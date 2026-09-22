@@ -43,30 +43,31 @@ private func borrowed<T: AnyObject>(_ pointer: OpaquePointer, as type: T.Type) -
     Unmanaged<T>.fromOpaque(UnsafeRawPointer(pointer)).takeUnretainedValue()
 }
 
-// C entry points are kept out of the Swift API; Runtime.h documents their
-// ownership and pointer contracts for native callers.
+// Package access preserves external C linkage through Xcode's optimized
+// relocatable link while keeping these names out of the public Swift API.
+// Runtime.h documents their ownership and pointer contracts.
 @_cdecl("ABICreateSymbolRuntime")
-func nativeCreateSymbolRuntime() -> OpaquePointer {
+package func nativeCreateSymbolRuntime() -> OpaquePointer {
     retained(SymbolResolver())
 }
 
 @_cdecl("ABICopySharedSymbolRuntime")
-func nativeCopySharedSymbolRuntime() -> OpaquePointer {
+package func nativeCopySharedSymbolRuntime() -> OpaquePointer {
     retained(SymbolResolver.shared)
 }
 
 @_cdecl("ABIReleaseSymbolRuntime")
-func nativeReleaseSymbolRuntime(_ runtime: OpaquePointer) {
+package func nativeReleaseSymbolRuntime(_ runtime: OpaquePointer) {
     Unmanaged<SymbolResolver>.fromOpaque(UnsafeRawPointer(runtime)).release()
 }
 
 @_cdecl("ABIRuntimeRemoveCachedResults")
-func nativeRemoveCachedResults(_ runtime: OpaquePointer) {
+package func nativeRemoveCachedResults(_ runtime: OpaquePointer) {
     borrowed(runtime, as: SymbolResolver.self).removeCachedResults()
 }
 
 @_cdecl("ABIResolveSymbol")
-func nativeResolveSymbol(
+package func nativeResolveSymbol(
     _ runtime: OpaquePointer,
     _ name: UnsafePointer<CChar>,
     _ language: Int32,
@@ -117,18 +118,18 @@ func nativeResolveSymbol(
 }
 
 @_cdecl("ABIReleaseResolvedSymbol")
-func nativeReleaseResolvedSymbol(_ symbol: OpaquePointer) {
+package func nativeReleaseResolvedSymbol(_ symbol: OpaquePointer) {
     Unmanaged<NativeSymbolBox>.fromOpaque(UnsafeRawPointer(symbol)).release()
 }
 
 @_cdecl("ABIResolvedSymbolAddress")
-func nativeResolvedSymbolAddress(_ symbol: OpaquePointer) -> UnsafeRawPointer {
+package func nativeResolvedSymbolAddress(_ symbol: OpaquePointer) -> UnsafeRawPointer {
     let box = borrowed(symbol, as: NativeSymbolBox.self)
     return UnsafeRawPointer(bitPattern: UInt(box.symbol.address))!
 }
 
 @_cdecl("ABIResolvedSymbolImage")
-func nativeResolvedSymbolImage(_ symbol: OpaquePointer, _ info: UnsafeMutablePointer<ABIImageInfo>) {
+package func nativeResolvedSymbolImage(_ symbol: OpaquePointer, _ info: UnsafeMutablePointer<ABIImageInfo>) {
     let box = borrowed(symbol, as: NativeSymbolBox.self)
     let identity = box.symbol.image.identity
     info.pointee = ABIImageInfo(
