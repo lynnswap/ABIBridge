@@ -190,10 +190,21 @@ ABIObjCInvocation *ABICopyObjCInvocation(
     class_getMethodImplementation(cls, selector);
     Method method = class_getInstanceMethod(cls, selector);
     NSMethodSignature *signature = nil;
-    if (method) {
-        signature = [NSMethodSignature signatureWithObjCTypes:method_getTypeEncoding(method)];
-    } else if ([receiver respondsToSelector:@selector(methodSignatureForSelector:)]) {
-        signature = [receiver methodSignatureForSelector:selector];
+    @try {
+        if (method) {
+            signature = [NSMethodSignature signatureWithObjCTypes:method_getTypeEncoding(method)];
+        } else if ([receiver respondsToSelector:@selector(methodSignatureForSelector:)]) {
+            signature = [receiver methodSignatureForSelector:selector];
+        }
+    } @catch (NSException *exception) {
+        // Foundation rejects some valid runtime encodings, including unions.
+        // Only signature acquisition is translated; invocation exceptions retain
+        // their native behavior.
+        if (![exception.name isEqualToString:NSInvalidArgumentException]) @throw;
+        fail(error, ABIFailureUnsupportedDeclaration,
+             [NSString stringWithFormat:@"Unsupported signature for %@: %@",
+              NSStringFromSelector(selector), exception.reason]);
+        return nullptr;
     }
     if (!signature || signature.numberOfArguments < 2) {
         fail(error, ABIFailureDeclarationNotFound,

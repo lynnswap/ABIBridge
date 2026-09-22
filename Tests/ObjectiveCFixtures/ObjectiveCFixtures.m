@@ -29,6 +29,8 @@
 - (signed char)negateCharacterBoolean:(signed char)value { return value ? 0 : -1; }
 - (Class)echoClass:(Class)value { self.classCalls += 1; return value; }
 - (SEL)echoSelector:(SEL)value { return value; }
+- (ABIUnionFixture)unionValue { return (ABIUnionFixture){.integer = 42}; }
+- (ABIUnionFixture *)unionPointer:(ABIUnionFixture *)value { return value; }
 @end
 
 @implementation ABIInitializerFixture

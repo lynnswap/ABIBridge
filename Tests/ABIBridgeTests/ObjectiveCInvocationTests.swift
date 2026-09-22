@@ -179,6 +179,19 @@ struct ObjectiveCInvocationTests {
         #expect(try unsafe sel.unsafeInvoke(selector) == selector)
     }
 
+    @Test func unsupportedFoundationEncodingsThrowDuringLookup() async throws {
+        let object = ABIRuntime.shared.object(ABIOwnershipFixture())
+        await #expect(throws: NSError.self) {
+            _ = try await object.method(selector: "unionValue", as: (() -> ABIUnionFixture).self)
+        }
+        await #expect(throws: NSError.self) {
+            _ = try await object.method(
+                selector: "unionPointer:",
+                as: ((UnsafeMutablePointer<ABIUnionFixture>) -> UnsafeMutablePointer<ABIUnionFixture>).self
+            )
+        }
+    }
+
     @Test func classValuesRemainDistinctFromInstances() async throws {
         let fixture = ABIOwnershipFixture()
         let object = ABIRuntime.shared.object(fixture)

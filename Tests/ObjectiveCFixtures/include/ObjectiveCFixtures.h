@@ -1,6 +1,8 @@
 #import <Foundation/Foundation.h>
 
 NS_ASSUME_NONNULL_BEGIN
+
+typedef union ABIUnionFixture { NSInteger integer; double real; } ABIUnionFixture;
 @interface ABIOwnershipFixture : NSObject
 @property(nonatomic, readonly) NSInteger liveResults;
 @property(nonatomic, readonly) NSInteger classCalls;
@@ -11,6 +13,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (signed char)negateCharacterBoolean:(signed char)value;
 - (Class)echoClass:(Class)value;
 - (SEL)echoSelector:(SEL)value;
+- (ABIUnionFixture)unionValue;
+- (ABIUnionFixture *)unionPointer:(ABIUnionFixture *)value;
 @end
 
 @interface ABIInitializerFixture : NSObject

@@ -66,4 +66,4 @@ Use ``NativeMethodOptions`` to override retained-result or consumed-receiver inf
 
 Lookup stays in the caller's isolation domain, and invocation is synchronous. Handles retain their receiver but do not make it thread-safe or actor-independent. For a main-actor UI object, perform lookup and invocation on the main actor.
 
-The unsafe call contract includes argument nullability, class constraints, pointer validity, ownership annotations, and any requirements that runtime encodings cannot express. Native Objective-C or C++ exceptions are not converted to Swift errors. Keep dynamically loaded receiver classes and method implementations available for as long as the object and its handles are used.
+The unsafe call contract includes argument nullability, class constraints, pointer validity, ownership annotations, and any requirements that runtime encodings cannot express. Foundation signature-construction failures are reported as lookup errors. Exceptions from the invoked Objective-C or C++ implementation are not converted to Swift errors. Keep dynamically loaded receiver classes and method implementations available for as long as the object and its handles are used.
