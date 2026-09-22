@@ -3,30 +3,45 @@
 
 import PackageDescription
 
+let strictSwiftSettings: [SwiftSetting] = [
+    .enableUpcomingFeature("ApproachableConcurrency"),
+]
+
 let package = Package(
     name: "ABIBridge",
     products: [
-        // Products define the executables and libraries a package produces, making them visible to other packages.
-        .library(
-            name: "ABIBridge",
-            targets: ["ABIBridge"]
-        ),
+        .library(name: "ABIBridge", targets: ["ABIBridge"]),
+        .library(name: "ABIBridgeCore", targets: ["ABIBridgeCore"]),
+        .library(name: "ABIBridgeObjCXX", targets: ["ABIBridgeObjCXX"]),
     ],
     targets: [
-        // Targets are the basic building blocks of a package, defining a module or a test suite.
-        // Targets can depend on other targets in this package and products from dependencies.
         .target(
             name: "ABIBridge",
-            swiftSettings: [
-                .enableUpcomingFeature("ApproachableConcurrency"),
-            ],
+            dependencies: ["ABIBridgeCore"],
+            swiftSettings: strictSwiftSettings
+        ),
+        .target(
+            name: "ABIBridgeCore",
+            path: "Sources/ABIBridgeCore",
+            publicHeadersPath: "include",
+            cxxSettings: [
+                .headerSearchPath("include"),
+            ]
+        ),
+        .target(
+            name: "ABIBridgeObjCXX",
+            dependencies: ["ABIBridgeCore"],
+            path: "Sources/ABIBridgeObjCXX",
+            publicHeadersPath: "include",
+            linkerSettings: [
+                .linkedFramework("Foundation"),
+            ]
         ),
         .testTarget(
             name: "ABIBridgeTests",
             dependencies: ["ABIBridge"],
-            swiftSettings: [
-                .enableUpcomingFeature("ApproachableConcurrency"),
-            ],
+            swiftSettings: strictSwiftSettings
         ),
-    ]
+    ],
+    cxxLanguageStandard: .cxx20
 )
