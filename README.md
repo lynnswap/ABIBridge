@@ -1,6 +1,6 @@
 # ABIBridge
 
-Resolve native symbols by source-level name and call C, C++, and Objective-C code with Swift types and values.
+Resolve native symbols by source-level name and call C, C++, Objective-C, and concrete Swift functions with Swift types and values.
 
 ## Requirements
 
@@ -65,6 +65,18 @@ let add = try await runtime.cxxFunction(
     in: .framework(named: "Example")
 )
 let sum = try unsafe add.unsafeInvoke(20, 22)
+```
+
+### Call a concrete Swift function
+
+For an already-loaded module defining `func decorate(_ value: String) -> String`:
+
+```swift
+let decorate = try await runtime.swiftFunction(
+    named: "Example.decorate(_:)",
+    as: ((String) -> String).self
+)
+let message = try unsafe decorate.unsafeInvoke("Hello")
 ```
 
 ### Call methods on a C++ object
@@ -142,13 +154,13 @@ if let image = images.first {
 }
 ```
 
-Use `.path(executableURL)` instead of `.framework(named:)` to select a particular loaded binary. Lookups do not load missing frameworks. Typed invocation for Swift declarations is being developed separately.
+Use `.path(executableURL)` instead of `.framework(named:)` to select a particular loaded binary. Lookups do not load missing frameworks.
 
 See the [documentation](https://lynnswap.github.io/ABIBridge/documentation/abibridge/) for API contracts and [CONTRIBUTING.md](CONTRIBUTING.md) for build and test instructions.
 
 ## Planned API
 
-These examples preview APIs that are **not implemented yet** and may change. Swift invocation is tracked in [#28](https://github.com/lynnswap/ABIBridge/issues/28) and [#29](https://github.com/lynnswap/ABIBridge/issues/29).
+These examples preview APIs that are **not implemented yet** and may change. Swift type and member invocation is tracked in [#29](https://github.com/lynnswap/ABIBridge/issues/29).
 
 ### Call a Swift method on an existing instance
 

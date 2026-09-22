@@ -8,7 +8,6 @@
 extern "C" {
 #endif
 
-typedef struct ABIValueType ABIValueType;
 typedef struct ABICallInterface ABICallInterface;
 
 /// Scalar C representations. Signedness affects extension of narrow results.

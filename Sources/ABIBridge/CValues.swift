@@ -2,13 +2,13 @@ import ABIBridgeCore
 import Foundation
 import CoreGraphics
 
-func consumeCCallFailure(_ failure: OpaquePointer?) -> any Error {
+func consumeNativeCallFailure(_ failure: OpaquePointer?, domain: String = "ABIBridge.CInvocation") -> any Error {
     guard let failure else {
-        return ABIResolutionError.metadataUnavailable("The native C call interface returned no failure details.")
+        return ABIResolutionError.metadataUnavailable("The native call interface returned no failure details.")
     }
     defer { ABIReleaseResolutionFailure(failure) }
     return NSError(
-        domain: "ABIBridge.CInvocation", code: Int(ABIResolutionFailureCode(failure)),
+        domain: domain, code: Int(ABIResolutionFailureCode(failure)),
         userInfo: [NSLocalizedDescriptionKey: String(cString: ABIResolutionFailureMessage(failure))]
     )
 }
@@ -23,7 +23,7 @@ final class CValueType: @unchecked Sendable {
     init(scalar: Int) throws {
         var failure: OpaquePointer?
         guard let handle = ABICreateScalarType(Int32(scalar), &failure) else {
-            throw consumeCCallFailure(failure)
+            throw consumeNativeCallFailure(failure)
         }
         self.handle = handle
     }
@@ -33,7 +33,7 @@ final class CValueType: @unchecked Sendable {
         var failure: OpaquePointer?
         guard let handle = handles.withUnsafeBufferPointer({
             ABICreateStructType($0.baseAddress, $0.count, &failure)
-        }) else { throw consumeCCallFailure(failure) }
+        }) else { throw consumeNativeCallFailure(failure) }
         self.handle = handle
     }
 

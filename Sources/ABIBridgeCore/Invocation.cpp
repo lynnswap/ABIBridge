@@ -1,5 +1,5 @@
 #include <ABIBridge/Invocation.h>
-#include <ffi.h>
+#include "NativeValueType.hpp"
 #include <ptrauth.h>
 #include <algorithm>
 #include <climits>
@@ -10,16 +10,7 @@
 #include <vector>
 
 namespace {
-struct TypeStorage {
-    ffi_type *scalar = nullptr;
-    ffi_type aggregate{0, 0, FFI_TYPE_STRUCT, nullptr};
-    std::vector<std::shared_ptr<TypeStorage>> fields;
-    std::vector<ffi_type*> elements;
-    std::vector<size_t> offsets;
-
-    ffi_type *native() { return scalar ? scalar : &aggregate; }
-    size_t size() { return native()->type == FFI_TYPE_VOID ? 0 : native()->size; }
-};
+using abibridge::TypeStorage;
 
 void fail(ABIResolutionFailure **error, int code, const char *message) {
     if (error) *error = ABICreateResolutionFailure(code, message);
@@ -44,9 +35,6 @@ ffi_type *scalarType(int32_t kind) {
 }
 }
 
-struct ABIValueType {
-    std::shared_ptr<TypeStorage> storage;
-};
 
 struct ABICallInterface {
     ffi_cif cif{};

@@ -155,7 +155,7 @@ public final class NativeVTable {
                 $0.baseAddress!.advanced(by: index * MemoryLayout<UnsafeRawPointer>.size),
                 authentication.keyCode, authentication.discriminator, authentication.addressDiversity,
                 &failure
-            ) else { throw consumeCCallFailure(failure) }
+            ) else { throw consumeNativeCallFailure(failure) }
             return VirtualCallTarget(handle: handle, retaining: storage)
         }
     }
