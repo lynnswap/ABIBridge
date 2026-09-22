@@ -17,6 +17,61 @@ final class CCallInterface: @unchecked Sendable {
     deinit { ABIReleaseCallInterface(handle) }
 }
 
+// Shares the typed marshalling path between free functions and bound methods.
+// Hidden pointers are ABI-supplied arguments such as this and an adapter target.
+struct CFunctionCall<Result, each Argument>: Sendable {
+    private let interface: CCallInterface
+    private let arguments: (repeat CValueCodec<each Argument>)
+    private let result: CValueCodec<Result>
+    private let hiddenPointerCount: Int
+
+    init(hiddenPointerCount: Int = 0) throws {
+        self.hiddenPointerCount = hiddenPointerCount
+        let arguments = (repeat try CValueCodec<each Argument>())
+        let result = try CValueCodec<Result>()
+        var types: [CValueType] = []
+        if hiddenPointerCount > 0 {
+            types = Array(repeating: try CValueType(scalar: ABIValuePointer), count: hiddenPointerCount)
+        }
+        for codec in repeat each arguments { types.append(codec.type) }
+        interface = try CCallInterface(result: result.type, parameters: types)
+        self.arguments = arguments
+        self.result = result
+    }
+
+    @unsafe func unsafeInvoke(
+        _ function: ABIUnmanagedFunction?,
+        hiddenPointers: [UnsafeRawPointer] = [],
+        retainingResultOwner owner: Any? = nil,
+        _ values: repeat each Argument
+    ) throws -> Result {
+        precondition(hiddenPointers.count == hiddenPointerCount)
+        var storage = hiddenPointers.map { pointer in
+            let value = NativeValueStorage(
+                size: MemoryLayout<UnsafeRawPointer>.size,
+                alignment: MemoryLayout<UnsafeRawPointer>.alignment
+            )
+            value.store(pointer)
+            return value
+        }
+        for (codec, value) in repeat (each arguments, each values) {
+            storage.append(try codec.encode(value))
+        }
+        let addresses: [UnsafeMutableRawPointer?] = storage.map(\.address)
+        let output = NativeValueStorage(size: result.type.size, alignment: result.type.alignment)
+        return try withExtendedLifetime(storage) {
+            var failure: OpaquePointer?
+            let success = addresses.withUnsafeBufferPointer {
+                ABIUnsafeInvokeCCallInterface(
+                    interface.handle, function, output.address, $0.baseAddress, &failure
+                )
+            }
+            guard success else { throw consumeCCallFailure(failure) }
+            return try result.decode(output, retaining: owner)
+        }
+    }
+}
+
 /// A typed C or C-compatible C++ function that retains its containing image.
 ///
 /// A function handle reuses its prepared signature across calls. The handle is
@@ -26,19 +81,11 @@ public struct NativeFunction<Result, each Argument>: Sendable {
     /// The resolved symbol and image retained for this function.
     public let symbol: ResolvedSymbol
 
-    private let interface: CCallInterface
-    private let arguments: (repeat CValueCodec<each Argument>)
-    private let result: CValueCodec<Result>
+    private let call: CFunctionCall<Result, repeat each Argument>
 
     init(symbol: ResolvedSymbol) throws {
         self.symbol = symbol
-        let arguments = (repeat try CValueCodec<each Argument>())
-        let result = try CValueCodec<Result>()
-        var types: [CValueType] = []
-        for codec in repeat each arguments { types.append(codec.type) }
-        interface = try CCallInterface(result: result.type, parameters: types)
-        self.arguments = arguments
-        self.result = result
+        call = try CFunctionCall()
     }
 
     /// Calls the function using the prepared platform C calling convention.
@@ -54,24 +101,8 @@ public struct NativeFunction<Result, each Argument>: Sendable {
     /// - Throws: An invocation error for a null nonoptional pointer result, or a
     ///   native call-interface error. ABI mismatches are not recoverable errors.
     @unsafe public func unsafeInvoke(_ values: repeat each Argument) throws -> Result {
-        var storage: [NativeValueStorage] = []
-        for (codec, value) in repeat (each arguments, each values) {
-            storage.append(try codec.encode(value))
-        }
-        let addresses: [UnsafeMutableRawPointer?] = storage.map(\.address)
-        let output = NativeValueStorage(size: result.type.size, alignment: result.type.alignment)
-        return try withExtendedLifetime(storage) {
-            var failure: OpaquePointer?
-            let success = unsafe symbol.withUnsafeAddress { address in
-                addresses.withUnsafeBufferPointer {
-                    ABIUnsafeInvokeCCallInterface(
-                        interface.handle, ABIUnsafeFunctionAtAddress(address), output.address,
-                        $0.baseAddress, &failure
-                    )
-                }
-            }
-            guard success else { throw consumeCCallFailure(failure) }
-            return try result.decode(output)
+        try unsafe symbol.withUnsafeAddress {
+            try unsafe call.unsafeInvoke(ABIUnsafeFunctionAtAddress($0), repeat each values)
         }
     }
 }

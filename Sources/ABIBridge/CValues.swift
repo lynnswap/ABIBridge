@@ -130,7 +130,7 @@ struct CValueCodec<Value>: Sendable {
         }
     }
 
-    func decode(_ storage: NativeValueStorage) throws -> Value {
+    func decode(_ storage: NativeValueStorage, retaining owner: Any? = nil) throws -> Value {
         switch kind {
         case .void: return () as! Value
         case .boolean: return (storage.address.load(as: UInt8.self) != 0) as! Value
@@ -151,7 +151,7 @@ struct CValueCodec<Value>: Sendable {
             if let optional, storage.address.load(as: UnsafeRawPointer?.self) == nil {
                 return optional.nilValue as! Value
             }
-            let nativeValue = NativeValue(type: nativeType) {
+            let nativeValue = NativeValue(type: nativeType, retaining: owner) {
                 $0.copyMemory(from: .init(start: storage.address, count: type.size))
             }
             let value = try bridge.init(nativeValue: nativeValue)

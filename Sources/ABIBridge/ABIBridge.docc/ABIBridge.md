@@ -42,6 +42,15 @@ print(symbol.image.path)
 - ``NativeMethodOptions``
 - ``ABIInvocationError``
 
+### Calling C++ object methods
+
+- <doc:CXXObjectInvocation>
+- ``NativeCXXObject``
+- ``NativeCXXMethod``
+- ``NativeVTable``
+- ``NativePointerAuthentication``
+- ``NativeDispatchError``
+
 ### Adapting native values
 
 - <doc:NativeValueAdapters>

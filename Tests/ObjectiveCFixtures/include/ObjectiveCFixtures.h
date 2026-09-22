@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import "CFunctionFixtures.h"
+#import "CXXObjectFixtures.h"
 
 NS_ASSUME_NONNULL_BEGIN
 

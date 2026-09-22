@@ -10,7 +10,6 @@ extern "C" {
 
 typedef struct ABIValueType ABIValueType;
 typedef struct ABICallInterface ABICallInterface;
-typedef void (*ABIUnmanagedFunction)(void);
 
 /// Scalar C representations. Signedness affects extension of narrow results.
 enum {
