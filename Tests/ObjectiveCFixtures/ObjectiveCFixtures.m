@@ -3,6 +3,7 @@
 
 @interface ABIOwnershipFixture ()
 @property(nonatomic) NSInteger liveResults;
+@property(nonatomic) NSInteger classCalls;
 @end
 
 @interface ABICountedResult : NSObject
@@ -26,7 +27,7 @@
 - (NSObject *)retainedObject { return [[ABICountedResult alloc] initWithFixture:self]; }
 - (NSObject *)newBorrowedObject { return [[ABICountedResult alloc] initWithFixture:self]; }
 - (signed char)negateCharacterBoolean:(signed char)value { return value ? 0 : -1; }
-- (Class)echoClass:(Class)value { return value; }
+- (Class)echoClass:(Class)value { self.classCalls += 1; return value; }
 - (SEL)echoSelector:(SEL)value { return value; }
 @end
 

@@ -24,7 +24,7 @@ public struct NativeMethodOptions: Sendable {
 
 /// A failure converting values at a native invocation boundary.
 public enum ABIInvocationError: Error, Sendable, Equatable {
-    /// A returned object cannot be converted to the requested Swift type.
+    /// An argument or returned value cannot be converted to its required type.
     case incompatibleValue(expected: String, actual: String)
     /// A native method returned nil for a nonoptional Swift result.
     case unexpectedNilResult(expected: String)
@@ -131,7 +131,7 @@ public struct NativeMethod<Result, each Argument> {
     ///
     /// - Parameter values: The explicit method arguments, in declaration order.
     /// - Returns: The result converted to the requested Swift type.
-    /// - Throws: An invocation error for a failed object conversion or unexpected
+    /// - Throws: An invocation error for a failed value conversion or unexpected
     ///   nil result. Objective-C and C++ exceptions are not translated.
     @unsafe public func unsafeInvoke(_ values: repeat each Argument) throws -> Result {
         var storage: [ObjCValueStorage] = []

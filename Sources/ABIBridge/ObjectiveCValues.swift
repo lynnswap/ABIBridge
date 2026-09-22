@@ -77,7 +77,7 @@ final class ObjCValueStorage {
 }
 
 struct ObjCValueCodec<Value> {
-    enum Kind { case void, boolean, bytes, object, pointer }
+    enum Kind { case void, boolean, bytes, object, classObject, pointer }
     let kind: Kind
     let size: Int
     let alignment: Int
@@ -101,7 +101,7 @@ struct ObjCValueCodec<Value> {
         } else if case .object = type {
             kind = .object
         } else if type == .class {
-            kind = .object
+            kind = .classObject
         } else if Self.matchesInteger(type), size == MemoryLayout<Value>.size {
             kind = .bytes
         } else if (type == .float && (Value.self == Float.self || Value.self == CGFloat.self))
@@ -130,10 +130,19 @@ struct ObjCValueCodec<Value> {
             let storage = ObjCValueStorage(size: size, alignment: alignment)
             storage.store(value)
             return storage
-        case .object:
+        case .object, .classObject:
             let unwrapped: Any?
             if let optional = value as? any ObjCOptionalValue { unwrapped = optional.wrappedValue }
             else { unwrapped = value }
+            // Class metadata and object instances both occupy one pointer, but
+            // sending an instance where Objective-C expects Class is invalid.
+            // Validate before bridging, which erases this distinction.
+            if kind == .classObject, let unwrapped, !(unwrapped is AnyClass) {
+                throw ABIInvocationError.incompatibleValue(
+                    expected: String(reflecting: AnyClass.self),
+                    actual: String(reflecting: type(of: unwrapped))
+                )
+            }
             let object = unwrapped.map { $0 as AnyObject }
             let storage = ObjCValueStorage(size: size, alignment: alignment, owner: object)
             storage.store(object.map { UnsafeRawPointer(Unmanaged.passUnretained($0).toOpaque()) })
@@ -154,9 +163,20 @@ struct ObjCValueCodec<Value> {
         case .void: return () as! Value
         case .boolean: return (storage.address.load(as: UInt8.self) != 0) as! Value
         case .bytes: return storage.address.load(as: Value.self)
-        case .object:
+        case .object, .classObject:
             guard let pointer = storage.address.load(as: UnsafeRawPointer?.self) else { return try nilResult() }
             let object = Unmanaged<AnyObject>.fromOpaque(pointer).takeRetainedValue()
+            if kind == .classObject {
+                guard let type = object as? AnyClass else {
+                    throw ABIInvocationError.incompatibleValue(
+                        expected: String(reflecting: AnyClass.self),
+                        actual: String(reflecting: Swift.type(of: object))
+                    )
+                }
+                // Converting the metatype as Any preserves its identity; casting
+                // the bridged class object could accept an NSObject instance type.
+                return try convert(type)
+            }
             return try convert(object)
         case .pointer:
             guard let pointer = storage.address.load(as: UnsafeRawPointer?.self) else { return try nilResult() }

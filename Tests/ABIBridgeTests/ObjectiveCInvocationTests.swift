@@ -179,6 +179,35 @@ struct ObjectiveCInvocationTests {
         #expect(try unsafe sel.unsafeInvoke(selector) == selector)
     }
 
+    @Test func classValuesRemainDistinctFromInstances() async throws {
+        let fixture = ABIOwnershipFixture()
+        let object = ABIRuntime.shared.object(fixture)
+        let typed = try await object.method(
+            selector: "echoClass:", as: ((NSString.Type?) -> NSString.Type?).self
+        )
+        #expect(try unsafe typed.unsafeInvoke(NSString.self) === NSString.self)
+        #expect(try unsafe typed.unsafeInvoke(nil) == nil)
+        let invalidArgument = try await object.method(
+            selector: "echoClass:", as: ((NSObject) -> AnyClass).self
+        )
+        let calls = fixture.classCalls
+        #expect(throws: ABIInvocationError.self) {
+            try unsafe invalidArgument.unsafeInvoke(NSObject())
+        }
+        #expect(fixture.classCalls == calls)
+        let invalidScalar = try await object.method(
+            selector: "echoClass:", as: ((Int) -> AnyClass).self
+        )
+        #expect(throws: ABIInvocationError.self) { try unsafe invalidScalar.unsafeInvoke(42) }
+        #expect(fixture.classCalls == calls)
+        let invalidResult = try await object.method(
+            selector: "echoClass:", as: ((AnyClass) -> NSObject).self
+        )
+        #expect(throws: ABIInvocationError.self) {
+            try unsafe invalidResult.unsafeInvoke(NSString.self)
+        }
+    }
+
     @Test func forwardingUsesNormalDispatch() async throws {
         let method = try await ABIRuntime.shared.object(ABIForwardingFixture()).method(
             selector: "answer", as: (() -> Int).self

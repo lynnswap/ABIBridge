@@ -34,12 +34,14 @@ The frontend supports these mappings:
 | Signed or unsigned integer | Matching signedness and width, including `Int` and `UInt` |
 | Floating point | `Float`, `Double`, or a matching `CGFloat` |
 | Objective-C object | Object types and Swift values that bridge to objects, optionally wrapped in `Optional` |
-| Objective-C class | Class metatypes |
+| Objective-C class | Class metatypes, optionally wrapped in `Optional` |
 | Pointer or selector | Swift pointer types, `OpaquePointer`, or `Selector`; pointer values may be optional |
 | Standard structures | `CGPoint`, `CGSize`, `CGRect`, and `NSRange` |
 | Void result | `Void` |
 
 There is no fixed argument-count limit. Signatures are synchronous and fixed: C variadic tails, blocks, arbitrary structures, unions, and nontrivial C++ values are not supported by this frontend.
+
+Class arguments are checked before native dispatch, so an instance supplied for a `Class` parameter throws a value-conversion error. Class results remain metatypes during Swift conversion and cannot masquerade as instances. These conversions happen during invocation; lookup does not introspect Swift metatype metadata.
 
 Object arguments stay alive until the call returns. Returned objects participate in ARC and are dynamically cast or bridged to the requested Swift result type. A failed cast throws ``ABIInvocationError/incompatibleValue(expected:actual:)``; nil for a nonoptional result throws ``ABIInvocationError/unexpectedNilResult(expected:)``. Pointer arguments and results remain borrowed, so their owners must establish the required lifetimes.
 

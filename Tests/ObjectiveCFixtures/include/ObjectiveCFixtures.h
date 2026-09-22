@@ -3,6 +3,7 @@
 NS_ASSUME_NONNULL_BEGIN
 @interface ABIOwnershipFixture : NSObject
 @property(nonatomic, readonly) NSInteger liveResults;
+@property(nonatomic, readonly) NSInteger classCalls;
 - (NSObject *)object;
 - (NSObject *)copyObject;
 - (NSObject *)retainedObject __attribute__((ns_returns_retained));
