@@ -36,14 +36,15 @@ For watchOS, add `WATCHOS_DEPLOYMENT_TARGET=11.4` so dependencies also build wit
 
 Describe public API contracts in DocC comments. Put guides in the DocC catalog and keep the README at installation and quick-start level. Write prose without manual line wrapping.
 
-Build documentation locally:
+Build the same static site that is published by CI:
 
 ```sh
-xcodebuild docbuild \
-  -scheme ABIBridge \
-  -destination 'generic/platform=macOS' \
-  -derivedDataPath /tmp/ABIBridge-Documentation
+bash scripts/build-documentation.sh
 ```
+
+The default output is `.build/documentation`. Optional arguments select the output directory and hosting base path. The script validates ABIBridge's catalog with DocC warnings treated as errors, while dependency documentation warnings remain separate.
+
+Pushes to `main` build and deploy the site to GitHub Pages. Pull requests run the package CI without a documentation job.
 
 ## Pull requests
 
