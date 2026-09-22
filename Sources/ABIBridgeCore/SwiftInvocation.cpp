@@ -196,7 +196,8 @@ bool ABIUnsafeInvokeSwiftCallInterface(
             const uintptr_t address = reinterpret_cast<uintptr_t>(source);
             std::memcpy(destination, &address, sizeof(address));
         } else {
-            std::memcpy(destination, source, move.component.size);
+            const auto available = interface->parameters[move.argument]->size() - move.component.offset;
+            std::memcpy(destination, source, std::min(move.component.size, available));
         }
     }
     uint64_t discriminator = 0;
@@ -208,7 +209,10 @@ bool ABIUnsafeInvokeSwiftCallInterface(
         size_t integers = 0, floating = 0;
         for (const auto &component : interface->resultLayout.components) {
             const auto source = component.floating ? &frame.floatingResults[floating++] : &frame.integerResults[integers++];
-            std::memcpy(static_cast<uint8_t *>(result) + component.offset, source, component.size);
+            // A coalesced register may include trailing padding beyond the
+            // value's allocation (for example, three bytes passed as i32).
+            const auto available = interface->result->size() - component.offset;
+            std::memcpy(static_cast<uint8_t *>(result) + component.offset, source, std::min(component.size, available));
         }
     }
     return true;
