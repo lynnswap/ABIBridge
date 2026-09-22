@@ -17,18 +17,55 @@ Add this Swift package dependency and the `ABIBridge` product to your target:
 
 ## Quick start
 
-Find a C function in the process's loaded images:
+### Find a function without specifying its library
+
+Search the process's loaded images:
 
 ```swift
 import ABIBridge
 
-let symbol = try await ABIRuntime.shared.resolve(
+let runtime = ABIRuntime.shared
+let symbol = try await runtime.resolve(
     NativeDeclaration(name: "getpid", language: .c)
 )
 print(symbol.image.path)
 ```
 
-C++ and Swift declarations can also be resolved without mangled names. Native invocation is being developed separately.
+### Resolve C++ and Swift declarations without mangled names
+
+For an already-loaded framework named `Example` that defines these declarations:
+
+```swift
+let add = try await runtime.resolve(
+    NativeDeclaration(name: "Example::Math::add(int, int)", language: .cxx),
+    in: .framework(named: "Example")
+)
+
+let refresh = try await runtime.resolve(
+    NativeDeclaration(name: "Example.Renderer.refresh() -> ()", language: .swift),
+    in: .framework(named: "Example")
+)
+```
+
+### Reuse an image for several lookups
+
+Obtain an image once and reuse its cached index:
+
+```swift
+let images = try await runtime.images(
+    matching: .framework(named: "Example")
+)
+if let image = images.first {
+    let start = try await runtime.resolve(
+        NativeDeclaration(name: "ExampleStart", language: .c), in: image
+    )
+    let stop = try await runtime.resolve(
+        NativeDeclaration(name: "ExampleStop", language: .c), in: image
+    )
+}
+```
+
+Use `.path(executableURL)` instead of `.framework(named:)` to select a particular loaded binary. Lookups do not load missing frameworks. Typed native invocation is being developed separately.
 
 See the [DocC catalog](Sources/ABIBridge/ABIBridge.docc/ABIBridge.md) for API contracts and [CONTRIBUTING.md](CONTRIBUTING.md) for build and test instructions.
 

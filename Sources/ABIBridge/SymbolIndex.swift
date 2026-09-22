@@ -68,6 +68,7 @@ final class SymbolIndex {
         let owner: String?
     }
     private var decoded: [Scope: [[UInt8]: [IndexedSymbol]]] = [:]
+    private var linkerNames: [String: [IndexedSymbol]]?
 
     init(image: NativeImage) {
         self.image = image
@@ -99,10 +100,15 @@ final class SymbolIndex {
     func appendSharedCacheSymbols(_ more: [IndexedSymbol]) {
         symbols += more
         decoded.removeAll()
+        linkerNames = nil
         sharedCacheLoaded = true
     }
 
     func matches(_ declaration: NativeDeclaration) -> [IndexedSymbol] {
+        if declaration.language == .c {
+            if linkerNames == nil { linkerNames = Dictionary(grouping: symbols, by: \.name) }
+            return linkerNames?["_" + declaration.name] ?? []
+        }
         // Plain Itanium owner names occur literally in their mangling. Restrict
         // demangling to that owner, then reuse its index for other members.
         let prefix = String(declaration.name.prefix { $0 != "(" })
@@ -116,11 +122,14 @@ final class SymbolIndex {
         let needle = declaration.language == .cxx
             && owner?.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) != nil
             && !substitutions.contains(owner ?? "") ? owner : nil
-        let scope = Scope(language: declaration.language, owner: needle)
+        let module = declaration.name.components(separatedBy: ".").first
+        let swiftNeedle = declaration.language == .swift && module != "Swift"
+            && module?.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) != nil ? module : nil
+        let scope = Scope(language: declaration.language, owner: swiftNeedle ?? needle)
         if decoded[scope] == nil {
             var index: [[UInt8]: [IndexedSymbol]] = [:]
             for symbol in symbols {
-                if let needle, !symbol.name.contains(needle) { continue }
+                if let needle = scope.owner, !symbol.name.contains(needle) { continue }
                 guard let name = DeclarationKey.demangle(symbol.name, language: declaration.language) else { continue }
                 index[DeclarationKey.make(name), default: []].append(symbol)
             }
