@@ -1,4 +1,8 @@
 #include "FixtureTypes.hpp"
+#include <cstdlib>
+#include <new>
+#include <ptrauth.h>
+#include <type_traits>
 
 namespace ABIBridgeFixture {
 int add(int left, int right) { return left + right; }
@@ -15,6 +19,7 @@ LargeResult large(long value) {
     return {{value, value + 1, value + 2, value + 3, value + 4, value + 5, value + 6, value + 7}};
 }
 int counter = 42;
+int VirtualCounter::current() const { return value; }
 
 int Counter::add(int delta) { return value += delta; }
 int Counter::current() const { return value; }
@@ -30,6 +35,29 @@ double Counter::many(int a, int b, int c, int d, int e, int f,
 }
 
 extern "C" int ABIBridgeFixtureCAdd(int left, int right) { return left + right; }
+
+static_assert(std::is_trivially_destructible_v<ABIBridgeFixture::VirtualCounter>);
+extern "C" void *ABIBridgeFixtureCreateVirtualCounter(int value) {
+    void *storage = std::malloc(sizeof(ABIBridgeFixture::VirtualCounter));
+    if (!storage) return nullptr;
+    return new (storage) ABIBridgeFixture::VirtualCounter(value);
+}
+extern "C" size_t ABIBridgeFixtureVirtualSize() { return sizeof(ABIBridgeFixture::VirtualCounter); }
+extern "C" size_t ABIBridgeFixtureVirtualAlignment() { return alignof(ABIBridgeFixture::VirtualCounter); }
+extern "C" uintptr_t ABIBridgeFixtureVTableDiscriminator() {
+#if __has_feature(ptrauth_calls)
+    return ptrauth_string_discriminator("_ZTVN16ABIBridgeFixture14VirtualCounterE");
+#else
+    return 0;
+#endif
+}
+extern "C" uintptr_t ABIBridgeFixtureSlotDiscriminator() {
+#if __has_feature(ptrauth_calls)
+    return ptrauth_string_discriminator("_ZNK16ABIBridgeFixture14VirtualCounter7currentEv");
+#else
+    return 0;
+#endif
+}
 
 static void (*unloadCallback)() = nullptr;
 extern "C" void ABIBridgeFixtureSetUnloadCallback(void (*callback)()) {

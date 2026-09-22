@@ -173,6 +173,22 @@ public final class NativeValue {
         }
     }
 
+    /// Creates a bounded storage view with another explicit layout.
+    ///
+    /// This is useful for a caller-specified C++ subobject offset. It does not
+    /// infer inheritance layout or adjust the receiver automatically.
+    /// - Parameters:
+    ///   - offset: The byte offset within this value.
+    ///   - type: The view's accessible extent and representation.
+    /// - Returns: A view retaining this value and sharing its storage.
+    /// - Throws: An out-of-bounds error when the view exceeds the known extent.
+    public func view(at offset: Int, as type: NativeType) throws -> NativeValue {
+        try checkRange(offset: offset, count: type.size)
+        return unsafe NativeValue(
+            borrowing: storage.address.advanced(by: offset), as: type, retaining: self
+        )
+    }
+
     /// Returns a mutable field view retaining the containing allocation.
     ///
     /// - Parameter index: A field index from the structure layout.

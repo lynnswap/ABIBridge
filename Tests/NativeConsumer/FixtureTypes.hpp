@@ -15,6 +15,12 @@ struct Counter {
                 int g, int h, int i, int j, double scale, const int& extra) const;
 };
 
+struct VirtualCounter {
+    int value;
+    explicit VirtualCounter(int value) : value(value) {}
+    virtual int current() const;
+};
+
 struct Prefix { long padding[4]; };
 struct Combined : Prefix, Counter {};
 }

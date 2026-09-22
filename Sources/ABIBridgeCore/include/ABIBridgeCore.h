@@ -11,6 +11,8 @@ extern "C" {
 typedef struct ABIImageList ABIImageList;
 typedef struct ABIImageLease ABIImageLease;
 typedef struct ABIResolutionFailure ABIResolutionFailure;
+/// Generic C entry point used by the internal call interfaces.
+typedef void (*ABIUnmanagedFunction)(void);
 
 /// Information about one image load. This value does not retain the image.
 typedef struct {
@@ -58,5 +60,6 @@ void ABIFreeString(char *string);
 
 #include <ABIBridge/Runtime.h>
 #include <ABIBridge/Invocation.h>
+#include <ABIBridge/NativeDispatch.h>
 
 #endif

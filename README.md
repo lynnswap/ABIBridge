@@ -67,6 +67,19 @@ let add = try await runtime.cxxFunction(
 let sum = try unsafe add.unsafeInvoke(20, 22)
 ```
 
+### Call methods on a C++ object
+
+Given native `storage` for a live C++ receiver:
+
+```swift
+let counter = runtime.cxxObject(storage, typeNamed: "Example::Counter")
+let add = try await counter.method(
+    named: "add(int)",
+    as: ((Int32) -> Int32).self
+)
+let value = try unsafe add.unsafeInvoke(5)
+```
+
 ### Use your own native value type
 
 For a `Pair` wrapper conforming to `ABIBridgeValue` and a loaded C-compatible declaration:
@@ -135,7 +148,7 @@ See the [documentation](https://lynnswap.github.io/ABIBridge/documentation/abibr
 
 ## Planned API
 
-These examples preview APIs that are **not implemented yet** and may change. Swift invocation is tracked in [#28](https://github.com/lynnswap/ABIBridge/issues/28) and [#29](https://github.com/lynnswap/ABIBridge/issues/29). C++ receiver and virtual dispatch adapters are tracked in [#31](https://github.com/lynnswap/ABIBridge/issues/31).
+These examples preview APIs that are **not implemented yet** and may change. Swift invocation is tracked in [#28](https://github.com/lynnswap/ABIBridge/issues/28) and [#29](https://github.com/lynnswap/ABIBridge/issues/29).
 
 ### Call a Swift method on an existing instance
 
