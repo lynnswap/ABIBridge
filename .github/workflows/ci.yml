@@ -42,7 +42,7 @@ jobs:
           -scheme ABIBridge-Package
           -destination 'platform=macOS,arch=arm64'
           -derivedDataPath "$RUNNER_TEMP/DerivedData"
-      - name: Test standalone C++ consumer
+      - name: Test native consumers
         run: bash scripts/test-native-consumer.sh
 
   platform-builds:

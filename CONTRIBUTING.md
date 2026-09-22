@@ -21,13 +21,13 @@ xcodebuild test \
 
 The symbol tests compile temporary C++ libraries with the installed Xcode toolchain. They test real symbol lookup, image retention, and unload/reload behavior.
 
-Run the standalone C++ package consumer to verify product linking and typed native calls:
+Run the standalone C++ and Objective-C++ package consumers to verify product linking and typed native calls:
 
 ```sh
 bash scripts/test-native-consumer.sh
 ```
 
-This fixture checks C/C++ calls, instance methods, receiver ownership, multiple-inheritance subobjects, reference arguments, non-trivial and indirect results, register/stack argument passing, concurrent resolution, and image retention after the original loader reference is released. CI runs it after the macOS package tests.
+This fixture checks C/C++ calls, instance methods, receiver ownership, multiple-inheritance subobjects, reference arguments, non-trivial and indirect results, register/stack argument passing, concurrent resolution, and image retention after the original loader reference is released. Objective-C++ consumers additionally check selector signatures, ARC and manual-reference-counting lifetimes, initializer ownership, and block arguments/results. CI runs these consumers after the macOS package tests.
 
 Build for another Apple platform by changing the generic destination:
 

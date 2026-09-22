@@ -1,0 +1,9 @@
+module ABIBridgeObjCXX {
+    header "ABIBridgeObjCXX/ABIBridgeObjCXX.h"
+    export *
+    module CXX {
+        requires cplusplus, objc
+        header "ABIBridge/ABIBridgeObjCXX.hpp"
+        export *
+    }
+}
