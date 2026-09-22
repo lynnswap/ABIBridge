@@ -43,6 +43,11 @@ struct SwiftValueCodec<Value>: Sendable {
         return storage
     }
 
+    func copy(from storage: NativeValueStorage, retaining owner: Any?) throws -> Value {
+        if let cValue { return try cValue.decode(storage, retaining: owner) }
+        return storage.address.load(as: Value.self)
+    }
+
     func decode(_ storage: NativeValueStorage, retaining owner: Any?) throws -> Value {
         if let cValue { return try cValue.decode(storage, retaining: owner) }
         if objectResult, !(Value.self is any NativeOptionalValue.Type),

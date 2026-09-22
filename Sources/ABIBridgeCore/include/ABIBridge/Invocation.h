@@ -28,6 +28,8 @@ void ABIReleaseValueType(ABIValueType *type);
 /// Actual value size; void has size zero.
 size_t ABIValueTypeSize(const ABIValueType *type);
 size_t ABIValueTypeAlignment(const ABIValueType *type);
+/// Whether the representation is a scalar native pointer.
+bool ABIValueTypeIsPointer(const ABIValueType *type);
 size_t ABIValueTypeFieldCount(const ABIValueType *type);
 /// Index must be less than ABIValueTypeFieldCount(type).
 size_t ABIValueTypeFieldOffset(const ABIValueType *type, size_t index);

@@ -23,6 +23,7 @@ struct SwiftCall<Result, each Argument>: Sendable {
     @unsafe func unsafeInvoke(
         symbol: ResolvedSymbol, context: UnsafeRawPointer? = nil,
         trailingValue: NativeValueStorage? = nil, retaining owner: Any? = nil,
+        didInvoke: (() -> Void)? = nil,
         _ values: repeat each Argument
     ) throws -> Result {
         precondition(hasTrailingValue == (trailingValue != nil))
@@ -49,6 +50,7 @@ struct SwiftCall<Result, each Argument>: Sendable {
             if consumesArguments {
                 for value in storage { value.relinquishValue() }
             }
+            didInvoke?()
             return try result.decode(output, retaining: owner ?? symbol)
         }
     }

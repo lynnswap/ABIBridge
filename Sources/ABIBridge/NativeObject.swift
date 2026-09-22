@@ -1,5 +1,6 @@
 import ABIBridgeObjCXX
 import Foundation
+import ObjectiveC
 
 /// Ownership overrides for Objective-C declarations with nonstandard annotations.
 ///
@@ -30,14 +31,82 @@ public enum ABIInvocationError: Error, Sendable, Equatable {
     case unexpectedNilResult(expected: String)
 }
 
-/// A retained Objective-C receiver used to look up bound methods.
+/// A retained object used to look up bound Objective-C or Swift methods.
 ///
 /// The receiver and its handles remain in the caller's isolation domain. This
 /// type does not make an object safe to use from another actor or thread.
 public final class NativeObject {
-    private let receiver: AnyObject
+    private var receiver: AnyObject?
+    private let runtime: ABIRuntime
 
-    init(_ receiver: AnyObject) { self.receiver = receiver }
+    init(_ receiver: AnyObject, runtime: ABIRuntime) {
+        self.receiver = receiver
+        self.runtime = runtime
+    }
+
+    deinit { withExtendedLifetime(runtime) { receiver = nil } }
+
+    private nonisolated(nonsending) func swiftType() async throws -> NativeSwiftType {
+        var type: AnyClass? = Swift.type(of: receiver!)
+        var missing: (any Error)?
+        while let current = type {
+            do {
+                return try await runtime.swiftType(named: swiftFunctionTypeName(current))
+            } catch let error as ABIResolutionError {
+                guard case .declarationNotFound = error else { throw error }
+                missing = error
+                type = class_getSuperclass(current)
+            }
+        }
+        throw missing ?? ABIResolutionError.metadataUnavailable("No Swift declaring type for this object.")
+    }
+
+    /// Resolves a Swift implementation for this object's concrete type.
+    ///
+    /// The method retains the receiver and implementation image. Invocation
+    /// remains on the caller's executor and calls the captured implementation.
+    /// - Parameters:
+    ///   - name: A relative Swift member name and argument labels.
+    ///   - signature: Explicit arguments and result, excluding self.
+    /// - Returns: A reusable method bound to this receiver.
+    /// - Throws: A lookup or unsupported-representation error.
+    public nonisolated(nonsending) func method<Result, each Argument>(
+        named name: String, as signature: ((repeat each Argument) -> Result).Type
+    ) async throws -> NativeBoundSwiftMethod<Result, repeat each Argument> {
+        let object = receiver!
+        let type = try await swiftType()
+        let method = try await type.method(named: name, as: signature)
+        return NativeBoundSwiftMethod(method: method, receiver: object)
+    }
+
+    /// Resolves a synchronous, nonthrowing Swift getter bound to this object.
+    ///
+    /// - Parameters:
+    ///   - name: The Swift property name or complete relative getter declaration.
+    ///   - valueType: The result representation.
+    /// - Returns: A zero-argument bound method.
+    /// - Throws: A lookup or representation error.
+    public nonisolated(nonsending) func getter<Value>(
+        named name: String, as valueType: Value.Type
+    ) async throws -> NativeBoundSwiftMethod<Value> {
+        let method = try await swiftType().getter(named: name, as: valueType)
+        return NativeBoundSwiftMethod(method: method, receiver: receiver!)
+    }
+
+    /// Resolves a Swift setter bound to this object.
+    ///
+    /// The setter receives ownership of its ordinary incoming value.
+    /// - Parameters:
+    ///   - name: The Swift property name or complete relative setter declaration.
+    ///   - valueType: The incoming representation.
+    /// - Returns: A one-argument bound method.
+    /// - Throws: A lookup or representation error.
+    public nonisolated(nonsending) func setter<Value>(
+        named name: String, as valueType: Value.Type
+    ) async throws -> NativeBoundSwiftMethod<Void, Value> {
+        let method = try await swiftType().setter(named: name, as: valueType)
+        return NativeBoundSwiftMethod(method: method, receiver: receiver!)
+    }
 
     /// Resolves a selector using an ordinary Swift function type.
     ///
@@ -58,7 +127,7 @@ public final class NativeObject {
     ) async throws -> NativeMethod<Result, repeat each Argument> {
         var error: NSError?
         guard let handle = ABICopyObjCInvocation(
-            receiver, NSSelectorFromString(selector),
+            receiver!, NSSelectorFromString(selector),
             options.returnsRetainedObject.map { $0 ? 1 : 0 } ?? -1,
             options.consumesReceiver.map { $0 ? 1 : 0 } ?? -1, &error
         ) else {
@@ -70,12 +139,12 @@ public final class NativeObject {
 }
 
 extension ABIRuntime {
-    /// Binds an existing Objective-C instance without searching or loading images.
+    /// Binds an existing object without searching or loading images.
     ///
-    /// - Parameter receiver: An object whose Objective-C methods will be called.
+    /// - Parameter receiver: An object whose Objective-C or Swift methods will be called.
     /// - Returns: A handle retaining the receiver in the caller's isolation domain.
     public nonisolated func object(_ receiver: AnyObject) -> NativeObject {
-        NativeObject(receiver)
+        NativeObject(receiver, runtime: self)
     }
 }
 

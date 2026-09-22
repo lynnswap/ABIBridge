@@ -87,6 +87,7 @@ ABIValueType *ABICreateStructType(
 void ABIReleaseValueType(ABIValueType *type) { delete type; }
 size_t ABIValueTypeSize(const ABIValueType *type) { return type->storage->size(); }
 size_t ABIValueTypeAlignment(const ABIValueType *type) { return type->storage->native()->alignment; }
+bool ABIValueTypeIsPointer(const ABIValueType *type) { return type->storage->native()->type == FFI_TYPE_POINTER; }
 size_t ABIValueTypeFieldCount(const ABIValueType *type) { return type->storage->offsets.size(); }
 size_t ABIValueTypeFieldOffset(const ABIValueType *type, size_t index) { return type->storage->offsets[index]; }
 

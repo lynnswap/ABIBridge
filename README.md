@@ -106,6 +106,55 @@ let translated = try unsafe translate.unsafeInvoke(Pair(left: 2, right: 3))
 
 Convert an existing `NativeValue` with `try nativeValue.cast(to: Pair.self)`. See the [native value adapter guide](https://lynnswap.github.io/ABIBridge/documentation/abibridge/nativevalueadapters) for layout and ownership declarations.
 
+### Call a Swift method on an existing instance
+
+For an existing `renderer` with a Swift `setImage(_:animated:)` method, bind the receiver once and pass ordinary Swift values:
+
+```swift
+import UIKit
+
+let object = runtime.object(renderer)
+let setImage = try await object.method(
+    named: "setImage(_:animated:)",
+    as: ((UIImage?, Bool) -> Void).self
+)
+
+try unsafe setImage.unsafeInvoke(image, true)
+try unsafe setImage.unsafeInvoke(nil, false)
+```
+
+### Reuse a type for multiple methods
+
+Resolve several methods through the same type handle, then select the receiver when calling them:
+
+```swift
+let rendererType = try await runtime.swiftType(named: "Example.Renderer")
+let start = try await rendererType.method(
+    named: "start()",
+    as: (() -> Void).self
+)
+let stop = try await rendererType.method(
+    named: "stop()",
+    as: (() -> Void).self
+)
+
+try unsafe start.unsafeInvoke(on: renderer)
+try unsafe stop.unsafeInvoke(on: renderer)
+```
+
+### Initialize a Swift type and access its properties
+
+For an already-loaded type defining `init(text:)` and a `text` property:
+
+```swift
+let initialize = try await rendererType.initializer(
+    named: "init(text:)", as: ((String) -> AnyObject).self
+)
+let renderer = try unsafe initialize.unsafeInvoke("Hello")
+let text = try await rendererType.getter(named: "text", as: String.self)
+let value = try unsafe text.unsafeInvoke(on: renderer)
+```
+
 ### Find a function without specifying its library
 
 Search the process's loaded images:
@@ -157,46 +206,6 @@ if let image = images.first {
 Use `.path(executableURL)` instead of `.framework(named:)` to select a particular loaded binary. Lookups do not load missing frameworks.
 
 See the [documentation](https://lynnswap.github.io/ABIBridge/documentation/abibridge/) for API contracts and [CONTRIBUTING.md](CONTRIBUTING.md) for build and test instructions.
-
-## Planned API
-
-These examples preview APIs that are **not implemented yet** and may change. Swift type and member invocation is tracked in [#29](https://github.com/lynnswap/ABIBridge/issues/29).
-
-### Call a Swift method on an existing instance
-
-For an existing `renderer` with a Swift `setImage(_:animated:)` method, bind the receiver once and pass ordinary Swift values:
-
-```swift
-import UIKit
-
-let object = runtime.object(renderer)
-let setImage = try await object.method(
-    named: "setImage(_:animated:)",
-    as: ((UIImage?, Bool) -> Void).self
-)
-
-try setImage.unsafeInvoke(image, true)
-try setImage.unsafeInvoke(nil, false)
-```
-
-### Reuse a type for multiple methods
-
-Resolve several methods through the same type handle, then select the receiver when calling them:
-
-```swift
-let rendererType = try await runtime.swiftType(named: "Example.Renderer")
-let start = try await rendererType.method(
-    named: "start()",
-    as: (() -> Void).self
-)
-let stop = try await rendererType.method(
-    named: "stop()",
-    as: (() -> Void).self
-)
-
-try start.unsafeInvoke(on: renderer)
-try stop.unsafeInvoke(on: renderer)
-```
 
 ## Acknowledgements
 

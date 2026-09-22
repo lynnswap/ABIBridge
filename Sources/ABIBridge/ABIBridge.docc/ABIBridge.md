@@ -79,3 +79,11 @@ print(symbol.image.path)
 
 - <doc:SwiftFunctionInvocation>
 - ``NativeSwiftFunction``
+
+### Swift types and members
+
+- <doc:SwiftMemberInvocation>
+- ``NativeSwiftType``
+- ``NativeSwiftMethod``
+- ``NativeBoundSwiftMethod``
+- ``NativeSwiftWritebackError``
