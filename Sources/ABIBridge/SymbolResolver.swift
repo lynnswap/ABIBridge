@@ -8,11 +8,21 @@ final class SymbolResolver: Sendable {
 
     func images(matching selector: ImageSelector) throws -> [NativeImage] {
         let snapshots = try ImageSnapshot.current().filter { $0.matches(selector) }
-        return try snapshots.map { snapshot in
+        return try snapshots.compactMap { snapshot in
             if let cached = state.withLock({ $0.indexes[snapshot.identity]?.image }) {
                 return cached
             }
-            return try snapshot.retain()
+            do {
+                return try snapshot.retain()
+            } catch ABIResolutionError.imageChanged {
+                // An unrelated load can disappear before its lease is acquired.
+                // Preserve failures for a generation that is still in the catalog.
+                let current = try ImageSnapshot.current()
+                if current.contains(where: { $0.identity.loadGeneration == snapshot.identity.loadGeneration }) {
+                    throw ABIResolutionError.imageChanged
+                }
+                return nil
+            }
         }
     }
 
