@@ -13,8 +13,10 @@ struct SymbolSection {
     let range: Range<UInt64>
     let code: Bool
     let vtable: Bool
+    let threadLocal: Bool
 
     func accepts(_ kind: NativeSymbolKind) -> Bool {
+        guard !threadLocal else { return false }
         switch kind {
         case .function: return code
         case .data: return !code
@@ -78,11 +80,19 @@ final class SymbolIndex {
             guard section.address >= 0, section.size > 0,
                   let start = Self.slid(UInt64(section.address), by: slide),
                   UInt64(section.size) <= UInt64.max - start else { return nil }
+            let threadLocal: Bool
+            switch section.flags.type {
+            case .some(.thread_local_regular), .some(.thread_local_zerofill),
+                 .some(.thread_local_variables), .some(.thread_local_variable_pointers),
+                 .some(.thread_local_init_function_pointers): threadLocal = true
+            default: threadLocal = false
+            }
             return SymbolSection(
                 range: start..<(start + UInt64(section.size)),
                 code: section.flags.attributes.contains(.pure_instructions) || section.flags.attributes.contains(.some_instructions),
                 vtable: section.sectionName == "__const"
-                    && (section.segmentName.hasPrefix("__DATA") || section.segmentName.hasPrefix("__AUTH"))
+                    && (section.segmentName.hasPrefix("__DATA") || section.segmentName.hasPrefix("__AUTH")),
+                threadLocal: threadLocal
             )
         }
         let base = image.identity.headerAddress

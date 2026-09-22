@@ -99,6 +99,21 @@ struct SymbolResolutionTests {
         #expect(symbol.source == .image)
     }
 
+    @Test func threadLocalDescriptorsAreNotReturnedAsOrdinaryData() async throws {
+        let fixture = try FixtureLibrary(threadLocal: true)
+        defer { fixture.cleanup() }
+        let address = try fixture.address(kind: 3)
+        let pointer = try #require(UnsafeRawPointer(bitPattern: address))
+        #expect(pointer.load(as: Int32.self) == 42)
+        let runtime = ABIRuntime()
+        await #expect(throws: ABIResolutionError.invalidAddress) {
+            _ = try await runtime.resolve(
+                .init(name: "\(fixture.namespace)::localCounter", language: .cxx, kind: .data),
+                in: .path(fixture.libraryURL)
+            )
+        }
+    }
+
     @Test func resolvesCompressedSwiftModuleNames() async throws {
         let fixture = try FixtureLibrary(swiftModule: "FooFoo")
         defer { fixture.cleanup() }
@@ -160,7 +175,7 @@ private final class FixtureLibrary {
     let namespace: String
     private var handle: UnsafeMutableRawPointer?
 
-    init(namespace: String? = nil, load: Bool = true, swiftModule: String? = nil) throws {
+    init(namespace: String? = nil, load: Bool = true, swiftModule: String? = nil, threadLocal: Bool = false) throws {
         self.namespace = namespace ?? "Fixture_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
         directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         libraryURL = directory.appendingPathComponent("fixture.dylib")
@@ -170,6 +185,7 @@ private final class FixtureLibrary {
         #include <cstdint>
         namespace \(self.namespace) {
         int counter = 42;
+        \(threadLocal ? "thread_local int localCounter = 42;" : "")
         int add(int a, int b) { return a + b; }
         class Counter {
         public:
@@ -181,6 +197,7 @@ private final class FixtureLibrary {
         Counter object;
         }
         extern "C" uintptr_t ABIFixtureAddress(int kind) {
+            \(threadLocal ? "if (kind == 3) return reinterpret_cast<uintptr_t>(&\(self.namespace)::localCounter);" : "")
             if (kind == 0) return reinterpret_cast<uintptr_t>(&\(self.namespace)::add);
             if (kind == 1) return reinterpret_cast<uintptr_t>(&\(self.namespace)::counter);
             return *reinterpret_cast<uintptr_t *>(&\(self.namespace)::object) - 2 * sizeof(void *);

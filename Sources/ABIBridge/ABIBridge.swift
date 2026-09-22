@@ -16,7 +16,8 @@ public enum NativeLanguage: Sendable, Hashable {
 public enum NativeSymbolKind: Sendable, Hashable {
     /// Code in a section marked as containing instructions.
     case function
-    /// Non-instruction storage; this does not establish a value's layout.
+    /// Non-instruction storage, excluding thread-local descriptors and templates.
+    /// This does not establish a value's layout.
     case data
     /// Constant data holding a C++ virtual table.
     case vtable

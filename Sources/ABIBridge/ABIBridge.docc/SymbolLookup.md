@@ -34,7 +34,7 @@ Symbol resolution does not reconstruct a function's calling convention. In parti
 
 The runtime searches loaded symbol tables and exports first. If no definition matches, it searches local symbols from the matching dyld shared cache where that metadata is available. Loaded-image results retain precedence even after a shared-cache index has been populated.
 
-Distinct definitions at the same lookup level produce `ABIResolutionError.ambiguousDeclaration`. A matching name whose address is outside the requested executable or data storage produces `ABIResolutionError.invalidAddress`. The containing section range does not establish the size of a function or value.
+Distinct definitions at the same lookup level produce `ABIResolutionError.ambiguousDeclaration`. A matching name whose address is outside the requested executable or data storage produces `ABIResolutionError.invalidAddress`. The containing section range does not establish the size of a function or value. Thread-local descriptors and storage templates are rejected because they do not provide an ordinary process-wide variable address.
 
 Shared-cache files are optional lookup sources, selected using cache and image identity rather than a particular OS build number. Their presence and readability vary by platform and installation. Missing local symbol metadata can leave a declaration unresolved.
 
