@@ -15,13 +15,13 @@ Run tests on macOS:
 
 ```sh
 xcodebuild test \
-  -scheme ABIBridge-Package \
+  -scheme ABIBridge \
   -destination 'platform=macOS,arch=arm64'
 ```
 
-The symbol tests compile temporary C++ libraries with the installed Xcode toolchain. They test real symbol lookup, image retention, and unload/reload behavior.
+The symbol tests compile temporary C++ libraries with the installed Xcode toolchain. They test real symbol lookup, image retention, and unload/reload behavior. Objective-C invocation tests use Swift and Objective-C fixtures to check typed arguments, forwarding, caller isolation, returned-object ownership, initializer behavior, and signature failures.
 
-Run the standalone C++ and Objective-C++ package consumers to verify product linking and typed native calls:
+Run the native backend fixtures to verify linking and ABI behavior through the `ABIBridge` product:
 
 ```sh
 bash scripts/test-native-consumer.sh
@@ -33,7 +33,7 @@ Build for another Apple platform by changing the generic destination:
 
 ```sh
 xcodebuild build \
-  -scheme ABIBridge-Package \
+  -scheme ABIBridge \
   -destination 'generic/platform=iOS' \
   CODE_SIGNING_ALLOWED=NO
 ```
@@ -42,7 +42,9 @@ For watchOS, add `WATCHOS_DEPLOYMENT_TARGET=11.4` so dependencies also build wit
 
 ## Documentation
 
-Describe public API contracts in DocC comments. Put guides in the DocC catalog and keep the README at installation and quick-start level. Write prose without manual line wrapping.
+The supported consumer API is the Swift `ABIBridge` module. `ABIBridgeCore`, `ABIBridgeObjCXX`, and their headers are implementation details used by the backends and fixtures. SwiftPM may make transitive modules importable; that does not make those interfaces supported public API.
+
+Describe public Swift API contracts in DocC comments. Put guides in the DocC catalog and keep the README at installation and quick-start level. Write prose without manual line wrapping.
 
 Build the same static site that is published by CI:
 

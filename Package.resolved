@@ -1,5 +1,5 @@
 {
-  "originHash" : "bf300209eb0f837567503fe5ebff7607baeaf43c0d4cf584b935839b2eacf062",
+  "originHash" : "da50af774814643e12c281e1a1c87d6908412401cb2a702abcf9d8a7e80f35ef",
   "pins" : [
     {
       "identity" : "machokit",
@@ -62,6 +62,15 @@
       "state" : {
         "revision" : "eccf765a9d90b82db55cacd260490d2fcae000fb",
         "version" : "0.3.0"
+      }
+    },
+    {
+      "identity" : "swift-objc-dump",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/p-x9/swift-objc-dump.git",
+      "state" : {
+        "revision" : "bc906fbfb9bf6e39ea4338288049b2372291e11b",
+        "version" : "0.9.0"
       }
     },
     {

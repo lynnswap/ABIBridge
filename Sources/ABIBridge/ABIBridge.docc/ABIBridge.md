@@ -4,7 +4,7 @@ Resolve source-level native declarations in loaded Apple-platform images.
 
 ## Overview
 
-Use ``ABIRuntime`` to locate C, C++, or Swift symbols without writing mangled names. A ``ResolvedSymbol`` keeps its containing image alive and provides scoped access to the raw address. C++ callers can use typed C/C++ function and method handles through `ABIBridgeCore`. Objective-C++ callers can bind selectors through `ABIBridgeObjCXX`. Swift typed invocation is not yet implemented.
+Use ``ABIRuntime`` to locate C, C++, or Swift symbols without writing mangled names. A ``ResolvedSymbol`` keeps its containing image alive and provides scoped access to the raw address. Bind an existing Objective-C receiver with ``NativeObject`` to invoke selectors using ordinary Swift function types and values.
 
 The Swift API requires Swift 6.3 or later and supports iOS 18.4, macOS 15.4, visionOS 2.4, watchOS 11.4, and tvOS 18.4 or later.
 
@@ -29,11 +29,13 @@ print(symbol.image.path)
 - ``NativeSymbolKind``
 - ``ResolvedSymbol``
 
-### Native invocation
+### Calling Objective-C methods
 
-- <doc:NativeFunctions>
-- <doc:NativeMethods>
-- <doc:ObjectiveCMethods>
+- <doc:ObjectiveCInvocation>
+- ``NativeObject``
+- ``NativeMethod``
+- ``NativeMethodOptions``
+- ``ABIInvocationError``
 
 ### Image lifetime
 

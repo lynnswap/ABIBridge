@@ -1,4 +1,7 @@
 #import <ABIBridgeObjCXX/ABIBridgeObjCXX.h>
+#import <ABIBridgeObjCXX/Invocation.h>
+#import <CoreGraphics/CGGeometry.h>
+#include <optional>
 #import <objc/message.h>
 #include <ABIBridgeCore.h>
 #include <dlfcn.h>
@@ -53,6 +56,32 @@ bool inFamily(const char* selector, const char* family) {
     const char next = selector[length];
     return next < 'a' || next > 'z';
 }
+
+struct Ownership { bool retained; bool consumed; };
+
+std::optional<Ownership> ownershipFor(
+    const char *resultType, Class cls, SEL selector,
+    int32_t returnsRetained, int32_t consumesReceiver, NSError **error)
+{
+    const char* result = unqualified(resultType);
+    const bool retainableResult = *result == '@' || *result == '#';
+    // Blocks are retainable, but Clang does not apply Objective-C method-family
+    // ownership to block return types. Explicit ownership overrides still apply.
+    const bool objectResult = retainableResult && !(*result == '@' && result[1] == '?');
+    const char* name = sel_getName(selector);
+    const bool initializer = objectResult && !class_isMetaClass(cls) && inFamily(name, "init");
+    const bool retainedFamily = objectResult && (initializer || inFamily(name, "alloc")
+        || inFamily(name, "new") || inFamily(name, "copy") || inFamily(name, "mutableCopy"));
+    if (returnsRetained == 1 && !retainableResult) {
+        fail(error, ABIFailureInvalidRequest, @"Retained results require an Objective-C object type.");
+        return std::nullopt;
+    }
+
+    return Ownership{
+        returnsRetained == -1 ? retainedFamily : returnsRetained == 1,
+        consumesReceiver == -1 ? initializer : consumesReceiver == 1
+    };
+}
 }
 
 ABIObjCMethod *ABICopyObjCMethod(
@@ -97,23 +126,11 @@ ABIObjCMethod *ABICopyObjCMethod(
         }
     }
 
-    const char* result = unqualified(resultType);
-    const bool retainableResult = *result == '@' || *result == '#';
-    // Blocks are retainable, but Clang does not apply Objective-C method-family
-    // ownership to block return types. Explicit ownership overrides still apply.
-    const bool objectResult = retainableResult && !(*result == '@' && result[1] == '?');
-    const char* name = sel_getName(selector);
-    const bool initializer = objectResult && !class_isMetaClass(cls) && inFamily(name, "init");
-    const bool retainedFamily = objectResult && (initializer || inFamily(name, "alloc")
-        || inFamily(name, "new") || inFamily(name, "copy") || inFamily(name, "mutableCopy"));
-    if (returnsRetained == 1 && !retainableResult) {
-        fail(error, ABIFailureInvalidRequest, @"Retained results require an Objective-C object type.");
-        return nullptr;
-    }
+    const auto ownership = ownershipFor(resultType, cls, selector, returnsRetained, consumesReceiver, error);
+    if (!ownership) return nullptr;
     auto binding = std::make_unique<ABIObjCMethod>(
         receiver, selector, implementation,
-        returnsRetained == -1 ? retainedFamily : returnsRetained == 1,
-        consumesReceiver == -1 ? initializer : consumesReceiver == 1);
+        ownership->retained, ownership->consumed);
 
     void* address = reinterpret_cast<void*>(implementation);
 #if __has_feature(ptrauth_calls)
@@ -146,3 +163,116 @@ SEL ABIObjCMethodSelector(const ABIObjCMethod *method) { return method->selector
 IMP ABIObjCMethodImplementation(const ABIObjCMethod *method) { return method->implementation; }
 BOOL ABIObjCMethodReturnsRetained(const ABIObjCMethod *method) { return method->returnsRetained; }
 BOOL ABIObjCMethodConsumesReceiver(const ABIObjCMethod *method) { return method->consumesReceiver; }
+
+struct ABIObjCInvocation {
+    CFTypeRef receiver;
+    CFTypeRef signature;
+    SEL selector;
+    Ownership ownership;
+
+    ABIObjCInvocation(id receiver, NSMethodSignature *signature, SEL selector, Ownership ownership)
+        : receiver(CFBridgingRetain(receiver)), signature(CFBridgingRetain(signature)),
+          selector(selector), ownership(ownership) {}
+    ~ABIObjCInvocation() { CFRelease(receiver); CFRelease(signature); }
+    NSMethodSignature *methodSignature() const { return (__bridge NSMethodSignature *)signature; }
+};
+
+ABIObjCInvocation *ABICopyObjCInvocation(
+    id receiver, SEL selector, int32_t returnsRetained, int32_t consumesReceiver, NSError **error)
+{
+    if (error) *error = nil;
+    if (!receiver || !selector || returnsRetained < -1 || returnsRetained > 1
+        || consumesReceiver < -1 || consumesReceiver > 1) {
+        fail(error, ABIFailureInvalidRequest, @"A receiver, selector, and valid ownership options are required.");
+        return nullptr;
+    }
+    Class cls = object_getClass(receiver);
+    class_getMethodImplementation(cls, selector);
+    Method method = class_getInstanceMethod(cls, selector);
+    NSMethodSignature *signature = nil;
+    @try {
+        if (method) {
+            signature = [NSMethodSignature signatureWithObjCTypes:method_getTypeEncoding(method)];
+        } else if ([receiver respondsToSelector:@selector(methodSignatureForSelector:)]) {
+            signature = [receiver methodSignatureForSelector:selector];
+        }
+    } @catch (NSException *exception) {
+        // Foundation rejects some valid runtime encodings, including unions.
+        // Only signature acquisition is translated; invocation exceptions retain
+        // their native behavior.
+        if (![exception.name isEqualToString:NSInvalidArgumentException]) @throw;
+        fail(error, ABIFailureUnsupportedDeclaration,
+             [NSString stringWithFormat:@"Unsupported signature for %@: %@",
+              NSStringFromSelector(selector), exception.reason]);
+        return nullptr;
+    }
+    if (!signature || signature.numberOfArguments < 2) {
+        fail(error, ABIFailureDeclarationNotFound,
+             [NSString stringWithFormat:@"No method signature for %@ on %@.",
+              NSStringFromSelector(selector), NSStringFromClass(cls)]);
+        return nullptr;
+    }
+    const auto ownership = ownershipFor(signature.methodReturnType, cls, selector,
+                                        returnsRetained, consumesReceiver, error);
+    if (!ownership) return nullptr;
+    return new ABIObjCInvocation(receiver, signature, selector, *ownership);
+}
+
+void ABIReleaseObjCInvocation(ABIObjCInvocation *invocation) { delete invocation; }
+size_t ABIObjCInvocationParameterCount(const ABIObjCInvocation *invocation) {
+    return invocation->methodSignature().numberOfArguments - 2;
+}
+const char *ABIObjCInvocationParameterType(const ABIObjCInvocation *invocation, size_t index) {
+    return [invocation->methodSignature() getArgumentTypeAtIndex:index + 2];
+}
+const char *ABIObjCInvocationResultType(const ABIObjCInvocation *invocation) {
+    return invocation->methodSignature().methodReturnType;
+}
+size_t ABIObjCInvocationParameterSize(const ABIObjCInvocation *invocation, size_t index) {
+    NSUInteger size = 0;
+    NSGetSizeAndAlignment(ABIObjCInvocationParameterType(invocation, index), &size, nullptr);
+    return size;
+}
+size_t ABIObjCInvocationResultSize(const ABIObjCInvocation *invocation) {
+    return invocation->methodSignature().methodReturnLength;
+}
+BOOL ABIInvokeObjCInvocation(
+    ABIObjCInvocation *plan, void *result, const void *const *arguments, NSError **error)
+{
+    if (error) *error = nil;
+    const size_t count = ABIObjCInvocationParameterCount(plan);
+    const size_t resultSize = ABIObjCInvocationResultSize(plan);
+    if ((resultSize && !result) || (count && !arguments)) {
+        fail(error, ABIFailureInvalidRequest, @"Argument and result storage are required.");
+        return NO;
+    }
+    NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:plan->methodSignature()];
+    invocation.selector = plan->selector;
+    for (size_t index = 0; index < count; ++index) {
+        if (!arguments[index]) {
+            fail(error, ABIFailureInvalidRequest, @"Each argument requires value storage.");
+            return NO;
+        }
+        [invocation setArgument:const_cast<void *>(arguments[index]) atIndex:index + 2];
+    }
+    if (plan->ownership.consumed) CFRetain(plan->receiver);
+    [invocation invokeWithTarget:(__bridge id)plan->receiver];
+    if (resultSize) {
+        const char *type = unqualified(plan->methodSignature().methodReturnType);
+        if (*type == '@' || *type == '#') {
+            __unsafe_unretained id object = nil;
+            [invocation getReturnValue:&object];
+            CFTypeRef owned = object
+                ? (plan->ownership.retained ? (__bridge CFTypeRef)object : CFRetain((__bridge CFTypeRef)object))
+                : nullptr;
+            std::memcpy(result, &owned, sizeof(owned));
+        } else {
+            [invocation getReturnValue:result];
+        }
+    }
+    return YES;
+}
+const char *ABIObjCEncodingPoint() { return @encode(CGPoint); }
+const char *ABIObjCEncodingSize() { return @encode(CGSize); }
+const char *ABIObjCEncodingRect() { return @encode(CGRect); }
+const char *ABIObjCEncodingRange() { return @encode(NSRange); }

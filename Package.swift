@@ -18,17 +18,20 @@ let package = Package(
     ],
     products: [
         .library(name: "ABIBridge", targets: ["ABIBridge"]),
-        .library(name: "ABIBridgeCore", targets: ["ABIBridgeCore", "ABIBridge"]),
-        .library(name: "ABIBridgeObjCXX", targets: ["ABIBridgeObjCXX", "ABIBridge"]),
     ],
     dependencies: [
         .package(url: "https://github.com/p-x9/MachOKit.git", exact: "0.52.2"),
+        .package(url: "https://github.com/p-x9/swift-objc-dump.git", exact: "0.9.0"),
         .package(url: "https://github.com/faimin/ZDLibffi.git", exact: "0.380.0"),
     ],
     targets: [
         .target(
             name: "ABIBridge",
-            dependencies: ["ABIBridgeCore", .product(name: "MachOKit", package: "MachOKit")],
+            dependencies: [
+                "ABIBridgeCore", "ABIBridgeObjCXX",
+                .product(name: "MachOKit", package: "MachOKit"),
+                .product(name: "ObjCDump", package: "swift-objc-dump"),
+            ],
             swiftSettings: strictSwiftSettings
         ),
         .target(
@@ -49,9 +52,14 @@ let package = Package(
                 .linkedFramework("Foundation"),
             ]
         ),
+        .target(
+            name: "ObjectiveCFixtures",
+            path: "Tests/ObjectiveCFixtures",
+            publicHeadersPath: "include"
+        ),
         .testTarget(
             name: "ABIBridgeTests",
-            dependencies: ["ABIBridge"],
+            dependencies: ["ABIBridge", "ObjectiveCFixtures"],
             swiftSettings: strictSwiftSettings
         ),
     ],

@@ -1,21 +1,50 @@
 # ABIBridge
 
-Resolve native symbols by source-level name from Swift and C++. Invoke native functions and instance methods from C++, or bind Objective-C selectors from Objective-C++.
+Resolve native Swift, C, and C++ symbols by source-level name, and call Objective-C methods with Swift types and values.
 
 ## Requirements
 
 - iOS 18.4+, macOS 15.4+, visionOS 2.4+, watchOS 11.4+, or tvOS 18.4+
-- Xcode on macOS with Swift 6.3+ and C++20 support
+- Xcode on macOS with Swift 6.3+
 
 ## Installation
 
-Add this Swift package dependency, then use `ABIBridge` for Swift, `ABIBridgeCore` for C++, or `ABIBridgeObjCXX` for Objective-C++:
+Add this Swift package dependency and the `ABIBridge` product to your target:
 
 ```swift
 .package(url: "https://github.com/lynnswap/ABIBridge.git", branch: "main")
 ```
 
 ## Quick start
+
+### Call a method on an existing Objective-C instance
+
+For an existing `renderer` that exposes `setImage:animated:`, pass ordinary Swift values:
+
+```swift
+import ABIBridge
+import UIKit
+
+let runtime = ABIRuntime.shared
+let object = runtime.object(renderer)
+let setImage = try await object.method(
+    selector: "setImage:animated:",
+    as: ((UIImage?, Bool) -> Void).self
+)
+
+try unsafe setImage.unsafeInvoke(image, true)
+try unsafe setImage.unsafeInvoke(nil, false)
+```
+
+Reuse the receiver handle for another selector, such as `refreshAnimated:` returning a Boolean:
+
+```swift
+let refresh = try await object.method(
+    selector: "refreshAnimated:",
+    as: ((Bool) -> Bool).self
+)
+let didRefresh = try unsafe refresh.unsafeInvoke(true)
+```
 
 ### Find a function without specifying its library
 
@@ -65,61 +94,15 @@ if let image = images.first {
 }
 ```
 
-Use `.path(executableURL)` instead of `.framework(named:)` to select a particular loaded binary. Lookups do not load missing frameworks. Swift typed invocation is being developed separately.
+Use `.path(executableURL)` instead of `.framework(named:)` to select a particular loaded binary. Lookups do not load missing frameworks. Typed invocation for Swift and C++ declarations is being developed separately.
 
 See the [documentation](https://lynnswap.github.io/ABIBridge/documentation/abibridge/) for API contracts and [CONTRIBUTING.md](CONTRIBUTING.md) for build and test instructions.
 
-### Call a C++ function
-
-For an already-loaded library defining `Example::Math::add(int, int)`:
-
-```cpp
-#include <ABIBridge/ABIBridge.hpp>
-
-auto runtime = abi_bridge::Runtime::current();
-auto add = runtime.cxx_function<int(int, int)>(
-    abi_bridge::declaration("Example::Math::add(int, int)")
-);
-
-int result = add.unsafe_invoke(20, 22);
-```
-
-### Call a method on an existing C++ instance
-
-For an existing `counter` whose class defines `Example::Counter::add(int)`:
-
-```cpp
-auto add = runtime.cxx_method<int(int)>(
-    abi_bridge::declaration("Example::Counter::add(int)")
-);
-int result = add.unsafe_invoke(&counter, 2);
-```
-
-With a `std::shared_ptr` named `counterOwner`, bind and retain the receiver for repeated calls:
-
-```cpp
-auto increment = add.bind(counterOwner);
-int result = increment.unsafe_invoke(2);
-```
-
-### Call an Objective-C selector from Objective-C++
-
-For an existing `renderer` with a `refreshAnimated:` method that returns a Boolean:
-
-```objc++
-#include <ABIBridge/ABIBridgeObjCXX.hpp>
-
-auto refresh = abi_bridge::objc_method<BOOL(BOOL)>(
-    renderer, "refreshAnimated:"
-);
-BOOL didRefresh = refresh.unsafe_invoke(YES);
-```
-
 ## Planned API
 
-These examples preview APIs that are **not implemented yet** and may change. Typed invocation is tracked in [#4](https://github.com/lynnswap/ABIBridge/issues/4) and [#5](https://github.com/lynnswap/ABIBridge/issues/5).
+These examples preview APIs that are **not implemented yet** and may change. Typed invocation is tracked in [#4](https://github.com/lynnswap/ABIBridge/issues/4) and [#6](https://github.com/lynnswap/ABIBridge/issues/6).
 
-### Call a method on an existing instance
+### Call a Swift method on an existing instance
 
 For an existing `renderer` with a Swift `setImage(_:animated:)` method, bind the receiver once and pass ordinary Swift values:
 
@@ -168,23 +151,11 @@ let add = try await runtime.cxxFunction(
 let result = try add.unsafeInvoke(20, 22)
 ```
 
-### Call an Objective-C selector from Swift
-
-For an existing `renderer` with a `refreshAnimated:` method that returns a Boolean:
-
-```swift
-let refresh = try await runtime.object(renderer).method(
-    selector: "refreshAnimated:",
-    as: ((Bool) -> Bool).self
-)
-let didRefresh = try refresh.unsafeInvoke(true)
-```
-
 ## Acknowledgements
 
-ABIBridge's symbol resolution relies on [MachOKit](https://github.com/p-x9/MachOKit) for reading Mach-O images and dyld shared caches. Its parsing support provides the foundation for this package.
+ABIBridge's symbol resolution relies on [MachOKit](https://github.com/p-x9/MachOKit) for reading Mach-O images and dyld shared caches. Its parsing support provides the foundation for this package. Objective-C type decoding uses [ObjCTypeDecodeKit](https://github.com/p-x9/swift-objc-dump).
 
-Thank you to [p-x9](https://github.com/p-x9) and the [MachOKit contributors](https://github.com/p-x9/MachOKit/graphs/contributors) for building and sharing that foundation.
+Thank you to [p-x9](https://github.com/p-x9) and the contributors to [MachOKit](https://github.com/p-x9/MachOKit/graphs/contributors) and [swift-objc-dump](https://github.com/p-x9/swift-objc-dump/graphs/contributors) for building and sharing these libraries.
 
 ## License
 
