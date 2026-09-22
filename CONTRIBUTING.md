@@ -27,7 +27,7 @@ Run the standalone C++ package consumer to verify product linking and typed nati
 bash scripts/test-native-consumer.sh
 ```
 
-This fixture checks C/C++ calls, reference arguments, non-trivial and indirect results, concurrent resolution, and image retention after the original loader reference is released. CI runs it after the macOS package tests.
+This fixture checks C/C++ calls, instance methods, receiver ownership, multiple-inheritance subobjects, reference arguments, non-trivial and indirect results, register/stack argument passing, concurrent resolution, and image retention after the original loader reference is released. CI runs it after the macOS package tests.
 
 Build for another Apple platform by changing the generic destination:
 

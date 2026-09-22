@@ -84,6 +84,24 @@ auto add = runtime.cxx_function<int(int, int)>(
 int result = add.unsafe_invoke(20, 22);
 ```
 
+### Call a method on an existing C++ instance
+
+For an existing `counter` whose class defines `Example::Counter::add(int)`:
+
+```cpp
+auto add = runtime.cxx_method<int(int)>(
+    abi_bridge::declaration("Example::Counter::add(int)")
+);
+int result = add.unsafe_invoke(&counter, 2);
+```
+
+With a `std::shared_ptr` named `counterOwner`, bind and retain the receiver for repeated calls:
+
+```cpp
+auto increment = add.bind(counterOwner);
+int result = increment.unsafe_invoke(2);
+```
+
 ## Planned API
 
 These examples preview APIs that are **not implemented yet** and may change. Typed invocation is tracked in [#4](https://github.com/lynnswap/ABIBridge/issues/4) and [#5](https://github.com/lynnswap/ABIBridge/issues/5).
@@ -135,6 +153,18 @@ let add = try await runtime.cxxFunction(
 )
 
 let result = try add.unsafeInvoke(20, 22)
+```
+
+### Call an Objective-C selector from Swift
+
+For an existing `renderer` with a `refreshAnimated:` method that returns a Boolean:
+
+```swift
+let refresh = try await runtime.object(renderer).method(
+    selector: "refreshAnimated:",
+    as: ((Bool) -> Bool).self
+)
+let didRefresh = try refresh.unsafeInvoke(true)
 ```
 
 ### Call an Objective-C selector from Objective-C++

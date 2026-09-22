@@ -33,7 +33,7 @@ The template signature determines how the consumer's compiler passes arguments a
 
 The caller must supply the actual native types and calling convention. A symbol name cannot establish a C++ return type, object layout, ownership contract, or thread requirement. A successful lookup therefore does not make an incorrect signature safe. A mismatch can corrupt memory or crash; it is not a recoverable resolution error.
 
-These handles support C and C++ free functions. Swift calling conventions, instance-method dispatch, Objective-C selectors, and variadic signatures require separate invocation APIs. Do not represent an instance method as a free function by guessing its hidden parameters.
+Function handles support C and C++ free functions. Use <doc:NativeMethods> for direct C++ member calls on an existing instance. Swift calling conventions, Objective-C selectors, virtual dispatch, and variadic signatures require separate invocation APIs.
 
 ## Select images and retain results
 
