@@ -1,6 +1,6 @@
 # ABIBridge
 
-Resolve native symbols by source-level name from Swift, with a C++ and Objective-C++ foundation.
+Resolve native symbols by source-level name from Swift and C++. Invoke C/C++ functions with typed C++ handles.
 
 ## Requirements
 
@@ -9,7 +9,7 @@ Resolve native symbols by source-level name from Swift, with a C++ and Objective
 
 ## Installation
 
-Add this Swift package dependency and the `ABIBridge` product to your target:
+Add this Swift package dependency, then use the `ABIBridge` product for Swift or `ABIBridgeCore` for C++:
 
 ```swift
 .package(url: "https://github.com/lynnswap/ABIBridge.git", branch: "main")
@@ -65,9 +65,24 @@ if let image = images.first {
 }
 ```
 
-Use `.path(executableURL)` instead of `.framework(named:)` to select a particular loaded binary. Lookups do not load missing frameworks. Typed native invocation is being developed separately.
+Use `.path(executableURL)` instead of `.framework(named:)` to select a particular loaded binary. Lookups do not load missing frameworks. Swift typed invocation is being developed separately.
 
 See the [documentation](https://lynnswap.github.io/ABIBridge/documentation/abibridge/) for API contracts and [CONTRIBUTING.md](CONTRIBUTING.md) for build and test instructions.
+
+### Call a C++ function
+
+For an already-loaded library defining `Example::Math::add(int, int)`:
+
+```cpp
+#include <ABIBridge/ABIBridge.hpp>
+
+auto runtime = abi_bridge::Runtime::current();
+auto add = runtime.cxx_function<int(int, int)>(
+    abi_bridge::declaration("Example::Math::add(int, int)")
+);
+
+int result = add.unsafe_invoke(20, 22);
+```
 
 ## Planned API
 
@@ -122,22 +137,9 @@ let add = try await runtime.cxxFunction(
 let result = try add.unsafeInvoke(20, 22)
 ```
 
-### Use C++ and Objective-C++ directly
+### Call an Objective-C selector from Objective-C++
 
-The planned native APIs provide typed calls from C++:
-
-```cpp
-#include <ABIBridge/ABIBridge.hpp>
-
-auto runtime = abi_bridge::Runtime::current();
-auto add = runtime.cxx_function<int(int, int)>(
-    abi_bridge::declaration("Example::Math::add(int, int)")
-);
-
-int result = add.unsafe_invoke(20, 22);
-```
-
-Objective-C++ callers can bind a selector to an existing `view`:
+Bind a selector to an existing `view`:
 
 ```objc++
 #include <ABIBridge/ABIBridgeObjCXX.hpp>

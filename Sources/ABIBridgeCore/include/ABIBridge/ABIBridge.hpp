@@ -57,3 +57,5 @@ struct call_plan final {
 inline constexpr std::string_view package_name = "ABIBridgeCore";
 
 } // namespace abi_bridge
+
+#include <ABIBridge/Runtime.hpp>

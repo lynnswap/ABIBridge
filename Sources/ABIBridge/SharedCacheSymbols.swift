@@ -2,7 +2,7 @@ import Foundation
 import MachO
 import MachOKit
 
-/// Isolated by ABIRuntime. Cache files supply names and unslid addresses only;
+/// Owned by one lookup. Cache files supply names and unslid addresses only;
 /// addresses are subsequently checked against the retained image's sections.
 final class SharedCacheSymbols {
     private lazy var loadedCache = DyldCacheLoaded.current

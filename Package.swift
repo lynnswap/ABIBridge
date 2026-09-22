@@ -18,7 +18,7 @@ let package = Package(
     ],
     products: [
         .library(name: "ABIBridge", targets: ["ABIBridge"]),
-        .library(name: "ABIBridgeCore", targets: ["ABIBridgeCore"]),
+        .library(name: "ABIBridgeCore", targets: ["ABIBridgeCore", "ABIBridge"]),
         .library(name: "ABIBridgeObjCXX", targets: ["ABIBridgeObjCXX"]),
     ],
     dependencies: [
