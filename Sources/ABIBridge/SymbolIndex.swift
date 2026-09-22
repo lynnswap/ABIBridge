@@ -71,6 +71,7 @@ final class SymbolIndex {
     }
     private var decoded: [Scope: [[UInt8]: [IndexedSymbol]]] = [:]
     private var linkerNames: [String: [IndexedSymbol]]?
+    private var swiftExtensions: [[UInt8]: [IndexedSymbol]] = [:]
 
     init(image: NativeImage) {
         self.image = image
@@ -110,11 +111,12 @@ final class SymbolIndex {
     func appendSharedCacheSymbols(_ more: [IndexedSymbol]) {
         symbols += more
         decoded.removeAll()
+        swiftExtensions.removeAll()
         linkerNames = nil
         sharedCacheLoaded = true
     }
 
-    func matches(_ declaration: NativeDeclaration) -> [IndexedSymbol] {
+    func matches(_ declaration: NativeDeclaration, extensionsOnly: Bool = false) -> [IndexedSymbol] {
         if declaration.language == .c {
             if linkerNames == nil { linkerNames = Dictionary(grouping: symbols, by: \.name) }
             return linkerNames?["_" + declaration.name] ?? []
@@ -139,14 +141,28 @@ final class SymbolIndex {
                 if let needle = scope.owner, !symbol.name.contains(needle) { continue }
                 guard let name = DeclarationKey.demangle(symbol.name, language: declaration.language) else { continue }
                 index[DeclarationKey.make(name), default: []].append(symbol)
+                if declaration.language == .swift, let unqualified = Self.extensionMemberName(name) {
+                    swiftExtensions[DeclarationKey.make(unqualified), default: []].append(symbol)
+                }
             }
             decoded[scope] = index
         }
-        return decoded[scope]?[DeclarationKey.make(declaration.name)] ?? []
+        let key = DeclarationKey.make(declaration.name)
+        return extensionsOnly ? swiftExtensions[key] ?? [] : decoded[scope]?[key] ?? []
     }
 
-    func resolve(_ declaration: NativeDeclaration, source: ResolvedSymbol.Source) throws -> ResolvedSymbol? {
-        let candidates = matches(declaration).filter { $0.source == source }
+    private static func extensionMemberName(_ name: String) -> String? {
+        let isStatic = name.hasPrefix("static ")
+        let declaration = isStatic ? String(name.dropFirst(7)) : name
+        guard declaration.hasPrefix("(extension in "),
+              let end = declaration.range(of: "):") else { return nil }
+        return (isStatic ? "static " : "") + declaration[end.upperBound...]
+    }
+
+    func resolve(
+        _ declaration: NativeDeclaration, source: ResolvedSymbol.Source, extensionsOnly: Bool = false
+    ) throws -> ResolvedSymbol? {
+        let candidates = matches(declaration, extensionsOnly: extensionsOnly).filter { $0.source == source }
         guard !candidates.isEmpty else { return nil }
         var addresses: [UInt64: (IndexedSymbol, SymbolSection)] = [:]
         for candidate in candidates {

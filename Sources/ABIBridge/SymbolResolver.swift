@@ -36,6 +36,10 @@ final class SymbolResolver: Sendable {
         try unique(declaration, images: [image])
     }
 
+    func resolveSwiftExtension(_ declaration: NativeDeclaration) throws -> ResolvedSymbol {
+        try unique(declaration, images: images(matching: .automatic), extensionsOnly: true)
+    }
+
     func removeCachedResults() {
         let removed = state.withLock { state in
             let indexes = state.indexes
@@ -45,7 +49,7 @@ final class SymbolResolver: Sendable {
         withExtendedLifetime(removed) {}
     }
 
-    private func unique(_ declaration: NativeDeclaration, images: [NativeImage]) throws -> ResolvedSymbol {
+    private func unique(_ declaration: NativeDeclaration, images: [NativeImage], extensionsOnly: Bool = false) throws -> ResolvedSymbol {
         guard declaration.language != .objectiveC else {
             throw ABIResolutionError.unsupportedDeclaration("Objective-C selectors require the invocation frontend.")
         }
@@ -54,7 +58,7 @@ final class SymbolResolver: Sendable {
         let candidates = state.withLock { state in images.map { state.index(for: $0) } }
         return try withExtendedLifetime(candidates) {
             let primary = try state.withLock { _ in
-                try candidates.compactMap { try $0.resolve(declaration, source: .image) }
+                try candidates.compactMap { try $0.resolve(declaration, source: .image, extensionsOnly: extensionsOnly) }
             }
             if !primary.isEmpty { return try select(declaration, from: primary) }
 
@@ -68,7 +72,7 @@ final class SymbolResolver: Sendable {
                 for (index, symbols) in additions where !index.sharedCacheLoaded {
                     index.appendSharedCacheSymbols(symbols)
                 }
-                return try candidates.compactMap { try $0.resolve(declaration, source: .sharedCache) }
+                return try candidates.compactMap { try $0.resolve(declaration, source: .sharedCache, extensionsOnly: extensionsOnly) }
             }
             return try select(declaration, from: fallback)
         }

@@ -81,6 +81,13 @@ final class NativeValueStorage {
         return value
     }
 
+    func writebackOwner(retaining images: [NativeImage]) -> Any {
+        if let value = owner as? NativeValue {
+            return value.lifetimeForCopy(retaining: images)
+        }
+        return self
+    }
+
     // Called only after a native call has consumed the initialized value.
     func relinquishValue() { destroyValue = nil }
 

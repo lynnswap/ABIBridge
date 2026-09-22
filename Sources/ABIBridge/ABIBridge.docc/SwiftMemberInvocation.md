@@ -15,7 +15,7 @@ let setImage = try await object.method(
 try unsafe setImage.unsafeInvoke(image, true)
 ```
 
-The handle retains its receiver and implementation images. Bound handles stay in the caller's isolation domain.
+The handle retains its receiver and implementation images. Existing objects supply their runtime class metadata, including imported Objective-C classes with Swift extension methods. Bound handles stay in the caller's isolation domain.
 
 ## Reuse a type
 
@@ -29,7 +29,7 @@ try unsafe stop.unsafeInvoke(on: renderer)
 
 Type lookup obtains the nominal descriptor and requests complete metadata. It rejects generic descriptors before calling an accessor that would need additional metadata or witness arguments. Type handles share the runtime's symbol indexes, retain their defining image, and remain valid after removeCachedResults().
 
-Methods capture the selected implementation. Lookup walks superclass declarations when a concrete class does not define the requested member; calls do not perform virtual redispatch. Generic superclass declarations require a separate adapter.
+Methods capture the selected implementation. Lookup prefers declarations in the type's defining image, then searches extension-qualified implementations in loaded images, and then walks superclass declarations. Calls do not perform virtual redispatch. Generic superclass declarations require a separate adapter.
 
 ## Initializers and static members
 
@@ -79,7 +79,7 @@ The as: representation is useful for an unimportable native struct or enum. Clas
 
 Small nonmutating value receivers use ordinary trailing components. Indirect and mutating value receivers use the Swift context register. Specify mutating: true for mutating value methods/getters, and use an inout receiver. Value setters default to mutating; an explicitly nonmutating setter can opt out.
 
-After a native mutation, receiver writeback is attempted even if result conversion fails. If both conversions fail, NativeSwiftWritebackError preserves both errors. A writeback failure leaves the caller's receiver value unchanged, while other native side effects may already have occurred.
+Writeback preserves the originating resource storage and implementation images without retaining a chain of intermediate value copies. After a native mutation, receiver writeback is attempted even if result conversion fails. If both conversions fail, NativeSwiftWritebackError preserves both errors. A writeback failure leaves the caller's receiver value unchanged, while other native side effects may already have occurred.
 
 ## Names, scopes, and limits
 

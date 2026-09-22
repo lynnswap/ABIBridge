@@ -17,7 +17,7 @@ struct ForeignPoint: ABIBridgeValue {
 }
 
 @MainActor
-func prepare(_ path: String) async throws -> NativeBoundSwiftMethod<Int, Int> {
+func prepare(_ path: String, extensionPath: String) async throws -> NativeBoundSwiftMethod<Int, Int> {
     guard let original = dlopen(path, RTLD_NOW | RTLD_LOCAL) else {
         fatalError(String(cString: dlerror()))
     }
@@ -51,12 +51,16 @@ func prepare(_ path: String) async throws -> NativeBoundSwiftMethod<Int, Int> {
     let total = try unsafe sum.unsafeInvoke(on: point, 5)
     precondition(total == 12 && point.x == 4)
 
-    let bound = try await runtime.object(object).method(named: "score(_:)", as: ((Int) -> Int).self)
+    guard let extensionImage = dlopen(extensionPath, RTLD_NOW | RTLD_LOCAL) else {
+        fatalError(String(cString: dlerror()))
+    }
+    defer { dlclose(extensionImage) }
+    let bound = try await runtime.object(object).method(named: "extendedScore(_:)", as: ((Int) -> Int).self)
     await runtime.removeCachedResults()
     return bound
 }
 
-let method = try await prepare(CommandLine.arguments[1])
-let value = try unsafe method.unsafeInvoke(37)
+let method = try await prepare(CommandLine.arguments[1], extensionPath: CommandLine.arguments[2])
+let value = try unsafe method.unsafeInvoke(36)
 precondition(value == 42)
 print("Swift member consumer passed")

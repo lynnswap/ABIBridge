@@ -56,6 +56,13 @@ public actor NativeSwiftType {
         )
     }
 
+    private func resolveDeclaredMember(_ declaration: NativeDeclaration, in image: NativeImage) throws -> ResolvedSymbol {
+        do { return try resolver.resolve(declaration, in: image) }
+        catch ABIResolutionError.declarationNotFound {
+            return try resolver.resolveSwiftExtension(declaration)
+        }
+    }
+
     private func resolveMember(
         _ declaration: (String) throws -> NativeDeclaration
     ) throws -> ResolvedSymbol {
@@ -65,8 +72,11 @@ public actor NativeSwiftType {
         while true {
             let request = try declaration(ownerName)
             do {
-                if let ownerImage { return try resolver.resolve(request, in: ownerImage) }
-                return try resolver.resolve(request, in: .automatic)
+                if let ownerImage { return try resolveDeclaredMember(request, in: ownerImage) }
+                do { return try resolver.resolve(request, in: .automatic) }
+                catch ABIResolutionError.declarationNotFound {
+                    return try resolver.resolveSwiftExtension(request)
+                }
             } catch ABIResolutionError.declarationNotFound {
                 guard let current = ownerClass, let parent = class_getSuperclass(current) else {
                     throw ABIResolutionError.declarationNotFound(request)
@@ -123,7 +133,7 @@ public actor NativeSwiftType {
             named: self.name + "." + member, as: signature, resultName: resultName
         )
         return try NativeSwiftFunction(
-            symbol: resolver.resolve(declaration, in: image), metadata: metadata, owner: self,
+            symbol: resolveDeclaredMember(declaration, in: image), metadata: metadata, owner: self,
             consumesArguments: true
         )
     }
@@ -242,6 +252,26 @@ public actor NativeSwiftType {
 }
 
 extension ABIRuntime {
+    func swiftType(for objectType: AnyClass) throws -> NativeSwiftType {
+        let name = try swiftFunctionTypeName(objectType)
+        guard !name.contains("<") else {
+            throw ABIResolutionError.unsupportedDeclaration("Generic Swift class members require a native adapter.")
+        }
+        guard let path = class_getImageName(objectType) else {
+            throw ABIResolutionError.declarationNotFound(
+                .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data)
+            )
+        }
+        let images = try resolver.images(matching: .path(URL(fileURLWithPath: String(cString: path))))
+        guard let image = images.first else { throw ABIResolutionError.imageNotLoaded }
+        let key = SwiftTypeCacheKey(name: name, image: image.identity, representation: nil)
+        if let cached = swiftTypes[key] { return cached }
+        let type = NativeSwiftType(name: name, image: image, metadata: objectType,
+                                   representation: nil, resolver: resolver)
+        swiftTypes[key] = type
+        return type
+    }
+
     /// Resolves a concrete Swift class, struct, or enum and caches its metadata.
     ///
     /// - Parameters:

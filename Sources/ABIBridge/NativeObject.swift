@@ -51,7 +51,7 @@ public final class NativeObject {
         var missing: (any Error)?
         while let current = type {
             do {
-                return try await runtime.swiftType(named: swiftFunctionTypeName(current))
+                return try await runtime.swiftType(for: current)
             } catch let error as ABIResolutionError {
                 guard case .declarationNotFound = error else { throw error }
                 missing = error

@@ -1,4 +1,5 @@
 import ABIBridge
+import Foundation
 import Testing
 
 public class SwiftMemberRenderer {
@@ -75,13 +76,14 @@ private struct RejectingSwiftPoint: ABIBridgeValue {
 
 private final class SwiftPointerAllocation {
     let pointer: UnsafeMutablePointer<Int64>
-    init() {
-        pointer = .allocate(capacity: 2)
-        pointer.initialize(to: 10)
-        pointer.advanced(by: 1).initialize(to: 20)
+    private let count: Int
+    init(count: Int = 2) {
+        self.count = count
+        pointer = .allocate(capacity: count)
+        for index in 0..<count { pointer.advanced(by: index).initialize(to: Int64(index + 1) * 10) }
     }
     deinit {
-        pointer.deinitialize(count: 2)
+        pointer.deinitialize(count: count)
         pointer.deallocate()
     }
 }
@@ -96,7 +98,65 @@ public struct SwiftMemberGeneric<Value> {
     public let value: Value
 }
 
+private final class WeakNativeValue {
+    weak var value: NativeValue?
+    init(_ value: NativeValue) { self.value = value }
+}
+
+extension NSObject {
+    @inline(never) public func bridgeImportedExtension(_ value: Int) -> Int { value + 1 }
+}
+
+extension NativeValue {
+    @inline(never) public func bridgeExtensionCount(_ value: Int) -> Int { type.size + value }
+    @inline(never) public static func bridgeExtensionStatic(_ value: Int) -> Int { value + 1 }
+    public var bridgeExtensionSize: Int { type.size }
+}
+
 struct SwiftMemberInvocationTests {
+    @Test func membersFromAnotherModulesExtensionResolveWithoutItsQualifier() async throws {
+        let imported = try await ABIRuntime.shared.object(NSObject()).method(
+            named: "bridgeImportedExtension(_:)", as: ((Int) -> Int).self
+        )
+        #expect(try unsafe imported.unsafeInvoke(41) == 42)
+        let value = try NativeValue(copying: Int64(42), as: .int64)
+        let object = ABIRuntime.shared.object(value)
+        let method = try await object.method(named: "bridgeExtensionCount(_:)", as: ((Int) -> Int).self)
+        #expect(try unsafe method.unsafeInvoke(2) == value.bridgeExtensionCount(2))
+        let getter = try await object.getter(named: "bridgeExtensionSize", as: Int.self)
+        #expect(try unsafe getter.unsafeInvoke() == value.type.size)
+        let type = try await ABIRuntime.shared.swiftType(named: "ABIBridge.NativeValue")
+        let staticMethod = try await type.staticMethod(named: "bridgeExtensionStatic(_:)", as: ((Int) -> Int).self)
+        #expect(try unsafe staticMethod.unsafeInvoke(41) == 42)
+    }
+
+    @Test func repeatedWritebackReleasesIntermediateValues() async throws {
+        let type = try await ABIRuntime.shared.swiftType(
+            named: "ABIBridgeTests.SwiftMemberPointer", as: SwiftPointerView.self
+        )
+        let advance = try await type.method(named: "advance()", as: (() -> Void).self, mutating: true)
+        weak var observed: SwiftPointerAllocation?
+        do {
+            var value: SwiftPointerView = {
+                let allocation = SwiftPointerAllocation(count: 101)
+                observed = allocation
+                return SwiftPointerView(nativeValue: NativeValue(type: .pointer, retaining: allocation) {
+                    $0.baseAddress!.storeBytes(of: allocation.pointer, as: UnsafeMutablePointer<Int64>.self)
+                })
+            }()
+            var previous: [WeakNativeValue] = []
+            for _ in 0..<100 {
+                previous.append(WeakNativeValue(value.storage))
+                try unsafe advance.unsafeInvoke(on: &value)
+            }
+            #expect(previous.allSatisfy { $0.value == nil })
+            try #require(observed != nil)
+            let pointer = try unsafe value.storage.read(as: UnsafeMutablePointer<Int64>.self)
+            #expect(pointer.pointee == 1010)
+        }
+        #expect(observed == nil)
+    }
+
     @Test func writebackKeepsReceiverOwnedResourcesAlive() async throws {
         let type = try await ABIRuntime.shared.swiftType(
             named: "ABIBridgeTests.SwiftMemberPointer", as: SwiftPointerView.self
