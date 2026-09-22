@@ -22,6 +22,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/p-x9/MachOKit.git", exact: "0.52.2"),
         .package(url: "https://github.com/p-x9/swift-objc-dump.git", exact: "0.9.0"),
+        .package(url: "https://github.com/faimin/ZDLibffi.git", exact: "0.380.0"),
     ],
     targets: [
         .target(
@@ -35,6 +36,7 @@ let package = Package(
         ),
         .target(
             name: "ABIBridgeCore",
+            dependencies: [.product(name: "ZDLibffi", package: "ZDLibffi")],
             path: "Sources/ABIBridgeCore",
             publicHeadersPath: "include",
             cxxSettings: [

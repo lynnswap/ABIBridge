@@ -13,28 +13,22 @@ private final class NativeSymbolBox {
     deinit { free(path) }
 }
 
-private final class NativeFailureBox {
+private func nativeFailure(_ error: Error) -> OpaquePointer {
     let code: Int32
-    let message: UnsafeMutablePointer<CChar>
-
-    init(_ error: Error) {
-        switch error {
-        case ABIResolutionError.imageUnavailable: code = Int32(ABIFailureImageUnavailable)
-        case ABIResolutionError.imageNotLoaded: code = Int32(ABIFailureImageNotLoaded)
-        case ABIResolutionError.declarationNotFound: code = Int32(ABIFailureDeclarationNotFound)
-        case ABIResolutionError.ambiguousDeclaration: code = Int32(ABIFailureAmbiguousDeclaration)
-        case ABIResolutionError.signatureMismatch: code = Int32(ABIFailureSignatureMismatch)
-        case ABIResolutionError.unsupportedDeclaration: code = Int32(ABIFailureUnsupportedDeclaration)
-        case ABIResolutionError.metadataUnavailable: code = Int32(ABIFailureMetadataUnavailable)
-        case ABIResolutionError.imageChanged: code = Int32(ABIFailureImageChanged)
-        case ABIResolutionError.invalidAddress: code = Int32(ABIFailureInvalidAddress)
-        case is InvalidNativeRequest: code = Int32(ABIFailureInvalidRequest)
-        default: code = Int32(ABIFailureOther)
-        }
-        message = strdup(String(describing: error))!
+    switch error {
+    case ABIResolutionError.imageUnavailable: code = Int32(ABIFailureImageUnavailable)
+    case ABIResolutionError.imageNotLoaded: code = Int32(ABIFailureImageNotLoaded)
+    case ABIResolutionError.declarationNotFound: code = Int32(ABIFailureDeclarationNotFound)
+    case ABIResolutionError.ambiguousDeclaration: code = Int32(ABIFailureAmbiguousDeclaration)
+    case ABIResolutionError.signatureMismatch: code = Int32(ABIFailureSignatureMismatch)
+    case ABIResolutionError.unsupportedDeclaration: code = Int32(ABIFailureUnsupportedDeclaration)
+    case ABIResolutionError.metadataUnavailable: code = Int32(ABIFailureMetadataUnavailable)
+    case ABIResolutionError.imageChanged: code = Int32(ABIFailureImageChanged)
+    case ABIResolutionError.invalidAddress: code = Int32(ABIFailureInvalidAddress)
+    case is InvalidNativeRequest: code = Int32(ABIFailureInvalidRequest)
+    default: code = Int32(ABIFailureOther)
     }
-
-    deinit { free(message) }
+    return String(describing: error).withCString { ABICreateResolutionFailure(code, $0)! }
 }
 
 private struct InvalidNativeRequest: Error {
@@ -117,7 +111,7 @@ func nativeResolveSymbol(
             .resolve(declaration, in: imageSelector)
         return retained(NativeSymbolBox(symbol))
     } catch let failure {
-        error?.pointee = retained(NativeFailureBox(failure))
+        error?.pointee = nativeFailure(failure)
         return nil
     }
 }
@@ -144,19 +138,4 @@ func nativeResolvedSymbolImage(_ symbol: OpaquePointer, _ info: UnsafeMutablePoi
         uuid: identity.uuid?.uuid ?? (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
         path: UnsafePointer(box.path)
     )
-}
-
-@_cdecl("ABIResolutionFailureCode")
-func nativeResolutionFailureCode(_ error: OpaquePointer) -> Int32 {
-    borrowed(error, as: NativeFailureBox.self).code
-}
-
-@_cdecl("ABIResolutionFailureMessage")
-func nativeResolutionFailureMessage(_ error: OpaquePointer) -> UnsafePointer<CChar> {
-    UnsafePointer(borrowed(error, as: NativeFailureBox.self).message)
-}
-
-@_cdecl("ABIReleaseResolutionFailure")
-func nativeReleaseResolutionFailure(_ error: OpaquePointer) {
-    Unmanaged<NativeFailureBox>.fromOpaque(UnsafeRawPointer(error)).release()
 }

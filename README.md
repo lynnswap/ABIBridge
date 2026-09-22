@@ -157,6 +157,8 @@ ABIBridge's symbol resolution relies on [MachOKit](https://github.com/p-x9/MachO
 
 Thank you to [p-x9](https://github.com/p-x9) and the contributors to [MachOKit](https://github.com/p-x9/MachOKit/graphs/contributors) and [swift-objc-dump](https://github.com/p-x9/swift-objc-dump/graphs/contributors) for building and sharing these libraries.
 
+The internal C ABI call backend uses [libffi](https://github.com/libffi/libffi), packaged for SwiftPM by [ZDLibffi](https://github.com/faimin/ZDLibffi). Thank you to their authors and contributors.
+
 ## License
 
 MIT License. Copyright (c) 2026 Kazuki Nakashima.
