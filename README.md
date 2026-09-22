@@ -67,6 +67,20 @@ let add = try await runtime.cxxFunction(
 let sum = try unsafe add.unsafeInvoke(20, 22)
 ```
 
+### Use your own native value type
+
+For a `Pair` wrapper conforming to `ABIBridgeValue` and a loaded C-compatible declaration:
+
+```swift
+let translate = try await runtime.cxxFunction(
+    named: "Example::translate(Example::Pair)",
+    as: ((Pair) -> Pair).self
+)
+let translated = try unsafe translate.unsafeInvoke(Pair(left: 2, right: 3))
+```
+
+Convert an existing `NativeValue` with `try nativeValue.cast(to: Pair.self)`. See the [native value adapter guide](https://lynnswap.github.io/ABIBridge/documentation/abibridge/nativevalueadapters) for layout and ownership declarations.
+
 ### Find a function without specifying its library
 
 Search the process's loaded images:
@@ -121,7 +135,7 @@ See the [documentation](https://lynnswap.github.io/ABIBridge/documentation/abibr
 
 ## Planned API
 
-These examples preview APIs that are **not implemented yet** and may change. Swift invocation is tracked in [#28](https://github.com/lynnswap/ABIBridge/issues/28) and [#29](https://github.com/lynnswap/ABIBridge/issues/29); custom native value adapters are tracked in [#6](https://github.com/lynnswap/ABIBridge/issues/6).
+These examples preview APIs that are **not implemented yet** and may change. Swift invocation is tracked in [#28](https://github.com/lynnswap/ABIBridge/issues/28) and [#29](https://github.com/lynnswap/ABIBridge/issues/29). C++ receiver and virtual dispatch adapters are tracked in [#31](https://github.com/lynnswap/ABIBridge/issues/31).
 
 ### Call a Swift method on an existing instance
 

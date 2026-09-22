@@ -42,6 +42,16 @@ print(symbol.image.path)
 - ``NativeMethodOptions``
 - ``ABIInvocationError``
 
+### Adapting native values
+
+- <doc:NativeValueAdapters>
+- ``ABIBridgeValue``
+- ``NativeType``
+- ``NativeValue``
+- ``NativeSignature``
+- ``DynamicNativeFunction``
+- ``NativeValueError``
+
 ### Image lifetime
 
 - ``NativeImage``

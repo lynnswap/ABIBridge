@@ -40,15 +40,21 @@ final class CValueType: @unchecked Sendable {
     deinit { ABIReleaseValueType(handle) }
 }
 
+// Swift 6.3 IRGen crashes when this payload enum is nested in the generic
+// codec and its destruction is emitted for a parameter pack.
+private enum CValueKind: Sendable {
+    case void, boolean, bytes
+    case pointer(any NativePointerValue.Type)
+    case foreign(any ABIBridgeValue.Type, NativeType)
+}
+
 struct CValueCodec<Value>: Sendable {
-    enum Kind: Sendable { case void, boolean, bytes, pointer }
-    let kind: Kind
+    private let kind: CValueKind
     let type: CValueType
-    private let pointerType: (any NativePointerValue.Type)?
 
     init() throws {
         let baseType = (Value.self as? any NativeOptionalValue.Type)?.wrappedType ?? Value.self
-        pointerType = baseType as? any NativePointerValue.Type
+        let pointerType = baseType as? any NativePointerValue.Type
         if Value.self == Void.self {
             kind = .void
             type = try CValueType(scalar: ABIValueVoid)
@@ -58,40 +64,70 @@ struct CValueCodec<Value>: Sendable {
         } else if let scalar = Self.scalarKind() {
             kind = .bytes
             type = try CValueType(scalar: scalar)
-        } else if pointerType != nil {
-            kind = .pointer
+        } else if let pointerType {
+            kind = .pointer(pointerType)
             type = try CValueType(scalar: ABIValuePointer)
         } else if let valueType = try Self.standardValueType() {
             kind = .bytes
             type = valueType
+        } else if let bridge = baseType as? any ABIBridgeValue.Type {
+            let nativeType = bridge.abiType
+            if Value.self is any NativeOptionalValue.Type, !nativeType.isPointer {
+                throw ABIResolutionError.unsupportedDeclaration(
+                    "Optional wrappers require a pointer ABI representation."
+                )
+            }
+            kind = .foreign(bridge, nativeType)
+            type = try nativeType.requireCType()
         } else {
             throw ABIResolutionError.unsupportedDeclaration(
                 "No C ABI representation for \(String(reflecting: Value.self))."
             )
         }
-        guard kind == .void || (type.size == MemoryLayout<Value>.size
-                               && type.alignment == MemoryLayout<Value>.alignment) else {
-            throw ABIResolutionError.signatureMismatch(
-                expected: "Swift layout of \(String(reflecting: Value.self))",
-                found: ["C size \(type.size), alignment \(type.alignment)"]
-            )
+        switch kind {
+        case .void, .foreign: break
+        default:
+            guard type.size == MemoryLayout<Value>.size,
+                  type.alignment == MemoryLayout<Value>.alignment else {
+                throw ABIResolutionError.signatureMismatch(
+                    expected: "Swift layout of \(String(reflecting: Value.self))",
+                    found: ["C size \(type.size), alignment \(type.alignment)"]
+                )
+            }
         }
     }
 
     func encode(_ value: Value) throws -> NativeValueStorage {
-        let storage = NativeValueStorage(size: type.size, alignment: type.alignment)
+        func storing<Representation>(_ representation: Representation) -> NativeValueStorage {
+            let storage = NativeValueStorage(size: type.size, alignment: type.alignment)
+            storage.store(representation)
+            return storage
+        }
         switch kind {
         case .void:
             throw ABIResolutionError.unsupportedDeclaration("Void is only supported as a result.")
-        case .boolean: storage.store((value as! Bool) ? UInt8(1) : UInt8(0))
-        case .bytes: storage.store(value)
+        case .boolean: return storing((value as! Bool) ? UInt8(1) : UInt8(0))
+        case .bytes: return storing(value)
         case .pointer:
             let unwrapped: Any?
             if let optional = value as? any NativeOptionalValue { unwrapped = optional.wrappedValue }
             else { unwrapped = value }
-            storage.store((unwrapped as? any NativePointerValue)?.rawPointer)
+            return storing((unwrapped as? any NativePointerValue)?.rawPointer)
+        case .foreign(_, let nativeType):
+            let unwrapped: Any?
+            if let optional = value as? any NativeOptionalValue { unwrapped = optional.wrappedValue }
+            else { unwrapped = value }
+            guard let unwrapped else { return storing(UnsafeRawPointer?.none) }
+            let nativeValue = try (unwrapped as! any ABIBridgeValue).nativeValueForCall()
+            try nativeValue.requireLayout(nativeType)
+            let storage = NativeValueStorage(size: type.size, alignment: type.alignment, owner: nativeValue)
+            unsafe nativeValue.withUnsafeBytes {
+                if let base = $0.baseAddress, !$0.isEmpty {
+                    storage.address.copyMemory(from: base, byteCount: $0.count)
+                }
+            }
+            return storage
         }
-        return storage
     }
 
     func decode(_ storage: NativeValueStorage) throws -> Value {
@@ -99,7 +135,7 @@ struct CValueCodec<Value>: Sendable {
         case .void: return () as! Value
         case .boolean: return (storage.address.load(as: UInt8.self) != 0) as! Value
         case .bytes: return storage.address.load(as: Value.self)
-        case .pointer:
+        case .pointer(let pointerType):
             let optional = Value.self as? any NativeOptionalValue.Type
             guard let pointer = storage.address.load(as: UnsafeRawPointer?.self) else {
                 guard let optional else {
@@ -107,7 +143,18 @@ struct CValueCodec<Value>: Sendable {
                 }
                 return optional.nilValue as! Value
             }
-            let value = pointerType!.fromRawPointer(pointer)
+            let value = pointerType.fromRawPointer(pointer)
+            if let optional { return try optional.wrapping(value) as! Value }
+            return value as! Value
+        case .foreign(let bridge, let nativeType):
+            let optional = Value.self as? any NativeOptionalValue.Type
+            if let optional, storage.address.load(as: UnsafeRawPointer?.self) == nil {
+                return optional.nilValue as! Value
+            }
+            let nativeValue = NativeValue(type: nativeType) {
+                $0.copyMemory(from: .init(start: storage.address, count: type.size))
+            }
+            let value = try bridge.init(nativeValue: nativeValue)
             if let optional { return try optional.wrapping(value) as! Value }
             return value as! Value
         }

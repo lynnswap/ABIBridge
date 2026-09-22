@@ -16,4 +16,9 @@ FOUNDATION_EXPORT NSRange ABICRange(NSRange value);
 FOUNDATION_EXPORT void * _Nullable ABICPointer(void * _Nullable value);
 FOUNDATION_EXPORT void ABICStore(int32_t *value);
 FOUNDATION_EXPORT int32_t ABICIncrement(int32_t value);
+typedef struct ABIAdapterPair { double left; double right; } ABIAdapterPair;
+FOUNDATION_EXPORT ABIAdapterPair ABICTransformPair(ABIAdapterPair value, int32_t *calls);
+FOUNDATION_EXPORT void * _Nullable ABICCreateResource(int32_t *live);
+FOUNDATION_EXPORT int32_t ABICReadResource(const void *resource);
+FOUNDATION_EXPORT void ABICDestroyResource(void *resource);
 NS_ASSUME_NONNULL_END
