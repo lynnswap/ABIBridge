@@ -17,6 +17,8 @@ ABISwiftCallInterface *ABICreateSwiftCallInterface(
     const ABIValueType *result, const ABIValueType *const *parameters,
     size_t count, ABIResolutionFailure **error);
 void ABIReleaseSwiftCallInterface(ABISwiftCallInterface *interface);
+/// Whether a fixed value uses indirect Swift parameter/result storage.
+bool ABISwiftValueIsIndirect(const ABIValueType *type);
 
 /// Calls a thin Swift implementation using prepared register/stack lowering.
 /// The caller retains code and all guaranteed arguments and supplies writable,

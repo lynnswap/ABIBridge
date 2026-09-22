@@ -1,6 +1,6 @@
 import ABIBridgeCore
 
-private func swiftFunctionTypeName(_ type: Any.Type) throws -> String {
+func swiftFunctionTypeName(_ type: Any.Type) throws -> String {
     // Objective-C metatypes can print an unqualified runtime name (NSString),
     // while Swift declarations use their imported identity (__C.NSString).
     guard let mangled = _mangledTypeName(type),
@@ -10,7 +10,7 @@ private func swiftFunctionTypeName(_ type: Any.Type) throws -> String {
     return name
 }
 
-private func swiftFunctionDeclaration<Result, each Argument>(
+func swiftFunctionDeclaration<Result, each Argument>(
     named name: String, as signature: ((repeat each Argument) -> Result).Type
 ) throws -> NativeDeclaration {
     var declaration = name
@@ -71,19 +71,11 @@ public struct NativeSwiftFunction<Result, each Argument>: Sendable {
     /// The declaration and image retained for this function.
     public let symbol: ResolvedSymbol
 
-    private let interface: SwiftCallInterface
-    private let arguments: (repeat SwiftValueCodec<each Argument>)
-    private let result: SwiftValueCodec<Result>
+    private let call: SwiftCall<Result, repeat each Argument>
 
     init(symbol: ResolvedSymbol) throws {
         self.symbol = symbol
-        let arguments = (repeat try SwiftValueCodec<each Argument>())
-        let result = try SwiftValueCodec<Result>()
-        var parameters: [CValueType] = []
-        for argument in repeat each arguments { parameters.append(argument.type) }
-        interface = try SwiftCallInterface(result: result.type, parameters: parameters)
-        self.arguments = arguments
-        self.result = result
+        call = try SwiftCall()
     }
 
     /// Calls the concrete Swift entry point using the prepared signature.
@@ -98,25 +90,7 @@ public struct NativeSwiftFunction<Result, each Argument>: Sendable {
     /// - Throws: An argument conversion or invocation error. An incorrect ABI
     ///   description can corrupt memory and is not a recoverable Swift error.
     @unsafe public func unsafeInvoke(_ values: repeat each Argument) throws -> Result {
-        var storage: [NativeValueStorage] = []
-        for (codec, value) in repeat (each arguments, each values) {
-            storage.append(try codec.encode(value))
-        }
-        let addresses: [UnsafeMutableRawPointer?] = storage.map(\.address)
-        let output = NativeValueStorage(size: result.type.size, alignment: result.type.alignment)
-        return try withExtendedLifetime(storage) {
-            var failure: OpaquePointer?
-            let success = unsafe symbol.withUnsafeAddress { address in
-                addresses.withUnsafeBufferPointer {
-                    ABIUnsafeInvokeSwiftCallInterface(
-                        interface.handle, ABIUnsafeFunctionAtAddress(address), output.address,
-                        $0.baseAddress, nil, &failure
-                    )
-                }
-            }
-            guard success else { throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftInvocation") }
-            return try result.decode(output, retaining: symbol)
-        }
+        try unsafe call.unsafeInvoke(symbol: symbol, repeat each values)
     }
 }
 
