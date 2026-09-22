@@ -1,6 +1,6 @@
 # ABIBridge
 
-Resolve native symbols by source-level name from Swift and C++. Invoke C/C++ functions with typed C++ handles.
+Resolve native symbols by source-level name from Swift and C++. Invoke native functions and instance methods from C++, or bind Objective-C selectors from Objective-C++.
 
 ## Requirements
 
@@ -9,7 +9,7 @@ Resolve native symbols by source-level name from Swift and C++. Invoke C/C++ fun
 
 ## Installation
 
-Add this Swift package dependency, then use the `ABIBridge` product for Swift or `ABIBridgeCore` for C++:
+Add this Swift package dependency, then use `ABIBridge` for Swift, `ABIBridgeCore` for C++, or `ABIBridgeObjCXX` for Objective-C++:
 
 ```swift
 .package(url: "https://github.com/lynnswap/ABIBridge.git", branch: "main")
@@ -102,6 +102,19 @@ auto increment = add.bind(counterOwner);
 int result = increment.unsafe_invoke(2);
 ```
 
+### Call an Objective-C selector from Objective-C++
+
+For an existing `renderer` with a `refreshAnimated:` method that returns a Boolean:
+
+```objc++
+#include <ABIBridge/ABIBridgeObjCXX.hpp>
+
+auto refresh = abi_bridge::objc_method<BOOL(BOOL)>(
+    renderer, "refreshAnimated:"
+);
+BOOL didRefresh = refresh.unsafe_invoke(YES);
+```
+
 ## Planned API
 
 These examples preview APIs that are **not implemented yet** and may change. Typed invocation is tracked in [#4](https://github.com/lynnswap/ABIBridge/issues/4) and [#5](https://github.com/lynnswap/ABIBridge/issues/5).
@@ -165,19 +178,6 @@ let refresh = try await runtime.object(renderer).method(
     as: ((Bool) -> Bool).self
 )
 let didRefresh = try refresh.unsafeInvoke(true)
-```
-
-### Call an Objective-C selector from Objective-C++
-
-Bind a selector to an existing `view`:
-
-```objc++
-#include <ABIBridge/ABIBridgeObjCXX.hpp>
-
-auto setHidden = abi_bridge::objc_method<void(BOOL)>(
-    view, @selector(setHidden:)
-);
-setHidden.unsafe_invoke(YES);
 ```
 
 ## Acknowledgements

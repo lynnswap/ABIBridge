@@ -14,3 +14,7 @@ xcrun clang++ -std=c++20 -dynamiclib -mmacosx-version-min=15.4 \
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" \
     NativeConsumer "$task_fixture/libFixture.dylib" "$task_fixture/libConstructor.dylib"
+xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
+    --scratch-path "$task_root/.build/native-consumer" ObjCConsumer
+xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
+    --scratch-path "$task_root/.build/native-consumer" MRCConsumer
