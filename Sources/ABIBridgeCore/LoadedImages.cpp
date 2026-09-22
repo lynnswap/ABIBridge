@@ -180,15 +180,19 @@ char *ABICopyDemangledCXXName(const char *name)
     return abi::__cxa_demangle(name, nullptr, nullptr, nullptr);
 }
 
+// Swift consumers and the native runtime product link libswiftCore. A weak
+// reference also permits the low-level target to be used without Swift, and
+// avoids lazy dlsym/once locks inside a resolver's index critical section.
+extern "C" char *swift_demangle(const char *, size_t, char *, size_t *, uint32_t)
+    __attribute__((weak_import));
+
 char *ABICopyDemangledSwiftName(const char *name)
 {
     if (name[0] == '_')
         ++name;
     if (std::strncmp(name, "$s", 2) != 0 && std::strncmp(name, "$S", 2) != 0)
         return nullptr;
-    using Demangle = char *(*)(const char *, size_t, char *, size_t *, uint32_t);
-    static auto demangle = reinterpret_cast<Demangle>(dlsym(RTLD_DEFAULT, "swift_demangle"));
-    return demangle ? demangle(name, std::strlen(name), nullptr, nullptr, 0) : nullptr;
+    return swift_demangle ? swift_demangle(name, std::strlen(name), nullptr, nullptr, 0) : nullptr;
 }
 
 void ABIFreeString(char *string)

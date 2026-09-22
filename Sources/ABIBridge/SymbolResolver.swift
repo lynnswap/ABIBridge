@@ -1,21 +1,29 @@
 import Synchronization
 
-// The Swift actor and native synchronous callers share this owner. No native
-// call blocks waiting for a Swift task, and index mutation stays under one lock.
+// Loader operations run outside the index lock: constructors and destructors
+// may reenter the native API while dyld holds its own lock.
 final class SymbolResolver: Sendable {
     static let shared = SymbolResolver()
     private let state = Mutex(ResolutionState())
 
     func images(matching selector: ImageSelector) throws -> [NativeImage] {
-        try state.withLock { try $0.images(matching: selector) }
+        let snapshots = try ImageSnapshot.current().filter { $0.matches(selector) }
+        return try snapshots.map { snapshot in
+            if let cached = state.withLock({ $0.indexes[snapshot.identity]?.image }) {
+                return cached
+            }
+            return try snapshot.retain()
+        }
     }
 
     func resolve(_ declaration: NativeDeclaration, in selector: ImageSelector) throws -> ResolvedSymbol {
-        try state.withLock { try $0.resolve(declaration, in: selector) }
+        let images = try images(matching: selector)
+        guard !images.isEmpty else { throw ABIResolutionError.imageNotLoaded }
+        return try unique(declaration, images: images)
     }
 
     func resolve(_ declaration: NativeDeclaration, in image: NativeImage) throws -> ResolvedSymbol {
-        try state.withLock { try $0.unique(declaration, images: [image]) }
+        try unique(declaration, images: [image])
     }
 
     func removeCachedResults() {
@@ -24,52 +32,54 @@ final class SymbolResolver: Sendable {
             state.indexes = [:]
             return indexes
         }
-        // Releasing a loader lease can run library destructors, which may
-        // themselves resolve symbols. Do not hold the resolver lock then.
         withExtendedLifetime(removed) {}
     }
-}
 
-private struct ResolutionState {
-    var indexes: [NativeImageIdentity: SymbolIndex] = [:]
-    let sharedCache = SharedCacheSymbols()
-
-    mutating func images(matching selector: ImageSelector) throws -> [NativeImage] {
-        try ImageSnapshot.current().filter { $0.matches(selector) }.map { snapshot in
-            if let cached = indexes[snapshot.identity] { return cached.image }
-            return try snapshot.retain()
-        }
-    }
-
-    mutating func resolve(_ declaration: NativeDeclaration, in selector: ImageSelector) throws -> ResolvedSymbol {
-        let images = try images(matching: selector)
-        guard !images.isEmpty else { throw ABIResolutionError.imageNotLoaded }
-        return try unique(declaration, images: images)
-    }
-
-    mutating func unique(_ declaration: NativeDeclaration, images: [NativeImage]) throws -> ResolvedSymbol {
+    private func unique(_ declaration: NativeDeclaration, images: [NativeImage]) throws -> ResolvedSymbol {
         guard declaration.language != .objectiveC else {
             throw ABIResolutionError.unsupportedDeclaration("Objective-C selectors require the invocation frontend.")
         }
-        let candidates = images.map { image -> SymbolIndex in
-            if let cached = indexes[image.identity] { return cached }
-            let index = SymbolIndex(image: image)
-            indexes[image.identity] = index
-            return index
-        }
-        // Keep source precedence independent of whether an earlier query has
-        // populated the shared-cache index for one image.
-        var matches = try candidates.compactMap { try $0.resolve(declaration, source: .image) }
-        if matches.isEmpty {
-            for index in candidates where !index.sharedCacheLoaded {
-                index.appendSharedCacheSymbols(sharedCache.symbols(in: index.image))
+        // Keep these indexes for the whole lookup even if another caller clears
+        // the cache while shared-cache metadata is being read.
+        let candidates = state.withLock { state in images.map { state.index(for: $0) } }
+        return try withExtendedLifetime(candidates) {
+            let primary = try state.withLock { _ in
+                try candidates.compactMap { try $0.resolve(declaration, source: .image) }
             }
-            matches = try candidates.compactMap { try $0.resolve(declaration, source: .sharedCache) }
+            if !primary.isEmpty { return try select(declaration, from: primary) }
+
+            let missing = state.withLock { _ in candidates.indices.filter { !candidates[$0].sharedCacheLoaded } }
+            // MachOKit's host-cache discovery may call the dynamic loader.
+            // Reuse file mappings within this lookup; retained per-image
+            // indexes cache the resulting symbols across future lookups.
+            let cache = SharedCacheSymbols()
+            let additions = missing.map { (candidates[$0], cache.symbols(in: candidates[$0].image)) }
+            let fallback = try state.withLock { _ in
+                for (index, symbols) in additions where !index.sharedCacheLoaded {
+                    index.appendSharedCacheSymbols(symbols)
+                }
+                return try candidates.compactMap { try $0.resolve(declaration, source: .sharedCache) }
+            }
+            return try select(declaration, from: fallback)
         }
+    }
+
+    private func select(_ declaration: NativeDeclaration, from matches: [ResolvedSymbol]) throws -> ResolvedSymbol {
         guard let result = matches.first else { throw ABIResolutionError.declarationNotFound(declaration) }
         guard matches.count == 1 else {
             throw ABIResolutionError.ambiguousDeclaration(declaration, candidates: matches.map { $0.image.path })
         }
         return result
+    }
+}
+
+private struct ResolutionState {
+    var indexes: [NativeImageIdentity: SymbolIndex] = [:]
+
+    mutating func index(for image: NativeImage) -> SymbolIndex {
+        if let cached = indexes[image.identity] { return cached }
+        let index = SymbolIndex(image: image)
+        indexes[image.identity] = index
+        return index
     }
 }

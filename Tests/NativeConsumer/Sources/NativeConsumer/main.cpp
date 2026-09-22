@@ -1,5 +1,10 @@
 #include <ABIBridge/ABIBridge.hpp>
 #include <cassert>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <cstdlib>
+#include <mutex>
 #include <cstring>
 #include <dlfcn.h>
 #include <filesystem>
@@ -19,13 +24,58 @@ static void onLibraryUnload() {
     unloadCallbackRan = true;
 }
 
+static std::thread constructorWorker;
+extern "C" void ABIBridgeTestConstructorEntered() {
+    std::atomic<bool> started = false;
+    constructorWorker = std::thread([&] {
+        started.store(true);
+        try {
+            auto function = abi_bridge::Runtime::current().c_function<pid_t()>("getpid");
+            assert(function.unsafe_invoke() == getpid());
+        } catch (const abi_bridge::resolution_error& error) {
+            // The catalog may include the library whose constructor has not
+            // finished, so acquiring its lease may report imageChanged.
+            assert(error.code() == ABIFailureImageChanged);
+        }
+    });
+    while (!started.load()) std::this_thread::yield();
+    // Give the other thread an opportunity to enter the loader while this
+    // constructor still owns dyld's lock.
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    abi_bridge::Runtime::current().remove_cached_results();
+}
+
 int main(int argc, char** argv) {
-    assert(argc == 2);
+    assert(argc == 3);
     const std::string path = argv[1];
     const auto scope = abi_bridge::image_selector::path(path);
     auto runtime = abi_bridge::Runtime::current();
     auto pid = runtime.c_function<pid_t()>("getpid");
     assert(pid.unsafe_invoke() == getpid());
+
+    std::mutex watchdogMutex;
+    std::condition_variable watchdogCondition;
+    bool constructorFinished = false;
+    std::thread watchdog([&] {
+        std::unique_lock lock(watchdogMutex);
+        if (!watchdogCondition.wait_for(lock, std::chrono::seconds(10), [&] { return constructorFinished; })) {
+            std::cerr << "Constructor/reentrant resolution timed out.\n";
+            std::_Exit(1);
+        }
+    });
+    runtime.remove_cached_results();
+    void* constructorLibrary = dlopen(argv[2], RTLD_NOW | RTLD_LOCAL);
+    assert(constructorLibrary);
+    constructorWorker.join();
+    assert(runtime.c_function<pid_t()>("getpid").unsafe_invoke() == getpid());
+    assert(dlclose(constructorLibrary) == 0);
+    {
+        std::lock_guard lock(watchdogMutex);
+        constructorFinished = true;
+    }
+    watchdogCondition.notify_one();
+    watchdog.join();
+    runtime.remove_cached_results();
 
     try {
         runtime.c_function<int(int, int)>("ABIBridgeFixtureCAdd", scope);

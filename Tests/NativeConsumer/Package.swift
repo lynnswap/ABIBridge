@@ -8,7 +8,8 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "NativeConsumer",
-            dependencies: [.product(name: "ABIBridgeCore", package: "ABIBridge")]
+            dependencies: [.product(name: "ABIBridgeCore", package: "ABIBridge")],
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-export_dynamic"])]
         )
     ],
     cxxLanguageStandard: .cxx20
