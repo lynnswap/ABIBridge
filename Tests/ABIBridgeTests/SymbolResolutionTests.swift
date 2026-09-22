@@ -80,6 +80,14 @@ struct SymbolResolutionTests {
         #expect(unsafe resolved.withUnsafeAddress { $0.load(as: Int32.self) } == 42)
     }
 
+    @Test func quickStartAndFrameworkScopeUseLoadedSystemImages() async throws {
+        let runtime = ABIRuntime()
+        let foundations = try await runtime.images(matching: .framework(named: "Foundation"))
+        #expect(foundations.count == 1)
+        let symbol = try await runtime.resolve(.init(name: "getpid", language: .c))
+        #expect(symbol.source == .image)
+    }
+
     @Test func resolvesSwiftSourceDeclarations() async throws {
         #expect(swiftFixtureEcho(41) == 42)
         let path = try #require(Bundle(for: FixtureBundleMarker.self).executableURL)
