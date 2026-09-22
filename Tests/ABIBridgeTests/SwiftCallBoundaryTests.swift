@@ -18,6 +18,21 @@ extension SwiftABIBytes3: ABIBridgeValue {
     }
 }
 
+@frozen public struct SwiftABIMixedFields: BitwiseCopyable {
+    public var integer: Int8
+    public var floating: Float
+}
+@inline(never) public func swiftABIMixedFields(_ value: SwiftABIMixedFields) -> SwiftABIMixedFields {
+    .init(integer: value.integer - 1, floating: value.floating + 2.5)
+}
+extension SwiftABIMixedFields: ABIBridgeValue {
+    public static let abiType = try! NativeType.structure(named: "MixedFields", fields: [.int8, .float])
+    public init(nativeValue: NativeValue) throws { self = try unsafe nativeValue.read(as: Self.self) }
+    public static func nativeValue(from value: Self) throws -> NativeValue {
+        try .init(copying: value, as: abiType)
+    }
+}
+
 private func withGuardedThreeBytes(_ body: (UnsafeMutableRawPointer) throws -> Void) throws {
     let page = Int(getpagesize())
     let allocation = try #require(mmap(nil, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0))
@@ -28,6 +43,17 @@ private func withGuardedThreeBytes(_ body: (UnsafeMutableRawPointer) throws -> V
 }
 
 struct SwiftCallBoundaryTests {
+    @Test func integerAndFloatSharingAChunkUseSeparateRegisterBanks() async throws {
+        let function = try await ABIRuntime.shared.swiftFunction(
+            named: "ABIBridgeTests.swiftABIMixedFields(_:)",
+            as: ((SwiftABIMixedFields) -> SwiftABIMixedFields).self
+        )
+        let input = SwiftABIMixedFields(integer: -8, floating: 3.25)
+        let result = try unsafe function.unsafeInvoke(input)
+        let expected = swiftABIMixedFields(input)
+        #expect(result.integer == expected.integer && result.floating == expected.floating)
+    }
+
     @Test func coalescedComponentsRespectGuardedArgumentAndResultExtents() async throws {
         let symbol = try await ABIRuntime.shared.resolve(.init(
             name: "ABIBridgeTests.swiftABIBytes(ABIBridgeTests.SwiftABIBytes3) -> ABIBridgeTests.SwiftABIBytes3",
