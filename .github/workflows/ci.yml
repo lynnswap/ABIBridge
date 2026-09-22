@@ -67,4 +67,5 @@ jobs:
           -scheme ABIBridge-Package
           -destination "generic/platform=$PLATFORM"
           -derivedDataPath "$RUNNER_TEMP/DerivedData"
+          WATCHOS_DEPLOYMENT_TARGET=11.4
           CODE_SIGNING_ALLOWED=NO
