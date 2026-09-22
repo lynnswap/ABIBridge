@@ -55,4 +55,6 @@ void ABIFreeString(char *string);
 }
 #endif
 
+#include <ABIBridge/Runtime.h>
+
 #endif

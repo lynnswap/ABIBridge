@@ -21,6 +21,14 @@ xcodebuild test \
 
 The symbol tests compile temporary C++ libraries with the installed Xcode toolchain. They test real symbol lookup, image retention, and unload/reload behavior.
 
+Run the standalone C++ package consumer to verify product linking and typed native calls:
+
+```sh
+bash scripts/test-native-consumer.sh
+```
+
+This fixture checks C/C++ calls, reference arguments, non-trivial and indirect results, concurrent resolution, and image retention after the original loader reference is released. CI runs it after the macOS package tests.
+
 Build for another Apple platform by changing the generic destination:
 
 ```sh
