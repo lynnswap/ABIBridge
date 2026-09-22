@@ -24,6 +24,14 @@ private func swiftFunctionDeclaration<Result, each Argument>(
             declaration = String(name[..<opening]) + "(" + fields.joined(separator: ", ") + ") -> " + String(reflecting: Result.self)
         }
     }
+    let prefix = declaration.prefix { $0 != "(" }
+    guard prefix.last(where: { !$0.isWhitespace }) != ">", !declaration.contains(" async "),
+          !declaration.contains(" throws "), !declaration.contains("inout "),
+          !declaration.contains("__owned ") else {
+        throw ABIResolutionError.unsupportedDeclaration(
+            "Generic, async, throwing, inout and consuming Swift declarations require a native adapter."
+        )
+    }
     return NativeDeclaration(name: declaration, language: .swift)
 }
 
@@ -35,7 +43,7 @@ final class SwiftCallInterface: @unchecked Sendable {
         var failure: OpaquePointer?
         guard let handle = handles.withUnsafeBufferPointer({
             ABICreateSwiftCallInterface(result.handle, $0.baseAddress, $0.count, &failure)
-        }) else { throw consumeCCallFailure(failure) }
+        }) else { throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftInvocation") }
         self.handle = handle
     }
     deinit { ABIReleaseSwiftCallInterface(handle) }
@@ -96,14 +104,14 @@ public struct NativeSwiftFunction<Result, each Argument>: Sendable {
                     )
                 }
             }
-            guard success else { throw consumeCCallFailure(failure) }
+            guard success else { throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftInvocation") }
             return try result.decode(output, retaining: symbol)
         }
     }
 }
 
 extension ABIRuntime {
-    /// Resolves a concrete Swift free function by its complete source-level name.
+    /// Resolves a concrete Swift free function by its source-level name.
     ///
     /// - Parameters:
     ///   - name: A qualified label-only name, such as Example.decorate(_:), or a complete demangled declaration.

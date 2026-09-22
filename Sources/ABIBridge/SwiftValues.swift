@@ -43,6 +43,7 @@ struct SwiftValueCodec<Value>: Sendable {
     }
 
     func encode(_ value: Value) throws -> NativeValueStorage {
+        if Value.self == Void.self { return NativeValueStorage(size: 0, alignment: 1) }
         if let cValue { return try cValue.encode(value) }
         let owner = SwiftArgumentOwner(value)
         let storage = NativeValueStorage(size: type.size, alignment: type.alignment, owner: owner)

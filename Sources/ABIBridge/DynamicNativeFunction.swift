@@ -61,7 +61,7 @@ public struct DynamicNativeFunction: Sendable {
                         )
                     }
                 }
-                guard success else { throw consumeCCallFailure(failure) }
+                guard success else { throw consumeNativeCallFailure(failure) }
             }
         }
     }

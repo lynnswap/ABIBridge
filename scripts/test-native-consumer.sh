@@ -11,6 +11,10 @@ xcrun clang++ -std=c++20 -dynamiclib -mmacosx-version-min=15.4 \
 xcrun clang++ -std=c++20 -dynamiclib -mmacosx-version-min=15.4 \
     -undefined dynamic_lookup "$task_root/Tests/NativeConsumer/Constructor.cpp" \
     -o "$task_fixture/libConstructor.dylib"
+xcrun swiftc -parse-as-library -emit-library -enable-library-evolution \
+    -module-name SwiftFunctionFixture \
+    "$task_root/Tests/NativeConsumer/SwiftFixture.swift" \
+    -o "$task_fixture/libSwiftFixture.dylib"
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" \
     NativeConsumer "$task_fixture/libFixture.dylib" "$task_fixture/libConstructor.dylib"
@@ -24,3 +28,5 @@ xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" SwiftConsumer "$task_fixture/libFixture.dylib"
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" SwiftObjectConsumer "$task_fixture/libFixture.dylib"
+xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
+    --scratch-path "$task_root/.build/native-consumer" SwiftFunctionConsumer "$task_fixture/libSwiftFixture.dylib"

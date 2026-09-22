@@ -10,7 +10,7 @@ final class CCallInterface: @unchecked Sendable {
         var failure: OpaquePointer?
         guard let handle = handles.withUnsafeBufferPointer({
             ABICreateCCallInterface(result.handle, $0.baseAddress, $0.count, &failure)
-        }) else { throw consumeCCallFailure(failure) }
+        }) else { throw consumeNativeCallFailure(failure) }
         self.handle = handle
     }
 
@@ -66,7 +66,7 @@ struct CFunctionCall<Result, each Argument>: Sendable {
                     interface.handle, function, output.address, $0.baseAddress, &failure
                 )
             }
-            guard success else { throw consumeCCallFailure(failure) }
+            guard success else { throw consumeNativeCallFailure(failure) }
             return try result.decode(output, retaining: owner)
         }
     }

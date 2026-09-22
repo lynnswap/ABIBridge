@@ -125,8 +125,8 @@ ABISwiftCallInterface *ABICreateSwiftCallInterface(
     constexpr size_t integerLimit = 8;
 #endif
     for (size_t index = 0; index < count; ++index) {
-        if (!parameters[index] || !parameters[index]->storage->size()) {
-            fail(error, ABIFailureInvalidRequest, "An explicit Swift parameter must have a value representation.");
+        if (!parameters[index]) {
+            fail(error, ABIFailureInvalidRequest, "Each Swift parameter requires a storage description.");
             return nullptr;
         }
         interface->parameters.push_back(parameters[index]->storage);

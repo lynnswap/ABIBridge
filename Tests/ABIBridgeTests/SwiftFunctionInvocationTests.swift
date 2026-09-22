@@ -3,6 +3,8 @@ import CoreGraphics
 import Foundation
 import Testing
 
+@inline(never) public func swiftABIVoid(_ value: Void) -> Int32 { 42 }
+@inline(never) public func swiftABIStore(_ pointer: UnsafeMutablePointer<Int32>) { pointer.pointee = 42 }
 @inline(never) public func swiftABIAnswer() -> Int32 { 42 }
 @inline(never) public func swiftABINegative(_ value: Int8) -> Int8 { value - 1 }
 @inline(never) public func swiftABINegate(_ value: Bool) -> Bool { !value }
@@ -80,7 +82,59 @@ extension SwiftABISmall: ABIBridgeValue {
     public static func nativeValue(from value: Self) throws -> NativeValue { try .init(copying: value, as: abiType) }
 }
 
+private final class ForeignSwiftFour: ABIBridgeValue {
+    static let abiType = SwiftABIFour.abiType
+    let storage: NativeValue
+    init(nativeValue: NativeValue) { storage = nativeValue }
+    static func nativeValue(from value: ForeignSwiftFour) -> NativeValue { value.storage }
+}
+
 struct SwiftFunctionInvocationTests {
+    @Test func voidValuesPointersAndReusableImageScopes() async throws {
+        let runtime = ABIRuntime()
+        let symbol = try await runtime.resolve(.init(
+            name: "ABIBridgeTests.swiftABIAnswer() -> Swift.Int32", language: .swift
+        ))
+        let empty = try await runtime.swiftFunction(
+            named: "ABIBridgeTests.swiftABIVoid(_:)", as: ((()) -> Int32).self, in: symbol.image
+        )
+        #expect(try unsafe empty.unsafeInvoke(()) == swiftABIVoid(()))
+        let store = try await runtime.swiftFunction(
+            named: "ABIBridgeTests.swiftABIStore(_:)",
+            as: ((UnsafeMutablePointer<Int32>) -> Void).self, in: .path(URL(fileURLWithPath: symbol.image.path))
+        )
+        var value: Int32 = 0
+        try withUnsafeMutablePointer(to: &value) { try unsafe store.unsafeInvoke($0) }
+        #expect(value == 42)
+    }
+
+    @Test func foreignClassWrappersUseTheirDeclaredValueLayout() async throws {
+        let function = try await ABIRuntime.shared.swiftFunction(
+            named: "ABIBridgeTests.swiftABIFour(ABIBridgeTests.SwiftABIFour) -> ABIBridgeTests.SwiftABIFour",
+            as: ((ForeignSwiftFour) -> ForeignSwiftFour).self
+        )
+        let input = ForeignSwiftFour(nativeValue: try .init(
+            copying: SwiftABIFour(a: 1, b: 2, c: 3, d: 4), as: SwiftABIFour.abiType
+        ))
+        let output = try unsafe function.unsafeInvoke(input)
+        let value = try unsafe output.storage.read(as: SwiftABIFour.self)
+        #expect([value.a, value.b, value.c, value.d] == [2, 4, 6, 8])
+    }
+
+    @Test func immutableInterfaceCanBeUsedConcurrently() async throws {
+        let function = try await ABIRuntime.shared.swiftFunction(
+            named: "ABIBridgeTests.swiftABIString(_:)", as: ((String) -> String).self
+        )
+        try await withThrowingTaskGroup(of: String.self) { group in
+            for index in 0..<16 {
+                group.addTask { try unsafe function.unsafeInvoke(String(index)) }
+            }
+            var results: Set<String> = []
+            for try await result in group { results.insert(result) }
+            #expect(results == Set((0..<16).map { "\($0)!" }))
+        }
+    }
+
     @Test func scalarResultsAndArguments() async throws {
         let runtime = ABIRuntime()
         let answer = try await runtime.swiftFunction(
@@ -174,6 +228,22 @@ struct SwiftFunctionInvocationTests {
     }
 
     @Test func unsupportedRepresentationsAndMissingDeclarationsThrow() async throws {
+        for name in [
+            "Example.generic<A>(A) -> A",
+            "Example.asyncFunction() async -> Swift.Int",
+            "Example.throwing() throws -> Swift.Int",
+            "Example.mutate(inout Swift.Int) -> Swift.Int",
+            "Example.consume(__owned Swift.String) -> Swift.Int",
+        ] {
+            await #expect(throws: ABIResolutionError.self) {
+                _ = try await ABIRuntime.shared.swiftFunction(named: name, as: (() -> Int).self)
+            }
+        }
+        await #expect(throws: ABIResolutionError.self) {
+            _ = try await ABIRuntime.shared.swiftFunction(
+                named: "Example.invalid(_:_:)", as: ((Int) -> Int).self
+            )
+        }
         await #expect(throws: ABIResolutionError.self) {
             _ = try await ABIRuntime.shared.swiftFunction(
                 named: "ABIBridgeTests.swiftABIAnswer() -> Swift.Int32", as: (() -> [String: Int]).self
