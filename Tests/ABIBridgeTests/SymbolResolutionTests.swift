@@ -7,6 +7,36 @@ import Testing
 
 @Suite(.serialized)
 struct SymbolResolutionTests {
+    @Test func automaticLookupToleratesUnrelatedLoaderChurn() async throws {
+        let fixture = try FixtureLibrary(load: false)
+        defer { fixture.cleanup() }
+        let path = fixture.libraryURL.path
+        let runtime = ABIRuntime()
+        try await withThrowingTaskGroup(of: Int.self) { group in
+            group.addTask {
+                var count = 0
+                while !Task.isCancelled {
+                    guard let handle = dlopen(path, RTLD_NOW | RTLD_LOCAL) else {
+                        throw NSError(domain: "ABIBridgeTests.Loader", code: 1)
+                    }
+                    dlclose(handle)
+                    count += 1
+                    // Let the query acquire dyld's unfair lock between cycles.
+                    try? await Task.sleep(for: .microseconds(100))
+                }
+                return count
+            }
+            for _ in 0..<8 {
+                await runtime.removeCachedResults()
+                let function = try await runtime.cFunction(named: "getpid", as: (() -> Int32).self)
+                #expect(try unsafe function.unsafeInvoke() == getpid())
+            }
+            group.cancelAll()
+            #expect(try await group.next() ?? 0 > 0)
+        }
+        await runtime.removeCachedResults()
+    }
+
     @Test func resolvesFunctionsDataAndVTablesByDeclaration() async throws {
         let fixture = try FixtureLibrary()
         defer { fixture.cleanup() }
