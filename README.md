@@ -67,7 +67,7 @@ if let image = images.first {
 
 Use `.path(executableURL)` instead of `.framework(named:)` to select a particular loaded binary. Lookups do not load missing frameworks. Typed native invocation is being developed separately.
 
-See the [DocC catalog](Sources/ABIBridge/ABIBridge.docc/ABIBridge.md) for API contracts and [CONTRIBUTING.md](CONTRIBUTING.md) for build and test instructions.
+See the [documentation](https://lynnswap.github.io/ABIBridge/documentation/abibridge/) for API contracts and [CONTRIBUTING.md](CONTRIBUTING.md) for build and test instructions.
 
 ## Acknowledgements
 
