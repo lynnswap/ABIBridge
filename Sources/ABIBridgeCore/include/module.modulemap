@@ -1,0 +1,4 @@
+module ABIBridgeCore {
+    header "ABIBridgeCore.h"
+    export *
+}

@@ -20,11 +20,13 @@ public struct NativeImageIdentity: Sendable, Hashable {
     public let headerAddress: UInt64
     public let slide: Int64
     public let loadGeneration: UInt64
+    public let uuid: UUID?
 
-    public init(headerAddress: UInt64, slide: Int64, loadGeneration: UInt64) {
+    public init(headerAddress: UInt64, slide: Int64, loadGeneration: UInt64, uuid: UUID? = nil) {
         self.headerAddress = headerAddress
         self.slide = slide
         self.loadGeneration = loadGeneration
+        self.uuid = uuid
     }
 }
 
