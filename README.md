@@ -69,6 +69,85 @@ Use `.path(executableURL)` instead of `.framework(named:)` to select a particula
 
 See the [documentation](https://lynnswap.github.io/ABIBridge/documentation/abibridge/) for API contracts and [CONTRIBUTING.md](CONTRIBUTING.md) for build and test instructions.
 
+## Planned API
+
+These examples preview APIs that are **not implemented yet** and may change. Typed invocation is tracked in [#4](https://github.com/lynnswap/ABIBridge/issues/4) and [#5](https://github.com/lynnswap/ABIBridge/issues/5).
+
+### Call a method on an existing instance
+
+For an existing `renderer` with a Swift `setImage(_:animated:)` method, bind the receiver once and pass ordinary Swift values:
+
+```swift
+import UIKit
+
+let object = runtime.object(renderer)
+let setImage = try await object.method(
+    named: "setImage(_:animated:)",
+    as: ((UIImage?, Bool) -> Void).self
+)
+
+try setImage.unsafeInvoke(image, true)
+try setImage.unsafeInvoke(nil, false)
+```
+
+### Reuse a type for multiple methods
+
+Resolve several methods through the same type handle, then select the receiver when calling them:
+
+```swift
+let rendererType = try await runtime.swiftType(named: "Example.Renderer")
+let start = try await rendererType.method(
+    named: "start()",
+    as: (() -> Void).self
+)
+let stop = try await rendererType.method(
+    named: "stop()",
+    as: (() -> Void).self
+)
+
+try start.unsafeInvoke(on: renderer)
+try stop.unsafeInvoke(on: renderer)
+```
+
+### Call C++ from Swift
+
+Use a source-level declaration and a Swift function type:
+
+```swift
+let add = try await runtime.cxxFunction(
+    named: "Example::Math::add(int, int)",
+    as: ((Int32, Int32) -> Int32).self
+)
+
+let result = try add.unsafeInvoke(20, 22)
+```
+
+### Use C++ and Objective-C++ directly
+
+The planned native APIs provide typed calls from C++:
+
+```cpp
+#include <ABIBridge/ABIBridge.hpp>
+
+auto runtime = abi_bridge::Runtime::current();
+auto add = runtime.cxx_function<int(int, int)>(
+    abi_bridge::declaration("Example::Math::add(int, int)")
+);
+
+int result = add.unsafe_invoke(20, 22);
+```
+
+Objective-C++ callers can bind a selector to an existing `view`:
+
+```objc++
+#include <ABIBridge/ABIBridgeObjCXX.hpp>
+
+auto setHidden = abi_bridge::objc_method<void(BOOL)>(
+    view, @selector(setHidden:)
+);
+setHidden.unsafe_invoke(YES);
+```
+
 ## Acknowledgements
 
 ABIBridge's symbol resolution relies on [MachOKit](https://github.com/p-x9/MachOKit) for reading Mach-O images and dyld shared caches. Its parsing support provides the foundation for this package.
