@@ -91,12 +91,13 @@ private final class ForeignSwiftFour: ABIBridgeValue {
 
 struct SwiftFunctionInvocationTests {
     @Test func voidValuesPointersAndReusableImageScopes() async throws {
+        typealias EmptyArgument = ()
         let runtime = ABIRuntime()
         let symbol = try await runtime.resolve(.init(
             name: "ABIBridgeTests.swiftABIAnswer() -> Swift.Int32", language: .swift
         ))
         let empty = try await runtime.swiftFunction(
-            named: "ABIBridgeTests.swiftABIVoid(_:)", as: ((()) -> Int32).self, in: symbol.image
+            named: "ABIBridgeTests.swiftABIVoid(_:)", as: ((EmptyArgument) -> Int32).self, in: symbol.image
         )
         #expect(try unsafe empty.unsafeInvoke(()) == swiftABIVoid(()))
         let store = try await runtime.swiftFunction(
