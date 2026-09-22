@@ -9,6 +9,8 @@ import Testing
 @inline(never) public func swiftABINegative(_ value: Int8) -> Int8 { value - 1 }
 @inline(never) public func swiftABINegate(_ value: Bool) -> Bool { !value }
 @inline(never) public func swiftABIString(_ value: String) -> String { value + "!" }
+@inline(never) public func swiftABIImportedObject(_ value: NSString) -> NSString { value }
+@inline(never) public func swiftABIOptionalImportedObject(_ value: NSString?) -> NSString? { value }
 @inline(never) public func swiftABIRect(_ value: CGRect) -> CGRect {
     CGRect(x: value.minX + 1, y: value.minY + 2, width: value.width + 3, height: value.height + 4)
 }
@@ -90,6 +92,19 @@ private final class ForeignSwiftFour: ABIBridgeValue {
 }
 
 struct SwiftFunctionInvocationTests {
+    @MainActor @Test func labelOnlyNamesUseCanonicalImportedClassNames() async throws {
+        let function = try await ABIRuntime.shared.swiftFunction(
+            named: "ABIBridgeTests.swiftABIImportedObject(_:)", as: ((NSString) -> NSString).self
+        )
+        let value = NSString(string: "value")
+        #expect(try unsafe function.unsafeInvoke(value) === swiftABIImportedObject(value))
+        let optional = try await ABIRuntime.shared.swiftFunction(
+            named: "ABIBridgeTests.swiftABIOptionalImportedObject(_:)", as: ((NSString?) -> NSString?).self
+        )
+        #expect(try unsafe optional.unsafeInvoke(value) === swiftABIOptionalImportedObject(value))
+        #expect(try unsafe optional.unsafeInvoke(nil) == nil)
+    }
+
     @Test func voidValuesPointersAndReusableImageScopes() async throws {
         typealias EmptyArgument = ()
         let runtime = ABIRuntime()

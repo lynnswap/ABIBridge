@@ -78,10 +78,9 @@ Layout lower(TypeStorage &type) {
         }
         result.components.push_back(field);
     }
-    size_t registers = 0;
-    for (const auto &component : result.components)
-        registers += component.floating ? 1 : (component.size + sizeof(void *) - 1) / sizeof(void *);
-    result.indirect = registers > 4;
+    // Supported scalars occupy one hardware register, including Int64 on
+    // arm64_32. Pointer width controls coalescing, not register capacity.
+    result.indirect = result.components.size() > 4;
     return result;
 }
 

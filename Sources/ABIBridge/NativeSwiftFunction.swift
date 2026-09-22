@@ -1,5 +1,15 @@
 import ABIBridgeCore
 
+private func swiftFunctionTypeName(_ type: Any.Type) throws -> String {
+    // Objective-C metatypes can print an unqualified runtime name (NSString),
+    // while Swift declarations use their imported identity (__C.NSString).
+    guard let mangled = _mangledTypeName(type),
+          let name = DeclarationKey.demangle("$s" + mangled, language: .swift) else {
+        throw ABIResolutionError.metadataUnavailable("No canonical Swift name for \(String(reflecting: type)).")
+    }
+    return name
+}
+
 private func swiftFunctionDeclaration<Result, each Argument>(
     named name: String, as signature: ((repeat each Argument) -> Result).Type
 ) throws -> NativeDeclaration {
@@ -14,14 +24,14 @@ private func swiftFunctionDeclaration<Result, each Argument>(
         })
         if labelsOnly {
             var parameters: [String] = []
-            for type in repeat (each Argument).self { parameters.append(String(reflecting: type)) }
+            for type in repeat (each Argument).self { parameters.append(try swiftFunctionTypeName(type)) }
             guard labels.count == parameters.count else {
                 throw ABIResolutionError.signatureMismatch(
                     expected: "\(parameters.count) argument labels", found: [name]
                 )
             }
             let fields = zip(labels, parameters).map { label, type in label == "_" ? type : label + ": " + type }
-            declaration = String(name[..<opening]) + "(" + fields.joined(separator: ", ") + ") -> " + String(reflecting: Result.self)
+            declaration = String(name[..<opening]) + "(" + fields.joined(separator: ", ") + ") -> " + (try swiftFunctionTypeName(Result.self))
         }
     }
     let prefix = declaration.prefix { $0 != "(" }

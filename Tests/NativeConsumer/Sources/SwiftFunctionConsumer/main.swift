@@ -2,6 +2,20 @@ import ABIBridge
 import Darwin
 import Foundation
 
+struct ThreeValue: ABIBridgeValue {
+    static let abiType = try! NativeType.structure(
+        named: "SwiftFunctionFixture.Three", fields: [.int64, .int64, .int64]
+    )
+    let values: (Int64, Int64, Int64)
+    init(_ a: Int64, _ b: Int64, _ c: Int64) { values = (a, b, c) }
+    init(nativeValue: NativeValue) throws {
+        values = try unsafe nativeValue.read(as: (Int64, Int64, Int64).self)
+    }
+    static func nativeValue(from value: Self) throws -> NativeValue {
+        try .init(copying: value.values, as: abiType)
+    }
+}
+
 @MainActor
 func prepare(_ path: String) async throws -> NativeSwiftFunction<String, String> {
     guard let original = dlopen(path, RTLD_NOW | RTLD_LOCAL) else {
@@ -18,6 +32,12 @@ func prepare(_ path: String) async throws -> NativeSwiftFunction<String, String>
     let function = try await runtime.swiftFunction(
         named: "SwiftFunctionFixture.decorate(_:)", as: ((String) -> String).self, in: scope
     )
+    let transform = try await runtime.swiftFunction(
+        named: "SwiftFunctionFixture.transform(SwiftFunctionFixture.Three) -> SwiftFunctionFixture.Three",
+        as: ((ThreeValue) -> ThreeValue).self, in: scope
+    )
+    let transformed = try unsafe transform.unsafeInvoke(.init(1, 2, 3))
+    precondition(transformed.values == (2, 4, 6))
     await runtime.removeCachedResults()
     return function
 }
