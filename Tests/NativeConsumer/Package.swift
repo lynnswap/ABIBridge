@@ -8,18 +8,18 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "NativeConsumer",
-            dependencies: [.product(name: "ABIBridgeCore", package: "ABIBridge")],
+            dependencies: [.product(name: "ABIBridge", package: "ABIBridge")],
             linkerSettings: [.unsafeFlags(["-Xlinker", "-export_dynamic"])]
         ),
         .executableTarget(
             name: "ObjCConsumer",
-            dependencies: [.product(name: "ABIBridgeObjCXX", package: "ABIBridge")],
+            dependencies: [.product(name: "ABIBridge", package: "ABIBridge")],
             cxxSettings: [.unsafeFlags(["-fobjc-arc"])],
             linkerSettings: [.linkedFramework("Foundation")]
         ),
         .executableTarget(
             name: "MRCConsumer",
-            dependencies: [.product(name: "ABIBridgeObjCXX", package: "ABIBridge")],
+            dependencies: [.product(name: "ABIBridge", package: "ABIBridge")],
             cxxSettings: [.unsafeFlags(["-fno-objc-arc"])],
             linkerSettings: [.linkedFramework("Foundation")]
         )
