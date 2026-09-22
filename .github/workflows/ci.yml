@@ -42,6 +42,14 @@ jobs:
           -scheme ABIBridge
           -destination 'platform=macOS,arch=arm64'
           -derivedDataPath "$RUNNER_TEMP/DerivedData"
+      - name: Test optimized native bridge
+        run: >-
+          xcodebuild test
+          -configuration Release
+          -scheme ABIBridge
+          -destination 'platform=macOS,arch=arm64'
+          -derivedDataPath "$RUNNER_TEMP/DerivedData"
+          -only-testing:ABIBridgeTests/NativeRuntimeTests
       - name: Test native consumers
         run: bash scripts/test-native-consumer.sh
 
