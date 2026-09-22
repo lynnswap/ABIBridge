@@ -125,6 +125,19 @@ int main() {
     assert(ABIValueTypeFieldOffset(nested.get(), 2) == offsetof(Nested, context));
     auto pairCall = call(pair.get(), {pair.get()});
     auto nestedCall = call(nested.get(), {nested.get()});
+    threads.clear();
+    for (int worker = 0; worker < 4; ++worker) {
+        threads.emplace_back([&] {
+            for (int iteration = 0; iteration < 20; ++iteration) {
+                auto prepared = call(nested.get(), {nested.get()});
+                Nested input{3, {4, 5}, address}, output{};
+                void* values[] = {&input};
+                invoke(prepared.get(), reinterpret_cast<ABIUnmanagedFunction>(dynamicNested), &output, values);
+                assert(output.tag == 4 && output.pair.x == 6 && output.context == address);
+            }
+        });
+    }
+    for (auto& thread : threads) thread.join();
     pair.reset();
     nested.reset();
     f64.reset();
