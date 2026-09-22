@@ -19,7 +19,7 @@ xcodebuild test \
   -destination 'platform=macOS,arch=arm64'
 ```
 
-The symbol tests compile temporary C++ libraries with the installed Xcode toolchain. They test real symbol lookup, image retention, and unload/reload behavior.
+The symbol tests compile temporary C++ libraries with the installed Xcode toolchain. They test real symbol lookup, image retention, and unload/reload behavior. Objective-C invocation tests use Swift and Objective-C fixtures to check typed arguments, forwarding, caller isolation, returned-object ownership, initializer behavior, and signature failures.
 
 Run the native backend fixtures to verify linking and ABI behavior through the `ABIBridge` product:
 
