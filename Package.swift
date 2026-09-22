@@ -18,8 +18,6 @@ let package = Package(
     ],
     products: [
         .library(name: "ABIBridge", targets: ["ABIBridge"]),
-        .library(name: "ABIBridgeCore", targets: ["ABIBridgeCore", "ABIBridge"]),
-        .library(name: "ABIBridgeObjCXX", targets: ["ABIBridgeObjCXX", "ABIBridge"]),
     ],
     dependencies: [
         .package(url: "https://github.com/p-x9/MachOKit.git", exact: "0.52.2"),
@@ -27,7 +25,7 @@ let package = Package(
     targets: [
         .target(
             name: "ABIBridge",
-            dependencies: ["ABIBridgeCore", .product(name: "MachOKit", package: "MachOKit")],
+            dependencies: ["ABIBridgeCore", "ABIBridgeObjCXX", .product(name: "MachOKit", package: "MachOKit")],
             swiftSettings: strictSwiftSettings
         ),
         .target(

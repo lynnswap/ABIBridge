@@ -1,15 +1,15 @@
 # ABIBridge
 
-Resolve native symbols by source-level name from Swift and C++. Invoke native functions and instance methods from C++, or bind Objective-C selectors from Objective-C++.
+Resolve native Swift, C, and C++ symbols by source-level name from Swift.
 
 ## Requirements
 
 - iOS 18.4+, macOS 15.4+, visionOS 2.4+, watchOS 11.4+, or tvOS 18.4+
-- Xcode on macOS with Swift 6.3+ and C++20 support
+- Xcode on macOS with Swift 6.3+
 
 ## Installation
 
-Add this Swift package dependency, then use `ABIBridge` for Swift, `ABIBridgeCore` for C++, or `ABIBridgeObjCXX` for Objective-C++:
+Add this Swift package dependency and the `ABIBridge` product to your target:
 
 ```swift
 .package(url: "https://github.com/lynnswap/ABIBridge.git", branch: "main")
@@ -69,55 +69,9 @@ Use `.path(executableURL)` instead of `.framework(named:)` to select a particula
 
 See the [documentation](https://lynnswap.github.io/ABIBridge/documentation/abibridge/) for API contracts and [CONTRIBUTING.md](CONTRIBUTING.md) for build and test instructions.
 
-### Call a C++ function
-
-For an already-loaded library defining `Example::Math::add(int, int)`:
-
-```cpp
-#include <ABIBridge/ABIBridge.hpp>
-
-auto runtime = abi_bridge::Runtime::current();
-auto add = runtime.cxx_function<int(int, int)>(
-    abi_bridge::declaration("Example::Math::add(int, int)")
-);
-
-int result = add.unsafe_invoke(20, 22);
-```
-
-### Call a method on an existing C++ instance
-
-For an existing `counter` whose class defines `Example::Counter::add(int)`:
-
-```cpp
-auto add = runtime.cxx_method<int(int)>(
-    abi_bridge::declaration("Example::Counter::add(int)")
-);
-int result = add.unsafe_invoke(&counter, 2);
-```
-
-With a `std::shared_ptr` named `counterOwner`, bind and retain the receiver for repeated calls:
-
-```cpp
-auto increment = add.bind(counterOwner);
-int result = increment.unsafe_invoke(2);
-```
-
-### Call an Objective-C selector from Objective-C++
-
-For an existing `renderer` with a `refreshAnimated:` method that returns a Boolean:
-
-```objc++
-#include <ABIBridge/ABIBridgeObjCXX.hpp>
-
-auto refresh = abi_bridge::objc_method<BOOL(BOOL)>(
-    renderer, "refreshAnimated:"
-);
-BOOL didRefresh = refresh.unsafe_invoke(YES);
-```
-
 ## Planned API
 
-These examples preview APIs that are **not implemented yet** and may change. Typed invocation is tracked in [#4](https://github.com/lynnswap/ABIBridge/issues/4) and [#5](https://github.com/lynnswap/ABIBridge/issues/5).
+These examples preview APIs that are **not implemented yet** and may change. Typed invocation is tracked in [#4](https://github.com/lynnswap/ABIBridge/issues/4) and [#6](https://github.com/lynnswap/ABIBridge/issues/6).
 
 ### Call a method on an existing instance
 

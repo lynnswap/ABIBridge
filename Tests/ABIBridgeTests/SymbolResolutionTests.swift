@@ -125,7 +125,7 @@ struct SymbolResolutionTests {
         #expect(symbol.source == .image)
     }
 
-    @Test func publicCoreModuleExportsItsCXXDeclarations() throws {
+    @Test func nativeModuleSupportsBackendFixtures() throws {
         let fixture = try FixtureLibrary(load: false)
         defer { fixture.cleanup() }
         let include = URL(fileURLWithPath: #filePath)

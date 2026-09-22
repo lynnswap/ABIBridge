@@ -187,9 +187,9 @@ private:
 
 /// Synchronous access to the shared native symbol resolver.
 ///
-/// Link the ABIBridgeCore Swift package product; it includes the MachOKit-backed
-/// implementation. Resolution and cache clearing are thread-safe. Copies share
-/// their runtime; separately constructed instances own independent caches.
+/// Internal helper for ABIBridge and its native fixtures. The supported
+/// consumer API is the Swift ABIBridge module. Resolution and cache clearing
+/// are thread-safe; copies share a runtime, while new instances own caches.
 class Runtime final {
 public:
     Runtime() : handle_(ABICreateSymbolRuntime(), ABIReleaseSymbolRuntime) {}
