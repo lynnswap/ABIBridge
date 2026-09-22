@@ -122,10 +122,7 @@ final class SymbolIndex {
         let needle = declaration.language == .cxx
             && owner?.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) != nil
             && !substitutions.contains(owner ?? "") ? owner : nil
-        let module = declaration.name.components(separatedBy: ".").first
-        let swiftNeedle = declaration.language == .swift && module != "Swift"
-            && module?.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) != nil ? module : nil
-        let scope = Scope(language: declaration.language, owner: swiftNeedle ?? needle)
+        let scope = Scope(language: declaration.language, owner: needle)
         if decoded[scope] == nil {
             var index: [[UInt8]: [IndexedSymbol]] = [:]
             for symbol in symbols {

@@ -69,6 +69,12 @@ Use `.path(executableURL)` instead of `.framework(named:)` to select a particula
 
 See the [DocC catalog](Sources/ABIBridge/ABIBridge.docc/ABIBridge.md) for API contracts and [CONTRIBUTING.md](CONTRIBUTING.md) for build and test instructions.
 
+## Acknowledgements
+
+ABIBridge's symbol resolution relies on [MachOKit](https://github.com/p-x9/MachOKit) for reading Mach-O images and dyld shared caches. Its parsing support provides the foundation for this package.
+
+Thank you to [p-x9](https://github.com/p-x9) and the [MachOKit contributors](https://github.com/p-x9/MachOKit/graphs/contributors) for building and sharing that foundation.
+
 ## License
 
 MIT License. Copyright (c) 2026 Kazuki Nakashima.

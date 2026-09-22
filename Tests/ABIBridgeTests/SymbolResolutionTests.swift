@@ -99,6 +99,36 @@ struct SymbolResolutionTests {
         #expect(symbol.source == .image)
     }
 
+    @Test func resolvesCompressedSwiftModuleNames() async throws {
+        let fixture = try FixtureLibrary(swiftModule: "FooFoo")
+        defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        let symbol = try await runtime.resolve(
+            .init(name: "FooFoo.echo() -> ()", language: .swift),
+            in: .path(fixture.libraryURL)
+        )
+        #expect(symbol.source == .image)
+    }
+
+    @Test func publicCoreModuleExportsItsCXXDeclarations() throws {
+        let fixture = try FixtureLibrary(load: false)
+        defer { fixture.cleanup() }
+        let include = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/ABIBridgeCore/include")
+        let client = fixture.directory.appendingPathComponent("consumer.mm")
+        try """
+        @import ABIBridgeCore;
+        static_assert(abi_bridge::image_identity{1, 2, 3}.load_generation == 3);
+        """.write(to: client, atomically: true, encoding: .utf8)
+        try FixtureLibrary.run([
+            "--sdk", "macosx", "clang++", "-std=c++20", "-fmodules", "-fcxx-modules",
+            "-fmodule-map-file=" + include.appendingPathComponent("module.modulemap").path,
+            "-fmodules-cache-path=" + fixture.directory.appendingPathComponent("ModuleCache").path,
+            "-I", include.path, "-fsyntax-only", client.path,
+        ])
+    }
+
     @Test func unloadingInvalidatesTheNativeGeneration() async throws {
         let fixture = try FixtureLibrary()
         defer { fixture.cleanup() }
@@ -130,13 +160,13 @@ private final class FixtureLibrary {
     let namespace: String
     private var handle: UnsafeMutableRawPointer?
 
-    init(namespace: String? = nil, load: Bool = true) throws {
+    init(namespace: String? = nil, load: Bool = true, swiftModule: String? = nil) throws {
         self.namespace = namespace ?? "Fixture_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
         directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         libraryURL = directory.appendingPathComponent("fixture.dylib")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let source = directory.appendingPathComponent("fixture.cpp")
-        try """
+        let source = directory.appendingPathComponent(swiftModule == nil ? "fixture.cpp" : "fixture.swift")
+        let cxxSource = """
         #include <cstdint>
         namespace \(self.namespace) {
         int counter = 42;
@@ -155,18 +185,34 @@ private final class FixtureLibrary {
             if (kind == 1) return reinterpret_cast<uintptr_t>(&\(self.namespace)::counter);
             return *reinterpret_cast<uintptr_t *>(&\(self.namespace)::object) - 2 * sizeof(void *);
         }
-        """.write(to: source, atomically: true, encoding: .utf8)
+        """
+        if let swiftModule {
+            #if arch(arm64)
+            let target = "arm64-apple-macosx15.4"
+            #else
+            let target = "x86_64-apple-macosx15.4"
+            #endif
+            try "public func echo() {}".write(to: source, atomically: true, encoding: .utf8)
+            try Self.run(["--sdk", "macosx", "swiftc", "-module-name", swiftModule, "-target", target,
+                          "-emit-library", source.path, "-o", libraryURL.path])
+        } else {
+            try cxxSource.write(to: source, atomically: true, encoding: .utf8)
+            try Self.run(["--sdk", "macosx", "clang++", "-std=c++20", "-mmacosx-version-min=15.4",
+                          "-dynamiclib", source.path, "-o", libraryURL.path])
+        }
+        if load { try self.load() }
+    }
+
+    static func run(_ arguments: [String]) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
         // XCTest injects loader paths for its own Xcode. A child compiler must
         // resolve its own libraries, even when xcode-select points elsewhere.
         process.environment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("DYLD_") }
-        process.arguments = ["--sdk", "macosx", "clang++", "-std=c++20", "-mmacosx-version-min=15.4",
-                             "-dynamiclib", source.path, "-o", libraryURL.path]
+        process.arguments = arguments
         try process.run()
         process.waitUntilExit()
         try #require(process.terminationStatus == 0)
-        if load { try self.load() }
     }
 
     func load() throws {
