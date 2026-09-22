@@ -1,0 +1,10 @@
+module ABIBridgeCore {
+    header "ABIBridgeCore.h"
+    export *
+
+    module CXX {
+        requires cplusplus
+        header "ABIBridge/ABIBridge.hpp"
+        export *
+    }
+}

@@ -21,10 +21,13 @@ let package = Package(
         .library(name: "ABIBridgeCore", targets: ["ABIBridgeCore"]),
         .library(name: "ABIBridgeObjCXX", targets: ["ABIBridgeObjCXX"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/p-x9/MachOKit.git", exact: "0.52.2"),
+    ],
     targets: [
         .target(
             name: "ABIBridge",
-            dependencies: ["ABIBridgeCore"],
+            dependencies: ["ABIBridgeCore", .product(name: "MachOKit", package: "MachOKit")],
             swiftSettings: strictSwiftSettings
         ),
         .target(

@@ -1,37 +1,79 @@
 # ABIBridge
 
-A native ABI bridge for Apple platforms, with Swift, C++, and Objective-C++ interfaces.
+Resolve native symbols by source-level name from Swift, with a C++ and Objective-C++ foundation.
 
 ## Requirements
 
 - iOS 18.4+, macOS 15.4+, visionOS 2.4+, watchOS 11.4+, or tvOS 18.4+
 - Xcode on macOS with Swift 6.3+ and C++20 support
 
-## Current capabilities
+## Installation
 
-This initial package provides native declaration, image identity, ownership, and call-plan model types. Symbol lookup and invocation are planned and are not yet implemented.
+Add this Swift package dependency and the `ABIBridge` product to your target:
 
-| Product | Interface |
-| --- | --- |
-| `ABIBridge` | Swift model types |
-| `ABIBridgeCore` | C++ model types in `abi_bridge` |
-| `ABIBridgeObjCXX` | Objective-C++ bridge target |
-
-These models describe caller-provided contracts. Constructing a model does not validate a native address, keep an image or object alive, or prove that an ABI is compatible.
-
-## Validation
-
-CI runs macOS tests and generic iOS, visionOS, watchOS, and tvOS builds using Xcode 26.6 on the `macos-26` runner for pull requests and pushes to `main`.
-
-Run package tests on macOS:
-
-```sh
-xcodebuild test \
-  -scheme ABIBridge-Package \
-  -destination 'platform=macOS,arch=arm64'
+```swift
+.package(url: "https://github.com/lynnswap/ABIBridge.git", branch: "main")
 ```
 
-Build for each Apple platform with the corresponding generic destination. A successful build establishes SDK compatibility; native invocation behavior will need its own runtime tests as those features are added.
+## Quick start
+
+### Find a function without specifying its library
+
+Search the process's loaded images:
+
+```swift
+import ABIBridge
+
+let runtime = ABIRuntime.shared
+let symbol = try await runtime.resolve(
+    NativeDeclaration(name: "getpid", language: .c)
+)
+print(symbol.image.path)
+```
+
+### Resolve C++ and Swift declarations without mangled names
+
+For an already-loaded framework named `Example` that defines these declarations:
+
+```swift
+let add = try await runtime.resolve(
+    NativeDeclaration(name: "Example::Math::add(int, int)", language: .cxx),
+    in: .framework(named: "Example")
+)
+
+let refresh = try await runtime.resolve(
+    NativeDeclaration(name: "Example.Renderer.refresh() -> ()", language: .swift),
+    in: .framework(named: "Example")
+)
+```
+
+### Reuse an image for several lookups
+
+Obtain an image once and reuse its cached index:
+
+```swift
+let images = try await runtime.images(
+    matching: .framework(named: "Example")
+)
+if let image = images.first {
+    let start = try await runtime.resolve(
+        NativeDeclaration(name: "ExampleStart", language: .c), in: image
+    )
+    let stop = try await runtime.resolve(
+        NativeDeclaration(name: "ExampleStop", language: .c), in: image
+    )
+}
+```
+
+Use `.path(executableURL)` instead of `.framework(named:)` to select a particular loaded binary. Lookups do not load missing frameworks. Typed native invocation is being developed separately.
+
+See the [DocC catalog](Sources/ABIBridge/ABIBridge.docc/ABIBridge.md) for API contracts and [CONTRIBUTING.md](CONTRIBUTING.md) for build and test instructions.
+
+## Acknowledgements
+
+ABIBridge's symbol resolution relies on [MachOKit](https://github.com/p-x9/MachOKit) for reading Mach-O images and dyld shared caches. Its parsing support provides the foundation for this package.
+
+Thank you to [p-x9](https://github.com/p-x9) and the [MachOKit contributors](https://github.com/p-x9/MachOKit/graphs/contributors) for building and sharing that foundation.
 
 ## License
 
