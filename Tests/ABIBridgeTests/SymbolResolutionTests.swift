@@ -13,7 +13,9 @@ struct SymbolResolutionTests {
         let path = fixture.libraryURL.path
         let runtime = ABIRuntime()
         try await withThrowingTaskGroup(of: Int.self) { group in
+            let (started, signal) = AsyncStream<Void>.makeStream()
             group.addTask {
+                defer { signal.finish() }
                 var count = 0
                 while !Task.isCancelled {
                     guard let handle = dlopen(path, RTLD_NOW | RTLD_LOCAL) else {
@@ -21,10 +23,16 @@ struct SymbolResolutionTests {
                     }
                     dlclose(handle)
                     count += 1
+                    if count == 1 { signal.yield(()); signal.finish() }
                     // Let the query acquire dyld's unfair lock between cycles.
                     try? await Task.sleep(for: .microseconds(100))
                 }
                 return count
+            }
+            var startup = started.makeAsyncIterator()
+            guard await startup.next() != nil else {
+                try await group.waitForAll()
+                throw NSError(domain: "ABIBridgeTests.Loader", code: 2)
             }
             for _ in 0..<8 {
                 await runtime.removeCachedResults()
