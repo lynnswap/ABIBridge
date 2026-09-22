@@ -134,12 +134,12 @@ public struct NativeMethod<Result, each Argument> {
     /// - Throws: An invocation error for a failed value conversion or unexpected
     ///   nil result. Objective-C and C++ exceptions are not translated.
     @unsafe public func unsafeInvoke(_ values: repeat each Argument) throws -> Result {
-        var storage: [ObjCValueStorage] = []
+        var storage: [NativeValueStorage] = []
         for (codec, value) in repeat (each arguments, each values) {
             storage.append(try codec.encode(value))
         }
         let addresses = storage.map { UnsafeRawPointer($0.address) }
-        let output = ObjCValueStorage(size: result.size, alignment: result.alignment)
+        let output = NativeValueStorage(size: result.size, alignment: result.alignment)
         return try withExtendedLifetime(storage) {
             var error: NSError?
             let success = addresses.withUnsafeBufferPointer {

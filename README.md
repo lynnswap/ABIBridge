@@ -1,6 +1,6 @@
 # ABIBridge
 
-Resolve native Swift, C, and C++ symbols by source-level name, and call Objective-C methods with Swift types and values.
+Resolve native symbols by source-level name and call C, C++, and Objective-C code with Swift types and values.
 
 ## Requirements
 
@@ -44,6 +44,27 @@ let refresh = try await object.method(
     as: ((Bool) -> Bool).self
 )
 let didRefresh = try unsafe refresh.unsafeInvoke(true)
+```
+
+### Call C and C++ functions with Swift types
+
+```swift
+let processID = try await runtime.cFunction(
+    named: "getpid",
+    as: (() -> Int32).self
+)
+let pid = try unsafe processID.unsafeInvoke()
+```
+
+For an already-loaded framework defining a C-compatible C++ function:
+
+```swift
+let add = try await runtime.cxxFunction(
+    named: "Example::Math::add(int, int)",
+    as: ((Int32, Int32) -> Int32).self,
+    in: .framework(named: "Example")
+)
+let sum = try unsafe add.unsafeInvoke(20, 22)
 ```
 
 ### Find a function without specifying its library
@@ -94,13 +115,13 @@ if let image = images.first {
 }
 ```
 
-Use `.path(executableURL)` instead of `.framework(named:)` to select a particular loaded binary. Lookups do not load missing frameworks. Typed invocation for Swift and C++ declarations is being developed separately.
+Use `.path(executableURL)` instead of `.framework(named:)` to select a particular loaded binary. Lookups do not load missing frameworks. Typed invocation for Swift declarations is being developed separately.
 
 See the [documentation](https://lynnswap.github.io/ABIBridge/documentation/abibridge/) for API contracts and [CONTRIBUTING.md](CONTRIBUTING.md) for build and test instructions.
 
 ## Planned API
 
-These examples preview APIs that are **not implemented yet** and may change. Typed invocation is tracked in [#4](https://github.com/lynnswap/ABIBridge/issues/4) and [#6](https://github.com/lynnswap/ABIBridge/issues/6).
+These examples preview APIs that are **not implemented yet** and may change. Swift invocation is tracked in [#28](https://github.com/lynnswap/ABIBridge/issues/28) and [#29](https://github.com/lynnswap/ABIBridge/issues/29); custom native value adapters are tracked in [#6](https://github.com/lynnswap/ABIBridge/issues/6).
 
 ### Call a Swift method on an existing instance
 
@@ -136,19 +157,6 @@ let stop = try await rendererType.method(
 
 try start.unsafeInvoke(on: renderer)
 try stop.unsafeInvoke(on: renderer)
-```
-
-### Call C++ from Swift
-
-Use a source-level declaration and a Swift function type:
-
-```swift
-let add = try await runtime.cxxFunction(
-    named: "Example::Math::add(int, int)",
-    as: ((Int32, Int32) -> Int32).self
-)
-
-let result = try add.unsafeInvoke(20, 22)
 ```
 
 ## Acknowledgements
