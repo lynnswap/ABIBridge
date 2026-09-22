@@ -14,9 +14,13 @@
 #include <unistd.h>
 #include <vector>
 
-namespace ABIBridgeFixture {
-struct LargeResult { long words[8]; };
-}
+#include "../../FixtureTypes.hpp"
+
+struct ABIBridgeLocalCounter {
+    int value;
+    int add(int delta);
+};
+int ABIBridgeLocalCounter::add(int delta) { return value += delta; }
 
 static bool unloadCallbackRan = false;
 static void onLibraryUnload() {
@@ -120,6 +124,55 @@ int main(int argc, char** argv) {
             assert(consume.unsafe_invoke(std::move(input)) == "native value");
             assert(input == "consumed");
 
+            auto addValue = runtime.cxx_method<int(int)>(
+                abi_bridge::declaration("ABIBridgeFixture::Counter::add(int)"), scope);
+            auto current = runtime.cxx_method<int() const>(
+                abi_bridge::declaration("ABIBridgeFixture::Counter::current() const"), scope);
+            ABIBridgeFixture::Counter counter{40};
+            assert(addValue.unsafe_invoke(&counter, 2) == 42);
+            assert(current.unsafe_invoke(&counter) == 42);
+            auto reference = runtime.cxx_method<int&()>(
+                abi_bridge::declaration("ABIBridgeFixture::Counter::reference()"), scope);
+            assert(&reference.unsafe_invoke(&counter) == &counter.value);
+            auto describe = runtime.cxx_method<std::string(std::string) const>(
+                abi_bridge::declaration("ABIBridgeFixture::Counter::describe(" + stringType + ") const"), scope);
+            assert(describe.unsafe_invoke(&counter, "value: ") == "value: 42");
+            auto memberLarge = runtime.cxx_method<ABIBridgeFixture::LargeResult() const>(
+                abi_bridge::declaration("ABIBridgeFixture::Counter::large() const"), scope);
+            assert(memberLarge.unsafe_invoke(&counter).words[7] == 49);
+
+            int extra = 3;
+            auto many = runtime.cxx_method<double(int, int, int, int, int, int, int, int, int, int, double, const int&) const>(
+                abi_bridge::declaration("ABIBridgeFixture::Counter::many(int, int, int, int, int, int, int, int, int, int, double, int const&) const"), scope);
+            assert(many.unsafe_invoke(&counter, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0.5, extra) == 50.0);
+
+            int destroyed = 0;
+            std::weak_ptr<ABIBridgeFixture::Combined> weakOwner;
+            {
+                auto owner = std::shared_ptr<ABIBridgeFixture::Combined>(
+                    new ABIBridgeFixture::Combined{}, [&](auto* object) { ++destroyed; delete object; });
+                owner->value = 40;
+                weakOwner = owner;
+                auto* receiver = static_cast<ABIBridgeFixture::Counter*>(owner.get());
+                assert(static_cast<void*>(receiver) != static_cast<void*>(owner.get()));
+                auto alias = std::shared_ptr<ABIBridgeFixture::Counter>(owner, receiver);
+                auto bound = addValue.bind(alias);
+                auto getter = current.bind(std::shared_ptr<const ABIBridgeFixture::Counter>(alias));
+                owner.reset();
+                alias.reset();
+                assert(!weakOwner.expired());
+                auto copy = bound;
+                assert(copy.unsafe_invoke(2) == 42);
+                assert(getter.unsafe_invoke() == 42);
+            }
+            assert(weakOwner.expired() && destroyed == 1);
+            try {
+                addValue.bind(std::shared_ptr<ABIBridgeFixture::Counter>{});
+                assert(false && "An empty shared pointer cannot bind a receiver");
+            } catch (const abi_bridge::resolution_error& error) {
+                assert(error.code() == ABIFailureInvalidRequest);
+            }
+
             auto large = runtime.cxx_function<ABIBridgeFixture::LargeResult(long)>(
                 abi_bridge::declaration("ABIBridgeFixture::large(long)"), scope);
             auto result = large.unsafe_invoke(35);
@@ -167,5 +220,32 @@ int main(int argc, char** argv) {
     }
     runtime.remove_cached_results();
     assert(unloadCallbackRan);
+
+    // Assignment must release the old receiver while its method image is still
+    // loaded, since a receiver's destructor may itself live in that image.
+    void* reloaded = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+    assert(reloaded);
+    bool receiverDestroyed = false;
+    auto oldBinding = [&] {
+        auto method = runtime.cxx_method<int(int)>(
+            abi_bridge::declaration("ABIBridgeFixture::Counter::add(int)"), scope);
+        auto owner = std::shared_ptr<ABIBridgeFixture::Counter>(
+            new ABIBridgeFixture::Counter{40}, [&](auto* object) {
+                void* held = dlopen(path.c_str(), RTLD_NOW | RTLD_NOLOAD);
+                assert(held && "Receiver destruction requires the old code image");
+                assert(dlclose(held) == 0);
+                receiverDestroyed = true;
+                delete object;
+            });
+        return method.bind(owner);
+    }();
+    auto local = runtime.cxx_method<int(int)>(
+        abi_bridge::declaration("ABIBridgeLocalCounter::add(int)"))
+        .bind(std::make_shared<ABIBridgeLocalCounter>(ABIBridgeLocalCounter{0}));
+    assert(dlclose(reloaded) == 0);
+    runtime.remove_cached_results();
+    oldBinding = local;
+    assert(receiverDestroyed);
+    assert(oldBinding.unsafe_invoke(2) == 2);
     std::cout << "Native consumer passed: C/C++, references, values, image lifetime, concurrent resolution.\n";
 }

@@ -32,6 +32,7 @@ print(symbol.image.path)
 ### Native invocation
 
 - <doc:NativeFunctions>
+- <doc:NativeMethods>
 
 ### Image lifetime
 
