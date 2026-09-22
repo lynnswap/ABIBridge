@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# macos-26 is an arm64 runner; Xcode 26.6 includes Swift 6.3 and all five SDKs.
+env:
+  DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+
+jobs:
+  macos-tests:
+    name: macOS tests
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcrun swift --version
+      - name: Check whitespace and manifest
+        run: |
+          git diff --check HEAD^ HEAD
+          xcrun swift package dump-package
+      - name: Test package
+        run: >-
+          xcodebuild test
+          -scheme ABIBridge-Package
+          -destination 'platform=macOS,arch=arm64'
+          -derivedDataPath "$RUNNER_TEMP/DerivedData"
+
+  platform-builds:
+    name: Build (${{ matrix.platform }})
+    runs-on: macos-26
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [iOS, visionOS, watchOS, tvOS]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcrun swift --version
+      - name: Build package products
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: >-
+          xcodebuild build
+          -scheme ABIBridge-Package
+          -destination "generic/platform=$PLATFORM"
+          -derivedDataPath "$RUNNER_TEMP/DerivedData"
+          CODE_SIGNING_ALLOWED=NO

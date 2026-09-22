@@ -21,6 +21,8 @@ These models describe caller-provided contracts. Constructing a model does not v
 
 ## Validation
 
+CI runs macOS tests and generic iOS, visionOS, watchOS, and tvOS builds using Xcode 26.6 on the `macos-26` runner for pull requests and pushes to `main`.
+
 Run package tests on macOS:
 
 ```sh
