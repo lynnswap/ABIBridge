@@ -68,11 +68,57 @@ private struct RejectingSwiftPoint: ABIBridgeValue {
     static func nativeValue(from value: Self) throws -> NativeValue { try .init(copying: value.value, as: abiType) }
 }
 
+@frozen public struct SwiftMemberPointer {
+    public var pointer: UnsafeMutablePointer<Int64>
+    @inline(never) public mutating func advance() { pointer += 1 }
+}
+
+private final class SwiftPointerAllocation {
+    let pointer: UnsafeMutablePointer<Int64>
+    init() {
+        pointer = .allocate(capacity: 2)
+        pointer.initialize(to: 10)
+        pointer.advanced(by: 1).initialize(to: 20)
+    }
+    deinit {
+        pointer.deinitialize(count: 2)
+        pointer.deallocate()
+    }
+}
+private struct SwiftPointerView: ABIBridgeValue {
+    static let abiType = NativeType.pointer
+    let storage: NativeValue
+    init(nativeValue: NativeValue) { storage = nativeValue }
+    static func nativeValue(from value: Self) -> NativeValue { value.storage }
+}
+
 public struct SwiftMemberGeneric<Value> {
     public let value: Value
 }
 
 struct SwiftMemberInvocationTests {
+    @Test func writebackKeepsReceiverOwnedResourcesAlive() async throws {
+        let type = try await ABIRuntime.shared.swiftType(
+            named: "ABIBridgeTests.SwiftMemberPointer", as: SwiftPointerView.self
+        )
+        let advance = try await type.method(named: "advance()", as: (() -> Void).self, mutating: true)
+        weak var observed: SwiftPointerAllocation?
+        do {
+            var value: SwiftPointerView = {
+                let allocation = SwiftPointerAllocation()
+                observed = allocation
+                return SwiftPointerView(nativeValue: NativeValue(type: .pointer, retaining: allocation) {
+                    $0.baseAddress!.storeBytes(of: allocation.pointer, as: UnsafeMutablePointer<Int64>.self)
+                })
+            }()
+            try unsafe advance.unsafeInvoke(on: &value)
+            try #require(observed != nil)
+            let pointer = try unsafe value.storage.read(as: UnsafeMutablePointer<Int64>.self)
+            #expect(pointer.pointee == 20)
+        }
+        #expect(observed == nil)
+    }
+
     @Test func largeValueReceiversUseIndirectSwiftContext() async throws {
         let type = try await ABIRuntime.shared.swiftType(named: "ABIBridgeTests.SwiftMemberLarge")
         let sum = try await type.method(named: "sum(_:)", as: ((Int64) -> Int64).self)

@@ -67,7 +67,7 @@ public struct NativeSwiftMethod<Result, each Argument>: Sendable {
         }
         if invoked && self.receiver.isMutating && self.receiver.mode != .object {
             do {
-                let value = try self.receiver.codec.decode(storage, (symbol, type))
+                let value = try self.receiver.codec.decode(storage, (symbol, type, storage))
                 guard let updated = value as? Receiver else {
                     throw ABIInvocationError.incompatibleValue(
                         expected: String(reflecting: Receiver.self), actual: String(reflecting: Swift.type(of: value))
