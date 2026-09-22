@@ -7,6 +7,10 @@ let package = Package(
     dependencies: [.package(path: "../..")],
     targets: [
         .executableTarget(
+            name: "SwiftConsumer",
+            dependencies: [.product(name: "ABIBridge", package: "ABIBridge")]
+        ),
+        .executableTarget(
             name: "DynamicConsumer",
             dependencies: [.product(name: "ABIBridge", package: "ABIBridge")],
             linkerSettings: [.unsafeFlags(["-Xlinker", "-export_dynamic"])]

@@ -19,7 +19,7 @@ xcodebuild test \
   -destination 'platform=macOS,arch=arm64'
 ```
 
-The symbol tests compile temporary C++ libraries with the installed Xcode toolchain. They test real symbol lookup, image retention, and unload/reload behavior. Objective-C invocation tests use Swift and Objective-C fixtures to check typed arguments, forwarding, caller isolation, returned-object ownership, initializer behavior, and signature failures.
+The symbol tests compile temporary C++ libraries with the installed Xcode toolchain. They test real symbol lookup, image retention, and unload/reload behavior. Objective-C invocation tests use Swift and Objective-C fixtures to check typed arguments, forwarding, caller isolation, returned-object ownership, initializer behavior, and signature failures. Typed C/C++ invocation tests additionally cover standard C value layouts, twelve mixed arguments, optional pointers, concurrent handle reuse, and invocation after the original loader reference is released.
 
 Run the native backend fixtures to verify linking and ABI behavior through the `ABIBridge` product:
 
@@ -27,7 +27,7 @@ Run the native backend fixtures to verify linking and ABI behavior through the `
 bash scripts/test-native-consumer.sh
 ```
 
-This fixture checks C/C++ calls, instance methods, receiver ownership, multiple-inheritance subobjects, reference arguments, non-trivial and indirect results, register/stack argument passing, concurrent resolution, and image retention after the original loader reference is released. Objective-C++ consumers additionally check selector signatures, ARC and manual-reference-counting lifetimes, initializer ownership, and block arguments/results. The dynamic C consumer checks libffi-backed calls with zero and twelve arguments, narrow scalar results, pointers, nested aggregate layouts and returns, retained type descriptions, and concurrent preparation/invocation. CI runs these consumers after the macOS package tests.
+This fixture checks C/C++ calls, instance methods, receiver ownership, multiple-inheritance subobjects, reference arguments, non-trivial and indirect results, register/stack argument passing, concurrent resolution, and image retention after the original loader reference is released. Objective-C++ consumers additionally check selector signatures, ARC and manual-reference-counting lifetimes, initializer ownership, and block arguments/results. The dynamic C consumer checks libffi-backed calls with zero and twelve arguments, narrow scalar results, pointers, nested aggregate layouts and returns, retained type descriptions, and concurrent preparation/invocation. A separate Swift consumer links the public product and invokes C/C++ functions after releasing its original loader reference. CI runs these consumers after the macOS package tests.
 
 Build for another Apple platform by changing the generic destination:
 

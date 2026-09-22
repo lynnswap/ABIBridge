@@ -42,6 +42,30 @@ struct SymbolResolutionTests {
         #expect(rebuilt.image.identity == image.identity)
     }
 
+    @Test func typedCXXFunctionsRetainImagesAndReuseScopes() async throws {
+        let fixture = try FixtureLibrary()
+        defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        let name = "\(fixture.namespace)::add(int, int)"
+        let function = try await runtime.cxxFunction(
+            named: name, as: ((Int32, Int32) -> Int32).self, in: .path(fixture.libraryURL)
+        )
+        let image = function.symbol.image
+        let again = try await runtime.cxxFunction(
+            named: name, as: ((Int32, Int32) -> Int32).self, in: image
+        )
+        let address = try await runtime.cFunction(
+            named: "ABIFixtureAddress", as: ((Int32) -> UInt).self, in: image
+        )
+        let expectedAddress = try fixture.address(kind: 0)
+        #expect(try unsafe address.unsafeInvoke(0) == expectedAddress)
+        #expect(function.symbol.image.identity == again.symbol.image.identity)
+        fixture.close()
+        await runtime.removeCachedResults()
+        #expect(try unsafe function.unsafeInvoke(20, 22) == 42)
+        #expect(try unsafe again.unsafeInvoke(12, 30) == 42)
+    }
+
     @Test func missingWrongKindAndAmbiguousDeclarationsRemainDistinct() async throws {
         let first = try FixtureLibrary()
         defer { first.cleanup() }
@@ -203,18 +227,19 @@ private final class FixtureLibrary {
             return *reinterpret_cast<uintptr_t *>(&\(self.namespace)::object) - 2 * sizeof(void *);
         }
         """
+        #if arch(arm64)
+        let architecture = "arm64"
+        #else
+        let architecture = "x86_64"
+        #endif
         if let swiftModule {
-            #if arch(arm64)
-            let target = "arm64-apple-macosx15.4"
-            #else
-            let target = "x86_64-apple-macosx15.4"
-            #endif
+            let target = "\(architecture)-apple-macosx15.4"
             try "public func echo() {}".write(to: source, atomically: true, encoding: .utf8)
             try Self.run(["--sdk", "macosx", "swiftc", "-module-name", swiftModule, "-target", target,
                           "-emit-library", source.path, "-o", libraryURL.path])
         } else {
             try cxxSource.write(to: source, atomically: true, encoding: .utf8)
-            try Self.run(["--sdk", "macosx", "clang++", "-std=c++20", "-mmacosx-version-min=15.4",
+            try Self.run(["--sdk", "macosx", "clang++", "-arch", architecture, "-std=c++20", "-mmacosx-version-min=15.4",
                           "-dynamiclib", source.path, "-o", libraryURL.path])
         }
         if load { try self.load() }
