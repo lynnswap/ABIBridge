@@ -1,0 +1,171 @@
+#include <ABIBridge/Invocation.h>
+#include <ffi.h>
+#include <ptrauth.h>
+#include <algorithm>
+#include <climits>
+#include <cstddef>
+#include <cstring>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace {
+struct TypeStorage {
+    ffi_type *scalar = nullptr;
+    ffi_type aggregate{0, 0, FFI_TYPE_STRUCT, nullptr};
+    std::vector<std::shared_ptr<TypeStorage>> fields;
+    std::vector<ffi_type*> elements;
+    std::vector<size_t> offsets;
+
+    ffi_type *native() { return scalar ? scalar : &aggregate; }
+    size_t size() { return native()->type == FFI_TYPE_VOID ? 0 : native()->size; }
+};
+
+void fail(ABIResolutionFailure **error, int code, const char *message) {
+    if (error) *error = ABICreateResolutionFailure(code, message);
+}
+
+ffi_type *scalarType(int32_t kind) {
+    switch (kind) {
+        case ABIValueVoid: return &ffi_type_void;
+        case ABIValueUInt8: return &ffi_type_uint8;
+        case ABIValueInt8: return &ffi_type_sint8;
+        case ABIValueUInt16: return &ffi_type_uint16;
+        case ABIValueInt16: return &ffi_type_sint16;
+        case ABIValueUInt32: return &ffi_type_uint32;
+        case ABIValueInt32: return &ffi_type_sint32;
+        case ABIValueUInt64: return &ffi_type_uint64;
+        case ABIValueInt64: return &ffi_type_sint64;
+        case ABIValueFloat: return &ffi_type_float;
+        case ABIValueDouble: return &ffi_type_double;
+        case ABIValuePointer: return &ffi_type_pointer;
+        default: return nullptr;
+    }
+}
+}
+
+struct ABIValueType {
+    std::shared_ptr<TypeStorage> storage;
+};
+
+struct ABICallInterface {
+    ffi_cif cif{};
+    std::shared_ptr<TypeStorage> result;
+    std::vector<std::shared_ptr<TypeStorage>> parameters;
+    std::vector<ffi_type*> nativeParameters;
+};
+
+ABIValueType *ABICreateScalarType(int32_t kind, ABIResolutionFailure **error) {
+    if (error) *error = nullptr;
+    auto *scalar = scalarType(kind);
+    if (!scalar) {
+        fail(error, ABIFailureUnsupportedDeclaration, "Unknown scalar C ABI type.");
+        return nullptr;
+    }
+    auto storage = std::make_shared<TypeStorage>();
+    storage->scalar = scalar;
+    return new ABIValueType{std::move(storage)};
+}
+
+ABIValueType *ABICreateStructType(
+    const ABIValueType *const *fields, size_t count, ABIResolutionFailure **error)
+{
+    if (error) *error = nullptr;
+    if (!fields || !count) {
+        fail(error, ABIFailureInvalidRequest, "A C aggregate requires field types.");
+        return nullptr;
+    }
+    auto storage = std::make_shared<TypeStorage>();
+    for (size_t index = 0; index < count; ++index) {
+        if (!fields[index] || fields[index]->storage->native()->type == FFI_TYPE_VOID) {
+            fail(error, ABIFailureInvalidRequest, "A C aggregate field must have a value type.");
+            return nullptr;
+        }
+        storage->fields.push_back(fields[index]->storage);
+        storage->elements.push_back(fields[index]->storage->native());
+    }
+    storage->elements.push_back(nullptr);
+    storage->aggregate.elements = storage->elements.data();
+    storage->offsets.resize(count);
+    // libffi otherwise initializes aggregate layout lazily during preparation.
+    // Complete it before publishing a type shared by concurrent interfaces.
+    if (ffi_get_struct_offsets(FFI_DEFAULT_ABI, &storage->aggregate, storage->offsets.data()) != FFI_OK) {
+        fail(error, ABIFailureUnsupportedDeclaration, "The aggregate cannot be represented by the platform C ABI.");
+        return nullptr;
+    }
+    return new ABIValueType{std::move(storage)};
+}
+
+void ABIReleaseValueType(ABIValueType *type) { delete type; }
+size_t ABIValueTypeSize(const ABIValueType *type) { return type->storage->size(); }
+size_t ABIValueTypeAlignment(const ABIValueType *type) { return type->storage->native()->alignment; }
+size_t ABIValueTypeFieldCount(const ABIValueType *type) { return type->storage->offsets.size(); }
+size_t ABIValueTypeFieldOffset(const ABIValueType *type, size_t index) { return type->storage->offsets[index]; }
+
+ABICallInterface *ABICreateCCallInterface(
+    const ABIValueType *result, const ABIValueType *const *parameters,
+    size_t count, ABIResolutionFailure **error)
+{
+    if (error) *error = nullptr;
+    if (!result || (count && !parameters) || count > UINT_MAX) {
+        fail(error, ABIFailureInvalidRequest, "A result and a representable parameter list are required.");
+        return nullptr;
+    }
+    auto interface = std::make_unique<ABICallInterface>();
+    interface->result = result->storage;
+    for (size_t index = 0; index < count; ++index) {
+        if (!parameters[index] || parameters[index]->storage->native()->type == FFI_TYPE_VOID) {
+            fail(error, ABIFailureInvalidRequest, "A parameter must have a non-void value type.");
+            return nullptr;
+        }
+        interface->parameters.push_back(parameters[index]->storage);
+        interface->nativeParameters.push_back(parameters[index]->storage->native());
+    }
+    if (ffi_prep_cif(&interface->cif, FFI_DEFAULT_ABI, static_cast<unsigned int>(count),
+                    interface->result->native(), interface->nativeParameters.data()) != FFI_OK) {
+        fail(error, ABIFailureUnsupportedDeclaration, "The signature cannot be represented by the platform C ABI.");
+        return nullptr;
+    }
+    return interface.release();
+}
+
+void ABIReleaseCallInterface(ABICallInterface *interface) { delete interface; }
+
+ABIUnmanagedFunction ABIUnsafeFunctionAtAddress(const void *address) {
+    if (!address) return nullptr;
+    void *pointer = const_cast<void*>(address);
+#if __has_feature(ptrauth_calls)
+    pointer = ptrauth_sign_unauthenticated(
+        pointer, ptrauth_key_function_pointer,
+        ptrauth_function_pointer_type_discriminator(void(void)));
+#endif
+    return reinterpret_cast<ABIUnmanagedFunction>(pointer);
+}
+
+bool ABIUnsafeInvokeCCallInterface(
+    ABICallInterface *interface, ABIUnmanagedFunction function,
+    void *result, void *const *arguments, ABIResolutionFailure **error)
+{
+    if (error) *error = nullptr;
+    if (!interface || !function || (interface->result->size() && !result)
+        || (!interface->parameters.empty() && !arguments)) {
+        fail(error, ABIFailureInvalidRequest, "A call interface, function, and value storage are required.");
+        return false;
+    }
+    std::vector<void*> values;
+    values.reserve(interface->parameters.size());
+    for (size_t index = 0; index < interface->parameters.size(); ++index) {
+        if (!arguments[index]) {
+            fail(error, ABIFailureInvalidRequest, "Each parameter requires value storage.");
+            return false;
+        }
+        values.push_back(arguments[index]);
+    }
+    const size_t size = interface->result->size();
+    const size_t capacity = std::max(size, sizeof(ffi_arg));
+    std::vector<std::max_align_t> storage(
+        (capacity + sizeof(std::max_align_t) - 1) / sizeof(std::max_align_t));
+    ffi_call(&interface->cif, function, size ? storage.data() : nullptr, values.data());
+    if (size) std::memcpy(result, storage.data(), size);
+    return true;
+}

@@ -18,3 +18,5 @@ xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" ObjCConsumer
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" MRCConsumer
+xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
+    --scratch-path "$task_root/.build/native-consumer" DynamicConsumer

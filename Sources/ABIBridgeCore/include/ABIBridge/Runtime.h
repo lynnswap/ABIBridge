@@ -9,7 +9,6 @@ extern "C" {
 
 typedef struct ABISymbolRuntime ABISymbolRuntime;
 typedef struct ABIResolvedSymbol ABIResolvedSymbol;
-typedef struct ABIResolutionFailure ABIResolutionFailure;
 
 /// Values accepted by ABIResolveSymbol's language argument.
 enum {
@@ -55,6 +54,8 @@ const void *ABIResolvedSymbolAddress(const ABIResolvedSymbol *symbol);
 /// Copies the image identity. The path is borrowed until symbol is released.
 void ABIResolvedSymbolImage(const ABIResolvedSymbol *symbol, ABIImageInfo *image);
 
+/// Creates an owned failure, copying its UTF-8 message.
+ABIResolutionFailure *ABICreateResolutionFailure(int32_t code, const char *message);
 /// Returns a stable failure category.
 int32_t ABIResolutionFailureCode(const ABIResolutionFailure *error);
 /// Returns a UTF-8 message borrowed until error is released.
