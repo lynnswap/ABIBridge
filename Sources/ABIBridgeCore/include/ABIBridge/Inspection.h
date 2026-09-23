@@ -115,6 +115,11 @@ void ABIRuntimeRemoveCachedResults(ABISymbolRuntime *runtime);
 ABIResolvedSymbol *ABIResolveSymbol(
     ABISymbolRuntime *runtime, const char *name, int32_t language, int32_t kind,
     int32_t scope, const char *selector, ABIResolutionFailure **error);
+/// Acquires another owned reference to a live non-null symbol. The input
+/// reference remains owned by its caller. Release each acquired reference with
+/// ABIReleaseResolvedSymbol, even when the returned pointer equals the input.
+/// Keep the input reference alive for this call; concurrent retains are allowed.
+ABIResolvedSymbol *ABIRetainResolvedSymbol(ABIResolvedSymbol *symbol);
 /// Releases a non-null owned symbol and its image reference. A copied handle
 /// pointer is borrowed, not another owned reference. Do not race final release
 /// with operations using the same symbol.

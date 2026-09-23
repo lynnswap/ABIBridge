@@ -47,8 +47,7 @@ int main(int argc, char **argv) {
                 {"vtable for ABIBridgeFixture::VirtualCounter", language::cxx, symbol_kind::vtable},
                 image_selector::path(argv[1]));
             generation = table.image().load_generation;
-            owner = [[CXXInspectionOwner alloc] initWithSymbol:std::move(table)];
-            assert(!table);
+            owner = [[CXXInspectionOwner alloc] initWithSymbol:resolved_symbol::retain(table.native_handle())];
             assert(dlclose(library) == 0);
             runtime.remove_cached_results();
         }

@@ -79,6 +79,21 @@ private:
 /// A symbol retaining its image. Copies share ownership of the same result.
 class resolved_symbol final {
 public:
+    /// Takes ownership of one acquired, non-null C symbol reference. The caller
+    /// must not release that reference after this call, including if allocation
+    /// throws. Copies of the wrapper share its ownership.
+    static resolved_symbol adopt(ABIResolvedSymbol* owned) {
+        return resolved_symbol(owned);
+    }
+    /// Acquires independent ownership from a borrowed, live, non-null C symbol.
+    /// Keep the borrowed reference alive throughout this call.
+    static resolved_symbol retain(ABIResolvedSymbol* borrowed) {
+        return adopt(ABIRetainResolvedSymbol(borrowed));
+    }
+    /// Borrows the C handle. Keep this wrapper or another owning copy alive
+    /// during use; call ABIRetainResolvedSymbol to acquire independent ownership.
+    ABIResolvedSymbol* native_handle() const noexcept { return handle_.get(); }
+
     /// False after a move. Other operations require a live handle.
     explicit operator bool() const noexcept { return bool(handle_); }
 

@@ -27,6 +27,24 @@ struct NativeRuntimeTests {
         #expect(ABIResolvedSymbolAddress(symbol) != nil)
     }
 
+    @Test func swiftAndNativeHandoffsPreserveSymbolMetadata() async throws {
+        let original = try await ABIRuntime().resolve(.init(name: "getpid", language: .c))
+        let exported = unsafe original.copyNativeHandle()
+        let retained = try #require(ABIRetainResolvedSymbol(exported))
+        ABIReleaseResolvedSymbol(exported)
+        let restored = unsafe ResolvedSymbol(retainingNativeHandle: retained)
+        ABIReleaseResolvedSymbol(retained)
+
+        #expect(restored.declaration == original.declaration)
+        #expect(restored.image.identity == original.image.identity)
+        #expect(restored.sectionRange == original.sectionRange)
+        #expect(restored.source == original.source)
+        let pid = unsafe restored.withUnsafeAddress {
+            unsafeBitCast($0, to: (@convention(c) () -> Int32).self)()
+        }
+        #expect(pid == ProcessInfo.processInfo.processIdentifier)
+    }
+
     @Test func dynamicCInterfaceIsCallableFromSwift() async throws {
         var failure: OpaquePointer?
         let resultType = try #require(ABICreateScalarType(Int32(ABIValueInt32), &failure))

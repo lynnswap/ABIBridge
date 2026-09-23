@@ -100,7 +100,10 @@ int main(int argc, char **argv) {
     assert(strlen(image.path) > 0);
 
     const int *borrowed = ABIResolvedSymbolAddress(counter);
+    ABIResolvedSymbol *retained_counter = ABIRetainResolvedSymbol(counter);
     ABIReleaseResolvedSymbol(counter);
+    assert(*(const int *)ABIResolvedSymbolAddress(retained_counter) == 42);
+    ABIReleaseResolvedSymbol(retained_counter);
     ABIReleaseResolvedSymbol(table);
     // An independent lease protects addresses but does not own a symbol's path.
     assert(*borrowed == 42);

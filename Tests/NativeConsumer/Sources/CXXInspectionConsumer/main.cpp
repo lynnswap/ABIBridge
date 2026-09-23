@@ -20,6 +20,7 @@ int main(int argc, char **argv) {
     const declaration tableQuery("vtable for ABIBridgeFixture::VirtualCounter", language::cxx, symbol_kind::vtable);
     const declaration counterQuery("ABIBridgeFixture::counter", language::cxx, symbol_kind::data);
     std::optional<resolved_symbol> retained;
+    std::optional<resolved_symbol> handedOff;
     std::optional<image_lease> lease;
     std::optional<resolution_error> savedError;
     image_description copiedDescription{};
@@ -94,6 +95,9 @@ int main(int argc, char **argv) {
         for (auto& thread : threads) thread.join();
 
         retained = runtime.resolve(counterQuery, scope);
+        auto acquired = ABIRetainResolvedSymbol(retained->native_handle());
+        auto adopted = resolved_symbol::adopt(acquired);
+        handedOff = resolved_symbol::retain(adopted.native_handle());
         assert(dlclose(library) == 0);
         runtime.remove_cached_results();
     }
@@ -109,6 +113,8 @@ int main(int argc, char **argv) {
     retained.reset();
     assert(*counter == 42); // The independent lease still keeps the image loaded.
     lease.reset();
+    assert(*static_cast<const int*>(handedOff->unsafe_address()) == 42);
+    handedOff.reset();
     assert(!image_lease::acquire(copiedDescription.identity.load_generation));
     std::cout << "C++ inspection consumer passed: public wrappers, copy/move ownership, errors, and leases.\n";
 }
