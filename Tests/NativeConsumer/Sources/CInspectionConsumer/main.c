@@ -6,6 +6,15 @@
 
 int main(int argc, char **argv) {
     assert(argc == 2);
+    unsigned char source[] = {1, 2, 3, 4};
+    unsigned char copied[3] = {0};
+    ABIMemoryReadResult read = ABIReadMemory((uintptr_t)(source + 1), 3, copied);
+    assert(read.status == ABIMemoryReadComplete && read.byteCount == 3);
+    assert(read.systemError == 0 && memcmp(copied, source + 1, 3) == 0);
+    assert(ABIReadMemory(UINTPTR_MAX, 1, copied).status == ABIMemoryReadInvalidRange);
+    assert(ABIReadMemory(0, 1, copied).status == ABIMemoryReadFailed);
+    assert(ABIReadMemory(0, 1, NULL).status == ABIMemoryReadInvalidRange);
+    assert(ABIReadMemory(UINTPTR_MAX, 0, NULL).status == ABIMemoryReadComplete);
     ABISymbolRuntime *shared = ABICopySharedSymbolRuntime();
     ABIRuntimeRemoveCachedResults(shared);
     ABIReleaseSymbolRuntime(shared);

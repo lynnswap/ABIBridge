@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ABIBridge/Inspection.h>
+#include <ABIBridge/Memory.hpp>
 #include <array>
 #include <cstdint>
 #include <cstddef>

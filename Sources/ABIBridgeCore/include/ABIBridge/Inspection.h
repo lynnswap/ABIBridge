@@ -1,6 +1,7 @@
 #ifndef ABIBRIDGE_INSPECTION_H
 #define ABIBRIDGE_INSPECTION_H
 
+#include <ABIBridge/Memory.h>
 #include <stddef.h>
 #include <stdint.h>
 
