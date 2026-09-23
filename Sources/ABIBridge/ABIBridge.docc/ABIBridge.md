@@ -19,7 +19,7 @@ print(symbol.image.path)
 
 ## Topics
 
-### Native inspection from C and Objective-C++
+### Native inspection from C, C++, and Objective-C++
 
 - <doc:NativeInspection>
 

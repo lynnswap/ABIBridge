@@ -220,7 +220,7 @@ int main() {
             assert(error.code() == ABIFailureInvalidRequest);
         }
 
-        auto processID = abi_bridge::Runtime::current().c_function<int()>("getpid");
+        auto processID = abi_bridge::InvocationRuntime::current().c_function<int()>("getpid");
         assert(processID.unsafe_invoke() > 0);
     }
     assert(liveResults == 0);

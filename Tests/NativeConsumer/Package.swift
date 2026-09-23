@@ -7,6 +7,22 @@ let package = Package(
     dependencies: [.package(path: "../..")],
     targets: [
         .executableTarget(
+            name: "CXXInspectionConsumer",
+            dependencies: [.product(name: "ABIBridge", package: "ABIBridge")]
+        ),
+        .executableTarget(
+            name: "ObjCXXInspectionConsumer",
+            dependencies: [.product(name: "ABIBridge", package: "ABIBridge")],
+            cxxSettings: [.unsafeFlags(["-fobjc-arc"])],
+            linkerSettings: [.linkedFramework("Foundation")]
+        ),
+        .executableTarget(
+            name: "MRCXXInspectionConsumer",
+            dependencies: [.product(name: "ABIBridge", package: "ABIBridge")],
+            cxxSettings: [.unsafeFlags(["-fno-objc-arc"])],
+            linkerSettings: [.linkedFramework("Foundation")]
+        ),
+        .executableTarget(
             name: "CInspectionConsumer",
             dependencies: [.product(name: "ABIBridge", package: "ABIBridge")]
         ),

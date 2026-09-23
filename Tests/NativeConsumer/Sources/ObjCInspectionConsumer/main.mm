@@ -37,7 +37,7 @@ int main(int argc, char **argv) {
         const auto generation = image.generation;
         __weak InspectionOwner *observed;
         {
-            InspectionOwner *owner = [[InspectionOwner alloc] initWithSymbol:table];
+            __attribute__((objc_precise_lifetime)) InspectionOwner *owner = [[InspectionOwner alloc] initWithSymbol:table];
             observed = owner;
             assert(dlclose(library) == 0);
             ABIRuntimeRemoveCachedResults(runtime);
