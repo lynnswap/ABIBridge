@@ -32,6 +32,9 @@ public struct NativeSwiftMethod<Result, each Argument>: Sendable {
 
     /// Calls a class member or nonmutating value member.
     ///
+    /// Consuming members transfer an independent receiver copy. The consuming
+    /// option selected during lookup must match the actual Swift declaration.
+    ///
     /// - Parameters:
     ///   - receiver: An instance or adapter matching the declaring native type.
     ///   - values: Explicit method arguments.
@@ -87,10 +90,21 @@ public struct NativeSwiftMethod<Result, each Argument>: Sendable {
     @unsafe private func invoke(
         _ storage: NativeValueStorage, didInvoke: (() -> Void)? = nil, _ values: repeat each Argument
     ) throws -> Result {
-        try unsafe call.unsafeInvoke(
-            symbol: symbol, context: receiver.context(for: storage),
+        let context = try unsafe receiver.context(for: storage)
+        // A consuming class method gets its own +1, including when the receiver
+        // was supplied by a raw-pointer adapter rather than a managed codec.
+        let consumedObject = receiver.isConsuming && receiver.mode == .object
+            ? Unmanaged<AnyObject>.fromOpaque(context!).retain() : nil
+        var invoked = false
+        defer { if !invoked { consumedObject?.release() } }
+        return try unsafe call.unsafeInvoke(
+            symbol: symbol, context: context,
             trailingValue: receiver.mode == .value ? storage : nil,
-            retaining: (symbol, type, storage), didInvoke: didInvoke, repeat each values
+            retaining: (symbol, type, storage), didInvoke: {
+                invoked = true
+                if receiver.isConsuming && receiver.mode != .object { storage.relinquishValue() }
+                didInvoke?()
+            }, repeat each values
         )
     }
 }

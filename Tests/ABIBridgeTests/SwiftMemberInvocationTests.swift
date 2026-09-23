@@ -2,6 +2,10 @@ import ABIBridge
 import Foundation
 import Testing
 
+public enum SwiftMemberFailure: Error { case rejected }
+
+@inline(never) public func swiftMemberTypedFailure() throws(SwiftMemberFailure) -> Int { throw .rejected }
+
 public class SwiftMemberRenderer {
     public var text: String
     public var object: SwiftMemberRenderer?
@@ -15,6 +19,12 @@ public class SwiftMemberRenderer {
         guard !nonemptyText.isEmpty else { return nil }
         self.init(text: nonemptyText)
     }
+    public convenience init(borrowedChild: borrowing SwiftMemberRenderer) {
+        self.init(child: copy borrowedChild)
+    }
+    @inline(never) public consuming func consumeText() -> Int { text.count }
+    @inline(never) public consuming func consumeReturningNil() -> UnsafeRawPointer? { nil }
+    @inline(never) public func typedFailure() throws(SwiftMemberFailure) -> Int { throw .rejected }
     @inline(never) public func render(_ value: Int) -> Int { value + text.count }
     public static var standard: String { "standard" }
     @inline(never) public static func decorate(_ text: String) -> String { text + "!" }
@@ -22,10 +32,17 @@ public class SwiftMemberRenderer {
 
 public final class SwiftMemberDerived: SwiftMemberRenderer {}
 
+prefix operator ~~~
+postfix operator ~~~
+
 @frozen public struct SwiftMemberPoint: BitwiseCopyable {
     public var value: Int64
     public init(value: Int64) { self.value = value }
     @inline(never) public func read(_ value: Int64) -> Int64 { self.value + value }
+    @inline(never) public consuming func consumeValue() -> Int64 { value }
+    @inline(never) public static func >(lhs: Self, rhs: Self) -> Bool { lhs.value > rhs.value }
+    @inline(never) public static prefix func ~~~(value: Self) -> Self { Self(value: value.value + 1) }
+    @inline(never) public static postfix func ~~~(value: Self) -> Self { Self(value: value.value - 1) }
     @inline(never) public mutating func change(_ value: Int64) { self.value = value }
     @inline(never) public mutating func changeReturningNil(_ value: Int64) -> UnsafeRawPointer? {
         self.value = value
@@ -58,6 +75,10 @@ extension SwiftMemberMode: ABIBridgeValue {
     public init(nativeValue: NativeValue) throws { self = try unsafe nativeValue.read(as: Self.self) }
     public static func nativeValue(from value: Self) throws -> NativeValue { try .init(copying: value, as: abiType) }
     @inline(never) public func sum(_ extra: Int64) -> Int64 { a + b + c + d + e + extra }
+    @inline(never) public consuming func consumeAfterChanging(_ value: Int64) -> Int64 {
+        a = value
+        return sum(0)
+    }
 }
 
 private enum SwiftWritebackRejection: Error { case rejected }
@@ -114,6 +135,82 @@ extension NativeValue {
 }
 
 struct SwiftMemberInvocationTests {
+    @MainActor @Test func consumingReceiversTransferAnIndependentCopy() async throws {
+        let runtime = ABIRuntime()
+        let type = try await runtime.swiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
+        let consume = try await type.method(named: "consumeText()", as: (() -> Int).self, consuming: true)
+        let invalidResult = try await type.method(
+            named: "consumeReturningNil() -> Swift.Optional<Swift.UnsafeRawPointer>",
+            as: (() -> UnsafeRawPointer).self, consuming: true
+        )
+        var value: SwiftMemberRenderer? = .init(text: String(repeating: "x", count: 100))
+        weak let observed = value
+        #expect(try unsafe consume.unsafeInvoke(on: value!) == 100)
+        #expect(throws: ABIInvocationError.self) { try unsafe invalidResult.unsafeInvoke(on: value!) }
+        #expect(value?.text.count == 100)
+        let rawType = try await runtime.swiftType(named: type.name, as: UnsafeRawPointer.self, in: type.image)
+        let rawConsume = try await rawType.method(named: "consumeText()", as: (() -> Int).self, consuming: true)
+        let pointer = UnsafeRawPointer(Unmanaged.passUnretained(value!).toOpaque())
+        #expect(try unsafe rawConsume.unsafeInvoke(on: pointer) == 100)
+        var bound: NativeBoundSwiftMethod<Int>? = try await runtime.object(value!).method(
+            named: "consumeText()", as: (() -> Int).self, consuming: true
+        )
+        value = nil
+        #expect(observed != nil)
+        #expect(try unsafe bound!.unsafeInvoke() == 100)
+        bound = nil
+        #expect(observed == nil)
+
+        let pointType = try await runtime.swiftType(named: "ABIBridgeTests.SwiftMemberPoint")
+        let take = try await pointType.method(named: "consumeValue()", as: (() -> Int64).self, consuming: true)
+        let point = SwiftMemberPoint(value: 42)
+        #expect(try unsafe take.unsafeInvoke(on: point) == 42 && point.value == 42)
+        let largeType = try await runtime.swiftType(named: "ABIBridgeTests.SwiftMemberLarge")
+        let change = try await largeType.method(
+            named: "consumeAfterChanging(_:)", as: ((Int64) -> Int64).self, consuming: true
+        )
+        let large = SwiftMemberLarge(a: 1, b: 2, c: 3, d: 4, e: 5)
+        #expect(try unsafe change.unsafeInvoke(on: large, 10) == 24 && large.a == 1)
+    }
+
+    @Test func typedThrowsAndBorrowedInitializerArgumentsRequireAdapters() async throws {
+        let runtime = ABIRuntime()
+        let type = try await runtime.swiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
+        let member = "typedFailure() throws(ABIBridgeTests.SwiftMemberFailure) -> Swift.Int"
+        _ = try await runtime.resolve(.init(name: type.name + "." + member, language: .swift), in: type.image)
+        do {
+            _ = try await type.method(named: member, as: (() -> Int).self)
+            Issue.record("Typed-throwing members need an error-result adapter")
+        } catch ABIResolutionError.unsupportedDeclaration {}
+        do {
+            _ = try await runtime.swiftFunction(
+                named: "ABIBridgeTests.swiftMemberTypedFailure() throws(ABIBridgeTests.SwiftMemberFailure) -> Swift.Int",
+                as: (() -> Int).self, in: type.image
+            )
+            Issue.record("Typed-throwing free functions need an error-result adapter")
+        } catch ABIResolutionError.unsupportedDeclaration {}
+        let initializer = "init(borrowedChild: __shared ABIBridgeTests.SwiftMemberRenderer) -> ABIBridgeTests.SwiftMemberRenderer"
+        _ = try await runtime.resolve(.init(name: type.name + ".__allocating_" + initializer, language: .swift), in: type.image)
+        do {
+            _ = try await type.initializer(named: initializer, as: ((SwiftMemberRenderer) -> SwiftMemberRenderer).self)
+            Issue.record("Borrowing initializers must not transfer argument ownership")
+        } catch ABIResolutionError.unsupportedDeclaration {}
+    }
+
+    @Test func operatorsResolveByLabelsAndReportFixityAmbiguity() async throws {
+        let type = try await ABIRuntime.shared.swiftType(named: "ABIBridgeTests.SwiftMemberPoint")
+        let greater = try await type.staticMethod(named: ">(_:_:)", as: ((SwiftMemberPoint, SwiftMemberPoint) -> Bool).self)
+        #expect(try unsafe greater.unsafeInvoke(.init(value: 42), .init(value: 1)))
+        do {
+            _ = try await type.staticMethod(named: "~~~(_:)", as: ((SwiftMemberPoint) -> SwiftMemberPoint).self)
+            Issue.record("Both prefix and postfix implementations match")
+        } catch ABIResolutionError.ambiguousDeclaration {}
+        let prefix = try await type.staticMethod(named: "~~~ prefix(_:)", as: ((SwiftMemberPoint) -> SwiftMemberPoint).self)
+        let postfix = try await type.staticMethod(named: "~~~ postfix(_:)", as: ((SwiftMemberPoint) -> SwiftMemberPoint).self)
+        #expect(try unsafe prefix.unsafeInvoke(.init(value: 10)).value == 11)
+        #expect(try unsafe postfix.unsafeInvoke(.init(value: 10)).value == 9)
+    }
+
     @Test func membersFromAnotherModulesExtensionResolveWithoutItsQualifier() async throws {
         let imported = try await ABIRuntime.shared.object(NSObject()).method(
             named: "bridgeImportedExtension(_:)", as: ((Int) -> Int).self

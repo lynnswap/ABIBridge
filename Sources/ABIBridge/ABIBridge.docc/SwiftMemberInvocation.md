@@ -29,7 +29,7 @@ try unsafe stop.unsafeInvoke(on: renderer)
 
 Type lookup obtains the nominal descriptor and requests complete metadata. It rejects generic descriptors before calling an accessor that would need additional metadata or witness arguments. Type handles share the runtime's symbol indexes, retain their defining image, and remain valid after removeCachedResults().
 
-Methods capture the selected implementation. Lookup prefers declarations in the type's defining image, then searches extension-qualified implementations in loaded images, and then walks superclass declarations. Calls do not perform virtual redispatch. Generic superclass declarations require a separate adapter.
+Methods capture the selected implementation. Lookup prefers declarations in the type's defining image, then searches extension-qualified implementations in loaded images, and then walks superclass declarations in each superclass's defining image. Calls do not perform virtual redispatch. Generic superclass declarations require a separate adapter.
 
 ## Initializers and static members
 
@@ -44,7 +44,7 @@ let standard = try await type.staticGetter(named: "standard", as: String.self)
 let value = try unsafe standard.unsafeInvoke()
 ```
 
-Allocating class initializers and static members receive the type metadata automatically. Initializers transfer ordinary arguments to the callee. A failable class initializer can use an optional class result. Initializers are resolved on the requested type; inherited allocation behavior must have its own compiler-generated initializer entry.
+Allocating class initializers and static members receive the type metadata automatically. Initializers transfer ordinary arguments to the callee. Explicitly borrowed initializer arguments (`__shared` in the demangled declaration) require a native adapter. A failable class initializer can use an optional class result. Initializers are resolved on the requested type; inherited allocation behavior must have its own compiler-generated initializer entry.
 
 ## Property accessors
 
@@ -79,11 +79,13 @@ The as: representation is useful for an unimportable native struct or enum. Clas
 
 Small nonmutating value receivers use ordinary trailing components. Indirect and mutating value receivers use the Swift context register. Specify mutating: true for mutating value methods/getters, and use an inout receiver. Value setters default to mutating; an explicitly nonmutating setter can opt out.
 
+For a `consuming` method, pass `consuming: true` during lookup. This transfers an independent receiver copy and leaves the caller's value usable. Consuming and mutating conventions are mutually exclusive, and symbol names do not distinguish them. Custom value adapters must describe a trivial native value; nontrivial resource destruction requires a native adapter.
+
 Writeback preserves the originating resource storage and implementation images without retaining a chain of intermediate value copies. After a native mutation, receiver writeback is attempted even if result conversion fails. If both conversions fail, NativeSwiftWritebackError preserves both errors. A writeback failure leaves the caller's receiver value unchanged, while other native side effects may already have occurred.
 
 ## Names, scopes, and limits
 
-Label-only method names obtain canonical parameter/result names from their metatypes. Use a complete relative declaration when a wrapper has a different native name, such as `transform(Example.NativeValue) -> Example.NativeValue`. An accessor can similarly use `property.getter : Example.NativeValue` or `property.setter : Example.NativeValue`.
+Label-only method names obtain canonical parameter/result names from their metatypes. Use a complete relative declaration when a wrapper has a different native name, such as `transform(Example.NativeValue) -> Example.NativeValue`. Operator names can omit fixity, such as `>(_:_:)`. If prefix and postfix implementations both match, lookup reports ambiguity; use `~~~ prefix(_:)` or a complete declaration to choose one. An accessor can similarly use `property.getter : Example.NativeValue` or `property.setter : Example.NativeValue`.
 
 Framework, executable-path, and retained-image overloads select already-loaded images. They do not load missing frameworks. The method or type handle keeps its implementation alive, and custom wrapper results retain their call's owners. Raw pointers remain borrowed.
 

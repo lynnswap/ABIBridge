@@ -46,12 +46,12 @@ public actor NativeSwiftType {
         self.resolver = resolver
     }
 
-    func receiverPlan(mutating isMutating: Bool) throws -> SwiftReceiverPlan {
+    func receiverPlan(mutating isMutating: Bool, consuming isConsuming: Bool = false) throws -> SwiftReceiverPlan {
         if cachedReceiver == nil {
             cachedReceiver = try SwiftReceiverCodec.make(for: representation ?? metadata)
         }
         return try SwiftReceiverPlan(
-            codec: cachedReceiver!, metadata: metadata, isMutating: isMutating,
+            codec: cachedReceiver!, metadata: metadata, isMutating: isMutating, isConsuming: isConsuming,
             validateClass: representation != nil && representation != metadata
         )
     }
@@ -68,15 +68,11 @@ public actor NativeSwiftType {
     ) throws -> ResolvedSymbol {
         var ownerName = name
         var ownerClass: AnyClass? = metadata as? AnyClass
-        var ownerImage: NativeImage? = image
+        var ownerImage = image
         while true {
             let request = try declaration(ownerName)
             do {
-                if let ownerImage { return try resolveDeclaredMember(request, in: ownerImage) }
-                do { return try resolver.resolve(request, in: .automatic) }
-                catch ABIResolutionError.declarationNotFound {
-                    return try resolver.resolveSwiftExtension(request)
-                }
+                return try resolveDeclaredMember(request, in: ownerImage)
             } catch ABIResolutionError.declarationNotFound {
                 guard let current = ownerClass, let parent = class_getSuperclass(current) else {
                     throw ABIResolutionError.declarationNotFound(request)
@@ -86,7 +82,7 @@ public actor NativeSwiftType {
                     throw ABIResolutionError.unsupportedDeclaration("Generic superclass members require a native adapter.")
                 }
                 ownerClass = parent
-                ownerImage = nil
+                ownerImage = try swiftClassImage(parent, named: ownerName, resolver: resolver)
             }
         }
     }
@@ -95,27 +91,31 @@ public actor NativeSwiftType {
     ///
     /// The signature excludes self. Mutating value members require an explicit
     /// mutating flag because their source-level symbol does not encode it.
+    /// Consuming members similarly require consuming: true; the call transfers
+    /// a receiver copy and preserves the caller's original value.
     /// - Parameters:
     ///   - name: A relative label-only or complete member declaration.
     ///   - signature: Explicit arguments and result.
     ///   - isMutating: Whether a value receiver is passed inout.
+    ///   - isConsuming: Whether the member consumes its receiver copy.
     /// - Returns: A reusable method with an explicit receiver.
     /// - Throws: A lookup, representation, or preparation error.
     public func method<Result, each Argument>(
         named name: String, as signature: ((repeat each Argument) -> Result).Type,
-        mutating isMutating: Bool = false
+        mutating isMutating: Bool = false, consuming isConsuming: Bool = false
     ) throws -> NativeSwiftMethod<Result, repeat each Argument> {
         let symbol = try resolveMember { try swiftFunctionDeclaration(named: $0 + "." + name, as: signature) }
         return try NativeSwiftMethod(
             symbol: symbol, type: self,
-            receiver: receiverPlan(mutating: isMutating)
+            receiver: receiverPlan(mutating: isMutating, consuming: isConsuming)
         )
     }
     /// Resolves a concrete allocating initializer.
     ///
     /// Ordinary initializer arguments transfer ownership to the callee. The
     /// native metadata is supplied automatically, and the result uses the
-    /// requested Swift class or fixed-layout value adapter.
+    /// requested Swift class or fixed-layout value adapter. Explicitly borrowed
+    /// initializer parameters require a native adapter.
     /// - Parameters:
     ///   - name: The relative initializer name, such as init(text:).
     ///   - signature: Explicit arguments and constructed result.
@@ -132,6 +132,9 @@ public actor NativeSwiftType {
         let declaration = try swiftFunctionDeclaration(
             named: self.name + "." + member, as: signature, resultName: resultName
         )
+        guard !declaration.name.contains("__shared ") else {
+            throw ABIResolutionError.unsupportedDeclaration("Borrowing initializer arguments require a native adapter.")
+        }
         return try NativeSwiftFunction(
             symbol: resolveDeclaredMember(declaration, in: image), metadata: metadata, owner: self,
             consumesArguments: true
@@ -251,19 +254,24 @@ public actor NativeSwiftType {
 
 }
 
+private func swiftClassImage(_ type: AnyClass, named name: String, resolver: SymbolResolver) throws -> NativeImage {
+    guard let path = class_getImageName(type) else {
+        throw ABIResolutionError.declarationNotFound(
+            .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data)
+        )
+    }
+    let images = try resolver.images(matching: .path(URL(fileURLWithPath: String(cString: path))))
+    guard let image = images.first else { throw ABIResolutionError.imageNotLoaded }
+    return image
+}
+
 extension ABIRuntime {
     func swiftType(for objectType: AnyClass) throws -> NativeSwiftType {
         let name = try swiftFunctionTypeName(objectType)
         guard !name.contains("<") else {
             throw ABIResolutionError.unsupportedDeclaration("Generic Swift class members require a native adapter.")
         }
-        guard let path = class_getImageName(objectType) else {
-            throw ABIResolutionError.declarationNotFound(
-                .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data)
-            )
-        }
-        let images = try resolver.images(matching: .path(URL(fileURLWithPath: String(cString: path))))
-        guard let image = images.first else { throw ABIResolutionError.imageNotLoaded }
+        let image = try swiftClassImage(objectType, named: name, resolver: resolver)
         let key = SwiftTypeCacheKey(name: name, image: image.identity, representation: nil)
         if let cached = swiftTypes[key] { return cached }
         let type = NativeSwiftType(name: name, image: image, metadata: objectType,

@@ -7,6 +7,38 @@ import Testing
 
 @Suite(.serialized)
 struct SymbolResolutionTests {
+    @Test func inheritedSwiftMembersUseTheConcreteSuperclassImage() async throws {
+        let module = "Inheritance_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+        let source = """
+        import Foundation
+        @objc(\(module)_ParentA) public class Parent: NSObject {
+            public override init() { super.init() }
+            @inline(never) public func answer() -> Int { 42 }
+        }
+        @objc(\(module)_ChildA) public final class Child: Parent {}
+        """
+        let first = try FixtureLibrary(swiftModule: module, swiftSource: source)
+        defer { first.cleanup() }
+        let other = source.replacingOccurrences(of: "_ParentA", with: "_ParentB")
+            .replacingOccurrences(of: "_ChildA", with: "_ChildB")
+            .replacingOccurrences(of: "{ 42 }", with: "{ 7 }")
+        let second = try FixtureLibrary(swiftModule: module, swiftSource: other)
+        defer { second.cleanup() }
+        let runtime = ABIRuntime()
+        do {
+            _ = try await runtime.resolve(.init(name: module + ".Parent.answer() -> Swift.Int", language: .swift))
+            Issue.record("The parent source name exists in both images")
+        } catch ABIResolutionError.ambiguousDeclaration {}
+        let type = try await runtime.swiftType(named: module + ".Child", in: .path(first.libraryURL))
+        let initialize = try await type.initializer(named: "init()", as: (() -> AnyObject).self)
+        let child = try unsafe initialize.unsafeInvoke()
+        let method = try await type.method(named: "answer()", as: (() -> Int).self)
+        #expect(method.symbol.image.identity == type.image.identity)
+        #expect(try unsafe method.unsafeInvoke(on: child) == 42)
+        let bound = try await runtime.object(child).method(named: "answer()", as: (() -> Int).self)
+        #expect(try unsafe bound.unsafeInvoke() == 42)
+    }
+
     @Test func automaticLookupToleratesUnrelatedLoaderChurn() async throws {
         let fixture = try FixtureLibrary(load: false)
         defer { fixture.cleanup() }
@@ -237,7 +269,7 @@ private final class FixtureLibrary {
     let namespace: String
     private var handle: UnsafeMutableRawPointer?
 
-    init(namespace: String? = nil, load: Bool = true, swiftModule: String? = nil, threadLocal: Bool = false) throws {
+    init(namespace: String? = nil, load: Bool = true, swiftModule: String? = nil, swiftSource: String? = nil, threadLocal: Bool = false) throws {
         self.namespace = namespace ?? "Fixture_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
         directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         libraryURL = directory.appendingPathComponent("fixture.dylib")
@@ -272,7 +304,7 @@ private final class FixtureLibrary {
         #endif
         if let swiftModule {
             let target = "\(architecture)-apple-macosx15.4"
-            try "public func echo() {}".write(to: source, atomically: true, encoding: .utf8)
+            try (swiftSource ?? "public func echo() {}").write(to: source, atomically: true, encoding: .utf8)
             try Self.run(["--sdk", "macosx", "swiftc", "-module-name", swiftModule, "-target", target,
                           "-emit-library", source.path, "-o", libraryURL.path])
         } else {

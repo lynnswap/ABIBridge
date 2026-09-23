@@ -32,11 +32,17 @@ struct SwiftReceiverPlan: Sendable {
     let codec: SwiftReceiverCodec
     let mode: SwiftReceiverMode
     let isMutating: Bool
+    let isConsuming: Bool
     let expectedClass: AnyClass?
 
-    init(codec: SwiftReceiverCodec, metadata: Any.Type, isMutating: Bool, validateClass: Bool) throws {
+    init(codec: SwiftReceiverCodec, metadata: Any.Type, isMutating: Bool,
+         isConsuming: Bool, validateClass: Bool) throws {
+        guard !(isMutating && isConsuming) else {
+            throw ABIResolutionError.unsupportedDeclaration("Swift self cannot be both mutating and consuming.")
+        }
         self.codec = codec
         self.isMutating = isMutating
+        self.isConsuming = isConsuming
         if let objectType = metadata as? AnyClass {
             guard ABIValueTypeIsPointer(codec.type.handle) else {
                 throw ABIResolutionError.unsupportedDeclaration("A Swift class receiver requires a reference or pointer adapter.")

@@ -36,11 +36,14 @@ func swiftFunctionDeclaration<Result, each Argument>(
         }
     }
     let prefix = declaration.prefix { $0 != "(" }
-    guard prefix.last(where: { !$0.isWhitespace }) != ">", !declaration.contains(" async "),
-          !declaration.contains(" throws "), !declaration.contains("inout "),
+    let member = prefix.split(separator: ".").last ?? prefix
+    let generic = prefix.last(where: { !$0.isWhitespace }) == ">"
+        && member.contains { $0.isLetter || $0.isNumber || $0 == "_" }
+    guard !generic, !declaration.contains(" async "),
+          !declaration.contains(" throws "), !declaration.contains(" throws("), !declaration.contains("inout "),
           !declaration.contains("__owned ") else {
         throw ABIResolutionError.unsupportedDeclaration(
-            "Generic, async, throwing, inout and consuming Swift declarations require a native adapter."
+            "Generic signatures, async/throwing effects, and inout/consuming parameters require a native adapter."
         )
     }
     return NativeDeclaration(name: declaration, language: .swift)

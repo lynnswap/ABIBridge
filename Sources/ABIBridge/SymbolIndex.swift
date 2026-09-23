@@ -140,15 +140,27 @@ final class SymbolIndex {
             for symbol in symbols {
                 if let needle = scope.owner, !symbol.name.contains(needle) { continue }
                 guard let name = DeclarationKey.demangle(symbol.name, language: declaration.language) else { continue }
-                index[DeclarationKey.make(name), default: []].append(symbol)
-                if declaration.language == .swift, let unqualified = Self.extensionMemberName(name) {
-                    swiftExtensions[DeclarationKey.make(unqualified), default: []].append(symbol)
+                var names = [name]
+                if declaration.language == .swift, let alias = Self.operatorAlias(name) { names.append(alias) }
+                for name in names {
+                    index[DeclarationKey.make(name), default: []].append(symbol)
+                    if declaration.language == .swift, let unqualified = Self.extensionMemberName(name) {
+                        swiftExtensions[DeclarationKey.make(unqualified), default: []].append(symbol)
+                    }
                 }
             }
             decoded[scope] = index
         }
         let key = DeclarationKey.make(declaration.name)
         return extensionsOnly ? swiftExtensions[key] ?? [] : decoded[scope]?[key] ?? []
+    }
+
+    private static func operatorAlias(_ name: String) -> String? {
+        for token in [" infix(", " prefix(", " postfix("] {
+            guard let fixity = name.range(of: token) else { continue }
+            return String(name[..<fixity.lowerBound]) + "(" + name[fixity.upperBound...]
+        }
+        return nil
     }
 
     private static func extensionMemberName(_ name: String) -> String? {
