@@ -29,6 +29,7 @@ print(symbol.image.path)
 - ``ABIRuntime``
 - ``ImageSelector``
 - ``NativeDeclaration``
+- ``NativeSymbolRequest``
 - ``NativeLanguage``
 - ``NativeSymbolKind``
 - ``ResolvedSymbol``

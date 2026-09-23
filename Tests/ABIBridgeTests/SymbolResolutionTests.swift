@@ -11,6 +11,74 @@ import Testing
 
 @Suite(.serialized)
 struct SymbolResolutionTests {
+    @Test func batchLookupPreservesOrderFallbackAliasesAndLifetime() async throws {
+        let first = try FixtureLibrary()
+        let other = try FixtureLibrary()
+        defer { first.cleanup(); other.cleanup() }
+        let runtime = ABIRuntime()
+        let counter = NativeDeclaration(name: "\(first.namespace)::counter", language: .cxx, kind: .data)
+        let add = NativeDeclaration(name: "\(first.namespace)::add(int, int)", language: .cxx)
+        let missing = NativeDeclaration(name: "\(first.namespace)::missing()", language: .cxx)
+        let scope = ImageSelector.path(first.libraryURL)
+        let fallback: [ImageSelector] = [.path(first.directory.appendingPathComponent("absent")), .path(other.libraryURL), scope]
+        let requests: [NativeSymbolRequest] = [
+            .init(counter, in: fallback),
+            .init(missing, in: [scope]),
+            .init(add, alternatives: [.init(name: "\(first.namespace)::add( int,int )", language: .cxx)], in: [scope]),
+            .init(missing, alternatives: [counter], in: [scope]),
+            .init(counter, in: [])
+        ]
+        let results = await runtime.resolve(requests)
+        #expect(results.count == requests.count)
+        #expect(try results[0].get().declaration == counter)
+        do {
+            _ = try results[1].get()
+            Issue.record("A missing request must fail independently")
+        } catch ABIResolutionError.declarationNotFound(let declaration) {
+            #expect(declaration == missing)
+        }
+        #expect(try results[2].get().declaration == add)
+        #expect(try results[3].get().declaration == counter)
+        do {
+            _ = try results[4].get()
+            Issue.record("Empty scopes must not search all images")
+        } catch ABIResolutionError.imageNotLoaded {}
+        #expect(await runtime.resolve([NativeSymbolRequest]()).isEmpty)
+        let again = try await runtime.resolve(requests[0])
+        #expect(try results[0].get().image.identity == again.image.identity)
+        first.close()
+        other.close()
+        await runtime.removeCachedResults()
+        #expect(try unsafe results[0].get().withUnsafeAddress { $0.load(as: Int32.self) } == 42)
+    }
+
+    @Test func alternativesAndScopeFallbackDoNotHideInvalidOrAmbiguousMatches() async throws {
+        let first = try FixtureLibrary()
+        let second = try FixtureLibrary(namespace: first.namespace)
+        defer { first.cleanup(); second.cleanup() }
+        let runtime = ABIRuntime()
+        let scope = ImageSelector.path(first.libraryURL)
+        let add = NativeDeclaration(name: "\(first.namespace)::add(int, int)", language: .cxx)
+        let counter = NativeDeclaration(name: "\(first.namespace)::counter", language: .cxx, kind: .data)
+        let wrongKind = NativeDeclaration(name: counter.name, language: .cxx)
+        let requests: [NativeSymbolRequest] = [
+            .init(add, alternatives: [counter], in: [scope]),
+            .init(add, alternatives: [wrongKind], in: [scope, .path(second.libraryURL)]),
+            .init(add, in: [.automatic, scope])
+        ]
+        let results = await runtime.resolve(requests)
+        for index in [0, 2] {
+            do {
+                _ = try results[index].get()
+                Issue.record("Ambiguity must stop lookup")
+            } catch ABIResolutionError.ambiguousDeclaration {}
+        }
+        do {
+            _ = try results[1].get()
+            Issue.record("Invalid storage must stop lookup")
+        } catch ABIResolutionError.invalidAddress {}
+    }
+
     @Test func handedOffSymbolsOwnTheImageAfterOriginalOwnersRelease() async throws {
         let fixture = try FixtureLibrary()
         defer { fixture.cleanup() }

@@ -62,6 +62,48 @@ enum {
     ABIFailureOther = 11
 };
 
+/// One source-level declaration. The name is null-terminated UTF-8.
+typedef struct {
+    const char *name;
+    int32_t language;
+    int32_t kind;
+} ABIDeclaration;
+/// One loaded-image scope, using the ABIImage constants and selector spelling.
+typedef struct {
+    int32_t scope;
+    const char *selector;
+} ABIImageSelector;
+/// A requirement with aliases and ordered scopes. Empty scopes match no images.
+/// Arrays and their strings remain borrowed throughout ABIResolveSymbols.
+/// Null array pointers are accepted only when the corresponding count is zero.
+typedef struct {
+    ABIDeclaration declaration;
+    const ABIDeclaration *alternatives;
+    size_t alternativeCount;
+    const ABIImageSelector *imageScopes;
+    size_t imageScopeCount;
+} ABISymbolRequest;
+/// Exactly one owned symbol or failure for one input request.
+/// Release each non-null field with its matching release function.
+typedef struct {
+    ABIResolvedSymbol *symbol;
+    ABIResolutionFailure *failure;
+} ABISymbolResult;
+
+/// Resolves every request independently, preserving input order and partial
+/// success. The live runtime and count-element input/output arrays must remain
+/// valid throughout the call. At count zero, both array pointers may be null.
+/// Output fields are overwritten without releasing their previous references.
+///
+/// Scopes are tried in order only when an image or declaration is absent.
+/// Found aliases must agree on address and image generation; ambiguity and
+/// invalid storage stop fallback. Missing aliases are ignored. Invalid fields
+/// fail only their request. Image-scope results are reused within the batch,
+/// without claiming an atomic loader snapshot.
+void ABIResolveSymbols(
+    ABISymbolRuntime *runtime, const ABISymbolRequest *requests, size_t count,
+    ABISymbolResult *results);
+
 /// Copies the current catalog. The caller frees a non-null result with
 /// ABIFreeImageList. Returns null if the catalog/callback image cannot be
 /// initialized and retained; this operation has no detailed failure output.

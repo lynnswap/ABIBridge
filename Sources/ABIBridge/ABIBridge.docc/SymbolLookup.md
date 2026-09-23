@@ -38,6 +38,34 @@ Distinct definitions at the same lookup level produce `ABIResolutionError.ambigu
 
 Shared-cache files are optional lookup sources, selected using cache and image identity rather than a particular OS build number. Their presence and readability vary by platform and installation. Missing local symbol metadata can leave a declaration unresolved.
 
+## Resolve a group of requirements
+
+Use ``NativeSymbolRequest`` to describe a declaration, optional alternative spellings, and ordered image scopes. Pass several requests to `runtime.resolve(_:)` to receive one `Result` per input:
+
+```swift
+let requests: [NativeSymbolRequest] = [
+    .init(
+        .init(name: "Example::Renderer::refresh()", language: .cxx),
+        in: [.framework(named: "Example"), .framework(named: "ExampleSupport")]
+    ),
+    .init(.init(name: "Example::counter", language: .cxx, kind: .data),
+          in: [.framework(named: "Example")])
+]
+let results = await runtime.resolve(requests)
+for result in results {
+    switch result {
+    case .success(let symbol): print(symbol.image.path)
+    case .failure(let error): print(error)
+    }
+}
+```
+
+A single request can also be resolved with `try await runtime.resolve(request)`. The first scope containing a matching declaration wins. Later scopes are tried only when an image or declaration is absent. An empty scope array searches no images and reports `imageNotLoaded`.
+
+Use `alternatives:` for declarations expected to identify the same symbol. Missing spellings are ignored, including a missing primary declaration. Every found spelling in the selected scope must agree on both address and image generation. Distinct matches are ambiguous, and invalid storage stops lookup even if another spelling matched. The returned symbol records the first declaration that matched.
+
+Batch results preserve input order and partial success. An empty batch returns no results. Retained image lists are reused for repeated scopes within the batch, while declaration indexes use the runtime's existing cache. This is not an atomic snapshot of loader activity. Each successful result retains its image independently of the batch and runtime.
+
 ## Borrow an address
 
 Use `ResolvedSymbol.withUnsafeAddress` for a synchronous operation that requires the raw address. The closure keeps the containing image retained, but the pointer must not escape.
