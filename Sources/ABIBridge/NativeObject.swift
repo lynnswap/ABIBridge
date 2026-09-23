@@ -86,12 +86,13 @@ public final class NativeObject {
     /// - Parameters:
     ///   - name: The Swift property name or complete relative getter declaration.
     ///   - valueType: The result representation.
+    ///   - isConsuming: Whether the getter consumes a receiver copy.
     /// - Returns: A zero-argument bound method.
     /// - Throws: A lookup or representation error.
     public nonisolated(nonsending) func getter<Value>(
-        named name: String, as valueType: Value.Type
+        named name: String, as valueType: Value.Type, consuming isConsuming: Bool = false
     ) async throws -> NativeBoundSwiftMethod<Value> {
-        let method = try await swiftType().getter(named: name, as: valueType)
+        let method = try await swiftType().getter(named: name, as: valueType, consuming: isConsuming)
         return NativeBoundSwiftMethod(method: method, receiver: receiver!)
     }
 
@@ -101,12 +102,13 @@ public final class NativeObject {
     /// - Parameters:
     ///   - name: The Swift property name or complete relative setter declaration.
     ///   - valueType: The incoming representation.
+    ///   - isConsuming: Whether the setter also consumes a receiver copy.
     /// - Returns: A one-argument bound method.
     /// - Throws: A lookup or representation error.
     public nonisolated(nonsending) func setter<Value>(
-        named name: String, as valueType: Value.Type
+        named name: String, as valueType: Value.Type, consuming isConsuming: Bool = false
     ) async throws -> NativeBoundSwiftMethod<Void, Value> {
-        let method = try await swiftType().setter(named: name, as: valueType)
+        let method = try await swiftType().setter(named: name, as: valueType, consuming: isConsuming)
         return NativeBoundSwiftMethod(method: method, receiver: receiver!)
     }
 

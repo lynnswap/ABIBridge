@@ -77,9 +77,9 @@ try unsafe translate.unsafeInvoke(on: &point, 10)
 
 The as: representation is useful for an unimportable native struct or enum. Class references, known Swift values, and declared trivial value adapters use the representations described in <doc:SwiftFunctionInvocation>. The adapter must match the actual native value layout; metadata size alone does not establish a call ABI.
 
-Small nonmutating value receivers use ordinary trailing components. Indirect and mutating value receivers use the Swift context register. Specify mutating: true for mutating value methods/getters, and use an inout receiver. Value setters default to mutating; an explicitly nonmutating setter can opt out.
+Small nonmutating value receivers use ordinary trailing components. Indirect and mutating value receivers use the Swift context register. Specify mutating: true for mutating value methods/getters, and use an inout receiver. Value setters default to mutating unless consuming is true; an explicitly nonmutating setter can opt out with mutating: false.
 
-For a `consuming` method, pass `consuming: true` during lookup. This transfers an independent receiver copy and leaves the caller's value usable. Consuming and mutating conventions are mutually exclusive, and symbol names do not distinguish them. Custom value adapters must describe a trivial native value; nontrivial resource destruction requires a native adapter.
+For a `consuming` method, getter, or setter, pass `consuming: true` during lookup. Bound object methods and accessors expose the same option. This transfers an independent receiver copy and leaves the caller's value usable. Consuming and mutating conventions are mutually exclusive, and symbol names do not distinguish them. Custom value adapters must describe a trivial native value; nontrivial resource destruction requires a native adapter.
 
 Writeback preserves the originating resource storage and implementation images without retaining a chain of intermediate value copies. After a native mutation, receiver writeback is attempted even if result conversion fails. If both conversions fail, NativeSwiftWritebackError preserves both errors. A writeback failure leaves the caller's receiver value unchanged, while other native side effects may already have occurred.
 

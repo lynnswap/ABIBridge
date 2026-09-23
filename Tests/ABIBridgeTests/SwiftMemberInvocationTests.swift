@@ -9,6 +9,10 @@ public enum SwiftMemberFailure: Error { case rejected }
 public class SwiftMemberRenderer {
     public var text: String
     public var object: SwiftMemberRenderer?
+    public var consumedText: String {
+        consuming get { text }
+        consuming set { text = newValue }
+    }
     public nonisolated(unsafe) static var count: Int = 0
     public init(text: String) { self.text = text }
     public convenience init(child: SwiftMemberRenderer) {
@@ -37,6 +41,11 @@ postfix operator ~~~
 
 @frozen public struct SwiftMemberPoint: BitwiseCopyable {
     public var value: Int64
+    public nonisolated(unsafe) static var observedConsumedValue: Int64 = 0
+    public var consumedValue: Int64 {
+        consuming get { value }
+        consuming set { Self.observedConsumedValue = value + newValue; value = newValue }
+    }
     public init(value: Int64) { self.value = value }
     @inline(never) public func read(_ value: Int64) -> Int64 { self.value + value }
     @inline(never) public consuming func consumeValue() -> Int64 { value }
@@ -135,6 +144,42 @@ extension NativeValue {
 }
 
 struct SwiftMemberInvocationTests {
+    @MainActor @Test func consumingAccessorsPreserveCallerReferencesAndValues() async throws {
+        let runtime = ABIRuntime()
+        let type = try await runtime.swiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
+        let get = try await type.getter(named: "consumedText", as: String.self, consuming: true)
+        let set = try await type.setter(named: "consumedText", as: String.self, consuming: true)
+        var value: SwiftMemberRenderer? = .init(text: String(repeating: "a", count: 100))
+        weak let observed = value
+        #expect(try unsafe get.unsafeInvoke(on: value!) == value?.text)
+        try unsafe set.unsafeInvoke(on: value!, String(repeating: "b", count: 100))
+        #expect(value?.text == String(repeating: "b", count: 100))
+        var boundGet: NativeBoundSwiftMethod<String>? = try await runtime.object(value!).getter(
+            named: "consumedText", as: String.self, consuming: true
+        )
+        var boundSet: NativeBoundSwiftMethod<Void, String>? = try await runtime.object(value!).setter(
+            named: "consumedText", as: String.self, consuming: true
+        )
+        value = nil
+        try unsafe boundSet!.unsafeInvoke(String(repeating: "c", count: 100))
+        #expect(try unsafe boundGet!.unsafeInvoke() == String(repeating: "c", count: 100))
+        boundGet = nil
+        #expect(observed != nil)
+        boundSet = nil
+        #expect(observed == nil)
+
+        let pointType = try await runtime.swiftType(named: "ABIBridgeTests.SwiftMemberPoint")
+        let getValue = try await pointType.getter(named: "consumedValue", as: Int64.self, consuming: true)
+        let setValue = try await pointType.setter(named: "consumedValue", as: Int64.self, consuming: true)
+        var point = SwiftMemberPoint(value: 12)
+        #expect(try unsafe getValue.unsafeInvoke(on: point) == 12)
+        try unsafe setValue.unsafeInvoke(on: point, 7)
+        #expect(SwiftMemberPoint.observedConsumedValue == 19 && point.value == 12)
+        try unsafe setValue.unsafeInvoke(on: &point, 8)
+        #expect(SwiftMemberPoint.observedConsumedValue == 20 && point.value == 12)
+        SwiftMemberPoint.observedConsumedValue = 0
+    }
+
     @MainActor @Test func consumingReceiversTransferAnIndependentCopy() async throws {
         let runtime = ABIRuntime()
         let type = try await runtime.swiftType(named: "ABIBridgeTests.SwiftMemberRenderer")

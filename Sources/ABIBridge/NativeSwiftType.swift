@@ -174,44 +174,51 @@ public actor NativeSwiftType {
     /// Resolves a synchronous, nonthrowing instance property getter.
     ///
     /// Getter symbols do not establish effect or value-self conventions. Set
-    /// mutating for a mutating value getter and honor the actual declaration.
+    /// mutating for a mutating value getter, or consuming for a consuming
+    /// getter, and honor the actual declaration.
     /// - Parameters:
     ///   - name: A property name or complete relative getter declaration.
     ///   - valueType: The result representation.
     ///   - isMutating: Whether the value getter receives self inout.
+    ///   - isConsuming: Whether the getter consumes its receiver copy.
     /// - Returns: A method called with unsafeInvoke(on:).
     /// - Throws: A lookup or unsupported-representation error.
     public func getter<Value>(
-        named name: String, as valueType: Value.Type, mutating isMutating: Bool = false
+        named name: String, as valueType: Value.Type, mutating isMutating: Bool = false,
+        consuming isConsuming: Bool = false
     ) throws -> NativeSwiftMethod<Value> {
         let symbol = try resolveMember {
             try accessorDeclaration(named: name, ownerName: $0, valueType: valueType, setter: false, isStatic: false)
         }
         return try NativeSwiftMethod(
             symbol: symbol, type: self,
-            receiver: receiverPlan(mutating: isMutating)
+            receiver: receiverPlan(mutating: isMutating, consuming: isConsuming)
         )
     }
 
     /// Resolves a property setter that consumes its incoming value.
     ///
-    /// Class receivers are references. Value setters receive self inout by
-    /// default; set mutating to false for an explicitly nonmutating setter.
+    /// Class receivers are references. Ordinary value setters receive self
+    /// inout; consuming setters transfer a copy. An explicitly nonmutating
+    /// setter can use mutating: false.
     /// - Parameters:
     ///   - name: A property name or complete relative setter declaration.
     ///   - valueType: The incoming value representation.
-    ///   - isMutating: Whether a value setter receives self inout.
+    ///   - isMutating: An inout override. Nil selects inout unless consuming is true.
+    ///   - isConsuming: Whether the setter consumes its receiver copy.
     /// - Returns: A reusable method with one explicit value argument.
     /// - Throws: A lookup or unsupported-representation error.
     public func setter<Value>(
-        named name: String, as valueType: Value.Type, mutating isMutating: Bool = true
+        named name: String, as valueType: Value.Type, mutating isMutating: Bool? = nil,
+        consuming isConsuming: Bool = false
     ) throws -> NativeSwiftMethod<Void, Value> {
         let symbol = try resolveMember {
             try accessorDeclaration(named: name, ownerName: $0, valueType: valueType, setter: true, isStatic: false)
         }
         return try NativeSwiftMethod(
             symbol: symbol, type: self,
-            receiver: receiverPlan(mutating: isMutating), consumesArguments: true
+            receiver: receiverPlan(mutating: isMutating ?? !isConsuming, consuming: isConsuming),
+            consumesArguments: true
         )
     }
 
