@@ -1,5 +1,6 @@
 import ABIBridgeCore
 import Foundation
+import Darwin
 import MachO
 import MachOKit
 
@@ -28,15 +29,17 @@ struct SymbolSection {
 enum DeclarationKey {
     static func make(_ declaration: String) -> [UInt8] {
         var key: [UInt8] = []
+        key.reserveCapacity(declaration.utf8.count * 2)
         var inIdentifier = false
         for byte in declaration.utf8 {
-            switch byte {
-            case 48...57, 65...90, 97...122, 95:
+            if (byte >= 48 && byte <= 57) || (byte >= 65 && byte <= 90)
+                || (byte >= 97 && byte <= 122) || byte == 95 {
                 if !inIdentifier { key.append(0) }
                 key.append(byte)
                 inIdentifier = true
-            case 9...13, 32: inIdentifier = false
-            default:
+            } else if (byte >= 9 && byte <= 13) || byte == 32 {
+                inIdentifier = false
+            } else {
                 key.append(0)
                 key.append(byte)
                 inIdentifier = false
@@ -60,6 +63,70 @@ enum DeclarationKey {
     }
 }
 
+/// A conservative prefilter over Itanium names. Matching still uses the full
+/// demangled declaration; complex spellings fall back to unfiltered lookup.
+struct CXXSymbolFilter {
+    let fragments: [String]
+    private let needles: [[CChar]]
+
+    init(_ declaration: String) {
+        var prefix = String(declaration.prefix { $0 != "(" })
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\\s*::\\s*", with: "::", options: .regularExpression)
+        // A leading return type can precede parentheses in anonymous namespaces
+        // or decltype expressions. Keep the original unfiltered path unless a
+        // qualified name is present; typeinfo spellings also remain unfiltered.
+        let hasQualification = prefix.contains("::")
+        var isTypeName = false
+        if let marker = prefix.range(of: "^vtable\\s+for\\s+", options: .regularExpression) {
+            prefix.removeSubrange(marker)
+            isTypeName = true
+        }
+        // Operator spellings are encoded as ABI codes, not literal identifiers.
+        // The enclosing ordinary class name can still narrow the candidates.
+        if let operation = prefix.range(of: "::operator") {
+            prefix = String(prefix[..<operation.lowerBound])
+            isTypeName = true
+        }
+        guard hasQualification,
+              prefix.range(of: "^(?:[A-Za-z_][A-Za-z0-9_]*::)*~?[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) != nil else {
+            fragments = []
+            needles = []
+            return
+        }
+        let substitutions: Set<String> = [
+            "std", "__1", "allocator", "basic_string", "string",
+            "basic_istream", "basic_ostream", "basic_iostream", "istream", "ostream", "iostream",
+        ]
+        var names = Array(prefix.replacingOccurrences(of: "~", with: "")
+            .components(separatedBy: "::").suffix(2))
+        // Group type metadata and operators with the class's ordinary members.
+        if isTypeName { names.reverse() }
+        var selected: [String] = []
+        for name in names where !substitutions.contains(name) && !selected.contains(name) {
+            selected.append(name)
+        }
+        fragments = selected
+        needles = selected.map { Array($0.utf8CString) }
+    }
+
+    func matchesOwner(_ rawName: String) -> Bool {
+        guard let needle = needles.first else { return true }
+        return rawName.withCString { raw in
+            needle.withUnsafeBufferPointer { strstr(raw, $0.baseAddress!) != nil }
+        }
+    }
+
+    func matches(_ rawName: String) -> Bool {
+        if needles.isEmpty { return true }
+        return rawName.withCString { raw in
+            needles.allSatisfy { needle in
+                needle.withUnsafeBufferPointer { strstr(raw, $0.baseAddress!) != nil }
+            }
+        }
+    }
+}
+
 final class SymbolIndex {
     let image: NativeImage
     let sections: [SymbolSection]
@@ -67,9 +134,10 @@ final class SymbolIndex {
     var sharedCacheLoaded = false
     private struct Scope: Hashable {
         let language: NativeLanguage
-        let owner: String?
+        let fragments: [String]
     }
     private var decoded: [Scope: [[UInt8]: [IndexedSymbol]]] = [:]
+    private var cxxCandidates: [String: [IndexedSymbol]] = [:]
     private var linkerNames: [String: [IndexedSymbol]]?
     private var swiftExtensions: [[UInt8]: [IndexedSymbol]] = [:]
 
@@ -111,6 +179,7 @@ final class SymbolIndex {
     func appendSharedCacheSymbols(_ more: [IndexedSymbol]) {
         symbols += more
         decoded.removeAll()
+        cxxCandidates.removeAll()
         swiftExtensions.removeAll()
         linkerNames = nil
         sharedCacheLoaded = true
@@ -121,24 +190,21 @@ final class SymbolIndex {
             if linkerNames == nil { linkerNames = Dictionary(grouping: symbols, by: \.name) }
             return linkerNames?["_" + declaration.name] ?? []
         }
-        // Plain Itanium owner names occur literally in their mangling. Restrict
-        // demangling to that owner, then reuse its index for other members.
-        let prefix = String(declaration.name.prefix { $0 != "(" })
-            .replacingOccurrences(of: "vtable for ", with: "")
-        let components = prefix.components(separatedBy: "::")
-        let owner = components.dropLast().last
-        let substitutions: Set<String> = [
-            "std", "__1", "allocator", "basic_string", "string",
-            "basic_istream", "basic_ostream", "basic_iostream", "istream", "ostream", "iostream",
-        ]
-        let needle = declaration.language == .cxx
-            && owner?.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) != nil
-            && !substitutions.contains(owner ?? "") ? owner : nil
-        let scope = Scope(language: declaration.language, owner: needle)
+        let filter = CXXSymbolFilter(declaration.language == .cxx ? declaration.name : "")
+        let scope = Scope(language: declaration.language, fragments: filter.fragments)
         if decoded[scope] == nil {
+            let candidates: [IndexedSymbol]
+            if let owner = filter.fragments.first {
+                if cxxCandidates[owner] == nil {
+                    cxxCandidates[owner] = symbols.filter { filter.matchesOwner($0.name) }
+                }
+                candidates = cxxCandidates[owner]!
+            } else {
+                candidates = symbols
+            }
             var index: [[UInt8]: [IndexedSymbol]] = [:]
-            for symbol in symbols {
-                if let needle = scope.owner, !symbol.name.contains(needle) { continue }
+            for symbol in candidates {
+                guard filter.matches(symbol.name) else { continue }
                 guard let name = DeclarationKey.demangle(symbol.name, language: declaration.language) else { continue }
                 var names = [name]
                 if declaration.language == .swift, let alias = Self.operatorAlias(name) { names.append(alias) }

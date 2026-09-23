@@ -1,5 +1,5 @@
 #if os(macOS)
-import ABIBridge
+@testable import ABIBridge
 import ABIBridgeCore
 import Darwin
 import Foundation
@@ -103,6 +103,10 @@ struct SymbolResolutionTests {
         )
         let expectedVTable = try fixture.address(kind: 2)
         #expect(unsafe vtable.withUnsafeAddress { UInt(bitPattern: $0) } == expectedVTable)
+        let member = try await runtime.resolve(
+            .init(name: "\(fixture.namespace)::Counter::value() const", language: .cxx), in: image
+        )
+        #expect(unsafe member.withUnsafeAddress { UInt(bitPattern: $0) } != expectedVTable)
 
         let again = try await runtime.resolve(function.declaration, in: image)
         #expect(unsafe again.withUnsafeAddress { UInt(bitPattern: $0) } == actual)
@@ -110,6 +114,25 @@ struct SymbolResolutionTests {
         let rebuilt = try await runtime.resolve(function.declaration, in: image)
         #expect(unsafe rebuilt.withUnsafeAddress { UInt(bitPattern: $0) } == actual)
         #expect(rebuilt.image.identity == image.identity)
+    }
+
+    @Test func appendedLocalSymbolsInvalidateEmptyCandidateGroups() async throws {
+        let fixture = try FixtureLibrary()
+        defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        let image = try #require(try await runtime.images(matching: .path(fixture.libraryURL)).first)
+        let declaration = NativeDeclaration(name: "\(fixture.namespace)::add(int, int)", language: .cxx)
+        let original = SymbolIndex(image: image).matches(declaration)
+        #expect(!original.isEmpty)
+        let index = SymbolIndex(image: image)
+        index.symbols = []
+        #expect(index.matches(declaration).isEmpty)
+        index.appendSharedCacheSymbols(original.map {
+            IndexedSymbol(name: $0.name, address: $0.address, source: .sharedCache)
+        })
+        let resolved = try #require(try index.resolve(declaration, source: .sharedCache))
+        let expected = try fixture.address(kind: 0)
+        #expect(unsafe resolved.withUnsafeAddress { UInt(bitPattern: $0) } == expected)
     }
 
     @Test func typedCXXFunctionsRetainImagesAndReuseScopes() async throws {
