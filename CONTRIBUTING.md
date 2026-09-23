@@ -35,6 +35,8 @@ The symbol tests compile temporary C++ libraries with the installed Xcode toolch
 
 Memory tests verify owned copies, region bounds, unaligned reads, zero-length requests, inaccessible source addresses, and readable prefixes before protected pages. The C, C++, and Objective-C++ consumers exercise the shared reader, including owner release and ARC/MRC builds. Runtime evidence is from macOS; other Apple platforms compile in CI.
 
+Pointer discovery tests cover shifted fields, cached-offset revalidation, aliases versus distinct targets, incomplete scans, packed slots, explicit vptr offsets, retained owners, and feeding a selected receiver to existing C++ invocation. Native consumers additionally exercise guarded source slots and PAC-bearing data in plain arm64 builds. Compile the scanner for arm64e as well; this is not a physical-device authenticated-dispatch test.
+
 Run the native backend fixtures to verify linking and ABI behavior through the `ABIBridge` product:
 
 ```sh

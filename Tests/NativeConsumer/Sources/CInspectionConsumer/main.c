@@ -15,6 +15,26 @@ int main(int argc, char **argv) {
     assert(ABIReadMemory(0, 1, copied).status == ABIMemoryReadFailed);
     assert(ABIReadMemory(0, 1, NULL).status == ABIMemoryReadInvalidRange);
     assert(ABIReadMemory(UINTPTR_MAX, 0, NULL).status == ABIMemoryReadComplete);
+    uintptr_t vtable = 123;
+    uintptr_t object[] = {vtable};
+    uintptr_t references[] = {0, (uintptr_t)object, (uintptr_t)object};
+    ABIPointerSearchOptions options = ABIDefaultPointerSearchOptions();
+    options.address = (uintptr_t)references;
+    options.byteCount = sizeof(references);
+    options.vtableAddressPoint = vtable;
+    int32_t search_error = -1;
+    ABIPointerSearchResult *search = ABICopyPointerSearch(&options, &search_error);
+    assert(search && search_error == ABIPointerSearchSuccess);
+    assert(ABIPointerSearchIsComplete(search) && ABIPointerSearchDistinctCount(search) == 1);
+    assert(ABIPointerSearchCandidateCount(search) == 2 && ABIPointerSearchVisitedCount(search) == 3);
+    assert(ABIPointerSearchCandidateAt(search, 1).pointerBits == (uintptr_t)object);
+    assert(ABIPointerSearchFailureCount(search) == 0);
+    ABIFreePointerSearch(search);
+    options.stride = 0;
+    assert(!ABICopyPointerSearch(&options, &search_error));
+    assert(search_error == ABIPointerSearchInvalidOptions);
+    ABIFreePointerSearch(NULL);
+
     ABISymbolRuntime *shared = ABICopySharedSymbolRuntime();
     ABIRuntimeRemoveCachedResults(shared);
     ABIReleaseSymbolRuntime(shared);

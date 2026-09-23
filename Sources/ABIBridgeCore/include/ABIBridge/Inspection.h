@@ -2,6 +2,7 @@
 #define ABIBRIDGE_INSPECTION_H
 
 #include <ABIBridge/Memory.h>
+#include <ABIBridge/PointerSearch.h>
 #include <stddef.h>
 #include <stdint.h>
 

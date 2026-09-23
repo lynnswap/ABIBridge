@@ -1,5 +1,6 @@
 #include <ABIBridge/Inspection.hpp>
 #include "../../MemoryFixture.hpp"
+#include "../../PointerSearchFixture.hpp"
 #include <cassert>
 #include <cstring>
 #include <dlfcn.h>
@@ -10,6 +11,7 @@
 int main(int argc, char **argv) {
     assert(argc == 2);
     checkMemoryReads();
+    checkPointerSearch();
     using namespace abi_bridge;
     Runtime::current().remove_cached_results();
     void *library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
