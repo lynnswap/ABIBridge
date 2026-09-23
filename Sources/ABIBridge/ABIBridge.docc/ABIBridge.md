@@ -55,6 +55,17 @@ print(symbol.image.path)
 - ``NativePointerAuthentication``
 - ``NativeDispatchError``
 
+### Discovering referenced objects
+
+- <doc:PointerDiscovery>
+- ``NativePointerSearchOptions``
+- ``NativePointerSearchPolicy``
+- ``NativePointerSearchResult``
+- ``NativePointerCandidate``
+- ``NativePointerSearchFailure``
+- ``NativePointerSearchError``
+- ``NativePointerNormalization``
+
 ### Reading native memory
 
 - <doc:NativeMemory>

@@ -217,6 +217,17 @@ let result = try region.read(at: 0, byteCount: 16)
 print(result.isComplete, result.bytes)
 ```
 
+### Find references to a native object
+
+Search a known region for references matching a target vtable address point:
+
+```swift
+let result = try region.pointers(toVTable: addressPoint)
+if let candidate = result.uniqueCandidate {
+    print(candidate.offset, candidate.addressForInspection)
+}
+```
+
 ### Inspect symbols from C++ or Objective-C++
 
 For an already-loaded framework defining `Example::Renderer`:

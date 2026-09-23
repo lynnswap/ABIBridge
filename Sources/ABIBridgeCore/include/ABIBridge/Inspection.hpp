@@ -2,6 +2,7 @@
 
 #include <ABIBridge/Inspection.h>
 #include <ABIBridge/Memory.hpp>
+#include <ABIBridge/PointerSearch.hpp>
 #include <array>
 #include <cstdint>
 #include <cstddef>

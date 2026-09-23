@@ -1,6 +1,7 @@
 #pragma once
 #include <ABIBridge/Inspection.hpp>
 #include "MemoryFixture.hpp"
+#include "PointerSearchFixture.hpp"
 #import <Foundation/Foundation.h>
 #include <cassert>
 #include <dlfcn.h>
@@ -33,6 +34,7 @@ static int destroyedInspectionOwners = 0;
 int main(int argc, char **argv) {
     assert(argc == 2);
     checkMemoryReads();
+    checkPointerSearch();
     using namespace abi_bridge;
     std::uint64_t generation = 0;
     @autoreleasepool {
