@@ -45,7 +45,7 @@ private func borrowed<T: AnyObject>(_ pointer: OpaquePointer, as type: T.Type) -
 
 // Package access preserves external C linkage through Xcode's optimized
 // relocatable link while keeping these names out of the public Swift API.
-// Runtime.h documents their ownership and pointer contracts.
+// Inspection.h documents their ownership and pointer contracts.
 @_cdecl("ABICreateSymbolRuntime")
 package func nativeCreateSymbolRuntime() -> OpaquePointer {
     retained(SymbolResolver())

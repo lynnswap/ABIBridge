@@ -19,6 +19,10 @@ print(symbol.image.path)
 
 ## Topics
 
+### Native inspection from C and Objective-C++
+
+- <doc:NativeInspection>
+
 ### Resolving symbols
 
 - <doc:SymbolLookup>

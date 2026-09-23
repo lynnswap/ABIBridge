@@ -20,6 +20,13 @@ xcrun swiftc -parse-as-library -emit-library -enable-library-evolution \
     -Xlinker -rpath -Xlinker "$task_fixture" \
     "$task_root/Tests/NativeConsumer/SwiftExtensionFixture.swift" \
     -o "$task_fixture/libSwiftExtensionFixture.dylib"
+xcrun clang -std=c11 -pedantic-errors -fsyntax-only \
+    -I "$task_root/Sources/ABIBridgeCore/include" \
+    "$task_root/Tests/NativeConsumer/Sources/CInspectionConsumer/main.c"
+xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
+    --scratch-path "$task_root/.build/native-consumer" CInspectionConsumer "$task_fixture/libFixture.dylib"
+xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
+    --scratch-path "$task_root/.build/native-consumer" ObjCInspectionConsumer "$task_fixture/libFixture.dylib"
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" \
     NativeConsumer "$task_fixture/libFixture.dylib" "$task_fixture/libConstructor.dylib"
