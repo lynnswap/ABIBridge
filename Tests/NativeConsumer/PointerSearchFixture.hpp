@@ -29,6 +29,10 @@ inline void checkPointerSearch() {
     auto result = find_pointers(region, table, options);
     assert(result.is_complete && result.distinct_count == 1 && result.visited_count == 5);
     assert(result.unique_candidate()->evidence.offset == sizeof(std::uintptr_t));
+    assert(!inspect_pointer(region, 0, table));
+    auto single = inspect_pointer(region, sizeof(std::uintptr_t), table);
+    assert(single && single->evidence.addressForInspection == slots[1]);
+    single.reset();
     slots[4] = slots[1];
     result = find_pointers(region, table, options);
     assert(result.is_complete && result.distinct_count == 1 && result.candidates.size() == 2);
@@ -39,6 +43,7 @@ inline void checkPointerSearch() {
     result = find_pointers(region, table, options);
     assert(!result.is_complete && result.visited_count == 1 && result.candidates[0].evidence.offset == sizeof(std::uintptr_t) * 4);
     slots[4] = 0;
+    assert(!inspect_pointer(region, sizeof(std::uintptr_t) * 4, table));
     result = find_pointers(region, table, options);
     assert(result.visited_count == 3 && result.candidates[0].evidence.offset == sizeof(std::uintptr_t));
     options.policy = pointer_search_policy::all;
@@ -46,11 +51,17 @@ inline void checkPointerSearch() {
     result = find_pointers(region, table, options);
     assert(!result.is_complete && result.failures.size() == 1 && result.distinct_count == 1);
     assert(result.failures[0].stage == ABIPointerSearchVPtrRead);
+    try {
+        inspect_pointer(region, sizeof(std::uintptr_t) * 3, table);
+        assert(false);
+    } catch (const pointer_read_error& error) {
+        assert(error.failure().stage == ABIPointerSearchVPtrRead && error.failure().address == 1);
+    }
     slots[3] = 0;
 
     // A copied candidate keeps a separately supplied pointee owner alive.
     std::weak_ptr<DiscoveryObject> weakOwner = owner;
-    auto retained = find_pointers(region, table).unique_candidate();
+    auto retained = inspect_pointer(region, sizeof(std::uintptr_t), table);
     owner.reset();
     region = memory_region(0, 0);
     result = {};
@@ -67,6 +78,15 @@ inline void checkPointerSearch() {
     result = find_pointers(memory_region(reinterpret_cast<std::uintptr_t>(pages + page - sizeof(std::uintptr_t)), sizeof(std::uintptr_t) * 2), table);
     assert(!result.is_complete && result.visited_count == 2 && result.failures.size() == 1);
     assert(result.failures[0].stage == ABIPointerSearchSlotRead);
+    const memory_region guarded(reinterpret_cast<std::uintptr_t>(pages), page * 2);
+    assert(!inspect_pointer(guarded, 0, table)); // Does not read the protected page.
+    try {
+        inspect_pointer(guarded, page, table);
+        assert(false);
+    } catch (const pointer_read_error& error) {
+        assert(error.failure().stage == ABIPointerSearchSlotRead);
+        assert(error.failure().offset == page && error.failure().read.byteCount == 0);
+    }
     assert(munmap(pages, page * 2) == 0);
 
     // Explicit vptr offset, packed slot alignment, and trailing bytes.
@@ -80,6 +100,14 @@ inline void checkPointerSearch() {
     options.vptr_offset = sizeof(std::uintptr_t);
     result = find_pointers(memory_region(reinterpret_cast<std::uintptr_t>(packed), sizeof(packed)), table, options);
     assert(result.unique_candidate()->evidence.vptrAddress == reinterpret_cast<std::uintptr_t>(&record.vptr));
+    single = inspect_pointer(memory_region(reinterpret_cast<std::uintptr_t>(packed), sizeof(packed)),
+                             1, table, sizeof(std::uintptr_t));
+    assert(single && single->evidence.vptrAddress == reinterpret_cast<std::uintptr_t>(&record.vptr));
+    try {
+        inspect_pointer(memory_region(reinterpret_cast<std::uintptr_t>(packed), sizeof(packed)),
+                        sizeof(packed), table);
+        assert(false);
+    } catch (const pointer_search_error& error) { assert(error.code() == ABIPointerSearchInvalidOptions); }
     options.stride = 0;
     try {
         find_pointers(memory_region(reinterpret_cast<std::uintptr_t>(packed), sizeof(packed)), table, options);
@@ -103,6 +131,9 @@ inline void checkPointerSearch() {
         const auto evidence = result.unique_candidate()->evidence;
         assert(evidence.pointerBits == signedAddress && evidence.addressForInspection == address);
         assert(evidence.vptrBits == record.vptr && evidence.vptrAddress == reinterpret_cast<std::uintptr_t>(&record.vptr));
+        single = inspect_pointer(memory_region(reinterpret_cast<std::uintptr_t>(slots), sizeof(std::uintptr_t)),
+                                 0, table, sizeof(std::uintptr_t), pointer_normalization::strip_data_signature);
+        assert(single && single->evidence.pointerBits == signedAddress && single->evidence.vptrBits == record.vptr);
         // Tampered signatures still strip: discovery is explicitly not authentication.
         const auto pointerSignature = signedAddress ^ address;
         const auto vptrSignature = record.vptr ^ table;

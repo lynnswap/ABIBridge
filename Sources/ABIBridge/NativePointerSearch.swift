@@ -87,8 +87,8 @@ public struct NativePointerCandidate {
     public let sourceRegion: NativeMemoryRegion
 }
 
-/// A slot or pointee read that prevented a complete search.
-public struct NativePointerSearchFailure: Sendable {
+/// A slot or pointee read failure, collected by searches or thrown by single-slot inspection.
+public struct NativePointerSearchFailure: Error, Sendable {
     /// The read that failed.
     public enum Stage: Int32, Sendable {
         /// Could not copy the pointer slot.
@@ -130,6 +130,43 @@ public struct NativePointerSearchResult {
 }
 
 extension NativeMemoryRegion {
+    /// Revalidates one slot without searching elsewhere in this region.
+    ///
+    /// The slot may be unaligned but must fit entirely inside the region.
+    /// A null reference or readable unequal vptr returns nil. A match makes no
+    /// uniqueness claim and retains this region's optional owner. Reads are
+    /// non-atomic; callers synchronize and establish the pointee's lifetime.
+    ///
+    /// - Parameters:
+    ///   - offset: Byte offset of the full-width pointer slot.
+    ///   - addressPoint: The actual vtable address point.
+    ///   - vptrOffset: Byte offset of the absolute vptr within the pointee.
+    ///   - normalization: Interpretation of slot and vptr bits for inspection.
+    /// - Returns: Matching evidence, or nil for a readable nonmatch.
+    /// - Throws: ``NativePointerSearchError`` for invalid setup, or
+    ///   ``NativePointerSearchFailure`` when the slot or pointee cannot be read.
+    public func pointer(
+        at offset: Int, toVTable addressPoint: UInt, vptrOffset: Int = 0,
+        normalization: NativePointerNormalization = .none
+    ) throws -> NativePointerCandidate? {
+        guard offset >= 0, vptrOffset >= 0 else { throw NativePointerSearchError.invalidOptions }
+        return try withExtendedLifetime(self) {
+            let result = ABIInspectPointer(address, byteCount, offset, addressPoint, vptrOffset, normalization.rawValue)
+            switch result.status {
+            case Int32(ABIPointerInspectionMatch):
+                return NativePointerCandidate(result.candidate, in: self)
+            case Int32(ABIPointerInspectionNoMatch):
+                return nil
+            case Int32(ABIPointerInspectionReadFailed):
+                throw NativePointerSearchFailure(result.failure)
+            case Int32(ABIPointerInspectionNormalizationUnavailable):
+                throw NativePointerSearchError.normalizationUnavailable
+            default:
+                throw NativePointerSearchError.invalidOptions
+            }
+        }
+    }
+
     /// Finds references whose absolute vptr matches an explicit address point.
     ///
     /// Only full-width slots inside the declared range are visited. Null
@@ -174,19 +211,11 @@ extension NativeMemoryRegion {
             defer { ABIFreePointerSearch(result) }
             let candidates = (0..<ABIPointerSearchCandidateCount(result)).map { index in
                 let value = ABIPointerSearchCandidateAt(result, index)
-                return NativePointerCandidate(
-                    offset: value.offset, slotAddress: value.slotAddress, pointerBits: value.pointerBits,
-                    addressForInspection: value.addressForInspection, vptrAddress: value.vptrAddress,
-                    vptrBits: value.vptrBits, sourceRegion: self
-                )
+                return NativePointerCandidate(value, in: self)
             }
             let failures = (0..<ABIPointerSearchFailureCount(result)).map { index in
                 let value = ABIPointerSearchFailureAt(result, index)
-                return NativePointerSearchFailure(
-                    offset: value.offset, stage: .init(rawValue: value.stage)!, address: value.address,
-                    status: .init(rawValue: value.read.status)!, copiedByteCount: value.read.byteCount,
-                    systemErrorCode: value.read.systemError
-                )
+                return NativePointerSearchFailure(value)
             }
             return NativePointerSearchResult(
                 candidates: candidates, failures: failures,
@@ -195,5 +224,25 @@ extension NativeMemoryRegion {
                 isComplete: ABIPointerSearchIsComplete(result) != 0
             )
         }
+    }
+}
+
+private extension NativePointerCandidate {
+    init(_ value: ABIPointerCandidate, in region: NativeMemoryRegion) {
+        self.init(
+            offset: value.offset, slotAddress: value.slotAddress, pointerBits: value.pointerBits,
+            addressForInspection: value.addressForInspection, vptrAddress: value.vptrAddress,
+            vptrBits: value.vptrBits, sourceRegion: region
+        )
+    }
+}
+
+private extension NativePointerSearchFailure {
+    init(_ value: ABIPointerSearchFailure) {
+        self.init(
+            offset: value.offset, stage: .init(rawValue: value.stage)!, address: value.address,
+            status: .init(rawValue: value.read.status)!, copiedByteCount: value.read.byteCount,
+            systemErrorCode: value.read.systemError
+        )
     }
 }

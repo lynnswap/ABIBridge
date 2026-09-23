@@ -51,6 +51,25 @@ Every search re-reads the hinted slot and its pointee. A stale nonmatching hint 
 
 With the default exhaustive policy, a hint does not avoid scanning other slots or hide ambiguity. Hints are caller-owned values, with no global cache. Scope them to a live enclosing region, slot layout, and target image/vtable identity; discard them when those change, including allocation replacement or image reload. A still-matching hint cannot detect a new competing target when first-match policy is used.
 
+## Revalidate only the cached slot
+
+Use `region.pointer(at:toVTable:vptrOffset:normalization:)` when the first operation should inspect only a known offset. It never searches other source slots:
+
+```swift
+var candidate = try region.pointer(at: previousOffset, toVTable: addressPoint)
+if candidate == nil {
+    candidate = try region.pointers(toVTable: addressPoint).uniqueCandidate
+}
+```
+
+The single-slot operation returns nil for a null reference or a readable unequal vptr. It throws ``NativePointerSearchFailure`` if the slot or its pointee cannot be read, preserving the stage, attempted address, copied byte count, and system error. Handle that failure explicitly if the consumer's policy permits falling back to a full search.
+
+The explicit offset may be unaligned, but a full-width slot must fit within the region. Invalid bounds and unavailable normalization throw ``NativePointerSearchError``. A successful candidate retains the region's owner and makes no uniqueness claim about other slots. Scope cached offsets to the same live region, layout, and target identity, as with search hints.
+
+C++ uses `inspect_pointer(region, offset, addressPoint, vptrOffset, normalization)`, returning `std::optional<pointer_candidate>`. A readable nonmatch returns `std::nullopt`; a read failure throws `pointer_read_error`, whose `failure()` preserves the C evidence. Setup failures throw `pointer_search_error`.
+
+C uses `ABIInspectPointer` and checks the returned status before reading the candidate or failure field. The result is a copied value that needs no release. As with C searches, it retains no source or pointee owner.
+
 ## Keep normalization separate from authentication
 
 ``NativePointerNormalization/stripDataSignature`` removes data-address signatures for recoverable inspection and comparison. It also works in a plain arm64 caller inspecting arm64e data, using a CPU capability check rather than relying on intrinsics that become no-ops outside the authenticated ABI. Unsupported CPUs report ``NativePointerSearchError/normalizationUnavailable``.

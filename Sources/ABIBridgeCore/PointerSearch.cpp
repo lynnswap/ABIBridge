@@ -55,36 +55,53 @@ bool valid(const ABIPointerSearchOptions& o) {
         (o.policy == ABIPointerSearchAll || o.policy == ABIPointerSearchFirst);
 }
 
+ABIPointerInspectionResult inspectSlot(
+    uintptr_t address, size_t offset, size_t vptrOffset, uintptr_t expected,
+    int32_t normalization) {
+    ABIPointerInspectionResult result{};
+    const auto slot = address + offset;
+    uintptr_t bits = 0;
+    const auto slotRead = ABIReadMemory(slot, sizeof(bits), &bits);
+    if (slotRead.status != ABIMemoryReadComplete) {
+        result.status = ABIPointerInspectionReadFailed;
+        result.failure = {offset, ABIPointerSearchSlotRead, slot, slotRead};
+        return result;
+    }
+    const auto target = normalize(bits, normalization);
+    if (target == 0) return result;
+    if (vptrOffset > UINTPTR_MAX - target) {
+        result.status = ABIPointerInspectionReadFailed;
+        result.failure = {offset, ABIPointerSearchVPtrRead, target, {ABIMemoryReadInvalidRange, 0, 0}};
+        return result;
+    }
+    const auto vptrAddress = target + vptrOffset;
+    uintptr_t vptr = 0;
+    const auto vptrRead = ABIReadMemory(vptrAddress, sizeof(vptr), &vptr);
+    if (vptrRead.status != ABIMemoryReadComplete) {
+        result.status = ABIPointerInspectionReadFailed;
+        result.failure = {offset, ABIPointerSearchVPtrRead, vptrAddress, vptrRead};
+        return result;
+    }
+    if (normalize(vptr, normalization) != expected) return result;
+    result.status = ABIPointerInspectionMatch;
+    result.candidate = {offset, slot, bits, target, vptrAddress, vptr};
+    return result;
+}
+
 std::unique_ptr<ABIPointerSearchResult> search(const ABIPointerSearchOptions& o) {
     auto result = std::make_unique<ABIPointerSearchResult>();
     std::unordered_set<uintptr_t> distinct;
     const auto expected = normalize(o.vtableAddressPoint, o.normalization);
     const auto visit = [&](size_t offset) {
         ++result->visitedCount;
-        const auto slot = o.address + offset;
-        uintptr_t bits = 0;
-        const auto slotRead = ABIReadMemory(slot, sizeof(bits), &bits);
-        if (slotRead.status != ABIMemoryReadComplete) {
-            result->failures.push_back({offset, ABIPointerSearchSlotRead, slot, slotRead});
+        const auto inspection = inspectSlot(o.address, offset, o.vptrOffset, expected, o.normalization);
+        if (inspection.status == ABIPointerInspectionReadFailed) {
+            result->failures.push_back(inspection.failure);
             return false;
         }
-        const auto target = normalize(bits, o.normalization);
-        if (target == 0) return false;
-        if (o.vptrOffset > UINTPTR_MAX - target) {
-            result->failures.push_back({offset, ABIPointerSearchVPtrRead, target,
-                                       {ABIMemoryReadInvalidRange, 0, 0}});
-            return false;
-        }
-        const auto vptrAddress = target + o.vptrOffset;
-        uintptr_t vptr = 0;
-        const auto vptrRead = ABIReadMemory(vptrAddress, sizeof(vptr), &vptr);
-        if (vptrRead.status != ABIMemoryReadComplete) {
-            result->failures.push_back({offset, ABIPointerSearchVPtrRead, vptrAddress, vptrRead});
-            return false;
-        }
-        if (normalize(vptr, o.normalization) != expected) return false;
-        result->candidates.push_back({offset, slot, bits, target, vptrAddress, vptr});
-        distinct.insert(target);
+        if (inspection.status != ABIPointerInspectionMatch) return false;
+        result->candidates.push_back(inspection.candidate);
+        distinct.insert(inspection.candidate.addressForInspection);
         return true;
     };
 
@@ -144,6 +161,29 @@ ABIPointerSearchResult* ABICopyPointerSearch(const ABIPointerSearchOptions* opti
     } catch (const std::length_error&) {
         return fail(ABIPointerSearchAllocationFailed);
     }
+}
+
+ABIPointerInspectionResult ABIInspectPointer(
+    uintptr_t address, size_t byteCount, size_t offset,
+    uintptr_t vtableAddressPoint, size_t vptrOffset, int32_t normalization) {
+    ABIPointerInspectionResult result{};
+    if (byteCount > UINTPTR_MAX - address || offset > byteCount ||
+        sizeof(uintptr_t) > byteCount - offset || vtableAddressPoint == 0 ||
+        (normalization != ABIPointerNormalizationNone &&
+         normalization != ABIPointerNormalizationStripDataSignature)) {
+        result.status = ABIPointerInspectionInvalidOptions;
+        return result;
+    }
+    if (normalization != ABIPointerNormalizationNone && !hasDataPAC()) {
+        result.status = ABIPointerInspectionNormalizationUnavailable;
+        return result;
+    }
+    const auto expected = normalize(vtableAddressPoint, normalization);
+    if (expected == 0) {
+        result.status = ABIPointerInspectionInvalidOptions;
+        return result;
+    }
+    return inspectSlot(address, offset, vptrOffset, expected, normalization);
 }
 
 void ABIFreePointerSearch(ABIPointerSearchResult* result) { delete result; }
