@@ -25,6 +25,67 @@ private final class DiscoveryOwner {
 }
 
 struct NativePointerSearchTests {
+    @Test func singleOffsetRevalidationDoesNotSearchOtherSlots() throws {
+        let owner = try DiscoveryOwner()
+        let region = try owner.region()
+        let table = try owner.addressPoint
+        let word = MemoryLayout<UInt>.size
+        owner.slots[1] = owner.objectAddress
+        owner.slots[3] = 1 // Unreadable pointee outside the requested slot.
+        #expect(try region.pointer(at: 0, toVTable: table) == nil)
+        let candidate = try #require(try region.pointer(at: word, toVTable: table))
+        #expect(candidate.offset == word && candidate.pointerBits == owner.objectAddress)
+        #expect(try region.pointer(at: word, toVTable: table + 1) == nil)
+        owner.slots[1] = 0
+        owner.slots[2] = owner.objectAddress
+        #expect(try region.pointer(at: word, toVTable: table) == nil)
+        #expect(try region.pointers(toVTable: table).candidates.first?.offset == 2 * word)
+    }
+
+    @Test func singleOffsetFailuresKeepTheirStageAndReadResult() throws {
+        let owner = try DiscoveryOwner()
+        let region = try owner.region()
+        let table = try owner.addressPoint
+        owner.slots[0] = 1
+        do {
+            _ = try region.pointer(at: 0, toVTable: table)
+            Issue.record("Unreadable pointees must throw")
+        } catch let failure as NativePointerSearchFailure {
+            #expect(failure.stage == .vptr && failure.address == 1 && failure.offset == 0)
+            #expect(failure.systemErrorCode == KERN_INVALID_ADDRESS)
+        }
+        let unreadable = try NativeMemoryRegion(address: 1, byteCount: MemoryLayout<UInt>.size)
+        do {
+            _ = try unreadable.pointer(at: 0, toVTable: table)
+            Issue.record("Unreadable source slots must throw")
+        } catch let failure as NativePointerSearchFailure {
+            #expect(failure.stage == .slot && failure.address == 1 && failure.copiedByteCount == 0)
+        }
+        owner.slots[0] = UInt.max
+        do {
+            _ = try region.pointer(at: 0, toVTable: table, vptrOffset: 1)
+            Issue.record("An overflowing vptr address must report a read failure")
+        } catch let failure as NativePointerSearchFailure {
+            #expect(failure.stage == .vptr && failure.status == .invalidRange)
+        }
+        for offset in [-1, region.byteCount - 1, region.byteCount, Int.max] {
+            #expect(throws: NativePointerSearchError.self) { try region.pointer(at: offset, toVTable: table) }
+        }
+        #expect(throws: NativePointerSearchError.self) { try region.pointer(at: 0, toVTable: 0) }
+        #expect(throws: NativePointerSearchError.self) { try region.pointer(at: 0, toVTable: table, vptrOffset: -1) }
+    }
+
+    @Test func singleOffsetCandidateRetainsAndReleasesItsOwner() throws {
+        var owner: DiscoveryOwner? = try DiscoveryOwner()
+        weak var weakOwner = owner
+        owner!.slots[0] = owner!.objectAddress
+        var candidate = try owner!.region().pointer(at: 0, toVTable: owner!.addressPoint)
+        owner = nil
+        #expect(candidate != nil && weakOwner != nil)
+        candidate = nil
+        #expect(weakOwner == nil)
+    }
+
     @Test func shiftedFieldsHintsAliasesAndAmbiguity() throws {
         let owner = try DiscoveryOwner()
         let region = try owner.region()
@@ -101,6 +162,9 @@ struct NativePointerSearchTests {
             #expect(result.uniqueCandidate?.vptrAddress == owner.objectAddress + UInt(secondaryOffset))
             #expect(result.uniqueCandidate?.pointerBits == owner.objectAddress)
             #expect(result.visitedCount == 1)
+            let inspected = try #require(try region.pointer(at: 1, toVTable: secondaryTable, vptrOffset: secondaryOffset))
+            #expect(inspected.vptrAddress == result.uniqueCandidate?.vptrAddress)
+            #expect(inspected.slotAddress == UInt(bitPattern: storage.baseAddress!) + 1)
         }
     }
 

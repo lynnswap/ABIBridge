@@ -78,6 +78,34 @@ typedef struct ABIPointerSearchFailure {
     ABIMemoryReadResult read;
 } ABIPointerSearchFailure;
 
+enum {
+    ABIPointerInspectionNoMatch = 0,
+    ABIPointerInspectionMatch = 1,
+    ABIPointerInspectionReadFailed = 2,
+    ABIPointerInspectionInvalidOptions = 3,
+    ABIPointerInspectionNormalizationUnavailable = 4
+};
+/// Single-slot outcome. Only the field selected by status contains evidence;
+/// candidate is set for Match and failure for ReadFailed. No allocation or owner
+/// retention is performed. A match does not establish uniqueness in the region.
+typedef struct {
+    int32_t status;
+    ABIPointerCandidate candidate;
+    ABIPointerSearchFailure failure;
+} ABIPointerInspectionResult;
+
+/// Re-reads exactly one full-width slot and its pointee's absolute vptr.
+/// Packed/unaligned slots are accepted. An out-of-bounds slot is invalid, not a
+/// nonmatch. Null references and unequal vptrs are readable nonmatches.
+/// No other source slots are read, including on a nonmatch or read failure.
+///
+/// Normalization and vptr interpretation match ABICopyPointerSearch. The caller
+/// supplies the actual address point and keeps region/pointee owners alive.
+/// Reads are non-atomic and do not authenticate pointers or establish lifetime.
+ABIPointerInspectionResult ABIInspectPointer(
+    uintptr_t address, size_t byteCount, size_t offset,
+    uintptr_t vtableAddressPoint, size_t vptrOffset, int32_t normalization);
+
 /// Searches current-process storage, returning owned copied evidence.
 ///
 /// The options pointer must be valid. No source owner is retained by this C

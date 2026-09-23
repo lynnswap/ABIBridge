@@ -22,6 +22,19 @@ int main(int argc, char **argv) {
     options.address = (uintptr_t)references;
     options.byteCount = sizeof(references);
     options.vtableAddressPoint = vtable;
+    ABIPointerInspectionResult inspected = ABIInspectPointer(
+        (uintptr_t)references, sizeof(references), sizeof(uintptr_t), vtable, 0, ABIPointerNormalizationNone);
+    assert(inspected.status == ABIPointerInspectionMatch && inspected.candidate.pointerBits == (uintptr_t)object);
+    inspected = ABIInspectPointer((uintptr_t)references, sizeof(references), 0, vtable, 0, ABIPointerNormalizationNone);
+    assert(inspected.status == ABIPointerInspectionNoMatch);
+    inspected = ABIInspectPointer((uintptr_t)references, sizeof(references), sizeof(references), vtable, 0, 0);
+    assert(inspected.status == ABIPointerInspectionInvalidOptions);
+    inspected = ABIInspectPointer((uintptr_t)references, sizeof(references), 0, vtable, 0, -1);
+    assert(inspected.status == ABIPointerInspectionInvalidOptions);
+    references[0] = 1;
+    inspected = ABIInspectPointer((uintptr_t)references, sizeof(references), 0, vtable, 0, 0);
+    assert(inspected.status == ABIPointerInspectionReadFailed && inspected.failure.stage == ABIPointerSearchVPtrRead);
+    references[0] = 0;
     int32_t search_error = -1;
     ABIPointerSearchResult *search = ABICopyPointerSearch(&options, &search_error);
     assert(search && search_error == ABIPointerSearchSuccess);

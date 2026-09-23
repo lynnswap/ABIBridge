@@ -46,6 +46,37 @@ struct pointer_candidate final {
     memory_region source_region;
 };
 
+/// An owned copy of a slot or pointee read failure from single-slot inspection.
+class pointer_read_error final : public std::runtime_error {
+public:
+    explicit pointer_read_error(ABIPointerSearchFailure failure)
+        : std::runtime_error("Native pointer storage could not be read."), failure_(failure) {}
+    const ABIPointerSearchFailure& failure() const noexcept { return failure_; }
+private:
+    ABIPointerSearchFailure failure_;
+};
+
+/// Revalidates one full-width slot without inspecting other source slots.
+/// Packed slots are accepted; out-of-range slots throw pointer_search_error.
+/// Returns nullopt for null references or readable unequal vptrs. Read failures
+/// throw pointer_read_error with the original stage, address, and Mach result.
+/// The candidate retains the region's owner and makes no uniqueness claim.
+inline std::optional<pointer_candidate> inspect_pointer(
+    const memory_region& region, std::size_t offset, std::uintptr_t vtable_address_point,
+    std::size_t vptr_offset = 0, pointer_normalization normalization = pointer_normalization::none) {
+    const auto result = ABIInspectPointer(
+        region.address(), region.byte_count(), offset, vtable_address_point, vptr_offset,
+        static_cast<std::int32_t>(normalization));
+    switch (result.status) {
+    case ABIPointerInspectionMatch: return pointer_candidate{result.candidate, region};
+    case ABIPointerInspectionNoMatch: return std::nullopt;
+    case ABIPointerInspectionReadFailed: throw pointer_read_error(result.failure);
+    case ABIPointerInspectionNormalizationUnavailable:
+        throw pointer_search_error(ABIPointerSearchNormalizationUnavailable);
+    default: throw pointer_search_error(ABIPointerSearchInvalidOptions);
+    }
+}
+
 /// Copied evidence. Candidate copies retain the source owner independently.
 struct pointer_search_result final {
     std::vector<pointer_candidate> candidates;
