@@ -11,6 +11,9 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <variant>
+#include <vector>
+#include <algorithm>
 
 namespace abi_bridge {
 
@@ -62,6 +65,14 @@ private:
         : kind_(kind), value_(std::move(value)) {}
     std::int32_t kind_ = ABIImageAutomatic;
     std::string value_;
+};
+
+/// One declaration with aliases and ordered loaded-image scopes.
+/// Empty scopes match no images. Found aliases must agree on address and load.
+struct symbol_request final {
+    declaration primary;
+    std::vector<declaration> alternatives;
+    std::vector<image_selector> image_scopes = {image_selector::automatic()};
 };
 
 /// A resolution failure with a stable category and human-readable detail.
@@ -120,6 +131,9 @@ private:
     std::shared_ptr<ABIResolvedSymbol> handle_;
 };
 
+
+/// An independently owned per-request symbol or lookup failure.
+using resolution_result = std::variant<resolved_symbol, resolution_error>;
 
 /// A copied image description. The path and UUID are owned values; this
 /// description does not retain the image or make its addresses safe to read.
@@ -210,6 +224,71 @@ public:
                                    ABIResolutionFailureMessage(failure));
         }
         return resolved_symbol(symbol);
+    }
+
+    /// Resolves aliases with ordered scope fallback, or throws resolution_error.
+    resolved_symbol resolve(const symbol_request& query) const {
+        auto results = resolve(std::vector<symbol_request>{query});
+        if (auto* symbol = std::get_if<resolved_symbol>(&results.front())) return std::move(*symbol);
+        throw std::get<resolution_error>(results.front());
+    }
+
+    /// Resolves every request, preserving order and partial success. Scope
+    /// results are reused within this batch, not an atomic loader snapshot.
+    /// Allocation failures still throw; resolution failures remain per request.
+    std::vector<resolution_result> resolve(const std::vector<symbol_request>& queries) const {
+        const auto declaration_value = [](const declaration& d) {
+            return ABIDeclaration{d.name.c_str(), static_cast<std::int32_t>(d.source_language),
+                                  static_cast<std::int32_t>(d.kind)};
+        };
+        const auto has_nul = [](const std::string& s) { return s.find('\0') != std::string::npos; };
+        std::vector<std::vector<ABIDeclaration>> aliases(queries.size());
+        std::vector<std::vector<ABIImageSelector>> scopes(queries.size());
+        std::vector<ABISymbolRequest> native_queries;
+        std::vector<std::size_t> indices;
+        std::vector<std::optional<resolution_result>> outcomes(queries.size());
+        for (std::size_t i = 0; i < queries.size(); ++i) {
+            const auto& query = queries[i];
+            if (has_nul(query.primary.name) ||
+                std::any_of(query.alternatives.begin(), query.alternatives.end(),
+                            [&](const auto& d) { return has_nul(d.name); }) ||
+                std::any_of(query.image_scopes.begin(), query.image_scopes.end(),
+                            [&](const auto& s) { return has_nul(s.value_); })) {
+                outcomes[i].emplace(resolution_error(
+                    ABIFailureInvalidRequest, "Names and image selectors must not contain embedded NULs."));
+                continue;
+            }
+            for (const auto& d : query.alternatives) aliases[i].push_back(declaration_value(d));
+            for (const auto& s : query.image_scopes) scopes[i].push_back({s.kind_, s.value_.c_str()});
+            native_queries.push_back({declaration_value(query.primary),
+                                      aliases[i].data(), aliases[i].size(),
+                                      scopes[i].data(), scopes[i].size()});
+            indices.push_back(i);
+        }
+        std::vector<ABISymbolResult> native_results(native_queries.size());
+        struct result_cleanup {
+            std::vector<ABISymbolResult>& results;
+            ~result_cleanup() {
+                for (auto& result : results) {
+                    if (result.symbol) ABIReleaseResolvedSymbol(result.symbol);
+                    if (result.failure) ABIReleaseResolutionFailure(result.failure);
+                }
+            }
+        } cleanup{native_results};
+        ABIResolveSymbols(handle_.get(), native_queries.data(), native_queries.size(), native_results.data());
+        for (std::size_t i = 0; i < native_results.size(); ++i) {
+            auto& result = native_results[i];
+            if (result.symbol) {
+                outcomes[indices[i]].emplace(resolved_symbol::adopt(std::exchange(result.symbol, nullptr)));
+            } else {
+                outcomes[indices[i]].emplace(resolution_error(
+                    ABIResolutionFailureCode(result.failure), ABIResolutionFailureMessage(result.failure)));
+            }
+        }
+        std::vector<resolution_result> results;
+        results.reserve(outcomes.size());
+        for (auto& outcome : outcomes) results.push_back(std::move(*outcome));
+        return results;
     }
 
     /// Clears indexes without invalidating previously returned symbol handles.

@@ -36,6 +36,58 @@ final class SymbolResolver: Sendable {
         try unique(declaration, images: [image])
     }
 
+    func resolve(_ request: NativeSymbolRequest) throws -> ResolvedSymbol {
+        var scopes: [ImageSelector: Result<[NativeImage], any Error>] = [:]
+        return try resolve(request, scopes: &scopes)
+    }
+
+    func resolve(_ requests: [NativeSymbolRequest]) -> [Result<ResolvedSymbol, any Error>] {
+        var scopes: [ImageSelector: Result<[NativeImage], any Error>] = [:]
+        return requests.map { request in
+            Result { try resolve(request, scopes: &scopes) }
+        }
+    }
+
+    private func resolve(
+        _ request: NativeSymbolRequest,
+        scopes: inout [ImageSelector: Result<[NativeImage], any Error>]
+    ) throws -> ResolvedSymbol {
+        var missing: ABIResolutionError = .imageNotLoaded
+        for scope in request.imageScopes {
+            let scopeResult: Result<[NativeImage], any Error>
+            if let cached = scopes[scope] {
+                scopeResult = cached
+            } else {
+                scopeResult = Result { try self.images(matching: scope) }
+                scopes[scope] = scopeResult
+            }
+            let images = try scopeResult.get()
+            guard !images.isEmpty else { continue }
+            var match: ResolvedSymbol?
+            for declaration in [request.declaration] + request.alternatives {
+                do {
+                    let found = try unique(declaration, images: images)
+                    if let previous = match {
+                        guard previous.address == found.address,
+                              previous.image.identity == found.image.identity else {
+                            throw ABIResolutionError.ambiguousDeclaration(
+                                request.declaration,
+                                candidates: [previous.declaration.name, found.declaration.name]
+                            )
+                        }
+                    } else {
+                        match = found
+                    }
+                } catch ABIResolutionError.declarationNotFound {
+                    continue
+                }
+            }
+            if let match { return match }
+            missing = .declarationNotFound(request.declaration)
+        }
+        throw missing
+    }
+
     func resolveSwiftExtension(_ declaration: NativeDeclaration) throws -> ResolvedSymbol {
         try unique(declaration, images: images(matching: .automatic), extensionsOnly: true)
     }

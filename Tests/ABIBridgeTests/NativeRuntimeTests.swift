@@ -61,6 +61,49 @@ struct NativeRuntimeTests {
         #expect(result == ProcessInfo.processInfo.processIdentifier)
     }
 
+    @Test func nativeBatchesReturnOwnedPerRequestOutcomes() throws {
+        let runtime = try #require(ABICreateSymbolRuntime())
+        defer { ABIReleaseSymbolRuntime(runtime) }
+        ABIResolveSymbols(runtime, nil, 0, nil)
+        try "getpid".withCString { name in
+            var scope = ABIImageSelector(scope: Int32(ABIImageAutomatic), selector: nil)
+            try withUnsafePointer(to: &scope) { scope in
+                let declaration = ABIDeclaration(name: name, language: Int32(ABILanguageC), kind: Int32(ABISymbolFunction))
+                let valid = ABISymbolRequest(declaration: declaration, alternatives: nil, alternativeCount: 0,
+                                             imageScopes: scope, imageScopeCount: 1)
+                var malformed = valid
+                malformed.alternativeCount = 1
+                var empty = valid
+                empty.imageScopeCount = 0
+                let requests = [valid, malformed, empty, valid]
+                var results = Array(repeating: ABISymbolResult(), count: requests.count)
+                requests.withUnsafeBufferPointer { requests in
+                    results.withUnsafeMutableBufferPointer { results in
+                        ABIResolveSymbols(runtime, requests.baseAddress, requests.count, results.baseAddress)
+                    }
+                }
+                defer {
+                    for result in results {
+                        if let symbol = result.symbol { ABIReleaseResolvedSymbol(symbol) }
+                        if let failure = result.failure { ABIReleaseResolutionFailure(failure) }
+                    }
+                }
+                for index in [0, 3] {
+                    #expect(results[index].symbol != nil)
+                    #expect(results[index].failure == nil)
+                }
+                let malformedFailure = try #require(results[1].failure)
+                #expect(results[1].symbol == nil)
+                #expect(ABIResolutionFailureCode(malformedFailure) == Int32(ABIFailureInvalidRequest))
+                let emptyFailure = try #require(results[2].failure)
+                #expect(ABIResolutionFailureCode(emptyFailure) == Int32(ABIFailureImageNotLoaded))
+                ABIRuntimeRemoveCachedResults(runtime)
+                let symbol = try #require(results[0].symbol)
+                #expect(ABIResolvedSymbolAddress(symbol) != nil)
+            }
+        }
+    }
+
     @Test func nativeErrorsAreOwnedAndKeepTheirDetail() throws {
         let runtime = try #require(ABICreateSymbolRuntime())
         defer { ABIReleaseSymbolRuntime(runtime) }

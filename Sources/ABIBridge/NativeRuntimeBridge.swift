@@ -78,36 +78,8 @@ package func nativeResolveSymbol(
 ) -> OpaquePointer? {
     error?.pointee = nil
     do {
-        let sourceLanguage: NativeLanguage
-        switch language {
-        case Int32(ABILanguageSwift): sourceLanguage = .swift
-        case Int32(ABILanguageObjectiveC): sourceLanguage = .objectiveC
-        case Int32(ABILanguageC): sourceLanguage = .c
-        case Int32(ABILanguageCXX): sourceLanguage = .cxx
-        default: throw InvalidNativeRequest(description: "Unknown source language: \(language)")
-        }
-        let symbolKind: NativeSymbolKind
-        switch kind {
-        case Int32(ABISymbolFunction): symbolKind = .function
-        case Int32(ABISymbolData): symbolKind = .data
-        case Int32(ABISymbolVTable): symbolKind = .vtable
-        default: throw InvalidNativeRequest(description: "Unknown symbol kind: \(kind)")
-        }
-        let imageSelector: ImageSelector
-        switch scope {
-        case Int32(ABIImageAutomatic): imageSelector = .automatic
-        case Int32(ABIImageFramework), Int32(ABIImagePath):
-            guard let selector else {
-                throw InvalidNativeRequest(description: "A framework or executable path is required.")
-            }
-            let value = String(cString: selector)
-            imageSelector = scope == Int32(ABIImageFramework)
-                ? .framework(named: value) : .path(URL(fileURLWithPath: value))
-        default: throw InvalidNativeRequest(description: "Unknown image scope: \(scope)")
-        }
-        let declaration = NativeDeclaration(
-            name: String(cString: name), language: sourceLanguage, kind: symbolKind
-        )
+        let declaration = try nativeDeclaration(name, language: language, kind: kind)
+        let imageSelector = try nativeImageSelector(scope: scope, selector: selector)
         let symbol = try borrowed(runtime, as: SymbolResolver.self)
             .resolve(declaration, in: imageSelector)
         return retained(NativeSymbolBox(symbol))
@@ -170,4 +142,84 @@ package func nativeResolvedSymbolImage(_ symbol: OpaquePointer, _ info: UnsafeMu
         uuid: identity.uuid?.uuid ?? (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
         path: UnsafePointer(box.path)
     )
+}
+
+private func nativeDeclaration(
+    _ name: UnsafePointer<CChar>?, language: Int32, kind: Int32
+) throws -> NativeDeclaration {
+    guard let name else { throw InvalidNativeRequest(description: "A declaration name is required.") }
+    let sourceLanguage: NativeLanguage
+    switch language {
+    case Int32(ABILanguageSwift): sourceLanguage = .swift
+    case Int32(ABILanguageObjectiveC): sourceLanguage = .objectiveC
+    case Int32(ABILanguageC): sourceLanguage = .c
+    case Int32(ABILanguageCXX): sourceLanguage = .cxx
+    default: throw InvalidNativeRequest(description: "Unknown source language: \(language)")
+    }
+    let symbolKind: NativeSymbolKind
+    switch kind {
+    case Int32(ABISymbolFunction): symbolKind = .function
+    case Int32(ABISymbolData): symbolKind = .data
+    case Int32(ABISymbolVTable): symbolKind = .vtable
+    default: throw InvalidNativeRequest(description: "Unknown symbol kind: \(kind)")
+    }
+
+    return NativeDeclaration(name: String(cString: name), language: sourceLanguage, kind: symbolKind)
+}
+
+private func nativeImageSelector(
+    scope: Int32, selector: UnsafePointer<CChar>?
+) throws -> ImageSelector {
+    let imageSelector: ImageSelector
+    switch scope {
+    case Int32(ABIImageAutomatic): imageSelector = .automatic
+    case Int32(ABIImageFramework), Int32(ABIImagePath):
+        guard let selector else {
+            throw InvalidNativeRequest(description: "A framework or executable path is required.")
+        }
+        let value = String(cString: selector)
+        imageSelector = scope == Int32(ABIImageFramework)
+            ? .framework(named: value) : .path(URL(fileURLWithPath: value))
+    default: throw InvalidNativeRequest(description: "Unknown image scope: \(scope)")
+    }
+
+    return imageSelector
+}
+
+private func nativeRequest(_ request: ABISymbolRequest) throws -> NativeSymbolRequest {
+    guard request.alternativeCount >= 0, request.imageScopeCount >= 0,
+          request.alternativeCount == 0 || request.alternatives != nil,
+          request.imageScopeCount == 0 || request.imageScopes != nil else {
+        throw InvalidNativeRequest(description: "Nonempty request arrays require valid storage.")
+    }
+    let declaration = try nativeDeclaration(
+        request.declaration.name, language: request.declaration.language, kind: request.declaration.kind
+    )
+    let alternatives = try UnsafeBufferPointer(start: request.alternatives, count: request.alternativeCount).map {
+        try nativeDeclaration($0.name, language: $0.language, kind: $0.kind)
+    }
+    let scopes = try UnsafeBufferPointer(start: request.imageScopes, count: request.imageScopeCount).map {
+        try nativeImageSelector(scope: $0.scope, selector: $0.selector)
+    }
+    return NativeSymbolRequest(declaration, alternatives: alternatives, in: scopes)
+}
+
+@_cdecl("ABIResolveSymbols")
+package func nativeResolveSymbols(
+    _ runtime: OpaquePointer, _ requests: UnsafePointer<ABISymbolRequest>?,
+    _ count: Int, _ results: UnsafeMutablePointer<ABISymbolResult>?
+) {
+    let decoded = UnsafeBufferPointer(start: requests, count: count).map { request in
+        Result { try nativeRequest(request) }
+    }
+    let valid = decoded.compactMap { try? $0.get() }
+    var resolved = borrowed(runtime, as: SymbolResolver.self).resolve(valid).makeIterator()
+    for (index, request) in decoded.enumerated() {
+        switch request.flatMap({ _ in resolved.next()! }) {
+        case .success(let symbol):
+            results![index] = ABISymbolResult(symbol: retained(NativeSymbolBox(symbol)), failure: nil)
+        case .failure(let error):
+            results![index] = ABISymbolResult(symbol: nil, failure: nativeFailure(error))
+        }
+    }
 }

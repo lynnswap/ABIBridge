@@ -97,6 +97,54 @@ C names omit the Mach-O underscore; C++ and Swift names use demangled declaratio
 
 Framework and executable-path scopes only search loaded images. Automatic scope reports distinct matching definitions as an ambiguity. A vtable symbol's address is not necessarily its first virtual-function slot; the consumer supplies the actual address-point offset and layout.
 
+## Resolve batches and ordered alternatives
+
+C++ uses `symbol_request` for a primary declaration, alternative spellings, and ordered image scopes:
+
+```cpp
+std::vector<abi_bridge::symbol_request> requests{
+    {{"Example::Renderer::refresh()", abi_bridge::language::cxx}, {},
+     {abi_bridge::image_selector::framework("Example"),
+      abi_bridge::image_selector::framework("ExampleSupport")}},
+    {{"Example::counter", abi_bridge::language::cxx, abi_bridge::symbol_kind::data}, {},
+     {abi_bridge::image_selector::framework("Example")}}
+};
+auto results = runtime.resolve(requests);
+for (const auto& result : results) {
+    if (const auto* symbol = std::get_if<abi_bridge::resolved_symbol>(&result)) {
+        auto path = symbol->image_path();
+    } else {
+        const auto& error = std::get<abi_bridge::resolution_error>(result);
+        // Handle error.code() and error.what().
+    }
+}
+```
+
+Each `resolution_result` owns either a symbol or an error. A single `symbol_request` can also be passed to `resolve`, which returns a symbol or throws. Batch lookup errors stay with their corresponding request; allocation failures may still throw.
+
+C uses `ABISymbolRequest` and a count-element `ABISymbolResult` output array:
+
+```c
+ABIImageSelector scopes[] = {{ABIImageFramework, "Example"}};
+ABISymbolRequest request = {
+    {"Example::counter", ABILanguageCXX, ABISymbolData},
+    NULL, 0, scopes, 1
+};
+ABISymbolResult result = {0};
+ABIResolveSymbols(runtime, &request, 1, &result);
+if (result.symbol) {
+    // This independently owned symbol can be kept after the batch ends.
+    ABIReleaseResolvedSymbol(result.symbol);
+} else {
+    fprintf(stderr, "%s\\n", ABIResolutionFailureMessage(result.failure));
+    ABIReleaseResolutionFailure(result.failure);
+}
+```
+
+Each output contains exactly one owned symbol or failure. Release old output references before reusing storage; the call overwrites them without releasing them. At count zero, both input and output arrays may be null. Request strings and nested arrays are borrowed only for the duration of the call. Invalid fields fail their request independently.
+
+Scopes are tried in order only when an image or declaration is absent. Missing aliases are ignored; all found aliases must agree on address and image generation. Ambiguity or invalid storage stops fallback. Empty scopes match no images. Scope results are reused within the batch, using the same backend as Swift; the operation does not claim an atomic loader snapshot.
+
 ## Pass symbols between Swift and native adapters
 
 Swift can export a resolved result with `symbol.copyNativeHandle()`. The returned pointer owns one C reference. A C adapter releases it with `ABIReleaseResolvedSymbol`; C++ can take ownership with `resolved_symbol::adopt`:

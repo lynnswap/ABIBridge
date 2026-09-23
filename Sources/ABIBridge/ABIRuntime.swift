@@ -61,6 +61,30 @@ public actor ABIRuntime {
         try resolver.resolve(declaration, in: image)
     }
 
+    /// Resolves a requirement with aliases and ordered image fallback.
+    ///
+    /// A later scope is tried only when an image or declaration is absent.
+    /// Found aliases must agree on the address and image generation.
+    /// - Parameter request: The declarations and ordered image scopes to search.
+    /// - Returns: The first found declaration's symbol, retaining its image.
+    /// - Throws: The lookup failure; ambiguity and invalid storage stop fallback.
+    public func resolve(_ request: NativeSymbolRequest) throws -> ResolvedSymbol {
+        try resolver.resolve(request)
+    }
+
+    /// Resolves independent requirements, preserving input order and partial success.
+    ///
+    /// Retained images for each scope are reused within this batch, and symbol
+    /// indexes use this runtime's existing cache. Results are independent; the
+    /// batch is not an atomic snapshot of loader activity.
+    /// - Parameter requests: Requirements to resolve, or an empty array.
+    /// - Returns: One owned symbol or lookup error for each input requirement.
+    public func resolve(
+        _ requests: [NativeSymbolRequest]
+    ) -> [Result<ResolvedSymbol, any Error>] {
+        resolver.resolve(requests)
+    }
+
     /// Releases cached image indexes.
     ///
     /// Existing image and symbol handles remain valid. Subsequent lookups rebuild

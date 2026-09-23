@@ -91,6 +91,22 @@ int main(int argc, char **argv) {
     assert(!ABIResolveSymbol(runtime, "missing", -1, ABISymbolData,
                              ABIImageAutomatic, NULL, NULL));
 
+    ABIImageSelector scopes[] = {{ABIImageFramework, "ABIBridgeAbsentFixture"}, {ABIImagePath, argv[1]}};
+    ABIDeclaration counter_declaration = {"ABIBridgeFixture::counter", ABILanguageCXX, ABISymbolData};
+    ABISymbolRequest requests[] = {
+        {counter_declaration, &counter_declaration, 1, scopes, 2},
+        {{"ABIBridgeBatchMissing", ABILanguageC, ABISymbolData}, NULL, 0, scopes, 2}
+    };
+    ABISymbolResult outcomes[2] = {{0}};
+    ABIResolveSymbols(runtime, NULL, 0, NULL);
+    ABIResolveSymbols(runtime, requests, 2, outcomes);
+    assert(outcomes[0].symbol && !outcomes[0].failure);
+    assert(!outcomes[1].symbol && outcomes[1].failure);
+    assert(*(const int *)ABIResolvedSymbolAddress(outcomes[0].symbol) == 42);
+    assert(ABIResolutionFailureCode(outcomes[1].failure) == ABIFailureDeclarationNotFound);
+    ABIReleaseResolvedSymbol(outcomes[0].symbol);
+    ABIReleaseResolutionFailure(outcomes[1].failure);
+
     assert(dlclose(library) == 0);
     ABIRuntimeRemoveCachedResults(runtime);
     ABIReleaseSymbolRuntime(runtime);

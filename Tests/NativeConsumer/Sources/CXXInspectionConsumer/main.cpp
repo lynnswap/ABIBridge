@@ -94,6 +94,26 @@ int main(int argc, char **argv) {
         }
         for (auto& thread : threads) thread.join();
 
+        const symbol_request batchCounter{
+            counterQuery, {counterQuery}, {image_selector::framework("ABIBridgeAbsentFixture"), scope}
+        };
+        auto invalidBatch = batchCounter;
+        invalidBatch.primary.name += std::string("\0suffix", 7);
+        auto noScopes = batchCounter;
+        noScopes.image_scopes.clear();
+        std::vector<symbol_request> batch{
+            batchCounter, {{"ABIBridgeBatchMissing", language::c}, {}, {scope}}, invalidBatch, noScopes
+        };
+        auto outcomes = runtime.resolve(batch);
+        assert(outcomes.size() == batch.size());
+        assert(*static_cast<const int*>(std::get<resolved_symbol>(outcomes[0]).unsafe_address()) == 42);
+        assert(std::get<resolution_error>(outcomes[1]).code() == ABIFailureDeclarationNotFound);
+        assert(std::get<resolution_error>(outcomes[2]).code() == ABIFailureInvalidRequest);
+        assert(std::get<resolution_error>(outcomes[3]).code() == ABIFailureImageNotLoaded);
+        assert(runtime.resolve(std::vector<symbol_request>{}).empty());
+        assert(runtime.resolve(batchCounter).unsafe_address() ==
+               std::get<resolved_symbol>(outcomes[0]).unsafe_address());
+
         retained = runtime.resolve(counterQuery, scope);
         auto acquired = ABIRetainResolvedSymbol(retained->native_handle());
         auto adopted = resolved_symbol::adopt(acquired);
