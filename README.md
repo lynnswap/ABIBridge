@@ -205,6 +205,18 @@ if let image = images.first {
 
 Use `.path(executableURL)` instead of `.framework(named:)` to select a particular loaded binary. Lookups do not load missing frameworks.
 
+### Copy a bounded native memory region
+
+Read current-process bytes and inspect incomplete reads without directly dereferencing the source:
+
+```swift
+let region = try NativeMemoryRegion(
+    address: address, byteCount: allocationSize, retaining: owner
+)
+let result = try region.read(at: 0, byteCount: 16)
+print(result.isComplete, result.bytes)
+```
+
 ### Inspect symbols from C++ or Objective-C++
 
 For an already-loaded framework defining `Example::Renderer`:

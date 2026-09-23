@@ -33,6 +33,8 @@ This checks that the C entry points remain externally linkable after Xcode combi
 
 The symbol tests compile temporary C++ libraries with the installed Xcode toolchain. They test real symbol lookup, image retention, and unload/reload behavior. Objective-C invocation tests use Swift and Objective-C fixtures to check typed arguments, forwarding, caller isolation, returned-object ownership, initializer behavior, and signature failures. Typed C/C++ invocation tests additionally cover standard C value layouts, twelve mixed arguments, optional pointers, concurrent handle reuse, and invocation after the original loader reference is released. Swift invocation tests compare normal calls with dynamically resolved calls for mixed register/stack arguments, ownership, integer-field coalescing, four-register results, and indirect results. Guarded argument/result pages verify that coalesced registers do not read or write beyond an odd-sized value's allocation. Native value tests cover custom wrappers, runtime signatures, borrowed/adopted ownership, failed conversions, field views, unaligned reads, and invalid layouts.
 
+Memory tests verify owned copies, region bounds, unaligned reads, zero-length requests, inaccessible source addresses, and readable prefixes before protected pages. The C, C++, and Objective-C++ consumers exercise the shared reader, including owner release and ARC/MRC builds. Runtime evidence is from macOS; other Apple platforms compile in CI.
+
 Run the native backend fixtures to verify linking and ABI behavior through the `ABIBridge` product:
 
 ```sh
