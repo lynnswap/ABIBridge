@@ -138,7 +138,7 @@ final class SymbolIndex {
     }
     private var decoded: [Scope: [[UInt8]: [IndexedSymbol]]] = [:]
     private var cxxCandidates: [String: [IndexedSymbol]] = [:]
-    private var linkerNames: [String: [IndexedSymbol]]?
+    private var linkerNames: [[UInt8]: [IndexedSymbol]]?
     private var swiftExtensions: [[UInt8]: [IndexedSymbol]] = [:]
 
     init(image: NativeImage) {
@@ -186,9 +186,10 @@ final class SymbolIndex {
     }
 
     func matches(_ declaration: NativeDeclaration, extensionsOnly: Bool = false) -> [IndexedSymbol] {
-        if declaration.language == .c {
-            if linkerNames == nil { linkerNames = Dictionary(grouping: symbols, by: \.name) }
-            return linkerNames?["_" + declaration.name] ?? []
+        if declaration.nameForm != .source || declaration.language == .c {
+            if linkerNames == nil { linkerNames = Dictionary(grouping: symbols, by: { Array($0.name.utf8) }) }
+            let name = declaration.nameForm == .machO ? declaration.name : "_" + declaration.name
+            return linkerNames?[Array(name.utf8)] ?? []
         }
         let filter = CXXSymbolFilter(declaration.language == .cxx ? declaration.name : "")
         let scope = Scope(language: declaration.language, fragments: filter.fragments)

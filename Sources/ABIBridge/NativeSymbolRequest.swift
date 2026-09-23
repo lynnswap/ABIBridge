@@ -16,7 +16,7 @@ public struct NativeSymbolRequest: Sendable, Hashable {
     /// Describes a requirement without loading code.
     ///
     /// - Parameters:
-    ///   - declaration: The preferred source-level declaration.
+    ///   - declaration: The preferred declaration, using a source-level or exact name.
     ///   - alternatives: Additional declarations for the same symbol.
     ///   - imageScopes: Ordered scopes; defaults to all loaded images.
     public init(

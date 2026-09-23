@@ -102,7 +102,7 @@ final class SymbolResolver: Sendable {
     }
 
     private func unique(_ declaration: NativeDeclaration, images: [NativeImage], extensionsOnly: Bool = false) throws -> ResolvedSymbol {
-        guard declaration.language != .objectiveC else {
+        guard declaration.language != .objectiveC || declaration.nameForm != .source else {
             throw ABIResolutionError.unsupportedDeclaration("Objective-C selectors require the invocation frontend.")
         }
         // Keep these indexes for the whole lookup even if another caller clears

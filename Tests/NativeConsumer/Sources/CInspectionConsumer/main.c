@@ -105,8 +105,15 @@ int main(int argc, char **argv) {
 
     ABIImageSelector scopes[] = {{ABIImageFramework, "ABIBridgeAbsentFixture"}, {ABIImagePath, argv[1]}};
     ABIDeclaration counter_declaration = {"ABIBridgeFixture::counter", ABILanguageCXX, ABISymbolData};
+    ABIDeclaration exact_counter = {"_ZN16ABIBridgeFixture7counterE", ABILanguageCXX, ABISymbolData, ABINameLinker};
+    ABIResolvedSymbol *literal_counter = ABIResolveSymbolWithNameForm(
+        runtime, "__ZN16ABIBridgeFixture7counterE", ABINameMachO,
+        ABILanguageCXX, ABISymbolData, ABIImagePath, argv[1], &failure);
+    assert(literal_counter && !failure);
+    assert(ABIResolvedSymbolAddress(literal_counter) == ABIResolvedSymbolAddress(counter));
+    ABIReleaseResolvedSymbol(literal_counter);
     ABISymbolRequest requests[] = {
-        {counter_declaration, &counter_declaration, 1, scopes, 2},
+        {counter_declaration, &exact_counter, 1, scopes, 2},
         {{"ABIBridgeBatchMissing", ABILanguageC, ABISymbolData}, NULL, 0, scopes, 2}
     };
     ABISymbolResult outcomes[2] = {{0}};

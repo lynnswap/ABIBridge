@@ -52,18 +52,33 @@ public struct NativeImageIdentity: Sendable, Hashable {
     }
 }
 
-/// A source-level name and storage requirement for symbol lookup.
+/// How a symbol name is represented, independently of its source language.
+public enum NativeSymbolNameForm: Int32, Sendable, Hashable {
+    /// A source-level declaration, interpreted using its language.
+    case source = 0
+    /// An exact linker spelling, such as a mangled C++ or Swift name.
+    /// Mach-O's leading underscore is added exactly once without inspecting the name.
+    case linker = 1
+    /// An exact symbol-table spelling, including Mach-O's leading underscore.
+    case machO = 2
+}
+
+/// A name, representation, language, and storage requirement for symbol lookup.
 ///
-/// For C++ and Swift, use a complete demangled declaration. Lookup normalizes
-/// punctuation spacing while preserving identifier boundaries. A symbol's name
-/// alone does not determine its calling convention or ownership.
+/// Prefer complete source-level declarations for C++ and Swift. Source lookup
+/// normalizes punctuation spacing while preserving identifier boundaries.
+/// Exact-name initializers bypass that normalization. A name alone does not
+/// determine calling convention or ownership. Equality and hashing preserve
+/// the name's UTF-8 bytes, even for canonically equivalent Unicode strings.
 public struct NativeDeclaration: Sendable, Hashable {
     /// The name or complete declaration to match.
     public let name: String
-    /// The language used to interpret the name.
+    /// The language used for source lookup; metadata only for exact spellings.
     public let language: NativeLanguage
     /// The required storage kind.
     public let kind: NativeSymbolKind
+    /// Whether the name is a source declaration or an exact native spelling.
+    public let nameForm: NativeSymbolNameForm
 
     /// Describes a symbol to resolve.
     ///
@@ -76,9 +91,50 @@ public struct NativeDeclaration: Sendable, Hashable {
         language: NativeLanguage,
         kind: NativeSymbolKind = .function
     ) {
+        self.init(name: name, language: language, kind: kind, nameForm: .source)
+    }
+
+    /// Describes an exact linker spelling without demangling or normalization.
+    ///
+    /// Use the source-level initializer for ordinary lookup. This escape hatch
+    /// distinguishes ABI variants with identical demangled declarations.
+    /// - Parameters:
+    ///   - linkerName: The exact linker name; any existing underscore is preserved.
+    ///   - language: The declaration's source language, retained as metadata.
+    ///   - kind: The required storage kind.
+    public init(linkerName: String, language: NativeLanguage, kind: NativeSymbolKind = .function) {
+        self.init(name: linkerName, language: language, kind: kind, nameForm: .linker)
+    }
+
+    /// Describes the literal spelling stored in a Mach-O symbol table.
+    ///
+    /// No prefix is added or removed, and no name normalization is performed.
+    /// - Parameters:
+    ///   - machOName: The complete symbol-table spelling.
+    ///   - language: The declaration's source language, retained as metadata.
+    ///   - kind: The required storage kind.
+    public init(machOName: String, language: NativeLanguage, kind: NativeSymbolKind = .function) {
+        self.init(name: machOName, language: language, kind: kind, nameForm: .machO)
+    }
+
+    init(name: String, language: NativeLanguage, kind: NativeSymbolKind, nameForm: NativeSymbolNameForm) {
         self.name = name
         self.language = language
         self.kind = kind
+        self.nameForm = nameForm
+    }
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        guard lhs.language == rhs.language, lhs.kind == rhs.kind, lhs.nameForm == rhs.nameForm else { return false }
+        // Canonical string equality can merge distinct native symbol spellings.
+        return lhs.name.utf8.elementsEqual(rhs.name.utf8)
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(language)
+        hasher.combine(kind)
+        hasher.combine(nameForm)
+        hasher.combine(Array(name.utf8))
     }
 
     /// Describes a C++ vtable using its qualified source-level type name.

@@ -11,6 +11,103 @@ import Testing
 
 @Suite(.serialized)
 struct SymbolResolutionTests {
+    @Test func exactSpellingsPreserveCXXVariantsAndUnderscores() async throws {
+        let fixture = try FixtureLibrary()
+        defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        let scope = ImageSelector.path(fixture.libraryURL)
+        let prefix = "_ZN\(fixture.namespace.utf8.count)\(fixture.namespace)7Counter"
+        let deleting = NativeDeclaration(linkerName: prefix + "D0Ev", language: .cxx)
+        let complete = NativeDeclaration(machOName: "_" + prefix + "D1Ev", language: .cxx)
+        let deletingSymbol = try await runtime.resolve(deleting, in: scope)
+        let completeSymbol = try await runtime.resolve(complete, in: scope)
+        #expect(deletingSymbol.declaration.nameForm == .linker)
+        #expect(completeSymbol.declaration.nameForm == .machO)
+        #expect(unsafe deletingSymbol.withUnsafeAddress { first in
+            completeSymbol.withUnsafeAddress { second in first != second }
+        })
+        let library = try #require(dlopen(fixture.libraryURL.path, RTLD_NOW | RTLD_LOCAL))
+        defer { dlclose(library) }
+        #expect(unsafe deletingSymbol.withUnsafeAddress { $0 == dlsym(library, prefix + "D0Ev") })
+        #expect(unsafe completeSymbol.withUnsafeAddress { $0 == dlsym(library, prefix + "D1Ev") })
+        let results = await runtime.resolve([
+            NativeSymbolRequest(deleting, alternatives: [
+                .init(machOName: "_" + prefix + "D0Ev", language: .cxx)
+            ], in: [scope]),
+            .init(deleting, alternatives: [complete], in: [scope]),
+            .init(.init(linkerName: "_ABIFixtureUnderscore", language: .c, kind: .data), in: [scope]),
+            .init(.init(machOName: "__ABIFixtureUnderscore", language: .c, kind: .data), in: [scope])
+        ])
+        #expect(try results[0].get().declaration == deleting)
+        do {
+            _ = try results[1].get()
+            Issue.record("Distinct destructor variants must not be treated as aliases")
+        } catch ABIResolutionError.ambiguousDeclaration {}
+        for index in [2, 3] {
+            #expect(try unsafe results[index].get().withUnsafeAddress { $0.load(as: Int32.self) } == 73)
+        }
+        await #expect(throws: ABIResolutionError.invalidAddress) {
+            _ = try await runtime.resolve(.init(linkerName: prefix + "D0Ev", language: .cxx, kind: .data), in: scope)
+        }
+        for query in [
+            NativeDeclaration(machOName: prefix + "D0Ev", language: .cxx),
+            .init(linkerName: "_" + prefix + "D0Ev", language: .cxx),
+            .init(linkerName: prefix + "D0Ev ", language: .cxx)
+        ] {
+            do {
+                _ = try await runtime.resolve(query, in: scope)
+                Issue.record("Exact lookup must not guess prefixes or normalize whitespace")
+            } catch ABIResolutionError.declarationNotFound {}
+        }
+    }
+
+    @Test func exactSpellingsDistinguishCanonicallyEquivalentUTF8() async throws {
+        let fixture = try FixtureLibrary()
+        defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        let composed = NativeDeclaration(machOName: "_ABIBridgeUTF8_\u{00E9}", language: .c, kind: .data)
+        let decomposed = NativeDeclaration(machOName: "_ABIBridgeUTF8_e\u{0301}", language: .c, kind: .data)
+        #expect(composed.name == decomposed.name) // Swift canonical string equality.
+        #expect(composed != decomposed)
+        #expect(Set([composed, decomposed]).count == 2)
+        let sourceComposed = NativeDeclaration(name: "ABIBridgeUTF8_\u{00E9}", language: .c, kind: .data)
+        let sourceDecomposed = NativeDeclaration(name: "ABIBridgeUTF8_e\u{0301}", language: .c, kind: .data)
+        #expect(sourceComposed != sourceDecomposed)
+        let scope = ImageSelector.path(fixture.libraryURL)
+        let first = try await runtime.resolve(composed, in: scope)
+        let second = try await runtime.resolve(decomposed, in: scope)
+        #expect(unsafe first.withUnsafeAddress { $0.load(as: Int32.self) } == 31)
+        #expect(unsafe second.withUnsafeAddress { $0.load(as: Int32.self) } == 32)
+        let linker = NativeDeclaration(linkerName: "ABIBridgeUTF8_e\u{0301}", language: .c, kind: .data)
+        let source = try await runtime.resolve(sourceDecomposed, in: scope)
+        #expect(unsafe source.withUnsafeAddress { $0.load(as: Int32.self) } == 32)
+        let alias = try await runtime.resolve(linker, in: scope)
+        #expect(unsafe alias.withUnsafeAddress { $0.load(as: Int32.self) } == 32)
+    }
+
+    @Test func exactSwiftSpellingsUseTheSameRetainedImage() async throws {
+        let module = "Exact_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+        let fixture = try FixtureLibrary(swiftModule: module)
+        defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        let exported = try fixture.exportedSymbols().filter { $0.hasPrefix("_$s") }
+        #expect(exported.count == 1)
+        let machOName = try #require(exported.first)
+        let mangled = String(machOName.dropFirst())
+        let scope = ImageSelector.path(fixture.libraryURL)
+        let symbol = try await runtime.resolve(.init(linkerName: mangled, language: .swift), in: scope)
+        let literal = try await runtime.resolve(.init(machOName: "_" + mangled, language: .swift), in: scope)
+        #expect(symbol.image.identity == literal.image.identity)
+        #expect(unsafe symbol.withUnsafeAddress { first in literal.withUnsafeAddress { $0 == first } })
+        #expect(symbol.declaration.language == .swift)
+        fixture.close()
+        await runtime.removeCachedResults()
+        #expect(unsafe symbol.withUnsafeAddress { address in
+            var info = Dl_info()
+            return dladdr(address, &info) != 0
+        })
+    }
+
     @Test func batchLookupPreservesOrderFallbackAliasesAndLifetime() async throws {
         let first = try FixtureLibrary()
         let other = try FixtureLibrary()
@@ -430,6 +527,9 @@ private final class FixtureLibrary {
         int Counter::value() const { return counter; }
         Counter object;
         }
+        extern "C" int _ABIFixtureUnderscore = 73;
+        extern "C" int exactComposed asm("_ABIBridgeUTF8_\u{00E9}") = 31;
+        extern "C" int exactDecomposed asm("_ABIBridgeUTF8_e\u{0301}") = 32;
         extern "C" uintptr_t ABIFixtureAddress(int kind) {
             \(threadLocal ? "if (kind == 3) return reinterpret_cast<uintptr_t>(&\(self.namespace)::localCounter);" : "")
             if (kind == 0) return reinterpret_cast<uintptr_t>(&\(self.namespace)::add);
@@ -465,6 +565,20 @@ private final class FixtureLibrary {
         try process.run()
         process.waitUntilExit()
         try #require(process.terminationStatus == 0)
+    }
+
+    func exportedSymbols() throws -> [String] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        process.environment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("DYLD_") }
+        process.arguments = ["--sdk", "macosx", "nm", "-gUj", libraryURL.path]
+        let output = Pipe()
+        process.standardOutput = output
+        try process.run()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        try #require(process.terminationStatus == 0)
+        return String(decoding: data, as: UTF8.self).split(whereSeparator: \.isNewline).map(String.init)
     }
 
     func load() throws {

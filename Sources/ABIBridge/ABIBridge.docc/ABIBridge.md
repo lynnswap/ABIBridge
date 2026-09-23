@@ -30,6 +30,7 @@ print(symbol.image.path)
 - ``ImageSelector``
 - ``NativeDeclaration``
 - ``NativeSymbolRequest``
+- ``NativeSymbolNameForm``
 - ``NativeLanguage``
 - ``NativeSymbolKind``
 - ``ResolvedSymbol``

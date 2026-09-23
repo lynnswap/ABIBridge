@@ -30,6 +30,26 @@ Punctuation spacing is normalized while identifier boundaries remain significant
 
 Symbol resolution does not reconstruct a function's calling convention. In particular, C++ symbols do not always encode return types, and nontrivial values require layout and ownership information beyond a name.
 
+## Use exact spellings when ABI variants matter
+
+Prefer ordinary declaration names. When distinct ABI entry points share a demangled declaration, such as C++ destructor variants, use an explicit linker or Mach-O spelling:
+
+```swift
+let linker = NativeDeclaration(
+    linkerName: "_ZN7Example4Math3addEii", language: .cxx
+)
+let literal = NativeDeclaration(
+    machOName: "__ZN7Example4Math3addEii", language: .cxx
+)
+let symbol = try await runtime.resolve(linker)
+```
+
+Both declarations identify the same symbol spelling in this example. Linker form adds exactly one Mach-O underscore. Literal Mach-O form uses the supplied name unchanged. The resolver never guesses the form from a prefix, strips an existing underscore, or normalizes punctuation or whitespace in an exact name.
+
+For example, a C linker name `_helper` corresponds to Mach-O spelling `__helper`. A mangled Swift linker name beginning with `$s` corresponds to a Mach-O spelling beginning with `_$s`. The declaration's ``NativeDeclaration/language`` remains available as metadata; exact matching does not reinterpret the name through that language's demangler.
+
+Exact declarations use the same storage checks, image scopes, lookup precedence, ambiguity errors, and image retention as source lookup. They can be mixed with source-level aliases in ``NativeSymbolRequest``. Matching an exact symbol still does not establish an invocation signature.
+
 ## Lookup precedence and failures
 
 The runtime searches loaded symbol tables and exports first. If no definition matches, it searches local symbols from the matching dyld shared cache where that metadata is available. Loaded-image results retain precedence even after a shared-cache index has been populated.
