@@ -157,6 +157,14 @@ void ABIRuntimeRemoveCachedResults(ABISymbolRuntime *runtime);
 ABIResolvedSymbol *ABIResolveSymbol(
     ABISymbolRuntime *runtime, const char *name, int32_t language, int32_t kind,
     int32_t scope, const char *selector, ABIResolutionFailure **error);
+/// Resolves a C++ vtable by qualified type name, such as "Example::Renderer".
+/// Scope, errors, ownership, and lifetime follow ABIResolveSymbol. The typeName
+/// string must remain valid for the call and omits the demangler's descriptive
+/// prefix. The result is the symbol base; no address-point offset is inferred.
+ABIResolvedSymbol *ABIResolveCXXVTable(
+    ABISymbolRuntime *runtime, const char *typeName,
+    int32_t scope, const char *selector, ABIResolutionFailure **error);
+
 /// Acquires another owned reference to a live non-null symbol. The input
 /// reference remains owned by its caller. Release each acquired reference with
 /// ABIReleaseResolvedSymbol, even when the returned pointer equals the input.

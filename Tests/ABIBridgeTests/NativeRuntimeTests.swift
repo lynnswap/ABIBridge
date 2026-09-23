@@ -104,6 +104,22 @@ struct NativeRuntimeTests {
         }
     }
 
+    @Test func nativeVTableErrorsPreserveLookupCategories() throws {
+        let runtime = try #require(ABICreateSymbolRuntime())
+        defer { ABIReleaseSymbolRuntime(runtime) }
+        for (scope, expected) in [(-1, Int32(ABIFailureInvalidRequest)),
+                                  (Int32(ABIImageAutomatic), Int32(ABIFailureDeclarationNotFound))] {
+            var failure: OpaquePointer?
+            let symbol = "ABIBridgeMissingType::Renderer".withCString {
+                ABIResolveCXXVTable(runtime, $0, scope, nil, &failure)
+            }
+            #expect(symbol == nil)
+            let error = try #require(failure)
+            #expect(ABIResolutionFailureCode(error) == expected)
+            ABIReleaseResolutionFailure(error)
+        }
+    }
+
     @Test func nativeErrorsAreOwnedAndKeepTheirDetail() throws {
         let runtime = try #require(ABICreateSymbolRuntime())
         defer { ABIReleaseSymbolRuntime(runtime) }

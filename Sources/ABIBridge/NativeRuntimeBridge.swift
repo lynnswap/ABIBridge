@@ -89,6 +89,24 @@ package func nativeResolveSymbol(
     }
 }
 
+@_cdecl("ABIResolveCXXVTable")
+package func nativeResolveCXXVTable(
+    _ runtime: OpaquePointer, _ typeName: UnsafePointer<CChar>,
+    _ scope: Int32, _ selector: UnsafePointer<CChar>?,
+    _ error: UnsafeMutablePointer<OpaquePointer?>?
+) -> OpaquePointer? {
+    error?.pointee = nil
+    do {
+        let declaration = NativeDeclaration(vtableFor: String(cString: typeName))
+        let imageSelector = try nativeImageSelector(scope: scope, selector: selector)
+        let symbol = try borrowed(runtime, as: SymbolResolver.self).resolve(declaration, in: imageSelector)
+        return retained(NativeSymbolBox(symbol))
+    } catch let failure {
+        error?.pointee = nativeFailure(failure)
+        return nil
+    }
+}
+
 extension ResolvedSymbol {
     /// Acquires a Swift symbol from a borrowed native inspection handle.
     ///

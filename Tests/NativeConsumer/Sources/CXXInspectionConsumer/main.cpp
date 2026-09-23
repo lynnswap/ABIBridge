@@ -17,7 +17,7 @@ int main(int argc, char **argv) {
     void *library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
     assert(library);
     const auto scope = image_selector::path(argv[1]);
-    const declaration tableQuery("vtable for ABIBridgeFixture::VirtualCounter", language::cxx, symbol_kind::vtable);
+    const auto tableQuery = declaration::vtable_for("ABIBridgeFixture::VirtualCounter");
     const declaration counterQuery("ABIBridgeFixture::counter", language::cxx, symbol_kind::data);
     std::optional<resolved_symbol> retained;
     std::optional<resolved_symbol> handedOff;

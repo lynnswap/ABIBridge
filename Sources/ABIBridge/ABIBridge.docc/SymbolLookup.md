@@ -26,7 +26,7 @@ A `NativeDeclaration` combines a source-level name with its language and require
 - Swift names use complete demangled declarations, including module qualification and a return type.
 - Objective-C selectors require an invocation frontend and are not resolved through these symbol-table APIs.
 
-Punctuation spacing is normalized while identifier boundaries remain significant. For C++ vtables, use a declaration such as `vtable for Example::Counter` with kind `.vtable`.
+Punctuation spacing is normalized while identifier boundaries remain significant. For C++ vtables, use `NativeDeclaration(vtableFor: "Example::Counter")`. Pass the qualified type name; the library supplies the descriptive symbol spelling. The result is the vtable symbol base, with no inferred address-point offset. Existing complete demangled declarations remain supported.
 
 Symbol resolution does not reconstruct a function's calling convention. In particular, C++ symbols do not always encode return types, and nontrivial values require layout and ownership information beyond a name.
 

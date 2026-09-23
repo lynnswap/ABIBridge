@@ -63,9 +63,8 @@ int main(int argc, char **argv) {
     assert(ABIResolutionFailureCode(failure) == ABIFailureDeclarationNotFound);
     ABIResolutionFailure *saved_failure = failure;
 
-    ABIResolvedSymbol *table = ABIResolveSymbol(
-        runtime, "vtable for ABIBridgeFixture::VirtualCounter",
-        ABILanguageCXX, ABISymbolVTable, ABIImagePath, argv[1], &failure);
+    ABIResolvedSymbol *table = ABIResolveCXXVTable(
+        runtime, "ABIBridgeFixture::VirtualCounter", ABIImagePath, argv[1], &failure);
     assert(table && !failure);
     // Independent address oracle for this compiler-generated fixture.
     assert(ABIResolvedSymbolAddress(table) ==

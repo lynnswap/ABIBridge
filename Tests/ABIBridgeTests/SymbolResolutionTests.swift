@@ -198,8 +198,23 @@ struct SymbolResolutionTests {
         )
         #expect(unsafe data.withUnsafeAddress { $0.load(as: Int32.self) } == 42)
         let vtable = try await runtime.resolve(
+            .init(vtableFor: "\(fixture.namespace)::Counter"), in: image
+        )
+        let legacyVTable = try await runtime.resolve(
             .init(name: "vtable for \(fixture.namespace)::Counter", language: .cxx, kind: .vtable), in: image
         )
+        var failure: OpaquePointer?
+        let nativeRuntime = try #require(ABICreateSymbolRuntime())
+        defer { ABIReleaseSymbolRuntime(nativeRuntime) }
+        let native = "\(fixture.namespace)::Counter".withCString { typeName in
+            fixture.libraryURL.path.withCString { path in
+                ABIResolveCXXVTable(nativeRuntime, typeName, Int32(ABIImagePath), path, &failure)
+            }
+        }
+        let nativeVTable = try #require(native)
+        defer { ABIReleaseResolvedSymbol(nativeVTable) }
+        #expect(failure == nil)
+        #expect(unsafe legacyVTable.withUnsafeAddress { $0 == ABIResolvedSymbolAddress(nativeVTable) })
         let expectedVTable = try fixture.address(kind: 2)
         #expect(unsafe vtable.withUnsafeAddress { UInt(bitPattern: $0) } == expectedVTable)
         let member = try await runtime.resolve(

@@ -44,7 +44,7 @@ int main(int argc, char **argv) {
         {
             Runtime runtime;
             auto table = runtime.resolve(
-                {"vtable for ABIBridgeFixture::VirtualCounter", language::cxx, symbol_kind::vtable},
+                declaration::vtable_for("ABIBridgeFixture::VirtualCounter"),
                 image_selector::path(argv[1]));
             generation = table.image().load_generation;
             owner = [[CXXInspectionOwner alloc] initWithSymbol:resolved_symbol::retain(table.native_handle())];
