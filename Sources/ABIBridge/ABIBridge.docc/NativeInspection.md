@@ -97,6 +97,25 @@ C names omit the Mach-O underscore; C++ and Swift names use demangled declaratio
 
 Framework and executable-path scopes only search loaded images. Automatic scope reports distinct matching definitions as an ambiguity. A vtable symbol's address is not necessarily its first virtual-function slot; the consumer supplies the actual address-point offset and layout.
 
+## Pass symbols between Swift and native adapters
+
+Swift can export a resolved result with `symbol.copyNativeHandle()`. The returned pointer owns one C reference. A C adapter releases it with `ABIReleaseResolvedSymbol`; C++ can take ownership with `resolved_symbol::adopt`:
+
+```cpp
+// owned is the ABIResolvedSymbol* transferred by the caller.
+auto symbol = abi_bridge::resolved_symbol::adopt(owned);
+```
+
+Adoption consumes that reference, including if wrapper allocation throws. To acquire ownership from a borrowed handle instead, call `ABIRetainResolvedSymbol` in C or `resolved_symbol::retain` in C++:
+
+```cpp
+auto retained = abi_bridge::resolved_symbol::retain(symbol.native_handle());
+```
+
+The original reference must stay alive during retention. Each acquired C reference must be released once; copying its numeric pointer alone does not acquire ownership. `native_handle()` borrows the C pointer from the C++ wrapper.
+
+In the other direction, Swift's `ResolvedSymbol(retainingNativeHandle:)` imports a live borrowed C handle without consuming it. It preserves the same resolved metadata and independently retains the image. No handoff repeats lookup, and the original Swift value, C handle, or runtime cache can be released once the receiving owner has acquired its reference.
+
 ## Track image identity
 
 `ABICopyLoadedImages()` returns an immutable snapshot with a count and indexed `ABIImageInfo` entries. Each load has a generation that changes on reload. Snapshots contain descriptions rather than loader references: an image can disappear after the snapshot is taken.

@@ -46,6 +46,14 @@ Calling a function still requires a correct signature, calling convention, argum
 
 The image handle protects code and static storage belonging to that image. It does not retain an unrelated receiver, protect a borrowed object's lifetime, or satisfy a function's thread-affinity contract.
 
+## Hand a symbol to a native adapter
+
+Use ``ResolvedSymbol/copyNativeHandle()`` when a C or Objective-C++ adapter needs to retain the result beyond a synchronous borrow. The returned `ABIResolvedSymbol *` owns a reference independently of the Swift value. Transfer that reference to the adapter, or release it with `ABIReleaseResolvedSymbol` from `ABIBridgeCore`.
+
+To import a live borrowed C handle, use ``ResolvedSymbol/init(retainingNativeHandle:)``. The initializer acquires independent Swift ownership without consuming the C reference or repeating lookup. Declaration metadata, section bounds, image identity, and lookup source are preserved.
+
+See <doc:NativeInspection> for C++ adoption and retention. These operations keep the implementation image loaded; they do not establish receiver ownership or validate a native call signature.
+
 ## Cache and loader lifetime
 
 Call `removeCachedResults()` on the runtime to release its indexes. Existing `NativeImage` and `ResolvedSymbol` values continue to retain their images. New lookups rebuild the indexes they need.

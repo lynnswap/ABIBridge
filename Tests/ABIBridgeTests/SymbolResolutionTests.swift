@@ -11,6 +11,33 @@ import Testing
 
 @Suite(.serialized)
 struct SymbolResolutionTests {
+    @Test func handedOffSymbolsOwnTheImageAfterOriginalOwnersRelease() async throws {
+        let fixture = try FixtureLibrary()
+        defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        let declaration = NativeDeclaration(
+            name: "\(fixture.namespace)::counter", language: .cxx, kind: .data
+        )
+        var original: ResolvedSymbol? = try await runtime.resolve(declaration, in: .path(fixture.libraryURL))
+        let generation = original!.image.identity.loadGeneration
+        let exported = unsafe original!.copyNativeHandle()
+        original = nil
+        fixture.close()
+        await runtime.removeCachedResults()
+
+        let retained = try #require(ABIRetainResolvedSymbol(exported))
+        ABIReleaseResolvedSymbol(exported)
+        #expect(ABIResolvedSymbolAddress(retained).load(as: Int32.self) == 42)
+        var restored: ResolvedSymbol? = unsafe ResolvedSymbol(retainingNativeHandle: retained)
+        ABIReleaseResolvedSymbol(retained)
+        #expect(restored!.declaration == declaration)
+        #expect(unsafe restored!.withUnsafeAddress { $0.load(as: Int32.self) } == 42)
+        restored = nil
+        let remaining = ABIRetainLoadedImage(generation)
+        #expect(remaining == nil)
+        if let remaining { ABIReleaseImage(remaining) }
+    }
+
     @Test func inheritedSwiftMembersUseTheConcreteSuperclassImage() async throws {
         let module = "Inheritance_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
         let source = """
