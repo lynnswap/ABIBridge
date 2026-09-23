@@ -1,12 +1,5 @@
 import ABIBridgeCore
 
-// The typed owner keeps the original Swift representation alive. Bridging a
-// String to AnyObject could retain a different representation of its contents.
-private final class SwiftArgumentOwner<Value> {
-    let value: Value
-    init(_ value: Value) { self.value = value }
-}
-
 struct SwiftValueCodec<Value>: Sendable {
     let type: CValueType
     private let cValue: CValueCodec<Value>?
@@ -45,10 +38,14 @@ struct SwiftValueCodec<Value>: Sendable {
     func encode(_ value: Value) throws -> NativeValueStorage {
         if Value.self == Void.self { return NativeValueStorage(size: 0, alignment: 1) }
         if let cValue { return try cValue.encode(value) }
-        let owner = SwiftArgumentOwner(value)
-        let storage = NativeValueStorage(size: type.size, alignment: type.alignment, owner: owner)
-        storage.store(owner.value)
+        let storage = NativeValueStorage(size: type.size, alignment: type.alignment)
+        storage.initialize(value)
         return storage
+    }
+
+    func copy(from storage: NativeValueStorage, retaining owner: Any?) throws -> Value {
+        if let cValue { return try cValue.decode(storage, retaining: owner) }
+        return storage.address.load(as: Value.self)
     }
 
     func decode(_ storage: NativeValueStorage, retaining owner: Any?) throws -> Value {
@@ -59,6 +56,6 @@ struct SwiftValueCodec<Value>: Sendable {
         }
         // A Swift result is +1. Taking it avoids adding another retain or
         // destroying bytes whose ownership has already moved to the caller.
-        return storage.address.assumingMemoryBound(to: Value.self).move()
+        return storage.take(as: Value.self)
     }
 }

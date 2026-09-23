@@ -1,6 +1,6 @@
 import ABIBridgeCore
 
-private func swiftFunctionTypeName(_ type: Any.Type) throws -> String {
+func swiftFunctionTypeName(_ type: Any.Type) throws -> String {
     // Objective-C metatypes can print an unqualified runtime name (NSString),
     // while Swift declarations use their imported identity (__C.NSString).
     guard let mangled = _mangledTypeName(type),
@@ -10,8 +10,9 @@ private func swiftFunctionTypeName(_ type: Any.Type) throws -> String {
     return name
 }
 
-private func swiftFunctionDeclaration<Result, each Argument>(
-    named name: String, as signature: ((repeat each Argument) -> Result).Type
+func swiftFunctionDeclaration<Result, each Argument>(
+    named name: String, as signature: ((repeat each Argument) -> Result).Type,
+    resultName: String? = nil
 ) throws -> NativeDeclaration {
     var declaration = name
     // A full demangled declaration is useful when a foreign wrapper's Swift
@@ -31,15 +32,18 @@ private func swiftFunctionDeclaration<Result, each Argument>(
                 )
             }
             let fields = zip(labels, parameters).map { label, type in label == "_" ? type : label + ": " + type }
-            declaration = String(name[..<opening]) + "(" + fields.joined(separator: ", ") + ") -> " + (try swiftFunctionTypeName(Result.self))
+            declaration = String(name[..<opening]) + "(" + fields.joined(separator: ", ") + ") -> " + (try resultName ?? swiftFunctionTypeName(Result.self))
         }
     }
     let prefix = declaration.prefix { $0 != "(" }
-    guard prefix.last(where: { !$0.isWhitespace }) != ">", !declaration.contains(" async "),
-          !declaration.contains(" throws "), !declaration.contains("inout "),
+    let member = prefix.split(separator: ".").last ?? prefix
+    let generic = prefix.last(where: { !$0.isWhitespace }) == ">"
+        && member.contains { $0.isLetter || $0.isNumber || $0 == "_" }
+    guard !generic, !declaration.contains(" async "),
+          !declaration.contains(" throws "), !declaration.contains(" throws("), !declaration.contains("inout "),
           !declaration.contains("__owned ") else {
         throw ABIResolutionError.unsupportedDeclaration(
-            "Generic, async, throwing, inout and consuming Swift declarations require a native adapter."
+            "Generic signatures, async/throwing effects, and inout/consuming parameters require a native adapter."
         )
     }
     return NativeDeclaration(name: declaration, language: .swift)
@@ -71,25 +75,23 @@ public struct NativeSwiftFunction<Result, each Argument>: Sendable {
     /// The declaration and image retained for this function.
     public let symbol: ResolvedSymbol
 
-    private let interface: SwiftCallInterface
-    private let arguments: (repeat SwiftValueCodec<each Argument>)
-    private let result: SwiftValueCodec<Result>
+    private let call: SwiftCall<Result, repeat each Argument>
+    private let context: UInt
+    private let typeOwner: NativeSwiftType?
 
-    init(symbol: ResolvedSymbol) throws {
+    init(symbol: ResolvedSymbol, metadata: Any.Type? = nil, owner: NativeSwiftType? = nil,
+         consumesArguments: Bool = false) throws {
         self.symbol = symbol
-        let arguments = (repeat try SwiftValueCodec<each Argument>())
-        let result = try SwiftValueCodec<Result>()
-        var parameters: [CValueType] = []
-        for argument in repeat each arguments { parameters.append(argument.type) }
-        interface = try SwiftCallInterface(result: result.type, parameters: parameters)
-        self.arguments = arguments
-        self.result = result
+        context = metadata.map { unsafeBitCast($0, to: UInt.self) } ?? 0
+        typeOwner = owner
+        call = try SwiftCall(consumesArguments: consumesArguments)
     }
 
     /// Calls the concrete Swift entry point using the prepared signature.
     ///
     /// The signature must match the declaration's Swift ABI and ordinary
-    /// guaranteed argument ownership. The caller satisfies actor/thread
+    /// ownership selected by lookup. Initializers transfer ordinary arguments
+    /// to the callee; free/static functions borrow them. The caller satisfies actor/thread
     /// requirements. Object and String results transfer Swift ownership to the
     /// caller; custom native wrappers must establish their own value contract.
     ///
@@ -98,25 +100,10 @@ public struct NativeSwiftFunction<Result, each Argument>: Sendable {
     /// - Throws: An argument conversion or invocation error. An incorrect ABI
     ///   description can corrupt memory and is not a recoverable Swift error.
     @unsafe public func unsafeInvoke(_ values: repeat each Argument) throws -> Result {
-        var storage: [NativeValueStorage] = []
-        for (codec, value) in repeat (each arguments, each values) {
-            storage.append(try codec.encode(value))
-        }
-        let addresses: [UnsafeMutableRawPointer?] = storage.map(\.address)
-        let output = NativeValueStorage(size: result.type.size, alignment: result.type.alignment)
-        return try withExtendedLifetime(storage) {
-            var failure: OpaquePointer?
-            let success = unsafe symbol.withUnsafeAddress { address in
-                addresses.withUnsafeBufferPointer {
-                    ABIUnsafeInvokeSwiftCallInterface(
-                        interface.handle, ABIUnsafeFunctionAtAddress(address), output.address,
-                        $0.baseAddress, nil, &failure
-                    )
-                }
-            }
-            guard success else { throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftInvocation") }
-            return try result.decode(output, retaining: symbol)
-        }
+        try unsafe call.unsafeInvoke(
+            symbol: symbol, context: UnsafeRawPointer(bitPattern: context),
+            retaining: (symbol, typeOwner), repeat each values
+        )
     }
 }
 

@@ -11,7 +11,8 @@ public actor ABIRuntime {
     /// A runtime whose indexes are shared across callers in this process.
     public static let shared = ABIRuntime(resolver: .shared)
 
-    private let resolver: SymbolResolver
+    let resolver: SymbolResolver
+    var swiftTypes: [SwiftTypeCacheKey: NativeSwiftType] = [:]
 
     /// Creates a runtime with independent image and declaration indexes.
     public init() { resolver = SymbolResolver() }
@@ -65,6 +66,7 @@ public actor ABIRuntime {
     /// Existing image and symbol handles remain valid. Subsequent lookups rebuild
     /// indexes as needed. The process-lifetime native image catalog remains active.
     public func removeCachedResults() {
+        swiftTypes.removeAll()
         resolver.removeCachedResults()
     }
 

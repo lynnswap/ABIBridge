@@ -41,6 +41,26 @@ extension ABIBridgeValue {
     }
 }
 
+// Copying a value preserves its original resource storage and a bounded set
+// of implementation images, without retaining every intermediate value buffer.
+final class NativeValueLifetime {
+    private var resource: AnyObject?
+    let images: [NativeImageIdentity: NativeImage]
+
+    init(resource: AnyObject, images: [NativeImageIdentity: NativeImage]) {
+        self.resource = resource
+        self.images = images
+    }
+
+    func adding(_ additions: [NativeImage]) -> NativeValueLifetime {
+        var images = images
+        for image in additions { images[image.identity] = image }
+        return NativeValueLifetime(resource: resource!, images: images)
+    }
+
+    deinit { withExtendedLifetime(images) { resource = nil } }
+}
+
 private final class NativeStorage {
     let address: UnsafeMutableRawPointer
     let owner: Any?
@@ -262,6 +282,15 @@ public final class NativeValue {
         try withExtendedLifetime(storage) {
             try body(.init(start: storage.address, count: type.size))
         }
+    }
+
+    func lifetimeForCopy(retaining images: [NativeImage]) -> NativeValueLifetime {
+        if let lifetime = storage.owner as? NativeValueLifetime {
+            return lifetime.adding(images)
+        }
+        var retained: [NativeImageIdentity: NativeImage] = [:]
+        for image in images { retained[image.identity] = image }
+        return NativeValueLifetime(resource: storage, images: retained)
     }
 
     func requireLayout(_ expected: NativeType) throws {

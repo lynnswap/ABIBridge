@@ -7,6 +7,10 @@ let package = Package(
     dependencies: [.package(path: "../..")],
     targets: [
         .executableTarget(
+            name: "SwiftMemberConsumer",
+            dependencies: [.product(name: "ABIBridge", package: "ABIBridge")]
+        ),
+        .executableTarget(
             name: "SwiftFunctionConsumer",
             dependencies: [.product(name: "ABIBridge", package: "ABIBridge")]
         ),

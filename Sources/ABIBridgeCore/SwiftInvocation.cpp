@@ -159,6 +159,7 @@ ABISwiftCallInterface *ABICreateSwiftCallInterface(
 }
 
 void ABIReleaseSwiftCallInterface(ABISwiftCallInterface *interface) { delete interface; }
+bool ABISwiftValueIsIndirect(const ABIValueType *type) { return lower(*type->storage).indirect; }
 
 bool ABIUnsafeInvokeSwiftCallInterface(
     ABISwiftCallInterface *interface, ABIUnmanagedFunction function,
