@@ -205,6 +205,34 @@ if let image = images.first {
 
 Use `.path(executableURL)` instead of `.framework(named:)` to select a particular loaded binary. Lookups do not load missing frameworks.
 
+### Inspect symbols from C or Objective-C++
+
+Use the same `ABIBridge` product and the public inspection header:
+
+```c
+#include <ABIBridge/Inspection.h>
+#include <stdio.h>
+
+ABISymbolRuntime *runtime = ABICopySharedSymbolRuntime();
+ABIResolutionFailure *error = NULL;
+ABIResolvedSymbol *symbol = ABIResolveSymbol(
+    runtime, "getpid", ABILanguageC, ABISymbolFunction,
+    ABIImageAutomatic, NULL, &error
+);
+if (symbol) {
+    ABIImageInfo image;
+    ABIResolvedSymbolImage(symbol, &image);
+    printf("%s\n", image.path);
+    ABIReleaseResolvedSymbol(symbol);
+} else {
+    fprintf(stderr, "%s\n", ABIResolutionFailureMessage(error));
+    ABIReleaseResolutionFailure(error);
+}
+ABIReleaseSymbolRuntime(runtime);
+```
+
+See the [native inspection guide](https://lynnswap.github.io/ABIBridge/documentation/abibridge/nativeinspection) for ownership and search scopes.
+
 See the [documentation](https://lynnswap.github.io/ABIBridge/documentation/abibridge/) for API contracts and [CONTRIBUTING.md](CONTRIBUTING.md) for build and test instructions.
 
 ## Acknowledgements
