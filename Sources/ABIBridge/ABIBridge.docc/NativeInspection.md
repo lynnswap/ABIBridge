@@ -95,6 +95,22 @@ C names omit the Mach-O underscore; C++ and Swift names use demangled declaratio
 
 Framework and executable-path scopes only search loaded images. Automatic scope reports distinct matching definitions as an ambiguity. A vtable symbol's address is not necessarily its first virtual-function slot; the consumer supplies the actual address-point offset and layout.
 
+## Resolve an exact native spelling
+
+Source-level declarations remain the default. For explicit ABI variants, C++ provides `declaration::linker_name` and `declaration::mach_o_name`:
+
+```cpp
+auto symbol = runtime.resolve(abi_bridge::declaration::linker_name(
+    "_ZN7Example4Math3addEii", abi_bridge::language::cxx
+));
+```
+
+Linker form adds one Mach-O underscore without examining the prefix. Mach-O form uses the literal symbol-table spelling unchanged. Neither form demangles or normalizes the name. Image selection, storage validation, ambiguity, and ownership use the ordinary resolver.
+
+C uses `ABIResolveSymbolWithNameForm` with `ABINameSource`, `ABINameLinker`, or `ABINameMachO`. `ABIResolveSymbol` remains the source-form convenience entry point. Batch declarations carry the same choice in `ABIDeclaration.nameForm`; zero selects source form. Initialize all fields or use zero-initialized C aggregates. C++ declarations preserve their form when used in batches.
+
+The language is retained as metadata for exact spellings, so a mangled C++ or Swift name does not need to be labeled as C. Exact Objective-C symbols can also be inspected; Objective-C selector invocation still uses the separate Swift frontend.
+
 ## Resolve batches and ordered alternatives
 
 C++ uses `symbol_request` for a primary declaration, alternative spellings, and ordered image scopes:

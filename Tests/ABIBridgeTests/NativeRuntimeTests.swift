@@ -1,6 +1,7 @@
 import ABIBridge
 import ABIBridgeCore
 import Foundation
+import Darwin
 import Testing
 
 struct NativeRuntimeTests {
@@ -68,14 +69,16 @@ struct NativeRuntimeTests {
         try "getpid".withCString { name in
             var scope = ABIImageSelector(scope: Int32(ABIImageAutomatic), selector: nil)
             try withUnsafePointer(to: &scope) { scope in
-                let declaration = ABIDeclaration(name: name, language: Int32(ABILanguageC), kind: Int32(ABISymbolFunction))
+                let declaration = ABIDeclaration(name: name, language: Int32(ABILanguageC), kind: Int32(ABISymbolFunction), nameForm: Int32(ABINameSource))
                 let valid = ABISymbolRequest(declaration: declaration, alternatives: nil, alternativeCount: 0,
                                              imageScopes: scope, imageScopeCount: 1)
                 var malformed = valid
                 malformed.alternativeCount = 1
                 var empty = valid
                 empty.imageScopeCount = 0
-                let requests = [valid, malformed, empty, valid]
+                var invalidForm = valid
+                invalidForm.declaration.nameForm = -1
+                let requests = [valid, malformed, empty, valid, invalidForm]
                 var results = Array(repeating: ABISymbolResult(), count: requests.count)
                 requests.withUnsafeBufferPointer { requests in
                     results.withUnsafeMutableBufferPointer { results in
@@ -97,11 +100,54 @@ struct NativeRuntimeTests {
                 #expect(ABIResolutionFailureCode(malformedFailure) == Int32(ABIFailureInvalidRequest))
                 let emptyFailure = try #require(results[2].failure)
                 #expect(ABIResolutionFailureCode(emptyFailure) == Int32(ABIFailureImageNotLoaded))
+                let formFailure = try #require(results[4].failure)
+                #expect(ABIResolutionFailureCode(formFailure) == Int32(ABIFailureInvalidRequest))
                 ABIRuntimeRemoveCachedResults(runtime)
                 let symbol = try #require(results[0].symbol)
                 #expect(ABIResolvedSymbolAddress(symbol) != nil)
             }
         }
+    }
+
+    @Test func nativeExactSpellingsPreserveTheirFormAndErrorCategory() throws {
+        let runtime = try #require(ABICreateSymbolRuntime())
+        defer { ABIReleaseSymbolRuntime(runtime) }
+        for (name, form) in [("getpid", Int32(ABINameLinker)), ("_getpid", Int32(ABINameMachO))] {
+            var failure: OpaquePointer?
+            let handle = name.withCString {
+                ABIResolveSymbolWithNameForm(runtime, $0, form, Int32(ABILanguageC),
+                    Int32(ABISymbolFunction), Int32(ABIImageAutomatic), nil, &failure)
+            }
+            let owned = try #require(handle)
+            #expect(failure == nil)
+            let imported = unsafe ResolvedSymbol(retainingNativeHandle: owned)
+            ABIReleaseResolvedSymbol(owned)
+            #expect(imported.declaration.nameForm.rawValue == form)
+            #expect(imported.declaration.name == name)
+            #expect(unsafe imported.withUnsafeAddress {
+                unsafeBitCast($0, to: (@convention(c) () -> Int32).self)()
+            } == ProcessInfo.processInfo.processIdentifier)
+        }
+        var failure: OpaquePointer?
+        let invalid = "getpid".withCString {
+            ABIResolveSymbolWithNameForm(runtime, $0, -1, Int32(ABILanguageC),
+                Int32(ABISymbolFunction), Int32(ABIImageAutomatic), nil, &failure)
+        }
+        #expect(invalid == nil)
+        let error = try #require(failure)
+        #expect(ABIResolutionFailureCode(error) == Int32(ABIFailureInvalidRequest))
+        ABIReleaseResolutionFailure(error)
+    }
+
+    @Test func exactObjectiveCSymbolsDoNotUseSelectorLookup() async throws {
+        let process = try #require(dlopen(nil, RTLD_NOW))
+        defer { dlclose(process) }
+        let expected = try #require(dlsym(process, "OBJC_CLASS_$_NSObject"))
+        let symbol = try await ABIRuntime.shared.resolve(
+            .init(machOName: "_OBJC_CLASS_$_NSObject", language: .objectiveC, kind: .data)
+        )
+        #expect(symbol.declaration.language == .objectiveC)
+        #expect(unsafe symbol.withUnsafeAddress { $0 == UnsafeRawPointer(expected) })
     }
 
     @Test func nativeVTableErrorsPreserveLookupCategories() throws {

@@ -40,8 +40,8 @@ typedef struct {
 /// Source-language values for ABIResolveSymbol.
 enum {
     ABILanguageSwift = 0,
-    /// Reserved for Objective-C declarations; symbol lookup currently reports
-    /// ABIFailureUnsupportedDeclaration. Selector dispatch uses the Swift API.
+    /// Objective-C source declarations report ABIFailureUnsupportedDeclaration.
+    /// Exact symbol spellings are accepted; selector dispatch uses the Swift API.
     ABILanguageObjectiveC = 1,
     ABILanguageC = 2,
     ABILanguageCXX = 3
@@ -62,11 +62,17 @@ enum {
     ABIFailureOther = 11
 };
 
-/// One source-level declaration. The name is null-terminated UTF-8.
+/// Name representation, independent of declaration language. Linker spelling
+/// adds one Mach-O underscore; literal Mach-O spelling is used unchanged.
+enum { ABINameSource = 0, ABINameLinker = 1, ABINameMachO = 2 };
+
+/// One declaration. The name is null-terminated UTF-8. Initialize all fields,
+/// or zero-initialize for source-level spelling before assigning other fields.
 typedef struct {
     const char *name;
     int32_t language;
     int32_t kind;
+    int32_t nameForm;
 } ABIDeclaration;
 /// One loaded-image scope, using the ABIImage constants and selector spelling.
 typedef struct {
@@ -157,6 +163,17 @@ void ABIRuntimeRemoveCachedResults(ABISymbolRuntime *runtime);
 ABIResolvedSymbol *ABIResolveSymbol(
     ABISymbolRuntime *runtime, const char *name, int32_t language, int32_t kind,
     int32_t scope, const char *selector, ABIResolutionFailure **error);
+/// Resolves a name with an explicit representation using ABIName constants.
+/// Source form follows ABIResolveSymbol. Linker/Mach-O forms match exact bytes,
+/// preserving ABI variants, without demangling or punctuation normalization.
+/// Language is retained as metadata for exact forms. Storage, scope, ownership,
+/// and error contracts are the same as ABIResolveSymbol; unknown forms report
+/// ABIFailureInvalidRequest. No representation is guessed from underscore prefixes.
+ABIResolvedSymbol *ABIResolveSymbolWithNameForm(
+    ABISymbolRuntime *runtime, const char *name, int32_t nameForm,
+    int32_t language, int32_t kind, int32_t scope,
+    const char *selector, ABIResolutionFailure **error);
+
 /// Resolves a C++ vtable by qualified type name, such as "Example::Renderer".
 /// Scope, errors, ownership, and lifetime follow ABIResolveSymbol. The typeName
 /// string must remain valid for the call and omits the demangler's descriptive

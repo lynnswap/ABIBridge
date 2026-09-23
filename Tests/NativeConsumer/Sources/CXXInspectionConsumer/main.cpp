@@ -94,8 +94,16 @@ int main(int argc, char **argv) {
         }
         for (auto& thread : threads) thread.join();
 
+        const auto exactCounter = declaration::linker_name(
+            "_ZN16ABIBridgeFixture7counterE", language::cxx, symbol_kind::data);
+        const auto literalCounter = declaration::mach_o_name(
+            "__ZN16ABIBridgeFixture7counterE", language::cxx, symbol_kind::data);
+        assert(runtime.resolve(exactCounter, scope).unsafe_address() ==
+               dlsym(library, "_ZN16ABIBridgeFixture7counterE"));
+        assert(runtime.resolve(literalCounter, scope).unsafe_address() ==
+               runtime.resolve(exactCounter, scope).unsafe_address());
         const symbol_request batchCounter{
-            counterQuery, {counterQuery}, {image_selector::framework("ABIBridgeAbsentFixture"), scope}
+            counterQuery, {counterQuery, exactCounter, literalCounter}, {image_selector::framework("ABIBridgeAbsentFixture"), scope}
         };
         auto invalidBatch = batchCounter;
         invalidBatch.primary.name += std::string("\0suffix", 7);

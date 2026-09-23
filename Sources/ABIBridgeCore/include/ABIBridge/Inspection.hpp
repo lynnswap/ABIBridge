@@ -20,13 +20,17 @@ namespace abi_bridge {
 /// Declaration language used for symbol inspection.
 enum class language : std::uint8_t {
     swift = ABILanguageSwift,
-    /// Reserved; symbol resolution reports unsupported declaration for this language.
+    /// Source declarations are unsupported; exact symbol spellings are accepted.
     objective_c = ABILanguageObjectiveC,
     c = ABILanguageC, cxx = ABILanguageCXX
 };
 /// Required storage kind; does not establish an invocation signature.
 enum class symbol_kind : std::uint8_t {
     function = ABISymbolFunction, data = ABISymbolData, vtable = ABISymbolVTable
+};
+/// Name representation independent of declaration language.
+enum class name_form : std::uint8_t {
+    source = ABINameSource, linker = ABINameLinker, mach_o = ABINameMachO
 };
 /// Process-local load identity. Addresses alone do not distinguish reloads.
 struct image_identity final {
@@ -35,16 +39,28 @@ struct image_identity final {
     std::uint64_t load_generation = 0;
     friend constexpr bool operator==(const image_identity&, const image_identity&) = default;
 };
-/// A source-level name and expected symbol storage.
+/// A source-level or exact name and expected symbol storage.
 struct declaration final {
     std::string name;
     language source_language = language::cxx;
     symbol_kind kind = symbol_kind::function;
+    name_form form = name_form::source;
 
     declaration() = default;
     declaration(std::string name, language source_language = language::cxx,
-                symbol_kind kind = symbol_kind::function)
-        : name(std::move(name)), source_language(source_language), kind(kind) {}
+                symbol_kind kind = symbol_kind::function, name_form form = name_form::source)
+        : name(std::move(name)), source_language(source_language), kind(kind), form(form) {}
+
+    /// Exact linker spelling; adds one Mach-O underscore without guessing prefixes.
+    static declaration linker_name(std::string name, language source_language,
+                                   symbol_kind kind = symbol_kind::function) {
+        return {std::move(name), source_language, kind, name_form::linker};
+    }
+    /// Literal Mach-O symbol spelling, with no prefix conversion or normalization.
+    static declaration mach_o_name(std::string name, language source_language,
+                                   symbol_kind kind = symbol_kind::function) {
+        return {std::move(name), source_language, kind, name_form::mach_o};
+    }
 
     /// Requests a C++ vtable by qualified type name. Resolves its symbol base,
     /// without inferring an address point, object layout, or authentication.
@@ -218,8 +234,8 @@ public:
             throw resolution_error(ABIFailureInvalidRequest, "Names and image selectors must not contain embedded NULs.");
         }
         ABIResolutionFailure* failure = nullptr;
-        auto* symbol = ABIResolveSymbol(
-            handle_.get(), query.name.c_str(),
+        auto* symbol = ABIResolveSymbolWithNameForm(
+            handle_.get(), query.name.c_str(), static_cast<std::int32_t>(query.form),
             static_cast<std::int32_t>(query.source_language),
             static_cast<std::int32_t>(query.kind),
             scope.kind_, scope.value_.c_str(), &failure);
@@ -245,7 +261,7 @@ public:
     std::vector<resolution_result> resolve(const std::vector<symbol_request>& queries) const {
         const auto declaration_value = [](const declaration& d) {
             return ABIDeclaration{d.name.c_str(), static_cast<std::int32_t>(d.source_language),
-                                  static_cast<std::int32_t>(d.kind)};
+                                  static_cast<std::int32_t>(d.kind), static_cast<std::int32_t>(d.form)};
         };
         const auto has_nul = [](const std::string& s) { return s.find('\0') != std::string::npos; };
         std::vector<std::vector<ABIDeclaration>> aliases(queries.size());

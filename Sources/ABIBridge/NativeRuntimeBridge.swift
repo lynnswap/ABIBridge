@@ -68,17 +68,22 @@ package func nativeRemoveCachedResults(_ runtime: OpaquePointer) {
 
 @_cdecl("ABIResolveSymbol")
 package func nativeResolveSymbol(
-    _ runtime: OpaquePointer,
-    _ name: UnsafePointer<CChar>,
-    _ language: Int32,
-    _ kind: Int32,
-    _ scope: Int32,
-    _ selector: UnsafePointer<CChar>?,
-    _ error: UnsafeMutablePointer<OpaquePointer?>?
+    _ runtime: OpaquePointer, _ name: UnsafePointer<CChar>,
+    _ language: Int32, _ kind: Int32, _ scope: Int32,
+    _ selector: UnsafePointer<CChar>?, _ error: UnsafeMutablePointer<OpaquePointer?>?
+) -> OpaquePointer? {
+    nativeResolveSymbolWithNameForm(runtime, name, Int32(ABINameSource), language, kind, scope, selector, error)
+}
+
+@_cdecl("ABIResolveSymbolWithNameForm")
+package func nativeResolveSymbolWithNameForm(
+    _ runtime: OpaquePointer, _ name: UnsafePointer<CChar>, _ nameForm: Int32,
+    _ language: Int32, _ kind: Int32, _ scope: Int32,
+    _ selector: UnsafePointer<CChar>?, _ error: UnsafeMutablePointer<OpaquePointer?>?
 ) -> OpaquePointer? {
     error?.pointee = nil
     do {
-        let declaration = try nativeDeclaration(name, language: language, kind: kind)
+        let declaration = try nativeDeclaration(name, language: language, kind: kind, nameForm: nameForm)
         let imageSelector = try nativeImageSelector(scope: scope, selector: selector)
         let symbol = try borrowed(runtime, as: SymbolResolver.self)
             .resolve(declaration, in: imageSelector)
@@ -163,7 +168,8 @@ package func nativeResolvedSymbolImage(_ symbol: OpaquePointer, _ info: UnsafeMu
 }
 
 private func nativeDeclaration(
-    _ name: UnsafePointer<CChar>?, language: Int32, kind: Int32
+    _ name: UnsafePointer<CChar>?, language: Int32, kind: Int32,
+    nameForm: Int32 = Int32(ABINameSource)
 ) throws -> NativeDeclaration {
     guard let name else { throw InvalidNativeRequest(description: "A declaration name is required.") }
     let sourceLanguage: NativeLanguage
@@ -182,7 +188,10 @@ private func nativeDeclaration(
     default: throw InvalidNativeRequest(description: "Unknown symbol kind: \(kind)")
     }
 
-    return NativeDeclaration(name: String(cString: name), language: sourceLanguage, kind: symbolKind)
+    guard let form = NativeSymbolNameForm(rawValue: nameForm) else {
+        throw InvalidNativeRequest(description: "Unknown name representation: \(nameForm)")
+    }
+    return NativeDeclaration(name: String(cString: name), language: sourceLanguage, kind: symbolKind, nameForm: form)
 }
 
 private func nativeImageSelector(
@@ -211,10 +220,11 @@ private func nativeRequest(_ request: ABISymbolRequest) throws -> NativeSymbolRe
         throw InvalidNativeRequest(description: "Nonempty request arrays require valid storage.")
     }
     let declaration = try nativeDeclaration(
-        request.declaration.name, language: request.declaration.language, kind: request.declaration.kind
+        request.declaration.name, language: request.declaration.language, kind: request.declaration.kind,
+        nameForm: request.declaration.nameForm
     )
     let alternatives = try UnsafeBufferPointer(start: request.alternatives, count: request.alternativeCount).map {
-        try nativeDeclaration($0.name, language: $0.language, kind: $0.kind)
+        try nativeDeclaration($0.name, language: $0.language, kind: $0.kind, nameForm: $0.nameForm)
     }
     let scopes = try UnsafeBufferPointer(start: request.imageScopes, count: request.imageScopeCount).map {
         try nativeImageSelector(scope: $0.scope, selector: $0.selector)

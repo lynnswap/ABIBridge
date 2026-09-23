@@ -37,7 +37,7 @@ public actor ABIRuntime {
     /// definitions at the selected level produce an ambiguity error.
     ///
     /// - Parameters:
-    ///   - declaration: A source-level name and storage requirement.
+    ///   - declaration: A source-level or exact name and storage requirement.
     ///   - selector: The image scope; defaults to all loaded images.
     /// - Returns: A symbol retaining its containing image.
     /// - Throws: ``ABIResolutionError`` for unavailable images, missing or
@@ -52,7 +52,7 @@ public actor ABIRuntime {
     /// Finds a declaration in an already retained image.
     ///
     /// - Parameters:
-    ///   - declaration: A source-level name and storage requirement.
+    ///   - declaration: A source-level or exact name and storage requirement.
     ///   - image: The retained image whose index can be reused.
     /// - Returns: A resolved symbol retaining that image.
     /// - Throws: ``ABIResolutionError`` when the declaration cannot be resolved
