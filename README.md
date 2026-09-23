@@ -1,34 +1,55 @@
 # ABIBridge
 
-Resolve native symbols by source-level name and call C, C++, Objective-C, and concrete Swift functions with Swift types and values.
+Resolve mangled Swift and C++ symbols by source-level name, and call supported native functions and methods with ordinary Swift types and values.
 
 ## Requirements
 
 - iOS 18.4+, macOS 15.4+, visionOS 2.4+, watchOS 11.4+, or tvOS 18.4+
 - Xcode on macOS with Swift 6.3+
 
-## Installation
-
-Add this Swift package dependency and the `ABIBridge` product to your target:
-
-```swift
-.package(url: "https://github.com/lynnswap/ABIBridge.git", branch: "main")
-```
-
 ## Quick start
 
-### Call a C function
+### Resolve a C++ function without writing its mangled name
 
-Resolve a function from the process's loaded images and call it with a Swift signature:
+For an already-loaded library defining `int Example::Math::add(int, int)`, a direct `dlsym` lookup with its loader handle requires the mangled name:
+
+```swift
+import Darwin
+
+let address = dlsym(libraryHandle, "_ZN7Example4Math3addEii")
+```
+
+With ABIBridge, use the function's declaration name instead. The runtime finds the corresponding mangled symbol in loaded images automatically:
 
 ```swift
 import ABIBridge
 
 let runtime = ABIRuntime.shared
-let processID = try await runtime.cFunction(
-    named: "getpid", as: (() -> Int32).self
+let symbol = try await runtime.resolve(
+    NativeDeclaration(name: "Example::Math::add(int, int)", language: .cxx)
 )
-let pid = try unsafe processID.unsafeInvoke()
+```
+
+### Call C++ by its declaration
+
+To call that function, provide its signature as a Swift function type:
+
+```swift
+let add = try await runtime.cxxFunction(
+    named: "Example::Math::add(int, int)", as: ((Int32, Int32) -> Int32).self
+)
+let sum = try unsafe add.unsafeInvoke(20, 22)
+```
+
+### Call Swift by its source-level name
+
+For an already-loaded module defining `func decorate(_ value: String) -> String`:
+
+```swift
+let decorate = try await runtime.swiftFunction(
+    named: "Example.decorate(_:)", as: ((String) -> String).self
+)
+let message = try unsafe decorate.unsafeInvoke("Hello")
 ```
 
 ### Call an existing Objective-C instance
@@ -44,17 +65,6 @@ let setImage = try await runtime.object(renderer).method(
 )
 try unsafe setImage.unsafeInvoke(image, true)
 try unsafe setImage.unsafeInvoke(nil, false)
-```
-
-### Call a Swift function
-
-For an already-loaded module defining `func decorate(_ value: String) -> String`:
-
-```swift
-let decorate = try await runtime.swiftFunction(
-    named: "Example.decorate(_:)", as: ((String) -> String).self
-)
-let message = try unsafe decorate.unsafeInvoke("Hello")
 ```
 
 ## Documentation
