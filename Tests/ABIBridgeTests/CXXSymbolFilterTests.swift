@@ -1,3 +1,5 @@
+#if DEBUG
+// Release bridge tests consume the production module without -enable-testing.
 import Testing
 @testable import ABIBridge
 
@@ -39,3 +41,4 @@ struct CXXSymbolFilterTests {
         #expect(DeclarationKey.make("Example::f()") != DeclarationKey.make("Example::f()\0extra"))
     }
 }
+#endif

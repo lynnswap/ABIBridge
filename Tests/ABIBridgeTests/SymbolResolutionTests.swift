@@ -1,5 +1,9 @@
 #if os(macOS)
+#if DEBUG
 @testable import ABIBridge
+#else
+import ABIBridge
+#endif
 import ABIBridgeCore
 import Darwin
 import Foundation
@@ -116,6 +120,7 @@ struct SymbolResolutionTests {
         #expect(rebuilt.image.identity == image.identity)
     }
 
+    #if DEBUG
     @Test func appendedLocalSymbolsInvalidateEmptyCandidateGroups() async throws {
         let fixture = try FixtureLibrary()
         defer { fixture.cleanup() }
@@ -134,6 +139,8 @@ struct SymbolResolutionTests {
         let expected = try fixture.address(kind: 0)
         #expect(unsafe resolved.withUnsafeAddress { UInt(bitPattern: $0) } == expected)
     }
+
+    #endif
 
     @Test func typedCXXFunctionsRetainImagesAndReuseScopes() async throws {
         let fixture = try FixtureLibrary()
