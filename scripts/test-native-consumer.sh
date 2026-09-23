@@ -24,6 +24,12 @@ xcrun clang -std=c11 -pedantic-errors -fsyntax-only \
     -I "$task_root/Sources/ABIBridgeCore/include" \
     "$task_root/Tests/NativeConsumer/Sources/CInspectionConsumer/main.c"
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
+    --scratch-path "$task_root/.build/native-consumer" CXXInspectionConsumer "$task_fixture/libFixture.dylib"
+xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
+    --scratch-path "$task_root/.build/native-consumer" ObjCXXInspectionConsumer "$task_fixture/libFixture.dylib"
+xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
+    --scratch-path "$task_root/.build/native-consumer" MRCXXInspectionConsumer "$task_fixture/libFixture.dylib"
+xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" CInspectionConsumer "$task_fixture/libFixture.dylib"
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" ObjCInspectionConsumer "$task_fixture/libFixture.dylib"

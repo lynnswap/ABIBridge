@@ -1,4 +1,4 @@
-# Inspecting native images from C
+# Inspecting native images from C and C++
 
 Resolve source-level declarations and retain their images from C, C++, or Objective-C++.
 
@@ -22,9 +22,49 @@ For example, a target in a separate Swift package can use:
 
 The same product supplies the Swift implementation, native code, and their dependencies. The resolver uses the shared MachOKit-backed implementation and the Swift runtime; linking the internal C++ target alone does not provide the supported product. C consumers do not need to import a generated Swift header or enable C++ interoperability.
 
-The declarations in `Inspection.h` are the supported C interface. Other native headers, invocation templates, and backend handles remain implementation details. Use this public header directly instead of the internal module umbrella.
+The declarations in `Inspection.h` and the C++20 wrappers in `Inspection.hpp` are supported consumer interfaces. Other native headers, invocation templates, and backend handles remain implementation details. Use this public header directly instead of the internal module umbrella.
 
-## Resolve a vtable
+## Use C++ ownership wrappers
+
+Include `<ABIBridge/Inspection.hpp>` and set `cxxLanguageStandard: .cxx20` in the consumer package. The wrappers use the C interface and the same `ABIBridge` product.
+
+```cpp
+#include <ABIBridge/Inspection.hpp>
+
+using namespace abi_bridge;
+
+auto runtime = Runtime::current();
+auto table = runtime.resolve(
+    {"vtable for Example::Renderer", language::cxx, symbol_kind::vtable},
+    image_selector::framework("Example")
+);
+const void *address = table.unsafe_address();
+auto path = table.image_path(); // An owned std::string.
+```
+
+The example requires an already-loaded framework defining that type. Resolution throws `resolution_error`, whose `code()` preserves the C failure category and whose `what()` owns the message. Error objects can outlive the runtime and native failure handle. Names and image selectors use UTF-8; embedded NULs are rejected instead of resolving a truncated prefix.
+
+Copies of `Runtime` share a resolver cache; default construction creates an independent resolver. Copies of `resolved_symbol` share the acquired symbol, keeping its implementation image alive after cache clearing or runtime destruction. The unsigned address remains borrowed; the C++ wrapper does not establish an invocation signature.
+
+Snapshots and independent loader leases are also values with automatic lifetime management:
+
+```cpp
+auto snapshot = image_snapshot::capture();
+for (std::size_t index = 0; index < snapshot.size(); ++index) {
+    auto image = snapshot.at(index);
+    auto lease = image_lease::acquire(image.identity.load_generation);
+    if (!lease) continue;
+    // Inspect this image while the lease is alive.
+}
+```
+
+`image_description` owns its path and UUID but does not retain the image. It can outlive the snapshot. `at()` throws `std::out_of_range` for an invalid index; capture throws `resolution_error` if the catalog is unavailable. Lease acquisition returns `std::nullopt` when the generation disappeared or cannot be retained, matching the C API's lack of a detailed lease failure.
+
+Copies share ownership of the underlying snapshot, lease, runtime, or symbol; their final owner releases the C handle. Moving a handle leaves the source empty. It can be tested with `operator bool`, reassigned, or destroyed; other methods require a live handle. A moved-from `std::optional<image_lease>` can remain engaged, so test the contained handle if it has been moved separately.
+
+Objective-C++ can store these C++ values in instance variables under either ARC or manual reference counting. Their C++ destructors release the native handles when the enclosing object is destroyed. Keep an Objective-C owner alive through uses of borrowed pointers, for example with an `objc_precise_lifetime` local, or keep an independent C++ handle copy. Image retention still does not retain an unrelated native receiver or satisfy that receiver's thread/lifetime requirements.
+
+## Resolve a vtable from C
 
 For an already-loaded image containing an `Example::Renderer` type:
 

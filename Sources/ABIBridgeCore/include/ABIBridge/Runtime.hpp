@@ -11,64 +11,6 @@
 
 namespace abi_bridge {
 
-/// A loaded-image constraint. Selecting an image does not load it.
-class image_selector final {
-public:
-    image_selector() = default;
-    static image_selector automatic() { return {}; }
-    static image_selector framework(std::string name) {
-        return {ABIImageFramework, std::move(name)};
-    }
-    static image_selector path(std::string executable_path) {
-        return {ABIImagePath, std::move(executable_path)};
-    }
-
-private:
-    friend class Runtime;
-    image_selector(std::int32_t kind, std::string value)
-        : kind_(kind), value_(std::move(value)) {}
-    std::int32_t kind_ = ABIImageAutomatic;
-    std::string value_;
-};
-
-/// A resolution failure with a stable category and human-readable detail.
-class resolution_error final : public std::runtime_error {
-public:
-    resolution_error(std::int32_t code, const std::string& message)
-        : std::runtime_error(message), code_(code) {}
-    /// One of the ABIFailure constants declared in Runtime.h.
-    std::int32_t code() const noexcept { return code_; }
-
-private:
-    std::int32_t code_;
-};
-
-/// A symbol retaining its image. Copies share ownership of the same result.
-class resolved_symbol final {
-public:
-    /// Borrowed address; keep this handle alive while using it. This establishes
-    /// neither a native signature nor the ownership/layout of a data value.
-    const void* unsafe_address() const noexcept {
-        return ABIResolvedSymbolAddress(handle_.get());
-    }
-    image_identity image() const noexcept {
-        ABIImageInfo info{};
-        ABIResolvedSymbolImage(handle_.get(), &info);
-        return {info.header, info.slide, info.generation};
-    }
-    std::string image_path() const {
-        ABIImageInfo info{};
-        ABIResolvedSymbolImage(handle_.get(), &info);
-        return info.path;
-    }
-
-private:
-    friend class Runtime;
-    explicit resolved_symbol(ABIResolvedSymbol* handle)
-        : handle_(handle, ABIReleaseResolvedSymbol) {}
-    std::shared_ptr<ABIResolvedSymbol> handle_;
-};
-
 template <typename Signature> class function;
 
 /// A concrete C/C++ function signature, lowered by the consumer's compiler.
@@ -95,7 +37,7 @@ public:
     const resolved_symbol& symbol() const noexcept { return symbol_; }
 
 private:
-    friend class Runtime;
+    friend class InvocationRuntime;
     explicit function(resolved_symbol symbol) : symbol_(std::move(symbol)) {}
     resolved_symbol symbol_;
 };
@@ -148,7 +90,7 @@ public:
     const resolved_symbol& symbol() const noexcept { return function_.symbol(); }
 
 private:
-    friend class Runtime;
+    friend class InvocationRuntime;
     explicit method(native_function function) : function_(std::move(function)) {}
     native_function function_;
 };
@@ -185,32 +127,14 @@ private:
     std::shared_ptr<receiver> receiver_;
 };
 
-/// Synchronous access to the shared native symbol resolver.
-///
-/// Internal helper for ABIBridge and its native fixtures. The supported
-/// consumer API is the Swift ABIBridge module. Resolution and cache clearing
-/// are thread-safe; copies share a runtime, while new instances own caches.
-class Runtime final {
+/// Internal compiler-lowered invocation support for native backend fixtures.
+/// Public inspection and its ownership model live in Inspection.hpp.
+class InvocationRuntime final {
 public:
-    Runtime() : handle_(ABICreateSymbolRuntime(), ABIReleaseSymbolRuntime) {}
-    /// Uses the same cache as Swift's ABIRuntime.shared.
-    static Runtime current() { return Runtime(ABICopySharedSymbolRuntime()); }
-
-    /// Resolves a source-level declaration; throws resolution_error on failure.
+    InvocationRuntime() = default;
+    static InvocationRuntime current() { return InvocationRuntime(Runtime::current()); }
     resolved_symbol resolve(const declaration& query, const image_selector& scope = {}) const {
-        ABIResolutionFailure* failure = nullptr;
-        auto* symbol = ABIResolveSymbol(
-            handle_.get(), query.name.c_str(),
-            static_cast<std::int32_t>(query.source_language),
-            static_cast<std::int32_t>(query.kind),
-            scope.kind_, scope.value_.c_str(), &failure);
-        if (!symbol) {
-            std::unique_ptr<ABIResolutionFailure, decltype(&ABIReleaseResolutionFailure)>
-                owned_failure(failure, ABIReleaseResolutionFailure);
-            throw resolution_error(ABIResolutionFailureCode(failure),
-                                   ABIResolutionFailureMessage(failure));
-        }
-        return resolved_symbol(symbol);
+        return runtime_.resolve(query, scope);
     }
 
     /// Resolves a C function by its unmangled name and retains its image.
@@ -238,7 +162,7 @@ public:
     }
 
     /// Drops indexes without invalidating existing function or symbol handles.
-    void remove_cached_results() const { ABIRuntimeRemoveCachedResults(handle_.get()); }
+    void remove_cached_results() const { runtime_.remove_cached_results(); }
 
 private:
     static void require_cxx_function(const declaration& query) {
@@ -247,8 +171,8 @@ private:
         }
     }
 
-    explicit Runtime(ABISymbolRuntime* handle) : handle_(handle, ABIReleaseSymbolRuntime) {}
-    std::shared_ptr<ABISymbolRuntime> handle_;
+    explicit InvocationRuntime(Runtime runtime) : runtime_(std::move(runtime)) {}
+    Runtime runtime_;
 };
 
 } // namespace abi_bridge

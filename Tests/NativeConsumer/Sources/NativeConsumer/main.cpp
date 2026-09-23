@@ -24,7 +24,7 @@ int ABIBridgeLocalCounter::add(int delta) { return value += delta; }
 
 static bool unloadCallbackRan = false;
 static void onLibraryUnload() {
-    abi_bridge::Runtime::current().remove_cached_results();
+    abi_bridge::InvocationRuntime::current().remove_cached_results();
     unloadCallbackRan = true;
 }
 
@@ -34,7 +34,7 @@ extern "C" void ABIBridgeTestConstructorEntered() {
     constructorWorker = std::thread([&] {
         started.store(true);
         try {
-            auto function = abi_bridge::Runtime::current().c_function<pid_t()>("getpid");
+            auto function = abi_bridge::InvocationRuntime::current().c_function<pid_t()>("getpid");
             assert(function.unsafe_invoke() == getpid());
         } catch (const abi_bridge::resolution_error& error) {
             // The catalog may include the library whose constructor has not
@@ -46,14 +46,14 @@ extern "C" void ABIBridgeTestConstructorEntered() {
     // Give the other thread an opportunity to enter the loader while this
     // constructor still owns dyld's lock.
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    abi_bridge::Runtime::current().remove_cached_results();
+    abi_bridge::InvocationRuntime::current().remove_cached_results();
 }
 
 int main(int argc, char** argv) {
     assert(argc == 3);
     const std::string path = argv[1];
     const auto scope = abi_bridge::image_selector::path(path);
-    auto runtime = abi_bridge::Runtime::current();
+    auto runtime = abi_bridge::InvocationRuntime::current();
     auto pid = runtime.c_function<pid_t()>("getpid");
     assert(pid.unsafe_invoke() == getpid());
 
@@ -206,7 +206,7 @@ int main(int argc, char** argv) {
             for (auto& thread : threads) thread.join();
 
             auto independent = [&] {
-                abi_bridge::Runtime temporary;
+                abi_bridge::InvocationRuntime temporary;
                 return temporary.cxx_function<int(int, int)>(
                     abi_bridge::declaration("ABIBridgeFixture::add(int, int)"), scope);
             }();

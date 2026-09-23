@@ -205,7 +205,25 @@ if let image = images.first {
 
 Use `.path(executableURL)` instead of `.framework(named:)` to select a particular loaded binary. Lookups do not load missing frameworks.
 
-### Inspect symbols from C or Objective-C++
+### Inspect symbols from C++ or Objective-C++
+
+For an already-loaded framework defining `Example::Renderer`:
+
+```cpp
+#include <ABIBridge/Inspection.hpp>
+
+auto runtime = abi_bridge::Runtime::current();
+auto table = runtime.resolve(
+    {"vtable for Example::Renderer",
+     abi_bridge::language::cxx, abi_bridge::symbol_kind::vtable},
+    abi_bridge::image_selector::framework("Example")
+);
+auto image = table.image();
+```
+
+The C++20 handles manage native ownership automatically and share the Swift resolver backend.
+
+### Inspect symbols from C
 
 Use the same `ABIBridge` product and the public inspection header:
 
