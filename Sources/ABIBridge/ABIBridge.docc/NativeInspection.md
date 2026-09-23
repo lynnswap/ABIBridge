@@ -35,7 +35,7 @@ using namespace abi_bridge;
 
 auto runtime = Runtime::current();
 auto table = runtime.resolve(
-    {"vtable for Example::Renderer", language::cxx, symbol_kind::vtable},
+    declaration::vtable_for("Example::Renderer"),
     image_selector::framework("Example")
 );
 const void *address = table.unsafe_address();
@@ -71,10 +71,8 @@ For an already-loaded image containing an `Example::Renderer` type:
 ```c
 ABISymbolRuntime *runtime = ABICreateSymbolRuntime();
 ABIResolutionFailure *failure = NULL;
-ABIResolvedSymbol *table = ABIResolveSymbol(
-    runtime, "vtable for Example::Renderer",
-    ABILanguageCXX, ABISymbolVTable,
-    ABIImageFramework, "Example", &failure
+ABIResolvedSymbol *table = ABIResolveCXXVTable(
+    runtime, "Example::Renderer", ABIImageFramework, "Example", &failure
 );
 if (!table) {
     fprintf(stderr, "%d: %s\n", (int)ABIResolutionFailureCode(failure),

@@ -80,6 +80,15 @@ public struct NativeDeclaration: Sendable, Hashable {
         self.language = language
         self.kind = kind
     }
+
+    /// Describes a C++ vtable using its qualified source-level type name.
+    ///
+    /// The resolver supplies the descriptive symbol spelling. The resulting
+    /// address is the vtable symbol, not an inferred address point or first slot.
+    /// - Parameter typeName: A qualified C++ type name, such as `Example::Renderer`.
+    public init(vtableFor typeName: String) {
+        self.init(name: "vtable for \(typeName)", language: .cxx, kind: .vtable)
+    }
 }
 
 /// The ownership contract associated with a native result.

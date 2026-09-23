@@ -45,6 +45,12 @@ struct declaration final {
     declaration(std::string name, language source_language = language::cxx,
                 symbol_kind kind = symbol_kind::function)
         : name(std::move(name)), source_language(source_language), kind(kind) {}
+
+    /// Requests a C++ vtable by qualified type name. Resolves its symbol base,
+    /// without inferring an address point, object layout, or authentication.
+    static declaration vtable_for(std::string type_name) {
+        return {"vtable for " + type_name, language::cxx, symbol_kind::vtable};
+    }
 };
 
 /// A loaded-image constraint. Selecting an image does not load it.
