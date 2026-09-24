@@ -159,6 +159,25 @@ Each output contains exactly one owned symbol or failure. Release old output ref
 
 Scopes are tried in order only when an image or declaration is absent. Missing aliases are ignored; all found aliases must agree on address and image generation. Ambiguity or invalid storage stops fallback. Empty scopes match no images. Scope results are reused within the batch, using the same backend as Swift; the operation does not claim an atomic loader snapshot.
 
+### Lazy name fallback
+
+The `fallbacks` member is distinct from strict `alternatives`. Each fallback is resolved only when earlier candidates are absent:
+
+```cpp
+abi_bridge::symbol_request request{
+    abi_bridge::declaration::linker_name(
+        "_ZN7Example7counterE", abi_bridge::language::cxx, abi_bridge::symbol_kind::data),
+    {},
+    {abi_bridge::image_selector::framework("Example")},
+    {{"Example::counter", abi_bridge::language::cxx, abi_bridge::symbol_kind::data}}
+};
+auto symbol = runtime.resolve(request);
+```
+
+C supplies the same candidates through `ABISymbolRequest.fallbacks` and `fallbackCount`. Zero-initialize requests before assigning fields, or initialize every field explicitly. This structure is passed by the compiled caller, so native consumers must rebuild when adopting the extended header.
+
+The primary and its aliases search every scope first. Then each fallback searches those scopes in order. Success skips all later candidates; ambiguity, invalid storage, and other substantive errors stop resolution. Request field validation still applies to the entire request before lookup, including unused candidates. If all candidates are absent, the missing-declaration error identifies the primary.
+
 ## Pass symbols between Swift and native adapters
 
 Swift can export a resolved result with `symbol.copyNativeHandle()`. The returned pointer owns one C reference. A C adapter releases it with `ABIReleaseResolvedSymbol`; C++ can take ownership with `resolved_symbol::adopt`:

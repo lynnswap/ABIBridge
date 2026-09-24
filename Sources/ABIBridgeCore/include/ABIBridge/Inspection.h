@@ -79,7 +79,8 @@ typedef struct {
     int32_t scope;
     const char *selector;
 } ABIImageSelector;
-/// A requirement with aliases and ordered scopes. Empty scopes match no images.
+/// A requirement with aliases, lazy fallbacks, and ordered scopes.
+/// Empty scopes match no images. Initialize every field or zero-initialize.
 /// Arrays and their strings remain borrowed throughout ABIResolveSymbols.
 /// Null array pointers are accepted only when the corresponding count is zero.
 typedef struct {
@@ -88,6 +89,8 @@ typedef struct {
     size_t alternativeCount;
     const ABIImageSelector *imageScopes;
     size_t imageScopeCount;
+    const ABIDeclaration *fallbacks;
+    size_t fallbackCount;
 } ABISymbolRequest;
 /// Exactly one owned symbol or failure for one input request.
 /// Release each non-null field with its matching release function.
@@ -103,8 +106,10 @@ typedef struct {
 ///
 /// Scopes are tried in order only when an image or declaration is absent.
 /// Found aliases must agree on address and image generation; ambiguity and
-/// invalid storage stop fallback. Missing aliases are ignored. Invalid fields
-/// fail only their request. Image-scope results are reused within the batch,
+/// invalid storage stop fallback. Missing aliases are ignored. After the primary
+/// and aliases are absent in every scope, fallback declarations are tried in
+/// order across the same scopes. The first success skips later declarations.
+/// Invalid fields fail only their request. Image-scope results are reused within the batch,
 /// without claiming an atomic loader snapshot.
 void ABIResolveSymbols(
     ABISymbolRuntime *runtime, const ABISymbolRequest *requests, size_t count,

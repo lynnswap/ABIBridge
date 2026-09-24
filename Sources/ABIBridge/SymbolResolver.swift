@@ -53,7 +53,30 @@ final class SymbolResolver: Sendable {
         scopes: inout [ImageSelector: Result<[NativeImage], any Error>]
     ) throws -> ResolvedSymbol {
         var missing: ABIResolutionError = .imageNotLoaded
-        for scope in request.imageScopes {
+        for (index, candidate) in ([request.declaration] + request.fallbacks).enumerated() {
+            do {
+                return try resolveAliases(
+                    candidate, alternatives: index == 0 ? request.alternatives : [],
+                    in: request.imageScopes, scopes: &scopes
+                )
+            } catch let error as ABIResolutionError {
+                switch error {
+                case .imageNotLoaded, .declarationNotFound:
+                    if index == 0 { missing = error }
+                default: throw error
+                }
+            }
+        }
+        throw missing
+    }
+
+    private func resolveAliases(
+        _ primary: NativeDeclaration, alternatives: [NativeDeclaration],
+        in imageScopes: [ImageSelector],
+        scopes: inout [ImageSelector: Result<[NativeImage], any Error>]
+    ) throws -> ResolvedSymbol {
+        var missing: ABIResolutionError = .imageNotLoaded
+        for scope in imageScopes {
             let scopeResult: Result<[NativeImage], any Error>
             if let cached = scopes[scope] {
                 scopeResult = cached
@@ -64,14 +87,14 @@ final class SymbolResolver: Sendable {
             let images = try scopeResult.get()
             guard !images.isEmpty else { continue }
             var match: ResolvedSymbol?
-            for declaration in [request.declaration] + request.alternatives {
+            for declaration in [primary] + alternatives {
                 do {
                     let found = try unique(declaration, images: images)
                     if let previous = match {
                         guard previous.address == found.address,
                               previous.image.identity == found.image.identity else {
                             throw ABIResolutionError.ambiguousDeclaration(
-                                request.declaration,
+                                primary,
                                 candidates: [previous.declaration.name, found.declaration.name]
                             )
                         }
@@ -83,7 +106,7 @@ final class SymbolResolver: Sendable {
                 }
             }
             if let match { return match }
-            missing = .declarationNotFound(request.declaration)
+            missing = .declarationNotFound(primary)
         }
         throw missing
     }

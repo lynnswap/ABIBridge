@@ -122,7 +122,20 @@ int main(int argc, char **argv) {
         assert(runtime.resolve(batchCounter).unsafe_address() ==
                std::get<resolved_symbol>(outcomes[0]).unsafe_address());
 
-        retained = runtime.resolve(counterQuery, scope);
+        symbol_request lazyRequest{
+            {"ABIBridgeLazyMissing", language::c}, {}, {scope},
+            {counterQuery, {"notASelector:", language::objective_c}}
+        };
+        assert(*static_cast<const int*>(runtime.resolve(lazyRequest).unsafe_address()) == 42);
+        lazyRequest.primary = exactCounter;
+        lazyRequest.fallbacks.erase(lazyRequest.fallbacks.begin());
+        assert(runtime.resolve(lazyRequest).unsafe_address() == dlsym(library, "_ZN16ABIBridgeFixture7counterE"));
+        auto invalidFallback = lazyRequest;
+        invalidFallback.fallbacks[0].name += std::string("\0suffix", 7);
+        auto lazyOutcomes = runtime.resolve(std::vector<symbol_request>{lazyRequest, invalidFallback});
+        assert(std::holds_alternative<resolved_symbol>(lazyOutcomes[0]));
+        assert(std::get<resolution_error>(lazyOutcomes[1]).code() == ABIFailureInvalidRequest);
+        retained = runtime.resolve(lazyRequest);
         auto acquired = ABIRetainResolvedSymbol(retained->native_handle());
         auto adopted = resolved_symbol::adopt(acquired);
         handedOff = resolved_symbol::retain(adopted.native_handle());
