@@ -197,7 +197,7 @@ private:
     std::shared_ptr<ABIImageList> handle_;
 };
 
-/// A loader lease. Copies share one acquired lease; its last owner releases it.
+/// An image lifetime lease. Copies share one acquired lease; its last owner releases it.
 /// This does not own path strings copied or borrowed from another handle.
 class image_lease final {
 public:
