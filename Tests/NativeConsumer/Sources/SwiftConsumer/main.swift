@@ -22,6 +22,13 @@ struct SwiftConsumer {
         guard loader != nil else { throw Failure.loadFailed }
         defer { if let loader { dlclose(loader) } }
 
+        try await MainActor.run {
+            let factory = try ABIRuntime.shared.object(NSData.self as AnyObject).method(
+                selector: "data", as: (() -> NSData).self
+            )
+            let data = try unsafe factory.unsafeInvoke()
+            precondition(data.length == 0)
+        }
         let runtime = ABIRuntime()
         let processID = try await runtime.cFunction(named: "getpid", as: (() -> Int32).self)
         let pid = try unsafe processID.unsafeInvoke()
