@@ -27,4 +27,18 @@ typedef union ABIUnionFixture { NSInteger integer; double real; } ABIUnionFixtur
 /// A forwarding-only receiver with no concrete implementation of answer.
 @interface ABIForwardingFixture : NSObject
 @end
+typedef int32_t (^ABIIntegerBlock)(int32_t);
+typedef id _Nonnull (^ABIObjectBlock)(void);
+typedef void (^ABIArrayCompletion)(NSArray<NSString *> *);
+typedef void (^ABIArrayProvider)(ABIArrayCompletion);
+@interface ABIBlockFixture : NSObject
+@property(nonatomic, copy, nullable) ABIIntegerBlock handler;
+- (int32_t)apply:(int32_t)value using:(nullable ABIIntegerBlock)block;
+- (ABIObjectBlock)blockHolding:(id)object;
+- (ABIObjectBlock)copyBlockHolding:(id)object;
+- (nullable ABIIntegerBlock)nilBlock;
+- (ABIArrayProvider)provider;
+- (id)plainObject;
+- (nullable id)eraseBlock:(nullable id)block;
+@end
 NS_ASSUME_NONNULL_END

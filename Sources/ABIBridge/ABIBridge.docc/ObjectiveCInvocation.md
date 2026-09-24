@@ -35,15 +35,43 @@ The frontend supports these mappings:
 | Floating point | `Float`, `Double`, or a matching `CGFloat` |
 | Objective-C object | Object types and Swift values that bridge to objects, optionally wrapped in `Optional` |
 | Objective-C class | Class metatypes, optionally wrapped in `Optional` |
+| Objective-C block | Typed `@convention(block)` values, optionally wrapped in `Optional` |
 | Pointer or selector | Swift pointer types, `OpaquePointer`, or `Selector`; pointer values may be optional |
 | Standard structures | `CGPoint`, `CGSize`, `CGRect`, and `NSRange` |
 | Void result | `Void` |
 
-There is no fixed argument-count limit. Signatures are synchronous and fixed: C variadic tails, blocks, arbitrary structures, unions, and nontrivial C++ values are not supported by this frontend.
+There is no fixed argument-count limit. Signatures are synchronous and fixed: C variadic tails, arbitrary structures, unions, and nontrivial C++ values are not supported by this frontend.
 
 Class arguments are checked before native dispatch, so an instance supplied for a `Class` parameter throws a value-conversion error. Class results remain metatypes during Swift conversion and cannot masquerade as instances. These conversions happen during invocation; lookup does not introspect Swift metatype metadata.
 
 Object arguments stay alive until the call returns. Returned objects participate in ARC and are dynamically cast or bridged to the requested Swift result type. A failed cast throws ``ABIInvocationError/incompatibleValue(expected:actual:)``; nil for a nonoptional result throws ``ABIInvocationError/unexpectedNilResult(expected:)``. Pointer arguments and results remain borrowed, so their owners must establish the required lifetimes.
+
+## Pass and receive typed blocks
+
+Declare the block's Objective-C calling convention explicitly, then use the type in the ordinary method signature:
+
+```swift
+typealias Transform = @convention(block) (Int32) -> Int32
+
+let apply = try object.method(
+    selector: "apply:using:",
+    as: ((Int32, Transform?) -> Int32).self
+)
+let transform: Transform = { $0 + 1 }
+let answer = try unsafe apply.unsafeInvoke(41, transform)
+
+let getter = try object.method(selector: "handler", as: (() -> Transform?).self)
+let returned = try unsafe getter.unsafeInvoke()
+let next = returned?(42)
+```
+
+Arguments are copied to owned block storage for the call. A native API that stores a callback must follow its normal block-copy contract; its retained copy keeps captures alive after invocation returns. Returned blocks are copied and managed by Swift ownership, including results from retained method families such as `copy`. Optional block values preserve nil; an unexpected nil for a nonoptional block throws an invocation error.
+
+The frontend distinguishes block function metadata from ordinary Swift closures and C function pointers. Use a typed block variable to bridge a Swift closure explicitly. An object-encoded argument or result may also carry a typed block, but a non-block object cannot be returned as a block.
+
+The usual `@?` method encoding does not describe the block's own arguments and result. The caller must supply that exact signature. A block's inner call is performed by the Swift compiler through its declared convention, including nested completion blocks and Objective-C-representable values. ABI conventions follow the [Clang block specification](https://clang.llvm.org/docs/Block-ABI-Apple.html) and [Swift function metadata flags](https://github.com/swiftlang/swift/blob/main/include/swift/ABI/MetadataValues.h).
+
+Block ownership does not establish actor isolation or move callbacks to another executor. Callbacks execute where the native API invokes them, and callbacks that require the main actor must be invoked there. Completion blocks are not automatically converted into async functions.
 
 ## Describe ownership when necessary
 

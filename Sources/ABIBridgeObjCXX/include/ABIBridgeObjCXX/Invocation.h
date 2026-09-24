@@ -29,6 +29,11 @@ FOUNDATION_EXPORT BOOL ABIInvokeObjCInvocation(
     ABIObjCInvocation *invocation, void * _Nullable result,
     const void * _Nonnull const * _Nullable arguments, NSError * _Nullable * _Nullable error);
 
+/// Copies a live Objective-C block to owned heap/global storage. Returns null
+/// for a non-block object. The input must be a valid live Objective-C object;
+/// the returned reference is released with ordinary Objective-C ownership.
+FOUNDATION_EXPORT void * _Nullable ABICopyObjCBlock(const void *block);
+
 /// Encodings for the standard imported value types supported by the frontend.
 FOUNDATION_EXPORT const char *ABIObjCEncodingPoint(void);
 FOUNDATION_EXPORT const char *ABIObjCEncodingSize(void);

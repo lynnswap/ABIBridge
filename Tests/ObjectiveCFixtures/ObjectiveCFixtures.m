@@ -1,6 +1,19 @@
 #import "ObjectiveCFixtures.h"
 #import <objc/runtime.h>
 
+@implementation ABIBlockFixture
+- (int32_t)apply:(int32_t)value using:(ABIIntegerBlock)block { return block ? block(value) : -1; }
+- (ABIObjectBlock)blockHolding:(id)object { return [^{ return object; } copy]; }
+- (ABIObjectBlock)copyBlockHolding:(id)object { return [^{ return object; } copy]; }
+- (ABIIntegerBlock)nilBlock { return nil; }
+- (ABIArrayProvider)provider {
+    return ^(ABIArrayCompletion completion) { completion(@[@"first", @"second"]); };
+}
+- (id)plainObject { return [NSObject new]; }
+- (id)eraseBlock:(id)block { return block; }
+@end
+
+
 @interface ABIOwnershipFixture ()
 @property(nonatomic) NSInteger liveResults;
 @property(nonatomic) NSInteger classCalls;

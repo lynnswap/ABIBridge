@@ -4,7 +4,7 @@ import CoreGraphics
 import ObjCTypeDecodeKit
 
 struct ObjCValueCodec<Value> {
-    enum Kind { case void, boolean, bytes, object, classObject, pointer }
+    enum Kind { case void, boolean, bytes, object, classObject, pointer, block }
     let kind: Kind
     let size: Int
     let alignment: Int
@@ -25,8 +25,19 @@ struct ObjCValueCodec<Value> {
             kind = .void
         } else if (type == .bool || type == .char) && Value.self == Bool.self && size == 1 {
             kind = .boolean
+        } else if case .block = type {
+            guard Self.isBlockType(baseType), size == MemoryLayout<UnsafeRawPointer>.size,
+                  MemoryLayout<Value>.size == size else { throw Self.mismatch(encoding) }
+            kind = .block
         } else if case .object = type {
-            kind = .object
+            if Self.isBlockType(baseType) {
+                guard size == MemoryLayout<UnsafeRawPointer>.size, MemoryLayout<Value>.size == size else {
+                    throw Self.mismatch(encoding)
+                }
+                kind = .block
+            } else {
+                kind = .object
+            }
         } else if type == .class {
             kind = .classObject
         } else if Self.matchesInteger(type), size == MemoryLayout<Value>.size {
@@ -56,6 +67,13 @@ struct ObjCValueCodec<Value> {
         case .bytes:
             let storage = NativeValueStorage(size: size, alignment: alignment)
             storage.store(value)
+            return storage
+        case .block:
+            // Block and optional-block values both use one nullable object word.
+            let object = unsafeBitCast(value, to: AnyObject?.self)
+            let copy = try object.map(Self.copyBlock)
+            let storage = NativeValueStorage(size: size, alignment: alignment, owner: copy)
+            storage.store(copy.map { UnsafeRawPointer(Unmanaged.passUnretained($0).toOpaque()) })
             return storage
         case .object, .classObject:
             let unwrapped: Any?
@@ -90,6 +108,11 @@ struct ObjCValueCodec<Value> {
         case .void: return () as! Value
         case .boolean: return (storage.address.load(as: UInt8.self) != 0) as! Value
         case .bytes: return storage.address.load(as: Value.self)
+        case .block:
+            guard let pointer = storage.address.load(as: UnsafeRawPointer?.self) else { return try nilResult() }
+            let object = Unmanaged<AnyObject>.fromOpaque(pointer).takeRetainedValue()
+            let copy: AnyObject? = try Self.copyBlock(object)
+            return unsafeBitCast(copy, to: Value.self)
         case .object, .classObject:
             guard let pointer = storage.address.load(as: UnsafeRawPointer?.self) else { return try nilResult() }
             let object = Unmanaged<AnyObject>.fromOpaque(pointer).takeRetainedValue()
@@ -131,6 +154,23 @@ struct ObjCValueCodec<Value> {
 
     private static func mismatch(_ encoding: String) -> ABIResolutionError {
         .signatureMismatch(expected: String(reflecting: Value.self), found: [encoding])
+    }
+
+    private static func copyBlock(_ object: AnyObject) throws -> AnyObject {
+        guard let copy = ABICopyObjCBlock(Unmanaged.passUnretained(object).toOpaque()) else {
+            throw ABIInvocationError.incompatibleValue(
+                expected: String(reflecting: Value.self), actual: String(reflecting: Swift.type(of: object))
+            )
+        }
+        return Unmanaged<AnyObject>.fromOpaque(copy).takeRetainedValue()
+    }
+
+    private static func isBlockType(_ type: Any.Type) -> Bool {
+        // Swift ABI FunctionTypeMetadata: kind word, then FunctionTypeFlags.
+        // Block convention is 1 in bits 16...23; ordinary Swift/C functions differ.
+        // https://github.com/swiftlang/swift/blob/main/include/swift/ABI/MetadataValues.h
+        let metadata = unsafeBitCast(type, to: UnsafePointer<UInt>.self)
+        return metadata[0] == 0x302 && metadata[1] & 0x00FF0000 == 0x00010000
     }
 
     private static func isPointer(_ type: ObjCType) -> Bool {
