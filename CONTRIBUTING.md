@@ -72,6 +72,36 @@ The default output is `.build/documentation`. Optional arguments select the outp
 
 Pushes to `main` build and deploy the site to GitHub Pages. Pull requests run the package CI without a documentation job.
 
+## Releases
+
+The Release workflow validates an approved commit with the same CI used for pull requests, then publishes its draft automatically. Failed or cancelled validation leaves the draft unpublished. This Swift package is distributed through its Git tag and GitHub's source archives; there are no separately uploaded binary assets.
+
+After reviewing the version, title, notes, full target commit SHA, and automatic publication plan, use Python 3, Git, and an authenticated GitHub CLI:
+
+```sh
+python3 scripts/release.py start v0.1.0 \
+  --repo lynnswap/ABIBridge \
+  --target <full-40-character-commit-sha> \
+  --notes-file /path/to/release-notes.md
+```
+
+Replace the example version and target with the approved values. The title defaults to the version; use `--title` to set it explicitly or `--prerelease` for a prerelease. Authentication needs permission to create releases and dispatch workflows. The Release workflow must already exist on `main`. Merely saving a draft in the GitHub UI does not start Actions.
+
+The command creates a draft pinned to the full SHA, or reuses an existing draft only when its target and content match. It then dispatches `release.yml` from main with the draft ID, target SHA, and content fingerprint. It reports the draft URL and dispatch acceptance; it does not wait for publication. The workflow checks out the target SHA for package tests and all four device-platform builds. Only the final job has publication permission, and it executes the release script from the workflow's main commit.
+
+The publish job uses the repository's `GITHUB_TOKEN` by default. For arbitrary historical commits, configure the optional Actions secret `RELEASE_TOKEN` with a fine-grained PAT scoped to this repository and **Contents: write** plus **Workflows: write** (or a classic token with `repo` and `workflow`). GitHub can reject tag creation with the default token when the target's workflow files differ from current branch tips. The custom credential is used only in the publish step; tests receive no release secret. If that permission restriction occurs, the draft remains unpublished: configure the credential and rerun the failed publish job, keeping the same approved SHA. Repository tag rules still apply. See [GitHub's reference-creation permissions](https://docs.github.com/en/rest/git/refs#create-a-reference).
+
+Do not edit the draft, upload assets, or move its tag while checks run. The workflow rejects uploaded assets and verifies the title, notes, prerelease state, tag name, and target again before publication. The publication request explicitly supplies those approved fields, so an intervening draft edit cannot substitute different release metadata. GitHub does not provide a transaction spanning tag references, release assets, and release publication; maintainers must serialize those external operations. A missing tag is created at the tested SHA only after checks pass; an existing lightweight or annotated tag must resolve to that SHA. Publication preserves the supplied notes and prerelease state. Stable releases use GitHub's legacy latest-release selection; prereleases are not marked latest.
+
+If dispatch fails or its response is uncertain, inspect the Actions page before rerunning the same command, since GitHub may already have accepted it. Repeating the command reuses a matching draft. For a failed workflow, use GitHub's re-run controls after addressing the failure. A failed publication can leave the correct tag alongside a draft; rerunning the failed publish job resumes without moving the tag. A retry after successful publication is a no-op. Changed draft content needs a newly reviewed command matching that content; old workflow runs will not publish it.
+
+Run the release protocol tests locally without creating any GitHub resources:
+
+```sh
+python3 -m unittest discover -s scripts -p 'test_release.py' -v
+actionlint
+```
+
 ## Pull requests
 
 Keep each pull request independently buildable and link its issue. Include the behavior changed, relevant validation, and any unverified runtime behavior.
