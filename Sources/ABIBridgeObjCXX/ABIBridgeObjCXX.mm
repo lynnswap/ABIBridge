@@ -1,4 +1,4 @@
-#import <ABIBridgeObjCXX/ABIBridgeObjCXX.h>
+#import <ABIBridge/ObjectiveCInvocation.h>
 #import <ABIBridgeObjCXX/Invocation.h>
 #import <CoreGraphics/CGGeometry.h>
 #include <optional>
@@ -102,7 +102,25 @@ ABIObjCMethod *ABICopyObjCMethod(
     // method resolution before returning the callable implementation.
     IMP implementation = class_getMethodImplementation(cls, selector);
     Method method = class_getInstanceMethod(cls, selector);
-    if (!method || !implementation || implementation == reinterpret_cast<IMP>(_objc_msgForward)) {
+    if (!method) {
+        // A custom method signature can describe a forwarded-only selector.
+        // NSProxy's abstract implementation must not be invoked for an unknown
+        // selector; concrete methods above require no NSObject reflection.
+        SEL signatureSelector = @selector(methodSignatureForSelector:);
+        Method signatureMethod = class_getInstanceMethod(cls, signatureSelector);
+        Method proxyDefault = class_getInstanceMethod(objc_getClass("NSProxy"), signatureSelector);
+        NSMethodSignature *signature = nil;
+        if (signatureMethod && (!proxyDefault || method_getImplementation(signatureMethod) != method_getImplementation(proxyDefault))) {
+            using SignatureGetter = NSMethodSignature *(*)(id, SEL, SEL);
+            signature = reinterpret_cast<SignatureGetter>(method_getImplementation(signatureMethod))(
+                receiver, signatureSelector, selector);
+        }
+        fail(error, signature ? ABIFailureUnsupportedDeclaration : ABIFailureDeclarationNotFound,
+             [NSString stringWithFormat:@"No concrete implementation for %@ on %@.",
+              NSStringFromSelector(selector), NSStringFromClass(cls)]);
+        return nullptr;
+    }
+    if (!implementation || implementation == reinterpret_cast<IMP>(_objc_msgForward)) {
         fail(error, ABIFailureUnsupportedDeclaration,
              [NSString stringWithFormat:@"No concrete implementation for %@ on %@.",
               NSStringFromSelector(selector), NSStringFromClass(cls)]);

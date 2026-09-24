@@ -1,7 +1,7 @@
 #pragma once
 
-#import <ABIBridgeObjCXX/ABIBridgeObjCXX.h>
-#include <ABIBridge/ABIBridge.hpp>
+#import <ABIBridge/ObjectiveCInvocation.h>
+#include <ABIBridge/Inspection.hpp>
 #include <array>
 #include <optional>
 #include <type_traits>
@@ -115,6 +115,8 @@ template <typename Signature>
 objc_method_handle<Signature> objc_method(
     id receiver, std::string_view name, objc_method_options options = {})
 {
+    if (name.find('\0') != std::string_view::npos)
+        throw resolution_error(ABIFailureInvalidRequest, "Selector names must not contain embedded NULs.");
     const std::string selector(name);
     return objc_method<Signature>(receiver, sel_registerName(selector.c_str()), options);
 }

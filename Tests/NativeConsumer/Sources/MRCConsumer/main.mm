@@ -1,8 +1,9 @@
 #import <Foundation/Foundation.h>
 #include <Block.h>
-#include <ABIBridge/ABIBridgeObjCXX.hpp>
+#include <ABIBridge/ObjectiveCInvocation.hpp>
 #include <cassert>
 #include <iostream>
+#include "../../ObjCInvocationFixture.hpp"
 
 typedef NSInteger (^Transform)(NSInteger);
 static int liveReceivers = 0;
@@ -37,6 +38,7 @@ static int liveResults = 0;
 @end
 
 int main() {
+    checkPublicObjCInvocation();
     @autoreleasepool {
         {
             FixtureObject* object = [[FixtureObject alloc] init];

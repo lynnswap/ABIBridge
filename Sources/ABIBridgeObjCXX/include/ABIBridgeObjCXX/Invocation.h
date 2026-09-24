@@ -1,6 +1,6 @@
 #pragma once
 
-#import <ABIBridgeObjCXX/ABIBridgeObjCXX.h>
+#import <ABIBridge/ObjectiveCInvocation.h>
 #include <ABIBridge/Invocation.h>
 
 NS_ASSUME_NONNULL_BEGIN
