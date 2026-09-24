@@ -11,6 +11,11 @@ private struct LargeValue: ABIBridgeValue {
     static func nativeValue(from value: Self) -> NativeValue { value.storage }
 }
 
+private typealias ConsumerBlock = @convention(block) (Int32) -> Int32
+private final class BlockReceiver: NSObject {
+    @objc var handler: ConsumerBlock?
+}
+
 @main
 struct SwiftConsumer {
     enum Failure: Error { case missingPath, loadFailed, missingImage }
@@ -28,6 +33,18 @@ struct SwiftConsumer {
             )
             let data = try unsafe factory.unsafeInvoke()
             precondition(data.length == 0)
+            let receiver = BlockReceiver()
+            let object = ABIRuntime.shared.object(receiver)
+            let setter = try object.method(selector: "setHandler:", as: ((ConsumerBlock?) -> Void).self)
+            let getter = try object.method(selector: "handler", as: (() -> ConsumerBlock?).self)
+            let captured = NSNumber(value: 31)
+            let block: ConsumerBlock = { captured.int32Value + $0 }
+            try unsafe setter.unsafeInvoke(block)
+            let returned = try unsafe getter.unsafeInvoke()
+            try unsafe setter.unsafeInvoke(nil)
+            precondition(returned?(11) == 42)
+            let cleared = try unsafe getter.unsafeInvoke()
+            precondition(cleared == nil)
         }
         let runtime = ABIRuntime()
         let processID = try await runtime.cFunction(named: "getpid", as: (() -> Int32).self)

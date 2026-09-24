@@ -200,7 +200,8 @@ public struct NativeMethod<Result, each Argument> {
     /// The caller must honor the receiver's actor and thread requirements, pointer
     /// lifetimes, and ownership annotations. Object arguments are kept alive for
     /// the call; returned objects are managed by ARC. Runtime encodings cannot
-    /// validate class constraints, nullability, consumed arguments, or variadic
+    /// validate class constraints, block invocation signatures, nullability,
+    /// consumed arguments, or variadic
     /// tails. Such contracts remain the caller's responsibility.
     ///
     /// - Parameter values: The explicit method arguments, in declaration order.

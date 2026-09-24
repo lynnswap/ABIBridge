@@ -272,6 +272,15 @@ BOOL ABIInvokeObjCInvocation(
     }
     return YES;
 }
+void *ABICopyObjCBlock(const void *pointer) {
+    id object = (__bridge id)pointer;
+    Class blockClass = objc_lookUpClass("NSBlock");
+    for (Class cls = object_getClass(object); cls; cls = class_getSuperclass(cls)) {
+        if (cls == blockClass) return (void *)CFBridgingRetain([object copy]);
+    }
+    return nullptr;
+}
+
 const char *ABIObjCEncodingPoint() { return @encode(CGPoint); }
 const char *ABIObjCEncodingSize() { return @encode(CGSize); }
 const char *ABIObjCEncodingRect() { return @encode(CGRect); }
