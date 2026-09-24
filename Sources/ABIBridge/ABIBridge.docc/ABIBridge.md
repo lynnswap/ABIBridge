@@ -45,6 +45,7 @@ print(symbol.image.path)
 - <doc:ObjectiveCInvocation>
 - ``NativeObject``
 - ``NativeMethod``
+- ``NativeObjCImplementation``
 - ``NativeMethodOptions``
 - ``ABIInvocationError``
 

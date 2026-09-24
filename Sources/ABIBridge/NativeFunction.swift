@@ -8,9 +8,13 @@ final class CCallInterface: @unchecked Sendable {
     init(result: CValueType, parameters: [CValueType]) throws {
         let handles: [OpaquePointer?] = parameters.map(\.handle)
         var failure: OpaquePointer?
-        guard let handle = handles.withUnsafeBufferPointer({
-            ABICreateCCallInterface(result.handle, $0.baseAddress, $0.count, &failure)
-        }) else { throw consumeNativeCallFailure(failure) }
+        // Borrowed handles must outlive preparation, which retains their native storage.
+        let handle = withExtendedLifetime((result, parameters)) {
+            handles.withUnsafeBufferPointer {
+                ABICreateCCallInterface(result.handle, $0.baseAddress, $0.count, &failure)
+            }
+        }
+        guard let handle else { throw consumeNativeCallFailure(failure) }
         self.handle = handle
     }
 

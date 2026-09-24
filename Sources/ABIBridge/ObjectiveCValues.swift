@@ -1,4 +1,5 @@
 import ABIBridgeObjCXX
+import ABIBridgeCore
 import Foundation
 import CoreGraphics
 import ObjCTypeDecodeKit
@@ -9,6 +10,7 @@ struct ObjCValueCodec<Value> {
     let size: Int
     let alignment: Int
     private let pointerType: (any NativePointerValue.Type)?
+    private let signedBoolean: Bool
 
     init(encoding: String, size: Int) throws {
         guard let decoded = ObjCTypeDecoder.decode(encoding) else {
@@ -16,6 +18,7 @@ struct ObjCValueCodec<Value> {
         }
         var type = decoded
         while case .modified(_, let base) = type { type = base }
+        signedBoolean = type == .char
         self.size = size
         alignment = max(MemoryLayout<Value>.alignment, MemoryLayout<UnsafeRawPointer>.alignment)
         let baseType = (Value.self as? any NativeOptionalValue.Type)?.wrappedType ?? Value.self
@@ -54,6 +57,17 @@ struct ObjCValueCodec<Value> {
             kind = .pointer
         } else {
             throw Self.mismatch(encoding)
+        }
+    }
+
+    func cType() throws -> CValueType {
+        switch kind {
+        case .object, .classObject, .pointer, .block:
+            try CValueType(scalar: ABIValuePointer)
+        case .boolean:
+            try CValueType(scalar: signedBoolean ? ABIValueInt8 : ABIValueUInt8)
+        case .void, .bytes:
+            try CValueCodec<Value>().type
         }
     }
 

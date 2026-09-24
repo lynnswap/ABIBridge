@@ -1,4 +1,5 @@
 import ABIBridgeObjCXX
+import ABIBridgeCore
 import Foundation
 import ObjectiveC
 
@@ -12,8 +13,8 @@ public struct NativeMethodOptions: Sendable {
 
     /// Whether the method consumes an additional reference to its receiver.
     ///
-    /// The method handle continues to retain the original receiver even when an
-    /// initializer returns a replacement object or nil.
+    /// Invocation supplies an additional reference so the caller's ownership
+    /// remains valid even when an initializer returns a replacement object or nil.
     public var consumesReceiver: Bool?
 
     /// Creates ownership overrides; nil values use method-family conventions.
@@ -166,12 +167,42 @@ final class ObjCInvocationBinding {
 /// the number of explicit arguments. See <doc:ObjectiveCInvocation>.
 public struct NativeMethod<Result, each Argument> {
     private let binding: ObjCInvocationBinding
-    private let arguments: (repeat ObjCValueCodec<each Argument>)
-    private let result: ObjCValueCodec<Result>
+    private let signature: ObjCMethodSignature<Result, repeat each Argument>
 
     init(binding: ObjCInvocationBinding) throws {
         self.binding = binding
-        let handle = binding.handle
+        signature = try ObjCMethodSignature(handle: binding.handle)
+    }
+
+    /// Calls the method using normal Objective-C dispatch.
+    ///
+    /// The caller honors the receiver's actor/thread requirements, pointer
+    /// lifetimes, ownership annotations, block signatures, and nullability.
+    /// Retainable arguments stay alive for the call and results use Swift
+    /// ownership. Foreign exceptions are not translated.
+    ///
+    /// - Parameter values: Explicit arguments, excluding self and the selector.
+    /// - Returns: The result converted to the requested Swift type.
+    /// - Throws: A conversion or invocation error, including unexpected nil.
+    @unsafe public func unsafeInvoke(_ values: repeat each Argument) throws -> Result {
+        try signature.invoke(repeat each values, using: { addresses, output in
+            var error: NSError?
+            let success = addresses.withUnsafeBufferPointer {
+                ABIInvokeObjCInvocation(binding.handle, output, $0.baseAddress, &error)
+            }
+            guard success else {
+                if let error { throw error }
+                throw ABIResolutionError.invalidAddress
+            }
+        })
+    }
+}
+
+struct ObjCMethodSignature<Result, each Argument> {
+    private let arguments: (repeat ObjCValueCodec<each Argument>)
+    private let result: ObjCValueCodec<Result>
+
+    init(handle: OpaquePointer) throws {
         var count = 0
         for _ in repeat (each Argument).self { count += 1 }
         guard count == ABIObjCInvocationParameterCount(handle) else {
@@ -195,20 +226,16 @@ public struct NativeMethod<Result, each Argument> {
         )
     }
 
-    /// Calls the method with ordinary Swift values.
-    ///
-    /// The caller must honor the receiver's actor and thread requirements, pointer
-    /// lifetimes, and ownership annotations. Object arguments are kept alive for
-    /// the call; returned objects are managed by ARC. Runtime encodings cannot
-    /// validate class constraints, block invocation signatures, nullability,
-    /// consumed arguments, or variadic
-    /// tails. Such contracts remain the caller's responsibility.
-    ///
-    /// - Parameter values: The explicit method arguments, in declaration order.
-    /// - Returns: The result converted to the requested Swift type.
-    /// - Throws: An invocation error for a failed value conversion or unexpected
-    ///   nil result. Objective-C and C++ exceptions are not translated.
-    @unsafe public func unsafeInvoke(_ values: repeat each Argument) throws -> Result {
+    func callInterface() throws -> CCallInterface {
+        var parameters = [try CValueType(scalar: ABIValuePointer), try CValueType(scalar: ABIValuePointer)]
+        for codec in repeat each arguments { parameters.append(try codec.cType()) }
+        return try CCallInterface(result: result.cType(), parameters: parameters)
+    }
+
+    func invoke(
+        _ values: repeat each Argument,
+        using body: ([UnsafeRawPointer], UnsafeMutableRawPointer) throws -> Void
+    ) throws -> Result {
         var storage: [NativeValueStorage] = []
         for (codec, value) in repeat (each arguments, each values) {
             storage.append(try codec.encode(value))
@@ -216,14 +243,7 @@ public struct NativeMethod<Result, each Argument> {
         let addresses = storage.map { UnsafeRawPointer($0.address) }
         let output = NativeValueStorage(size: result.size, alignment: result.alignment)
         return try withExtendedLifetime(storage) {
-            var error: NSError?
-            let success = addresses.withUnsafeBufferPointer {
-                ABIInvokeObjCInvocation(binding.handle, output.address, $0.baseAddress, &error)
-            }
-            guard success else {
-                if let error { throw error }
-                throw ABIResolutionError.invalidAddress
-            }
+            try body(addresses, output.address)
             return try result.decode(output)
         }
     }
