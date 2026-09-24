@@ -203,6 +203,8 @@ public enum ABIResolutionError: Error, Sendable, Hashable {
     case imageNotLoaded
     /// None of the available symbol sources contains the declaration.
     case declarationNotFound(NativeDeclaration)
+    /// The receiver's Objective-C class hierarchy has no ivar with this name.
+    case ivarNotFound(name: String, className: String)
     /// Multiple distinct definitions match; candidates identify the competing symbols or images.
     case ambiguousDeclaration(NativeDeclaration, candidates: [String])
     /// Available signature information disagrees with the requested signature.

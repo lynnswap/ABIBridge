@@ -51,6 +51,11 @@ struct SwiftConsumer {
             try unsafe setter.unsafeInvoke(block)
             let capturedBlock = try unsafe capturedGetter.unsafeInvoke(on: receiver)
             precondition(capturedBlock?(11) == 42)
+            let storedBlock = try object.value(forIvar: "handler", as: ConsumerBlock.self)
+            try unsafe setter.unsafeInvoke(nil)
+            precondition(storedBlock(11) == 42)
+            let nilIvar = try object.value(forIvar: "handler", as: ConsumerBlock?.self)
+            precondition(nilIvar == nil)
             let capturedFactory = try ABIRuntime.shared.objcImplementation(
                 on: NSData.self, selector: "data", as: (() -> NSData).self, classMethod: true
             )

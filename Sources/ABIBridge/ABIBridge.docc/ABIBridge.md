@@ -40,7 +40,7 @@ print(symbol.image.path)
 - <doc:CFunctionInvocation>
 - ``NativeFunction``
 
-### Calling Objective-C methods
+### Calling Objective-C methods and reading ivars
 
 - <doc:ObjectiveCInvocation>
 - ``NativeObject``

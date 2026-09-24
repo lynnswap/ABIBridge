@@ -62,6 +62,58 @@ public final class NativeObject {
         throw missing ?? ABIResolutionError.metadataUnavailable("No Swift declaring type for this object.")
     }
 
+    /// Reads an Objective-C object or class ivar by its runtime name.
+    ///
+    /// Lookup includes inherited ivars and runs synchronously on the caller's
+    /// executor. The requested type uses the same object bridging and optional
+    /// conversions as Objective-C method results. The isa field returns the
+    /// runtime-decoded class. A present nil value requires
+    /// an optional result; a missing ivar throws `ABIResolutionError.ivarNotFound`.
+    ///
+    /// The returned value owns its reference independently of this receiver.
+    /// Weak ivars use the runtime's weak load; unsafe-unretained pointees must
+    /// remain alive throughout the read. The caller must synchronize access with
+    /// writers and honor the object's thread or actor requirements.
+    ///
+    /// Scalar, pointer, and aggregate ivars are unsupported. This does not infer
+    /// Swift stored-property layouts. Block results require the correct
+    /// `@convention(block)` signature, which ivar encodings cannot validate.
+    ///
+    /// - Parameters:
+    ///   - name: The literal runtime ivar name, including any leading underscore.
+    ///   - valueType: The desired Swift object, bridgeable value, class, or block type.
+    /// - Returns: The converted value, or nil for an optional result with a nil ivar.
+    /// - Throws: A missing-ivar, unsupported-storage, metadata, or conversion error.
+    public func value<Value>(forIvar name: String, as valueType: Value.Type) throws -> Value {
+        let object = receiver!
+        let type: AnyClass = object_getClass(object)!
+        guard !name.utf8.contains(0) else {
+            throw ABIResolutionError.unsupportedDeclaration("An ivar name cannot contain a NUL byte.")
+        }
+        guard let ivar = class_getInstanceVariable(type, name) else {
+            throw ABIResolutionError.ivarNotFound(name: name, className: NSStringFromClass(type))
+        }
+        guard let encoding = ivar_getTypeEncoding(ivar) else {
+            throw ABIResolutionError.metadataUnavailable("The ivar has no Objective-C type encoding.")
+        }
+        let codec = try ObjCValueCodec<Value>(
+            encoding: String(cString: encoding), size: MemoryLayout<UnsafeRawPointer>.size
+        )
+        switch codec.kind {
+        case .object, .classObject, .block: break
+        default:
+            throw ABIResolutionError.unsupportedDeclaration("Only Objective-C object and class ivars can be read.")
+        }
+        // The first word is isa, which may contain packed or authenticated bits.
+        // Decode it through the runtime instead of retaining the stored word.
+        let value: AnyObject? = ivar_getOffset(ivar) == 0
+            ? type as AnyObject : object_getIvar(object, ivar) as AnyObject?
+        let storage = NativeValueStorage(size: codec.size, alignment: codec.alignment)
+        // The shared decoder consumes one owned reference, including on conversion failure.
+        storage.store(value.map { UnsafeRawPointer(Unmanaged.passRetained($0).toOpaque()) })
+        return try codec.decode(storage)
+    }
+
     /// Resolves a Swift implementation for this object's concrete type.
     ///
     /// The method retains the receiver and implementation image. Invocation
