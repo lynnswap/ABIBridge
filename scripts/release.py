@@ -45,10 +45,16 @@ class GitHub:
         return payload
 
 
+def publication_fields(release):
+    return {key: release[key] for key in
+            ("tag_name", "target_commitish", "name", "body", "prerelease")}
+
+
 def fingerprint(release):
+    if release.get("assets"):
+        raise ReleaseError("Uploaded assets are not approved by this source-release workflow; no assets were removed.")
     # Only publication content is compared; timestamps, counters, and URLs may change.
-    content = {key: release[key] for key in
-               ("id", "tag_name", "target_commitish", "name", "body", "prerelease")}
+    content = dict(publication_fields(release), id=release["id"])
     return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
 
 
@@ -161,7 +167,8 @@ def publish(github, release_id, sha, digest):
     try:
         published = github.api(
             f"releases/{release_id}", "PATCH",
-            dict(draft=False, make_latest="false" if release["prerelease"] else "legacy"),
+            dict(publication_fields(release), draft=False,
+                 make_latest="false" if release["prerelease"] else "legacy"),
         )
     except ReleaseError as error:
         raise ReleaseError(

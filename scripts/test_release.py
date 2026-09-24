@@ -32,6 +32,7 @@ class FakeGitHub:
         self.publish_error = False
         self.tag_error = False
         self.after_tag = None
+        self.before_publish = None
         self.older_page = False
 
     @property
@@ -68,7 +69,9 @@ class FakeGitHub:
             if method == "PATCH":
                 if self.publish_error:
                     raise release.APIError(503, "Publication failed")
-                self.release["draft"] = data["draft"]
+                if self.before_publish:
+                    self.before_publish(self)
+                self.release.update({key: value for key, value in data.items() if key != "make_latest"})
             return copy.deepcopy(self.release)
         raise AssertionError((path, method, data))
 
@@ -178,8 +181,37 @@ class ReleaseTests(unittest.TestCase):
             self.assertFalse(github.release["draft"])
             self.assertEqual(release.fingerprint(github.release), digest)
             self.assertEqual(github.writes[0], ("git/refs", "POST", dict(ref="refs/tags/v0.1.0", sha=SHA)))
-            self.assertEqual(github.writes[1][2],
-                             dict(draft=False, make_latest="false" if prerelease else "legacy"))
+            self.assertEqual(github.writes[1][2], dict(
+                tag_name="v0.1.0", target_commitish=SHA, name="First release",
+                body="One\n\nTwo\n", prerelease=prerelease, draft=False,
+                make_latest="false" if prerelease else "legacy"))
+
+    def test_publish_writes_approved_fields_even_if_the_draft_changes_after_verification(self):
+        github = FakeGitHub(draft())
+        digest = release.fingerprint(github.release)
+        github.before_publish = lambda state: state.release.update(
+            name="Unapproved title", body="Unapproved notes", tag_name="v9.9.9",
+            target_commitish=OTHER, prerelease=True)
+        release.publish(github, 42, SHA, digest)
+        self.assertEqual(release.fingerprint(github.release), digest)
+        self.assertFalse(github.release["draft"])
+        self.assertEqual(github.tag, SHA)
+
+    def test_existing_assets_stop_dispatch_without_removing_them(self):
+        github = FakeGitHub(draft(assets=[{"id": 91, "name": "unapproved.zip"}]))
+        with self.assertRaisesRegex(release.ReleaseError, "Uploaded assets are not approved"):
+            self.start(github)
+        self.assertEqual(github.writes, [])
+        self.assertEqual(github.release["assets"][0]["id"], 91)
+
+    def test_assets_added_during_validation_stop_publication(self):
+        github = FakeGitHub(draft())
+        digest = release.fingerprint(github.release)
+        github.release["assets"] = [{"id": 92, "name": "new.zip"}]
+        with self.assertRaisesRegex(release.ReleaseError, "Uploaded assets are not approved"):
+            release.publish(github, 42, SHA, digest)
+        self.assertEqual(github.writes, [])
+        self.assertTrue(github.release["draft"])
 
     def test_failed_publication_can_resume_without_recreating_tag(self):
         github = FakeGitHub(draft())
