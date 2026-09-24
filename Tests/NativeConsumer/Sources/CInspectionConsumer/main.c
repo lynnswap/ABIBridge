@@ -126,9 +126,35 @@ int main(int argc, char **argv) {
     ABIReleaseResolvedSymbol(outcomes[0].symbol);
     ABIReleaseResolutionFailure(outcomes[1].failure);
 
+    ABIDeclaration lazy_candidates[] = {
+        counter_declaration,
+        {"notASelector:", ABILanguageObjectiveC, ABISymbolFunction}
+    };
+    ABISymbolRequest lazy_request = {
+        {"ABIBridgeLazyMissing", ABILanguageC, ABISymbolData}, NULL, 0, scopes, 2,
+        lazy_candidates, 2
+    };
+    ABISymbolResult lazy_result = {0};
+    ABIResolveSymbols(runtime, &lazy_request, 1, &lazy_result);
+    assert(lazy_result.symbol && !lazy_result.failure);
+    lazy_request.declaration = exact_counter;
+    lazy_request.fallbacks = lazy_candidates + 1;
+    lazy_request.fallbackCount = 1;
+    ABISymbolResult skipped_result = {0};
+    ABIResolveSymbols(runtime, &lazy_request, 1, &skipped_result);
+    assert(skipped_result.symbol && !skipped_result.failure);
+    ABIReleaseResolvedSymbol(skipped_result.symbol);
+    lazy_request.fallbacks = NULL;
+    ABISymbolResult invalid_result = {0};
+    ABIResolveSymbols(runtime, &lazy_request, 1, &invalid_result);
+    assert(!invalid_result.symbol && ABIResolutionFailureCode(invalid_result.failure) == ABIFailureInvalidRequest);
+    ABIReleaseResolutionFailure(invalid_result.failure);
+
     assert(dlclose(library) == 0);
     ABIRuntimeRemoveCachedResults(runtime);
     ABIReleaseSymbolRuntime(runtime);
+    assert(*(const int *)ABIResolvedSymbolAddress(lazy_result.symbol) == 42);
+    ABIReleaseResolvedSymbol(lazy_result.symbol);
     assert(strstr(ABIResolutionFailureMessage(saved_failure), "ABIBridgeFixtureMissing"));
     ABIReleaseResolutionFailure(saved_failure);
     assert(*(const int *)ABIResolvedSymbolAddress(counter) == 42);

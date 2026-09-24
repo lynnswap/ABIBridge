@@ -89,12 +89,14 @@ private:
     std::string value_;
 };
 
-/// One declaration with aliases and ordered loaded-image scopes.
+/// One declaration with aliases, lazy fallbacks, and ordered loaded-image scopes.
 /// Empty scopes match no images. Found aliases must agree on address and load.
+/// Each candidate searches all scopes before the next candidate is attempted.
 struct symbol_request final {
     declaration primary;
     std::vector<declaration> alternatives;
     std::vector<image_selector> image_scopes = {image_selector::automatic()};
+    std::vector<declaration> fallbacks;
 };
 
 /// A resolution failure with a stable category and human-readable detail.
@@ -248,7 +250,7 @@ public:
         return resolved_symbol(symbol);
     }
 
-    /// Resolves aliases with ordered scope fallback, or throws resolution_error.
+    /// Resolves aliases and lazy name/scope fallbacks, or throws resolution_error.
     resolved_symbol resolve(const symbol_request& query) const {
         auto results = resolve(std::vector<symbol_request>{query});
         if (auto* symbol = std::get_if<resolved_symbol>(&results.front())) return std::move(*symbol);
@@ -265,6 +267,7 @@ public:
         };
         const auto has_nul = [](const std::string& s) { return s.find('\0') != std::string::npos; };
         std::vector<std::vector<ABIDeclaration>> aliases(queries.size());
+        std::vector<std::vector<ABIDeclaration>> fallbacks(queries.size());
         std::vector<std::vector<ABIImageSelector>> scopes(queries.size());
         std::vector<ABISymbolRequest> native_queries;
         std::vector<std::size_t> indices;
@@ -274,6 +277,8 @@ public:
             if (has_nul(query.primary.name) ||
                 std::any_of(query.alternatives.begin(), query.alternatives.end(),
                             [&](const auto& d) { return has_nul(d.name); }) ||
+                std::any_of(query.fallbacks.begin(), query.fallbacks.end(),
+                            [&](const auto& d) { return has_nul(d.name); }) ||
                 std::any_of(query.image_scopes.begin(), query.image_scopes.end(),
                             [&](const auto& s) { return has_nul(s.value_); })) {
                 outcomes[i].emplace(resolution_error(
@@ -281,10 +286,12 @@ public:
                 continue;
             }
             for (const auto& d : query.alternatives) aliases[i].push_back(declaration_value(d));
+            for (const auto& d : query.fallbacks) fallbacks[i].push_back(declaration_value(d));
             for (const auto& s : query.image_scopes) scopes[i].push_back({s.kind_, s.value_.c_str()});
             native_queries.push_back({declaration_value(query.primary),
                                       aliases[i].data(), aliases[i].size(),
-                                      scopes[i].data(), scopes[i].size()});
+                                      scopes[i].data(), scopes[i].size(),
+                                      fallbacks[i].data(), fallbacks[i].size()});
             indices.push_back(i);
         }
         std::vector<ABISymbolResult> native_results(native_queries.size());

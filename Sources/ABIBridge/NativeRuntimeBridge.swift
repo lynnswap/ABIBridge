@@ -214,8 +214,9 @@ private func nativeImageSelector(
 }
 
 private func nativeRequest(_ request: ABISymbolRequest) throws -> NativeSymbolRequest {
-    guard request.alternativeCount >= 0, request.imageScopeCount >= 0,
+    guard request.alternativeCount >= 0, request.imageScopeCount >= 0, request.fallbackCount >= 0,
           request.alternativeCount == 0 || request.alternatives != nil,
+          request.fallbackCount == 0 || request.fallbacks != nil,
           request.imageScopeCount == 0 || request.imageScopes != nil else {
         throw InvalidNativeRequest(description: "Nonempty request arrays require valid storage.")
     }
@@ -229,7 +230,10 @@ private func nativeRequest(_ request: ABISymbolRequest) throws -> NativeSymbolRe
     let scopes = try UnsafeBufferPointer(start: request.imageScopes, count: request.imageScopeCount).map {
         try nativeImageSelector(scope: $0.scope, selector: $0.selector)
     }
-    return NativeSymbolRequest(declaration, alternatives: alternatives, in: scopes)
+    let fallbacks = try UnsafeBufferPointer(start: request.fallbacks, count: request.fallbackCount).map {
+        try nativeDeclaration($0.name, language: $0.language, kind: $0.kind, nameForm: $0.nameForm)
+    }
+    return NativeSymbolRequest(declaration, alternatives: alternatives, fallbacks: fallbacks, in: scopes)
 }
 
 @_cdecl("ABIResolveSymbols")

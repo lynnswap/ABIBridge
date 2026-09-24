@@ -86,6 +86,25 @@ Use `alternatives:` for declarations expected to identify the same symbol. Missi
 
 Batch results preserve input order and partial success. An empty batch returns no results. Retained image lists are reused for repeated scopes within the batch, while declaration indexes use the runtime's existing cache. This is not an atomic snapshot of loader activity. Each successful result retains its image independently of the batch and runtime.
 
+## Try names lazily
+
+Use `fallbacks:` when one declaration should be tried only after an earlier candidate is absent. For example, an adapter with a known linker spelling can keep its exact-name fast path and use source-level resolution only when needed:
+
+```swift
+let request = NativeSymbolRequest(
+    .init(linkerName: "_ZN7Example7counterE", language: .cxx, kind: .data),
+    fallbacks: [
+        .init(name: "Example::counter", language: .cxx, kind: .data)
+    ],
+    in: [.framework(named: "Example"), .framework(named: "ExampleSupport")]
+)
+let symbol = try await runtime.resolve(request)
+```
+
+Candidate order takes precedence over image-scope order. The primary declaration and its `alternatives:` are searched together across every scope before the first fallback is attempted across those scopes. Each fallback is independent, and the first success stops resolution without looking up later candidates. Ambiguity, invalid storage, and unsupported declarations stop immediately. If every candidate is absent, the error keeps the primary declaration's identity; empty or entirely unloaded scopes report `imageNotLoaded`.
+
+Use `alternatives:` for aliases that must agree and `fallbacks:` for ordered choices that need not have the same address. Both single-request and batch APIs reuse the same scope and symbol caches.
+
 ## Borrow an address
 
 Use `ResolvedSymbol.withUnsafeAddress` for a synchronous operation that requires the raw address. The closure keeps the containing image retained, but the pointer must not escape.

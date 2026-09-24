@@ -176,6 +176,75 @@ struct SymbolResolutionTests {
         } catch ABIResolutionError.invalidAddress {}
     }
 
+    @Test func lazyNamesShortCircuitAndTakePriorityOverScopes() async throws {
+        let first = try FixtureLibrary()
+        let second = try FixtureLibrary()
+        defer { first.cleanup(); second.cleanup() }
+        let runtime = ABIRuntime()
+        let firstCounter = NativeDeclaration(name: "\(first.namespace)::counter", language: .cxx, kind: .data)
+        let secondCounter = NativeDeclaration(name: "\(second.namespace)::counter", language: .cxx, kind: .data)
+        let exact = NativeDeclaration(
+            linkerName: "_ZN\(second.namespace.utf8.count)\(second.namespace)7counterE",
+            language: .cxx, kind: .data
+        )
+        let missing = NativeDeclaration(linkerName: "ABIBridgeLazyMissing", language: .cxx)
+        let unsupported = NativeDeclaration(name: "selector:", language: .objectiveC)
+        let scopes: [ImageSelector] = [.path(first.libraryURL), .path(second.libraryURL)]
+        let results = await runtime.resolve([
+            NativeSymbolRequest(exact, fallbacks: [firstCounter, unsupported], in: scopes),
+            .init(missing, fallbacks: [secondCounter, firstCounter, unsupported], in: scopes),
+            .init(missing, alternatives: [exact], fallbacks: [unsupported], in: scopes)
+        ])
+        #expect(try results[0].get().declaration == exact)
+        #expect(try results[1].get().declaration == secondCounter)
+        #expect(try results[2].get().declaration == exact)
+        #expect(try results[0].get().image.identity == results[1].get().image.identity)
+        first.close()
+        second.close()
+        await runtime.removeCachedResults()
+        for result in results {
+            #expect(try unsafe result.get().withUnsafeAddress { $0.load(as: Int32.self) } == 42)
+        }
+    }
+
+    @Test func lazyNamesStopOnSubstantiveErrorsAndPreserveMissingIdentity() async throws {
+        let first = try FixtureLibrary()
+        let second = try FixtureLibrary(namespace: first.namespace)
+        defer { first.cleanup(); second.cleanup() }
+        let runtime = ABIRuntime()
+        let scope = ImageSelector.path(first.libraryURL)
+        let add = NativeDeclaration(name: "\(first.namespace)::add(int, int)", language: .cxx)
+        let counter = NativeDeclaration(name: "\(first.namespace)::counter", language: .cxx, kind: .data)
+        let wrongKind = NativeDeclaration(name: counter.name, language: .cxx)
+        let missing = NativeDeclaration(name: "ABIBridgeLazyMissing", language: .c)
+        let results = await runtime.resolve([
+            NativeSymbolRequest(missing, fallbacks: [add, counter], in: [.automatic, scope]),
+            .init(add, alternatives: [counter], fallbacks: [add], in: [scope]),
+            .init(wrongKind, fallbacks: [add], in: [scope]),
+            .init(missing, fallbacks: [wrongKind, add], in: [scope]),
+            .init(add, fallbacks: [wrongKind], in: [scope]),
+            .init(missing, fallbacks: [.init(name: "ABIBridgeAlsoMissing", language: .c)], in: [scope]),
+            .init(missing, fallbacks: [add], in: [])
+        ])
+        for index in [0, 1] {
+            do {
+                _ = try results[index].get()
+                Issue.record("Ambiguity must stop candidate fallback")
+            } catch ABIResolutionError.ambiguousDeclaration {}
+        }
+        for index in [2, 3] {
+            #expect(throws: ABIResolutionError.invalidAddress) { try results[index].get() }
+        }
+        #expect(try results[4].get().declaration == add)
+        do {
+            _ = try results[5].get()
+            Issue.record("Exhausted fallbacks must report the primary missing declaration")
+        } catch ABIResolutionError.declarationNotFound(let declaration) {
+            #expect(declaration == missing)
+        }
+        #expect(throws: ABIResolutionError.imageNotLoaded) { try results[6].get() }
+    }
+
     @Test func handedOffSymbolsOwnTheImageAfterOriginalOwnersRelease() async throws {
         let fixture = try FixtureLibrary()
         defer { fixture.cleanup() }

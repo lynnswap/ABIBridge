@@ -71,7 +71,7 @@ struct NativeRuntimeTests {
             try withUnsafePointer(to: &scope) { scope in
                 let declaration = ABIDeclaration(name: name, language: Int32(ABILanguageC), kind: Int32(ABISymbolFunction), nameForm: Int32(ABINameSource))
                 let valid = ABISymbolRequest(declaration: declaration, alternatives: nil, alternativeCount: 0,
-                                             imageScopes: scope, imageScopeCount: 1)
+                                             imageScopes: scope, imageScopeCount: 1, fallbacks: nil, fallbackCount: 0)
                 var malformed = valid
                 malformed.alternativeCount = 1
                 var empty = valid
