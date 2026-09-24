@@ -45,6 +45,17 @@ struct SwiftConsumer {
             precondition(returned?(11) == 42)
             let cleared = try unsafe getter.unsafeInvoke()
             precondition(cleared == nil)
+            let capturedGetter = try ABIRuntime.shared.objcImplementation(
+                on: BlockReceiver.self, selector: "handler", as: (() -> ConsumerBlock?).self
+            )
+            try unsafe setter.unsafeInvoke(block)
+            let capturedBlock = try unsafe capturedGetter.unsafeInvoke(on: receiver)
+            precondition(capturedBlock?(11) == 42)
+            let capturedFactory = try ABIRuntime.shared.objcImplementation(
+                on: NSData.self, selector: "data", as: (() -> NSData).self, classMethod: true
+            )
+            let capturedData = try unsafe capturedFactory.unsafeInvoke(on: NSData.self as AnyObject)
+            precondition(capturedData.length == 0)
         }
         let runtime = ABIRuntime()
         let processID = try await runtime.cFunction(named: "getpid", as: (() -> Int32).self)

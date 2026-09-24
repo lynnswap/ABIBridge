@@ -31,9 +31,13 @@ final class CValueType: @unchecked Sendable {
     init(fields: [CValueType]) throws {
         let handles: [OpaquePointer?] = fields.map(\.handle)
         var failure: OpaquePointer?
-        guard let handle = handles.withUnsafeBufferPointer({
-            ABICreateStructType($0.baseAddress, $0.count, &failure)
-        }) else { throw consumeNativeCallFailure(failure) }
+        // Keep the owners alive until the aggregate retains each native field type.
+        let handle = withExtendedLifetime(fields) {
+            handles.withUnsafeBufferPointer {
+                ABICreateStructType($0.baseAddress, $0.count, &failure)
+            }
+        }
+        guard let handle else { throw consumeNativeCallFailure(failure) }
         self.handle = handle
     }
 

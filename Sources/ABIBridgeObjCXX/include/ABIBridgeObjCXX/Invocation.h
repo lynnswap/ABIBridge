@@ -1,6 +1,7 @@
 #pragma once
 
 #import <ABIBridgeObjCXX/ABIBridgeObjCXX.h>
+#include <ABIBridge/Invocation.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -12,6 +13,12 @@ typedef struct ABIObjCInvocation ABIObjCInvocation;
 FOUNDATION_EXPORT ABIObjCInvocation * _Nullable ABICopyObjCInvocation(
     id receiver, SEL selector, int32_t returnsRetained, int32_t consumesReceiver,
     NSError * _Nullable * _Nullable error);
+/// Captures a concrete IMP and signature without retaining an instance.
+/// The class and selector must remain valid during lookup. Generated classes
+/// must remain registered and generated IMPs must remain callable for its lifetime.
+FOUNDATION_EXPORT ABIObjCInvocation * _Nullable ABICopyObjCImplementation(
+    Class type, SEL selector, BOOL classMethod, int32_t returnsRetained,
+    int32_t consumesReceiver, NSError * _Nullable * _Nullable error);
 FOUNDATION_EXPORT void ABIReleaseObjCInvocation(ABIObjCInvocation *invocation);
 FOUNDATION_EXPORT size_t ABIObjCInvocationParameterCount(const ABIObjCInvocation *invocation);
 /// Encodings are borrowed for the plan's lifetime. Index excludes self/_cmd.
@@ -28,6 +35,14 @@ FOUNDATION_EXPORT size_t ABIObjCInvocationResultSize(const ABIObjCInvocation *in
 FOUNDATION_EXPORT BOOL ABIInvokeObjCInvocation(
     ABIObjCInvocation *invocation, void * _Nullable result,
     const void * _Nonnull const * _Nullable arguments, NSError * _Nullable * _Nullable error);
+
+/// Calls a captured IMP with a prepared C interface whose first two parameters
+/// are receiver/selector pointers. Validates receiver compatibility and transfers
+/// retainable results at +1. This does not perform message forwarding.
+FOUNDATION_EXPORT BOOL ABIInvokeObjCImplementation(
+    ABIObjCInvocation *invocation, ABICallInterface *interface, id receiver,
+    void * _Nullable result, const void * _Nonnull const * _Nullable arguments,
+    NSError * _Nullable * _Nullable error);
 
 /// Copies a live Objective-C block to owned heap/global storage. Returns null
 /// for a non-block object. The input must be a valid live Objective-C object;

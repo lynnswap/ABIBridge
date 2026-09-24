@@ -24,6 +24,29 @@ The function type describes only explicit arguments. ABIBridge supplies the rece
 
 Keep a method handle to reuse its decoded signature. Each invocation builds an independent call frame and uses normal Objective-C message dispatch, including forwarding. A replacement implementation must preserve the signature and ownership contract captured during lookup.
 
+## Capture an implementation for original calls
+
+Use `objcImplementation(on:selector:as:classMethod:options:retaining:)` when a method replacement needs to call the implementation selected before replacement:
+
+```swift
+let original = try ABIRuntime.shared.objcImplementation(
+    on: UIView.self,
+    selector: "sizeThatFits:",
+    as: ((CGSize) -> CGSize).self
+)
+let measured = try unsafe original.unsafeInvoke(on: view, proposedSize)
+```
+
+The capture holds a fixed IMP and signature, without retaining an instance. Supply a compatible receiver for each call; subclass instances are accepted, but their overrides are not selected. Ordinary `NativeMethod` handles continue to use current message dispatch. Forwarding-only selectors cannot be captured.
+
+For a class method, pass the ordinary class with `classMethod: true` and invoke with the class object, such as `SomeClass.self as AnyObject`. A subclass class object is also valid. Wrong receiver kinds and unrelated classes fail before calling native code.
+
+The handle retains discoverable implementation and class images. Caller-created classes must stay registered. Generated IMPs must remain callable; do not call `imp_removeBlock` or free generated code while a capture may use it. Pass `retaining:` to retain an owner responsible for that code/class lifetime. A retained block alone does not own the runtime trampoline produced by `imp_implementationWithBlock`.
+
+Captures use the same supported values and ownership overrides as ordinary selector calls. Lookup and invocation are synchronous on the caller's executor. The captured function pointer preserves authentication through the C call backend; an unsigned loader-inspection address is not used as the callable. Foreign exceptions must not cross that backend boundary.
+
+Installation, ordering, and restoration of replacements remain the consumer's responsibility.
+
 ## Use Swift values
 
 The frontend supports these mappings:
