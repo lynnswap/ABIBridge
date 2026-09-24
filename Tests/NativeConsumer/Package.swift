@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "NativeConsumer",
     platforms: [.macOS("15.4")],
-    dependencies: [.package(path: "../..")],
+    dependencies: [.package(name: "ABIBridge", path: "../..")],
     targets: [
         .executableTarget(
             name: "CXXInspectionConsumer",

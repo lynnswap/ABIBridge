@@ -22,7 +22,7 @@ For example, a target in a separate Swift package can use:
 
 The same product supplies the Swift implementation, native code, and their dependencies. The resolver uses the shared MachOKit-backed implementation and the Swift runtime; linking the internal C++ target alone does not provide the supported product. C consumers do not need to import a generated Swift header or enable C++ interoperability.
 
-The declarations in `Inspection.h` and the C++20 wrappers in `Inspection.hpp` are supported consumer interfaces. Other native headers, invocation templates, and backend handles remain implementation details. Use this public header directly instead of the internal module umbrella.
+The declarations in `Inspection.h` and the C++20 wrappers in `Inspection.hpp` are supported consumer interfaces. Native invocation is supported through the public headers documented in the invocation guides. Other native headers and backend handles remain implementation details. Use the documented public headers directly instead of an internal module umbrella.
 
 ## Use C++ ownership wrappers
 

@@ -38,6 +38,7 @@ print(symbol.image.path)
 ### Calling C and C++ functions
 
 - <doc:CFunctionInvocation>
+- <doc:NativeFunctionInvocation>
 - ``NativeFunction``
 
 ### Calling Objective-C methods and reading ivars

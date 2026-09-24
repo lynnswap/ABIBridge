@@ -167,6 +167,25 @@ package func nativeResolvedSymbolImage(_ symbol: OpaquePointer, _ info: UnsafeMu
     )
 }
 
+@_cdecl("ABIResolvedSymbolKind")
+package func nativeResolvedSymbolKind(_ symbol: OpaquePointer) -> Int32 {
+    switch borrowed(symbol, as: NativeSymbolBox.self).symbol.declaration.kind {
+    case .function: Int32(ABISymbolFunction)
+    case .data: Int32(ABISymbolData)
+    case .vtable: Int32(ABISymbolVTable)
+    }
+}
+
+@_cdecl("ABIResolvedSymbolLanguage")
+package func nativeResolvedSymbolLanguage(_ symbol: OpaquePointer) -> Int32 {
+    switch borrowed(symbol, as: NativeSymbolBox.self).symbol.declaration.language {
+    case .swift: Int32(ABILanguageSwift)
+    case .objectiveC: Int32(ABILanguageObjectiveC)
+    case .c: Int32(ABILanguageC)
+    case .cxx: Int32(ABILanguageCXX)
+    }
+}
+
 private func nativeDeclaration(
     _ name: UnsafePointer<CChar>?, language: Int32, kind: Int32,
     nameForm: Int32 = Int32(ABINameSource)

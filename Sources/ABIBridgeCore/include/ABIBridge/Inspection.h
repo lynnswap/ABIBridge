@@ -203,6 +203,12 @@ void ABIReleaseResolvedSymbol(ABIResolvedSymbol *symbol);
 /// Calling code at this address additionally requires the actual native ABI
 /// and any function-pointer authentication required by the calling convention.
 const void *ABIResolvedSymbolAddress(const ABIResolvedSymbol *symbol);
+/// Returns an ABISymbol kind for a live non-null symbol. This describes the
+/// validated storage; it does not establish a native function signature.
+int32_t ABIResolvedSymbolKind(const ABIResolvedSymbol *symbol);
+/// Returns the ABILanguage value supplied by the symbol's declaration.
+/// This is caller-selected metadata, not an inferred calling convention.
+int32_t ABIResolvedSymbolLanguage(const ABIResolvedSymbol *symbol);
 /// Copies image identity into non-null output storage. The symbol must be live
 /// and non-null. The path is borrowed from the symbol until it is released,
 /// even when an independent image lease keeps the underlying image loaded.
