@@ -19,11 +19,12 @@ int main(int argc, char **argv) {
     uintptr_t object[] = {vtable};
     uintptr_t references[] = {0, (uintptr_t)object, (uintptr_t)object};
     ABIPointerSearchOptions options = ABIDefaultPointerSearchOptions();
+    assert(options.normalization == ABIPointerNormalizationAutomatic);
     options.address = (uintptr_t)references;
     options.byteCount = sizeof(references);
     options.vtableAddressPoint = vtable;
     ABIPointerInspectionResult inspected = ABIInspectPointer(
-        (uintptr_t)references, sizeof(references), sizeof(uintptr_t), vtable, 0, ABIPointerNormalizationNone);
+        (uintptr_t)references, sizeof(references), sizeof(uintptr_t), vtable, 0, ABIPointerNormalizationAutomatic);
     assert(inspected.status == ABIPointerInspectionMatch && inspected.candidate.pointerBits == (uintptr_t)object);
     inspected = ABIInspectPointer((uintptr_t)references, sizeof(references), 0, vtable, 0, ABIPointerNormalizationNone);
     assert(inspected.status == ABIPointerInspectionNoMatch);

@@ -44,14 +44,24 @@ uintptr_t normalize(uintptr_t bits, int32_t mode) {
     return mode == ABIPointerNormalizationNone ? bits : stripDataSignature(bits);
 }
 
+bool validNormalization(int32_t mode) {
+    return mode == ABIPointerNormalizationNone || mode == ABIPointerNormalizationStripDataSignature ||
+        mode == ABIPointerNormalizationAutomatic;
+}
+
+int32_t resolvedNormalization(int32_t mode) {
+    if (mode == ABIPointerNormalizationAutomatic)
+        return hasDataPAC() ? ABIPointerNormalizationStripDataSignature : ABIPointerNormalizationNone;
+    return mode;
+}
+
 bool valid(const ABIPointerSearchOptions& o) {
     return o.byteCount <= UINTPTR_MAX - o.address &&
         o.firstOffset <= o.byteCount && o.stride > 0 && o.alignment > 0 &&
         (o.alignment & (o.alignment - 1)) == 0 &&
         (o.address + o.firstOffset) % o.alignment == 0 &&
         o.stride % o.alignment == 0 && o.vtableAddressPoint != 0 &&
-        (o.normalization == ABIPointerNormalizationNone ||
-         o.normalization == ABIPointerNormalizationStripDataSignature) &&
+        validNormalization(o.normalization) &&
         (o.policy == ABIPointerSearchAll || o.policy == ABIPointerSearchFirst);
 }
 
@@ -137,7 +147,7 @@ std::unique_ptr<ABIPointerSearchResult> search(const ABIPointerSearchOptions& o)
 
 ABIPointerSearchOptions ABIDefaultPointerSearchOptions() {
     return {0, 0, 0, sizeof(uintptr_t), alignof(uintptr_t), 0, 0,
-            ABIPointerNormalizationNone, ABIPointerSearchAll, SIZE_MAX};
+            ABIPointerNormalizationAutomatic, ABIPointerSearchAll, SIZE_MAX};
 }
 
 ABIPointerSearchResult* ABICopyPointerSearch(const ABIPointerSearchOptions* options, int32_t* error) {
@@ -146,14 +156,16 @@ ABIPointerSearchResult* ABICopyPointerSearch(const ABIPointerSearchOptions* opti
         return nullptr;
     };
     if (!valid(*options)) return fail(ABIPointerSearchInvalidOptions);
-    if (options->normalization != ABIPointerNormalizationNone && !hasDataPAC()) {
+    auto effective = *options;
+    effective.normalization = resolvedNormalization(effective.normalization);
+    if (effective.normalization == ABIPointerNormalizationStripDataSignature && !hasDataPAC()) {
         return fail(ABIPointerSearchNormalizationUnavailable);
     }
-    if (normalize(options->vtableAddressPoint, options->normalization) == 0) {
+    if (normalize(effective.vtableAddressPoint, effective.normalization) == 0) {
         return fail(ABIPointerSearchInvalidOptions);
     }
     try {
-        auto result = search(*options);
+        auto result = search(effective);
         if (error) *error = ABIPointerSearchSuccess;
         return result.release();
     } catch (const std::bad_alloc&) {
@@ -169,12 +181,12 @@ ABIPointerInspectionResult ABIInspectPointer(
     ABIPointerInspectionResult result{};
     if (byteCount > UINTPTR_MAX - address || offset > byteCount ||
         sizeof(uintptr_t) > byteCount - offset || vtableAddressPoint == 0 ||
-        (normalization != ABIPointerNormalizationNone &&
-         normalization != ABIPointerNormalizationStripDataSignature)) {
+        !validNormalization(normalization)) {
         result.status = ABIPointerInspectionInvalidOptions;
         return result;
     }
-    if (normalization != ABIPointerNormalizationNone && !hasDataPAC()) {
+    normalization = resolvedNormalization(normalization);
+    if (normalization == ABIPointerNormalizationStripDataSignature && !hasDataPAC()) {
         result.status = ABIPointerInspectionNormalizationUnavailable;
         return result;
     }

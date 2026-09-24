@@ -11,7 +11,11 @@ typedef struct ABIPointerSearchResult ABIPointerSearchResult;
 enum {
     ABIPointerNormalizationNone = 0,
     /// Strip data-address signatures for inspection only; never authenticate.
-    ABIPointerNormalizationStripDataSignature = 1
+    ABIPointerNormalizationStripDataSignature = 1,
+    /// Strip data signatures on a PAC-capable 64-bit ARM CPU; otherwise leave
+    /// bits unchanged, including when capability detection is unavailable.
+    /// Does not authenticate pointers or remove arbitrary tags.
+    ABIPointerNormalizationAutomatic = 2
 };
 enum {
     ABIPointerSearchAll = 0,
@@ -53,8 +57,9 @@ typedef struct ABIPointerSearchOptions {
     size_t hintOffset;
 } ABIPointerSearchOptions;
 
-/// Defaults: pointer-sized stride/alignment, vptr at zero, no normalization,
+/// Defaults: pointer-sized stride/alignment, vptr at zero, automatic normalization,
 /// exhaustive search, no hint. Fill in address, byteCount, and address point.
+/// A zero-initialized normalization field still selects explicit None.
 ABIPointerSearchOptions ABIDefaultPointerSearchOptions(void);
 
 /// Evidence for one matching source slot. Several slots may alias one target.

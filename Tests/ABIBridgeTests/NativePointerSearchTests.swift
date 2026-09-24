@@ -25,6 +25,25 @@ private final class DiscoveryOwner {
 }
 
 struct NativePointerSearchTests {
+    @Test func automaticAndRawInspectionPreserveOriginalEvidence() throws {
+        let owner = try DiscoveryOwner()
+        owner.slots[1] = owner.objectAddress
+        let region = try owner.region()
+        let table = try owner.addressPoint
+        let offset = MemoryLayout<UInt>.size
+        let automatic = try #require(try region.pointers(toVTable: table).uniqueCandidate)
+        let explicit = try #require(try region.pointers(toVTable: table, options: .init(normalization: .automatic)).uniqueCandidate)
+        let raw = try #require(try region.pointers(toVTable: table, options: .init(normalization: .none)).uniqueCandidate)
+        for candidate in [automatic, explicit, raw] {
+            #expect(candidate.offset == offset)
+            #expect(candidate.pointerBits == owner.slots[1])
+            #expect(candidate.vptrBits == table)
+        }
+        let single = try #require(try region.pointer(at: offset, toVTable: table))
+        #expect(single.addressForInspection == automatic.addressForInspection)
+        #expect(single.pointerBits == automatic.pointerBits && single.vptrBits == automatic.vptrBits)
+    }
+
     @Test func singleOffsetRevalidationDoesNotSearchOtherSlots() throws {
         let owner = try DiscoveryOwner()
         let region = try owner.region()
@@ -63,7 +82,7 @@ struct NativePointerSearchTests {
         }
         owner.slots[0] = UInt.max
         do {
-            _ = try region.pointer(at: 0, toVTable: table, vptrOffset: 1)
+            _ = try region.pointer(at: 0, toVTable: table, vptrOffset: 1, normalization: .none)
             Issue.record("An overflowing vptr address must report a read failure")
         } catch let failure as NativePointerSearchFailure {
             #expect(failure.stage == .vptr && failure.status == .invalidRange)
@@ -141,7 +160,7 @@ struct NativePointerSearchTests {
         #expect(result.failures.first?.stage == .vptr)
         #expect(result.failures.first?.systemErrorCode == KERN_INVALID_ADDRESS)
         owner.slots[1] = UInt.max
-        let overflow = try owner.region().pointers(toVTable: owner.addressPoint, options: .init(vptrOffset: 1))
+        let overflow = try owner.region().pointers(toVTable: owner.addressPoint, options: .init(vptrOffset: 1, normalization: .none))
         #expect(overflow.failures.first?.status == .invalidRange)
     }
 
