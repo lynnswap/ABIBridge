@@ -42,4 +42,17 @@ typedef void (^ABIArrayProvider)(ABIArrayCompletion);
 - (id)plainObject;
 - (nullable id)eraseBlock:(nullable id)block;
 @end
+@interface ABIIvarFixture : NSObject
+@property(nonatomic, strong, nullable) id inheritedObject;
+@property(nonatomic, weak, nullable) id weakObject;
+@property(nonatomic, unsafe_unretained, nullable) id unretainedObject;
+@property(nonatomic, assign, nullable) Class classObject;
+@property(nonatomic) NSInteger scalar;
+@property(nonatomic) void *pointer;
+@property(nonatomic) NSRange range;
+@property(nonatomic, copy, nullable) ABIIntegerBlock block;
+@end
+@interface ABIIvarChild : ABIIvarFixture
+@property(nonatomic, strong, nullable) id childObject;
+@end
 NS_ASSUME_NONNULL_END

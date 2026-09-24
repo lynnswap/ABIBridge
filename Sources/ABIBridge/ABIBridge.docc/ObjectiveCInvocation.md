@@ -1,6 +1,6 @@
-# Calling Objective-C methods
+# Calling Objective-C methods and reading ivars
 
-Bind an existing receiver and invoke its selectors using Swift function types.
+Bind an existing receiver to invoke selectors using Swift function types or read named object ivars.
 
 ## Look up a method
 
@@ -46,6 +46,22 @@ The handle retains discoverable implementation and class images. Caller-created 
 Captures use the same supported values and ownership overrides as ordinary selector calls. Lookup and invocation are synchronous on the caller's executor. The captured function pointer preserves authentication through the C call backend; an unsigned loader-inspection address is not used as the callable. Foreign exceptions must not cross that backend boundary.
 
 Installation, ordering, and restoration of replacements remain the consumer's responsibility.
+
+## Read an object ivar
+
+Use the literal runtime ivar name, including any underscore; this is not a property getter or a key-value coding lookup:
+
+```swift
+let object = ABIRuntime.shared.object(renderer)
+let image = try object.value(forIvar: "_image", as: UIImage?.self)
+let type = try object.value(forIvar: "_rendererClass", as: AnyClass?.self)
+```
+
+Lookup searches the receiver's Objective-C class hierarchy and checks the ivar encoding before reading. The special isa field is decoded through the runtime rather than read as a raw class pointer. Object values can use ordinary Swift bridging, such as `NSString` to `String` or `NSArray` to an array. Class ivars return metatypes. Typed block ivars use `@convention(block)`; the caller must know the inner signature.
+
+A missing ivar throws `ABIResolutionError.ivarNotFound`. A present nil value becomes nil only for an optional requested type; otherwise it throws `ABIInvocationError.unexpectedNilResult`. Incompatible values throw a conversion error. Scalars, raw pointers, and aggregate ivars are rejected even when their size matches an object pointer.
+
+Reads run synchronously on the caller's executor. A returned object owns a reference independently of the receiver. Weak reads follow Objective-C runtime semantics and can yield nil; an unsafe-unretained pointee must remain alive throughout the read. Synchronization with writers and actor/thread affinity remain the caller's responsibility. This API does not infer Swift stored-property layouts, walk object graphs, or invoke property accessors.
 
 ## Use Swift values
 

@@ -1,6 +1,11 @@
 #import "ObjectiveCFixtures.h"
 #import <objc/runtime.h>
 
+@implementation ABIIvarFixture
+@end
+@implementation ABIIvarChild
+@end
+
 @implementation ABIBlockFixture
 - (int32_t)apply:(int32_t)value using:(ABIIntegerBlock)block { return block ? block(value) : -1; }
 - (ABIObjectBlock)blockHolding:(id)object { return [^{ return object; } copy]; }
