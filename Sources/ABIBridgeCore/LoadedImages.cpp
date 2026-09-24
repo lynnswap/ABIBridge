@@ -20,7 +20,7 @@ struct Image {
     uint64_t generation;
     std::array<uint8_t, 16> uuid;
     std::string path;
-    bool executable;
+    bool processLifetime;
 };
 
 struct Catalog {
@@ -37,13 +37,20 @@ Catalog& catalog()
     return *value;
 }
 
+bool hasProcessLifetime(const mach_header *header)
+{
+    // Shared-cache images cannot unload. Their reported path need not be
+    // reopenable by dlopen, notably with Simulator runtime prefixes.
+    return header->filetype == MH_EXECUTE || (header->flags & MH_DYLIB_IN_CACHE) != 0;
+}
+
 void addedImage(const mach_header *header, intptr_t slide)
 {
     Dl_info info {};
     if (!dladdr(header, &info) || !info.dli_fname)
         return;
     Image image { reinterpret_cast<uintptr_t>(header), slide, 0, {}, info.dli_fname,
-                  header->filetype == MH_EXECUTE };
+                  hasProcessLifetime(header) };
     const size_t headerSize = header->magic == MH_MAGIC_64 ? sizeof(mach_header_64) : sizeof(mach_header);
     auto *command = reinterpret_cast<const load_command *>(reinterpret_cast<const char *>(header) + headerSize);
     for (uint32_t index = 0; index < header->ncmds; ++index) {
@@ -78,7 +85,7 @@ bool initialize()
         if (!dladdr(reinterpret_cast<const void *>(&ABICopyLoadedImages), &ownImage) || !ownImage.dli_fname)
             return;
         const auto *header = static_cast<const mach_header *>(ownImage.dli_fbase);
-        if (header->filetype != MH_EXECUTE) {
+        if (!hasProcessLifetime(header)) {
             void *handle = dlopen(ownImage.dli_fname, RTLD_LAZY | RTLD_LOCAL | RTLD_NOLOAD | RTLD_NODELETE);
             if (!handle)
                 return;
@@ -144,8 +151,8 @@ ABIImageLease *ABIRetainLoadedImage(uint64_t generation)
     }
     // Never call dlopen/dlclose while holding the catalog lock: dyld observers
     // acquire that lock while running under the loader's own lock.
-    void *handle = image.executable ? nullptr : dlopen(image.path.c_str(), RTLD_LAZY | RTLD_LOCAL | RTLD_NOLOAD);
-    if (!image.executable && !handle)
+    void *handle = image.processLifetime ? nullptr : dlopen(image.path.c_str(), RTLD_LAZY | RTLD_LOCAL | RTLD_NOLOAD);
+    if (!image.processLifetime && !handle)
         return nullptr;
     bool current;
     {

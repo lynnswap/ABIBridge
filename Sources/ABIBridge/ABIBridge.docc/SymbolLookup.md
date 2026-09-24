@@ -125,7 +125,7 @@ See <doc:NativeInspection> for C++ adoption and retention. These operations keep
 
 Call `removeCachedResults()` on the runtime to release its indexes. Existing `NativeImage` and `ResolvedSymbol` values continue to retain their images. New lookups rebuild the indexes they need.
 
-Each image load has a process-local generation, so a later image at the same address cannot inherit the previous generation's identity. The native catalog registers process-lifetime dyld observers and pins the image containing their callback code. Individual image leases acquire loader references without loading missing code.
+Each image load has a process-local generation, so a later image at the same address cannot inherit the previous generation's identity. The native catalog registers process-lifetime dyld observers and pins the image containing their callback code. Executables and dyld shared-cache images already have process lifetime, so their leases do not reopen a filesystem path. Other image leases acquire loader references without loading missing code.
 
 ## Validation boundary
 

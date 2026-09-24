@@ -544,6 +544,29 @@ struct SymbolResolutionTests {
         ])
     }
 
+    @Test func processLifetimeImagesDoNotRequireAReopenablePath() throws {
+        let fixture = try FixtureLibrary(load: false)
+        defer { fixture.cleanup() }
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let core = root.appendingPathComponent("Sources/ABIBridgeCore")
+        let object = fixture.directory.appendingPathComponent("LoadedImages.o")
+        let executable = fixture.directory.appendingPathComponent("image-lease-test")
+        try FixtureLibrary.run([
+            "--sdk", "macosx", "clang++", "-std=c++20", "-mmacosx-version-min=15.4",
+            "-I", core.appendingPathComponent("include").path,
+            "-Ddlopen=ABIImageLeaseTestDlopen", "-c", core.appendingPathComponent("LoadedImages.cpp").path,
+            "-o", object.path,
+        ])
+        try FixtureLibrary.run([
+            "--sdk", "macosx", "clang++", "-std=c++20", "-mmacosx-version-min=15.4",
+            "-I", core.appendingPathComponent("include").path,
+            root.appendingPathComponent("Tests/NativeConsumer/ImageLeaseFixture.cpp").path,
+            object.path, "-L/usr/lib/swift", "-lswiftCore", "-o", executable.path,
+        ])
+        try FixtureLibrary.run([executable.path, fixture.libraryURL.path])
+    }
+
     @Test func unloadingInvalidatesTheNativeGeneration() async throws {
         let fixture = try FixtureLibrary()
         defer { fixture.cleanup() }
