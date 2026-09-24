@@ -116,7 +116,8 @@ public final class NativeObject {
     ///
     /// The signature includes only explicit arguments; the receiver and selector
     /// are supplied automatically. Each call uses normal Objective-C dispatch.
-    /// Lookup validates argument count and supported runtime type encodings.
+    /// Lookup runs synchronously on the caller's executor and validates argument
+    /// count and supported runtime type encodings. No task or actor hop is needed.
     ///
     /// - Parameters:
     ///   - selector: The Objective-C selector, including argument colons.
@@ -124,11 +125,11 @@ public final class NativeObject {
     ///   - options: Overrides for ownership annotations absent from runtime metadata.
     /// - Returns: A method retaining this receiver.
     /// - Throws: A resolution error for a missing selector or incompatible signature.
-    public nonisolated(nonsending) func method<Result, each Argument>(
+    public func method<Result, each Argument>(
         selector: String,
         as signature: ((repeat each Argument) -> Result).Type,
         options: NativeMethodOptions = .init()
-    ) async throws -> NativeMethod<Result, repeat each Argument> {
+    ) throws -> NativeMethod<Result, repeat each Argument> {
         var error: NSError?
         guard let handle = ABICopyObjCInvocation(
             receiver!, NSSelectorFromString(selector),

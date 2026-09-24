@@ -25,10 +25,10 @@ private class Renderer: NSObject {
 }
 
 struct ObjectiveCInvocationTests {
-    @MainActor @Test func callerIsolationAndOptionalArguments() async throws {
+    @MainActor @Test func callerIsolationAndOptionalArguments() throws {
         let renderer = Renderer()
         let object = ABIRuntime.shared.object(renderer)
-        let setImage = try await object.method(
+        let setImage = try object.method(
             selector: "setImage:animated:", as: ((NSObject?, Bool) -> Void).self
         )
         let image = NSObject()
@@ -38,52 +38,52 @@ struct ObjectiveCInvocationTests {
         try unsafe setImage.unsafeInvoke(nil, false)
         #expect(renderer.recorded?.0 == nil)
         #expect(renderer.recorded?.1 == false)
-        let refresh = try await object.method(selector: "refreshAnimated:", as: ((Bool) -> Bool).self)
+        let refresh = try object.method(selector: "refreshAnimated:", as: ((Bool) -> Bool).self)
         #expect(try unsafe refresh.unsafeInvoke(false))
     }
 
-    @Test func zeroAndManyArguments() async throws {
+    @Test func zeroAndManyArguments() throws {
         let object = ABIRuntime.shared.object(Renderer())
-        let answer = try await object.method(selector: "answer", as: (() -> Int).self)
+        let answer = try object.method(selector: "answer", as: (() -> Int).self)
         #expect(try unsafe answer.unsafeInvoke() == 42)
-        let mixed = try await object.method(
+        let mixed = try object.method(
             selector: "mixed::::::::::",
             as: ((Int8, UInt16, Int32, UInt64, Float, Double, Bool, NSObject?, Int, Double) -> Double).self
         )
         #expect(try unsafe mixed.unsafeInvoke(-1, 2, 3, 4, 5.5, 6.25, true, NSObject(), 8, 9.75) == 39.5)
     }
 
-    @Test func geometryAndRangeValues() async throws {
+    @Test func geometryAndRangeValues() throws {
         let object = ABIRuntime.shared.object(Renderer())
-        let rect = try await object.method(selector: "rectangle:", as: ((CGRect) -> CGRect).self)
+        let rect = try object.method(selector: "rectangle:", as: ((CGRect) -> CGRect).self)
         let value = CGRect(x: 1, y: 2, width: 3, height: 4)
         #expect(try unsafe rect.unsafeInvoke(value) == value)
-        let point = try await object.method(selector: "point:", as: ((CGPoint) -> CGPoint).self)
+        let point = try object.method(selector: "point:", as: ((CGPoint) -> CGPoint).self)
         #expect(try unsafe point.unsafeInvoke(value.origin) == value.origin)
-        let size = try await object.method(selector: "size:", as: ((CGSize) -> CGSize).self)
+        let size = try object.method(selector: "size:", as: ((CGSize) -> CGSize).self)
         #expect(try unsafe size.unsafeInvoke(value.size) == value.size)
-        let range = try await object.method(selector: "range:", as: ((NSRange) -> NSRange).self)
+        let range = try object.method(selector: "range:", as: ((NSRange) -> NSRange).self)
         #expect(try unsafe range.unsafeInvoke(NSRange(location: 2, length: 7)) == NSRange(location: 2, length: 7))
     }
 
-    @Test func objectResultsAndConversions() async throws {
+    @Test func objectResultsAndConversions() throws {
         let object = ABIRuntime.shared.object(Renderer())
-        let echo = try await object.method(selector: "echo:", as: ((NSObject?) -> NSObject?).self)
+        let echo = try object.method(selector: "echo:", as: ((NSObject?) -> NSObject?).self)
         let value = NSObject()
         #expect(try unsafe echo.unsafeInvoke(value) === value)
         #expect(try unsafe echo.unsafeInvoke(nil) == nil)
-        let bridge = try await object.method(selector: "echo:", as: ((String?) -> String?).self)
+        let bridge = try object.method(selector: "echo:", as: ((String?) -> String?).self)
         #expect(try unsafe bridge.unsafeInvoke("value") == "value")
         #expect(try unsafe bridge.unsafeInvoke(nil) == nil)
-        let nonoptional = try await object.method(selector: "echo:", as: ((NSObject?) -> NSObject).self)
+        let nonoptional = try object.method(selector: "echo:", as: ((NSObject?) -> NSObject).self)
         #expect(throws: ABIInvocationError.self) { try unsafe nonoptional.unsafeInvoke(nil) }
-        let mismatch = try await object.method(selector: "echo:", as: ((NSObject) -> NSString).self)
+        let mismatch = try object.method(selector: "echo:", as: ((NSObject) -> NSString).self)
         #expect(throws: ABIInvocationError.self) { try unsafe mismatch.unsafeInvoke(value) }
     }
 
-    @Test func pointersAndNil() async throws {
+    @Test func pointersAndNil() throws {
         let object = ABIRuntime.shared.object(Renderer())
-        let echo = try await object.method(
+        let echo = try object.method(
             selector: "pointer:", as: ((UnsafeMutablePointer<Int>?) -> UnsafeMutablePointer<Int>?).self
         )
         let memory = UnsafeMutablePointer<Int>.allocate(capacity: 1)
@@ -92,10 +92,10 @@ struct ObjectiveCInvocationTests {
         #expect(try unsafe echo.unsafeInvoke(nil) == nil)
     }
 
-    @Test func boundMethodRetainsReceiver() async throws {
+    @Test func boundMethodRetainsReceiver() throws {
         var receiver: Renderer? = Renderer()
         weak var weakReceiver = receiver
-        var method: NativeMethod<Int>? = try await ABIRuntime.shared.object(receiver!).method(
+        var method: NativeMethod<Int>? = try ABIRuntime.shared.object(receiver!).method(
             selector: "answer", as: (() -> Int).self
         )
         receiver = nil
@@ -105,30 +105,30 @@ struct ObjectiveCInvocationTests {
         #expect(weakReceiver == nil)
     }
 
-    @Test func invalidSignaturesThrowBeforeInvocation() async throws {
+    @Test func invalidSignaturesThrowBeforeInvocation() throws {
         let object = ABIRuntime.shared.object(Renderer())
-        await #expect(throws: (any Error).self) {
-            _ = try await object.method(selector: "absent", as: (() -> Void).self)
+        #expect(throws: (any Error).self) {
+            _ = try object.method(selector: "absent", as: (() -> Void).self)
         }
-        await #expect(throws: ABIResolutionError.self) {
-            _ = try await object.method(selector: "answer", as: ((Int) -> Int).self)
+        #expect(throws: ABIResolutionError.self) {
+            _ = try object.method(selector: "answer", as: ((Int) -> Int).self)
         }
-        await #expect(throws: ABIResolutionError.self) {
-            _ = try await object.method(selector: "answer", as: (() -> Double).self)
+        #expect(throws: ABIResolutionError.self) {
+            _ = try object.method(selector: "answer", as: (() -> Double).self)
         }
-        await #expect(throws: ABIResolutionError.self) {
-            _ = try await object.method(selector: "answer", as: (() -> UInt).self)
+        #expect(throws: ABIResolutionError.self) {
+            _ = try object.method(selector: "answer", as: (() -> UInt).self)
         }
     }
 
-    @Test func objectOwnershipConventionsAndOverrides() async throws {
+    @Test func objectOwnershipConventionsAndOverrides() throws {
         let fixture = ABIOwnershipFixture()
         let object = ABIRuntime.shared.object(fixture)
         for (selector, override) in [
             ("object", nil), ("copyObject", nil),
             ("retainedObject", true), ("newBorrowedObject", false),
         ] as [(String, Bool?)] {
-            let method = try await object.method(
+            let method = try object.method(
                 selector: selector, as: (() -> NSObject).self,
                 options: .init(returnsRetainedObject: override)
             )
@@ -143,11 +143,11 @@ struct ObjectiveCInvocationTests {
         }
     }
 
-    @Test func initializersKeepOriginalReceiverAlive() async throws {
+    @Test func initializersKeepOriginalReceiverAlive() throws {
         for selector in ["initWithReplacement", "initReturningNil"] {
             var receiver: ABIInitializerFixture? = ABIInitializerFixture()
             weak var original = receiver
-            var method: NativeMethod<ABIInitializerFixture?>? = try await ABIRuntime.shared.object(receiver!).method(
+            var method: NativeMethod<ABIInitializerFixture?>? = try ABIRuntime.shared.object(receiver!).method(
                 selector: selector, as: (() -> ABIInitializerFixture?).self
             )
             receiver = nil
@@ -165,42 +165,42 @@ struct ObjectiveCInvocationTests {
         }
     }
 
-    @Test func characterBooleanClassAndSelector() async throws {
+    @Test func characterBooleanClassAndSelector() throws {
         let object = ABIRuntime.shared.object(ABIOwnershipFixture())
-        let negate = try await object.method(
+        let negate = try object.method(
             selector: "negateCharacterBoolean:", as: ((Bool) -> Bool).self
         )
         #expect(try unsafe negate.unsafeInvoke(false))
         #expect(try unsafe !negate.unsafeInvoke(true))
-        let cls = try await object.method(selector: "echoClass:", as: ((AnyClass) -> AnyClass).self)
+        let cls = try object.method(selector: "echoClass:", as: ((AnyClass) -> AnyClass).self)
         #expect(try unsafe cls.unsafeInvoke(NSString.self) === NSString.self)
-        let sel = try await object.method(selector: "echoSelector:", as: ((Selector) -> Selector).self)
+        let sel = try object.method(selector: "echoSelector:", as: ((Selector) -> Selector).self)
         let selector = NSSelectorFromString("answer")
         #expect(try unsafe sel.unsafeInvoke(selector) == selector)
     }
 
-    @Test func unsupportedFoundationEncodingsThrowDuringLookup() async throws {
+    @Test func unsupportedFoundationEncodingsThrowDuringLookup() throws {
         let object = ABIRuntime.shared.object(ABIOwnershipFixture())
-        await #expect(throws: NSError.self) {
-            _ = try await object.method(selector: "unionValue", as: (() -> ABIUnionFixture).self)
+        #expect(throws: NSError.self) {
+            _ = try object.method(selector: "unionValue", as: (() -> ABIUnionFixture).self)
         }
-        await #expect(throws: NSError.self) {
-            _ = try await object.method(
+        #expect(throws: NSError.self) {
+            _ = try object.method(
                 selector: "unionPointer:",
                 as: ((UnsafeMutablePointer<ABIUnionFixture>) -> UnsafeMutablePointer<ABIUnionFixture>).self
             )
         }
     }
 
-    @Test func classValuesRemainDistinctFromInstances() async throws {
+    @Test func classValuesRemainDistinctFromInstances() throws {
         let fixture = ABIOwnershipFixture()
         let object = ABIRuntime.shared.object(fixture)
-        let typed = try await object.method(
+        let typed = try object.method(
             selector: "echoClass:", as: ((NSString.Type?) -> NSString.Type?).self
         )
         #expect(try unsafe typed.unsafeInvoke(NSString.self) === NSString.self)
         #expect(try unsafe typed.unsafeInvoke(nil) == nil)
-        let invalidArgument = try await object.method(
+        let invalidArgument = try object.method(
             selector: "echoClass:", as: ((NSObject) -> AnyClass).self
         )
         let calls = fixture.classCalls
@@ -208,12 +208,12 @@ struct ObjectiveCInvocationTests {
             try unsafe invalidArgument.unsafeInvoke(NSObject())
         }
         #expect(fixture.classCalls == calls)
-        let invalidScalar = try await object.method(
+        let invalidScalar = try object.method(
             selector: "echoClass:", as: ((Int) -> AnyClass).self
         )
         #expect(throws: ABIInvocationError.self) { try unsafe invalidScalar.unsafeInvoke(42) }
         #expect(fixture.classCalls == calls)
-        let invalidResult = try await object.method(
+        let invalidResult = try object.method(
             selector: "echoClass:", as: ((AnyClass) -> NSObject).self
         )
         #expect(throws: ABIInvocationError.self) {
@@ -221,14 +221,14 @@ struct ObjectiveCInvocationTests {
         }
     }
 
-    @Test func forwardingUsesNormalDispatch() async throws {
-        let method = try await ABIRuntime.shared.object(ABIForwardingFixture()).method(
+    @Test func forwardingUsesNormalDispatch() throws {
+        let method = try ABIRuntime.shared.object(ABIForwardingFixture()).method(
             selector: "answer", as: (() -> Int).self
         )
         #expect(try unsafe method.unsafeInvoke() == 61)
     }
 
-    @Test func runtimeMethodWithoutOffsets() async throws {
+    @Test func runtimeMethodWithoutOffsets() throws {
         let className = "ABIInvocationDynamic_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
         let cls = try #require(objc_allocateClassPair(NSObject.self, className, 0))
         let implementation: @convention(block) (AnyObject) -> Int = { _ in 73 }
@@ -237,7 +237,7 @@ struct ObjectiveCInvocationTests {
         objc_registerClassPair(cls)
         // Registered classes and their implementations live for this test process.
         let receiver = try #require(class_createInstance(cls, 0))
-        let answer = try await ABIRuntime.shared.object(receiver as AnyObject).method(
+        let answer = try ABIRuntime.shared.object(receiver as AnyObject).method(
             selector: "dynamicAnswer", as: (() -> Int).self
         )
         #expect(try unsafe answer.unsafeInvoke() == 73)

@@ -11,7 +11,7 @@ import ABIBridge
 import UIKit
 
 let object = ABIRuntime.shared.object(renderer)
-let setImage = try await object.method(
+let setImage = try object.method(
     selector: "setImage:animated:",
     as: ((UIImage?, Bool) -> Void).self
 )
@@ -52,7 +52,7 @@ ABIBridge infers retained results from Objective-C method families such as `copy
 Runtime type encodings omit ownership attributes. For a method declared with `ns_returns_retained` outside a retained method family:
 
 ```swift
-let result = try await object.method(
+let result = try object.method(
     selector: "makeResult",
     as: (() -> NSObject).self,
     options: .init(returnsRetainedObject: true)
@@ -64,6 +64,6 @@ Use ``NativeMethodOptions`` to override retained-result or consumed-receiver inf
 
 ## Preserve the receiver's execution requirements
 
-Lookup stays in the caller's isolation domain, and invocation is synchronous. Handles retain their receiver but do not make it thread-safe or actor-independent. For a main-actor UI object, perform lookup and invocation on the main actor.
+Selector lookup and invocation are synchronous and stay in the caller's isolation domain. Call `method(selector:as:options:)` without `await`; the Swift ABI `method(named:as:consuming:)` overload remains asynchronous. Handles retain their receiver but do not make it thread-safe or actor-independent. For a main-actor UI object, perform lookup and invocation on the main actor.
 
 The unsafe call contract includes argument nullability, class constraints, pointer validity, ownership annotations, and any requirements that runtime encodings cannot express. Foundation signature-construction failures are reported as lookup errors. Exceptions from the invoked Objective-C or C++ implementation are not converted to Swift errors. Keep dynamically loaded receiver classes and method implementations available for as long as the object and its handles are used.

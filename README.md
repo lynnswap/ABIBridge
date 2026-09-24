@@ -59,7 +59,7 @@ For a `renderer` exposing `setImage:animated:`, pass ordinary Swift values:
 ```swift
 import UIKit
 
-let setImage = try await runtime.object(renderer).method(
+let setImage = try runtime.object(renderer).method(
     selector: "setImage:animated:",
     as: ((UIImage?, Bool) -> Void).self
 )
