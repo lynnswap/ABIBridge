@@ -5,6 +5,7 @@
 - (int32_t)apply:(int32_t)value using:(ABIIntegerBlock)block { return block ? block(value) : -1; }
 - (ABIObjectBlock)blockHolding:(id)object { return [^{ return object; } copy]; }
 - (ABIObjectBlock)copyBlockHolding:(id)object { return [^{ return object; } copy]; }
+- (ABIObjectBlock)retainedBlockHolding:(id)object { return [^{ return object; } copy]; }
 - (ABIIntegerBlock)nilBlock { return nil; }
 - (ABIArrayProvider)provider {
     return ^(ABIArrayCompletion completion) { completion(@[@"first", @"second"]); };

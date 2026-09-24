@@ -65,7 +65,7 @@ let returned = try unsafe getter.unsafeInvoke()
 let next = returned?(42)
 ```
 
-Arguments are copied to owned block storage for the call. A native API that stores a callback must follow its normal block-copy contract; its retained copy keeps captures alive after invocation returns. Returned blocks are copied and managed by Swift ownership, including results from retained method families such as `copy`. Optional block values preserve nil; an unexpected nil for a nonoptional block throws an invocation error.
+Arguments are copied to owned block storage for the call. A native API that stores a callback must follow its normal block-copy contract; its retained copy keeps captures alive after invocation returns. Returned blocks are copied and managed by Swift ownership. Block-encoded returns default to borrowed-result handling even when the selector begins with `copy` or `new`; Clang does not apply those method families to block return types. Supply `returnsRetainedObject: true` when an explicit native ownership attribute returns a block at +1. Optional block values preserve nil; an unexpected nil for a nonoptional block throws an invocation error.
 
 The frontend distinguishes block function metadata from ordinary Swift closures and C function pointers. Use a typed block variable to bridge a Swift closure explicitly. An object-encoded argument or result may also carry a typed block, but a non-block object cannot be returned as a block.
 

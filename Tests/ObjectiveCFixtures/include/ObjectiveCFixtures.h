@@ -36,6 +36,7 @@ typedef void (^ABIArrayProvider)(ABIArrayCompletion);
 - (int32_t)apply:(int32_t)value using:(nullable ABIIntegerBlock)block;
 - (ABIObjectBlock)blockHolding:(id)object;
 - (ABIObjectBlock)copyBlockHolding:(id)object;
+- (ABIObjectBlock)retainedBlockHolding:(id)object __attribute__((ns_returns_retained));
 - (nullable ABIIntegerBlock)nilBlock;
 - (ABIArrayProvider)provider;
 - (id)plainObject;

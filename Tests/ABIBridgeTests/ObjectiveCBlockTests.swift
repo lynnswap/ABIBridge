@@ -49,13 +49,16 @@ struct ObjectiveCBlockTests {
         #expect(observed == nil)
     }
 
-    @Test func returnedBlocksHandleBorrowedAndOwnedMethodFamilies() throws {
-        for selector in ["blockHolding:", "copyBlockHolding:"] {
+    @Test func returnedBlocksRespectBlockOwnershipAndExplicitOverrides() throws {
+        for (selector, retained) in [
+            ("blockHolding:", nil), ("copyBlockHolding:", nil), ("retainedBlockHolding:", true)
+        ] as [(String, Bool?)] {
             weak var observed: BlockOwner?
             var returned: ObjectBlock?
             try autoreleasepool {
                 let method = try ABIRuntime.shared.object(ABIBlockFixture()).method(
-                    selector: selector, as: ((NSObject) -> ObjectBlock).self
+                    selector: selector, as: ((NSObject) -> ObjectBlock).self,
+                    options: .init(returnsRetainedObject: retained)
                 )
                 let owner = BlockOwner()
                 observed = owner
