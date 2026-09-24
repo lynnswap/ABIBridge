@@ -29,6 +29,14 @@ struct ABIObjCMethod {
 };
 
 namespace {
+bool isForwardingImplementation(IMP implementation) {
+    if (implementation == reinterpret_cast<IMP>(_objc_msgForward)) return true;
+#if defined(__x86_64__)
+    if (implementation == reinterpret_cast<IMP>(_objc_msgForward_stret)) return true;
+#endif
+    return false;
+}
+
 void fail(NSError **error, int code, NSString *message) {
     if (error) *error = [NSError errorWithDomain:ABIObjCInvocationErrorDomain code:code
                                       userInfo:@{NSLocalizedDescriptionKey: message}];
@@ -120,7 +128,7 @@ ABIObjCMethod *ABICopyObjCMethod(
               NSStringFromSelector(selector), NSStringFromClass(cls)]);
         return nullptr;
     }
-    if (!implementation || implementation == reinterpret_cast<IMP>(_objc_msgForward)) {
+    if (!implementation || isForwardingImplementation(implementation)) {
         fail(error, ABIFailureUnsupportedDeclaration,
              [NSString stringWithFormat:@"No concrete implementation for %@ on %@.",
               NSStringFromSelector(selector), NSStringFromClass(cls)]);
@@ -279,11 +287,7 @@ ABIObjCInvocation *ABICopyObjCImplementation(
     class_getMethodImplementation(lookup, selector);
     Method method = class_getInstanceMethod(lookup, selector);
     IMP implementation = method ? method_getImplementation(method) : nullptr;
-    bool forwarded = implementation == reinterpret_cast<IMP>(_objc_msgForward);
-#if defined(__x86_64__)
-    forwarded = forwarded || implementation == reinterpret_cast<IMP>(_objc_msgForward_stret);
-#endif
-    if (!method || !implementation || forwarded) {
+    if (!method || !implementation || isForwardingImplementation(implementation)) {
         fail(error, ABIFailureDeclarationNotFound, @"A captured call requires a concrete method implementation.");
         return nullptr;
     }

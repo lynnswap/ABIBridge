@@ -2,6 +2,7 @@
 #include <ABIBridge/ObjectiveCInvocation.hpp>
 #include <cassert>
 #include <cstdlib>
+#include <objc/message.h>
 
 static int liveProxyReceivers = 0;
 static int liveProxyResults = 0;
@@ -59,6 +60,19 @@ static int nativeStorage = 42;
 }
 @end
 
+struct ForwardedAggregate { long long fields[4]; };
+
+inline void checkForwardingImplementation(id receiver, IMP implementation, SEL selector, const char *encoding) {
+    assert(class_addMethod(object_getClass(receiver), selector, implementation, encoding));
+    assert(class_getInstanceMethod(object_getClass(receiver), selector));
+    try {
+        abi_bridge::objc_method<ForwardedAggregate()>(receiver, selector);
+        assert(false && "Forwarding trampolines must not become captured calls");
+    } catch (const abi_bridge::resolution_error& error) {
+        assert(error.code() == ABIFailureUnsupportedDeclaration);
+    }
+}
+
 inline void checkPublicObjCInvocation() {
     using namespace abi_bridge;
     @autoreleasepool {
@@ -103,6 +117,13 @@ inline void checkPublicObjCInvocation() {
             abi_bridge::objc_method<long long()>(forwarded, "forwardedValue");
             assert(false);
         } catch (const resolution_error& error) { assert(error.code() == ABIFailureUnsupportedDeclaration); }
+        const std::string aggregateEncoding = std::string(@encode(ForwardedAggregate)) + "@:";
+        checkForwardingImplementation(forwarded, reinterpret_cast<IMP>(_objc_msgForward),
+                                      sel_registerName("ordinaryForwardingIMP"), aggregateEncoding.c_str());
+#if defined(__x86_64__)
+        checkForwardingImplementation(forwarded, reinterpret_cast<IMP>(_objc_msgForward_stret),
+                                      sel_registerName("aggregateForwardingIMP"), aggregateEncoding.c_str());
+#endif
 #if !__has_feature(objc_arc)
         [forwarded release];
 #endif
