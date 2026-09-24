@@ -1,6 +1,7 @@
+#pragma once
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
-#include <ABIBridgeCore.h>
+#include <ABIBridge/Inspection.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -17,6 +18,9 @@ FOUNDATION_EXPORT NSErrorDomain const ABIObjCInvocationErrorDomain;
 /// consumed respectively. Runtime encodings cannot reveal ownership attributes.
 /// A successful handle owns its receiver and any discoverable code image.
 /// Forwarded-only selectors cannot be bound to a concrete IMP.
+/// Missing declarations report ABIFailureDeclarationNotFound; forwarded-only
+/// signatures/implementations report ABIFailureUnsupportedDeclaration, and
+/// incompatible encodings report ABIFailureSignatureMismatch.
 FOUNDATION_EXPORT ABIObjCMethod * _Nullable ABICopyObjCMethod(
     id receiver, SEL selector, const char *resultType,
     const char * _Nonnull const * _Nullable parameterTypes, size_t parameterCount,

@@ -1,7 +1,9 @@
 #pragma once
 
-#import <ABIBridgeObjCXX/ABIBridgeObjCXX.h>
-#include <ABIBridge/Invocation.h>
+// Load Core as a module before referring to its declarations. Directly
+// including Invocation.h can hide its constants from Swift batch imports.
+#include <ABIBridgeCore.h>
+#import <ABIBridge/ObjectiveCInvocation.h>
 
 NS_ASSUME_NONNULL_BEGIN
 

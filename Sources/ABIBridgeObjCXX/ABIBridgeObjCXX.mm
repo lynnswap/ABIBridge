@@ -1,4 +1,4 @@
-#import <ABIBridgeObjCXX/ABIBridgeObjCXX.h>
+#import <ABIBridge/ObjectiveCInvocation.h>
 #import <ABIBridgeObjCXX/Invocation.h>
 #import <CoreGraphics/CGGeometry.h>
 #include <optional>
@@ -29,6 +29,14 @@ struct ABIObjCMethod {
 };
 
 namespace {
+bool isForwardingImplementation(IMP implementation) {
+    if (implementation == reinterpret_cast<IMP>(_objc_msgForward)) return true;
+#if defined(__x86_64__)
+    if (implementation == reinterpret_cast<IMP>(_objc_msgForward_stret)) return true;
+#endif
+    return false;
+}
+
 void fail(NSError **error, int code, NSString *message) {
     if (error) *error = [NSError errorWithDomain:ABIObjCInvocationErrorDomain code:code
                                       userInfo:@{NSLocalizedDescriptionKey: message}];
@@ -102,7 +110,25 @@ ABIObjCMethod *ABICopyObjCMethod(
     // method resolution before returning the callable implementation.
     IMP implementation = class_getMethodImplementation(cls, selector);
     Method method = class_getInstanceMethod(cls, selector);
-    if (!method || !implementation || implementation == reinterpret_cast<IMP>(_objc_msgForward)) {
+    if (!method) {
+        // A custom method signature can describe a forwarded-only selector.
+        // NSProxy's abstract implementation must not be invoked for an unknown
+        // selector; concrete methods above require no NSObject reflection.
+        SEL signatureSelector = @selector(methodSignatureForSelector:);
+        Method signatureMethod = class_getInstanceMethod(cls, signatureSelector);
+        Method proxyDefault = class_getInstanceMethod(objc_getClass("NSProxy"), signatureSelector);
+        NSMethodSignature *signature = nil;
+        if (signatureMethod && (!proxyDefault || method_getImplementation(signatureMethod) != method_getImplementation(proxyDefault))) {
+            using SignatureGetter = NSMethodSignature *(*)(id, SEL, SEL);
+            signature = reinterpret_cast<SignatureGetter>(method_getImplementation(signatureMethod))(
+                receiver, signatureSelector, selector);
+        }
+        fail(error, signature ? ABIFailureUnsupportedDeclaration : ABIFailureDeclarationNotFound,
+             [NSString stringWithFormat:@"No concrete implementation for %@ on %@.",
+              NSStringFromSelector(selector), NSStringFromClass(cls)]);
+        return nullptr;
+    }
+    if (!implementation || isForwardingImplementation(implementation)) {
         fail(error, ABIFailureUnsupportedDeclaration,
              [NSString stringWithFormat:@"No concrete implementation for %@ on %@.",
               NSStringFromSelector(selector), NSStringFromClass(cls)]);
@@ -261,11 +287,7 @@ ABIObjCInvocation *ABICopyObjCImplementation(
     class_getMethodImplementation(lookup, selector);
     Method method = class_getInstanceMethod(lookup, selector);
     IMP implementation = method ? method_getImplementation(method) : nullptr;
-    bool forwarded = implementation == reinterpret_cast<IMP>(_objc_msgForward);
-#if defined(__x86_64__)
-    forwarded = forwarded || implementation == reinterpret_cast<IMP>(_objc_msgForward_stret);
-#endif
-    if (!method || !implementation || forwarded) {
+    if (!method || !implementation || isForwardingImplementation(implementation)) {
         fail(error, ABIFailureDeclarationNotFound, @"A captured call requires a concrete method implementation.");
         return nullptr;
     }

@@ -44,6 +44,7 @@ print(symbol.image.path)
 ### Calling Objective-C methods and reading ivars
 
 - <doc:ObjectiveCInvocation>
+- <doc:NativeObjectiveCInvocation>
 - ``NativeObject``
 - ``NativeMethod``
 - ``NativeObjCImplementation``

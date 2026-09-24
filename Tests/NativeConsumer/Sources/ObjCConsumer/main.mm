@@ -1,8 +1,9 @@
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
-#include <ABIBridge/ABIBridgeObjCXX.hpp>
+#include <ABIBridge/ObjectiveCInvocation.hpp>
 #include <cassert>
 #include <iostream>
+#include "../../ObjCInvocationFixture.hpp"
 
 typedef NSInteger (^Transform)(NSInteger);
 struct Pair { double x, y; };
@@ -88,6 +89,7 @@ static NSInteger dynamicValue(id, SEL) { return 42; }
 @end
 
 int main() {
+    checkPublicObjCInvocation();
     @autoreleasepool {
         Class cls = objc_getClass("FixtureObject");
         auto initialized = abi_bridge::objc_method<BOOL()>(cls, @selector(initialized));
@@ -211,7 +213,7 @@ int main() {
             abi_bridge::objc_method<void()>(object, sel_registerName("missingMethod"));
             assert(false && "Missing methods must be rejected");
         } catch (const abi_bridge::resolution_error& error) {
-            assert(error.code() == ABIFailureUnsupportedDeclaration);
+            assert(error.code() == ABIFailureDeclarationNotFound);
         }
         try {
             abi_bridge::objc_method<void()>(nil, @selector(description));
@@ -220,8 +222,6 @@ int main() {
             assert(error.code() == ABIFailureInvalidRequest);
         }
 
-        auto processID = abi_bridge::InvocationRuntime::current().c_function<int()>("getpid");
-        assert(processID.unsafe_invoke() > 0);
     }
     assert(liveResults == 0);
     std::cout << "Objective-C++ consumer passed: selectors, encodings, receiver and result ownership.\n";
