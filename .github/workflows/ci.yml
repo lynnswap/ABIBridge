@@ -6,12 +6,18 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      revision:
+        description: Exact commit to validate
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ inputs.revision && github.run_id || github.ref }}
   cancel-in-progress: true
 
 # macos-26 is an arm64 runner; Xcode 26.6 includes Swift 6.3 and all five SDKs.
@@ -19,6 +25,18 @@ env:
   DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
 
 jobs:
+  release-tests:
+    name: Release automation tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Test the dispatching automation, including for older release targets.
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - run: python3 -m unittest discover -s scripts -p 'test_release.py' -v
+
   macos-tests:
     name: macOS tests
     runs-on: macos-26
@@ -26,6 +44,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.revision || github.sha }}
           persist-credentials: false
           fetch-depth: 2
       - name: Show toolchain
@@ -64,6 +83,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.revision || github.sha }}
           persist-credentials: false
       - name: Show toolchain
         run: |
