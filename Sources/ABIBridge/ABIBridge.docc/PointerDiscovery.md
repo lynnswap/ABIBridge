@@ -72,9 +72,13 @@ C uses `ABIInspectPointer` and checks the returned status before reading the can
 
 ## Keep normalization separate from authentication
 
+Pointer searches and single-slot inspection default to ``NativePointerNormalization/automatic``. ABIBridge strips data signatures on a PAC-capable 64-bit ARM CPU and leaves address bits unchanged on other CPUs, including when capability detection is unavailable. The same interpretation applies to slot values, vptr values, and the expected address point. Callers do not need their own CPU feature checks.
+
+Use `normalization: .none` when the operation requires unchanged pointer bits. C++ uses `pointer_normalization::none`; C uses `ABIPointerNormalizationNone`. `ABIDefaultPointerSearchOptions()` selects automatic normalization, while a zero-initialized C normalization field means none.
+
 ``NativePointerNormalization/stripDataSignature`` removes data-address signatures for recoverable inspection and comparison. It also works in a plain arm64 caller inspecting arm64e data, using a CPU capability check rather than relying on intrinsics that become no-ops outside the authenticated ABI. Unsupported CPUs report ``NativePointerSearchError/normalizationUnavailable``.
 
-This operation does not verify a signature. Both valid and invalid signatures can produce matching evidence. It does not remove arbitrary pointer tags, authenticate a vptr, or turn a stripped address into an authenticated function pointer. See [Clang's pointer-authentication model](https://clang.llvm.org/docs/PointerAuthentication.html#basic-concepts).
+Neither automatic normalization nor explicit stripping verifies a signature. Both valid and invalid signatures can produce matching evidence. They do not remove arbitrary pointer tags, authenticate a vptr, or turn a stripped address into an authenticated function pointer. See [Clang's pointer-authentication model](https://clang.llvm.org/docs/PointerAuthentication.html#basic-concepts).
 
 Each candidate preserves ``NativePointerCandidate/pointerBits``, ``NativePointerCandidate/slotAddress``, ``NativePointerCandidate/vptrBits``, and ``NativePointerCandidate/vptrAddress``. Use the original storage and a caller-supplied authentication schema for authenticated dispatch. Do not copy address-diversified signed bits to new storage and authenticate them using that new address.
 

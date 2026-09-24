@@ -9,6 +9,11 @@ public enum NativePointerNormalization: Int32, Sendable {
     /// Requires a 64-bit ARM CPU with pointer authentication. This does not
     /// verify signatures or produce authenticated function-call targets.
     case stripDataSignature = 1
+    /// Strip data signatures when the current CPU supports pointer authentication.
+    ///
+    /// On other CPUs, or when capability detection is unavailable, address bits
+    /// remain unchanged. This does not authenticate pointers or remove arbitrary tags.
+    case automatic = 2
 }
 
 /// Whether to inspect every eligible slot or stop at a matching candidate.
@@ -48,11 +53,11 @@ public struct NativePointerSearchOptions: Sendable {
     public var hintOffset: Int?
 
     /// Defaults to aligned pointer-sized slots, a vptr at zero, and an exhaustive
-    /// search with unchanged pointer bits. No vtable header length is inferred.
+    /// search with automatic normalization. No vtable header length is inferred.
     public init(
         firstOffset: Int = 0, stride: Int = MemoryLayout<UInt>.size,
         alignment: Int = MemoryLayout<UInt>.alignment, vptrOffset: Int = 0,
-        normalization: NativePointerNormalization = .none,
+        normalization: NativePointerNormalization = .automatic,
         policy: NativePointerSearchPolicy = .all, hintOffset: Int? = nil
     ) {
         self.firstOffset = firstOffset
@@ -141,13 +146,14 @@ extension NativeMemoryRegion {
     ///   - offset: Byte offset of the full-width pointer slot.
     ///   - addressPoint: The actual vtable address point.
     ///   - vptrOffset: Byte offset of the absolute vptr within the pointee.
-    ///   - normalization: Interpretation of slot and vptr bits for inspection.
+    ///   - normalization: Interpretation of slot and vptr bits for inspection;
+    ///     defaults to automatic selection for the current CPU.
     /// - Returns: Matching evidence, or nil for a readable nonmatch.
     /// - Throws: ``NativePointerSearchError`` for invalid setup, or
     ///   ``NativePointerSearchFailure`` when the slot or pointee cannot be read.
     public func pointer(
         at offset: Int, toVTable addressPoint: UInt, vptrOffset: Int = 0,
-        normalization: NativePointerNormalization = .none
+        normalization: NativePointerNormalization = .automatic
     ) throws -> NativePointerCandidate? {
         guard offset >= 0, vptrOffset >= 0 else { throw NativePointerSearchError.invalidOptions }
         return try withExtendedLifetime(self) {

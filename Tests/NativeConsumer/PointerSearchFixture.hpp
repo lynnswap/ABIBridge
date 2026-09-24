@@ -134,6 +134,12 @@ inline void checkPointerSearch() {
         single = inspect_pointer(memory_region(reinterpret_cast<std::uintptr_t>(slots), sizeof(std::uintptr_t)),
                                  0, table, sizeof(std::uintptr_t), pointer_normalization::strip_data_signature);
         assert(single && single->evidence.pointerBits == signedAddress && single->evidence.vptrBits == record.vptr);
+        options.normalization = pointer_normalization::automatic;
+        result = find_pointers(memory_region(reinterpret_cast<std::uintptr_t>(slots), sizeof(std::uintptr_t)), table, options);
+        assert(result.unique_candidate()->evidence.pointerBits == signedAddress);
+        single = inspect_pointer(memory_region(reinterpret_cast<std::uintptr_t>(slots), sizeof(std::uintptr_t)),
+                                 0, table, sizeof(std::uintptr_t));
+        assert(single && single->evidence.vptrBits == record.vptr);
         // Tampered signatures still strip: discovery is explicitly not authentication.
         const auto pointerSignature = signedAddress ^ address;
         const auto vptrSignature = record.vptr ^ table;

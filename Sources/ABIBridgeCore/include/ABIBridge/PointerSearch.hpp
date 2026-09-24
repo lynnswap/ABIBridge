@@ -8,7 +8,10 @@ namespace abi_bridge {
 /// How to interpret data-address bits for inspection, never authentication.
 enum class pointer_normalization : std::int32_t {
     none = ABIPointerNormalizationNone,
-    strip_data_signature = ABIPointerNormalizationStripDataSignature
+    strip_data_signature = ABIPointerNormalizationStripDataSignature,
+    /// Strip data signatures when the current CPU supports PAC; otherwise
+    /// keep bits unchanged. Does not authenticate or remove arbitrary tags.
+    automatic = ABIPointerNormalizationAutomatic
 };
 /// Exhaustive searches can establish observed uniqueness; first-match searches cannot.
 enum class pointer_search_policy : std::int32_t {
@@ -21,7 +24,7 @@ struct pointer_search_options final {
     std::size_t stride = sizeof(std::uintptr_t);
     std::size_t alignment = alignof(std::uintptr_t);
     std::size_t vptr_offset = 0;
-    pointer_normalization normalization = pointer_normalization::none;
+    pointer_normalization normalization = pointer_normalization::automatic;
     pointer_search_policy policy = pointer_search_policy::all;
     /// Revalidated on every search. Scope it to the same live region, layout,
     /// and vtable identity. Invalid/off-grid hints are ignored.
@@ -63,7 +66,7 @@ private:
 /// The candidate retains the region's owner and makes no uniqueness claim.
 inline std::optional<pointer_candidate> inspect_pointer(
     const memory_region& region, std::size_t offset, std::uintptr_t vtable_address_point,
-    std::size_t vptr_offset = 0, pointer_normalization normalization = pointer_normalization::none) {
+    std::size_t vptr_offset = 0, pointer_normalization normalization = pointer_normalization::automatic) {
     const auto result = ABIInspectPointer(
         region.address(), region.byte_count(), offset, vtable_address_point, vptr_offset,
         static_cast<std::int32_t>(normalization));
