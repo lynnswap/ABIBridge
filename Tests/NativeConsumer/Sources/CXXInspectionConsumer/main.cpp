@@ -1,6 +1,7 @@
 #include <ABIBridge/Inspection.hpp>
 #include "../../MemoryFixture.hpp"
 #include "../../PointerSearchFixture.hpp"
+#include "../../NativeInvocationFixture.hpp"
 #include <cassert>
 #include <cstring>
 #include <dlfcn.h>
@@ -10,6 +11,7 @@
 
 int main(int argc, char **argv) {
     assert(argc == 2);
+    checkPublicNativeInvocation(argv[1]);
     checkMemoryReads();
     checkPointerSearch();
     using namespace abi_bridge;

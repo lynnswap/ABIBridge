@@ -58,7 +58,7 @@ For watchOS, add `WATCHOS_DEPLOYMENT_TARGET=11.4` so dependencies also build wit
 
 ## Documentation
 
-The supported consumer interfaces are the Swift `ABIBridge` module, C-compatible `<ABIBridge/Inspection.h>` header, and C++20 `<ABIBridge/Inspection.hpp>` wrappers, all linked through the `ABIBridge` product. Other `ABIBridgeCore` and `ABIBridgeObjCXX` headers remain implementation details. SwiftPM may make transitive modules importable; that does not make their entire contents supported public API.
+The supported consumer interfaces are the Swift `ABIBridge` module and the native headers documented in the DocC consumer guides, all linked through the `ABIBridge` product. Other native headers remain implementation details. SwiftPM may make transitive modules importable; that does not make their entire contents supported public API.
 
 Describe public Swift API contracts in DocC comments. Put guides in the DocC catalog and keep the README at installation and quick-start level. Write prose without manual line wrapping.
 

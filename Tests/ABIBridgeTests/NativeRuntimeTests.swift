@@ -31,6 +31,8 @@ struct NativeRuntimeTests {
     @Test func swiftAndNativeHandoffsPreserveSymbolMetadata() async throws {
         let original = try await ABIRuntime().resolve(.init(name: "getpid", language: .c))
         let exported = unsafe original.copyNativeHandle()
+        #expect(ABIResolvedSymbolKind(exported) == Int32(ABISymbolFunction))
+        #expect(ABIResolvedSymbolLanguage(exported) == Int32(ABILanguageC))
         let retained = try #require(ABIRetainResolvedSymbol(exported))
         ABIReleaseResolvedSymbol(exported)
         let restored = unsafe ResolvedSymbol(retainingNativeHandle: retained)
