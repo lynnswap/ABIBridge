@@ -130,7 +130,10 @@ struct CXXSymbolFilter {
 final class SymbolIndex {
     let image: NativeImage
     let sections: [SymbolSection]
-    var symbols: [IndexedSymbol]
+    private let macho: MachOImage
+    private lazy var exportTrie = macho.exportTrie
+    private var localSymbols: [IndexedSymbol] = []
+    private var sourceSymbols: [NativeLanguage: [IndexedSymbol]] = [:]
     var sharedCacheLoaded = false
     private struct Scope: Hashable {
         let language: NativeLanguage
@@ -138,12 +141,13 @@ final class SymbolIndex {
     }
     private var decoded: [Scope: [[UInt8]: [IndexedSymbol]]] = [:]
     private var cxxCandidates: [String: [IndexedSymbol]] = [:]
-    private var linkerNames: [[UInt8]: [IndexedSymbol]]?
-    private var swiftExtensions: [[UInt8]: [IndexedSymbol]] = [:]
+    private var linkerNames: [[UInt8]: [IndexedSymbol]] = [:]
+    private var swiftExtensions: [[UInt8]: [IndexedSymbol]]?
 
     init(image: NativeImage) {
         self.image = image
         let macho = MachOImage(ptr: UnsafePointer<mach_header>(bitPattern: UInt(image.identity.headerAddress))!)
+        self.macho = macho
         let slide = image.identity.slide
         sections = macho.sections.compactMap { section in
             guard section.address >= 0, section.size > 0,
@@ -164,36 +168,105 @@ final class SymbolIndex {
                 threadLocal: threadLocal
             )
         }
-        let base = image.identity.headerAddress
-        symbols = macho.symbols.compactMap { symbol in
-            guard symbol.nlist.flags?.type == .sect,
-                  symbol.offset >= 0, UInt64(symbol.offset) <= UInt64.max - base else { return nil }
-            return IndexedSymbol(name: symbol.name, address: base + UInt64(symbol.offset), source: .image)
-        }
-        symbols += macho.exportedSymbols.compactMap { symbol in
-            guard let offset = symbol.offset, offset >= 0, UInt64(offset) <= UInt64.max - base else { return nil }
-            return IndexedSymbol(name: symbol.name, address: base + UInt64(offset), source: .image)
-        }
     }
 
     func appendSharedCacheSymbols(_ more: [IndexedSymbol]) {
-        symbols += more
+        sharedCacheLoaded = true
+        guard !more.isEmpty else { return }
+        localSymbols += more
+        sourceSymbols.removeAll()
         decoded.removeAll()
         cxxCandidates.removeAll()
-        swiftExtensions.removeAll()
-        linkerNames = nil
-        sharedCacheLoaded = true
+        swiftExtensions = nil
+        linkerNames.removeAll()
+    }
+
+    private func imageSymbol(name: String, offset: Int) -> IndexedSymbol? {
+        let base = image.identity.headerAddress
+        guard offset >= 0, UInt64(offset) <= UInt64.max - base else { return nil }
+        return IndexedSymbol(name: name, address: base + UInt64(offset), source: .image)
+    }
+
+    private func tableSymbols(matching predicate: (UnsafePointer<CChar>) -> Bool) -> [IndexedSymbol] {
+        func collect(_ symbols: some Sequence<MachOImage.Symbol>) -> [IndexedSymbol] {
+            symbols.compactMap { symbol in
+                guard symbol.nlist.flags?.type == .sect, predicate(symbol.nameC) else { return nil }
+                return imageSymbol(name: symbol.name, offset: symbol.offset)
+            }
+        }
+        if let symbols = macho.symbols64 { return collect(symbols) }
+        if let symbols = macho.symbols32 { return collect(symbols) }
+        return []
+    }
+
+    private func exactSymbols(named name: String) -> [IndexedSymbol] {
+        let key = Array(name.utf8)
+        guard !key.contains(0) else { return [] }
+        if let cached = linkerNames[key] { return cached }
+        var matches = name.withCString { name in tableSymbols { strcmp($0, name) == 0 } }
+        if let offset = exportedOffset(named: key), let symbol = imageSymbol(name: name, offset: offset) {
+            matches.append(symbol)
+        }
+        matches += localSymbols.filter { $0.name.utf8.elementsEqual(key) }
+        linkerNames[key] = matches
+        return matches
+    }
+
+    // Export names are byte strings. String-based trie lookup would equate
+    // canonically equivalent Unicode spellings that the linker keeps distinct.
+    private func exportedOffset(named name: [UInt8]) -> Int? {
+        guard let trie = exportTrie, !name.isEmpty else { return nil }
+        var offset = 0
+        var remaining = name[...]
+        while offset < trie.exportSize {
+            guard let node = TrieNode<ExportTrieNodeContent>.readNext(
+                basePointer: trie.basePointer.assumingMemoryBound(to: UInt8.self),
+                trieSize: trie.exportSize, nextOffset: &offset
+            ) else { return nil }
+            if remaining.isEmpty {
+                return node.content?.symbolOffset.map { Int(bitPattern: $0) }
+            }
+            guard let child = node.children.first(where: {
+                !$0.label.isEmpty && remaining.starts(with: $0.label.utf8)
+            }), let childOffset = Int(exactly: child.offset) else { return nil }
+            remaining = remaining.dropFirst(child.label.utf8.count)
+            offset = childOffset
+        }
+        return nil
+    }
+
+    private func symbols(for language: NativeLanguage) -> [IndexedSymbol] {
+        if let cached = sourceSymbols[language] { return cached }
+        // These are exactly the prefixes accepted by the native demanglers.
+        let prefixes = language == .cxx ? ["__Z", "_Z"] : ["_$s", "_$S", "$s", "$S"]
+        let needles = prefixes.map { Array($0.utf8CString) }
+        var symbols = tableSymbols { raw in
+            needles.contains { needle in
+                needle.withUnsafeBufferPointer { strncmp(raw, $0.baseAddress!, $0.count - 1) == 0 }
+            }
+        }
+        if let trie = exportTrie {
+            symbols += prefixes.flatMap { trie.search(byKeyPrefix: $0) }.compactMap { symbol in
+                guard let offset = symbol.offset else { return nil }
+                return imageSymbol(name: symbol.name, offset: offset)
+            }
+        }
+        symbols += localSymbols.filter { symbol in prefixes.contains { symbol.name.hasPrefix($0) } }
+        sourceSymbols[language] = symbols
+        return symbols
     }
 
     func matches(_ declaration: NativeDeclaration, extensionsOnly: Bool = false) -> [IndexedSymbol] {
         if declaration.nameForm != .source || declaration.language == .c {
-            if linkerNames == nil { linkerNames = Dictionary(grouping: symbols, by: { Array($0.name.utf8) }) }
             let name = declaration.nameForm == .machO ? declaration.name : "_" + declaration.name
-            return linkerNames?[Array(name.utf8)] ?? []
+            return exactSymbols(named: name)
         }
+        let key = DeclarationKey.make(declaration.name)
+        if extensionsOnly, let swiftExtensions { return swiftExtensions[key] ?? [] }
         let filter = CXXSymbolFilter(declaration.language == .cxx ? declaration.name : "")
         let scope = Scope(language: declaration.language, fragments: filter.fragments)
         if decoded[scope] == nil {
+            let symbols = symbols(for: declaration.language)
             let candidates: [IndexedSymbol]
             if let owner = filter.fragments.first {
                 if cxxCandidates[owner] == nil {
@@ -204,28 +277,33 @@ final class SymbolIndex {
                 candidates = symbols
             }
             var index: [[UInt8]: [IndexedSymbol]] = [:]
+            var extensions: [[UInt8]: [IndexedSymbol]] = [:]
             for symbol in candidates {
                 guard filter.matches(symbol.name) else { continue }
                 guard let name = DeclarationKey.demangle(symbol.name, language: declaration.language) else { continue }
+                // An extension fallback needs no index of ordinary declarations
+                // in unrelated images. Reject those before alias/key creation.
+                if extensionsOnly && Self.extensionMemberName(name) == nil { continue }
                 var names = [name]
                 if declaration.language == .swift, let alias = Self.operatorAlias(name) { names.append(alias) }
                 for name in names {
-                    index[DeclarationKey.make(name), default: []].append(symbol)
+                    if !extensionsOnly { index[DeclarationKey.make(name), default: []].append(symbol) }
                     if declaration.language == .swift, let unqualified = Self.extensionMemberName(name) {
-                        swiftExtensions[DeclarationKey.make(unqualified), default: []].append(symbol)
+                        extensions[DeclarationKey.make(unqualified), default: []].append(symbol)
                     }
                 }
             }
-            decoded[scope] = index
+            if !extensionsOnly { decoded[scope] = index }
+            if declaration.language == .swift { swiftExtensions = extensions }
         }
-        let key = DeclarationKey.make(declaration.name)
-        return extensionsOnly ? swiftExtensions[key] ?? [] : decoded[scope]?[key] ?? []
+        return extensionsOnly ? swiftExtensions?[key] ?? [] : decoded[scope]?[key] ?? []
     }
 
     private static func operatorAlias(_ name: String) -> String? {
         for token in [" infix(", " prefix(", " postfix("] {
-            guard let fixity = name.range(of: token) else { continue }
-            return String(name[..<fixity.lowerBound]) + "(" + name[fixity.upperBound...]
+            guard let offset = byteOffset(of: token, in: name) else { continue }
+            return String(decoding: name.utf8.prefix(offset), as: UTF8.self) + "("
+                + String(decoding: name.utf8.dropFirst(offset + token.utf8.count), as: UTF8.self)
         }
         return nil
     }
@@ -234,8 +312,17 @@ final class SymbolIndex {
         let isStatic = name.hasPrefix("static ")
         let declaration = isStatic ? String(name.dropFirst(7)) : name
         guard declaration.hasPrefix("(extension in "),
-              let end = declaration.range(of: "):") else { return nil }
-        return (isStatic ? "static " : "") + declaration[end.upperBound...]
+              let offset = byteOffset(of: "):", in: declaration) else { return nil }
+        return (isStatic ? "static " : "")
+            + String(decoding: declaration.utf8.dropFirst(offset + 2), as: UTF8.self)
+    }
+
+    // Demangler markers are ASCII. Avoid locale-aware substring search on
+    // every Swift symbol while retaining the spelling of Unicode identifiers.
+    private static func byteOffset(of marker: String, in name: String) -> Int? {
+        name.withCString { start in
+            marker.withCString { marker in strstr(start, marker).map { start.distance(to: $0) } }
+        }
     }
 
     func resolve(

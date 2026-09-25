@@ -11,8 +11,9 @@ import Testing
 
 @Suite(.serialized)
 struct SymbolResolutionTests {
-    @Test func exactSpellingsPreserveCXXVariantsAndUnderscores() async throws {
-        let fixture = try FixtureLibrary()
+    @Test(arguments: [false, true])
+    func exactSpellingsPreserveCXXVariantsAndUnderscores(stripped: Bool) async throws {
+        let fixture = try FixtureLibrary(stripped: stripped)
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
         let scope = ImageSelector.path(fixture.libraryURL)
@@ -52,7 +53,8 @@ struct SymbolResolutionTests {
         for query in [
             NativeDeclaration(machOName: prefix + "D0Ev", language: .cxx),
             .init(linkerName: "_" + prefix + "D0Ev", language: .cxx),
-            .init(linkerName: prefix + "D0Ev ", language: .cxx)
+            .init(linkerName: prefix + "D0Ev ", language: .cxx),
+            .init(linkerName: prefix + "D0Ev\0suffix", language: .cxx)
         ] {
             do {
                 _ = try await runtime.resolve(query, in: scope)
@@ -61,8 +63,9 @@ struct SymbolResolutionTests {
         }
     }
 
-    @Test func exactSpellingsDistinguishCanonicallyEquivalentUTF8() async throws {
-        let fixture = try FixtureLibrary()
+    @Test(arguments: [false, true])
+    func exactSpellingsDistinguishCanonicallyEquivalentUTF8(stripped: Bool) async throws {
+        let fixture = try FixtureLibrary(stripped: stripped)
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
         let composed = NativeDeclaration(machOName: "_ABIBridgeUTF8_\u{00E9}", language: .c, kind: .data)
@@ -106,6 +109,18 @@ struct SymbolResolutionTests {
             var info = Dl_info()
             return dladdr(address, &info) != 0
         })
+    }
+
+    @Test func resolvesSwiftDeclarationsFromExportsWithoutASymbolTable() async throws {
+        let module = "Stripped_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+        let fixture = try FixtureLibrary(swiftModule: module, stripped: true)
+        defer { fixture.cleanup() }
+        #expect(try fixture.exportedSymbols().isEmpty)
+        let runtime = ABIRuntime()
+        let function = try await runtime.swiftFunction(
+            named: module + ".echo()", as: (() -> Void).self, in: .path(fixture.libraryURL)
+        )
+        try unsafe function.unsafeInvoke()
     }
 
     @Test func batchLookupPreservesOrderFallbackAliasesAndLifetime() async throws {
@@ -342,8 +357,9 @@ struct SymbolResolutionTests {
         await runtime.removeCachedResults()
     }
 
-    @Test func resolvesFunctionsDataAndVTablesByDeclaration() async throws {
-        let fixture = try FixtureLibrary()
+    @Test(arguments: [false, true])
+    func resolvesFunctionsDataAndVTablesByDeclaration(stripped: Bool) async throws {
+        let fixture = try FixtureLibrary(stripped: stripped)
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
         let images = try await runtime.images(matching: .path(fixture.libraryURL))
@@ -397,23 +413,45 @@ struct SymbolResolutionTests {
     }
 
     #if DEBUG
+    @Test(arguments: [false, true])
+    func extensionAndOrdinaryIndexesCanBeBuiltInEitherOrder(extensionFirst: Bool) async throws {
+        let module = "IndexOrder_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+        let fixture = try FixtureLibrary(swiftModule: module, swiftSource: """
+        public func echo() -> Int { 42 }
+        extension Int { public func café() -> Int { self } }
+        """)
+        defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        let image = try #require(try await runtime.images(matching: .path(fixture.libraryURL)).first)
+        let index = SymbolIndex(image: image)
+        let ordinary = NativeDeclaration(name: module + ".echo() -> Swift.Int", language: .swift)
+        let member = NativeDeclaration(name: "Swift.Int.café() -> Swift.Int", language: .swift)
+        for extensionsOnly in [extensionFirst, !extensionFirst, extensionFirst] {
+            let symbol = try #require(try index.resolve(
+                extensionsOnly ? member : ordinary, source: .image, extensionsOnly: extensionsOnly
+            ))
+            #expect(symbol.image.identity == image.identity)
+        }
+    }
+
     @Test func appendedLocalSymbolsInvalidateEmptyCandidateGroups() async throws {
         let fixture = try FixtureLibrary()
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
         let image = try #require(try await runtime.images(matching: .path(fixture.libraryURL)).first)
-        let declaration = NativeDeclaration(name: "\(fixture.namespace)::add(int, int)", language: .cxx)
-        let original = SymbolIndex(image: image).matches(declaration)
-        #expect(!original.isEmpty)
-        let index = SymbolIndex(image: image)
-        index.symbols = []
-        #expect(index.matches(declaration).isEmpty)
-        index.appendSharedCacheSymbols(original.map {
-            IndexedSymbol(name: $0.name, address: $0.address, source: .sharedCache)
-        })
-        let resolved = try #require(try index.resolve(declaration, source: .sharedCache))
+        let declaration = NativeDeclaration(name: "ABICacheFixture::add(int, int)", language: .cxx)
         let expected = try fixture.address(kind: 0)
+        let index = SymbolIndex(image: image)
+        #expect(index.matches(declaration).isEmpty)
+        let exact = NativeDeclaration(machOName: "__ZN15ABICacheFixture3addEii", language: .cxx)
+        #expect(index.matches(exact).isEmpty)
+        index.appendSharedCacheSymbols([
+            IndexedSymbol(name: "__ZN15ABICacheFixture3addEii", address: UInt64(expected), source: .sharedCache)
+        ])
+        let resolved = try #require(try index.resolve(declaration, source: .sharedCache))
         #expect(unsafe resolved.withUnsafeAddress { UInt(bitPattern: $0) } == expected)
+        let exactResolved = try #require(try index.resolve(exact, source: .sharedCache))
+        #expect(unsafe exactResolved.withUnsafeAddress { UInt(bitPattern: $0) } == expected)
     }
 
     #endif
@@ -598,7 +636,7 @@ private final class FixtureLibrary {
     let namespace: String
     private var handle: UnsafeMutableRawPointer?
 
-    init(namespace: String? = nil, load: Bool = true, swiftModule: String? = nil, swiftSource: String? = nil, threadLocal: Bool = false) throws {
+    init(namespace: String? = nil, load: Bool = true, swiftModule: String? = nil, swiftSource: String? = nil, threadLocal: Bool = false, stripped: Bool = false) throws {
         self.namespace = namespace ?? "Fixture_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
         directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         libraryURL = directory.appendingPathComponent("fixture.dylib")
@@ -644,6 +682,7 @@ private final class FixtureLibrary {
             try Self.run(["--sdk", "macosx", "clang++", "-arch", architecture, "-std=c++20", "-mmacosx-version-min=15.4",
                           "-dynamiclib", source.path, "-o", libraryURL.path])
         }
+        if stripped { try Self.run(["--sdk", "macosx", "strip", "-u", "-r", libraryURL.path]) }
         if load { try self.load() }
     }
 

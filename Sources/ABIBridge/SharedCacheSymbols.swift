@@ -7,6 +7,19 @@ import MachOKit
 final class SharedCacheSymbols {
     private lazy var loadedCache = DyldCacheLoaded.current
     private lazy var fullCache = FullDyldCache.host
+    private lazy var filesByUUID: [UUID: MachOFile] = {
+        guard let fullCache else { return [:] }
+        var files: [UUID: MachOFile] = [:]
+        for file in fullCache.machOFiles() {
+            for command in file.loadCommands {
+                if case .uuid(let uuid) = command, files[uuid.uuid] == nil {
+                    files[uuid.uuid] = file
+                    break
+                }
+            }
+        }
+        return files
+    }()
     private var filesByCache: [UUID: [DyldCache]] = [:]
 
     func symbols(in image: NativeImage) -> [IndexedSymbol] {
@@ -35,12 +48,8 @@ final class SharedCacheSymbols {
             readSymbolFiles(header: cache.mainCacheHeader, offset: offset, record: record)
         }
         if result.isEmpty, let cache = fullCache, let expectedUUID = image.identity.uuid,
-           let file = cache.machOFiles().first(where: { file in
-               file.loadCommands.contains { command in
-                   if case .uuid(let uuid) = command { return uuid.uuid == expectedUUID }
-                   return false
-               }
-           }), let fileText = file.segments64.first(where: { $0.segmentName == "__TEXT" }),
+           let file = filesByUUID[expectedUUID],
+           let fileText = file.segments64.first(where: { $0.segmentName == "__TEXT" }),
            UInt64(fileText.virtualMemoryAddress) >= cache.mainCacheHeader.sharedRegionStart {
             let offset = UInt64(fileText.virtualMemoryAddress) - cache.mainCacheHeader.sharedRegionStart
             if let info = cache.localSymbolsInfo, let symbols = info.symbols64(in: cache),
