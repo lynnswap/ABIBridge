@@ -7,11 +7,12 @@ final class SymbolResolver: Sendable {
     private let state = Mutex(ResolutionState())
 
     func images(matching selector: ImageSelector) throws -> [NativeImage] {
-        let snapshots = try ImageSnapshot.current().filter { $0.matches(selector) }
-        return try snapshots.compactMap { snapshot in
-            if let cached = state.withLock({ $0.indexes[snapshot.identity]?.image }) {
-                return cached
-            }
+        let snapshots = try ImageSnapshot.matching(selector, in: ImageSnapshot.current())
+        let retained = state.withLock { state in
+            snapshots.map { state.indexes[$0.identity]?.image }
+        }
+        return try zip(snapshots, retained).compactMap { snapshot, cached in
+            if let cached { return cached }
             do {
                 return try snapshot.retain()
             } catch ABIResolutionError.imageChanged {
@@ -130,10 +131,11 @@ final class SymbolResolver: Sendable {
         }
         // Keep these indexes for the whole lookup even if another caller clears
         // the cache while shared-cache metadata is being read.
+        let query = SymbolQuery(declaration)
         let candidates = state.withLock { state in images.map { state.index(for: $0) } }
         return try withExtendedLifetime(candidates) {
             let primary = try state.withLock { _ in
-                try candidates.compactMap { try $0.resolve(declaration, source: .image, extensionsOnly: extensionsOnly) }
+                try candidates.compactMap { try $0.resolve(query, source: .image, extensionsOnly: extensionsOnly) }
             }
             if !primary.isEmpty { return try select(declaration, from: primary) }
 
@@ -147,7 +149,7 @@ final class SymbolResolver: Sendable {
                 for (index, symbols) in additions where !index.sharedCacheLoaded {
                     index.appendSharedCacheSymbols(symbols)
                 }
-                return try candidates.compactMap { try $0.resolve(declaration, source: .sharedCache, extensionsOnly: extensionsOnly) }
+                return try candidates.compactMap { try $0.resolve(query, source: .sharedCache, extensionsOnly: extensionsOnly) }
             }
             return try select(declaration, from: fallback)
         }

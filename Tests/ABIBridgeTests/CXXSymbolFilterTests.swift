@@ -40,5 +40,28 @@ struct CXXSymbolFilterTests {
         #expect(DeclarationKey.make("Example::f(unsigned int)") != DeclarationKey.make("Example::f(unsignedint)"))
         #expect(DeclarationKey.make("Example::f()") != DeclarationKey.make("Example::f()\0extra"))
     }
+
+    @Test func fingerprintCandidatesRequireFullDeclarationMatch() {
+        let intended = IndexedSymbol(name: "__ZN7Example1fEj", address: 1, source: .image)
+        let sameDeclaration = IndexedSymbol(name: intended.name, address: 2, source: .image)
+        let differentType = IndexedSymbol(name: "__ZN7Example1fE11unsignedint", address: 3, source: .image)
+        let query = SymbolQuery(.init(name: "Example :: f( unsigned int )", language: .cxx))
+        let matches = SymbolIndex.matching(
+            [differentType, intended, sameDeclaration], query: query, extensionsOnly: false
+        )
+        #expect(matches.map(\.address) == [1, 2])
+    }
+
+    @Test func duplicateDefinitionsPreserveBytesAddressesAndSources() {
+        let first = IndexedSymbol(name: "_\u{00E9}", address: 1, source: .image)
+        let decomposed = IndexedSymbol(name: "_e\u{0301}", address: 1, source: .image)
+        #expect(first.name == decomposed.name)
+        let symbols = Set([
+            first, first, decomposed,
+            .init(name: first.name, address: 2, source: .image),
+            .init(name: first.name, address: 1, source: .sharedCache),
+        ])
+        #expect(symbols.count == 4)
+    }
 }
 #endif
