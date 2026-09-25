@@ -98,6 +98,14 @@ bool initialize()
     return initialized;
 }
 
+auto findGeneration(const std::vector<Image>& images, uint64_t generation)
+{
+    // Appending a new generation and erasing unloaded images preserve order.
+    const auto found = std::lower_bound(images.begin(), images.end(), generation,
+        [](const Image& image, uint64_t value) { return image.generation < value; });
+    return found != images.end() && found->generation == generation ? found : images.end();
+}
+
 } // namespace
 
 struct ABIImageList {
@@ -143,8 +151,7 @@ ABIImageLease *ABIRetainLoadedImage(uint64_t generation)
     {
         auto& state = catalog();
         std::lock_guard lock(state.mutex);
-        auto found = std::find_if(state.images.begin(), state.images.end(),
-                                 [generation](const Image& item) { return item.generation == generation; });
+        auto found = findGeneration(state.images, generation);
         if (found == state.images.end())
             return nullptr;
         image = *found;
@@ -158,8 +165,7 @@ ABIImageLease *ABIRetainLoadedImage(uint64_t generation)
     {
         auto& state = catalog();
         std::lock_guard lock(state.mutex);
-        current = std::any_of(state.images.begin(), state.images.end(),
-                             [generation](const Image& item) { return item.generation == generation; });
+        current = findGeneration(state.images, generation) != state.images.end();
     }
     if (!current) {
         if (handle)

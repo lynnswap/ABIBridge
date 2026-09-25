@@ -518,6 +518,44 @@ struct SymbolResolutionTests {
         #expect(unsafe resolved.withUnsafeAddress { $0.load(as: Int32.self) } == 42)
     }
 
+    @Test func pathSelectorsFollowRetargetedSymlinks() async throws {
+        let first = try FixtureLibrary()
+        let second = try FixtureLibrary()
+        defer { first.cleanup(); second.cleanup() }
+        let runtime = ABIRuntime()
+        let alias = first.directory.appendingPathComponent("alias.dylib")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: first.libraryURL)
+        let firstGeneration = try await generation(of: first.libraryURL, runtime: runtime)
+        #expect(try await generation(of: alias, runtime: runtime) == firstGeneration)
+        try FileManager.default.removeItem(at: alias)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: second.libraryURL)
+        let secondGeneration = try await generation(of: second.libraryURL, runtime: runtime)
+        #expect(firstGeneration != secondGeneration)
+        #expect(try await generation(of: alias, runtime: runtime) == secondGeneration)
+    }
+
+    @Test func nativeGenerationLookupPreservesGapsAfterUnload() async throws {
+        let first = try FixtureLibrary()
+        let middle = try FixtureLibrary()
+        let last = try FixtureLibrary()
+        defer { first.cleanup(); middle.cleanup(); last.cleanup() }
+        let runtime = ABIRuntime()
+        let firstGeneration = try await generation(of: first.libraryURL, runtime: runtime)
+        let middleGeneration = try await generation(of: middle.libraryURL, runtime: runtime)
+        let lastGeneration = try await generation(of: last.libraryURL, runtime: runtime)
+        #expect(firstGeneration < middleGeneration && middleGeneration < lastGeneration)
+        middle.close()
+        for generation in [0, middleGeneration, UInt64.max] {
+            let handle = ABIRetainLoadedImage(generation)
+            #expect(handle == nil)
+            if let handle { ABIReleaseImage(handle) }
+        }
+        for generation in [firstGeneration, lastGeneration] {
+            let handle = try #require(ABIRetainLoadedImage(generation))
+            ABIReleaseImage(handle)
+        }
+    }
+
     @Test func quickStartAndFrameworkScopeUseLoadedSystemImages() async throws {
         let runtime = ABIRuntime()
         let foundations = try await runtime.images(matching: .framework(named: "Foundation"))

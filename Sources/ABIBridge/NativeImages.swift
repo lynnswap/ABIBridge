@@ -37,13 +37,17 @@ struct ImageSnapshot {
     let identity: NativeImageIdentity
     let path: String
 
-    func matches(_ selector: ImageSelector) -> Bool {
+    static func matching(_ selector: ImageSelector, in snapshots: [Self]) -> [Self] {
         switch selector {
-        case .automatic: return true
-        case .path(let url): return URL(fileURLWithPath: path).resolvingSymlinksInPath() == url.resolvingSymlinksInPath()
+        case .automatic: return snapshots
+        case .path(let url):
+            let resolved = url.resolvingSymlinksInPath()
+            return snapshots.filter { URL(fileURLWithPath: $0.path).resolvingSymlinksInPath() == resolved }
         case .framework(let name):
-            let url = URL(fileURLWithPath: path)
-            return url.lastPathComponent == name && url.pathComponents.contains("\(name).framework")
+            return snapshots.filter {
+                let url = URL(fileURLWithPath: $0.path)
+                return url.lastPathComponent == name && url.pathComponents.contains("\(name).framework")
+            }
         }
     }
 
