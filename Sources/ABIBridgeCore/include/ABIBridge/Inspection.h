@@ -21,6 +21,46 @@ typedef struct ABISymbolRuntime ABISymbolRuntime;
 typedef struct ABIResolvedSymbol ABIResolvedSymbol;
 /// An owned failure with an immutable category and UTF-8 message.
 typedef struct ABIResolutionFailure ABIResolutionFailure;
+/// An owned, immutable lazy-library diagnostic snapshot. Strings are copied.
+typedef struct ABILazyLibraryList ABILazyLibraryList;
+
+/// Optional diagnostic Boolean values. Unknown is distinct from false.
+enum { ABIDiagnosticUnknown = -1, ABIDiagnosticFalse = 0, ABIDiagnosticTrue = 1 };
+/// Copied scalar fields and strings borrowed from the owning lazy-library list.
+typedef struct {
+    uint64_t commandOffset;
+    /// Null if the recorded path is unreadable.
+    const char *path;
+    int32_t isOptional;
+    int32_t areSymbolsPrebound;
+    /// Unknown for file snapshots; a live observation does not synchronize with dyld.
+    int32_t isInitialized;
+    /// True for a readable symbol array, including an empty array.
+    int32_t symbolsAvailable;
+    size_t symbolCount;
+} ABILazyLibraryInfo;
+/// Names borrowed from the owning list. Both are null for an unreadable string.
+/// A decoded name is not a resolved symbol or callable-signature guarantee.
+typedef struct { const char *name; const char *rawName; } ABILazySymbolInfo;
+
+/// Copies diagnostics for one live generation, retaining its image while reading.
+/// The result does not retain the image. No library is loaded and no mutable
+/// binding chain is walked. Malformed payloads remain represented with unknown
+/// fields. Returns null and an owned failure when the source cannot be inspected;
+/// success clears *error. Existing *error is overwritten, not released.
+ABILazyLibraryList *ABICopyLazyLibrariesForImage(uint64_t generation, ABIResolutionFailure **error);
+/// Copies metadata from a thin Mach-O file; fat files are not accepted.
+/// Path is non-null, null-terminated UTF-8. File state never establishes live
+/// initialization. Error ownership follows ABICopyLazyLibrariesForImage.
+ABILazyLibraryList *ABICopyLazyLibrariesInFile(const char *path, ABIResolutionFailure **error);
+/// Requires a non-null live list. Read operations on the same list may run concurrently.
+size_t ABILazyLibraryListCount(const ABILazyLibraryList *list);
+/// Requires index < count. Returned strings live until the list is freed.
+ABILazyLibraryInfo ABILazyLibraryListGet(const ABILazyLibraryList *list, size_t index);
+/// Requires valid library/symbol indexes and an available symbol array.
+ABILazySymbolInfo ABILazyLibraryListSymbol(const ABILazyLibraryList *list, size_t libraryIndex, size_t symbolIndex);
+/// Frees a snapshot and its strings. Null is accepted; do not race with reads.
+void ABIFreeLazyLibraryList(ABILazyLibraryList *list);
 
 /// A description of one image load. Copying this value does not retain an image.
 /// Strings and addresses are borrowed; their owners are documented by each getter.

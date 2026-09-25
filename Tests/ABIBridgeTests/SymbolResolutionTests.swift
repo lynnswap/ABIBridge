@@ -556,6 +556,26 @@ struct SymbolResolutionTests {
         }
     }
 
+    @Test func lazyLibrarySnapshotsDoNotKeepTheirSourceImageLoaded() async throws {
+        let fixture = try FixtureLibrary()
+        defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        var image = try #require(try await runtime.images(matching: .path(fixture.libraryURL)).first) as NativeImage?
+        let generation = image!.identity.loadGeneration
+        let swift = try await runtime.lazyLibraries(in: image!)
+        var error: OpaquePointer?
+        let native = try #require(ABICopyLazyLibrariesForImage(generation, &error))
+        defer { ABIFreeLazyLibraryList(native) }
+        #expect(error == nil)
+        #expect(ABILazyLibraryListCount(native) == swift.count)
+        image = nil
+        fixture.close()
+        let lease = ABIRetainLoadedImage(generation)
+        #expect(lease == nil)
+        if let lease { ABIReleaseImage(lease) }
+        #expect(ABILazyLibraryListCount(native) == swift.count)
+    }
+
     @Test func quickStartAndFrameworkScopeUseLoadedSystemImages() async throws {
         let runtime = ABIRuntime()
         let foundations = try await runtime.images(matching: .framework(named: "Foundation"))
