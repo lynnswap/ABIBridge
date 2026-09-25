@@ -216,6 +216,82 @@ private:
     std::shared_ptr<ABIImageLease> handle_;
 };
 
+/// Copied import names. Neither spelling establishes a callable signature.
+struct lazy_symbol_description final {
+    std::optional<std::string> name;
+    std::optional<std::string> raw_name;
+};
+
+/// Copied lazy-load metadata. Empty optionals mean unavailable information.
+struct lazy_library_description final {
+    std::uint64_t command_offset;
+    std::optional<std::string> path;
+    std::optional<bool> is_optional;
+    std::optional<bool> symbols_prebound;
+    /// Always empty for file inspection; live reads do not synchronize with dyld.
+    std::optional<bool> is_initialized;
+    /// An engaged empty vector means a readable zero-symbol list.
+    std::optional<std::vector<lazy_symbol_description>> symbols;
+};
+
+/// Immutable diagnostics that may outlive the source image or file.
+/// Copies share ownership; descriptions returned by at() own their strings.
+class lazy_library_snapshot final {
+public:
+    /// Retains the generation during reading, then releases that temporary lease.
+    /// No dependency is loaded and no mutable binding chain is traversed.
+    static lazy_library_snapshot capture(std::uint64_t generation) {
+        ABIResolutionFailure* failure = nullptr;
+        auto* list = ABICopyLazyLibrariesForImage(generation, &failure);
+        return checked(list, failure);
+    }
+    /// Reads a thin Mach-O file. Disk data cannot establish live initialization.
+    static lazy_library_snapshot read_file(const std::string& path) {
+        if (path.find('\0') != std::string::npos) {
+            throw resolution_error(ABIFailureInvalidRequest, "File paths must not contain embedded NULs.");
+        }
+        ABIResolutionFailure* failure = nullptr;
+        auto* list = ABICopyLazyLibrariesInFile(path.c_str(), &failure);
+        return checked(list, failure);
+    }
+    explicit operator bool() const noexcept { return bool(handle_); }
+    /// Requires a live snapshot; moving leaves an empty handle.
+    std::size_t size() const noexcept { return ABILazyLibraryListCount(handle_.get()); }
+    lazy_library_description at(std::size_t index) const {
+        if (index >= size()) throw std::out_of_range("Lazy-library index is out of range.");
+        const auto info = ABILazyLibraryListGet(handle_.get(), index);
+        lazy_library_description result{info.commandOffset, string(info.path), boolean(info.isOptional),
+            boolean(info.areSymbolsPrebound), boolean(info.isInitialized), std::nullopt};
+        if (info.symbolsAvailable == ABIDiagnosticTrue) {
+            result.symbols.emplace();
+            result.symbols->reserve(info.symbolCount);
+            for (std::size_t i = 0; i < info.symbolCount; ++i) {
+                const auto symbol = ABILazyLibraryListSymbol(handle_.get(), index, i);
+                result.symbols->push_back({string(symbol.name), string(symbol.rawName)});
+            }
+        }
+        return result;
+    }
+
+private:
+    explicit lazy_library_snapshot(ABILazyLibraryList* list) : handle_(list, ABIFreeLazyLibraryList) {}
+    static lazy_library_snapshot checked(ABILazyLibraryList* list, ABIResolutionFailure* failure) {
+        std::unique_ptr<ABIResolutionFailure, decltype(&ABIReleaseResolutionFailure)>
+            owned_failure(failure, ABIReleaseResolutionFailure);
+        if (!list) throw resolution_error(ABIResolutionFailureCode(failure), ABIResolutionFailureMessage(failure));
+        return lazy_library_snapshot(list);
+    }
+    static std::optional<std::string> string(const char* value) {
+        return value ? std::optional<std::string>(value) : std::nullopt;
+    }
+    static std::optional<bool> boolean(std::int32_t value) {
+        if (value == ABIDiagnosticTrue) return true;
+        if (value == ABIDiagnosticFalse) return false;
+        return std::nullopt;
+    }
+    std::shared_ptr<ABILazyLibraryList> handle_;
+};
+
 /// Synchronous access to the same backend as Swift's ABIRuntime.
 /// Copies share a cache; default construction creates an independent cache.
 /// Calls and cache clearing are thread-safe while handles stay alive. Moving

@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#include "LazyLibraryFixtures.h"
 #import "CFunctionFixtures.h"
 #import "CXXObjectFixtures.h"
 

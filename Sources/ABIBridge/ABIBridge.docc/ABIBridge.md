@@ -94,6 +94,12 @@ print(symbol.image.path)
 - ``NativeImage``
 - ``NativeImageIdentity``
 
+### Lazy-load diagnostics
+
+- <doc:LazyLibraries>
+- ``NativeLazyLibrary``
+- ``NativeLazySymbol``
+
 ### Describing call contracts
 
 - ``NativeCallPlan``

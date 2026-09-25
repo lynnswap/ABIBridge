@@ -13,7 +13,7 @@ private final class NativeSymbolBox {
     deinit { free(path) }
 }
 
-private func nativeFailure(_ error: Error) -> OpaquePointer {
+func nativeFailure(_ error: Error) -> OpaquePointer {
     let code: Int32
     switch error {
     case ABIResolutionError.imageUnavailable: code = Int32(ABIFailureImageUnavailable)

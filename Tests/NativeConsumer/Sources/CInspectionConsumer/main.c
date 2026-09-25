@@ -3,8 +3,33 @@
 #include <dlfcn.h>
 #include <stdio.h>
 #include <string.h>
+#include "../../LazyLibraryFixture.h"
+
+static void test_lazy_libraries(void) {
+    char path[] = "/tmp/abibridge-lazy-c-XXXXXX";
+    int fd = mkstemp(path);
+    assert(fd >= 0);
+    close(fd);
+    unsigned char *bytes = ABITestLazyCreate(1, 0);
+    assert(bytes && ABITestLazyWrite(path, bytes));
+    free(bytes);
+    ABIResolutionFailure *error = NULL;
+    ABILazyLibraryList *list = ABICopyLazyLibrariesInFile(path, &error);
+    unlink(path);
+    assert(list && !error && ABILazyLibraryListCount(list) == 3);
+    ABILazyLibraryInfo info = ABILazyLibraryListGet(list, 0);
+    assert(info.isOptional == ABIDiagnosticTrue && info.isInitialized == ABIDiagnosticUnknown);
+    assert(info.symbolCount == 3 && strcmp(info.path, "@rpath/Example.dylib") == 0);
+    assert(strcmp(ABILazyLibraryListSymbol(list, 0, 0).name, "Example::Renderer::refresh()") == 0);
+    assert(ABILazyLibraryListGet(list, 2).symbolsAvailable == ABIDiagnosticFalse);
+    ABIFreeLazyLibraryList(list);
+    assert(!ABICopyLazyLibrariesForImage(UINT64_MAX, &error));
+    assert(error && ABIResolutionFailureCode(error) == ABIFailureImageChanged);
+    ABIReleaseResolutionFailure(error);
+}
 
 int main(int argc, char **argv) {
+    test_lazy_libraries();
     assert(argc == 2);
     unsigned char source[] = {1, 2, 3, 4};
     unsigned char copied[3] = {0};

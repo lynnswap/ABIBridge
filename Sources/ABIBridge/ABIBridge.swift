@@ -211,7 +211,7 @@ public enum ABIResolutionError: Error, Sendable, Hashable {
     case signatureMismatch(expected: String, found: [String])
     /// The operation cannot interpret this kind of declaration.
     case unsupportedDeclaration(String)
-    /// The required type metadata is unavailable.
+    /// Requested native metadata is unavailable.
     case metadataUnavailable(String)
     /// An image was unloaded or replaced before a loader reference could be acquired.
     case imageChanged

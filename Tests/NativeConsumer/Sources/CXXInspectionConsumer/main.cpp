@@ -2,6 +2,7 @@
 #include "../../MemoryFixture.hpp"
 #include "../../PointerSearchFixture.hpp"
 #include "../../NativeInvocationFixture.hpp"
+#include "../../LazyLibraryFixture.h"
 #include <cassert>
 #include <cstring>
 #include <dlfcn.h>
@@ -9,8 +10,39 @@
 #include <thread>
 #include <vector>
 
+static void checkLazyLibraries() {
+    using namespace abi_bridge;
+    char path[] = "/tmp/abibridge-lazy-cxx-XXXXXX";
+    int fd = mkstemp(path);
+    assert(fd >= 0);
+    close(fd);
+    auto* bytes = ABITestLazyCreate(1, 0);
+    assert(bytes && ABITestLazyWrite(path, bytes));
+    free(bytes);
+    std::optional<lazy_library_description> copied;
+    {
+        auto snapshot = lazy_library_snapshot::read_file(path);
+        unlink(path);
+        auto shared = snapshot;
+        auto moved = std::move(shared);
+        assert(!shared && moved.size() == 3);
+        copied = moved.at(0);
+        assert(moved.at(1).symbols->empty());
+        assert(!moved.at(2).path && !moved.at(2).symbols);
+        try { (void)moved.at(3); assert(false); } catch (const std::out_of_range&) {}
+    }
+    assert(copied->path == "@rpath/Example.dylib" && copied->is_optional == true);
+    assert(!copied->is_initialized);
+    assert(copied->symbols->at(0).name == "Example::Renderer::refresh()");
+    try { (void)lazy_library_snapshot::capture(UINT64_MAX); assert(false); }
+    catch (const resolution_error& error) { assert(error.code() == ABIFailureImageChanged); }
+    try { (void)lazy_library_snapshot::read_file(std::string("bad\0path", 8)); assert(false); }
+    catch (const resolution_error& error) { assert(error.code() == ABIFailureInvalidRequest); }
+}
+
 int main(int argc, char **argv) {
     assert(argc == 2);
+    checkLazyLibraries();
     checkPublicNativeInvocation(argv[1]);
     checkMemoryReads();
     checkPointerSearch();
