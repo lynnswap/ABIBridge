@@ -10,7 +10,12 @@ let package = Package(
     ],
     dependencies: [.package(name: "ABIBridge", path: "../..")],
     targets: [
-        .target(name: "ABIBridgeLoadingFixture"),
+        .target(
+            name: "ABIBridgeLoadingFixture",
+            // This fixture tests loading and constructor execution, not coverage.
+            // Xcode instruments C-only dynamic products without linking the profile runtime.
+            cSettings: [.unsafeFlags(["-fno-profile-instr-generate", "-fno-coverage-mapping"])]
+        ),
         .target(name: "ArchitectureFixtures", dependencies: [.product(name: "ABIBridge", package: "ABIBridge")]),
         .target(name: "ArchitectureValidation", dependencies: ["ArchitectureFixtures", .product(name: "ABIBridge", package: "ABIBridge")]),
         .executableTarget(name: "ArchitectureProbe", dependencies: ["ArchitectureValidation"]),
