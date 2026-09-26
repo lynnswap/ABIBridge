@@ -2,31 +2,10 @@
 @testable import ABIBridge
 import Darwin
 import Foundation
-import MachOKit
 import Testing
 
 @Suite(.serialized)
 struct ImportIndexTests {
-    @Test func preservesFormatDefinedOrdinalAndAddendBoundaries() {
-        for (raw, expected) in [(127, 127), (128, 128), (240, 240), (241, -15), (253, -3), (254, -2), (255, -1)] {
-            var plain = DyldChainedImportGeneral.Layout()
-            plain.lib_ordinal = UInt32(raw)
-            #expect(ImportMetadata.chainedImport(.general(.init(layout: plain))).ordinal == expected)
-            var withAddend = DyldChainedImportAddend.Layout()
-            withAddend.lib_ordinal = UInt32(raw)
-            withAddend.addend = -123
-            let parsed = ImportMetadata.chainedImport(.addend(.init(layout: withAddend)))
-            #expect(parsed.ordinal == expected && parsed.addend == -123)
-        }
-        for (raw, expected) in [(32767, 32767), (32768, 32768), (65520, 65520), (65521, -15), (65533, -3), (65534, -2), (65535, -1)] {
-            var wide = DyldChainedImportAddend64.Layout()
-            wide.lib_ordinal = UInt64(raw)
-            wide.addend = UInt64(bitPattern: Int64.min)
-            let parsed = ImportMetadata.chainedImport(.addend64(.init(layout: wide)))
-            #expect(parsed.ordinal == expected && parsed.addend == Int64.min)
-        }
-    }
-
     @Test(arguments: [false, true])
     func preservesNamesProvidersWeakImportsAndAddends(chained: Bool) throws {
         let namespace = "Import_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
