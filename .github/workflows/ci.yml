@@ -71,6 +71,15 @@ jobs:
           -only-testing:ABIBridgeTests/NativeRuntimeTests
       - name: Test native consumers
         run: bash scripts/test-native-consumer.sh
+      - name: Test architecture fixtures on macOS
+        working-directory: Tests/ArchitectureValidation
+        run: >-
+          xcodebuild test
+          -scheme ArchitectureValidation-Package
+          -destination 'platform=macOS,arch=arm64'
+          -derivedDataPath "$RUNNER_TEMP/ArchitectureValidation"
+      - name: Check arm64 and arm64e code generation
+        run: python3 scripts/check-architecture-codegen.py
 
   platform-builds:
     name: Build (${{ matrix.platform }})

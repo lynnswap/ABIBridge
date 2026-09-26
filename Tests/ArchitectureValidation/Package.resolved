@@ -1,0 +1,87 @@
+{
+  "originHash" : "8df0e74d261940dfbc7a653cff073cbc6831c1aebc1a37635c17fdf13255dd63",
+  "pins" : [
+    {
+      "identity" : "machokit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/p-x9/MachOKit.git",
+      "state" : {
+        "revision" : "ff82e37c37b17e3508e150f8a03adae8a6cc4a3e",
+        "version" : "0.53.0"
+      }
+    },
+    {
+      "identity" : "objectarchivekit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/p-x9/ObjectArchiveKit.git",
+      "state" : {
+        "revision" : "96d782a576273b73b277b577943a2a25b00b919e",
+        "version" : "0.5.0"
+      }
+    },
+    {
+      "identity" : "swift-asn1",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-asn1.git",
+      "state" : {
+        "revision" : "3b6410f7dee09eb33cdd26260c5fd47fda19b0e2",
+        "version" : "1.7.3"
+      }
+    },
+    {
+      "identity" : "swift-binary-parse-support",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/p-x9/swift-binary-parse-support.git",
+      "state" : {
+        "revision" : "5fb96b503672ea4752eded6b4e301fd87214b03b",
+        "version" : "0.2.1"
+      }
+    },
+    {
+      "identity" : "swift-crypto",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-crypto.git",
+      "state" : {
+        "revision" : "95ba0316a9b733e92bb6b071255ff46263bbe7dc",
+        "version" : "3.15.1"
+      }
+    },
+    {
+      "identity" : "swift-fileio",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/p-x9/swift-fileio.git",
+      "state" : {
+        "revision" : "13a83389fb4844f279b43012c4b8d7a3f95773bf",
+        "version" : "0.15.1"
+      }
+    },
+    {
+      "identity" : "swift-fileio-extra",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/p-x9/swift-fileio-extra.git",
+      "state" : {
+        "revision" : "eccf765a9d90b82db55cacd260490d2fcae000fb",
+        "version" : "0.3.0"
+      }
+    },
+    {
+      "identity" : "swift-objc-dump",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/p-x9/swift-objc-dump.git",
+      "state" : {
+        "revision" : "bc906fbfb9bf6e39ea4338288049b2372291e11b",
+        "version" : "0.9.0"
+      }
+    },
+    {
+      "identity" : "zdlibffi",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/faimin/ZDLibffi.git",
+      "state" : {
+        "revision" : "835d4297f3a58b5cab1920794b2e20c07018a992",
+        "version" : "0.380.0"
+      }
+    }
+  ],
+  "version" : 3
+}

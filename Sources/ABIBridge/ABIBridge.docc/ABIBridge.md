@@ -102,6 +102,7 @@ print(symbol.image.path)
 
 ### Describing call contracts
 
+- <doc:Architectures>
 - ``NativeCallPlan``
 - ``NativeOwnership``
 
