@@ -1,6 +1,7 @@
 #if os(macOS)
 import ABIBridge
 import ABIBridgeCore
+import CoreGraphics
 import Darwin
 import Foundation
 import Synchronization
@@ -205,7 +206,117 @@ struct ImportedFunctionHookTests {
             #expect(error.registration.slots[failed].mutation.systemErrorCode == KERN_PROTECTION_FAILURE)
             let retry=try await unsafe runtime.hookImportedFunction(fixture.declaration,as:((Int32,Int32)->Int32).self,
                 in:.path(paths[0]),onFailure:{ Issue.record($0) }) { next,a,b in try next.proceed(a,b)+1 }
-            #expect(retry.slots.allSatisfy { $0.status == .active }); retry.invalidate()
+            #expect(retry.slots.allSatisfy { $0.status == .active })
+            do {
+                _=try await unsafe runtime.hookImportedFunction(fixture.declaration,as:((Int32,Int32)->Int32).self,
+                    in:.framework(named:framework),onFailure:{ Issue.record($0) }) { next,a,b in try next.proceed(a,b)+2 }
+                Issue.record("The same protected slot should still reject publication")
+            } catch is NativeImportedHookInstallationError {}
+            let call=try await runtime.cFunction(named:"ABIHookCall",as:((Int32,Int32)->Int32).self,in:.path(paths[0]))
+            #expect(retry.slots.allSatisfy { $0.status == .active })
+            #expect(try unsafe call.unsafeInvoke(20,21)==42)
+            retry.invalidate()
+        }
+    }
+
+    @Test func preservesNarrowAndAggregateResults() async throws {
+        let provider=try FixtureLibrary(cxxSource:"""
+        struct Size { double width, height; };
+        extern "C" signed char ABIImportedNarrow(signed char value) { return value; }
+        extern "C" Size ABIImportedSize(Size value) { return {value.width+1,value.height+2}; }
+        """)
+        defer { provider.cleanup() }
+        let consumer=try FixtureLibrary(cxxSource:"""
+        struct Size { double width, height; };
+        extern "C" signed char ABIImportedNarrow(signed char);
+        extern "C" Size ABIImportedSize(Size);
+        signed char (*narrowSlot)(signed char)=ABIImportedNarrow;
+        Size (*sizeSlot)(Size)=ABIImportedSize;
+        extern "C" signed char ABIImportedNarrowCall(signed char value) { return narrowSlot(value); }
+        extern "C" Size ABIImportedSizeCall(Size value) { return sizeSlot(value); }
+        """,linkArguments:[provider.libraryURL.path])
+        defer { consumer.cleanup() }
+        let runtime=ABIRuntime(), scope=ImageSelector.path(consumer.libraryURL)
+        let narrow=try await unsafe runtime.hookImportedFunction(.init(name:"ABIImportedNarrow",language:.c),as:((Int8)->Int8).self,
+            in:scope,onFailure:{ Issue.record($0) }) { call,value in try call.proceed(value)-1 }
+        let size=try await unsafe runtime.hookImportedFunction(.init(name:"ABIImportedSize",language:.c),as:((CGSize)->CGSize).self,
+            in:scope,onFailure:{ Issue.record($0) }) { call,value in
+                let next=try call.proceed(value); return CGSize(width:next.width+1,height:next.height+1)
+            }
+        let narrowCall=try await runtime.cFunction(named:"ABIImportedNarrowCall",as:((Int8)->Int8).self,in:scope)
+        let sizeCall=try await runtime.cFunction(named:"ABIImportedSizeCall",as:((CGSize)->CGSize).self,in:scope)
+        #expect(try unsafe narrowCall.unsafeInvoke(-41) == -42)
+        #expect(try unsafe sizeCall.unsafeInvoke(CGSize(width:40,height:39)) == CGSize(width:42,height:42))
+        narrow.invalidate(); size.invalidate()
+    }
+
+    @Test func lazyImportsDoNotExecuteDuringRegistrationAndWorkAfterNormalBinding() async throws {
+        let namespace="LazyHook_"+UUID().uuidString.replacingOccurrences(of:"-",with:"_")
+        let provider=try FixtureLibrary(cxxSource:"""
+        namespace \(namespace) { int calls=0; int value(int x) { ++calls; return x; } }
+        extern "C" int ABILazyHookCount() { return \(namespace)::calls; }
+        """)
+        defer { provider.cleanup() }
+        let consumer=try FixtureLibrary(load:false,cxxSource:"""
+        namespace \(namespace) { int value(int); }
+        extern "C" int ABILazyHookCall(int value) { return \(namespace)::value(value); }
+        """,linkArguments:[provider.libraryURL.path,"-Wl,-no_fixup_chains"])
+        defer { consumer.cleanup() }
+        let handle=try #require(dlopen(consumer.libraryURL.path,RTLD_LAZY|RTLD_LOCAL)); defer { dlclose(handle) }
+        let runtime=ABIRuntime(), scope=ImageSelector.path(consumer.libraryURL)
+        let query=NativeDeclaration(name:"\(namespace)::value(int)",language:.cxx)
+        do {
+            let first=try await unsafe runtime.hookImportedFunction(query,as:((Int32)->Int32).self,in:scope,
+                onFailure:{ Issue.record($0) }) { call,value in try call.proceed(value)+1 }
+            first.invalidate() // A dyld that eagerly resolved the slot is also valid.
+        } catch ABIResolutionError.unsupportedDeclaration(let reason) { #expect(reason.contains("lazy-bound")) }
+        let count=try await runtime.cFunction(named:"ABILazyHookCount",as:(()->Int32).self,in:.path(provider.libraryURL))
+        #expect(try unsafe count.unsafeInvoke()==0)
+        let call=try await runtime.cFunction(named:"ABILazyHookCall",as:((Int32)->Int32).self,in:scope)
+        #expect(try unsafe call.unsafeInvoke(42)==42)
+        let hook=try await unsafe runtime.hookImportedFunction(query,as:((Int32)->Int32).self,in:scope,
+            onFailure:{ Issue.record($0) }) { next,value in try next.proceed(value)+1 }
+        #expect(try unsafe call.unsafeInvoke(41)==42)
+        #expect(try unsafe count.unsafeInvoke()==2)
+        hook.invalidate()
+    }
+
+    @Test func callbackCanInvalidateItselfAndReenterTheImportedCall() async throws {
+        let fixture=try ImportHookFixture(); defer { fixture.cleanup() }
+        let runtime=ABIRuntime(), call=try await fixture.call(ABIRuntime())
+        let owner=Mutex<NativeImportedFunctionHook?>(nil)
+        let hook=try await unsafe runtime.hookImportedFunction(fixture.declaration,as:((Int32,Int32)->Int32).self,
+            in:fixture.scope,onFailure:{ Issue.record($0) }) { next,a,b in
+                owner.withLock { $0 }?.invalidate()
+                #expect(try unsafe call.unsafeInvoke(0,42)==42)
+                return try next.proceed(a,b)+1
+            }
+        owner.withLock { $0=hook }
+        #expect(try unsafe call.unsafeInvoke(20,21)==42)
+        #expect(hook.slots[0].status == .invalidated)
+        #expect(try unsafe call.unsafeInvoke(20,22)==42)
+        owner.withLock { $0=nil }
+    }
+
+    @Test func concurrentRuntimesShareOneSlotAndIndependentRegistrations() async throws {
+        let fixture=try ImportHookFixture(); defer { fixture.cleanup() }
+        let declaration=fixture.declaration, scope=fixture.scope
+        let hooks=try await withThrowingTaskGroup(of:NativeImportedFunctionHook.self) { group in
+            for _ in 0..<8 {
+                group.addTask {
+                    try await unsafe ABIRuntime().hookImportedFunction(declaration,as:((Int32,Int32)->Int32).self,
+                        in:scope,onFailure:{ Issue.record($0) }) { next,a,b in try next.proceed(a,b)+1 }
+                }
+            }
+            var hooks:[NativeImportedFunctionHook]=[]
+            for try await hook in group { hooks.append(hook) }
+            return hooks
+        }
+        let call=try await fixture.call(ABIRuntime())
+        #expect(try unsafe call.unsafeInvoke(20,14)==42)
+        for (index,hook) in hooks.enumerated() {
+            hook.invalidate()
+            #expect(try unsafe call.unsafeInvoke(20,Int32(15+index))==42)
         }
     }
 }
