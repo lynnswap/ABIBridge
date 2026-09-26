@@ -52,7 +52,7 @@ Entry prepare(SEL selector, State& state) {
                 result += 1;
                 state.valid &= ABISetObjCReplacementResult(call, &result, nullptr);
             }
-        }, &state, [](void *context) { ++static_cast<State *>(context)->destroyed; }, &error);
+        }, &state, [](void *context) { ++static_cast<State *>(context)->destroyed; }, nil, &error);
     ABIReleaseCallInterface(interface);
     ABIReleaseValueType(pointer);
     ABIReleaseValueType(integer);

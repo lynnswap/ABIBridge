@@ -1,4 +1,4 @@
-@testable import ABIBridge
+import ABIBridge
 import Foundation
 import CoreGraphics
 import ObjectiveC
@@ -14,6 +14,14 @@ private final class ReplacementBox<Value>: @unchecked Sendable {
 }
 private enum ReplacementFailure: Error { case deliberate }
 private final class ReplacementCapture: @unchecked Sendable {}
+private final class ReplacementCodeOwner {
+    let implementation: IMP
+    init() {
+        let body: @convention(block) (AnyObject, Int32, Int32) -> Int32 = { _, a, b in a + b + 100 }
+        implementation = imp_implementationWithBlock(body)
+    }
+    deinit { imp_removeBlock(implementation) }
+}
 private final class RequiredReplacementObject: NSObject {}
 
 // Only this isolated fixture class is modified, and each test restores the
@@ -242,6 +250,25 @@ struct ObjectiveCReplacementTests {
         #expect(observed == nil)
     }
 
+    @Test func generatedFallbackCodeHasAnIndependentOwner() throws {
+        var owner: ReplacementCodeOwner? = ReplacementCodeOwner()
+        weak var observed = owner
+        let selector = NSSelectorFromString("add:to:")
+        let method = try #require(class_getInstanceMethod(ABIReplacementFixture.self, selector))
+        let previous = method_setImplementation(method, try #require(owner).implementation)
+        defer { method_setImplementation(method, previous) }
+        var entry: ObjCReplacement<Int32, Int32, Int32>? = try ObjCReplacement(on: ABIReplacementFixture.self,
+            selector: "add:to:", as: ((Int32, Int32) -> Int32).self, retaining: owner,
+            onFailure: { Issue.record($0) }) { call, a, b in try call.proceed(a, b) + 1 }
+        let cached = try #require(entry).publishImplementation()
+        method_setImplementation(method, previous)
+        owner = nil
+        #expect(ABIReplacementCallAdd(cached, ABIReplacementFixture(), 20, 21) == 142)
+        entry = nil
+        #expect(observed != nil)
+        #expect(ABIReplacementCallAdd(cached, ABIReplacementFixture(), 20, 22) == 142)
+    }
+
     @Test func inFlightCallbacksKeepCapturesAndRejectCrossThreadContinuation() throws {
         let started = DispatchSemaphore(value: 0)
         let resume = DispatchSemaphore(value: 0)
@@ -394,5 +421,27 @@ struct ObjectiveCReplacementTests {
             for index in 0..<count { _ = receiver.add(Int32(index), to: 1) }
             print("ObjC replacement \(count) calls: direct=\(direct), callback=\(callback), inactive=\(bypassStart.duration(to: clock.now))")
         }
+        let size = CGSize(width: 3, height: 5)
+        let sizeStart = clock.now
+        for _ in 0..<count { _ = receiver.resize(size) }
+        let sizeDirect = sizeStart.duration(to: clock.now)
+        let sizeEntry = try ObjCReplacement(on: ABIReplacementFixture.self, selector: "resize:",
+            as: ((CGSize) -> CGSize).self, onFailure: { Issue.record($0) }) { call, value in try call.proceed(value) }
+        try withReplacement(sizeEntry, selector: "resize:") {
+            let start = clock.now
+            for _ in 0..<count { _ = receiver.resize(size) }
+            print("ObjC replacement CGSize \(count) calls: direct=\(sizeDirect), callback=\(start.duration(to: clock.now))")
+        }
+        let objectStart = clock.now
+        autoreleasepool { for _ in 0..<count { _ = receiver.object() } }
+        let objectDirect = objectStart.duration(to: clock.now)
+        let objectEntry = try ObjCReplacement(on: ABIReplacementFixture.self, selector: "object",
+            as: (() -> NSObject).self, onFailure: { Issue.record($0) }) { call in try call.proceed() }
+        try withReplacement(objectEntry, selector: "object") {
+            let start = clock.now
+            autoreleasepool { for _ in 0..<count { _ = receiver.object() } }
+            print("ObjC replacement object \(count) calls: direct=\(objectDirect), callback=\(start.duration(to: clock.now))")
+        }
+        #expect(receiver.liveResults == 0)
     }
 }

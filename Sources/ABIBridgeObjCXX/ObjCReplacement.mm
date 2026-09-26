@@ -23,6 +23,7 @@ struct ABIObjCReplacement {
     ABIObjCInvocation *binding;
     ABICallInterface *interface;
     ABICallClosure *closure = nullptr;
+    CFTypeRef fallbackOwner;
     std::mutex mutex;
     std::shared_ptr<Callback> callback;
     bool published = false;
@@ -31,8 +32,8 @@ struct ABIObjCReplacement {
     bool consumed;
     size_t resultSize;
 
-    ABIObjCReplacement(ABIObjCInvocation *binding, ABICallInterface *interface)
-        : binding(binding), interface(interface),
+    ABIObjCReplacement(ABIObjCInvocation *binding, ABICallInterface *interface, id owner)
+        : binding(binding), interface(interface), fallbackOwner(CFBridgingRetain(owner)),
           retained(ABIObjCInvocationReturnsRetained(binding)),
           consumed(ABIObjCInvocationConsumesReceiver(binding)),
           resultSize(ABIObjCInvocationResultSize(binding)) {
@@ -45,6 +46,7 @@ struct ABIObjCReplacement {
     ~ABIObjCReplacement() {
         ABIReleaseCallClosure(closure);
         ABIReleaseCallInterface(interface);
+        if (fallbackOwner) CFRelease(fallbackOwner);
         ABIReleaseObjCInvocation(binding);
     }
 };
@@ -72,13 +74,13 @@ struct ABIObjCReplacementCall {
 
 ABIObjCReplacement *ABICreateObjCReplacement(ABIObjCInvocation *binding,
     ABICallInterface *interface, ABIObjCReplacementHandler handler, void *context,
-    ABIObjCReplacementDestroy destroy, NSError **error) {
+    ABIObjCReplacementDestroy destroy, id fallbackOwner, NSError **error) {
     if (error) *error = nil;
     if (!binding || !interface || !handler || !destroy || !ABIObjCInvocationImplementation(binding)) {
         fail(error, @"A captured implementation, prepared interface, and callback owner are required.");
         return nullptr;
     }
-    auto entry = std::make_unique<ABIObjCReplacement>(binding, interface);
+    auto entry = std::make_unique<ABIObjCReplacement>(binding, interface, fallbackOwner);
     ABIResolutionFailure *failure = nullptr;
     entry->closure = ABICreateCallClosure(interface,
         [](void *context, void *output, void *const *arguments) {

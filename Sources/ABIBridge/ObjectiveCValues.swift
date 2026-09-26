@@ -118,18 +118,30 @@ struct ObjCValueCodec<Value> {
     }
 
     func decode(_ storage: NativeValueStorage) throws -> Value {
+        try decode(storage.address, takingObjectReference: true)
+    }
+
+    // Callback arguments remain borrowed for the invocation. Decode directly
+    // without allocating a temporary value buffer for every argument.
+    func decodeBorrowed(_ address: UnsafeRawPointer) throws -> Value {
+        try decode(address, takingObjectReference: false)
+    }
+
+    private func decode(_ address: UnsafeRawPointer, takingObjectReference: Bool) throws -> Value {
         switch kind {
         case .void: return () as! Value
-        case .boolean: return (storage.address.load(as: UInt8.self) != 0) as! Value
-        case .bytes: return storage.address.load(as: Value.self)
+        case .boolean: return (address.load(as: UInt8.self) != 0) as! Value
+        case .bytes: return address.load(as: Value.self)
         case .block:
-            guard let pointer = storage.address.load(as: UnsafeRawPointer?.self) else { return try nilResult() }
-            let object = Unmanaged<AnyObject>.fromOpaque(pointer).takeRetainedValue()
+            guard let pointer = address.load(as: UnsafeRawPointer?.self) else { return try nilResult() }
+            let reference = Unmanaged<AnyObject>.fromOpaque(pointer)
+            let object = takingObjectReference ? reference.takeRetainedValue() : reference.takeUnretainedValue()
             let copy: AnyObject? = try Self.copyBlock(object)
             return unsafeBitCast(copy, to: Value.self)
         case .object, .classObject:
-            guard let pointer = storage.address.load(as: UnsafeRawPointer?.self) else { return try nilResult() }
-            let object = Unmanaged<AnyObject>.fromOpaque(pointer).takeRetainedValue()
+            guard let pointer = address.load(as: UnsafeRawPointer?.self) else { return try nilResult() }
+            let reference = Unmanaged<AnyObject>.fromOpaque(pointer)
+            let object = takingObjectReference ? reference.takeRetainedValue() : reference.takeUnretainedValue()
             if kind == .classObject {
                 guard let type = object as? AnyClass else {
                     throw ABIInvocationError.incompatibleValue(
@@ -143,21 +155,9 @@ struct ObjCValueCodec<Value> {
             }
             return try convert(object)
         case .pointer:
-            guard let pointer = storage.address.load(as: UnsafeRawPointer?.self) else { return try nilResult() }
+            guard let pointer = address.load(as: UnsafeRawPointer?.self) else { return try nilResult() }
             return try convert(pointerType!.fromRawPointer(pointer))
         }
-    }
-
-    // Incoming Objective-C values are borrowed. The existing decoder consumes
-    // retainable results, so supply it with an independent +1 first.
-    func decodeBorrowed(_ address: UnsafeRawPointer) throws -> Value {
-        let storage = NativeValueStorage(size: size, alignment: alignment)
-        storage.address.copyMemory(from: address, byteCount: size)
-        if kind == .object || kind == .classObject || kind == .block,
-           let pointer = storage.address.load(as: UnsafeRawPointer?.self) {
-            _ = Unmanaged<AnyObject>.fromOpaque(pointer).retain()
-        }
-        return try decode(storage)
     }
 
     func encodeResult(_ value: Value) throws -> NativeValueStorage {

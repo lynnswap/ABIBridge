@@ -17,9 +17,12 @@ typedef void (*ABIObjCReplacementDestroy)(void *context);
 
 /// Retains binding/interface. Takes context ownership only on success. The
 /// prepared interface must exactly describe the binding, including self/_cmd.
+/// Fallback owner keeps generated original code/classes valid independently of
+/// callback invalidation. Without one, their lifetime remains the caller's duty.
 ABIObjCReplacement * _Nullable ABICreateObjCReplacement(
     ABIObjCInvocation *binding, ABICallInterface *interface,
     ABIObjCReplacementHandler handler, void *context, ABIObjCReplacementDestroy destroy,
+    id _Nullable fallbackOwner,
     NSError * _Nullable * _Nullable error);
 /// Publishing makes entry code and fallback owners process-lived. Releasing
 /// the owner disables its callback, but cached IMPs remain valid pass-throughs.

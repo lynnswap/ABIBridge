@@ -3,7 +3,7 @@ import ABIBridgeObjCXX
 import Darwin
 import Foundation
 
-enum ObjCReplacementError: Error, Equatable {
+package enum ObjCReplacementError: Error, Equatable {
     case expiredInvocation
     case wrongThread
     case unavailableReceiver
@@ -41,11 +41,11 @@ private final class ObjCReplacementFrame {
     }
 }
 
-struct ObjCReplacementInvocation<Result, each Argument> {
+package struct ObjCReplacementInvocation<Result, each Argument> {
     fileprivate let frame: ObjCReplacementFrame
     fileprivate let signature: ObjCMethodSignature<Result, repeat each Argument>
 
-    var receiver: AnyObject {
+    package var receiver: AnyObject {
         get throws {
             try frame.withCall {
                 guard let receiver = ABIObjCReplacementReceiver($0) else {
@@ -56,7 +56,7 @@ struct ObjCReplacementInvocation<Result, each Argument> {
         }
     }
 
-    func proceed(_ values: repeat each Argument) throws -> Result {
+    package func proceed(_ values: repeat each Argument) throws -> Result {
         try frame.withCall { call in
             try signature.invoke(repeat each values, using: { arguments, output in
                 var error: NSError?
@@ -88,16 +88,22 @@ private struct ObjCReplacementIsolatedArguments<Result, each Argument>: @uncheck
 /// Internal executable-entry owner. It does not install or restore a method.
 /// Published entry code remains callable after invalidation; callback captures
 /// can be released independently once in-flight snapshots have finished.
-final class ObjCReplacement<Result, each Argument> {
+package final class ObjCReplacement<Result, each Argument> {
     private let handle: OpaquePointer
 
-    init(on type: AnyClass, selector: String,
+    package init(on type: AnyClass, selector: String,
          as: ((repeat each Argument) -> Result).Type,
          classMethod: Bool = false, options: NativeMethodOptions = .init(),
+         requiresMainThread: Bool = false,
+         retaining owner: Any? = nil,
          onFailure: @escaping @Sendable (any Error) -> Void,
          body: @escaping @Sendable (ObjCReplacementInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result) throws {
-        handle = try Self.prepare(type, selector, classMethod, options, initializer: false) { signature in
+        handle = try Self.prepare(type, selector, classMethod, options, initializer: false, retaining: owner) { signature in
             ObjCReplacementCallback { pointer in
+                guard !requiresMainThread || Thread.isMainThread else {
+                    onFailure(ObjCReplacementError.wrongThread)
+                    return
+                }
                 let frame = ObjCReplacementFrame(pointer)
                 defer { frame.expire() }
                 do {
@@ -115,13 +121,13 @@ final class ObjCReplacement<Result, each Argument> {
         }
     }
 
-    @MainActor convenience init(mainActorOn type: AnyClass, selector: String,
+    @MainActor package convenience init(mainActorOn type: AnyClass, selector: String,
          as signature: ((repeat each Argument) -> Result).Type,
+         retaining owner: Any? = nil,
          onFailure: @escaping @Sendable (any Error) -> Void,
          body: @escaping @MainActor @Sendable (ObjCReplacementInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result) throws {
-        try self.init(on: type, selector: selector, as: signature, onFailure: onFailure) {
+        try self.init(on: type, selector: selector, as: signature, requiresMainThread: true, retaining: owner, onFailure: onFailure) {
             (call: ObjCReplacementInvocation<Result, repeat each Argument>, values: repeat each Argument) in
-            guard Thread.isMainThread else { throw ObjCReplacementError.wrongThread }
             let input = ObjCReplacementIsolatedArguments(call: call, values: (repeat each values))
             return try MainActor.assumeIsolated {
                 ObjCReplacementIsolatedResult(value: try body(input.call, repeat each input.values))
@@ -129,12 +135,13 @@ final class ObjCReplacement<Result, each Argument> {
         }
     }
 
-    init(initializerOn type: AnyClass, selector: String,
+    package init(initializerOn type: AnyClass, selector: String,
          as: ((repeat each Argument) -> Result).Type,
+         retaining owner: Any? = nil,
          onFailure: @escaping @Sendable (any Error) -> Void,
          before: @escaping @Sendable (repeat each Argument) throws -> Void,
          after: @escaping @Sendable (Result) throws -> Void) throws {
-        handle = try Self.prepare(type, selector, false, .init(), initializer: true) { signature in
+        handle = try Self.prepare(type, selector, false, .init(), initializer: true, retaining: owner) { signature in
             ObjCReplacementCallback { pointer in
                 do {
                     let values = try Self.decodeArguments(signature, pointer)
@@ -164,7 +171,7 @@ final class ObjCReplacement<Result, each Argument> {
     }
 
     private static func prepare(_ type: AnyClass, _ selector: String, _ classMethod: Bool,
-        _ options: NativeMethodOptions, initializer: Bool,
+        _ options: NativeMethodOptions, initializer: Bool, retaining owner: Any?,
         callback: (ObjCMethodSignature<Result, repeat each Argument>) -> ObjCReplacementCallback) throws -> OpaquePointer {
         var error: NSError?
         guard let binding = ABICopyObjCImplementation(type, NSSelectorFromString(selector), classMethod,
@@ -187,14 +194,14 @@ final class ObjCReplacement<Result, each Argument> {
             Unmanaged<ObjCReplacementCallback>.fromOpaque(context).takeUnretainedValue().body(call)
         }, context.toOpaque(), { context in
             Unmanaged<ObjCReplacementCallback>.fromOpaque(context).release()
-        }, &error) else {
+        }, owner.map { $0 as AnyObject }, &error) else {
             context.release()
             throw error ?? ABIResolutionError.invalidAddress as NSError
         }
         return entry
     }
 
-    func publishImplementation() -> IMP { ABIPublishObjCReplacement(handle) }
-    func invalidate() { ABIInvalidateObjCReplacement(handle) }
+    package func publishImplementation() -> IMP { ABIPublishObjCReplacement(handle) }
+    package func invalidate() { ABIInvalidateObjCReplacement(handle) }
     deinit { ABIReleaseObjCReplacement(handle) }
 }

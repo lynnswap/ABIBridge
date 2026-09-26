@@ -165,7 +165,15 @@ ABICallClosure *ABICreateCallClosure(ABICallInterface *interface,
 }
 
 ABIUnmanagedFunction ABICallClosureFunction(const ABICallClosure *closure) {
-    return ABIUnsafeFunctionAtAddress(closure->code);
+    void *code = closure->code;
+#if __has_feature(ptrauth_calls)
+    // libffi's Apple trampoline allocator already signs this pointer with
+    // function key / discriminator zero. Signing it as a raw address corrupts
+    // it before the Objective-C runtime authenticates the installed IMP.
+    code = ptrauth_auth_and_resign(code, ptrauth_key_function_pointer, 0,
+        ptrauth_key_function_pointer, ptrauth_function_pointer_type_discriminator(void(void)));
+#endif
+    return reinterpret_cast<ABIUnmanagedFunction>(code);
 }
 void ABIReleaseCallClosure(ABICallClosure *closure) { delete closure; }
 
