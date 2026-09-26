@@ -33,6 +33,19 @@ const char *ABIValidateNativeCalls(void);
 const char *ABIValidateObjCReplacement(void);
 const char *ABIValidateNativeObjCHooks(void);
 const char *ABIValidateCoordinatedObjCHooks(void);
+/// Fixture-only probes; valid slot addresses and schemas come from its own image.
+const void *ABIImportProbeImage(void);
+int32_t ABIImportProbeCall(void);
+typedef struct {
+    bool changed;
+    int32_t protectionResult;
+    int32_t protectionBefore, protectionAfter;
+    int32_t maximumBefore, maximumAfter;
+    uint32_t regionFlags;
+} ABIImportProbeResult;
+const char *ABIValidateImportSlot(void *slot, int32_t key, uintptr_t extra, bool diverse,
+    ABIImportProbeResult *result);
+const char *ABIValidateReadOnlySignedSlot(ABIImportProbeResult *result);
 /// Positive control using the same signing schema and call path as tamper mode.
 bool ABIValidateAuthenticatedFunction(void);
 /// Returns false if a signed-bit mutation could not be formed. A successful

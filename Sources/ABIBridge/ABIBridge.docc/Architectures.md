@@ -26,6 +26,12 @@ These fixtures cover specific ABI contracts. They do not establish compatibility
 
 The tagged-allocation fixture records the allocation's top byte and original pointer bits. It does not test use-after-free protection or out-of-bounds enforcement. Passing it on a device without an observed tag supplies no evidence about tagged memory.
 
+## Imported-function replacement evidence
+
+The experimental `import-replacement` fixture distinguishes symbol discovery from writable call-site storage. On M5 Pro / macOS 26.6.2, the normal chained `getppid` import was in a TPRO-protected page. The kernel rejected adding write permission with `KERN_PROTECTION_FAILURE`; the original pointer, native behavior and current/maximum page protections remained unchanged. A legacy-binding build of the same fixture allowed replacement, captured-predecessor invocation and restoration. An allocated read-only control page also allowed mutation and restoration.
+
+These are bounded fixture results, not a public rebinding capability. A maximum protection containing WRITE does not establish that the kernel permits a change, and an arm64 run does not validate pointer authentication. The [import-rebinding workstream](https://github.com/lynnswap/ABIBridge/issues/121) tracks supported mutation paths and concrete failure reporting separately from name resolution. Disabling process security is not a prerequisite for symbol inspection or existing invocation APIs.
+
 ## arm64e.x1 remains unverified at runtime
 
 The compiler fixture and Swift trampoline produce these raw Mach-O headers with Xcode 27.0:
