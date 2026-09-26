@@ -266,6 +266,36 @@ struct ObjectiveCMethodHookTests {
         #expect(count.read() == 800)
     }
 
+    @Test func concurrentFirstRegistrationsShareOneEntry() throws {
+        for _ in 0..<16 {
+            let name = "ABIConcurrentHook_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+            let type = try #require(objc_allocateClassPair(ABIManagedHookFixture.self, name, 0))
+            objc_registerClassPair(type)
+            // Published entries require their runtime class for process lifetime.
+            let target = HookBox<AnyClass>(type)
+            let tokens = HookBox<[NativeObjCMethodHook]>([])
+            DispatchQueue.concurrentPerform(iterations: 8) { _ in
+                do {
+                    let token = try unsafe ABIRuntime.shared.hookMethod(on: target.read(), selector: "add:to:",
+                        as: ((Int32, Int32) -> Int32).self, onFailure: { Issue.record($0) }) { call, a, b in try call.proceed(a, b) + 1 }
+                    tokens.update { $0.append(token) }
+                } catch { Issue.record(error) }
+            }
+            defer { for token in tokens.read() { token.invalidate() } }
+            #expect(tokens.read().count == 8)
+            let fixture = try #require(type as? ABIManagedHookFixture.Type).init()
+            #expect(fixture.add(20, to: 22) == 50)
+            let method = try #require(class_getInstanceMethod(type, NSSelectorFromString("add:to:")))
+            let implementation = method_getImplementation(method)
+            for token in tokens.read() { token.invalidate() }
+            #expect(fixture.add(20, to: 22) == 42)
+            let again = try unsafe runtime.hookMethod(on: type, selector: "add:to:",
+                as: ((Int32, Int32) -> Int32).self, onFailure: { Issue.record($0) }) { call, a, b in try call.proceed(a, b) }
+            again.invalidate()
+            #expect(method_getImplementation(method) == implementation)
+        }
+    }
+
     @MainActor @Test func mainActorMethodAndWeakObjectRoute() throws {
         let object = ABIManagedHookFixture()
         let calls = HookBox(0), errors = HookBox(0)

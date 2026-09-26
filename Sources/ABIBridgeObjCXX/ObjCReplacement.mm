@@ -366,10 +366,12 @@ ABIObjCMethodHook *ABICreateObjCMethodHook(Class type, SEL selector, BOOL classM
     std::string encoding;
     if (!existing) {
         Method method = class_getInstanceMethod(target, selector);
-        if (!method || method_getImplementation(method) != ABIObjCInvocationImplementation(binding)) {
-            hookFail(error, 1, @"The method changed during hook preparation.");
+        if (!method) {
+            hookFail(error, 1, @"The method disappeared during hook preparation.");
             return nullptr;
         }
+        // A concurrent managed installer may already have published its entry.
+        // Decide ownership only after rechecking the registry under writer lock.
         encoding = method_getTypeEncoding(method);
         candidate = std::make_unique<HookEntry>(target, selector, contract);
         candidate->replacement = ABICreateObjCReplacement(binding, interface, dispatchEntry, candidate.get(),
