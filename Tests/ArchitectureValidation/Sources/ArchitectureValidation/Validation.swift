@@ -33,6 +33,17 @@ private final class ArchitectureObjCReceiver: NSObject {
     @objc func adding(_ value: Int32) -> Int32 { 40 + value }
 }
 
+private final class ArchitectureHookReceiver: NSObject {
+    @objc dynamic func adding(_ value: Int32) -> Int32 { 40 + value }
+}
+
+private final class ArchitectureHookErrors: @unchecked Sendable {
+    private let lock = NSLock()
+    private var errors: [String] = []
+    func append(_ error: any Error) { lock.lock(); defer { lock.unlock() }; errors.append(String(describing: error)) }
+    var isEmpty: Bool { lock.lock(); defer { lock.unlock() }; return errors.isEmpty }
+}
+
 @MainActor public func runArchitectureValidation(mode: String) async throws -> ArchitectureReport {
     var checks: [String] = []
     var tag: UInt64?
@@ -42,6 +53,21 @@ private final class ArchitectureObjCReceiver: NSObject {
     }
     let runtime = ABIRuntime()
     switch mode {
+    case "hooks":
+        let failures = ArchitectureHookErrors()
+        let receiver = ArchitectureHookReceiver()
+        let first = try unsafe runtime.hookMethod(on: ArchitectureHookReceiver.self, selector: "adding:",
+            as: ((Int32) -> Int32).self, onFailure: { failures.append($0) }) { call, value in try call.proceed(value) + 1 }
+        let second = try unsafe runtime.hookMethod(on: ArchitectureHookReceiver.self, selector: "adding:",
+            as: ((Int32) -> Int32).self, onFailure: { failures.append($0) }) { call, value in try call.proceed(value * 2) }
+        defer { first.invalidate(); second.invalidate() }
+        let saved = try runtime.objcImplementation(on: ArchitectureHookReceiver.self, selector: "adding:", as: ((Int32) -> Int32).self)
+        try check(receiver.adding(2) == 45, "Typed managed chain enters authenticated Objective-C dispatch")
+        second.invalidate()
+        try check(unsafe saved.unsafeInvoke(on: receiver, 2) == 43, "Saved implementation follows hook removal")
+        first.invalidate()
+        try check(unsafe saved.unsafeInvoke(on: receiver, 2) == 42, "Saved implementation remains callable after invalidation")
+        try check(failures.isEmpty, "Typed hook callbacks complete without conversion failures")
     case "replacement":
         if let error = ABIValidateObjCReplacement() {
             throw ArchitectureValidationFailure(description: String(cString: error))

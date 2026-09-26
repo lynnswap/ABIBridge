@@ -51,6 +51,13 @@ print(symbol.image.path)
 - ``NativeMethodOptions``
 - ``ABIInvocationError``
 
+### Hooking Objective-C methods
+
+- <doc:ObjectiveCMethodHooks>
+- ``NativeObjCMethodHook``
+- ``NativeObjCMethodInvocation``
+- ``NativeObjCMethodHookError``
+
 ### Calling C++ object methods
 
 - <doc:CXXObjectInvocation>

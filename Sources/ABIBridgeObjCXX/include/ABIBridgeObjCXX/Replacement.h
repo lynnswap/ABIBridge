@@ -48,6 +48,24 @@ BOOL ABICopyObjCReplacementResult(ABIObjCReplacementCall *call, void *result,
 BOOL ABISetObjCReplacementResult(ABIObjCReplacementCall *call, const void *result,
     NSError * _Nullable * _Nullable error);
 
+/// Internal managed ordinary-method hooks. Context ownership transfers on entry,
+/// including failure. Signature/ownership validation precedes method mutation.
+typedef struct ABIObjCMethodHook ABIObjCMethodHook;
+FOUNDATION_EXPORT NSString * const ABIObjCMethodHookErrorDomain;
+ABIObjCMethodHook * _Nullable ABICreateObjCMethodHook(
+    Class type, SEL selector, BOOL classMethod,
+    ABIObjCInvocation *binding, ABICallInterface *interface,
+    ABIObjCReplacementHandler handler, void *context, ABIObjCReplacementDestroy destroy,
+    id _Nullable object, id _Nullable fallbackOwner,
+    NSError * _Nullable * _Nullable error);
+/// Reports displacement even when a subsequent method lookup cannot capture
+/// the external implementation (for example, a forwarding trampoline).
+BOOL ABIObjCMethodHookIsDisplaced(Class type, SEL selector, BOOL classMethod);
+void ABIInvalidateObjCMethodHook(ABIObjCMethodHook *hook);
+void ABIReleaseObjCMethodHook(ABIObjCMethodHook *hook);
+/// 0 = invalidated, 1 = active, 2 = displaced by another runtime writer.
+int32_t ABIObjCMethodHookStatus(const ABIObjCMethodHook *hook);
+
 #ifdef __cplusplus
 }
 #endif
