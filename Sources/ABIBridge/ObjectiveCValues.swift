@@ -148,6 +148,23 @@ struct ObjCValueCodec<Value> {
         }
     }
 
+    // Incoming Objective-C values are borrowed. The existing decoder consumes
+    // retainable results, so supply it with an independent +1 first.
+    func decodeBorrowed(_ address: UnsafeRawPointer) throws -> Value {
+        let storage = NativeValueStorage(size: size, alignment: alignment)
+        storage.address.copyMemory(from: address, byteCount: size)
+        if kind == .object || kind == .classObject || kind == .block,
+           let pointer = storage.address.load(as: UnsafeRawPointer?.self) {
+            _ = Unmanaged<AnyObject>.fromOpaque(pointer).retain()
+        }
+        return try decode(storage)
+    }
+
+    func encodeResult(_ value: Value) throws -> NativeValueStorage {
+        if kind == .void { return NativeValueStorage(size: 0, alignment: alignment) }
+        return try encode(value)
+    }
+
     private func convert(_ value: Any) throws -> Value {
         if let optional = Value.self as? any NativeOptionalValue.Type {
             return try optional.wrapping(value) as! Value

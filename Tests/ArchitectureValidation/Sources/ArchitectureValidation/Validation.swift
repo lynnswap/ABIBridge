@@ -42,6 +42,11 @@ private final class ArchitectureObjCReceiver: NSObject {
     }
     let runtime = ABIRuntime()
     switch mode {
+    case "replacement":
+        if let error = ABIValidateObjCReplacement() {
+            throw ArchitectureValidationFailure(description: String(cString: error))
+        }
+        checks.append("Objective-C callback entry, signed cached IMP lifetime, and consuming initialization")
     case "native":
         if let error = ABIValidateNativeCalls() { throw ArchitectureValidationFailure(description: String(cString: error)) }
         checks.append("C/C++ typed calls, indirect results, bound ownership, and authenticated virtual dispatch")

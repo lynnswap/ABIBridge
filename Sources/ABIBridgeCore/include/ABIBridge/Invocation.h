@@ -9,6 +9,7 @@ extern "C" {
 #endif
 
 typedef struct ABICallInterface ABICallInterface;
+typedef struct ABICallClosure ABICallClosure;
 
 /// Scalar C representations. Signedness affects extension of narrow results.
 enum {
@@ -41,6 +42,19 @@ ABICallInterface *ABICreateCCallInterface(
     const ABIValueType *result, const ABIValueType *const *parameters,
     size_t count, ABIResolutionFailure **error);
 void ABIReleaseCallInterface(ABICallInterface *interface);
+void ABIRetainCallInterface(ABICallInterface *interface);
+
+/// Internal callback transport. Context and argument storage remain borrowed;
+/// the callback writes the interface's result representation. This does not
+/// manage Objective-C ownership or allow exceptions to cross the C boundary.
+typedef void (*ABICallClosureHandler)(void *context, void *result, void *const *arguments);
+/// Retains the prepared interface. A failed creation publishes no callable code.
+ABICallClosure *ABICreateCallClosure(ABICallInterface *interface,
+    ABICallClosureHandler handler, void *context, ABIResolutionFailure **error);
+/// Returns a signed generic function pointer. Its lifetime is the closure's.
+ABIUnmanagedFunction ABICallClosureFunction(const ABICallClosure *closure);
+/// Requires that no caller can enter or still be executing this closure.
+void ABIReleaseCallClosure(ABICallClosure *closure);
 
 /// Signs an unsigned executable address as a generic C function pointer when
 /// required by the target. Does not validate storage, signature, or lifetime.

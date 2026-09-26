@@ -2,6 +2,7 @@
 #include "LazyLibraryFixtures.h"
 #import "CFunctionFixtures.h"
 #import "CXXObjectFixtures.h"
+#import "ReplacementFixtures.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
