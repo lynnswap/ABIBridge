@@ -21,6 +21,9 @@ typedef struct ABISymbolRuntime ABISymbolRuntime;
 typedef struct ABIResolvedSymbol ABIResolvedSymbol;
 /// An owned failure with an immutable category and UTF-8 message.
 typedef struct ABIResolutionFailure ABIResolutionFailure;
+/// Creates an owned failure, copying a nonnull UTF-8 message. Native callback
+/// errors may use ABIFailureOther or a more specific category below.
+ABIResolutionFailure *ABICreateResolutionFailure(int32_t code, const char *message);
 /// An owned, immutable lazy-library diagnostic snapshot. Strings are copied.
 typedef struct ABILazyLibraryList ABILazyLibraryList;
 
@@ -102,7 +105,8 @@ enum {
     ABIFailureSignatureMismatch = 5, ABIFailureUnsupportedDeclaration = 6,
     ABIFailureMetadataUnavailable = 7, ABIFailureImageChanged = 8,
     ABIFailureInvalidAddress = 9, ABIFailureInvalidRequest = 10,
-    ABIFailureOther = 11, ABIFailureImageLoadFailed = 12, ABIFailureAmbiguousImage = 13
+    ABIFailureOther = 11, ABIFailureImageLoadFailed = 12, ABIFailureAmbiguousImage = 13,
+    ABIFailureHookDisplaced = 14, ABIFailureWrongThread = 15
 };
 
 /// Name representation, independent of declaration language. Linker spelling

@@ -53,6 +53,11 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
     }
     let runtime = ABIRuntime()
     switch mode {
+    case "native-hooks":
+        if let error = ABIValidateNativeObjCHooks() {
+            throw ArchitectureValidationFailure(description: String(cString: error))
+        }
+        checks.append("Native C++/Objective-C++ hook chaining, signed saved entries, and initializer ownership")
     case "initializers":
         let failures = ArchitectureHookErrors()
         let hook = try unsafe runtime.hookInitializer(on: ABIValidationInitializerClass(), selector: "initWithSeed:",

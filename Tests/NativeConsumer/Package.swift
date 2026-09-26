@@ -6,6 +6,12 @@ let package = Package(
     platforms: [.macOS("15.4")],
     dependencies: [.package(name: "ABIBridge", path: "../..")],
     targets: [
+        .executableTarget(name: "MixedHookConsumer", dependencies: [.product(name: "ABIBridge", package: "ABIBridge"), "HookFixture"]),
+        .executableTarget(name: "ObjCXXHookConsumer", dependencies: [.product(name: "ABIBridge", package: "ABIBridge"), "HookFixture"], cxxSettings: [.unsafeFlags(["-fobjc-arc"])], linkerSettings: [.linkedFramework("Foundation")]),
+        .executableTarget(name: "MRCXXHookConsumer", dependencies: [.product(name: "ABIBridge", package: "ABIBridge"), "HookFixture"], cxxSettings: [.unsafeFlags(["-fno-objc-arc"])], linkerSettings: [.linkedFramework("Foundation")]),
+        .target(name: "HookFixture", dependencies: [.product(name: "ABIBridge", package: "ABIBridge")], linkerSettings: [.linkedFramework("Foundation")]),
+        .executableTarget(name: "CHookConsumer", dependencies: [.product(name: "ABIBridge", package: "ABIBridge"), "HookFixture"]),
+        .executableTarget(name: "CXXHookConsumer", dependencies: [.product(name: "ABIBridge", package: "ABIBridge"), "HookFixture"]),
         .target(
             name: "InitializerFixture",
             cSettings: [.unsafeFlags(["-fno-objc-arc"])],

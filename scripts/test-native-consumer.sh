@@ -76,3 +76,11 @@ xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" SwiftMemberConsumer "$task_fixture/libSwiftFixture.dylib" "$task_fixture/libSwiftExtensionFixture.dylib"
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" SwiftInitializerHookConsumer
+xcrun clang -std=c11 -pedantic-errors -fsyntax-only \
+    -I "$task_root/Sources/ABIBridgeCore/include" \
+    -I "$task_root/Tests/NativeConsumer/Sources/HookFixture/include" \
+    "$task_root/Tests/NativeConsumer/Sources/CHookConsumer/main.c"
+for task_hook_consumer in CHookConsumer CXXHookConsumer ObjCXXHookConsumer MRCXXHookConsumer MixedHookConsumer; do
+    xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
+        --scratch-path "$task_root/.build/native-consumer" "$task_hook_consumer"
+done

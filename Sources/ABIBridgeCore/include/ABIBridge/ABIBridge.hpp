@@ -26,3 +26,5 @@ inline constexpr std::string_view package_name = "ABIBridgeCore";
 } // namespace abi_bridge
 
 #include <ABIBridge/Runtime.hpp>
+
+#include <ABIBridge/ObjectiveCHooks.hpp>

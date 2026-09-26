@@ -85,6 +85,8 @@ Published executable entries, their prepared call layout, and original fallback 
 
 Implementation and class images discovered at first installation are retained. `retaining:` can keep a generated original IMP owner or dynamic class owner alive when creating that entry; subsequent registrations reuse its existing fallback ownership. Do not dispose a controlled runtime class, invalidate generated original code, or unload an implementation that inherited pass-through may currently select. External writers remain responsible for the lifetime and ABI/ownership of implementations they introduce. Token invalidation alone does not establish that unloading or physically freeing saved code is safe.
 
+See <doc:NativeObjectiveCHooks> for C, C++, and Objective-C++ registration on the same chain.
+
 ## Cost and validation
 
 Signatures and argument codecs are prepared at registration. Calls do not perform symbol discovery, demangling, or image scans. An empty dispatcher still has a call-boundary and snapshot cost; each active callback adds value conversion and a scoped continuation frame. Object filtering shares the class-wide dispatcher cost. The `ObjectiveCMethodHookTests` benchmark compares direct calls, inactive dispatch, and one/three hooks for scalar, CGSize, and object methods without imposing timing thresholds.
