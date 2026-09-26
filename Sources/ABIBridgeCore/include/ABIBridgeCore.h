@@ -3,6 +3,7 @@
 
 // Internal umbrella. The supported C consumer surface is Inspection.h.
 #include <ABIBridge/Inspection.h>
+#include <ABIBridge/ObjectiveCHooks.h>
 #include <ABIBridge/Runtime.h>
 
 #ifdef __cplusplus

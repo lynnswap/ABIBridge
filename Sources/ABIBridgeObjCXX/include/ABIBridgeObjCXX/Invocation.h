@@ -62,3 +62,8 @@ FOUNDATION_EXPORT const char *ABIObjCEncodingRect(void);
 FOUNDATION_EXPORT const char *ABIObjCEncodingRange(void);
 
 NS_ASSUME_NONNULL_END
+
+/// Internal encoding-to-C-layout bridge, implemented by the existing Swift
+/// Objective-C decoder. The returned type is owned; failure is owned.
+FOUNDATION_EXPORT ABIValueType * _Nullable ABICopyObjCHookValueType(
+    const char *encoding, ABIResolutionFailure * _Nullable * _Nullable error);

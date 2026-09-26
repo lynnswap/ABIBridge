@@ -55,6 +55,7 @@ print(symbol.image.path)
 
 - <doc:ObjectiveCMethodHooks>
 - <doc:ObjectiveCInitializerHooks>
+- <doc:NativeObjectiveCHooks>
 - ``NativeObjCMethodHook``
 - ``NativeObjCMethodInvocation``
 - ``NativeObjCMethodHookError``

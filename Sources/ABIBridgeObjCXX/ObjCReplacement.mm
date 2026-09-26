@@ -334,6 +334,7 @@ void dispatchEntry(void *context, ABIObjCReplacementCall *call) {
 }
 
 struct ABIObjCMethodHook {
+    std::atomic<size_t> references{1};
     HookEntry *entry = nullptr;
     // Only identity is retained here. Removing a registration drops its
     // captures even while the invalidated token remains alive.
@@ -457,7 +458,7 @@ BOOL ABIObjCMethodHookIsDisplaced(Class type, SEL selector, BOOL classMethod) {
 }
 
 void ABIInvalidateObjCMethodHook(ABIObjCMethodHook *hook) {
-    if (!hook->active.exchange(false)) return;
+    if (!hook || !hook->active.exchange(false)) return;
     std::shared_ptr<const HookChain> previous;
     {
         auto& entry = *hook->entry;
@@ -470,12 +471,16 @@ void ABIInvalidateObjCMethodHook(ABIObjCMethodHook *hook) {
     }
     // Release captures outside locks; a destructor may register/invalidate hooks.
 }
+ABIObjCMethodHook *ABIRetainObjCMethodHook(ABIObjCMethodHook *hook) {
+    if (hook) ++hook->references;
+    return hook;
+}
 void ABIReleaseObjCMethodHook(ABIObjCMethodHook *hook) {
-    if (!hook) return;
+    if (!hook || --hook->references != 0) return;
     ABIInvalidateObjCMethodHook(hook);
     delete hook;
 }
 int32_t ABIObjCMethodHookStatus(const ABIObjCMethodHook *hook) {
-    if (!hook->active.load()) return 0;
+    if (!hook || !hook->active.load()) return 0;
     return ownsMethod(*hook->entry) ? 1 : 2;
 }
