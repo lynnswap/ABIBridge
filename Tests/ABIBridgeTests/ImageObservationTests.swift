@@ -53,21 +53,21 @@ struct ImageObservationTests {
     @Test func snapshotsTrackUnloadAndReloadWithoutRetainingImages() async throws {
         let fixture = try FixtureLibrary(load: false, cxxSource: "extern \"C\" int observedValue() { return 42; }")
         defer { fixture.cleanup() }
-        let suffix = fixture.directory.lastPathComponent + "/fixture.dylib"
-        let latest = Mutex<[ObservedImage]?>(nil)
-        let observation = try CatalogObservation { images in latest.withLock { $0 = images } }
-        defer { observation.invalidate() }
-        #expect(try await waitForObservation { latest.withLock { $0 != nil } })
-        var previous: UInt64 = 0
-        for _ in 0..<3 {
-            try fixture.load()
-            #expect(try await waitForObservation { latest.withLock { $0?.contains { $0.path.hasSuffix(suffix) } == true } })
-            let generation = try #require(latest.withLock { $0?.first { $0.path.hasSuffix(suffix) }?.generation })
-            #expect(generation > previous)
-            previous = generation
-            fixture.close()
-            #expect(try await waitForObservation { latest.withLock { $0?.contains { $0.path.hasSuffix(suffix) } == false } })
-        }
+        // Other suites legitimately retain images during automatic symbol
+        // lookup. An isolated process gives this test sole loader ownership.
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let core = root.appendingPathComponent("Sources/ABIBridgeCore")
+        let executable = fixture.directory.appendingPathComponent("image-observation-test")
+        try FixtureLibrary.run([
+            "--sdk", "macosx", "clang++", "-std=c++20", "-mmacosx-version-min=15.4",
+            "-I", core.appendingPathComponent("include").path,
+            root.appendingPathComponent("Tests/NativeConsumer/ImageObservationFixture.cpp").path,
+            core.appendingPathComponent("LoadedImages.cpp").path,
+            core.appendingPathComponent("NativeFailure.cpp").path,
+            "-L/usr/lib/swift", "-lswiftCore", "-o", executable.path,
+        ])
+        try FixtureLibrary.run([executable.path, fixture.libraryURL.path])
     }
 
     @Test func deliveryAndContextReleaseCanReenterTheCatalog() async throws {
