@@ -29,6 +29,10 @@ public final class ArchitectureCounter {
     @inline(never) public func adding(_ delta: Int) -> Int { value + delta }
 }
 
+private final class ArchitectureObjCReceiver: NSObject {
+    @objc func adding(_ value: Int32) -> Int32 { 40 + value }
+}
+
 @MainActor public func runArchitectureValidation(mode: String) async throws -> ArchitectureReport {
     var checks: [String] = []
     var tag: UInt64?
@@ -99,6 +103,9 @@ public final class ArchitectureCounter {
         let adapted = try await object.method(named: "add(int)", as: ((Int32) -> Int32).self, using: adapter)
         let adaptedResult = try unsafe adapted.unsafeInvoke(3)
         try check(adaptedResult == 45 && adaptedResult == ABIValidationCounterOracle(address), "libffi adapter and signed target")
+        let objcReceiver = ArchitectureObjCReceiver()
+        let objcMethod = try runtime.object(objcReceiver).method(selector: "adding:", as: ((Int32) -> Int32).self)
+        try check(try unsafe objcMethod.unsafeInvoke(2) == objcReceiver.adding(2), "libffi Objective-C invocation")
     case "memory":
         guard let allocation = ABIValidationAllocate() else { throw ArchitectureValidationFailure(description: "Allocation failed") }
         defer { ABIValidationDeallocate(allocation) }

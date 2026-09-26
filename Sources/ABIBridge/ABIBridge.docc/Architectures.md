@@ -18,7 +18,9 @@ Focused fixtures were run on an iPhone Air with iOS 27.0, built using Xcode 27.0
 | Concrete Swift calls | Passed register/stack arguments, owned String results, and bound class receiver retention/release. |
 | Memory reading and pointer discovery | Passed in-bounds arithmetic, copied reads, and bounded discovery in a tagged allocation. |
 | Corrupted function-pointer signature | The isolated control terminated with `EXC_ARM_PAC_FAIL` inside authentication. |
-| Swift/C dynamic invocation through libffi | ZDLibffi 0.380.0 uses an unauthenticated branch for a signed target and crashes in arm64e. The dependency correction is tracked in [#106](https://github.com/lynnswap/ABIBridge/issues/106). |
+| Swift/C dynamic invocation through libffi | Passed scalar calls, aggregate arguments/indirect results, C++ receiver and authenticated virtual calls, signed targets through an adapter, and Objective-C invocation. |
+
+ABIBridge pins [ZDLibffi fork 0.380.1](https://github.com/lynnswap/ZDLibffi/releases/tag/0.380.1), which aligns the C and assembly authentication paths and the Mach closure trampolines. The original 0.380.0 dependency's arm64e failure and the integration regression tests are tracked in [#106](https://github.com/lynnswap/ABIBridge/issues/106).
 
 These fixtures cover specific ABI contracts. They do not establish compatibility with arbitrary private layouts, compiler-specific signature discriminators, or every Swift signature. Authentication failures can terminate the process and are not Swift errors.
 
