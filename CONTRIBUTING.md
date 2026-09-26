@@ -56,6 +56,29 @@ xcodebuild build \
 
 For watchOS, add `WATCHOS_DEPLOYMENT_TARGET=11.4` so dependencies also build within the supported deployment range. CI uses Xcode 26.6 on `macos-26` for macOS tests and iOS, visionOS, watchOS, and tvOS builds.
 
+## Architecture validation
+
+Run the focused consumer fixtures on macOS:
+
+```sh
+cd Tests/ArchitectureValidation
+xcodebuild test -scheme ArchitectureValidation-Package -destination 'platform=macOS,arch=arm64'
+```
+
+From the repository root, compare compiler-generated calls with the Swift trampoline:
+
+```sh
+python3 scripts/check-architecture-codegen.py
+```
+
+The default checks arm64 and arm64e with the selected Xcode. With Xcode 27, add `--architectures arm64 arm64e arm64e.x1`. Objects, disassembly, and a report preserving raw CPU subtype bits are written under `.build/architecture-codegen`; no cross-compiled code is executed. CI runs the baseline checks with Xcode 26.6.
+
+For a device test, add the local `Tests/ArchitectureValidation` package's `ArchitectureValidation` product to a disposable signed app. Compile the app and all package dependencies for the same architecture, enable Enhanced Security and hardware memory tagging in Xcode, and call `try await runArchitectureValidation(mode:)` on the main actor. The modes `native`, `swift`, `ffi`, and `memory` return a Codable report with the loaded fixture image's CPU type/subtype, compilation mode, completed checks, and observed allocation tag. Run modes in separate launches and persist a start marker before entering the helper so a crash is not mistaken for completion. `ffi` is a known arm64e failure until the dependency fix in #106 is adopted.
+
+Run `tamper` only in that disposable app as a separate launch. It intentionally corrupts a signature; success requires a crash report showing an authentication failure in the expected helper. A generic crash, a returned error, or lack of a completion marker is not sufficient. On a build without pointer authentication the control reports that it is unavailable. Keep credentials, provisioning profiles, and device identifiers out of the repository.
+
+The host executable is also available with `swift run --package-path Tests/ArchitectureValidation --scratch-path .build/architecture-validation ArchitectureProbe <mode>`. The public architecture guide in DocC records execution evidence separately from compilation and outstanding hardware validation.
+
 ## Documentation
 
 The supported consumer interfaces are the Swift `ABIBridge` module and the native headers documented in the DocC consumer guides, all linked through the `ABIBridge` product. Other native headers remain implementation details. SwiftPM may make transitive modules importable; that does not make their entire contents supported public API.

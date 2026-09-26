@@ -1,0 +1,22 @@
+#pragma once
+#include <stdint.h>
+#include <stdbool.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+uint32_t ABIValidationCPUType(void);
+uint32_t ABIValidationCPUSubtype(void);
+bool ABIValidationPACCompiled(void);
+int32_t ABIValidationAdd(int32_t a, int32_t b);
+/// Null on success; otherwise an owned-by-fixture diagnostic string.
+const char *ABIValidateNativeCalls(void);
+/// Returns false if a signed-bit mutation could not be formed. A successful
+/// authentication check must terminate the isolated probe before this returns true.
+bool ABIValidateTamperedFunction(void);
+void *ABIValidationAllocate(void);
+void ABIValidationDeallocate(void *pointer);
+void *ABIValidationAdvance(char *pointer, long offset);
+uintptr_t ABIValidationAdvanceInteger(uintptr_t pointer, uintptr_t offset);
+#ifdef __cplusplus
+}
+#endif
