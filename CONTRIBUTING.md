@@ -37,6 +37,8 @@ Debug-only `ImportIndexTests` cover the internal read-only import index with com
 
 Memory tests verify owned copies, region bounds, unaligned reads, zero-length requests, inaccessible source addresses, and readable prefixes before protected pages. The C, C++, and Objective-C++ consumers exercise the shared reader, including owner release and ARC/MRC builds. Runtime evidence is from macOS; other Apple platforms compile in CI.
 
+The internal pointer-slot tests verify atomic expected-value replacement, preservation of competing writers, data-page protection restoration, copy-on-write maximum protections and shared-page serialization. A VM fixture injects publication and cleanup failures into the production mutation sequence and checks that both restoration errors and partial effects remain observable. This is an internal prerequisite for managed rebinding; it does not own callback/code lifetimes or synchronize with external VM operations.
+
 Pointer discovery tests cover shifted fields, cached-offset revalidation, aliases versus distinct targets, incomplete scans, packed slots, explicit vptr offsets, retained owners, and feeding a selected receiver to existing C++ invocation. Native consumers additionally exercise guarded source slots and PAC-bearing data in plain arm64 builds. Compile the scanner for arm64e as well; this is not a physical-device authenticated-dispatch test.
 
 Run the native backend fixtures to verify linking and ABI behavior through the `ABIBridge` product:

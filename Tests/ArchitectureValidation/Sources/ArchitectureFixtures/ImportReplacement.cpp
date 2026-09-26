@@ -1,4 +1,5 @@
 #include "ArchitectureFixtures.h"
+#include <ABIBridge/PointerSlot.h>
 #include <mach/mach.h>
 #include <dlfcn.h>
 #include <ptrauth.h>
@@ -86,21 +87,24 @@ std::string exercise(void *slot, int32_t key, uintptr_t extra, bool diverse,
     result.protectionBefore = before.protection;
     result.maximumBefore = before.max_protection;
     result.regionFlags = before.flags;
-    const auto address = reinterpret_cast<vm_address_t>(slot);
-    const auto page = address - address % vm_page_size;
-    code = vm_protect(mach_task_self(), page, vm_page_size, false, before.protection | VM_PROT_WRITE);
-    result.protectionResult = code;
+    uintptr_t replacementBits = 0;
+    if (!ABIEncodePointerSlotFunction(reinterpret_cast<ABIUnmanagedFunction>(replacement), slot, key, extra, diverse, &replacementBits))
+        return "Replacement signing schema was rejected";
+    const auto changed = ABICompareExchangePointerSlot(slot, reinterpret_cast<uintptr_t>(original), replacementBits);
+    result.protectionResult = changed.systemErrorCode;
     std::string failure;
-    if (code == KERN_SUCCESS) {
-        auto *changed = encode(replacement, slot, key, extra, diverse);
-        std::memcpy(slot, &changed, sizeof(changed));
+    if (changed.didWrite) {
         result.changed = oracle() == baseline + 1;
-        std::memcpy(slot, &original, sizeof(original));
-        const auto cleanup = vm_protect(mach_task_self(), page, vm_page_size, false, before.protection);
+        const auto restored = ABICompareExchangePointerSlot(slot, replacementBits, reinterpret_cast<uintptr_t>(original));
         if (!result.changed) failure += "Compiler-generated call did not use the replacement; ";
-        if (cleanup != KERN_SUCCESS) failure += "Restore protection failed: " + std::to_string(cleanup) + "; ";
-    } else if (code != KERN_PROTECTION_FAILURE || !(before.flags & VM_REGION_FLAG_TPRO_ENABLED)) {
-        failure += "Make slot writable failed unexpectedly: " + std::to_string(code) + "; ";
+        if (changed.status != ABIPointerSlotComplete || restored.status != ABIPointerSlotComplete) {
+            failure += "Mutation/recovery failed: " + std::to_string(changed.status) + "/" + std::to_string(restored.status)
+                + " restore current=" + std::to_string(changed.restoreProtectionError) + "/" + std::to_string(restored.restoreProtectionError)
+                + " restore maximum=" + std::to_string(changed.restoreMaximumError) + "/" + std::to_string(restored.restoreMaximumError) + "; ";
+        }
+    } else if (changed.status != ABIPointerSlotProtectFailed || changed.systemErrorCode != KERN_PROTECTION_FAILURE
+        || !(before.flags & VM_REGION_FLAG_TPRO_ENABLED)) {
+        failure += "Slot mutation failed unexpectedly: " + std::to_string(changed.status) + "/" + std::to_string(changed.systemErrorCode) + "; ";
     }
     // A kernel refusal is a distinct observed outcome, not a successful rebind.
     // Both outcomes must leave the original representation and protections intact.
@@ -120,10 +124,11 @@ std::string exercise(void *slot, int32_t key, uintptr_t extra, bool diverse,
 }
 
 void *controlSlot = nullptr;
+int32_t controlKey = 0;
 __attribute__((noinline)) int32_t controlOracle() {
     void *value = nullptr;
     std::memcpy(&value, controlSlot, sizeof(value));
-    return decode(value, controlSlot, 0, 0x1234, true)();
+    return decode(value, controlSlot, controlKey, 0x1234, true)();
 }
 }
 
@@ -147,11 +152,17 @@ const char *ABIValidateReadOnlySignedSlot(ABIImportProbeResult *result) {
         return diagnostic.c_str();
     }
     controlSlot = reinterpret_cast<void *>(page + 64);
-    auto *initial = encode(controlOriginal, controlSlot, 0, 0x1234, true);
-    std::memcpy(controlSlot, &initial, sizeof(initial));
-    code = vm_protect(mach_task_self(), page, vm_page_size, false, VM_PROT_READ);
-    diagnostic = code == KERN_SUCCESS ? exercise(controlSlot, 0, 0x1234, true, controlOracle, *result)
-        : "Protect control page failed: " + std::to_string(code);
+    diagnostic.clear();
+    for (controlKey = ABIAuthenticationUnsigned; controlKey <= ABIAuthenticationDataB; ++controlKey) {
+        code = vm_protect(mach_task_self(), page, vm_page_size, false, VM_PROT_READ | VM_PROT_WRITE);
+        if (code != KERN_SUCCESS) { diagnostic = "Unprotect control page failed: " + std::to_string(code); break; }
+        auto *initial = encode(controlOriginal, controlSlot, controlKey, 0x1234, true);
+        std::memcpy(controlSlot, &initial, sizeof(initial));
+        code = vm_protect(mach_task_self(), page, vm_page_size, false, VM_PROT_READ);
+        diagnostic = code == KERN_SUCCESS ? exercise(controlSlot, controlKey, 0x1234, true, controlOracle, *result)
+            : "Protect control page failed: " + std::to_string(code);
+        if (!diagnostic.empty()) break;
+    }
     const auto cleanup = vm_deallocate(mach_task_self(), page, vm_page_size);
     if (cleanup != KERN_SUCCESS) diagnostic += " Deallocate control page failed: " + std::to_string(cleanup);
     controlSlot = nullptr;
