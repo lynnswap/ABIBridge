@@ -431,6 +431,9 @@ ABIObjCHookInstallation *ABIInstallObjCHooks(const ABIObjCHookRequest *requests,
         }
         contracts[key] = ownership;
     }
+    // Acquiring a live hook must not be followed by a throwing vector growth.
+    // Reserve after preparation so unwinding also releases every request context.
+    result->hooks.reserve(count);
     for (size_t index = 0; index < count; ++index) {
         const auto& request = requests[index];
         ABIResolutionFailure *error = nullptr;
