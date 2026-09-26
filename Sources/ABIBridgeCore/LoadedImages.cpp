@@ -13,6 +13,7 @@
 #include <utility>
 #include <string>
 #include <vector>
+#include <dispatch/dispatch.h>
 
 namespace {
 
@@ -27,10 +28,25 @@ struct Image {
     std::string installName;
 };
 
+struct ObservationCallback {
+    void *context;
+    ABIImageObservationHandler handler;
+    ABIImageObservationRelease release;
+    ~ObservationCallback() { release(context); }
+};
+
+struct Observation {
+    std::mutex mutex;
+    std::shared_ptr<ObservationCallback> callback;
+    dispatch_source_t source = nullptr;
+    ~Observation() { if (source) dispatch_release(source); }
+};
+
 struct Catalog {
     std::mutex mutex;
     uint64_t generation = 0;
     std::vector<Image> images;
+    std::vector<std::weak_ptr<Observation>> observations;
 };
 
 // dyld has no callback-unregistration API. The catalog and callback code must
@@ -39,6 +55,15 @@ Catalog& catalog()
 {
     static auto *value = new Catalog;
     return *value;
+}
+
+// Called with the catalog lock, including on dyld's notification stack. Merging
+// data only schedules work; it never runs or waits for a consumer callback.
+void signalObservations(Catalog& state)
+{
+    for (const auto& weak : state.observations) {
+        if (auto observer = weak.lock()) dispatch_source_merge_data(observer->source, 1);
+    }
 }
 
 bool hasProcessLifetime(const mach_header *header)
@@ -77,6 +102,7 @@ void addedImage(const mach_header *header, intptr_t slide)
     std::lock_guard lock(state.mutex);
     image.generation = ++state.generation;
     state.images.push_back(std::move(image));
+    signalObservations(state);
 }
 
 void removedImage(const mach_header *header, intptr_t)
@@ -85,6 +111,7 @@ void removedImage(const mach_header *header, intptr_t)
     std::lock_guard lock(state.mutex);
     const auto address = reinterpret_cast<uintptr_t>(header);
     std::erase_if(state.images, [address](const Image& image) { return image.header == address; });
+    signalObservations(state);
 }
 
 bool initialize()
@@ -129,6 +156,86 @@ struct ABIImageLease {
     void *handle;
     Image image;
 };
+
+struct ABIImageObservation {
+    std::shared_ptr<Observation> state;
+};
+
+ABIImageObservation *ABIObserveLoadedImages(void *context, ABIImageObservationHandler handler,
+    ABIImageObservationRelease release, ABIResolutionFailure **error)
+{
+    if (error) *error = nullptr;
+    auto reject = [&](int32_t code, const char *message) -> ABIImageObservation * {
+        if (error) *error = ABICreateResolutionFailure(code, message);
+        return nullptr;
+    };
+    if (!release) return reject(ABIFailureInvalidRequest, "A context release callback is required.");
+    auto callback = std::shared_ptr<ObservationCallback>(new ObservationCallback{context, handler, release});
+    if (!handler) return reject(ABIFailureInvalidRequest, "An image observation handler is required.");
+    if (!initialize()) return reject(ABIFailureImageUnavailable, "The native image catalog is unavailable.");
+
+    auto state = std::make_shared<Observation>();
+    state->callback = std::move(callback);
+    auto owner = std::make_unique<ABIImageObservation>(ABIImageObservation{state});
+    auto captured = std::make_unique<std::shared_ptr<Observation>>(state);
+    auto queue = dispatch_queue_create("ABIBridge.loaded-images", DISPATCH_QUEUE_SERIAL);
+    state->source = dispatch_source_create(DISPATCH_SOURCE_TYPE_DATA_OR, 0, 0, queue);
+    dispatch_release(queue);
+    if (!state->source) return reject(ABIFailureOther, "Could not create the image observation source.");
+    dispatch_set_context(state->source, captured.release());
+    dispatch_source_set_event_handler_f(state->source, [](void *context) {
+        auto state = *static_cast<std::shared_ptr<Observation> *>(context);
+        std::shared_ptr<ObservationCallback> callback;
+        { std::lock_guard lock(state->mutex); callback = state->callback; }
+        if (!callback) return;
+        std::unique_ptr<ABIImageList, decltype(&ABIFreeImageList)> snapshot(ABICopyLoadedImages(), ABIFreeImageList);
+        callback->handler(callback->context, snapshot.get());
+    });
+    dispatch_source_set_cancel_handler_f(state->source, [](void *context) {
+        delete static_cast<std::shared_ptr<Observation> *>(context);
+    });
+    dispatch_resume(state->source);
+    try {
+        auto& current = catalog();
+        std::lock_guard lock(current.mutex);
+        current.observations.push_back(state);
+        // Subscribe and schedule the initial snapshot under the same lock used
+        // by add/remove, so changes cannot fall into a registration gap.
+        dispatch_source_merge_data(state->source, 1);
+    } catch (...) {
+        ABIInvalidateImageObservation(owner.get());
+        throw;
+    }
+    return owner.release();
+}
+
+void ABIInvalidateImageObservation(ABIImageObservation *observation)
+{
+    if (!observation) return;
+    auto state = observation->state;
+    std::shared_ptr<ObservationCallback> retired;
+    {
+        std::lock_guard lock(state->mutex);
+        retired = std::move(state->callback);
+    }
+    if (!retired) return;
+    {
+        auto& current = catalog();
+        std::lock_guard lock(current.mutex);
+        std::erase_if(current.observations, [&](const auto& weak) {
+            const auto value = weak.lock();
+            return !value || value == state;
+        });
+    }
+    dispatch_source_cancel(state->source);
+    // Dropping callback captures can reenter the resolver or loader.
+}
+
+void ABIReleaseImageObservation(ABIImageObservation *observation)
+{
+    ABIInvalidateImageObservation(observation);
+    delete observation;
+}
 
 ABIImageList *ABICopyLoadedImages(void)
 {
