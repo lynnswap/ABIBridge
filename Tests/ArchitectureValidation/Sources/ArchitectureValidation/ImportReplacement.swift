@@ -75,6 +75,6 @@ private struct ImportProbeSlot {
     var checks = ["Imported getppid: \(outcome); \(slot.format), key=\(slot.key), discriminator=\(slot.extra), addressDiversity=\(slot.diverse), regionFlags=\(result.regionFlags), protection=\(result.protectionBefore)->\(result.protectionAfter), maximum=\(result.maximumBefore)->\(result.maximumAfter)"]
     if let error = ABIValidateReadOnlySignedSlot(&result) { throw failure("Read-only control: " + String(cString: error)) }
     guard result.changed else { throw failure("Read-only control was not replaced") }
-    checks.append("Read-only control replacement/predecessor/restoration: PAC=\(ABIValidationPACCompiled()), addressDiversity=true, protection=\(result.protectionBefore)->\(result.protectionAfter), maximum=\(result.maximumBefore)->\(result.maximumAfter)")
+    checks.append("Pointer-slot backend read-only control replacement/predecessor/restoration: PAC=\(ABIValidationPACCompiled()), unsigned and IA/IB/DA/DB with address diversity, protection=\(result.protectionBefore)->\(result.protectionAfter), maximum=\(result.maximumBefore)->\(result.maximumAfter)")
     return checks
 }

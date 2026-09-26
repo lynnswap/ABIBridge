@@ -32,6 +32,8 @@ The experimental `import-replacement` fixture distinguishes symbol discovery fro
 
 These are bounded fixture results, not a public rebinding capability. A maximum protection containing WRITE does not establish that the kernel permits a change, and an arm64 run does not validate pointer authentication. The [import-rebinding workstream](https://github.com/lynnswap/ABIBridge/issues/121) tracks supported mutation paths and concrete failure reporting separately from name resolution. Disabling process security is not a prerequisite for symbol inspection or existing invocation APIs.
 
+The same probe ran on iPhone Air / iOS 27.0 with an arm64e Enhanced Security host. Its real import used `DYLD_CHAINED_PTR_ARM64E_USERLAND24`, instruction key A, discriminator zero and address diversity. The captured original function authenticated correctly, but TPRO prevented mutation of the import page. Its pointer and protections remained unchanged. The allocated read-only control passed authenticated replacement, predecessor calls and restoration. This confirms the mutation/authentication boundary on controlled storage; it does not claim that the protected import was changed.
+
 ## arm64e.x1 remains unverified at runtime
 
 The compiler fixture and Swift trampoline produce these raw Mach-O headers with Xcode 27.0:

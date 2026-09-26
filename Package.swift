@@ -56,6 +56,7 @@ let package = Package(
         ),
         .target(
             name: "ObjectiveCFixtures",
+            dependencies: ["ABIBridgeCore"],
             path: "Tests/ObjectiveCFixtures",
             publicHeadersPath: "include"
         ),

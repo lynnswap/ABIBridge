@@ -54,3 +54,5 @@ swift run --package-path Tests/ArchitectureValidation --scratch-path .build/arch
 ```
 
 The linker flag changes only the comparison fixture's binding format; it is not a consumer requirement or a way to establish support for protected imports. M5 Pro / macOS 26.6.2 runs observed refusal for the normal chained import and successful replacement for the legacy import. The signed device host can run the same mode; authenticated execution must be reported separately from macOS arm64 results.
+
+The probe now uses the internal pointer-slot mutation transport for publication and restoration, with an independent compiler/authentication oracle. The read-only control checks unsigned storage and all four PAC keys with address diversity. An iPhone Air / iOS 27.0 arm64e host passed this control and reported unchanged TPRO-protected import storage after the expected kernel refusal. The root `PointerSlotMutationTests` additionally exercise same-page concurrency, inaccessible/executable storage, copy-on-write maximum-protection restoration, and injected VM failures through the same internal mutation sequence.

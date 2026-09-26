@@ -3,6 +3,7 @@
 #import "CFunctionFixtures.h"
 #import "CXXObjectFixtures.h"
 #import "ReplacementFixtures.h"
+#include "PointerSlotFixtures.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
