@@ -434,6 +434,17 @@ ABIObjCMethodHook *ABICreateObjCMethodHook(Class type, SEL selector, BOOL classM
     return token.release();
 }
 
+BOOL ABIObjCMethodHookIsDisplaced(Class type, SEL selector, BOOL classMethod) {
+    Class target = classMethod ? object_getClass(type) : type;
+    HookKey key{reinterpret_cast<uintptr_t>((__bridge void *)target), reinterpret_cast<uintptr_t>(selector)};
+    auto& registry = hookRegistry();
+    HookEntry *entry = nullptr;
+    { std::lock_guard lock(registry.mutex);
+      auto found = registry.entries.find(key);
+      if (found != registry.entries.end()) entry = found->second.get(); }
+    return entry && !ownsMethod(*entry);
+}
+
 void ABIInvalidateObjCMethodHook(ABIObjCMethodHook *hook) {
     if (!hook->active.exchange(false)) return;
     std::shared_ptr<const HookChain> previous;

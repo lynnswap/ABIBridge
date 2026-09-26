@@ -53,6 +53,7 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 @interface ABIHookChild : ABIHookParent @end
 @interface ABIHookSibling : ABIHookParent @end
+IMP ABIHookForwardingImplementation(void);
 @interface ABIHookExternalFixture : ABIManagedHookFixture @end
 @interface ABIHookBenchmarkControl : ABIReplacementFixture @end
 NS_ASSUME_NONNULL_END

@@ -74,6 +74,9 @@ public final class NativeObjCMethodHook: @unchecked Sendable {
         guard let binding = ABICopyObjCImplementation(type, sel, classMethod,
             options.returnsRetainedObject.map { $0 ? 1 : 0 } ?? -1,
             options.consumesReceiver.map { $0 ? 1 : 0 } ?? -1, &error) else {
+            if ABIObjCMethodHookIsDisplaced(type, sel, classMethod) {
+                throw NativeObjCMethodHookError.displaced
+            }
             throw error ?? ABIResolutionError.metadataUnavailable(selector) as NSError
         }
         defer { ABIReleaseObjCInvocation(binding) }

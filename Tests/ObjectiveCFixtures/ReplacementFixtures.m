@@ -1,5 +1,6 @@
 #import "ReplacementFixtures.h"
 #include <stdatomic.h>
+#import <objc/message.h>
 
 @interface ABIReplacementFixture ()
 @property(nonatomic) NSInteger calls;
@@ -108,3 +109,5 @@ static atomic_long initializations;
         + i*13 + j*14 + k*15 + l*16;
 }
 @end
+
+IMP ABIHookForwardingImplementation(void) { return (IMP)_objc_msgForward; }

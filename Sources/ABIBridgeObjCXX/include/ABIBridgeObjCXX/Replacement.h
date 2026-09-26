@@ -58,6 +58,9 @@ ABIObjCMethodHook * _Nullable ABICreateObjCMethodHook(
     ABIObjCReplacementHandler handler, void *context, ABIObjCReplacementDestroy destroy,
     id _Nullable object, id _Nullable fallbackOwner,
     NSError * _Nullable * _Nullable error);
+/// Reports displacement even when a subsequent method lookup cannot capture
+/// the external implementation (for example, a forwarding trampoline).
+BOOL ABIObjCMethodHookIsDisplaced(Class type, SEL selector, BOOL classMethod);
 void ABIInvalidateObjCMethodHook(ABIObjCMethodHook *hook);
 void ABIReleaseObjCMethodHook(ABIObjCMethodHook *hook);
 /// 0 = invalidated, 1 = active, 2 = displaced by another runtime writer.

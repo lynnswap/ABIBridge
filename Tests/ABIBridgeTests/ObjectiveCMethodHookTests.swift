@@ -199,6 +199,11 @@ struct ObjectiveCMethodHookTests {
         #expect(method_getImplementation(method) == external)
         #expect(ABIHookExternalFixture().add(20, to: 21) == 51)
         #expect(ABIReplacementCallAdd(saved, ABIHookExternalFixture(), 20, 22) == 42)
+        method_setImplementation(method, ABIHookForwardingImplementation())
+        #expect(throws: NativeObjCMethodHookError.displaced) {
+            try unsafe runtime.hookMethod(on: ABIHookExternalFixture.self, selector: "add:to:",
+                as: ((Int32, Int32) -> Int32).self, onFailure: { Issue.record($0) }) { call, a, b in try call.proceed(a, b) }
+        }
     }
 
     @Test func tokenDestructionAndReentrantCaptureDestruction() throws {
