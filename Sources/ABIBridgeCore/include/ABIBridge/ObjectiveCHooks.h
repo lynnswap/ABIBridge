@@ -115,6 +115,45 @@ bool ABIObjCInitializerReadArgument(ABIObjCInitializerArguments *arguments, size
 bool ABIObjCInitializerSetArgument(ABIObjCInitializerArguments *arguments, size_t index,
     const void *value, size_t size, ABIResolutionFailure **error);
 
+/// One declaration in a coordinated installation. Each request owns one context
+/// reference; callbacks and signatures have the single-installation contracts.
+typedef struct {
+    Class type;
+    const char *selector;
+    const ABIObjCHookSignature *signature;
+    ABIObjCHookOptions options;
+    bool initializer;
+    void *context;
+    ABIObjCHookCallback callback;
+    ABIObjCInitializerBefore before;
+    ABIObjCInitializerAfter after;
+    ABIObjCHookFailureHandler onFailure;
+    ABIObjCHookContextRelease releaseContext;
+} ABIObjCHookRequest;
+typedef struct ABIObjCHookInstallation ABIObjCHookInstallation;
+enum { ABIObjCHookPreparation = 1, ABIObjCHookActivation = 2 };
+/// Validates every request before publishing, then revalidates/installs in order.
+/// On activation failure, invalidates only this operation's earlier registrations.
+/// Visibility is not atomic across methods. Published entries can remain.
+///
+/// A null table with nonzero count, or any null releaseContext, takes no contexts.
+/// Otherwise all context references transfer on entry, including later failures.
+/// The result owns successful/invalidated partial handles and any failure.
+ABIObjCHookInstallation *ABIInstallObjCHooks(const ABIObjCHookRequest *requests, size_t count);
+/// Logical group invalidation; shared aliases remain valid but inactive.
+void ABIInvalidateObjCHookInstallation(ABIObjCHookInstallation *installation);
+/// Releases the result's references. Independently retained handles remain owned.
+void ABIReleaseObjCHookInstallation(ABIObjCHookInstallation *installation);
+size_t ABIObjCHookInstallationCount(const ABIObjCHookInstallation *installation);
+/// Borrows a handle; index must be less than Count, including on partial failure.
+ABIObjCMethodHook *ABIObjCHookInstallationGet(const ABIObjCHookInstallation *installation, size_t index);
+/// Borrowed failure, or null on success. Readable regardless of method ownership.
+const ABIResolutionFailure *ABIObjCHookInstallationFailure(const ABIObjCHookInstallation *installation);
+/// SIZE_MAX on success; otherwise the zero-based failing request index.
+size_t ABIObjCHookInstallationFailedIndex(const ABIObjCHookInstallation *installation);
+/// Zero on success; otherwise preparation or activation.
+int32_t ABIObjCHookInstallationPhase(const ABIObjCHookInstallation *installation);
+
 #ifdef __cplusplus
 }
 #endif

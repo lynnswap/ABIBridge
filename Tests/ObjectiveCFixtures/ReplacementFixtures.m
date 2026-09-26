@@ -145,3 +145,10 @@ static atomic_long managedInitializerCalls;
 ABIManagedInitializerFixture *ABIManagedConstruct(NSInteger value) {
     return [[ABIManagedInitializerFixture alloc] constructValue:value];
 }
+
+@implementation ABIBatchInitializerFixture
+- (instancetype)initWithBatchValue:(NSInteger)value {
+    if ((self = [super init])) _value = value;
+    return self;
+}
+@end

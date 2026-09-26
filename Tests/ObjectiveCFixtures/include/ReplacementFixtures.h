@@ -75,3 +75,10 @@ NS_ASSUME_NONNULL_BEGIN
 @interface ABIManagedInitializerInherited : ABIManagedInitializerFixture @end
 ABIManagedInitializerFixture *ABIManagedConstruct(NSInteger value);
 NS_ASSUME_NONNULL_END
+
+NS_ASSUME_NONNULL_BEGIN
+@interface ABIBatchInitializerFixture : NSObject
+@property(nonatomic) NSInteger value;
+- (instancetype)initWithBatchValue:(NSInteger)value;
+@end
+NS_ASSUME_NONNULL_END

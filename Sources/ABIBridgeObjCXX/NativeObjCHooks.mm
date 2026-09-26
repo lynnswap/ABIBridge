@@ -4,6 +4,7 @@
 #include <cstring>
 #include <cstddef>
 #include <memory>
+#include <map>
 #include <optional>
 #include <pthread.h>
 #include <string>
@@ -111,6 +112,8 @@ struct State {
     ABIObjCInitializerAfter after = nullptr;
     bool initializer;
     bool mainThread;
+    bool retained = false;
+    bool consumed = false;
     ValueInfo result{};
     std::vector<ValueInfo> parameters;
     State(void *context, ABIObjCHookContextRelease release, ABIObjCHookFailureHandler failure,
@@ -273,52 +276,67 @@ void invoke(State& state, ABIObjCReplacementCall *call) {
         if (!succeeded) state.report(reported.release());
     }
 }
-ABIObjCMethodHook *install(Class type, const char *name, const ABIObjCHookSignature *signature,
-    ABIObjCHookOptions options, std::unique_ptr<State> state, ABIResolutionFailure **error) {
+bool prepare(Class type, const char *name, const ABIObjCHookSignature *signature,
+    ABIObjCHookOptions options, State& state, Binding& binding, Interface& interface, ABIResolutionFailure **error) {
     if (error) *error = nullptr;
-    if (!type || !object_isClass((id)type) || !name || !*name || !signature || !state->failure ||
+    if (!type || !object_isClass((id)type) || !name || !*name || !signature || !state.failure ||
         (signature->parameterCount && !signature->parameters) ||
         options.resultOwnership < 0 || options.resultOwnership > 2 ||
         options.receiverOwnership < 0 || options.receiverOwnership > 2) {
-        fail(error, ABIFailureInvalidRequest, "A class, selector, signature, failure handler, and valid ownership options are required."); return nullptr;
+        fail(error, ABIFailureInvalidRequest, "A class, selector, signature, failure handler, and valid ownership options are required."); return false;
     }
-    if ((state->initializer && options.classMethod) || (options.object && (state->initializer || options.classMethod))) {
-        fail(error, ABIFailureUnsupportedDeclaration, "Object filters require ordinary instance methods; initializer hooks require instance initialization."); return nullptr;
+    if ((state.initializer && options.classMethod) || (options.object && (state.initializer || options.classMethod))) {
+        fail(error, ABIFailureUnsupportedDeclaration, "Object filters require ordinary instance methods; initializer hooks require instance initialization."); return false;
     }
     if (options.object && !belongsTo((__bridge id)options.object, type)) {
-        fail(error, ABIFailureSignatureMismatch, "The object filter does not belong to the target class."); return nullptr;
+        fail(error, ABIFailureSignatureMismatch, "The object filter does not belong to the target class."); return false;
     }
     SEL selector = sel_registerName(name);
     NSError *failure = nil;
-    Binding binding(ABICopyObjCImplementation(type, selector, options.classMethod,
-        options.resultOwnership - 1, options.receiverOwnership - 1, &failure), ABIReleaseObjCInvocation);
+    binding.reset(ABICopyObjCImplementation(type, selector, options.classMethod,
+        options.resultOwnership - 1, options.receiverOwnership - 1, &failure));
     if (!binding) {
         if (ABIObjCMethodHookIsDisplaced(type, selector, options.classMethod))
             fail(error, ABIFailureHookDisplaced, "Another writer displaced the managed entry.");
         else fail(error, failure);
-        return nullptr;
+        return false;
     }
     if (signature->parameterCount != ABIObjCInvocationParameterCount(binding.get())) {
-        fail(error, ABIFailureSignatureMismatch, "The parameter count does not match the method."); return nullptr;
+        fail(error, ABIFailureSignatureMismatch, "The parameter count does not match the method."); return false;
     }
     Type result(nullptr, ABIReleaseValueType);
     const auto resultInfo = prepareType(signature->result, ABIObjCInvocationResultType(binding.get()), result, error);
-    if (!resultInfo) return nullptr;
-    state->result = *resultInfo;
+    if (!resultInfo) return false;
+    state.result = *resultInfo;
+    state.parameters.clear();
     std::vector<Type> types;
     Type pointer(ABICreateScalarType(ABIValuePointer, error), ABIReleaseValueType);
-    if (!pointer) return nullptr;
+    if (!pointer) return false;
     std::vector<const ABIValueType *> parameters{pointer.get(), pointer.get()};
     for (size_t index = 0; index < signature->parameterCount; ++index) {
         Type type(nullptr, ABIReleaseValueType);
         auto info = prepareType(signature->parameters[index], ABIObjCInvocationParameterType(binding.get(), index), type, error);
-        if (!info) return nullptr;
-        state->parameters.push_back(*info);
+        if (!info) return false;
+        state.parameters.push_back(*info);
         parameters.push_back(type.get()); types.push_back(std::move(type));
     }
-    Interface interface(ABICreateCCallInterface(result.get(), parameters.data(), parameters.size(), error), ABIReleaseCallInterface);
-    if (!interface) return nullptr;
+    interface.reset(ABICreateCCallInterface(result.get(), parameters.data(), parameters.size(), error));
+    if (!interface) return false;
+    if (!ABIValidateObjCMethodHook(type, selector, options.classMethod, state.initializer,
+        binding.get(), (__bridge id)options.object, &failure)) return fail(error, failure);
+    state.retained = ABIObjCInvocationReturnsRetained(binding.get());
+    state.consumed = ABIObjCInvocationConsumesReceiver(binding.get());
+    return true;
+}
+
+ABIObjCMethodHook *install(Class type, const char *name, const ABIObjCHookSignature *signature,
+    ABIObjCHookOptions options, std::unique_ptr<State> state, ABIResolutionFailure **error) {
+    Binding binding(nullptr, ABIReleaseObjCInvocation);
+    Interface interface(nullptr, ABIReleaseCallInterface);
+    if (!prepare(type, name, signature, options, *state, binding, interface, error)) return nullptr;
     const bool initializer = state->initializer;
+    SEL selector = sel_registerName(name);
+    NSError *failure = nil;
     // The managed boundary takes ownership on success and failure.
     auto *context = state.release();
     auto *hook = ABICreateObjCMethodHook(type, selector, options.classMethod, initializer, binding.get(), interface.get(),
@@ -350,3 +368,91 @@ ABIObjCMethodHook *ABIInstallObjCInitializerHook(Class type, const char *selecto
     state->before = before; state->after = after;
     return install(type, selector, signature, options, std::move(state), error);
 }
+
+struct ABIObjCHookInstallation {
+    std::vector<ABIObjCMethodHook *> hooks;
+    Failure failure{nullptr, ABIReleaseResolutionFailure};
+    size_t failedIndex = SIZE_MAX;
+    int32_t phase = 0;
+    ~ABIObjCHookInstallation() { for (auto *hook : hooks) ABIReleaseObjCMethodHook(hook); }
+};
+
+ABIObjCHookInstallation *ABIInstallObjCHooks(const ABIObjCHookRequest *requests, size_t count) {
+    auto result = std::make_unique<ABIObjCHookInstallation>();
+    auto failed = [&](size_t index, int32_t phase, ABIResolutionFailure *failure) {
+        result->failedIndex = index; result->phase = phase; result->failure.reset(failure);
+    };
+    if (!requests && count) {
+        failed(0, ABIObjCHookPreparation, ABICreateResolutionFailure(ABIFailureInvalidRequest, "A request table is required."));
+        return result.release();
+    }
+    for (size_t index = 0; index < count; ++index) {
+        if (!requests[index].releaseContext) {
+            failed(index, ABIObjCHookPreparation, ABICreateResolutionFailure(ABIFailureInvalidRequest, "Every request needs a context release callback; no contexts were taken."));
+            return result.release();
+        }
+    }
+    struct Prepared {
+        Binding binding{nullptr, ABIReleaseObjCInvocation};
+        Interface interface{nullptr, ABIReleaseCallInterface};
+        // Callback destruction may execute image code; destroy it before leases.
+        std::unique_ptr<State> state;
+        explicit Prepared(std::unique_ptr<State> state) : state(std::move(state)) {}
+    };
+    std::vector<Prepared> prepared;
+    prepared.reserve(count);
+    // Acquire every context before validating declarations, so cleanup includes
+    // requests after the first failure as well as already-prepared requests.
+    for (size_t index = 0; index < count; ++index) {
+        const auto& request = requests[index];
+        auto state = std::make_unique<State>(request.context, request.releaseContext, request.onFailure,
+            request.initializer, request.options.requiresMainThread);
+        state->method = request.callback; state->before = request.before; state->after = request.after;
+        prepared.push_back(Prepared{std::move(state)});
+    }
+    std::map<std::pair<uintptr_t, std::string>, std::pair<bool, bool>> contracts;
+    for (size_t index = 0; index < count; ++index) {
+        const auto& request = requests[index];
+        auto& value = prepared[index];
+        ABIResolutionFailure *error = nullptr;
+        if ((!request.initializer && !request.callback)
+            || !prepare(request.type, request.selector, request.signature, request.options,
+                *value.state, value.binding, value.interface, &error)) {
+            failed(index, ABIObjCHookPreparation, error ?: ABICreateResolutionFailure(ABIFailureInvalidRequest, "An ordinary callback is required."));
+            return result.release();
+        }
+        Class type = request.options.classMethod ? object_getClass(request.type) : request.type;
+        auto key = std::make_pair(reinterpret_cast<uintptr_t>((__bridge void *)type), std::string(request.selector));
+        const auto ownership = std::make_pair(value.state->retained, value.state->consumed);
+        auto previous = contracts.find(key);
+        if (previous != contracts.end() && previous->second != ownership) {
+            failed(index, ABIObjCHookPreparation, ABICreateResolutionFailure(ABIFailureSignatureMismatch, "Requests for one method disagree on ownership."));
+            return result.release();
+        }
+        contracts[key] = ownership;
+    }
+    for (size_t index = 0; index < count; ++index) {
+        const auto& request = requests[index];
+        ABIResolutionFailure *error = nullptr;
+        // Reacquire the current predecessor: an earlier request may have
+        // installed a superclass dispatcher since this request was validated.
+        auto *hook = install(request.type, request.selector, request.signature, request.options,
+            std::move(prepared[index].state), &error);
+        if (!hook) {
+            for (auto it = result->hooks.rbegin(); it != result->hooks.rend(); ++it) ABIInvalidateObjCMethodHook(*it);
+            failed(index, ABIObjCHookActivation, error);
+            return result.release();
+        }
+        result->hooks.push_back(hook);
+    }
+    return result.release();
+}
+void ABIInvalidateObjCHookInstallation(ABIObjCHookInstallation *installation) {
+    if (installation) for (auto *hook : installation->hooks) ABIInvalidateObjCMethodHook(hook);
+}
+void ABIReleaseObjCHookInstallation(ABIObjCHookInstallation *installation) { delete installation; }
+size_t ABIObjCHookInstallationCount(const ABIObjCHookInstallation *installation) { return installation->hooks.size(); }
+ABIObjCMethodHook *ABIObjCHookInstallationGet(const ABIObjCHookInstallation *installation, size_t index) { return installation->hooks[index]; }
+const ABIResolutionFailure *ABIObjCHookInstallationFailure(const ABIObjCHookInstallation *installation) { return installation->failure.get(); }
+size_t ABIObjCHookInstallationFailedIndex(const ABIObjCHookInstallation *installation) { return installation->failedIndex; }
+int32_t ABIObjCHookInstallationPhase(const ABIObjCHookInstallation *installation) { return installation->phase; }

@@ -69,5 +69,13 @@ int main() {
     auto result = std::shared_ptr<void>(ABIHookFixtureCreate(1), ABIHookFixtureRelease);
     assert(ABIHookFixtureSeed(result.get()) == 42 && ABIHookFixtureCreate(-1) == nullptr);
     initializer.invalidate();
+    auto requests = std::vector<abi_bridge::objc_hook_request>{
+        abi_bridge::objc_hook_request::method<int32_t(int32_t,int32_t)>(ABIHookFixtureClass(), "add:to:",
+            [](auto& call, int32_t a, int32_t b) { return call.proceed(a,b) + 1; }, failed)
+    };
+    auto coordinated = abi_bridge::install_objc_hooks(requests);
+    assert(ABIHookFixtureAdd(object.get(),20,21) == 42);
+    coordinated.clear();
+    assert(ABIHookFixtureAdd(object.get(),20,22) == 42);
     std::puts("C++ hook consumer passed");
 }

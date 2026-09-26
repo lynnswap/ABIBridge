@@ -343,12 +343,9 @@ struct ABIObjCMethodHook {
     explicit ABIObjCMethodHook(HookCallback *identity) : identity(identity) {}
 };
 
-ABIObjCMethodHook *ABICreateObjCMethodHook(Class type, SEL selector, BOOL classMethod, BOOL initializer,
-    ABIObjCInvocation *binding, ABICallInterface *interface,
-    ABIObjCReplacementHandler handler, void *context, ABIObjCReplacementDestroy destroy,
-    id object, id fallbackOwner, NSError **error) {
+BOOL ABIValidateObjCMethodHook(Class type, SEL selector, BOOL classMethod, BOOL initializer,
+    ABIObjCInvocation *binding, id object, NSError **error) {
     if (error) *error = nil;
-    auto callback = std::make_shared<HookCallback>(handler, context, destroy, object);
     const char *resultType = ABIObjCInvocationResultType(binding);
     while (*resultType && std::strchr("rnNoORV", *resultType)) ++resultType;
     const bool validInitializer = !classMethod && !object && *resultType == '@' && resultType[1] != '?'
@@ -359,8 +356,31 @@ ABIObjCMethodHook *ABICreateObjCMethodHook(Class type, SEL selector, BOOL classM
         hookFail(error, 2, initializer
             ? @"An initializer hook requires consumed self and a retained object result on an instance method."
             : @"Initializers, consuming receivers, allocation, and lifecycle methods require dedicated hook contracts.");
-        return nullptr;
+        return NO;
     }
+    Class target = classMethod ? object_getClass(type) : type;
+    HookKey key{reinterpret_cast<uintptr_t>((__bridge void *)target), reinterpret_cast<uintptr_t>(selector)};
+    auto& registry = hookRegistry();
+    HookEntry *entry = nullptr;
+    { std::lock_guard lock(registry.mutex);
+      auto found = registry.entries.find(key);
+      if (found != registry.entries.end()) entry = found->second.get(); }
+    if (entry && !ownsMethod(*entry)) {
+        hookFail(error, 1, @"Another writer displaced the managed method implementation."); return NO;
+    }
+    if (entry && entry->contract != hookContract(binding)) {
+        hookFail(error, 3, @"The hook's ownership or native signature differs from the installed entry."); return NO;
+    }
+    return YES;
+}
+
+ABIObjCMethodHook *ABICreateObjCMethodHook(Class type, SEL selector, BOOL classMethod, BOOL initializer,
+    ABIObjCInvocation *binding, ABICallInterface *interface,
+    ABIObjCReplacementHandler handler, void *context, ABIObjCReplacementDestroy destroy,
+    id object, id fallbackOwner, NSError **error) {
+    if (error) *error = nil;
+    auto callback = std::make_shared<HookCallback>(handler, context, destroy, object);
+    if (!ABIValidateObjCMethodHook(type, selector, classMethod, initializer, binding, object, error)) return nullptr;
     const auto contract = hookContract(binding);
     Class target = classMethod ? object_getClass(type) : type;
     HookKey key{reinterpret_cast<uintptr_t>((__bridge void *)target), reinterpret_cast<uintptr_t>(selector)};
