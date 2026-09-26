@@ -158,11 +158,25 @@ final class SymbolResolver: Sendable {
 
     func removeCachedResults() {
         let removed = state.withLock { state in
-            let indexes = state.indexes
+            let indexes = (state.indexes, state.imports)
             state.indexes = [:]
+            state.imports = [:]
             return indexes
         }
         withExtendedLifetime(removed) {}
+    }
+
+    func importIndex(for image: NativeImage) throws -> ImportIndex {
+        if let cached = state.withLock({ $0.imports[image.identity] }) { return cached }
+        // File/cache discovery can enter dyld; keep it outside the resolver lock.
+        let candidate = try ImportIndex(image: image)
+        return withExtendedLifetime(candidate) {
+            state.withLock { state in
+                if let cached = state.imports[image.identity] { return cached }
+                state.imports[image.identity] = candidate
+                return candidate
+            }
+        }
     }
 
     private func validate(_ declaration: NativeDeclaration) throws {
@@ -209,6 +223,7 @@ final class SymbolResolver: Sendable {
 
 private struct ResolutionState {
     var indexes: [NativeImageIdentity: SymbolIndex] = [:]
+    var imports: [NativeImageIdentity: ImportIndex] = [:]
 
     mutating func index(for image: NativeImage) -> SymbolIndex {
         if let cached = indexes[image.identity] { return cached }

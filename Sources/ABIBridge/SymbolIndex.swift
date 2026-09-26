@@ -37,6 +37,15 @@ struct SymbolSection {
 }
 
 enum DeclarationKey {
+    // These are exactly the prefixes accepted by the native demanglers.
+    static func symbolPrefixes(for language: NativeLanguage) -> [String] {
+        switch language {
+        case .cxx: ["__Z", "_Z"]
+        case .swift: ["_$s", "_$S", "$s", "$S"]
+        default: []
+        }
+    }
+
     static func fingerprint(_ key: [UInt8]) -> Int {
         var hasher = Hasher()
         key.withUnsafeBytes { hasher.combine(bytes: $0) }
@@ -288,8 +297,7 @@ final class SymbolIndex {
 
     private func symbols(for language: NativeLanguage) -> [IndexedSymbol] {
         if let cached = sourceSymbols[language] { return cached }
-        // These are exactly the prefixes accepted by the native demanglers.
-        let prefixes = language == .cxx ? ["__Z", "_Z"] : ["_$s", "_$S", "$s", "$S"]
+        let prefixes = DeclarationKey.symbolPrefixes(for: language)
         let needles = prefixes.map { Array($0.utf8CString) }
         var symbols = tableSymbols { raw in
             needles.contains { needle in
@@ -379,7 +387,7 @@ final class SymbolIndex {
         }
     }
 
-    private static func operatorAlias(_ name: String) -> String? {
+    static func operatorAlias(_ name: String) -> String? {
         for token in [" infix(", " prefix(", " postfix("] {
             guard let offset = byteOffset(of: token, in: name) else { continue }
             return String(decoding: name.utf8.prefix(offset), as: UTF8.self) + "("
