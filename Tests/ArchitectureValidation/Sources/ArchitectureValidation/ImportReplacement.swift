@@ -18,12 +18,17 @@ private struct ImportProbeSlot {
     var location = Dl_info()
     guard dladdr(header, &location) != 0, let path = location.dli_fname,
           let slide = image.vmaddrSlide else { throw failure("Import fixture path/slide unavailable") }
-    let file = try MachOFile(url: URL(fileURLWithPath: String(cString: path)))
-    let fileUUID = file.loadCommands.compactMap { if case .uuid(let value) = $0 { value.uuid } else { nil } }.first
+    let candidates: [MachOFile]
+    switch try MachOKit.loadFromFile(url: URL(fileURLWithPath: String(cString: path))) {
+    case .machO(let file): candidates = [file]
+    case .fat(let file): candidates = try file.machOFiles()
+    }
     let imageUUID = image.loadCommands.compactMap { if case .uuid(let value) = $0 { value.uuid } else { nil } }.first
-    guard file.header.layout.cputype == image.header.layout.cputype,
-          file.header.layout.cpusubtype == image.header.layout.cpusubtype,
-          let fileUUID, fileUUID == imageUUID else {
+    guard let imageUUID, let file = candidates.first(where: { candidate in
+        let uuid = candidate.loadCommands.compactMap { if case .uuid(let value) = $0 { value.uuid } else { nil } }.first
+        return candidate.header.layout.cputype == image.header.layout.cputype
+            && candidate.header.layout.cpusubtype == image.header.layout.cpusubtype && uuid == imageUUID
+    }) else {
         throw failure("Import fixture file does not identify the loaded image")
     }
     // Only this compiled, zero-addend function import is mutated. The general
