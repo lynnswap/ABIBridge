@@ -1,8 +1,15 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
+#ifdef __OBJC__
+#import <Foundation/Foundation.h>
+#endif
 #ifdef __cplusplus
 extern "C" {
+#endif
+#ifdef __OBJC__
+Class _Nonnull ABIValidationInitializerClass(void);
+NSObject * _Nullable ABIValidationCreateInitialized(int32_t seed) NS_RETURNS_RETAINED;
 #endif
 uint32_t ABIValidationCPUType(void);
 uint32_t ABIValidationCPUSubtype(void);

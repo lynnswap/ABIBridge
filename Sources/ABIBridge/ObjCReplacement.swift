@@ -89,8 +89,8 @@ final class ObjCReplacementCallback {
     init(_ body: @escaping (OpaquePointer) -> Void) { self.body = body }
 }
 
-// Only bridges the static Sendable result constraint of assumeIsolated. The
-// value is produced and consumed synchronously on the verified main thread.
+// Bridges Sendable constraints around synchronous assumeIsolated calls.
+// Values are produced and consumed on the verified main thread.
 struct ObjCReplacementIsolatedResult<Value>: @unchecked Sendable { let value: Value }
 struct ObjCReplacementIsolatedArguments<Result, each Argument>: @unchecked Sendable {
     let call: NativeObjCMethodInvocation<Result, repeat each Argument>
@@ -136,21 +136,8 @@ package final class ObjCReplacement<Result, each Argument> {
          before: @escaping @Sendable (repeat each Argument) throws -> Void,
          after: @escaping @Sendable (Result) throws -> Void) throws {
         handle = try Self.prepare(type, selector, false, .init(), initializer: true, retaining: owner) { signature in
-            ObjCReplacementCallback { pointer in
-                do {
-                    let values = try Self.decodeArguments(signature, pointer)
-                    try before(repeat each values)
-                    var error: NSError?
-                    guard ABIObjCReplacementProceed(pointer, nil, &error) else {
-                        throw error ?? ABIResolutionError.invalidAddress as NSError
-                    }
-                    let storage = NativeValueStorage(size: signature.result.size, alignment: signature.result.alignment)
-                    guard ABICopyObjCReplacementResult(pointer, storage.address, &error) else {
-                        throw error ?? ABIResolutionError.invalidAddress as NSError
-                    }
-                    try after(signature.result.decode(storage))
-                } catch { onFailure(error) }
-            }
+            Self.initializerCallback(signature, requiresMainThread: false, onFailure: onFailure,
+                transformingArguments: nil, before: before, after: after)
         }
     }
 
@@ -176,6 +163,56 @@ package final class ObjCReplacement<Result, each Argument> {
                     ABISetObjCReplacementResult(pointer, storage.address, &error)
                 }
                 guard success else { throw error ?? ABIResolutionError.invalidAddress as NSError }
+            } catch { onFailure(error) }
+        }
+    }
+
+    static func initializerCallback(_ signature: ObjCMethodSignature<Result, repeat each Argument>,
+        requiresMainThread: Bool,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        transformingArguments: (@Sendable (repeat each Argument) throws -> (repeat each Argument))?,
+        before: (@Sendable (repeat each Argument) throws -> Void)?,
+        after: @escaping @Sendable (Result) throws -> Void
+    ) -> ObjCReplacementCallback {
+        ObjCReplacementCallback { pointer in
+            guard !requiresMainThread || Thread.isMainThread else {
+                onFailure(NativeObjCMethodHookError.wrongThread)
+                return
+            }
+            do {
+                let result: Result
+                if let transformingArguments {
+                    let values = try Self.decodeArguments(signature, pointer)
+                    try before?(repeat each values)
+                    let adjusted = try transformingArguments(repeat each values)
+                    result = try signature.invoke(repeat each adjusted, using: { arguments, output in
+                        var error: NSError?
+                        let success = arguments.withUnsafeBufferPointer {
+                            ABIObjCReplacementProceed(pointer, $0.baseAddress, &error)
+                        }
+                        guard success else { throw error ?? ABIResolutionError.invalidAddress as NSError }
+                        guard ABICopyObjCReplacementResult(pointer, output, &error) else {
+                            throw error ?? ABIResolutionError.invalidAddress as NSError
+                        }
+                    })
+                } else {
+                    if let before {
+                        let values = try Self.decodeArguments(signature, pointer)
+                        try before(repeat each values)
+                    }
+                    // Observation must not round-trip native arguments through
+                    // Swift bridging or normalize their original representation.
+                    var error: NSError?
+                    guard ABIObjCReplacementProceed(pointer, nil, &error) else {
+                        throw error ?? ABIResolutionError.invalidAddress as NSError
+                    }
+                    let output = NativeValueStorage(size: signature.result.size, alignment: signature.result.alignment)
+                    guard ABICopyObjCReplacementResult(pointer, output.address, &error) else {
+                        throw error ?? ABIResolutionError.invalidAddress as NSError
+                    }
+                    result = try signature.result.decode(output)
+                }
+                try after(result)
             } catch { onFailure(error) }
         }
     }

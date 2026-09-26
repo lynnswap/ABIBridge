@@ -32,7 +32,7 @@ hook.invalidate()
 
 The selector must resolve to a concrete implementation. The function type contains explicit arguments only; self and the selector are supplied by the bridge. Set `classMethod: true` for a class method. Getters and setters use their ordinary selectors. Scalar, pointer, object, optional, class, block, and supported standard structure types follow <doc:ObjectiveCInvocation>. There is no fixed argument-count limit. Only Objective-C dispatch is intercepted: Swift calls to an `@objc` method can bypass the method table unless the declaration uses `dynamic` or the caller otherwise performs Objective-C dispatch.
 
-Installation is an unsafe operation because runtime encodings do not describe every ownership annotation, block signature, pointee lifetime, or actor requirement. Supply `NativeMethodOptions` when result ownership differs from the method family. Registrations on one managed entry must agree on ownership and native signature. Explicit consumed arguments, foreign exception unwinding, initializers, allocation, retain/release, and lifecycle methods need different contracts and are outside this API.
+Installation is an unsafe operation because runtime encodings do not describe every ownership annotation, block signature, pointee lifetime, or actor requirement. Supply `NativeMethodOptions` when result ownership differs from the method family. Registrations on one managed entry must agree on ownership and native signature. Initializers use the dedicated operation in <doc:ObjectiveCInitializerHooks>. Explicit consumed arguments, foreign exception unwinding, allocation, retain/release, and lifecycle methods are outside the ordinary-method API.
 
 ## Continue, replace, and recover from failures
 

@@ -97,3 +97,8 @@ const char *ABIValidateObjCReplacement(void) {
     }
     return nullptr;
 }
+
+Class ABIValidationInitializerClass(void) { return ABIReplacementArchitectureReceiver.class; }
+NSObject *ABIValidationCreateInitialized(int32_t seed) {
+    return [[ABIReplacementArchitectureReceiver alloc] initWithSeed:seed];
+}

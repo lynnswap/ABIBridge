@@ -6,6 +6,15 @@ let package = Package(
     platforms: [.macOS("15.4")],
     dependencies: [.package(name: "ABIBridge", path: "../..")],
     targets: [
+        .target(
+            name: "InitializerFixture",
+            cSettings: [.unsafeFlags(["-fno-objc-arc"])],
+            linkerSettings: [.linkedFramework("Foundation")]
+        ),
+        .executableTarget(
+            name: "SwiftInitializerHookConsumer",
+            dependencies: [.product(name: "ABIBridge", package: "ABIBridge"), "InitializerFixture"]
+        ),
         .executableTarget(
             name: "LoadingConsumer",
             dependencies: [.product(name: "ABIBridge", package: "ABIBridge")],

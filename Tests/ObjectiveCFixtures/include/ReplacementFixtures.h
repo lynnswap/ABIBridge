@@ -57,3 +57,21 @@ IMP ABIHookForwardingImplementation(void);
 @interface ABIHookExternalFixture : ABIManagedHookFixture @end
 @interface ABIHookBenchmarkControl : ABIReplacementFixture @end
 NS_ASSUME_NONNULL_END
+
+NS_ASSUME_NONNULL_BEGIN
+@interface ABIManagedInitializerFixture : NSObject
+@property(class, nonatomic, readonly) NSInteger liveObjects;
+@property(class, nonatomic, readonly) NSInteger initializations;
+@property(nonatomic) NSInteger value;
+@property(nonatomic, strong, nullable) id object;
+- (nullable instancetype)initWithMode:(NSInteger)mode value:(NSInteger)value object:(nullable id)object;
+- (instancetype)initWithValue:(NSInteger)value;
+- (BOOL)containsIdenticalObject:(id)object;
+- (instancetype)constructValue:(NSInteger)value __attribute__((objc_method_family(init)));
+@end
+@interface ABIManagedInitializerChild : ABIManagedInitializerFixture
+- (nullable instancetype)initWithMode:(NSInteger)mode value:(NSInteger)value object:(nullable id)object;
+@end
+@interface ABIManagedInitializerInherited : ABIManagedInitializerFixture @end
+ABIManagedInitializerFixture *ABIManagedConstruct(NSInteger value);
+NS_ASSUME_NONNULL_END

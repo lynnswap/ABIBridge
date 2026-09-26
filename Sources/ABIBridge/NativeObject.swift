@@ -13,8 +13,9 @@ public struct NativeMethodOptions: Sendable {
 
     /// Whether the method consumes an additional reference to its receiver.
     ///
-    /// Invocation supplies an additional reference so the caller's ownership
-    /// remains valid even when an initializer returns a replacement object or nil.
+    /// Outgoing invocation supplies an additional reference so the caller's
+    /// ownership remains valid when initialization returns another object or nil.
+    /// Initializer hooks instead forward the incoming consumed reference once.
     public var consumesReceiver: Bool?
 
     /// Creates ownership overrides; nil values use method-family conventions.

@@ -289,6 +289,7 @@ bool ordinaryMethod(SEL selector, bool classMethod) {
 }
 std::vector<std::string> hookContract(const ABIObjCInvocation *binding) {
     std::vector<std::string> contract{ABIObjCInvocationReturnsRetained(binding) ? "retained" : "borrowed",
+        ABIObjCInvocationConsumesReceiver(binding) ? "consumed" : "borrowed-self",
         ABIObjCInvocationResultType(binding)};
     for (size_t index = 0; index < ABIObjCInvocationParameterCount(binding); ++index)
         contract.emplace_back(ABIObjCInvocationParameterType(binding, index));
@@ -341,14 +342,22 @@ struct ABIObjCMethodHook {
     explicit ABIObjCMethodHook(HookCallback *identity) : identity(identity) {}
 };
 
-ABIObjCMethodHook *ABICreateObjCMethodHook(Class type, SEL selector, BOOL classMethod,
+ABIObjCMethodHook *ABICreateObjCMethodHook(Class type, SEL selector, BOOL classMethod, BOOL initializer,
     ABIObjCInvocation *binding, ABICallInterface *interface,
     ABIObjCReplacementHandler handler, void *context, ABIObjCReplacementDestroy destroy,
     id object, id fallbackOwner, NSError **error) {
     if (error) *error = nil;
     auto callback = std::make_shared<HookCallback>(handler, context, destroy, object);
-    if (!ordinaryMethod(selector, classMethod) || ABIObjCInvocationConsumesReceiver(binding)) {
-        hookFail(error, 2, @"Initializers, consuming receivers, allocation, and lifecycle methods require dedicated hook contracts.");
+    const char *resultType = ABIObjCInvocationResultType(binding);
+    while (*resultType && std::strchr("rnNoORV", *resultType)) ++resultType;
+    const bool validInitializer = !classMethod && !object && *resultType == '@' && resultType[1] != '?'
+        && ABIObjCInvocationConsumesReceiver(binding) && ABIObjCInvocationReturnsRetained(binding)
+        && (methodFamily(sel_getName(selector), "init") || ordinaryMethod(selector, false));
+    if (initializer ? !validInitializer
+        : (!ordinaryMethod(selector, classMethod) || ABIObjCInvocationConsumesReceiver(binding))) {
+        hookFail(error, 2, initializer
+            ? @"An initializer hook requires consumed self and a retained object result on an instance method."
+            : @"Initializers, consuming receivers, allocation, and lifecycle methods require dedicated hook contracts.");
         return nullptr;
     }
     const auto contract = hookContract(binding);
