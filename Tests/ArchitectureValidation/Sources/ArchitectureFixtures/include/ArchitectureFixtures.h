@@ -10,6 +10,8 @@ bool ABIValidationPACCompiled(void);
 int32_t ABIValidationAdd(int32_t a, int32_t b);
 /// Null on success; otherwise an owned-by-fixture diagnostic string.
 const char *ABIValidateNativeCalls(void);
+/// Positive control using the same signing schema and call path as tamper mode.
+bool ABIValidateAuthenticatedFunction(void);
 /// Returns false if a signed-bit mutation could not be formed. A successful
 /// authentication check must terminate the isolated probe before this returns true.
 bool ABIValidateTamperedFunction(void);

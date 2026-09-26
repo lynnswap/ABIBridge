@@ -17,7 +17,7 @@ __attribute__((noinline,used)) Large large(long value) {
 }
 struct Counter {
     int value = 40;
-    __attribute__((noinline)) int add(int delta);
+    __attribute__((noinline,used)) int add(int delta);
     virtual int current() const;
 };
 int Counter::add(int delta) { return value += delta; }
@@ -91,21 +91,36 @@ const char *ABIValidateNativeCalls() {
 }
 
 static void tamperTarget() {}
-bool ABIValidateTamperedFunction() {
-#if __has_feature(ptrauth_calls)
+
+static uintptr_t targetBits() {
     auto function = &tamperTarget;
     uintptr_t bits = 0;
     std::memcpy(&bits, &function, sizeof(bits));
-    const auto raw = reinterpret_cast<uintptr_t>(ptrauth_strip(function, ptrauth_key_function_pointer));
-    const auto signedBits = bits ^ raw;
-    if (!signedBits) return false;
-    bits ^= signedBits & (~signedBits + 1);
+    return bits;
+}
+
+static bool invokeAuthenticatedTarget(uintptr_t bits) {
     ABIResolutionFailure *error = nullptr;
-    auto *target = ABICopyVirtualCallTarget(&bits, ABIAuthenticationInstructionA, 0, false, &error);
+    auto *target = ABICopyVirtualCallTarget(&bits, ABIAuthenticationInstructionA,
+        ptrauth_function_pointer_type_discriminator(void(void)), false, &error);
     if (!target) { ABIReleaseResolutionFailure(error); return false; }
     ABIVirtualCallTargetFunction(target)();
     ABIReleaseVirtualCallTarget(target);
     return true;
+}
+
+bool ABIValidateAuthenticatedFunction() {
+    return invokeAuthenticatedTarget(targetBits());
+}
+
+bool ABIValidateTamperedFunction() {
+#if __has_feature(ptrauth_calls)
+    auto bits = targetBits();
+    const auto raw = reinterpret_cast<uintptr_t>(ptrauth_strip(&tamperTarget, ptrauth_key_function_pointer));
+    const auto signedBits = bits ^ raw;
+    if (!signedBits) return false;
+    bits ^= signedBits & (~signedBits + 1);
+    return invokeAuthenticatedTarget(bits);
 #else
     return false;
 #endif
