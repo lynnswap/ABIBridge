@@ -122,12 +122,32 @@ struct ImportIndexTests {
         let image = try #require(resolver.images(matching: .path(fixture.libraryURL)).first)
         let references = try resolver.importIndex(for: image).matches(.init(name: "getpid", language: .c))
         #expect(references.count == 2)
+        #expect(references.filter { $0.sectionType == .non_lazy_symbol_pointers }.count == 1)
+        #expect(references.filter { $0.sectionType == .regular }.count == 1)
         let handle = try #require(dlopen(nil, RTLD_NOW))
         defer { dlclose(handle) }
         let target = try #require(dlsym(handle, "getpid"))
         for reference in references {
             let slot = try #require(UnsafePointer<UnsafeRawPointer>(bitPattern: UInt(reference.address)))
             #expect(slot.pointee == UnsafeRawPointer(target))
+        }
+    }
+
+    @Test func indirectTablesKeepSlotPositionsAfterLocalEntries() throws {
+        let resolver = SymbolResolver()
+        let ownSymbol = try resolver.resolve(.init(name: "ABICopyLoadedImages", language: .c), in: .automatic)
+        let metadata = ImportMetadata(image: ownSymbol.image)
+        let table = try #require(metadata.macho.indirectSymbols)
+        #expect(table.contains { $0.isLocal })
+        let complete = try resolver.importIndex(for: ownSymbol.image)
+        let indirect = try metadata.indirect()
+        #expect(!indirect.isEmpty)
+        // Independently decoded chained/bind metadata is the oracle for the
+        // indirect table's physical addresses, including positions after locals.
+        for reference in indirect {
+            let matching = try complete.matches(.init(machOName: reference.symbol, language: .c))
+            #expect(matching.contains { $0.address == reference.address })
+            #expect(reference.authentication == nil)
         }
     }
 

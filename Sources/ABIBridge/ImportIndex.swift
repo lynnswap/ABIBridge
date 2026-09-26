@@ -6,7 +6,8 @@ import Synchronization
 
 // Binding metadata describes references, not the signature or mutability of the
 // referenced storage. Consumers must establish those separately before calling
-// or changing an entry. Keeping the importing image also keeps its dependencies.
+// or changing an entry. References retain their importing image; a resolved or
+// interposed target can require an independent image/code owner.
 struct ImportedReference: Sendable {
     enum Source: Sendable, Equatable { case chained, opcodes, indirectSymbols }
     let image: NativeImage
@@ -19,6 +20,7 @@ struct ImportedReference: Sendable {
     let addend: Int64
     let address: UInt64
     let width: Int
+    let sectionType: SectionType?
     let authentication: NativePointerAuthentication?
     let source: Source
 }
@@ -76,11 +78,12 @@ final class ImportIndex: Sendable {
     }
 }
 
-private struct ImportMetadata {
+struct ImportMetadata {
     let image: NativeImage
     let macho: MachOImage
     let segments: [(address: UInt64, size: UInt64)]
     let libraries: [String]
+    let sections: [(address: UInt64, size: UInt64, type: SectionType?)]
 
     init(image: NativeImage) {
         self.image = image
@@ -88,6 +91,7 @@ private struct ImportMetadata {
         if macho.is64Bit { segments = macho.segments64.map { ($0.vmaddr, $0.vmsize) } }
         else { segments = macho.segments32.map { (UInt64($0.vmaddr), UInt64($0.vmsize)) } }
         libraries = macho.dependencies.map { $0.dylib.name }
+        sections = macho.sections.map { (UInt64($0.address), UInt64($0.size), $0.flags.type) }
     }
 
     func unavailable(_ message: String) -> ABIResolutionError {
@@ -101,8 +105,11 @@ private struct ImportMetadata {
             guard libraries.indices.contains(ordinal - 1) else { throw unavailable("library ordinal is out of range") }
             library = libraries[ordinal - 1]
         } else { library = nil }
+        let unslid = UInt64(bitPattern: Int64(bitPattern: address) &- image.identity.slide)
+        let sectionType = sections.first { unslid >= $0.address && unslid - $0.address < $0.size }?.type
         return .init(image: image, symbol: name, libraryOrdinal: ordinal, libraryName: library,
-            weak: weak, isLazyBinding: lazy, addend: addend, address: address, width: width, authentication: authentication, source: source)
+            weak: weak, isLazyBinding: lazy, addend: addend, address: address, width: width,
+            sectionType: sectionType, authentication: authentication, source: source)
     }
 
     func address(segment: Int, offset: UInt64, width: Int) throws -> UInt64 {
@@ -239,19 +246,37 @@ private struct ImportMetadata {
     }
 
     func indirect() throws -> [ImportedReference] {
-        guard let bindings = macho.classicBindingSymbols else { return [] }
-        let symbols = Array(macho.symbols)
-        return try bindings.map { binding in
-            guard case .pointer = binding.type else { throw unavailable("classic text relocations are not pointer slots") }
-            guard symbols.indices.contains(binding.symbolIndex) else { throw unavailable("indirect symbol index is out of range") }
-            let symbol = symbols[binding.symbolIndex]
-            guard let descriptor = symbol.nlist.symbolDescription else { throw unavailable("indirect symbol description is unavailable") }
-            let ordinal = descriptor.libraryOrdinal == 255 ? -1 : descriptor.libraryOrdinal == 254 ? -2 : Int(descriptor.libraryOrdinal)
-            let value = Int64(bitPattern: UInt64(binding.address)).addingReportingOverflow(image.identity.slide)
-            guard !value.overflow else { throw unavailable("indirect binding address overflow") }
-            return try reference(symbol.name, ordinal: ordinal, weak: descriptor.contains(.weak_ref),
-                addend: Int64(binding.addend), address: UInt64(bitPattern: value.partialValue), width: MemoryLayout<UnsafeRawPointer>.size,
-                authentication: nil, source: .indirectSymbols)
+        if let relocations = macho.externalRelocations, relocations.contains(where: { _ in true }) {
+            throw unavailable("classic external relocations require their original addend storage")
         }
+        guard let indirect = macho.indirectSymbols else { return [] }
+        let table = Array(indirect)
+        let symbols = Array(macho.symbols)
+        let width = MemoryLayout<UnsafeRawPointer>.size
+        var result: [ImportedReference] = []
+        for section in macho.sections {
+            guard let type = section.flags.type,
+                  [.lazy_symbol_pointers, .non_lazy_symbol_pointers, .lazy_dylib_symbol_pointers].contains(type) else { continue }
+            guard let start = section.indirectSymbolIndex, let count = section.numberOfIndirectSymbols,
+                  start >= 0, start <= table.count, count >= 0, count <= table.count - start,
+                  section.address >= 0, let segment = segments.indices.first(where: {
+                      UInt64(section.address) >= segments[$0].address
+                          && UInt64(section.address) - segments[$0].address < segments[$0].size
+                  }) else { throw unavailable("indirect section exceeds its image metadata") }
+            for slot in 0..<count {
+                // Preserve the physical slot index when local/absolute entries
+                // are skipped; filtering the table before enumeration shifts it.
+                guard let index = table[start + slot].index else { continue }
+                guard symbols.indices.contains(index) else { throw unavailable("indirect symbol index is out of range") }
+                let symbol = symbols[index]
+                guard let descriptor = symbol.nlist.symbolDescription else { throw unavailable("indirect symbol description is unavailable") }
+                let ordinal = descriptor.libraryOrdinal == 255 ? -1 : descriptor.libraryOrdinal == 254 ? -2 : Int(descriptor.libraryOrdinal)
+                let offset = UInt64(section.address) - segments[segment].address + UInt64(slot * width)
+                result.append(try reference(symbol.name, ordinal: ordinal, weak: descriptor.contains(.weak_ref),
+                    lazy: type != .non_lazy_symbol_pointers, addend: 0, address: address(segment: segment, offset: offset, width: width),
+                    width: width, authentication: nil, source: .indirectSymbols))
+            }
+        }
+        return result
     }
 }
