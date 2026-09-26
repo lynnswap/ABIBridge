@@ -245,6 +245,36 @@ private func nativeLoadingPolicy(_ value: Int32) throws -> ImageLoadingPolicy {
     return policy
 }
 
+@_cdecl("ABICopyImportSelection")
+package func copyImportSelection(_ runtime: OpaquePointer?, _ declaration: UnsafePointer<ABIDeclaration>?,
+    _ importer: ABIImageSelector, _ provider: UnsafePointer<ABIImageSelector>?, _ error: UnsafeMutablePointer<OpaquePointer?>?) -> OpaquePointer? {
+    error?.pointee = nil
+    do {
+        guard let runtime, let declaration = declaration?.pointee else { throw InvalidNativeRequest(description: "A runtime and declaration are required.") }
+        let request = try nativeDeclaration(declaration.name, language: declaration.language, kind: declaration.kind, nameForm: declaration.nameForm)
+        let importing = try nativeImageSelector(scope: importer.scope, selector: importer.selector)
+        let defining = try provider.map { try nativeImageSelector(scope: $0.pointee.scope, selector: $0.pointee.selector) }
+        return try ImportedFunctionSelection(resolver: borrowed(runtime, as: SymbolResolver.self), declaration: request,
+            importer: importing, provider: defining).retainedHandle()
+    } catch let failure { error?.pointee = nativeFailure(failure); return nil }
+}
+
+@_cdecl("ABIInstallImportedFunctionHook")
+package func installImportedFunctionHook(_ runtime: OpaquePointer?, _ declaration: UnsafePointer<ABIDeclaration>?,
+    _ importer: ABIImageSelector, _ provider: UnsafePointer<ABIImageSelector>?,
+    _ result: OpaquePointer?, _ parameters: UnsafePointer<OpaquePointer?>?, _ count: Int,
+    _ context: UnsafeMutableRawPointer?, _ callback: ABIImportedCallback?, _ onFailure: ABIImportedFailureHandler?,
+    _ release: ABIImportedContextRelease?) -> OpaquePointer? {
+    guard let release else { return nil }
+    var error: OpaquePointer?
+    guard let selection = copyImportSelection(runtime, declaration, importer, provider, &error) else {
+        release(context)
+        return ABICreateFailedImportedHook(error)
+    }
+    defer { ABIReleaseImportSelection(selection) }
+    return ABICreateImportedHook(selection,result,parameters,count,context,callback,onFailure,release)
+}
+
 private func nativeRequest(_ request: ABISymbolRequest) throws -> NativeSymbolRequest {
     guard request.alternativeCount >= 0, request.imageScopeCount >= 0, request.fallbackCount >= 0,
           request.alternativeCount == 0 || request.alternatives != nil,

@@ -36,6 +36,8 @@ const char *ABIValidateCoordinatedObjCHooks(void);
 /// Fixture-only probes; valid slot addresses and schemas come from its own image.
 const void *ABIImportProbeImage(void);
 int32_t ABIImportProbeCall(void);
+uint32_t ABIImportedUIDCall(void);
+const char *ABIValidateImportedHookFrontend(const char *importer, uint32_t expected);
 typedef struct {
     bool changed;
     int32_t protectionResult;
