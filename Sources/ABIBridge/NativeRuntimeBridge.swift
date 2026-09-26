@@ -275,6 +275,38 @@ package func installImportedFunctionHook(_ runtime: OpaquePointer?, _ declaratio
     return ABICreateImportedHook(selection,result,parameters,count,context,callback,onFailure,release)
 }
 
+@_cdecl("ABICopyImportedSelectionForImage")
+package func copyImportedSelectionForImage(_ query: OpaquePointer, _ info: ABIImageInfo,
+    _ error: UnsafeMutablePointer<OpaquePointer?>?) -> OpaquePointer? {
+    error?.pointee = nil
+    do {
+        return try borrowed(query, as: ImportedFunctionQuery.self).select(ImageSnapshot(info))?.retainedHandle()
+    } catch let failure { error?.pointee = nativeFailure(failure); return nil }
+}
+
+@_cdecl("ABIMonitorImportedFunction")
+package func monitorImportedFunction(_ declaration: UnsafePointer<ABIDeclaration>?, _ importer: ABIImageSelector,
+    _ provider: UnsafePointer<ABIImageSelector>?, _ result: OpaquePointer?, _ parameters: UnsafePointer<OpaquePointer?>?, _ count: Int,
+    _ context: UnsafeMutableRawPointer?, _ callback: ABIImportedCallback?, _ failure: ABIImportedFailureHandler?,
+    _ update: ABIImportedImageHandler?, _ release: ABIImportedContextRelease?, _ error: UnsafeMutablePointer<OpaquePointer?>?) -> OpaquePointer? {
+    error?.pointee = nil
+    guard let release else {
+        error?.pointee = nativeFailure(InvalidNativeRequest(description: "A context release callback is required."))
+        return nil
+    }
+    let query: ImportedFunctionQuery
+    do {
+        guard let declaration = declaration?.pointee else { throw InvalidNativeRequest(description: "A declaration is required.") }
+        query = try ImportedFunctionQuery(
+            declaration: nativeDeclaration(declaration.name, language: declaration.language, kind: declaration.kind, nameForm: declaration.nameForm),
+            importer: nativeImageSelector(scope: importer.scope, selector: importer.selector),
+            provider: provider.map { try nativeImageSelector(scope: $0.pointee.scope, selector: $0.pointee.selector) })
+    } catch let failure {
+        release(context); error?.pointee = nativeFailure(failure); return nil
+    }
+    return ABICreateImportedHookMonitor(query.retainedHandle(), result, parameters, count, context, callback, failure, update, release, error)
+}
+
 private func nativeRequest(_ request: ABISymbolRequest) throws -> NativeSymbolRequest {
     guard request.alternativeCount >= 0, request.imageScopeCount >= 0, request.fallbackCount >= 0,
           request.alternativeCount == 0 || request.alternatives != nil,

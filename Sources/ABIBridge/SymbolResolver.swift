@@ -13,20 +13,14 @@ final class SymbolResolver: Sendable {
 
     private func acquire(_ selector: ImageSelector, loading: ImageLoadingPolicy) throws -> [NativeImage] {
         guard loading == .ifNeeded, selector != .automatic else { return try images(matching: selector) }
+        try selector.validateTarget()
         switch selector {
         case .automatic: return try images(matching: selector)
         case .installName(let name):
-            guard !name.isEmpty, !name.utf8.contains(0) else { throw ABIResolutionError.invalidImageTarget(name) }
             return [try NativeImage.opening(path: name)]
         case .path(let url):
-            guard url.isFileURL, !url.path.utf8.contains(0) else {
-                throw ABIResolutionError.invalidImageTarget(url.absoluteString)
-            }
             return [try NativeImage.opening(path: url.path)]
         case .framework(let name):
-            guard !name.isEmpty, !name.utf8.contains(0), !name.contains("/"), name != ".", name != ".." else {
-                throw ABIResolutionError.invalidImageTarget(name)
-            }
             let loaded = try images(matching: selector)
             if loaded.count == 1 { return [try loaded[0].opened()] }
             if loaded.count > 1 { throw ABIResolutionError.ambiguousImage(candidates: loaded.map(\.path)) }

@@ -16,6 +16,22 @@ public enum ImageSelector: Hashable, Sendable {
     /// Relative loader paths use the image containing ABIBridge's native loader
     /// call, not the source location of an async Swift caller.
     case installName(String)
+
+    func validateTarget() throws {
+        switch self {
+        case .automatic: return
+        case .framework(let name):
+            guard !name.isEmpty, !name.utf8.contains(0), !name.contains("/"), name != ".", name != ".." else {
+                throw ABIResolutionError.invalidImageTarget(name)
+            }
+        case .path(let url):
+            guard url.isFileURL, !url.path.utf8.contains(0) else {
+                throw ABIResolutionError.invalidImageTarget(url.absoluteString)
+            }
+        case .installName(let name):
+            guard !name.isEmpty, !name.utf8.contains(0) else { throw ABIResolutionError.invalidImageTarget(name) }
+        }
+    }
 }
 
 /// Controls whether resolution can acquire an explicitly selected image.
