@@ -8,7 +8,10 @@ let package = Package(
         .library(name: "ArchitectureValidation", targets: ["ArchitectureValidation"]),
         .library(name: "ABIBridgeLoadingFixture", type: .dynamic, targets: ["ABIBridgeLoadingFixture"]),
     ],
-    dependencies: [.package(name: "ABIBridge", path: "../..")],
+    dependencies: [
+        .package(name: "ABIBridge", path: "../.."),
+        .package(url: "https://github.com/p-x9/MachOKit.git", exact: "0.53.0"),
+    ],
     targets: [
         .target(
             name: "ABIBridgeLoadingFixture",
@@ -17,7 +20,7 @@ let package = Package(
             cSettings: [.unsafeFlags(["-fno-profile-instr-generate", "-fno-coverage-mapping"])]
         ),
         .target(name: "ArchitectureFixtures", dependencies: [.product(name: "ABIBridge", package: "ABIBridge")]),
-        .target(name: "ArchitectureValidation", dependencies: ["ArchitectureFixtures", .product(name: "ABIBridge", package: "ABIBridge")]),
+        .target(name: "ArchitectureValidation", dependencies: ["ArchitectureFixtures", .product(name: "ABIBridge", package: "ABIBridge"), .product(name: "MachOKit", package: "MachOKit")]),
         .executableTarget(name: "ArchitectureProbe", dependencies: ["ArchitectureValidation"]),
         .testTarget(name: "ArchitectureValidationTests", dependencies: ["ArchitectureValidation"]),
     ],
