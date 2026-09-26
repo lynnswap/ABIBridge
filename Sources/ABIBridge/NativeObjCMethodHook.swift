@@ -29,7 +29,7 @@ public enum NativeObjCMethodHookError: Error, Sendable, Equatable {
 /// object scope, external writers, and dynamic class/code lifetime requirements.
 public final class NativeObjCMethodHook: @unchecked Sendable {
     /// The registration's logical state and current method-table ownership.
-    public enum Status: Sendable {
+    public enum Status: Sendable, Equatable {
         /// New calls entering the dispatcher can run this callback.
         case active
         /// The token's callback was logically removed.

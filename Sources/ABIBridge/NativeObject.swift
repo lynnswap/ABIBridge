@@ -37,7 +37,7 @@ public enum ABIInvocationError: Error, Sendable, Equatable {
 /// The receiver and its handles remain in the caller's isolation domain. This
 /// type does not make an object safe to use from another actor or thread.
 public final class NativeObject {
-    var receiver: AnyObject?
+    private(set) var receiver: AnyObject?
     private let runtime: ABIRuntime
 
     init(_ receiver: AnyObject, runtime: ABIRuntime) {

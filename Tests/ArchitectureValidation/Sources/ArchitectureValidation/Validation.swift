@@ -64,7 +64,7 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         let saved = try runtime.objcImplementation(on: ArchitectureHookReceiver.self, selector: "adding:", as: ((Int32) -> Int32).self)
         try check(receiver.adding(2) == 45, "Typed managed chain enters authenticated Objective-C dispatch")
         second.invalidate()
-        try check(unsafe saved.unsafeInvoke(on: receiver, 2) == 43, "Saved implementation follows middle removal")
+        try check(unsafe saved.unsafeInvoke(on: receiver, 2) == 43, "Saved implementation follows hook removal")
         first.invalidate()
         try check(unsafe saved.unsafeInvoke(on: receiver, 2) == 42, "Saved implementation remains callable after invalidation")
         try check(failures.isEmpty, "Typed hook callbacks complete without conversion failures")
