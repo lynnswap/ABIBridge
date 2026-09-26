@@ -18,6 +18,8 @@ public struct NativeSymbolRequest: Sendable, Hashable {
     public let fallbacks: [NativeDeclaration]
     /// Scopes tried in order. An empty array matches no images.
     public let imageScopes: [ImageSelector]
+    /// Acquisition policy for explicit scopes; automatic scope stays loaded-only.
+    public let loading: ImageLoadingPolicy
 
     /// Describes a requirement without loading code.
     ///
@@ -26,15 +28,18 @@ public struct NativeSymbolRequest: Sendable, Hashable {
     ///   - alternatives: Additional declarations for the same symbol.
     ///   - fallbacks: Ordered candidates resolved lazily after primary/alias absence.
     ///   - imageScopes: Ordered scopes; defaults to all loaded images.
+    ///   - loading: Acquisition policy for explicit scopes; constructing the request is inert.
     public init(
         _ declaration: NativeDeclaration,
         alternatives: [NativeDeclaration] = [],
         fallbacks: [NativeDeclaration] = [],
-        in imageScopes: [ImageSelector] = [.automatic]
+        in imageScopes: [ImageSelector] = [.automatic],
+        loading: ImageLoadingPolicy = .ifNeeded
     ) {
         self.declaration = declaration
         self.alternatives = alternatives
         self.fallbacks = fallbacks
         self.imageScopes = imageScopes
+        self.loading = loading
     }
 }

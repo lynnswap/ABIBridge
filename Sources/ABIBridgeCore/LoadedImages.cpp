@@ -7,6 +7,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <memory>
+#include <optional>
 #include <iterator>
 #include <utility>
 #include <string>
@@ -21,6 +23,8 @@ struct Image {
     std::array<uint8_t, 16> uuid;
     std::string path;
     bool processLifetime;
+    bool executable = false;
+    std::string installName;
 };
 
 struct Catalog {
@@ -50,13 +54,22 @@ void addedImage(const mach_header *header, intptr_t slide)
     if (!dladdr(header, &info) || !info.dli_fname)
         return;
     Image image { reinterpret_cast<uintptr_t>(header), slide, 0, {}, info.dli_fname,
-                  hasProcessLifetime(header) };
+                  hasProcessLifetime(header), header->filetype == MH_EXECUTE, {} };
     const size_t headerSize = header->magic == MH_MAGIC_64 ? sizeof(mach_header_64) : sizeof(mach_header);
     auto *command = reinterpret_cast<const load_command *>(reinterpret_cast<const char *>(header) + headerSize);
     for (uint32_t index = 0; index < header->ncmds; ++index) {
         if (command->cmd == LC_UUID) {
             const auto *uuid = reinterpret_cast<const uuid_command *>(command);
             std::copy(std::begin(uuid->uuid), std::end(uuid->uuid), image.uuid.begin());
+        }
+        if (command->cmd == LC_ID_DYLIB && command->cmdsize >= sizeof(dylib_command)) {
+            const auto *dylib = reinterpret_cast<const dylib_command *>(command);
+            const auto offset = dylib->dylib.name.offset;
+            if (offset < command->cmdsize) {
+                const auto *name = reinterpret_cast<const char *>(command) + offset;
+                const auto length = strnlen(name, command->cmdsize - offset);
+                if (length < command->cmdsize - offset) image.installName.assign(name, length);
+            }
         }
         command = reinterpret_cast<const load_command *>(reinterpret_cast<const char *>(command) + command->cmdsize);
     }
@@ -114,6 +127,7 @@ struct ABIImageList {
 
 struct ABIImageLease {
     void *handle;
+    Image image;
 };
 
 ABIImageList *ABICopyLoadedImages(void)
@@ -172,7 +186,165 @@ ABIImageLease *ABIRetainLoadedImage(uint64_t generation)
             dlclose(handle);
         return nullptr;
     }
-    return new ABIImageLease { handle };
+    return new ABIImageLease { handle, std::move(image) };
+}
+
+namespace {
+
+std::vector<Image> imageSnapshot()
+{
+    auto& state = catalog();
+    std::lock_guard lock(state.mutex);
+    return state.images;
+}
+
+std::string canonicalPath(const std::string& path)
+{
+    std::unique_ptr<char, decltype(&std::free)> resolved(realpath(path.c_str(), nullptr), std::free);
+    return resolved ? resolved.get() : path;
+}
+
+std::string leafName(const std::string& path)
+{
+    return path.substr(path.find_last_of('/') + 1);
+}
+
+void loadingFailure(ABIResolutionFailure **error, int32_t code, const std::string& message)
+{
+    if (error) *error = ABICreateResolutionFailure(code, message.c_str());
+}
+
+std::optional<bool> pathMatchesHandle(const std::string& path, void *handle)
+{
+    void *probe = dlopen(path.c_str(), RTLD_LAZY | RTLD_LOCAL | RTLD_FIRST | RTLD_NOLOAD);
+    if (!probe) return std::nullopt;
+    const bool matches = probe == handle;
+    dlclose(probe);
+    return matches;
+}
+
+} // namespace
+
+ABIImageLease *ABIOpenImage(const char *path, bool loadIfNeeded, ABIResolutionFailure **error)
+{
+    if (error) *error = nullptr;
+    if (!initialize()) {
+        loadingFailure(error, ABIFailureImageUnavailable, "The native image catalog is unavailable.");
+        return nullptr;
+    }
+    const auto canonical = canonicalPath(path);
+    // An executable cannot be opened as a dylib. It already owns process lifetime.
+    for (const auto& image : imageSnapshot()) {
+        if (image.executable && canonicalPath(image.path) == canonical)
+            return new ABIImageLease { nullptr, image };
+    }
+    void *handle = dlopen(path, RTLD_LAZY | RTLD_LOCAL | RTLD_FIRST | (loadIfNeeded ? 0 : RTLD_NOLOAD));
+    if (!handle) {
+        const char *message = dlerror();
+        loadingFailure(error, loadIfNeeded ? ABIFailureImageLoadFailed : ABIFailureImageNotLoaded,
+                       message ? message : "dlopen failed without a diagnostic.");
+        return nullptr;
+    }
+    std::unique_ptr<void, decltype(&dlclose)> owner(handle, dlclose);
+    // Catalog callbacks have completed when dlopen returns. Do not identify the
+    // image from dlsym: a re-export can belong to a dependency, and local-only
+    // libraries need not export an anchor or Mach-O header symbol.
+    const auto images = imageSnapshot();
+    const auto leaf = leafName(canonical);
+    const Image *matched = nullptr;
+    std::vector<const Image *> unavailablePaths;
+    for (int pass = 0; pass < 2 && !matched; ++pass) {
+        for (const auto& image : images) {
+            const bool likely = leafName(image.path) == leaf || leafName(image.installName) == leaf;
+            if (image.executable || (pass == 0) != likely) continue;
+            const auto match = pathMatchesHandle(image.path, handle);
+            if (!match) { unavailablePaths.push_back(&image); continue; }
+            if (!*match) continue;
+            if (matched) {
+                loadingFailure(error, ABIFailureMetadataUnavailable, "The loader handle matches multiple cataloged images.");
+                return nullptr;
+            }
+            matched = &image;
+        }
+    }
+    if (!matched) {
+        for (const auto *image : unavailablePaths) {
+            // Only a cache image's host-prefixed spelling may need translation
+            // back to its logical path. LC_ID_DYLIB by itself is not identity:
+            // two ordinary loaded images can share it and resolve to one handle.
+            if (!image->processLifetime || !image->installName.starts_with('/') ||
+                !image->path.ends_with(image->installName) ||
+                std::count_if(images.begin(), images.end(), [&](const Image& other) {
+                    return other.installName == image->installName;
+                }) != 1)
+                continue;
+            const auto match = pathMatchesHandle(image->installName, handle);
+            if (!match || !*match) continue;
+            if (matched) {
+                loadingFailure(error, ABIFailureMetadataUnavailable, "The loader handle matches multiple cache paths.");
+                return nullptr;
+            }
+            matched = image;
+        }
+    }
+    if (!matched) {
+        loadingFailure(error, ABIFailureMetadataUnavailable, "The acquired image could not be identified in the dyld catalog.");
+        return nullptr;
+    }
+    auto *lease = new ABIImageLease { handle, *matched };
+    owner.release();
+    return lease;
+}
+
+ABIImageLease *ABIOpenLoadedImage(uint64_t generation, ABIResolutionFailure **error)
+{
+    if (error) *error = nullptr;
+    if (!initialize()) {
+        loadingFailure(error, ABIFailureImageUnavailable, "The native image catalog is unavailable.");
+        return nullptr;
+    }
+    for (const auto& image : imageSnapshot()) {
+        if (image.generation != generation) continue;
+        if (image.executable) return new ABIImageLease { nullptr, image };
+        std::string messages;
+        for (const auto& path : {image.path, image.installName}) {
+            if (path.empty() || (path == image.installName && image.installName == image.path && !messages.empty())) continue;
+            ABIResolutionFailure *failure = nullptr;
+            auto *lease = ABIOpenImage(path.c_str(), true, &failure);
+            if (lease) {
+                if (lease->image.generation == generation) return lease;
+                ABIReleaseImage(lease);
+                loadingFailure(error, ABIFailureImageChanged, "The loader acquired a different image generation.");
+                return nullptr;
+            }
+            const auto code = ABIResolutionFailureCode(failure);
+            messages += (messages.empty() ? "" : "\n") + path + ": " + ABIResolutionFailureMessage(failure);
+            ABIReleaseResolutionFailure(failure);
+            if (code != ABIFailureImageLoadFailed) {
+                loadingFailure(error, code, messages);
+                return nullptr;
+            }
+            // A Simulator cache image can report a host-prefixed path that
+            // dyld only recognizes by the same image's logical install name.
+        }
+        loadingFailure(error, ABIFailureImageLoadFailed, messages);
+        return nullptr;
+    }
+    loadingFailure(error, ABIFailureImageChanged, "The requested image generation is no longer loaded.");
+    return nullptr;
+}
+
+ABIImageInfo ABIImageLeaseGet(const ABIImageLease *lease)
+{
+    const auto& image = lease->image;
+    ABIImageInfo result { image.header, image.slide, image.generation, {}, image.path.c_str() };
+    std::copy(image.uuid.begin(), image.uuid.end(), std::begin(result.uuid));
+    return result;
+}
+
+bool ABIImageIsInSharedCache(const char *path)
+{
+    return _dyld_shared_cache_contains_path(path);
 }
 
 void ABIReleaseImage(ABIImageLease *lease)

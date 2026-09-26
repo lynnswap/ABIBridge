@@ -1,9 +1,10 @@
 import ABIBridgeCore
 import Foundation
 
-/// Limits a lookup to images already loaded in the current process.
+/// Selects images for declaration lookup or loaded-image inspection.
 ///
-/// A selector is a search constraint, not a request to load code.
+/// Resolution may acquire an explicitly selected image according to its loading
+/// policy. Catalog enumeration always remains loaded-only.
 public enum ImageSelector: Hashable, Sendable {
     /// Search all loaded images and report competing definitions as ambiguous.
     case automatic
@@ -11,6 +12,19 @@ public enum ImageSelector: Hashable, Sendable {
     case framework(named: String)
     /// Match an executable image path, resolving filesystem symlinks when available.
     case path(URL)
+    /// A dyld path spelling, including @rpath, @loader_path, or @executable_path.
+    /// Relative loader paths use the image containing ABIBridge's native loader
+    /// call, not the source location of an async Swift caller.
+    case installName(String)
+}
+
+/// Controls whether resolution can acquire an explicitly selected image.
+public enum ImageLoadingPolicy: Int32, Hashable, Sendable {
+    /// Use dyld to acquire and initialize an explicit target. Automatic search
+    /// still considers only images already present in the catalog.
+    case ifNeeded = 0
+    /// Search existing images without requesting loading or initialization.
+    case loadedOnly = 1
 }
 
 /// A loaded image retained for the lifetime of this handle and its symbols.
@@ -23,6 +37,35 @@ public struct NativeImage: Hashable, Sendable {
 
     public static func == (lhs: Self, rhs: Self) -> Bool { lhs.identity == rhs.identity }
     public func hash(into hasher: inout Hasher) { hasher.combine(identity) }
+
+    static func opening(path: String, loading: ImageLoadingPolicy = .ifNeeded) throws -> Self {
+        var failure: OpaquePointer?
+        let handle = path.withCString { ABIOpenImage($0, loading == .ifNeeded, &failure) }
+        return try acquired(handle, failure: failure, target: path)
+    }
+
+    func opened() throws -> Self {
+        var failure: OpaquePointer?
+        let handle = ABIOpenLoadedImage(identity.loadGeneration, &failure)
+        return try Self.acquired(handle, failure: failure, target: path)
+    }
+
+    private static func acquired(_ handle: OpaquePointer?, failure: OpaquePointer?, target: String) throws -> Self {
+        guard let handle else {
+            guard let failure else { throw ABIResolutionError.imageUnavailable }
+            defer { ABIReleaseResolutionFailure(failure) }
+            let message = String(cString: ABIResolutionFailureMessage(failure))
+            switch ABIResolutionFailureCode(failure) {
+            case Int32(ABIFailureImageNotLoaded): throw ABIResolutionError.imageNotLoaded
+            case Int32(ABIFailureImageLoadFailed): throw ABIResolutionError.imageLoadFailed(target: target, message: message)
+            case Int32(ABIFailureImageChanged): throw ABIResolutionError.imageChanged
+            case Int32(ABIFailureImageUnavailable): throw ABIResolutionError.imageUnavailable
+            default: throw ABIResolutionError.metadataUnavailable(message)
+            }
+        }
+        let snapshot = ImageSnapshot(ABIImageLeaseGet(handle))
+        return Self(identity: snapshot.identity, path: snapshot.path, lease: ImageLease(handle))
+    }
 }
 
 // Immutable native lease; dyld's reference counting is thread-safe. Releasing
@@ -37,9 +80,24 @@ struct ImageSnapshot {
     let identity: NativeImageIdentity
     let path: String
 
-    static func matching(_ selector: ImageSelector, in snapshots: [Self]) -> [Self] {
+    init(_ info: ABIImageInfo) {
+        let uuid = UUID(uuid: info.uuid)
+        identity = NativeImageIdentity(
+            headerAddress: UInt64(info.header), slide: Int64(info.slide), loadGeneration: info.generation,
+            uuid: uuid == UUID(uuid: (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)) ? nil : uuid
+        )
+        path = String(cString: info.path)
+    }
+
+    static func matching(_ selector: ImageSelector, in snapshots: [Self]) throws -> [Self] {
         switch selector {
         case .automatic: return snapshots
+        case .installName(let name):
+            guard !name.isEmpty, !name.utf8.contains(0) else { throw ABIResolutionError.invalidImageTarget(name) }
+            do {
+                let image = try NativeImage.opening(path: name, loading: .loadedOnly)
+                return snapshots.filter { $0.identity == image.identity }
+            } catch ABIResolutionError.imageNotLoaded { return [] }
         case .path(let url):
             let resolved = url.resolvingSymlinksInPath()
             return snapshots.filter { URL(fileURLWithPath: $0.path).resolvingSymlinksInPath() == resolved }
@@ -62,18 +120,33 @@ struct ImageSnapshot {
         guard let list = ABICopyLoadedImages() else { throw ABIResolutionError.imageUnavailable }
         defer { ABIFreeImageList(list) }
         return (0..<ABIImageListCount(list)).map { index in
-            let info = ABIImageListGet(list, index)
-            let uuid = UUID(uuid: info.uuid)
-            return Self(
-                identity: NativeImageIdentity(
-                    headerAddress: UInt64(info.header),
-                    slide: Int64(info.slide),
-                    loadGeneration: info.generation,
-                    uuid: uuid == UUID(uuid: (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)) ? nil : uuid
-                ),
-                path: String(cString: info.path)
-            )
+            Self(ABIImageListGet(list, index))
         }
+    }
+}
+
+enum FrameworkImages {
+    static var bundleDirectories: [URL] {
+        [Bundle.main.privateFrameworksURL, Bundle.main.sharedFrameworksURL].compactMap { $0 }
+    }
+
+    static func candidates(named name: String, bundleDirectories: [URL] = FrameworkImages.bundleDirectories) -> [URL] {
+        var paths = bundleDirectories.map { $0.appendingPathComponent("\(name).framework/\(name)") }
+        var systemPaths = ["/System/Library/Frameworks", "/System/Library/PrivateFrameworks"]
+        #if targetEnvironment(macCatalyst)
+        systemPaths += ["/System/iOSSupport/System/Library/Frameworks", "/System/iOSSupport/System/Library/PrivateFrameworks"]
+        #endif
+        paths += systemPaths.map { URL(fileURLWithPath: "\($0)/\(name).framework/\(name)") }
+        return Array(Set(paths.filter { url in
+            if url.path.withCString({ ABIImageIsInSharedCache($0) }) { return true }
+            if FileManager.default.fileExists(atPath: url.path) { return true }
+            #if targetEnvironment(simulator)
+            if let root = ProcessInfo.processInfo.environment["SIMULATOR_ROOT"], url.path.hasPrefix("/System/") {
+                return FileManager.default.fileExists(atPath: root + url.path)
+            }
+            #endif
+            return false
+        }.map { $0.resolvingSymlinksInPath() })).sorted { $0.path < $1.path }
     }
 }
 

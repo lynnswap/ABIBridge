@@ -4,7 +4,7 @@ Select a loaded image, resolve a declaration, and use its address within an expl
 
 ## Choose a search scope
 
-The default scope of ``ABIRuntime`` searches images already loaded in the process. It does not load frameworks or execute their initializers. Use ``ImageSelector`` to restrict lookup to a framework name or an executable path.
+The default automatic scope of ``ABIRuntime`` searches images already loaded in the process. Explicit framework, executable-path, and install-name scopes acquire their target by default. Use `loading: .loadedOnly` to keep lookup from requesting loading or initialization. See <doc:ImageLoading> for dyld path rules and ownership.
 
 ```swift
 let runtime = ABIRuntime()
@@ -13,7 +13,7 @@ let images = try await runtime.images(
 )
 ```
 
-An empty image list means no loaded image matches. Resolving a declaration in an empty scope throws `ABIResolutionError.imageNotLoaded`. If the application loads a framework later, a subsequent query can discover it.
+Image enumeration is always loaded-only. An empty image list means no loaded image matches; it does not predict whether a resolution request can load that target. A later query can discover newly acquired images.
 
 A `NativeImage` retains its loaded image. Reuse that handle to resolve several declarations in the same scope. The runtime caches raw symbol data and decoded declaration indexes; C++ members with a plain qualified owner reuse that owner's index.
 
@@ -84,7 +84,7 @@ A single request can also be resolved with `try await runtime.resolve(request)`.
 
 Use `alternatives:` for declarations expected to identify the same symbol. Missing spellings are ignored, including a missing primary declaration. Every found spelling in the selected scope must agree on both address and image generation. Distinct matches are ambiguous, and invalid storage stops lookup even if another spelling matched. The returned symbol records the first declaration that matched.
 
-Batch results preserve input order and partial success. An empty batch returns no results. Retained image lists are reused for repeated scopes within the batch, while declaration indexes use the runtime's existing cache. This is not an atomic snapshot of loader activity. Each successful result retains its image independently of the batch and runtime.
+Batch results preserve input order and partial success. An empty batch returns no results. Retained image lists are reused for repeated scopes within the batch, while declaration indexes use the runtime's existing cache. Acquisition invalidates earlier scope snapshots so later requests can discover newly loaded dependencies. This is not an atomic snapshot of loader activity. Each successful result retains its image independently of the batch and runtime.
 
 ## Try names lazily
 
@@ -101,7 +101,7 @@ let request = NativeSymbolRequest(
 let symbol = try await runtime.resolve(request)
 ```
 
-Candidate order takes precedence over image-scope order. The primary declaration and its `alternatives:` are searched together across every scope before the first fallback is attempted across those scopes. Each fallback is independent, and the first success stops resolution without looking up later candidates. Ambiguity, invalid storage, and unsupported declarations stop immediately. If every candidate is absent, the error keeps the primary declaration's identity; empty or entirely unloaded scopes report `imageNotLoaded`.
+Candidate order takes precedence over image-scope order. The primary declaration and its `alternatives:` are searched together across every scope before the first fallback is attempted across those scopes. Each fallback is independent, and the first success stops resolution without looking up later candidates. Ambiguity, invalid storage, unsupported declarations, and loader failures stop immediately. If every candidate is absent, the error keeps the primary declaration's identity; empty or entirely unloaded scopes report `imageNotLoaded`.
 
 Use `alternatives:` for aliases that must agree and `fallbacks:` for ordered choices that need not have the same address. Both single-request and batch APIs reuse the same scope and symbol caches.
 

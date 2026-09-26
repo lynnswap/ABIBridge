@@ -201,6 +201,12 @@ public enum ABIResolutionError: Error, Sendable, Hashable {
     case imageUnavailable
     /// No currently loaded image matches the requested scope.
     case imageNotLoaded
+    /// dyld could not acquire an explicit target. The original loader diagnostic is preserved.
+    case imageLoadFailed(target: String, message: String)
+    /// More than one image matches a framework name; select a concrete path.
+    case ambiguousImage(candidates: [String])
+    /// A target cannot be represented as a framework name or executable file URL.
+    case invalidImageTarget(String)
     /// None of the available symbol sources contains the declaration.
     case declarationNotFound(NativeDeclaration)
     /// The receiver's Objective-C class hierarchy has no ivar with this name.

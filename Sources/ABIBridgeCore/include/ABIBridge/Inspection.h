@@ -88,9 +88,12 @@ enum {
 };
 /// Required storage kind. A symbol in an incompatible section is not returned.
 enum { ABISymbolFunction = 0, ABISymbolData = 1, ABISymbolVTable = 2 };
-/// Loaded-image search scope. A framework selector omits ".framework"; a path
-/// selector names the executable. None of these values loads a missing image.
-enum { ABIImageAutomatic = 0, ABIImageFramework = 1, ABIImagePath = 2 };
+/// Image search scope. Framework names omit ".framework"; paths identify
+/// executables; install names use dyld spelling, including @rpath. Automatic
+/// scope searches loaded images only. The operation controls acquisition.
+enum { ABIImageAutomatic = 0, ABIImageFramework = 1, ABIImagePath = 2, ABIImageInstallName = 3 };
+/// Explicit scopes may load by default. Automatic scope only searches loaded images.
+enum { ABIImageLoadIfNeeded = 0, ABIImageLoadedOnly = 1 };
 /// Failure categories. Preserve the message for declaration-specific detail.
 /// Callers should handle unknown future categories as unspecified failures.
 enum {
@@ -99,7 +102,7 @@ enum {
     ABIFailureSignatureMismatch = 5, ABIFailureUnsupportedDeclaration = 6,
     ABIFailureMetadataUnavailable = 7, ABIFailureImageChanged = 8,
     ABIFailureInvalidAddress = 9, ABIFailureInvalidRequest = 10,
-    ABIFailureOther = 11
+    ABIFailureOther = 11, ABIFailureImageLoadFailed = 12, ABIFailureAmbiguousImage = 13
 };
 
 /// Name representation, independent of declaration language. Linker spelling
@@ -114,7 +117,7 @@ typedef struct {
     int32_t kind;
     int32_t nameForm;
 } ABIDeclaration;
-/// One loaded-image scope, using the ABIImage constants and selector spelling.
+/// One image scope, using the ABIImage constants and selector spelling.
 typedef struct {
     int32_t scope;
     const char *selector;
@@ -131,6 +134,8 @@ typedef struct {
     size_t imageScopeCount;
     const ABIDeclaration *fallbacks;
     size_t fallbackCount;
+    /// ABIImageLoadIfNeeded (zero) or ABIImageLoadedOnly.
+    int32_t loading;
 } ABISymbolRequest;
 /// Exactly one owned symbol or failure for one input request.
 /// Release each non-null field with its matching release function.
@@ -190,12 +195,17 @@ void ABIReleaseSymbolRuntime(ABISymbolRuntime *runtime);
 /// valid. Resolution and cache clearing may be performed concurrently.
 void ABIRuntimeRemoveCachedResults(ABISymbolRuntime *runtime);
 
-/// Resolves a source-level declaration in loaded images. Name and non-null
+/// Resolves a source-level declaration. Explicit scopes acquire/initialize their
+/// target with ABIImageLoadIfNeeded; ABIImageLoadedOnly keeps inspection behavior.
+/// Install names resolve in the image containing the native loader call, not
+/// a source-language caller. Loading errors preserve the dyld message and stop
+/// fallback. Successful loading may have side effects even if lookup fails.
+/// Name and non-null
 /// runtime must remain valid for the call. Strings are null-terminated UTF-8;
 /// C++/Swift names are demangled declarations, and C names omit the Mach-O "_".
 ///
 /// Automatic scope ignores selector, which may be null. Framework/path scope
-/// requires selector. Invalid enum values or a missing required selector report
+/// requires selector, as does install-name scope. Invalid enum values or a missing required selector report
 /// ABIFailureInvalidRequest. Ambiguity is reported rather than selecting a load.
 ///
 /// On success, returns an owned symbol and writes null to error when supplied.
@@ -209,7 +219,7 @@ void ABIRuntimeRemoveCachedResults(ABISymbolRuntime *runtime);
 /// pointer-authentication schema, or pointee lifetime.
 ABIResolvedSymbol *ABIResolveSymbol(
     ABISymbolRuntime *runtime, const char *name, int32_t language, int32_t kind,
-    int32_t scope, const char *selector, ABIResolutionFailure **error);
+    int32_t scope, const char *selector, int32_t loading, ABIResolutionFailure **error);
 /// Resolves a name with an explicit representation using ABIName constants.
 /// Source form follows ABIResolveSymbol. Linker/Mach-O forms match exact bytes,
 /// preserving ABI variants, without demangling or punctuation normalization.
@@ -219,7 +229,7 @@ ABIResolvedSymbol *ABIResolveSymbol(
 ABIResolvedSymbol *ABIResolveSymbolWithNameForm(
     ABISymbolRuntime *runtime, const char *name, int32_t nameForm,
     int32_t language, int32_t kind, int32_t scope,
-    const char *selector, ABIResolutionFailure **error);
+    const char *selector, int32_t loading, ABIResolutionFailure **error);
 
 /// Resolves a C++ vtable by qualified type name, such as "Example::Renderer".
 /// Scope, errors, ownership, and lifetime follow ABIResolveSymbol. The typeName
@@ -227,7 +237,7 @@ ABIResolvedSymbol *ABIResolveSymbolWithNameForm(
 /// prefix. The result is the symbol base; no address-point offset is inferred.
 ABIResolvedSymbol *ABIResolveCXXVTable(
     ABISymbolRuntime *runtime, const char *typeName,
-    int32_t scope, const char *selector, ABIResolutionFailure **error);
+    int32_t scope, const char *selector, int32_t loading, ABIResolutionFailure **error);
 
 /// Acquires another owned reference to a live non-null symbol. The input
 /// reference remains owned by its caller. Release each acquired reference with

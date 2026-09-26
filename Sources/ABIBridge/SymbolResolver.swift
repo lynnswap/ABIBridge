@@ -6,6 +6,39 @@ final class SymbolResolver: Sendable {
     static let shared = SymbolResolver()
     private let state = Mutex(ResolutionState())
 
+    private struct Scope: Hashable {
+        let selector: ImageSelector
+        let loading: ImageLoadingPolicy
+    }
+
+    private func acquire(_ selector: ImageSelector, loading: ImageLoadingPolicy) throws -> [NativeImage] {
+        guard loading == .ifNeeded, selector != .automatic else { return try images(matching: selector) }
+        switch selector {
+        case .automatic: return try images(matching: selector)
+        case .installName(let name):
+            guard !name.isEmpty, !name.utf8.contains(0) else { throw ABIResolutionError.invalidImageTarget(name) }
+            return [try NativeImage.opening(path: name)]
+        case .path(let url):
+            guard url.isFileURL, !url.path.utf8.contains(0) else {
+                throw ABIResolutionError.invalidImageTarget(url.absoluteString)
+            }
+            return [try NativeImage.opening(path: url.path)]
+        case .framework(let name):
+            guard !name.isEmpty, !name.utf8.contains(0), !name.contains("/"), name != ".", name != ".." else {
+                throw ABIResolutionError.invalidImageTarget(name)
+            }
+            let loaded = try images(matching: selector)
+            if loaded.count == 1 { return [try loaded[0].opened()] }
+            if loaded.count > 1 { throw ABIResolutionError.ambiguousImage(candidates: loaded.map(\.path)) }
+            let candidates = FrameworkImages.candidates(named: name)
+            guard candidates.count <= 1 else {
+                throw ABIResolutionError.ambiguousImage(candidates: candidates.map(\.path))
+            }
+            guard let target = candidates.first else { return [] }
+            return [try NativeImage.opening(path: target.path)]
+        }
+    }
+
     func images(matching selector: ImageSelector) throws -> [NativeImage] {
         let snapshots = try ImageSnapshot.matching(selector, in: ImageSnapshot.current())
         let retained = state.withLock { state in
@@ -27,23 +60,25 @@ final class SymbolResolver: Sendable {
         }
     }
 
-    func resolve(_ declaration: NativeDeclaration, in selector: ImageSelector) throws -> ResolvedSymbol {
-        let images = try images(matching: selector)
+    func resolve(_ declaration: NativeDeclaration, in selector: ImageSelector, loading: ImageLoadingPolicy = .ifNeeded) throws -> ResolvedSymbol {
+        try validate(declaration)
+        let images = try acquire(selector, loading: loading)
         guard !images.isEmpty else { throw ABIResolutionError.imageNotLoaded }
         return try unique(declaration, images: images)
     }
 
-    func resolve(_ declaration: NativeDeclaration, in image: NativeImage) throws -> ResolvedSymbol {
-        try unique(declaration, images: [image])
+    func resolve(_ declaration: NativeDeclaration, in image: NativeImage, loading: ImageLoadingPolicy = .ifNeeded) throws -> ResolvedSymbol {
+        try validate(declaration)
+        return try unique(declaration, images: [loading == .ifNeeded ? image.opened() : image])
     }
 
     func resolve(_ request: NativeSymbolRequest) throws -> ResolvedSymbol {
-        var scopes: [ImageSelector: Result<[NativeImage], any Error>] = [:]
+        var scopes: [Scope: Result<[NativeImage], any Error>] = [:]
         return try resolve(request, scopes: &scopes)
     }
 
     func resolve(_ requests: [NativeSymbolRequest]) -> [Result<ResolvedSymbol, any Error>] {
-        var scopes: [ImageSelector: Result<[NativeImage], any Error>] = [:]
+        var scopes: [Scope: Result<[NativeImage], any Error>] = [:]
         return requests.map { request in
             Result { try resolve(request, scopes: &scopes) }
         }
@@ -51,14 +86,14 @@ final class SymbolResolver: Sendable {
 
     private func resolve(
         _ request: NativeSymbolRequest,
-        scopes: inout [ImageSelector: Result<[NativeImage], any Error>]
+        scopes: inout [Scope: Result<[NativeImage], any Error>]
     ) throws -> ResolvedSymbol {
         var missing: ABIResolutionError = .imageNotLoaded
         for (index, candidate) in ([request.declaration] + request.fallbacks).enumerated() {
             do {
                 return try resolveAliases(
                     candidate, alternatives: index == 0 ? request.alternatives : [],
-                    in: request.imageScopes, scopes: &scopes
+                    in: request.imageScopes, loading: request.loading, scopes: &scopes
                 )
             } catch let error as ABIResolutionError {
                 switch error {
@@ -73,17 +108,22 @@ final class SymbolResolver: Sendable {
 
     private func resolveAliases(
         _ primary: NativeDeclaration, alternatives: [NativeDeclaration],
-        in imageScopes: [ImageSelector],
-        scopes: inout [ImageSelector: Result<[NativeImage], any Error>]
+        in imageScopes: [ImageSelector], loading: ImageLoadingPolicy,
+        scopes: inout [Scope: Result<[NativeImage], any Error>]
     ) throws -> ResolvedSymbol {
+        for declaration in [primary] + alternatives { try validate(declaration) }
         var missing: ABIResolutionError = .imageNotLoaded
         for scope in imageScopes {
+            let key = Scope(selector: scope, loading: loading)
             let scopeResult: Result<[NativeImage], any Error>
-            if let cached = scopes[scope] {
+            if let cached = scopes[key] {
                 scopeResult = cached
             } else {
-                scopeResult = Result { try self.images(matching: scope) }
-                scopes[scope] = scopeResult
+                // Even a failed dlopen can change the catalog through dependencies
+                // or constructors. Later requests must see those changes.
+                if loading == .ifNeeded && scope != .automatic { scopes.removeAll() }
+                scopeResult = Result { try acquire(scope, loading: loading) }
+                scopes[key] = scopeResult
             }
             let images = try scopeResult.get()
             guard !images.isEmpty else { continue }
@@ -125,10 +165,13 @@ final class SymbolResolver: Sendable {
         withExtendedLifetime(removed) {}
     }
 
-    private func unique(_ declaration: NativeDeclaration, images: [NativeImage], extensionsOnly: Bool = false) throws -> ResolvedSymbol {
+    private func validate(_ declaration: NativeDeclaration) throws {
         guard declaration.language != .objectiveC || declaration.nameForm != .source else {
             throw ABIResolutionError.unsupportedDeclaration("Objective-C selectors require the invocation frontend.")
         }
+    }
+
+    private func unique(_ declaration: NativeDeclaration, images: [NativeImage], extensionsOnly: Bool = false) throws -> ResolvedSymbol {
         // Keep these indexes for the whole lookup even if another caller clears
         // the cache while shared-cache metadata is being read.
         let query = SymbolQuery(declaration)

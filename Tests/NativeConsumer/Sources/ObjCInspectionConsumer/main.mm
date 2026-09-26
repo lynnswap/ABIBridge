@@ -29,7 +29,7 @@ int main(int argc, char **argv) {
         auto *runtime = ABICreateSymbolRuntime();
         ABIResolutionFailure *failure = nullptr;
         auto *table = ABIResolveCXXVTable(
-            runtime, "ABIBridgeFixture::VirtualCounter", ABIImagePath, argv[1], &failure);
+            runtime, "ABIBridgeFixture::VirtualCounter", ABIImagePath, argv[1], ABIImageLoadIfNeeded, &failure);
         assert(table && !failure);
         ABIImageInfo image{};
         ABIResolvedSymbolImage(table, &image);

@@ -17,31 +17,35 @@ class InvocationRuntime final {
 public:
     InvocationRuntime() = default;
     static InvocationRuntime current() { return InvocationRuntime(Runtime::current()); }
-    resolved_symbol resolve(const declaration& query, const image_selector& scope = {}) const {
-        return runtime_.resolve(query, scope);
+    resolved_symbol resolve(const declaration& query, const image_selector& scope = {},
+                            image_loading loading = image_loading::if_needed) const {
+        return runtime_.resolve(query, scope, loading);
     }
 
     /// Resolves a C function by its unmangled name and retains its image.
     template <typename Signature>
-    function<Signature> c_function(std::string name, const image_selector& scope = {}) const {
-        return function<Signature>(resolve(declaration(std::move(name), language::c), scope));
+    function<Signature> c_function(std::string name, const image_selector& scope = {},
+                            image_loading loading = image_loading::if_needed) const {
+        return function<Signature>(resolve(declaration(std::move(name), language::c), scope, loading));
     }
 
     /// Resolves a complete demangled C++ declaration. Signature must describe
     /// the actual C++ types, including reference categories and return type.
     template <typename Signature>
-    function<Signature> cxx_function(const declaration& query, const image_selector& scope = {}) const {
+    function<Signature> cxx_function(const declaration& query, const image_selector& scope = {},
+                            image_loading loading = image_loading::if_needed) const {
         require_cxx_function(query);
-        return function<Signature>(resolve(query, scope));
+        return function<Signature>(resolve(query, scope, loading));
     }
 
     /// Resolves a direct member entry point. Use Result(Arguments...) const for
     /// a const method. The caller supplies the exact receiver subobject;
     /// virtual dispatch and implicit base adjustments are not performed.
     template <typename Signature>
-    method<Signature> cxx_method(const declaration& query, const image_selector& scope = {}) const {
+    method<Signature> cxx_method(const declaration& query, const image_selector& scope = {},
+                            image_loading loading = image_loading::if_needed) const {
         require_cxx_function(query);
-        return method<Signature>(resolve(query, scope));
+        return method<Signature>(resolve(query, scope, loading));
     }
 
     /// Drops indexes without invalidating existing function or symbol handles.

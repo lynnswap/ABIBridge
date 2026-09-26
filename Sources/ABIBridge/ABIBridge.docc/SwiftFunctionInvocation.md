@@ -16,7 +16,7 @@ let message = try unsafe decorate.unsafeInvoke("Hello")
 
 A label-only name obtains its parameter and result type names from the function metatype. Use `Example.combine(_:suffix:)` for a declaration with one unlabeled argument and a second argument labeled suffix. The number of labels must match the signature. A complete demangled declaration is also accepted; use that form when a custom wrapper has a different Swift name from the native type.
 
-The framework/path and retained-image overloads use the same symbol indexes as other runtime lookups. They search loaded images and do not load a missing framework.
+The framework/path and retained-image overloads use the same symbol indexes as other runtime lookups. Explicit targets are acquired by default; `loading: .loadedOnly` opts out. See <doc:ImageLoading>.
 
 ## Supported representations
 

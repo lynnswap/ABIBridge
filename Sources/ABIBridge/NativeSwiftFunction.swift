@@ -113,15 +113,17 @@ extension ABIRuntime {
     /// - Parameters:
     ///   - name: A qualified label-only name, such as Example.decorate(_:), or a complete demangled declaration.
     ///   - signature: A synchronous, nonthrowing function-type metatype.
-    ///   - scope: Loaded images to search; defaults to all loaded images.
+    ///   - scope: Images to search; automatic scope considers only loaded images.
+    ///   - loading: Whether an explicit image may be acquired and initialized.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
     /// - Throws: A resolution, unsupported representation, or call preparation error.
     public func swiftFunction<Result, each Argument>(
         named name: String,
         as signature: ((repeat each Argument) -> Result).Type,
-        in scope: ImageSelector = .automatic
+        in scope: ImageSelector = .automatic,
+        loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftFunction<Result, repeat each Argument> {
-        try NativeSwiftFunction(symbol: resolve(swiftFunctionDeclaration(named: name, as: signature), in: scope))
+        try NativeSwiftFunction(symbol: resolve(swiftFunctionDeclaration(named: name, as: signature), in: scope, loading: loading))
     }
 
     /// Resolves a concrete Swift free function in an already retained image.
@@ -130,13 +132,15 @@ extension ABIRuntime {
     ///   - name: The qualified demangled declaration.
     ///   - signature: A synchronous, nonthrowing function-type metatype.
     ///   - image: An image whose symbol index is reused.
+    ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
     /// - Throws: A resolution, unsupported representation, or call preparation error.
     public func swiftFunction<Result, each Argument>(
         named name: String,
         as signature: ((repeat each Argument) -> Result).Type,
-        in image: NativeImage
+        in image: NativeImage,
+        loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftFunction<Result, repeat each Argument> {
-        try NativeSwiftFunction(symbol: resolve(swiftFunctionDeclaration(named: name, as: signature), in: image))
+        try NativeSwiftFunction(symbol: resolve(swiftFunctionDeclaration(named: name, as: signature), in: image, loading: loading))
     }
 }

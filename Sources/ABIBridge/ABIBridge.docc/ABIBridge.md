@@ -91,6 +91,8 @@ print(symbol.image.path)
 
 ### Image lifetime
 
+- <doc:ImageLoading>
+- ``ImageLoadingPolicy``
 - ``NativeImage``
 - ``NativeImageIdentity``
 

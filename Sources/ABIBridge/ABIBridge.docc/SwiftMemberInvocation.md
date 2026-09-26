@@ -87,6 +87,6 @@ Writeback preserves the originating resource storage and implementation images w
 
 Label-only method names obtain canonical parameter/result names from their metatypes. Use a complete relative declaration when a wrapper has a different native name, such as `transform(Example.NativeValue) -> Example.NativeValue`. Operator names can omit fixity, such as `>(_:_:)`. If prefix and postfix implementations both match, lookup reports ambiguity; use `~~~ prefix(_:)` or a complete declaration to choose one. An accessor can similarly use `property.getter : Example.NativeValue` or `property.setter : Example.NativeValue`.
 
-Framework, executable-path, and retained-image overloads select already-loaded images. They do not load missing frameworks. The method or type handle keeps its implementation alive, and custom wrapper results retain their call's owners. Raw pointers remain borrowed.
+Framework, executable-path, install-name, and retained-image overloads acquire explicit targets by default. Pass `loading: .loadedOnly` to retain inspection behavior; see <doc:ImageLoading>. The method or type handle keeps its implementation alive, and custom wrapper results retain their call's owners. Raw pointers remain borrowed.
 
 The unsafe boundary requires the actual declaration's ownership, effects, and actor/thread requirements. Generic metadata synthesis, async/throwing methods and getters, nontrivial foreign value layouts, and resilient-layout inference remain adapter cases.

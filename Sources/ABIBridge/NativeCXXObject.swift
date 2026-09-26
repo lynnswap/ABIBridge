@@ -54,12 +54,14 @@ public final class NativeCXXObject {
 
     private let runtime: ABIRuntime
     private let scope: CXXImageScope
+    private let loading: ImageLoadingPolicy
 
-    fileprivate init(runtime: ABIRuntime, storage: NativeValue, typeName: String, scope: CXXImageScope) {
+    fileprivate init(runtime: ABIRuntime, storage: NativeValue, typeName: String, scope: CXXImageScope, loading: ImageLoadingPolicy) {
         self.runtime = runtime
         self.storage = storage
         self.typeName = typeName
         self.scope = scope
+        self.loading = loading
     }
 
     /// Resolves a direct member implementation and binds this receiver.
@@ -83,8 +85,8 @@ public final class NativeCXXObject {
         let declaration = NativeDeclaration(name: typeName + "::" + name, language: .cxx)
         let symbol: ResolvedSymbol
         switch scope {
-        case .selector(let selector): symbol = try await runtime.resolve(declaration, in: selector)
-        case .image(let image): symbol = try await runtime.resolve(declaration, in: image)
+        case .selector(let selector): symbol = try await runtime.resolve(declaration, in: selector, loading: loading)
+        case .image(let image): symbol = try await runtime.resolve(declaration, in: image, loading: loading)
         }
         return try NativeCXXMethod(
             binding: CXXMethodBinding(receiver: storage, target: .symbol(symbol), adapter: adapter)
@@ -175,12 +177,14 @@ extension ABIRuntime {
     /// - Parameters:
     ///   - storage: A live object or caller-adjusted subobject view.
     ///   - typeName: The qualified C++ class name.
-    ///   - scope: Loaded images to search; defaults to all loaded images.
+    ///   - scope: Images to search; automatic scope stays loaded-only.
+    ///   - loading: Whether an explicit target may be acquired and initialized.
     /// - Returns: A receiver scope using this runtime's shared indexes.
     public nonisolated func cxxObject(
-        _ storage: NativeValue, typeNamed typeName: String, in scope: ImageSelector = .automatic
+        _ storage: NativeValue, typeNamed typeName: String, in scope: ImageSelector = .automatic,
+        loading: ImageLoadingPolicy = .ifNeeded
     ) -> NativeCXXObject {
-        .init(runtime: self, storage: storage, typeName: typeName, scope: .selector(scope))
+        .init(runtime: self, storage: storage, typeName: typeName, scope: .selector(scope), loading: loading)
     }
 
     /// Creates a C++ receiver scope within an already retained image.
@@ -189,10 +193,12 @@ extension ABIRuntime {
     ///   - storage: A live object or caller-adjusted subobject view.
     ///   - typeName: The qualified C++ class name.
     ///   - image: The image whose symbol index can be reused.
+    ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A receiver scope retaining its storage and image.
     public nonisolated func cxxObject(
-        _ storage: NativeValue, typeNamed typeName: String, in image: NativeImage
+        _ storage: NativeValue, typeNamed typeName: String, in image: NativeImage,
+        loading: ImageLoadingPolicy = .ifNeeded
     ) -> NativeCXXObject {
-        .init(runtime: self, storage: storage, typeName: typeName, scope: .image(image))
+        .init(runtime: self, storage: storage, typeName: typeName, scope: .image(image), loading: loading)
     }
 }

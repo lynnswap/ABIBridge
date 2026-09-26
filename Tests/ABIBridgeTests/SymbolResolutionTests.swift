@@ -134,7 +134,7 @@ struct SymbolResolutionTests {
         let scope = ImageSelector.path(first.libraryURL)
         let fallback: [ImageSelector] = [.path(first.directory.appendingPathComponent("absent")), .path(other.libraryURL), scope]
         let requests: [NativeSymbolRequest] = [
-            .init(counter, in: fallback),
+            .init(counter, in: fallback, loading: .loadedOnly),
             .init(missing, in: [scope]),
             .init(add, alternatives: [.init(name: "\(first.namespace)::add( int,int )", language: .cxx)], in: [scope]),
             .init(missing, alternatives: [counter], in: [scope]),
@@ -390,7 +390,7 @@ struct SymbolResolutionTests {
         defer { ABIReleaseSymbolRuntime(nativeRuntime) }
         let native = "\(fixture.namespace)::Counter".withCString { typeName in
             fixture.libraryURL.path.withCString { path in
-                ABIResolveCXXVTable(nativeRuntime, typeName, Int32(ABIImagePath), path, &failure)
+                ABIResolveCXXVTable(nativeRuntime, typeName, Int32(ABIImagePath), path, Int32(ABIImageLoadIfNeeded), &failure)
             }
         }
         let nativeVTable = try #require(native)
@@ -509,7 +509,7 @@ struct SymbolResolutionTests {
         let runtime = ABIRuntime()
         let request = NativeDeclaration(name: "\(fixture.namespace)::counter", language: .cxx, kind: .data)
         await #expect(throws: ABIResolutionError.imageNotLoaded) {
-            _ = try await runtime.resolve(request, in: .path(fixture.libraryURL))
+            _ = try await runtime.resolve(request, in: .path(fixture.libraryURL), loading: .loadedOnly)
         }
         try fixture.load()
         let resolved = try await runtime.resolve(request, in: .path(fixture.libraryURL))
@@ -658,7 +658,8 @@ struct SymbolResolutionTests {
             "--sdk", "macosx", "clang++", "-std=c++20", "-mmacosx-version-min=15.4",
             "-I", core.appendingPathComponent("include").path,
             root.appendingPathComponent("Tests/NativeConsumer/ImageLeaseFixture.cpp").path,
-            object.path, "-L/usr/lib/swift", "-lswiftCore", "-o", executable.path,
+            object.path, core.appendingPathComponent("NativeFailure.cpp").path,
+            "-L/usr/lib/swift", "-lswiftCore", "-o", executable.path,
         ])
         try FixtureLibrary.run([executable.path, fixture.libraryURL.path])
     }
@@ -688,19 +689,20 @@ private final class FixtureBundleMarker: NSObject {}
 @inline(never)
 public func swiftFixtureEcho(_ value: Int32) -> Int32 { value + 1 }
 
-private final class FixtureLibrary {
+final class FixtureLibrary {
     let directory: URL
     let libraryURL: URL
     let namespace: String
     private var handle: UnsafeMutableRawPointer?
 
-    init(namespace: String? = nil, load: Bool = true, swiftModule: String? = nil, swiftSource: String? = nil, threadLocal: Bool = false, stripped: Bool = false) throws {
+    init(namespace: String? = nil, load: Bool = true, swiftModule: String? = nil, swiftSource: String? = nil, threadLocal: Bool = false, stripped: Bool = false,
+         cxxSource: String? = nil, linkArguments: [String] = []) throws {
         self.namespace = namespace ?? "Fixture_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
         directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         libraryURL = directory.appendingPathComponent("fixture.dylib")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let source = directory.appendingPathComponent(swiftModule == nil ? "fixture.cpp" : "fixture.swift")
-        let cxxSource = """
+        let cxxSource = cxxSource ?? """
         #include <cstdint>
         namespace \(self.namespace) {
         int counter = 42;
@@ -738,7 +740,7 @@ private final class FixtureLibrary {
         } else {
             try cxxSource.write(to: source, atomically: true, encoding: .utf8)
             try Self.run(["--sdk", "macosx", "clang++", "-arch", architecture, "-std=c++20", "-mmacosx-version-min=15.4",
-                          "-dynamiclib", source.path, "-o", libraryURL.path])
+                          "-dynamiclib", source.path, "-o", libraryURL.path] + linkArguments)
         }
         if stripped { try Self.run(["--sdk", "macosx", "strip", "-u", "-r", libraryURL.path]) }
         if load { try self.load() }

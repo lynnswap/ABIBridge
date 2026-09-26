@@ -7,6 +7,11 @@ let package = Package(
     dependencies: [.package(name: "ABIBridge", path: "../..")],
     targets: [
         .executableTarget(
+            name: "LoadingConsumer",
+            dependencies: [.product(name: "ABIBridge", package: "ABIBridge")],
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/LoadingFixtures"])]
+        ),
+        .executableTarget(
             name: "CXXInspectionConsumer",
             dependencies: [.product(name: "ABIBridge", package: "ABIBridge")]
         ),

@@ -23,6 +23,30 @@ xcrun swiftc -parse-as-library -emit-library -enable-library-evolution \
 xcrun clang -std=c11 -pedantic-errors -fsyntax-only \
     -I "$task_root/Sources/ABIBridgeCore/include" \
     "$task_root/Tests/NativeConsumer/Sources/CInspectionConsumer/main.c"
+xcrun swift build --package-path "$task_root/Tests/NativeConsumer" \
+    --scratch-path "$task_root/.build/native-consumer" --product LoadingConsumer
+task_loading_bin=$(xcrun swift build --package-path "$task_root/Tests/NativeConsumer" \
+    --scratch-path "$task_root/.build/native-consumer" --show-bin-path)
+mkdir -p "$task_loading_bin/LoadingFixtures"
+xcrun clang++ -std=c++20 -dynamiclib -mmacosx-version-min=15.4 -undefined dynamic_lookup \
+    -Wl,-install_name,@rpath/libLoadingFixture.dylib \
+    "$task_root/Tests/NativeConsumer/LoadingFixture.cpp" \
+    -o "$task_loading_bin/LoadingFixtures/libLoadingFixture.dylib"
+mkdir -p "$task_loading_bin/LoadingFixtures/other"
+for task_identity in Actual Alias; do
+    task_identity_value=1
+    task_identity_directory="$task_loading_bin/LoadingFixtures"
+    if [[ "$task_identity" == Alias ]]; then
+        task_identity_value=2
+        task_identity_directory="$task_loading_bin/LoadingFixtures/other"
+    fi
+    xcrun clang -dynamiclib -mmacosx-version-min=15.4 \
+        -Wl,-install_name,@rpath/libIdentityShared.dylib -DFIXTURE_VALUE="$task_identity_value" \
+        "$task_root/Tests/NativeConsumer/ImageIdentityFixture.c" \
+        -o "$task_identity_directory/libIdentity$task_identity.dylib"
+done
+ln -sf libIdentityActual.dylib "$task_loading_bin/LoadingFixtures/libIdentityAlias.dylib"
+"$task_loading_bin/LoadingConsumer" "$task_loading_bin/LoadingFixtures/libLoadingFixture.dylib"
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" CXXInspectionConsumer "$task_fixture/libFixture.dylib"
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \

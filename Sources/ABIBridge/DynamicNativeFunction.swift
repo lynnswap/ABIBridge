@@ -73,13 +73,15 @@ extension ABIRuntime {
     /// - Parameters:
     ///   - name: A C linker name without the Mach-O underscore.
     ///   - signature: The explicit C-compatible parameter and result layouts.
-    ///   - scope: Loaded images to search; defaults to all loaded images.
+    ///   - scope: Images to search; automatic scope considers only loaded images.
+    ///   - loading: Whether an explicit image may be acquired and initialized.
     /// - Returns: A reusable function retaining the image and call interface.
     /// - Throws: A resolution error or unsupported call layout.
     public func cFunction(
-        named name: String, signature: NativeSignature, in scope: ImageSelector = .automatic
+        named name: String, signature: NativeSignature, in scope: ImageSelector = .automatic,
+        loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> DynamicNativeFunction {
-        try .init(symbol: resolve(.init(name: name, language: .c), in: scope), signature: signature)
+        try .init(symbol: resolve(.init(name: name, language: .c), in: scope, loading: loading), signature: signature)
     }
 
     /// Resolves a C function in a retained image using runtime-known layouts.
@@ -88,12 +90,14 @@ extension ABIRuntime {
     ///   - name: A C linker name without the Mach-O underscore.
     ///   - signature: The explicit C-compatible parameter and result layouts.
     ///   - image: The retained image whose symbol index can be reused.
+    ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable function retaining the image and call interface.
     /// - Throws: A resolution error or unsupported call layout.
     public func cFunction(
-        named name: String, signature: NativeSignature, in image: NativeImage
+        named name: String, signature: NativeSignature, in image: NativeImage,
+        loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> DynamicNativeFunction {
-        try .init(symbol: resolve(.init(name: name, language: .c), in: image), signature: signature)
+        try .init(symbol: resolve(.init(name: name, language: .c), in: image, loading: loading), signature: signature)
     }
 
     /// Resolves a C-compatible C++ function using runtime-known native layouts.
@@ -101,13 +105,15 @@ extension ABIRuntime {
     /// - Parameters:
     ///   - name: A complete demangled C++ declaration.
     ///   - signature: The explicit C-compatible parameter and result layouts.
-    ///   - scope: Loaded images to search; defaults to all loaded images.
+    ///   - scope: Images to search; automatic scope considers only loaded images.
+    ///   - loading: Whether an explicit image may be acquired and initialized.
     /// - Returns: A reusable function retaining the image and call interface.
     /// - Throws: A resolution error or unsupported call layout.
     public func cxxFunction(
-        named name: String, signature: NativeSignature, in scope: ImageSelector = .automatic
+        named name: String, signature: NativeSignature, in scope: ImageSelector = .automatic,
+        loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> DynamicNativeFunction {
-        try .init(symbol: resolve(.init(name: name, language: .cxx), in: scope), signature: signature)
+        try .init(symbol: resolve(.init(name: name, language: .cxx), in: scope, loading: loading), signature: signature)
     }
 
     /// Resolves a C-compatible C++ function in a retained image using runtime layouts.
@@ -116,11 +122,13 @@ extension ABIRuntime {
     ///   - name: A complete demangled C++ declaration.
     ///   - signature: The explicit C-compatible parameter and result layouts.
     ///   - image: The retained image whose symbol index can be reused.
+    ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable function retaining the image and call interface.
     /// - Throws: A resolution error or unsupported call layout.
     public func cxxFunction(
-        named name: String, signature: NativeSignature, in image: NativeImage
+        named name: String, signature: NativeSignature, in image: NativeImage,
+        loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> DynamicNativeFunction {
-        try .init(symbol: resolve(.init(name: name, language: .cxx), in: image), signature: signature)
+        try .init(symbol: resolve(.init(name: name, language: .cxx), in: image, loading: loading), signature: signature)
     }
 }
