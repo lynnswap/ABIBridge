@@ -53,6 +53,8 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
     }
     let runtime = ABIRuntime()
     switch mode {
+    case "import-replacement":
+        checks = try validateImportReplacement()
     case "coordinated-hooks":
         let failures = ArchitectureHookErrors()
         let receiver = ArchitectureHookReceiver()

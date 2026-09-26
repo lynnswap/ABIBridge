@@ -40,3 +40,17 @@ The `initializers` mode uses the public initializer hook with a compiler-authore
 The `native-hooks` mode runs the public C++/Objective-C++ wrappers on the signed host, including saved authenticated IMPs and dedicated initializer phases.
 
 The `coordinated-hooks` mode checks public Swift/C++ request arrays, ordinary and initializer registration, preflight failure details, and logical invalidation.
+
+## Imported-function replacement probe
+
+The `import-replacement` mode locates its own compiled `getppid` import with MachOKit, retaining the original chained-fixup metadata from the matching executable file. It checks a compiled replacement, invocation of the captured predecessor, restoration of the original pointer bits, and preservation of current/maximum page protections. A separate allocated read-only page exercises address-diversified pointer signing when compiled for arm64e. These fixture-only routines are not a public rebinding API.
+
+TPRO-protected imports can reject `vm_protect` even when their maximum protection includes WRITE. The report distinguishes `replacement and captured predecessor passed` from `kernel refused TPRO mutation`; refusal is accepted only for the observed TPRO flag and `KERN_PROTECTION_FAILURE`, with the original state verified unchanged. A completed probe does not necessarily mean its import was writable. The allocated control must actually complete replacement and restoration.
+
+For a comparison with legacy lazy binding, run from the repository root:
+
+```sh
+swift run --package-path Tests/ArchitectureValidation --scratch-path .build/architecture-validation -Xlinker -no_fixup_chains ArchitectureProbe import-replacement
+```
+
+The linker flag changes only the comparison fixture's binding format; it is not a consumer requirement or a way to establish support for protected imports. M5 Pro / macOS 26.6.2 runs observed refusal for the normal chained import and successful replacement for the legacy import. The signed device host can run the same mode; authenticated execution must be reported separately from macOS arm64 results.
