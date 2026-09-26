@@ -29,6 +29,10 @@ public final class ArchitectureCounter {
     @inline(never) public func adding(_ delta: Int) -> Int { value + delta }
 }
 
+private final class ArchitectureObjCReceiver: NSObject {
+    @objc func adding(_ value: Int32) -> Int32 { 40 + value }
+}
+
 @MainActor public func runArchitectureValidation(mode: String) async throws -> ArchitectureReport {
     var checks: [String] = []
     var tag: UInt64?
@@ -65,6 +69,43 @@ public final class ArchitectureCounter {
     case "ffi":
         let add = try await runtime.cFunction(named: "ABIValidationAdd", as: ((Int32, Int32) -> Int32).self)
         try check(unsafe add.unsafeInvoke(20,22) == ABIValidationAdd(20,22), "libffi signed function call")
+        let largeType = try NativeType.structure(named: "ABIValidationLarge", fields: Array(repeating: .int64, count: 8))
+        let shift = try await runtime.cFunction(named: "ABIValidationShiftLarge",
+            signature: NativeSignature(parameters: [largeType], returns: largeType))
+        let input = NativeValue(type: largeType) { bytes in
+            for index in 0..<8 {
+                bytes.baseAddress!.storeBytes(of: Int64(index + 1), toByteOffset: largeType.fields[index].offset, as: Int64.self)
+            }
+        }
+        let expected = ABIValidationShiftLarge(ABIValidationLarge(a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8))
+        let output = try unsafe shift.unsafeInvoke(with: [input])
+        let expectedFields = [expected.a, expected.b, expected.c, expected.d, expected.e, expected.f, expected.g, expected.h]
+        for index in expectedFields.indices {
+            try check(try unsafe output.field(at: index).read(as: Int64.self) == expectedFields[index],
+                      "libffi aggregate argument/indirect result field \(index)")
+        }
+        guard let address = ABIValidationCreateCounter() else {
+            throw ArchitectureValidationFailure(description: "Counter allocation failed")
+        }
+        let storage = unsafe NativeValue(adopting: address,
+            as: try .opaque(named: "ABIArchitecture::Counter", size: Int(ABIValidationCounterSize()), alignment: Int(ABIValidationCounterAlignment())),
+            release: { ABIValidationDeleteCounter($0) })
+        let object = runtime.cxxObject(storage, typeNamed: "ABIArchitecture::Counter")
+        let method = try await object.method(named: "add(int)", as: ((Int32) -> Int32).self)
+        let directResult = try unsafe method.unsafeInvoke(2)
+        try check(directResult == 42 && directResult == ABIValidationCounterOracle(address), "libffi C++ receiver call")
+        let table = try unsafe NativeVTable(readingFrom: storage, entryCount: 1,
+            authentication: .cxxVTablePointer(discriminator: ABIValidationTableDiscriminator()))
+        let virtual = try unsafe object.virtualMethod(at: 0, in: table,
+            authentication: .cxxVirtualFunction(discriminator: ABIValidationSlotDiscriminator()), as: (() -> Int32).self)
+        try check(try unsafe virtual.unsafeInvoke() == ABIValidationCounterOracle(address), "libffi authenticated virtual call")
+        let adapter = try await runtime.resolve(.init(name: "ABIValidationCounterAdapter", language: .c))
+        let adapted = try await object.method(named: "add(int)", as: ((Int32) -> Int32).self, using: adapter)
+        let adaptedResult = try unsafe adapted.unsafeInvoke(3)
+        try check(adaptedResult == 45 && adaptedResult == ABIValidationCounterOracle(address), "libffi adapter and signed target")
+        let objcReceiver = ArchitectureObjCReceiver()
+        let objcMethod = try runtime.object(objcReceiver).method(selector: "adding:", as: ((Int32) -> Int32).self)
+        try check(try unsafe objcMethod.unsafeInvoke(2) == objcReceiver.adding(2), "libffi Objective-C invocation")
     case "memory":
         guard let allocation = ABIValidationAllocate() else { throw ArchitectureValidationFailure(description: "Allocation failed") }
         defer { ABIValidationDeallocate(allocation) }
