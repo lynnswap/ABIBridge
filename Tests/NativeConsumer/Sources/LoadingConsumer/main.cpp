@@ -2,12 +2,37 @@
 #include <ABIBridge/NativeInvocation.hpp>
 #include <atomic>
 #include <cassert>
+#include <dlfcn.h>
+#include <filesystem>
 #include <iostream>
 #include <thread>
 #include <unistd.h>
 #include <vector>
 
 static std::atomic<unsigned> initializationCount = 0;
+
+static void checkDuplicateInstallNames(const std::filesystem::path& directory) {
+    using namespace abi_bridge;
+    auto firstPath = directory / "libIdentityActual.dylib";
+    auto secondPath = directory / "other/libIdentityAlias.dylib";
+    void *first = dlopen(firstPath.c_str(), RTLD_LAZY | RTLD_LOCAL | RTLD_FIRST);
+    void *second = dlopen(secondPath.c_str(), RTLD_LAZY | RTLD_LOCAL | RTLD_FIRST);
+    assert(first && second && first != second);
+    auto expected = reinterpret_cast<int (*)()>(dlsym(first, "ABIBridgeIdentityValue"));
+    assert(expected && expected() == 1);
+    Runtime runtime;
+    auto symbol = runtime.resolve({"ABIBridgeIdentityValue", language::c},
+                                  image_selector::install_name("@rpath/libIdentityAlias.dylib"));
+    // The install-name alias identifies the first loader. The second library
+    // deliberately has the alias's leaf name but a different path/definition.
+    assert(std::filesystem::equivalent(symbol.image_path(), firstPath));
+    function<int()> value(symbol);
+    assert(value.unsafe_invoke() == 1);
+    assert(dlclose(second) == 0);
+    assert(dlclose(first) == 0);
+    runtime.remove_cached_results();
+    assert(value.unsafe_invoke() == 1);
+}
 extern "C" __attribute__((used)) void ABIBridgeLoadingDidInitialize() {
     // Reenter the same resolver while dyld is executing the new library's
     // constructor. Neither the catalog nor index lock may span dlopen.
@@ -49,5 +74,6 @@ int main(int argc, char **argv) {
     runtime.remove_cached_results();
     assert(value.unsafe_invoke() == 42 && hidden.unsafe_invoke() == 42);
     assert(initializationCount == 1);
+    checkDuplicateInstallNames(std::filesystem::path(argv[1]).parent_path());
     std::cout << "Automatic loading consumer passed: rpath, initialization, reentrancy, concurrency, local symbols, and lifetime.\n";
 }

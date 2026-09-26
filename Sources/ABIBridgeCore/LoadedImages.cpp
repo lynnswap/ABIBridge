@@ -8,6 +8,7 @@
 #include <cstring>
 #include <mutex>
 #include <memory>
+#include <optional>
 #include <iterator>
 #include <utility>
 #include <string>
@@ -213,18 +214,13 @@ void loadingFailure(ABIResolutionFailure **error, int32_t code, const std::strin
     if (error) *error = ABICreateResolutionFailure(code, message.c_str());
 }
 
-bool matchesHandle(const Image& image, void *handle)
+std::optional<bool> pathMatchesHandle(const std::string& path, void *handle)
 {
-    if (image.executable) return false;
-    for (const auto& path : {image.path, image.installName}) {
-        if (path.empty()) continue;
-        void *probe = dlopen(path.c_str(), RTLD_LAZY | RTLD_LOCAL | RTLD_FIRST | RTLD_NOLOAD);
-        if (!probe) continue;
-        const bool matches = probe == handle;
-        dlclose(probe);
-        if (matches) return true;
-    }
-    return false;
+    void *probe = dlopen(path.c_str(), RTLD_LAZY | RTLD_LOCAL | RTLD_FIRST | RTLD_NOLOAD);
+    if (!probe) return std::nullopt;
+    const bool matches = probe == handle;
+    dlclose(probe);
+    return matches;
 }
 
 } // namespace
@@ -256,15 +252,39 @@ ABIImageLease *ABIOpenImage(const char *path, bool loadIfNeeded, ABIResolutionFa
     const auto images = imageSnapshot();
     const auto leaf = leafName(canonical);
     const Image *matched = nullptr;
+    std::vector<const Image *> unavailablePaths;
     for (int pass = 0; pass < 2 && !matched; ++pass) {
         for (const auto& image : images) {
             const bool likely = leafName(image.path) == leaf || leafName(image.installName) == leaf;
-            if ((pass == 0) != likely || !matchesHandle(image, handle)) continue;
+            if (image.executable || (pass == 0) != likely) continue;
+            const auto match = pathMatchesHandle(image.path, handle);
+            if (!match) { unavailablePaths.push_back(&image); continue; }
+            if (!*match) continue;
             if (matched) {
                 loadingFailure(error, ABIFailureMetadataUnavailable, "The loader handle matches multiple cataloged images.");
                 return nullptr;
             }
             matched = &image;
+        }
+    }
+    if (!matched) {
+        for (const auto *image : unavailablePaths) {
+            // Only a cache image's host-prefixed spelling may need translation
+            // back to its logical path. LC_ID_DYLIB by itself is not identity:
+            // two ordinary loaded images can share it and resolve to one handle.
+            if (!image->processLifetime || !image->installName.starts_with('/') ||
+                !image->path.ends_with(image->installName) ||
+                std::count_if(images.begin(), images.end(), [&](const Image& other) {
+                    return other.installName == image->installName;
+                }) != 1)
+                continue;
+            const auto match = pathMatchesHandle(image->installName, handle);
+            if (!match || !*match) continue;
+            if (matched) {
+                loadingFailure(error, ABIFailureMetadataUnavailable, "The loader handle matches multiple cache paths.");
+                return nullptr;
+            }
+            matched = image;
         }
     }
     if (!matched) {
