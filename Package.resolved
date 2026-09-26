@@ -1,5 +1,5 @@
 {
-  "originHash" : "8df0e74d261940dfbc7a653cff073cbc6831c1aebc1a37635c17fdf13255dd63",
+  "originHash" : "722396bd91bc13e6a1113f1d7b76c6e0057343fc074ece82c4ca7d295e21c67a",
   "pins" : [
     {
       "identity" : "machokit",
@@ -76,10 +76,10 @@
     {
       "identity" : "zdlibffi",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/faimin/ZDLibffi.git",
+      "location" : "https://github.com/lynnswap/ZDLibffi.git",
       "state" : {
-        "revision" : "835d4297f3a58b5cab1920794b2e20c07018a992",
-        "version" : "0.380.0"
+        "revision" : "e9737c755088a4a3d2ba03f2ca5bfeadff9c09b2",
+        "version" : "0.380.1"
       }
     }
   ],

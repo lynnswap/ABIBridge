@@ -38,6 +38,35 @@ uint32_t ABIValidationCPUType() { return ownHeader()->cputype; }
 uint32_t ABIValidationCPUSubtype() { return ownHeader()->cpusubtype; }
 bool ABIValidationPACCompiled() { return __has_feature(ptrauth_calls); }
 __attribute__((noinline,used)) int32_t ABIValidationAdd(int32_t a, int32_t b) { return a + b; }
+__attribute__((noinline,used)) ABIValidationLarge ABIValidationShiftLarge(ABIValidationLarge value) {
+    return {value.a + 1, value.b + 2, value.c + 3, value.d + 4,
+            value.e + 5, value.f + 6, value.g + 7, value.h + 8};
+}
+void *ABIValidationCreateCounter() { return new ABIArchitecture::Counter; }
+void ABIValidationDeleteCounter(void *counter) { delete static_cast<ABIArchitecture::Counter *>(counter); }
+uintptr_t ABIValidationCounterSize() { return sizeof(ABIArchitecture::Counter); }
+uintptr_t ABIValidationCounterAlignment() { return alignof(ABIArchitecture::Counter); }
+uintptr_t ABIValidationTableDiscriminator() {
+#if __has_feature(ptrauth_calls)
+    return ptrauth_string_discriminator("_ZTVN15ABIArchitecture7CounterE");
+#else
+    return 0;
+#endif
+}
+uintptr_t ABIValidationSlotDiscriminator() {
+#if __has_feature(ptrauth_calls)
+    return ptrauth_string_discriminator("_ZNK15ABIArchitecture7Counter7currentEv");
+#else
+    return 0;
+#endif
+}
+int32_t ABIValidationCounterOracle(const void *counter) {
+    return ABIArchitecture::virtualOracle(static_cast<const ABIArchitecture::Counter *>(counter));
+}
+__attribute__((noinline,used)) int32_t ABIValidationCounterAdapter(void (*target)(void), void *counter, int32_t delta) {
+    auto call = reinterpret_cast<int (*)(ABIArchitecture::Counter *, int)>(target);
+    return call(static_cast<ABIArchitecture::Counter *>(counter), delta);
+}
 __attribute__((noinline)) void *ABIValidationAdvance(char *pointer, long offset) { return pointer + offset; }
 __attribute__((noinline)) uintptr_t ABIValidationAdvanceInteger(uintptr_t pointer, uintptr_t offset) { return pointer + offset; }
 void *ABIValidationAllocate() { return std::malloc(256); }
@@ -68,16 +97,11 @@ const char *ABIValidateNativeCalls() {
         if (!weak.expired()) return "Bound receiver leak";
 
         ABIArchitecture::Counter receiver;
-        uintptr_t tableDiscriminator = 0, slotDiscriminator = 0;
-#if __has_feature(ptrauth_calls)
-        tableDiscriminator = ptrauth_string_discriminator("_ZTVN15ABIArchitecture7CounterE");
-        slotDiscriminator = ptrauth_string_discriminator("_ZNK15ABIArchitecture7Counter7currentEv");
-#endif
         auto* table = static_cast<const void *const *>(ABIUnsafeReadAuthenticatedPointer(
-            &receiver, ABIAuthenticationDataA, tableDiscriminator, true));
+            &receiver, ABIAuthenticationDataA, ABIValidationTableDiscriminator(), true));
         ABIResolutionFailure *error = nullptr;
         std::unique_ptr<ABIVirtualCallTarget, decltype(&ABIReleaseVirtualCallTarget)> target(
-            ABICopyVirtualCallTarget(table, ABIAuthenticationInstructionA, slotDiscriminator, true, &error),
+            ABICopyVirtualCallTarget(table, ABIAuthenticationInstructionA, ABIValidationSlotDiscriminator(), true, &error),
             ABIReleaseVirtualCallTarget);
         if (!target) {
             failure = ABIResolutionFailureMessage(error);
