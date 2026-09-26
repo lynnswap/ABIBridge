@@ -14,7 +14,8 @@ struct ImportedReference: Sendable {
     let symbol: String
     let libraryOrdinal: Int
     let libraryName: String?
-    let weak: Bool
+    var weak: Bool
+    var usesWeakCoalescing: Bool
     // Identifies the legacy lazy-bind stream, not whether dyld has resolved it.
     let isLazyBinding: Bool
     let addend: Int64
@@ -108,7 +109,7 @@ struct ImportMetadata {
         let unslid = UInt64(bitPattern: Int64(bitPattern: address) &- image.identity.slide)
         let sectionType = sections.first { unslid >= $0.address && unslid - $0.address < $0.size }?.type
         return .init(image: image, symbol: name, libraryOrdinal: ordinal, libraryName: library,
-            weak: weak, isLazyBinding: lazy, addend: addend, address: address, width: width,
+            weak: weak, usesWeakCoalescing: ordinal == -3, isLazyBinding: lazy, addend: addend, address: address, width: width,
             sectionType: sectionType, authentication: authentication, source: source)
     }
 
@@ -128,7 +129,26 @@ struct ImportMetadata {
         let lazy = macho.lazyBindOperations.map(Array.init) ?? []
         let weak = macho.weakBindOperations.map(Array.init) ?? []
         if !normal.isEmpty || !lazy.isEmpty || !weak.isEmpty {
-            return try opcodes(normal) + opcodes(lazy, lazy: true) + opcodes(weak, coalesced: true)
+            var result = try opcodes(normal) + opcodes(lazy, lazy: true)
+            var positions: [UInt64: Int] = [:]
+            for (index, reference) in result.enumerated() { positions[reference.address] = index }
+            for reference in try opcodes(weak, coalesced: true) {
+                if let index = positions[reference.address] {
+                    let previous = result[index]
+                    guard previous.symbol.utf8.elementsEqual(reference.symbol.utf8), previous.addend == reference.addend,
+                          previous.width == reference.width, previous.authentication == reference.authentication else {
+                        throw unavailable("normal and weak streams disagree about one slot")
+                    }
+                    // The weak stream refines lookup at an existing binding; it
+                    // is not another slot and does not erase its declared dylib.
+                    result[index].usesWeakCoalescing = true
+                    result[index].weak = previous.weak || reference.weak
+                } else {
+                    positions[reference.address] = result.count
+                    result.append(reference)
+                }
+            }
+            return result
         }
         if image.path.withCString({ ABIImageIsInSharedCache($0) }) {
             throw unavailable("the shared-cache image has no recoverable binding metadata")
@@ -180,7 +200,7 @@ struct ImportMetadata {
             for pointer in fixups.pointers(of: fileSegment, in: file) {
                 guard let bind = pointer.fixupInfo.bind else { continue }
                 guard imports.indices.contains(bind.ordinal) else { throw unavailable("chained import ordinal is out of range") }
-                let item = imports[bind.ordinal].info
+                let item = Self.chainedImport(imports[bind.ordinal])
                 guard let name = fixups.symbolName(for: item.nameOffset) else { throw unavailable("chained import name is unavailable") }
                 let authentication: NativePointerAuthentication
                 if let auth = bind as? DyldChainedPtrArm64eAuthBind {
@@ -195,12 +215,29 @@ struct ImportMetadata {
                 }
                 guard pointer.offset >= 0, UInt64(pointer.offset) >= fileOffset else { throw unavailable("invalid chain offset") }
                 let slot = try address(segment: segment.segmentIndex, offset: UInt64(pointer.offset) - fileOffset, width: width)
-                let addend = Int64(bitPattern: bind.signExtendedAddend &+ UInt64(bitPattern: Int64(item.addend)))
-                result.append(try reference(name, ordinal: item.libraryOrdinal, weak: item.isWeakImport, addend: addend,
+                let addend = Int64(bitPattern: bind.signExtendedAddend &+ UInt64(bitPattern: item.addend))
+                result.append(try reference(name, ordinal: item.ordinal, weak: item.weak, addend: addend,
                     address: slot, width: width, authentication: authentication, source: .chained))
             }
         }
         return result
+    }
+
+    // Only the reserved high ordinal range is signed. MachOKit 0.53's accessors
+    // sign-extend all ordinals and checked-convert ADDEND64 to Int; use the raw
+    // fields so large dependency indexes and negative addends preserve their bits.
+    static func chainedImport(_ item: DyldChainedImport) -> (ordinal: Int, nameOffset: Int, weak: Bool, addend: Int64) {
+        switch item {
+        case .general(let item):
+            let raw = Int(item.layout.lib_ordinal)
+            return (raw > 0xF0 ? raw - 0x100 : raw, Int(item.layout.name_offset), item.layout.weak_import != 0, 0)
+        case .addend(let item):
+            let raw = Int(item.layout.lib_ordinal)
+            return (raw > 0xF0 ? raw - 0x100 : raw, Int(item.layout.name_offset), item.layout.weak_import != 0, Int64(item.layout.addend))
+        case .addend64(let item):
+            let raw = Int(item.layout.lib_ordinal)
+            return (raw > 0xFFF0 ? raw - 0x10000 : raw, Int(item.layout.name_offset), item.layout.weak_import != 0, Int64(bitPattern: item.layout.addend))
+        }
     }
 
     // MachOKit decodes the opcodes; retain symbol flags as well as location state
