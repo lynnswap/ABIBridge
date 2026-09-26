@@ -22,7 +22,7 @@ if let image = images.first {
 
 The source image stays retained while metadata is copied. Returned values own their strings and may outlive the image. Swift and C++ mangling is decoded where supported; `rawName` retains the exact recorded spelling. An import name does not establish a symbol's storage kind, function signature, or current address.
 
-These diagnostics do not change normal lookup behavior. An image selector still selects already-loaded images. A recorded dependency path can contain loader tokens such as `@rpath`, and does not prove that the dependency is present or loadable.
+These diagnostics neither acquire dependencies nor prepare calls. Ordinary resolution handles explicit-target acquisition according to its loading policy; see <doc:ImageLoading>. A recorded dependency path can contain loader tokens such as `@rpath`, and does not prove that the dependency is present or loadable.
 
 ## Interpret unavailable information
 

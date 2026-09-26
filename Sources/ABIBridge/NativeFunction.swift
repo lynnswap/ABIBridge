@@ -120,15 +120,17 @@ extension ABIRuntime {
     /// - Parameters:
     ///   - name: A C linker name without the Mach-O underscore.
     ///   - signature: A synchronous, fixed function type using supported C representations.
-    ///   - scope: Loaded images to search; defaults to all loaded images.
+    ///   - scope: Images to search; automatic scope considers only loaded images.
+    ///   - loading: Whether an explicit image may be acquired and initialized.
     /// - Returns: A reusable function retaining its image and prepared signature.
     /// - Throws: A resolution error, unsupported representation, or call preparation error.
     public func cFunction<Result, each Argument>(
         named name: String,
         as signature: ((repeat each Argument) -> Result).Type,
-        in scope: ImageSelector = .automatic
+        in scope: ImageSelector = .automatic,
+        loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeFunction<Result, repeat each Argument> {
-        try NativeFunction(symbol: resolve(.init(name: name, language: .c), in: scope))
+        try NativeFunction(symbol: resolve(.init(name: name, language: .c), in: scope, loading: loading))
     }
 
     /// Resolves a C function in an already retained image.
@@ -137,14 +139,16 @@ extension ABIRuntime {
     ///   - name: A C linker name without the Mach-O underscore.
     ///   - signature: A synchronous, fixed function type using supported C representations.
     ///   - image: The retained image whose symbol index can be reused.
+    ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable typed function retaining the image.
     /// - Throws: A resolution error, unsupported representation, or call preparation error.
     public func cFunction<Result, each Argument>(
         named name: String,
         as signature: ((repeat each Argument) -> Result).Type,
-        in image: NativeImage
+        in image: NativeImage,
+        loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeFunction<Result, repeat each Argument> {
-        try NativeFunction(symbol: resolve(.init(name: name, language: .c), in: image))
+        try NativeFunction(symbol: resolve(.init(name: name, language: .c), in: image, loading: loading))
     }
 
     /// Resolves a C++ free or static function with C-compatible value representations.
@@ -155,15 +159,17 @@ extension ABIRuntime {
     /// - Parameters:
     ///   - name: A complete demangled C++ declaration.
     ///   - signature: A synchronous, fixed function type using supported C representations.
-    ///   - scope: Loaded images to search; defaults to all loaded images.
+    ///   - scope: Images to search; automatic scope considers only loaded images.
+    ///   - loading: Whether an explicit image may be acquired and initialized.
     /// - Returns: A reusable function retaining its image and prepared signature.
     /// - Throws: A resolution error, unsupported representation, or call preparation error.
     public func cxxFunction<Result, each Argument>(
         named name: String,
         as signature: ((repeat each Argument) -> Result).Type,
-        in scope: ImageSelector = .automatic
+        in scope: ImageSelector = .automatic,
+        loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeFunction<Result, repeat each Argument> {
-        try NativeFunction(symbol: resolve(.init(name: name, language: .cxx), in: scope))
+        try NativeFunction(symbol: resolve(.init(name: name, language: .cxx), in: scope, loading: loading))
     }
 
     /// Resolves a C-compatible C++ function in an already retained image.
@@ -172,13 +178,15 @@ extension ABIRuntime {
     ///   - name: A complete demangled C++ declaration.
     ///   - signature: A synchronous, fixed function type using supported C representations.
     ///   - image: The retained image whose symbol index can be reused.
+    ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable typed function retaining the image.
     /// - Throws: A resolution error, unsupported representation, or call preparation error.
     public func cxxFunction<Result, each Argument>(
         named name: String,
         as signature: ((repeat each Argument) -> Result).Type,
-        in image: NativeImage
+        in image: NativeImage,
+        loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeFunction<Result, repeat each Argument> {
-        try NativeFunction(symbol: resolve(.init(name: name, language: .cxx), in: image))
+        try NativeFunction(symbol: resolve(.init(name: name, language: .cxx), in: image, loading: loading))
     }
 }

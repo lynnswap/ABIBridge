@@ -11,7 +11,7 @@ struct NativeRuntimeTests {
         var failure: OpaquePointer?
         let handle = "getpid".withCString {
             ABIResolveSymbol(runtime, $0, Int32(ABILanguageC), Int32(ABISymbolFunction),
-                             Int32(ABIImageAutomatic), nil, &failure)
+                             Int32(ABIImageAutomatic), nil, Int32(ABIImageLoadIfNeeded), &failure)
         }
         let symbol = try #require(handle)
         defer { ABIReleaseResolvedSymbol(symbol) }
@@ -73,7 +73,7 @@ struct NativeRuntimeTests {
             try withUnsafePointer(to: &scope) { scope in
                 let declaration = ABIDeclaration(name: name, language: Int32(ABILanguageC), kind: Int32(ABISymbolFunction), nameForm: Int32(ABINameSource))
                 let valid = ABISymbolRequest(declaration: declaration, alternatives: nil, alternativeCount: 0,
-                                             imageScopes: scope, imageScopeCount: 1, fallbacks: nil, fallbackCount: 0)
+                                             imageScopes: scope, imageScopeCount: 1, fallbacks: nil, fallbackCount: 0, loading: Int32(ABIImageLoadIfNeeded))
                 var malformed = valid
                 malformed.alternativeCount = 1
                 var empty = valid
@@ -118,7 +118,7 @@ struct NativeRuntimeTests {
             var failure: OpaquePointer?
             let handle = name.withCString {
                 ABIResolveSymbolWithNameForm(runtime, $0, form, Int32(ABILanguageC),
-                    Int32(ABISymbolFunction), Int32(ABIImageAutomatic), nil, &failure)
+                    Int32(ABISymbolFunction), Int32(ABIImageAutomatic), nil, Int32(ABIImageLoadIfNeeded), &failure)
             }
             let owned = try #require(handle)
             #expect(failure == nil)
@@ -133,7 +133,7 @@ struct NativeRuntimeTests {
         var failure: OpaquePointer?
         let invalid = "getpid".withCString {
             ABIResolveSymbolWithNameForm(runtime, $0, -1, Int32(ABILanguageC),
-                Int32(ABISymbolFunction), Int32(ABIImageAutomatic), nil, &failure)
+                Int32(ABISymbolFunction), Int32(ABIImageAutomatic), nil, Int32(ABIImageLoadIfNeeded), &failure)
         }
         #expect(invalid == nil)
         let error = try #require(failure)
@@ -159,7 +159,7 @@ struct NativeRuntimeTests {
                                   (Int32(ABIImageAutomatic), Int32(ABIFailureDeclarationNotFound))] {
             var failure: OpaquePointer?
             let symbol = "ABIBridgeMissingType::Renderer".withCString {
-                ABIResolveCXXVTable(runtime, $0, scope, nil, &failure)
+                ABIResolveCXXVTable(runtime, $0, scope, nil, Int32(ABIImageLoadIfNeeded), &failure)
             }
             #expect(symbol == nil)
             let error = try #require(failure)
@@ -174,7 +174,7 @@ struct NativeRuntimeTests {
         var failure: OpaquePointer?
         let symbol = "missing".withCString {
             ABIResolveSymbol(runtime, $0, -1, Int32(ABISymbolFunction),
-                             Int32(ABIImageAutomatic), nil, &failure)
+                             Int32(ABIImageAutomatic), nil, Int32(ABIImageLoadIfNeeded), &failure)
         }
         #expect(symbol == nil)
         let error = try #require(failure)

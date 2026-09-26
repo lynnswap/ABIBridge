@@ -42,7 +42,7 @@ const void *address = table.unsafe_address();
 auto path = table.image_path(); // An owned std::string.
 ```
 
-The example requires an already-loaded framework defining that type. Resolution throws `resolution_error`, whose `code()` preserves the C failure category and whose `what()` owns the message. Error objects can outlive the runtime and native failure handle. Names and image selectors use UTF-8; embedded NULs are rejected instead of resolving a truncated prefix.
+The example acquires the named framework when needed. Use `image_loading::loaded_only` as the third `resolve` argument to opt out; see <doc:ImageLoading>. Resolution throws `resolution_error`, whose `code()` preserves the C failure category and whose `what()` owns the message. Error objects can outlive the runtime and native failure handle. Names and image selectors use UTF-8; embedded NULs are rejected instead of resolving a truncated prefix.
 
 Copies of `Runtime` share a resolver cache; default construction creates an independent resolver. Copies of `resolved_symbol` share the acquired symbol, keeping its implementation image alive after cache clearing or runtime destruction. The unsigned address remains borrowed; the C++ wrapper does not establish an invocation signature.
 
@@ -66,13 +66,13 @@ Objective-C++ can store these C++ values in instance variables under either ARC 
 
 ## Resolve a vtable from C
 
-For an already-loaded image containing an `Example::Renderer` type:
+For a framework containing an `Example::Renderer` type:
 
 ```c
 ABISymbolRuntime *runtime = ABICreateSymbolRuntime();
 ABIResolutionFailure *failure = NULL;
 ABIResolvedSymbol *table = ABIResolveCXXVTable(
-    runtime, "Example::Renderer", ABIImageFramework, "Example", &failure
+    runtime, "Example::Renderer", ABIImageFramework, "Example", ABIImageLoadIfNeeded, &failure
 );
 if (!table) {
     fprintf(stderr, "%d: %s\n", (int)ABIResolutionFailureCode(failure),

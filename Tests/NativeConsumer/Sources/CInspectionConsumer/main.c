@@ -84,13 +84,13 @@ int main(int argc, char **argv) {
     ABIResolutionFailure *failure = NULL;
     ABIResolvedSymbol *missing = ABIResolveSymbol(
         runtime, "ABIBridgeFixtureMissing", ABILanguageC, ABISymbolFunction,
-        ABIImagePath, argv[1], &failure);
+        ABIImagePath, argv[1], ABIImageLoadIfNeeded, &failure);
     assert(!missing && failure);
     assert(ABIResolutionFailureCode(failure) == ABIFailureDeclarationNotFound);
     ABIResolutionFailure *saved_failure = failure;
 
     ABIResolvedSymbol *table = ABIResolveCXXVTable(
-        runtime, "ABIBridgeFixture::VirtualCounter", ABIImagePath, argv[1], &failure);
+        runtime, "ABIBridgeFixture::VirtualCounter", ABIImagePath, argv[1], ABIImageLoadIfNeeded, &failure);
     assert(table && !failure);
     // Independent address oracle for this compiler-generated fixture.
     assert(ABIResolvedSymbolAddress(table) ==
@@ -119,22 +119,22 @@ int main(int argc, char **argv) {
 
     ABIResolvedSymbol *counter = ABIResolveSymbol(
         runtime, "ABIBridgeFixture::counter", ABILanguageCXX, ABISymbolData,
-        ABIImagePath, argv[1], &failure);
+        ABIImagePath, argv[1], ABIImageLoadIfNeeded, &failure);
     assert(counter && !failure);
     assert(!ABIResolveSymbol(runtime, "missing", ABILanguageC, ABISymbolData,
-                             ABIImagePath, NULL, &failure));
+                             ABIImagePath, NULL, ABIImageLoadIfNeeded, &failure));
     assert(ABIResolutionFailureCode(failure) == ABIFailureInvalidRequest);
     ABIReleaseResolutionFailure(failure);
     failure = NULL;
     assert(!ABIResolveSymbol(runtime, "missing", -1, ABISymbolData,
-                             ABIImageAutomatic, NULL, NULL));
+                             ABIImageAutomatic, NULL, ABIImageLoadIfNeeded, NULL));
 
     ABIImageSelector scopes[] = {{ABIImageFramework, "ABIBridgeAbsentFixture"}, {ABIImagePath, argv[1]}};
     ABIDeclaration counter_declaration = {"ABIBridgeFixture::counter", ABILanguageCXX, ABISymbolData};
     ABIDeclaration exact_counter = {"_ZN16ABIBridgeFixture7counterE", ABILanguageCXX, ABISymbolData, ABINameLinker};
     ABIResolvedSymbol *literal_counter = ABIResolveSymbolWithNameForm(
         runtime, "__ZN16ABIBridgeFixture7counterE", ABINameMachO,
-        ABILanguageCXX, ABISymbolData, ABIImagePath, argv[1], &failure);
+        ABILanguageCXX, ABISymbolData, ABIImagePath, argv[1], ABIImageLoadIfNeeded, &failure);
     assert(literal_counter && !failure);
     assert(ABIResolvedSymbolAddress(literal_counter) == ABIResolvedSymbolAddress(counter));
     ABIReleaseResolvedSymbol(literal_counter);

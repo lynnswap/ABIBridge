@@ -32,11 +32,12 @@ let symbol = try await runtime.resolve(
 
 ### Call C++ by its declaration
 
-To call that function, provide its signature as a Swift function type:
+To call that function, provide its signature as a Swift function type. Specifying a framework acquires it when needed:
 
 ```swift
 let add = try await runtime.cxxFunction(
-    named: "Example::Math::add(int, int)", as: ((Int32, Int32) -> Int32).self
+    named: "Example::Math::add(int, int)", as: ((Int32, Int32) -> Int32).self,
+    in: .framework(named: "Example")
 )
 let sum = try unsafe add.unsafeInvoke(20, 22)
 ```

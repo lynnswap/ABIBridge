@@ -23,6 +23,16 @@ xcrun swiftc -parse-as-library -emit-library -enable-library-evolution \
 xcrun clang -std=c11 -pedantic-errors -fsyntax-only \
     -I "$task_root/Sources/ABIBridgeCore/include" \
     "$task_root/Tests/NativeConsumer/Sources/CInspectionConsumer/main.c"
+xcrun swift build --package-path "$task_root/Tests/NativeConsumer" \
+    --scratch-path "$task_root/.build/native-consumer" --product LoadingConsumer
+task_loading_bin=$(xcrun swift build --package-path "$task_root/Tests/NativeConsumer" \
+    --scratch-path "$task_root/.build/native-consumer" --show-bin-path)
+mkdir -p "$task_loading_bin/LoadingFixtures"
+xcrun clang++ -std=c++20 -dynamiclib -mmacosx-version-min=15.4 -undefined dynamic_lookup \
+    -Wl,-install_name,@rpath/libLoadingFixture.dylib \
+    "$task_root/Tests/NativeConsumer/LoadingFixture.cpp" \
+    -o "$task_loading_bin/LoadingFixtures/libLoadingFixture.dylib"
+"$task_loading_bin/LoadingConsumer" "$task_loading_bin/LoadingFixtures/libLoadingFixture.dylib"
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" CXXInspectionConsumer "$task_fixture/libFixture.dylib"
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \

@@ -82,7 +82,7 @@ int main(int argc, char** argv) {
     runtime.remove_cached_results();
 
     try {
-        runtime.c_function<int(int, int)>("ABIBridgeFixtureCAdd", scope);
+        runtime.c_function<int(int, int)>("ABIBridgeFixtureCAdd", scope, abi_bridge::image_loading::loaded_only);
         assert(false && "Unloaded images must be reported");
     } catch (const abi_bridge::resolution_error& error) {
         assert(error.code() == ABIFailureImageNotLoaded);

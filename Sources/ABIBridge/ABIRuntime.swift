@@ -3,7 +3,7 @@ import Foundation
 /// Resolves declarations using shared image and symbol indexes.
 ///
 /// Use ``shared`` to reuse indexes across callers, or create a runtime to own an
-/// independent cache. Methods do not load missing frameworks. Image handles and
+/// independent cache. Explicit resolution scopes acquire images by default. Image handles and
 /// resolved symbols keep their images alive until the last owner releases them.
 ///
 /// See <doc:SymbolLookup> for search scopes and the raw-address contract.
@@ -30,7 +30,7 @@ public actor ABIRuntime {
         try resolver.images(matching: selector)
     }
 
-    /// Finds a declaration within a loaded-image search scope.
+    /// Finds a declaration, acquiring an explicitly selected image when permitted.
     ///
     /// Loaded-image definitions take precedence. Shared-cache local symbols are
     /// searched only when no loaded-image definition matches. Multiple distinct
@@ -39,14 +39,16 @@ public actor ABIRuntime {
     /// - Parameters:
     ///   - declaration: A source-level or exact name and storage requirement.
     ///   - selector: The image scope; defaults to all loaded images.
+    ///   - loading: Whether an explicit target may be acquired and initialized.
     /// - Returns: A symbol retaining its containing image.
     /// - Throws: ``ABIResolutionError`` for unavailable images, missing or
     ///   ambiguous declarations, unsupported languages, or invalid storage.
     public func resolve(
         _ declaration: NativeDeclaration,
-        in selector: ImageSelector = .automatic
+        in selector: ImageSelector = .automatic,
+        loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> ResolvedSymbol {
-        try resolver.resolve(declaration, in: selector)
+        try resolver.resolve(declaration, in: selector, loading: loading)
     }
 
     /// Finds a declaration in an already retained image.
@@ -54,11 +56,12 @@ public actor ABIRuntime {
     /// - Parameters:
     ///   - declaration: A source-level or exact name and storage requirement.
     ///   - image: The retained image whose index can be reused.
+    ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A resolved symbol retaining that image.
     /// - Throws: ``ABIResolutionError`` when the declaration cannot be resolved
     ///   unambiguously in the requested storage.
-    public func resolve(_ declaration: NativeDeclaration, in image: NativeImage) throws -> ResolvedSymbol {
-        try resolver.resolve(declaration, in: image)
+    public func resolve(_ declaration: NativeDeclaration, in image: NativeImage, loading: ImageLoadingPolicy = .ifNeeded) throws -> ResolvedSymbol {
+        try resolver.resolve(declaration, in: image, loading: loading)
     }
 
     /// Resolves a requirement with aliases and ordered image fallback.

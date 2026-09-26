@@ -57,7 +57,7 @@ public actor NativeSwiftType {
     }
 
     private func resolveDeclaredMember(_ declaration: NativeDeclaration, in image: NativeImage) throws -> ResolvedSymbol {
-        do { return try resolver.resolve(declaration, in: image) }
+        do { return try resolver.resolve(declaration, in: image, loading: .loadedOnly) }
         catch ABIResolutionError.declarationNotFound {
             return try resolver.resolveSwiftExtension(declaration)
         }
@@ -291,14 +291,16 @@ extension ABIRuntime {
     ///
     /// - Parameters:
     ///   - name: A module-qualified nominal type name.
-    ///   - scope: Loaded images to search; defaults to all loaded images.
+    ///   - scope: Images to search; automatic scope stays loaded-only.
+    ///   - loading: Whether an explicit target may be acquired and initialized.
     /// - Returns: A reusable type handle retaining its defining image.
     /// - Throws: A lookup error or unavailable/unsupported metadata.
     public func swiftType(
-        named name: String, in scope: ImageSelector = .automatic
+        named name: String, in scope: ImageSelector = .automatic,
+        loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftType {
         try makeSwiftType(named: name, descriptor: resolver.resolve(
-            .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data), in: scope
+            .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data), in: scope, loading: loading
         ), representation: nil)
     }
 
@@ -307,11 +309,12 @@ extension ABIRuntime {
     /// - Parameters:
     ///   - name: A module-qualified nominal type name.
     ///   - image: The image whose symbol index is reused.
+    ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable type handle retaining the image.
     /// - Throws: A lookup error or unavailable/unsupported metadata.
-    public func swiftType(named name: String, in image: NativeImage) throws -> NativeSwiftType {
+    public func swiftType(named name: String, in image: NativeImage, loading: ImageLoadingPolicy = .ifNeeded) throws -> NativeSwiftType {
         try makeSwiftType(named: name, descriptor: resolver.resolve(
-            .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data), in: image
+            .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data), in: image, loading: loading
         ), representation: nil)
     }
 
@@ -323,15 +326,17 @@ extension ABIRuntime {
     /// - Parameters:
     ///   - name: The qualified native type name.
     ///   - representation: A Swift type or adapter for receiver values.
-    ///   - scope: Loaded images to search.
+    ///   - scope: Images to search; automatic scope stays loaded-only.
+    ///   - loading: Whether an explicit target may be acquired and initialized.
     /// - Returns: A reusable type handle with the chosen receiver representation.
     /// - Throws: A lookup error or unavailable/unsupported metadata.
     public func swiftType<Representation>(
         named name: String, as representation: Representation.Type,
-        in scope: ImageSelector = .automatic
+        in scope: ImageSelector = .automatic,
+        loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftType {
         try makeSwiftType(named: name, descriptor: resolver.resolve(
-            .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data), in: scope
+            .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data), in: scope, loading: loading
         ), representation: representation)
     }
 
@@ -341,13 +346,15 @@ extension ABIRuntime {
     ///   - name: The qualified native type name.
     ///   - representation: A Swift type or fixed-layout receiver adapter.
     ///   - image: The image whose symbol index is reused.
+    ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable type handle with the chosen representation.
     /// - Throws: A lookup error or unavailable/unsupported metadata.
     public func swiftType<Representation>(
-        named name: String, as representation: Representation.Type, in image: NativeImage
+        named name: String, as representation: Representation.Type, in image: NativeImage,
+        loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftType {
         try makeSwiftType(named: name, descriptor: resolver.resolve(
-            .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data), in: image
+            .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data), in: image, loading: loading
         ), representation: representation)
     }
 
@@ -370,7 +377,7 @@ extension ABIRuntime {
             throw ABIResolutionError.metadataUnavailable("Expected a Swift nominal type descriptor for " + name)
         }
         let accessor = try resolver.resolve(
-            .init(name: "type metadata accessor for " + name, language: .swift), in: descriptor.image
+            .init(name: "type metadata accessor for " + name, language: .swift), in: descriptor.image, loading: .loadedOnly
         )
         let function = try NativeSwiftFunction<SwiftMetadataResponse, UInt>(symbol: accessor)
         // MetadataRequest.Complete is zero and requests blocking completion.

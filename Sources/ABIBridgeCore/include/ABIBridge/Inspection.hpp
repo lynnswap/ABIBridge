@@ -69,7 +69,12 @@ struct declaration final {
     }
 };
 
-/// A loaded-image constraint. Selecting an image does not load it.
+enum class image_loading : std::int32_t {
+    if_needed = ABIImageLoadIfNeeded,
+    loaded_only = ABIImageLoadedOnly
+};
+
+/// An image selection. Resolution controls whether the image may be loaded.
 class image_selector final {
 public:
     image_selector() = default;
@@ -79,6 +84,10 @@ public:
     }
     static image_selector path(std::string executable_path) {
         return {ABIImagePath, std::move(executable_path)};
+    }
+    /// dyld spelling, resolved relative to ABIBridge's native loader image.
+    static image_selector install_name(std::string name) {
+        return {ABIImageInstallName, std::move(name)};
     }
 
 private:
@@ -97,6 +106,7 @@ struct symbol_request final {
     std::vector<declaration> alternatives;
     std::vector<image_selector> image_scopes = {image_selector::automatic()};
     std::vector<declaration> fallbacks;
+    image_loading loading = image_loading::if_needed;
 };
 
 /// A resolution failure with a stable category and human-readable detail.
@@ -307,7 +317,8 @@ public:
     /// symbol is independent of this runtime and keeps its image loaded.
     /// Names/selectors use UTF-8 without embedded NULs. Embedded NULs report
     /// ABIFailureInvalidRequest instead of resolving a truncated C string.
-    resolved_symbol resolve(const declaration& query, const image_selector& scope = {}) const {
+    resolved_symbol resolve(const declaration& query, const image_selector& scope = {},
+                            image_loading loading = image_loading::if_needed) const {
         if (query.name.find('\0') != std::string::npos || scope.value_.find('\0') != std::string::npos) {
             throw resolution_error(ABIFailureInvalidRequest, "Names and image selectors must not contain embedded NULs.");
         }
@@ -316,7 +327,7 @@ public:
             handle_.get(), query.name.c_str(), static_cast<std::int32_t>(query.form),
             static_cast<std::int32_t>(query.source_language),
             static_cast<std::int32_t>(query.kind),
-            scope.kind_, scope.value_.c_str(), &failure);
+            scope.kind_, scope.value_.c_str(), static_cast<std::int32_t>(loading), &failure);
         if (!symbol) {
             std::unique_ptr<ABIResolutionFailure, decltype(&ABIReleaseResolutionFailure)>
                 owned_failure(failure, ABIReleaseResolutionFailure);
@@ -367,7 +378,7 @@ public:
             native_queries.push_back({declaration_value(query.primary),
                                       aliases[i].data(), aliases[i].size(),
                                       scopes[i].data(), scopes[i].size(),
-                                      fallbacks[i].data(), fallbacks[i].size()});
+                                      fallbacks[i].data(), fallbacks[i].size(), static_cast<std::int32_t>(query.loading)});
             indices.push_back(i);
         }
         std::vector<ABISymbolResult> native_results(native_queries.size());

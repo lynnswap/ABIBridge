@@ -18,6 +18,9 @@ func nativeFailure(_ error: Error) -> OpaquePointer {
     switch error {
     case ABIResolutionError.imageUnavailable: code = Int32(ABIFailureImageUnavailable)
     case ABIResolutionError.imageNotLoaded: code = Int32(ABIFailureImageNotLoaded)
+    case ABIResolutionError.imageLoadFailed: code = Int32(ABIFailureImageLoadFailed)
+    case ABIResolutionError.ambiguousImage: code = Int32(ABIFailureAmbiguousImage)
+    case ABIResolutionError.invalidImageTarget: code = Int32(ABIFailureInvalidRequest)
     case ABIResolutionError.declarationNotFound: code = Int32(ABIFailureDeclarationNotFound)
     case ABIResolutionError.ambiguousDeclaration: code = Int32(ABIFailureAmbiguousDeclaration)
     case ABIResolutionError.signatureMismatch: code = Int32(ABIFailureSignatureMismatch)
@@ -70,23 +73,23 @@ package func nativeRemoveCachedResults(_ runtime: OpaquePointer) {
 package func nativeResolveSymbol(
     _ runtime: OpaquePointer, _ name: UnsafePointer<CChar>,
     _ language: Int32, _ kind: Int32, _ scope: Int32,
-    _ selector: UnsafePointer<CChar>?, _ error: UnsafeMutablePointer<OpaquePointer?>?
+    _ selector: UnsafePointer<CChar>?, _ loading: Int32, _ error: UnsafeMutablePointer<OpaquePointer?>?
 ) -> OpaquePointer? {
-    nativeResolveSymbolWithNameForm(runtime, name, Int32(ABINameSource), language, kind, scope, selector, error)
+    nativeResolveSymbolWithNameForm(runtime, name, Int32(ABINameSource), language, kind, scope, selector, loading, error)
 }
 
 @_cdecl("ABIResolveSymbolWithNameForm")
 package func nativeResolveSymbolWithNameForm(
     _ runtime: OpaquePointer, _ name: UnsafePointer<CChar>, _ nameForm: Int32,
     _ language: Int32, _ kind: Int32, _ scope: Int32,
-    _ selector: UnsafePointer<CChar>?, _ error: UnsafeMutablePointer<OpaquePointer?>?
+    _ selector: UnsafePointer<CChar>?, _ loading: Int32, _ error: UnsafeMutablePointer<OpaquePointer?>?
 ) -> OpaquePointer? {
     error?.pointee = nil
     do {
         let declaration = try nativeDeclaration(name, language: language, kind: kind, nameForm: nameForm)
         let imageSelector = try nativeImageSelector(scope: scope, selector: selector)
         let symbol = try borrowed(runtime, as: SymbolResolver.self)
-            .resolve(declaration, in: imageSelector)
+            .resolve(declaration, in: imageSelector, loading: try nativeLoadingPolicy(loading))
         return retained(NativeSymbolBox(symbol))
     } catch let failure {
         error?.pointee = nativeFailure(failure)
@@ -97,14 +100,14 @@ package func nativeResolveSymbolWithNameForm(
 @_cdecl("ABIResolveCXXVTable")
 package func nativeResolveCXXVTable(
     _ runtime: OpaquePointer, _ typeName: UnsafePointer<CChar>,
-    _ scope: Int32, _ selector: UnsafePointer<CChar>?,
+    _ scope: Int32, _ selector: UnsafePointer<CChar>?, _ loading: Int32,
     _ error: UnsafeMutablePointer<OpaquePointer?>?
 ) -> OpaquePointer? {
     error?.pointee = nil
     do {
         let declaration = NativeDeclaration(vtableFor: String(cString: typeName))
         let imageSelector = try nativeImageSelector(scope: scope, selector: selector)
-        let symbol = try borrowed(runtime, as: SymbolResolver.self).resolve(declaration, in: imageSelector)
+        let symbol = try borrowed(runtime, as: SymbolResolver.self).resolve(declaration, in: imageSelector, loading: try nativeLoadingPolicy(loading))
         return retained(NativeSymbolBox(symbol))
     } catch let failure {
         error?.pointee = nativeFailure(failure)
@@ -219,17 +222,27 @@ private func nativeImageSelector(
     let imageSelector: ImageSelector
     switch scope {
     case Int32(ABIImageAutomatic): imageSelector = .automatic
-    case Int32(ABIImageFramework), Int32(ABIImagePath):
+    case Int32(ABIImageFramework), Int32(ABIImagePath), Int32(ABIImageInstallName):
         guard let selector else {
-            throw InvalidNativeRequest(description: "A framework or executable path is required.")
+            throw InvalidNativeRequest(description: "A framework, executable path, or install name is required.")
         }
         let value = String(cString: selector)
-        imageSelector = scope == Int32(ABIImageFramework)
-            ? .framework(named: value) : .path(URL(fileURLWithPath: value))
+        switch scope {
+        case Int32(ABIImageFramework): imageSelector = .framework(named: value)
+        case Int32(ABIImageInstallName): imageSelector = .installName(value)
+        default: imageSelector = .path(URL(fileURLWithPath: value))
+        }
     default: throw InvalidNativeRequest(description: "Unknown image scope: \(scope)")
     }
 
     return imageSelector
+}
+
+private func nativeLoadingPolicy(_ value: Int32) throws -> ImageLoadingPolicy {
+    guard let policy = ImageLoadingPolicy(rawValue: value) else {
+        throw InvalidNativeRequest(description: "Unknown image loading policy: \(value)")
+    }
+    return policy
 }
 
 private func nativeRequest(_ request: ABISymbolRequest) throws -> NativeSymbolRequest {
@@ -252,7 +265,8 @@ private func nativeRequest(_ request: ABISymbolRequest) throws -> NativeSymbolRe
     let fallbacks = try UnsafeBufferPointer(start: request.fallbacks, count: request.fallbackCount).map {
         try nativeDeclaration($0.name, language: $0.language, kind: $0.kind, nameForm: $0.nameForm)
     }
-    return NativeSymbolRequest(declaration, alternatives: alternatives, fallbacks: fallbacks, in: scopes)
+    return NativeSymbolRequest(declaration, alternatives: alternatives, fallbacks: fallbacks, in: scopes,
+                               loading: try nativeLoadingPolicy(request.loading))
 }
 
 @_cdecl("ABIResolveSymbols")

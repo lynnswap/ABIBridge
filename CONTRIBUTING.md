@@ -79,6 +79,10 @@ Run `tamper` only in that disposable app as a separate launch, after `native` ha
 
 The host executable is also available with `swift run --package-path Tests/ArchitectureValidation --scratch-path .build/architecture-validation ArchitectureProbe <mode>`. The public architecture guide in DocC records execution evidence separately from compilation and outstanding hardware validation.
 
+For automatic-loading validation on a device, build the standalone `ABIBridgeLoadingFixture` dynamic product from the same package and embed/sign `ABIBridgeLoadingFixture.framework` in the disposable app's `Frameworks` directory without linking it. Call `runImageLoadingValidation()` in a fresh process. It checks the unloaded starting state, loaded-only behavior, framework acquisition, constructor execution, absolute-path/install-name identity, and retained calls after cache clearing. This host links ABIBridge into the app image or its adjacent debug dylib, so the test's `@loader_path/Frameworks` spelling has a defined base. An iPhone Air / iOS 27.0 arm64e run with Enhanced Security passed these checks; this does not establish the same runtime permissions for other devices or libraries.
+
+The native consumer script includes a separate `@rpath` fixture that reenters the resolver from its constructor and performs concurrent acquisitions. macOS package fixtures also verify missing-dependency failures, retries, framework-name ambiguity, local symbols, Swift metadata, and refreshed batch scopes. The C symbol-resolution functions now take a loading-policy argument; update direct C calls along with the `ABISymbolRequest` layout when building against the new headers.
+
 ## Documentation
 
 The supported consumer interfaces are the Swift `ABIBridge` module and the native headers documented in the DocC consumer guides, all linked through the `ABIBridge` product. Other native headers remain implementation details. SwiftPM may make transitive modules importable; that does not make their entire contents supported public API.
