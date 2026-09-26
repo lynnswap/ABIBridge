@@ -18,7 +18,9 @@ public struct ArchitectureValidationFailure: Error, CustomStringConvertible {
 }
 
 @inline(never) public func architectureSum(_ a: Int, _ b: Int, _ c: Int, _ d: Int, _ e: Int, _ f: Int, _ g: Int, _ h: Int, _ i: Int, _ j: Int) -> Int {
-    a + b + c + d + e + f + g + h + i + j
+    // Test inputs 1...10 occupy separate hexadecimal digits, making their order observable.
+    a + b * 0x10 + c * 0x100 + d * 0x1000 + e * 0x10000
+        + f * 0x100000 + g * 0x1000000 + h * 0x10000000 + i * 0x100000000 + j * 0x1000000000
 }
 @inline(never) public func architectureDecorate(_ value: String) -> String { value + "!" }
 public final class ArchitectureCounter {
@@ -39,6 +41,7 @@ public final class ArchitectureCounter {
     case "native":
         if let error = ABIValidateNativeCalls() { throw ArchitectureValidationFailure(description: String(cString: error)) }
         checks.append("C/C++ typed calls, indirect results, bound ownership, and authenticated virtual dispatch")
+        try check(ABIValidateAuthenticatedFunction(), "Unmodified function-pointer authentication")
     case "swift":
         let sum = try await runtime.swiftFunction(named: "ArchitectureValidation.architectureSum(_:_:_:_:_:_:_:_:_:_:)",
             as: ((Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Int).self)

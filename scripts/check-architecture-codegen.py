@@ -25,6 +25,13 @@ def require(condition, message):
         raise RuntimeError(message)
 
 
+def function_body(listing, name):
+    lines = listing.splitlines()
+    start = lines.index(f"_{name}:") + 1
+    end = next((index for index in range(start, len(lines)) if lines[index].endswith(":")), len(lines))
+    return "\n".join(lines[start:end])
+
+
 def main():
     root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(description=__doc__)
@@ -55,8 +62,14 @@ def main():
             require(has_authenticated_call == authenticated, f"Wrong call authentication in {path}")
             if authenticated:
                 require(re.search(r"\bblr\b", listing) is None, f"Unauthenticated indirect call in {path}")
-        require((re.search(r"\baddpt\b", listings["compiler"]) is not None) == (arch == "arm64e.x1"),
-                f"Unexpected typed pointer arithmetic for {arch}")
+        typed = function_body(listings["compiler"], "compilerAdvance")
+        integer = function_body(listings["compiler"], "compilerAdvanceInteger")
+        typed_operation = "addpt" if arch == "arm64e.x1" else "add"
+        require(re.search(rf"\b{typed_operation}\s+x\d+, x0, x1\b", typed) is not None,
+                f"Unexpected compilerAdvance arithmetic for {arch}")
+        require(re.search(r"\badd\s+x\d+, (?:x0, x1|x1, x0)\b", integer) is not None
+                and re.search(r"\baddpt\b", integer) is None,
+                f"Unexpected compilerAdvanceInteger arithmetic for {arch}")
         reports.append({"architecture": arch, "cpuType": "0x0100000c", "rawCPUSubtype": f"0x{expected:08x}",
                         "authenticatedCalls": authenticated, "checkedPointerArithmetic": arch == "arm64e.x1"})
     result = {"compiler": run("xcrun", "clang", "--version").splitlines()[0], "runtimeTested": False, "objects": reports}
