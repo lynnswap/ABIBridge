@@ -84,3 +84,9 @@ for task_hook_consumer in CHookConsumer CXXHookConsumer ObjCXXHookConsumer MRCXX
     xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
         --scratch-path "$task_root/.build/native-consumer" "$task_hook_consumer"
 done
+
+xcrun clang -dynamiclib -mmacosx-version-min=15.4 "$task_root/Tests/NativeConsumer/ImportedHookProvider.c" -o "$task_fixture/libImportedProvider.dylib"
+xcrun clang -dynamiclib -mmacosx-version-min=15.4 "$task_root/Tests/NativeConsumer/ImportedHookLibrary.c" "$task_fixture/libImportedProvider.dylib" -o "$task_fixture/libImportedCaller.dylib"
+for task_hook_consumer in ImportedHookConsumer ObjCXXImportedHookConsumer; do
+    xcrun swift run --package-path "$task_root/Tests/NativeConsumer" --scratch-path "$task_root/.build/native-consumer" "$task_hook_consumer" "$task_fixture/libImportedCaller.dylib"
+done

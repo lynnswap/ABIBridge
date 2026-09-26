@@ -53,6 +53,22 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
     }
     let runtime = ABIRuntime()
     switch mode {
+    case "import-hooks":
+        var location = Dl_info()
+        guard let header = ABIImportProbeImage(), dladdr(header, &location) != 0, let path = location.dli_fname else {
+            throw ArchitectureValidationFailure(description: "Imported hook fixture image unavailable")
+        }
+        let baseline = ABIImportedUIDCall()
+        let failures = ArchitectureHookErrors()
+        let hook = try await unsafe runtime.hookImportedFunction(.init(name: "getuid", language: .c), as: (() -> UInt32).self,
+            in: .path(URL(fileURLWithPath: String(cString: path))), onFailure: { failures.append($0) }) { call in try call.proceed()+1 }
+        defer { hook.invalidate() }
+        try check(ABIImportedUIDCall() == baseline+1, "Typed Swift callback on a compiler-created imported function pointer")
+        if let error = ABIValidateImportedHookFrontend(path,baseline+1) { throw ArchitectureValidationFailure(description:String(cString:error)) }
+        checks.append("C++ and Swift callbacks share ordering and independent invalidation")
+        hook.invalidate()
+        try check(ABIImportedUIDCall() == baseline, "Imported function passes through after logical invalidation")
+        try check(failures.isEmpty, "Imported callbacks completed without conversion errors")
     case "import-replacement":
         checks = try validateImportReplacement()
     case "coordinated-hooks":

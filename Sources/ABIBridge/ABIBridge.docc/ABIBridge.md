@@ -19,6 +19,14 @@ print(symbol.image.path)
 
 ## Topics
 
+### Hooking imported functions
+
+- <doc:ImportedFunctionHooks>
+- ``NativeImportedFunctionHook``
+- ``NativeImportedFunctionInvocation``
+- ``NativeImportedHookInstallationError``
+- ``NativeImportedInvocationError``
+
 ### Native inspection from C, C++, and Objective-C++
 
 - <doc:NativeInspection>

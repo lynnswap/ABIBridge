@@ -28,3 +28,4 @@ inline constexpr std::string_view package_name = "ABIBridgeCore";
 #include <ABIBridge/Runtime.hpp>
 
 #include <ABIBridge/ObjectiveCHooks.hpp>
+#include <ABIBridge/ImportedHooks.hpp>

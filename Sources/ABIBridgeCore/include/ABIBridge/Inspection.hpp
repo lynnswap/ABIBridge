@@ -89,6 +89,12 @@ public:
     static image_selector install_name(std::string name) {
         return {ABIImageInstallName, std::move(name)};
     }
+    /// Borrows selector strings for the lifetime of this unchanged value.
+    ABIImageSelector native_selector() const {
+        if (value_.find('\0') != std::string::npos)
+            throw std::invalid_argument("Image selector contains a NUL.");
+        return {kind_, value_.empty() ? nullptr : value_.c_str()};
+    }
 
 private:
     friend class Runtime;
@@ -312,6 +318,8 @@ public:
     /// Shares the process-wide resolver cache with Swift's ABIRuntime.shared.
     static Runtime current() { return Runtime(ABICopySharedSymbolRuntime()); }
     explicit operator bool() const noexcept { return bool(handle_); }
+    /// Borrows this resolver's C reference; keep the Runtime alive during use.
+    ABISymbolRuntime *native_handle() const noexcept { return handle_.get(); }
 
     /// Resolves a declaration or throws an owned resolution_error. The returned
     /// symbol is independent of this runtime and keeps its image loaded.

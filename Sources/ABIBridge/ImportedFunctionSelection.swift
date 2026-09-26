@@ -1,0 +1,74 @@
+import ABIBridgeCore
+import Foundation
+import MachO
+import MachOKit
+
+final class ImportedFunctionSelection {
+    let references: [ImportedReference]
+    let slots: [ABIImportSlot]
+
+    init(resolver: SymbolResolver, declaration: NativeDeclaration, importer: ImageSelector, provider: ImageSelector?) throws {
+        guard declaration.kind == .function, [.c, .cxx].contains(declaration.language), !declaration.name.utf8.contains(0) else {
+            throw ABIResolutionError.unsupportedDeclaration("Imported callbacks require a C/C++ function declaration.")
+        }
+        let images = try resolver.images(matching: importer)
+        guard !images.isEmpty else { throw ABIResolutionError.imageNotLoaded }
+        var found: [ImportedReference] = []
+        for image in images {
+            found += try resolver.importIndex(for: image).matches(declaration).filter { reference in
+                guard let provider else { return true }
+                switch provider {
+                case .automatic: return true
+                case .installName(let value): return reference.libraryName?.utf8.elementsEqual(value.utf8) == true
+                case .path(let url):
+                    return reference.libraryName.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath() == url.resolvingSymlinksInPath() } ?? false
+                case .framework(let name):
+                    return reference.libraryName.map { path in
+                        let url = URL(fileURLWithPath: path)
+                        return url.lastPathComponent == name && url.pathComponents.contains("\(name).framework")
+                    } ?? false
+                }
+            }
+        }
+        guard !found.isEmpty else { throw ABIResolutionError.declarationNotFound(declaration) }
+        var seen = Set<UInt64>()
+        found = found.filter { seen.insert($0.address).inserted }
+        slots = try found.map { reference in
+            guard reference.width == MemoryLayout<UnsafeRawPointer>.size, reference.addend == 0,
+                  let authentication = reference.authentication else {
+                throw ABIResolutionError.unsupportedDeclaration("The imported function needs a pointer-width zero-addend slot with a known authentication schema.")
+            }
+            if reference.isLazyBinding {
+                let image = MachOImage(ptr: UnsafePointer<mach_header>(bitPattern: UInt(reference.image.identity.headerAddress))!)
+                var bits: UInt = 0
+                let read = ABIReadMemory(UInt(reference.address), MemoryLayout<UInt>.size, &bits)
+                guard read.status == ABIMemoryReadComplete else { throw ABIResolutionError.invalidAddress }
+                // Only reject the actual lazy binder entry, not every record
+                // originating in the lazy stream. Do not warm up arbitrary calls.
+                if image.sections.contains(where: { section in
+                    let start = Int64(section.address) + reference.image.identity.slide
+                    return section.sectionName == "__stub_helper" && UInt64(bits) >= UInt64(bitPattern: start)
+                        && UInt64(bits) - UInt64(bitPattern: start) < UInt64(section.size)
+                }) { throw ABIResolutionError.unsupportedDeclaration("The import is still lazy-bound; call it normally before installing its hook.") }
+            }
+            return ABIImportSlot(slot: UInt(reference.address), generation: reference.image.identity.loadGeneration,
+                key: authentication.keyCode, discriminator: authentication.discriminator, addressDiversity: authentication.addressDiversity)
+        }
+        references = found
+    }
+
+    func retainedHandle() -> OpaquePointer { OpaquePointer(Unmanaged.passRetained(self).toOpaque()) }
+}
+
+@_cdecl("ABIRetainImportSelection")
+package func retainImportSelection(_ value: OpaquePointer) { _ = Unmanaged<ImportedFunctionSelection>.fromOpaque(UnsafeRawPointer(value)).retain() }
+@_cdecl("ABIReleaseImportSelection")
+package func releaseImportSelection(_ value: OpaquePointer) { Unmanaged<ImportedFunctionSelection>.fromOpaque(UnsafeRawPointer(value)).release() }
+@_cdecl("ABIImportSelectionCount")
+package func importSelectionCount(_ value: OpaquePointer) -> Int {
+    Unmanaged<ImportedFunctionSelection>.fromOpaque(UnsafeRawPointer(value)).takeUnretainedValue().slots.count
+}
+@_cdecl("ABIImportSelectionGet")
+package func importSelectionGet(_ value: OpaquePointer, _ index: Int) -> ABIImportSlot {
+    Unmanaged<ImportedFunctionSelection>.fromOpaque(UnsafeRawPointer(value)).takeUnretainedValue().slots[index]
+}
