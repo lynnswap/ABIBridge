@@ -111,3 +111,37 @@ static atomic_long initializations;
 @end
 
 IMP ABIHookForwardingImplementation(void) { return (IMP)_objc_msgForward; }
+
+static atomic_long managedInitializerLive;
+static atomic_long managedInitializerCalls;
+@interface ABIManagedInitializerOther : ABIManagedInitializerFixture @end
+@implementation ABIManagedInitializerOther @end
+@implementation ABIManagedInitializerFixture
++ (id)allocWithZone:(struct _NSZone *)zone {
+    atomic_fetch_add(&managedInitializerLive, 1);
+    return [super allocWithZone:zone];
+}
++ (NSInteger)liveObjects { return atomic_load(&managedInitializerLive); }
++ (NSInteger)initializations { return atomic_load(&managedInitializerCalls); }
+- (instancetype)init { return [self initWithMode:0 value:7 object:nil]; }
+- (instancetype)initWithValue:(NSInteger)value { return [self initWithMode:0 value:value object:nil]; }
+- (BOOL)containsIdenticalObject:(id)object { return _object == object; }
+- (instancetype)constructValue:(NSInteger)value { return [self initWithMode:0 value:value object:nil]; }
+- (instancetype)initWithMode:(NSInteger)mode value:(NSInteger)value object:(id)object {
+    atomic_fetch_add(&managedInitializerCalls, 1);
+    if (mode == 1) return nil;
+    if (mode == 2) return [[ABIManagedInitializerOther alloc] initWithMode:0 value:value + 10 object:object];
+    if ((self = [super init])) { _value = value; _object = object; }
+    return self;
+}
+- (void)dealloc { atomic_fetch_sub(&managedInitializerLive, 1); }
+@end
+@implementation ABIManagedInitializerChild
+- (instancetype)initWithMode:(NSInteger)mode value:(NSInteger)value object:(id)object {
+    return [super initWithMode:mode value:value object:object];
+}
+@end
+@implementation ABIManagedInitializerInherited @end
+ABIManagedInitializerFixture *ABIManagedConstruct(NSInteger value) {
+    return [[ABIManagedInitializerFixture alloc] constructValue:value];
+}

@@ -53,6 +53,26 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
     }
     let runtime = ABIRuntime()
     switch mode {
+    case "initializers":
+        let failures = ArchitectureHookErrors()
+        let hook = try unsafe runtime.hookInitializer(on: ABIValidationInitializerClass(), selector: "initWithSeed:",
+            as: ((Int32) -> NSObject?).self, onFailure: { failures.append($0) },
+            transformingArguments: { $0 < 0 ? $0 : $0 + 1 }, after: { initialized in
+                guard let initialized else { return }
+                guard let value = initialized.value(forKey: "calls") as? NSNumber else {
+                    throw ArchitectureValidationFailure(description: "Initializer result has no counter")
+                }
+                initialized.setValue(value.int32Value + 40, forKey: "calls")
+            })
+        defer { hook.invalidate() }
+        let result = ABIValidationCreateInitialized(1)
+        try check((result?.value(forKey: "calls") as? NSNumber)?.int32Value == 42,
+            "Initializer argument transformation and initialized-object mutation")
+        try check(ABIValidationCreateInitialized(-1) == nil, "Nil initializer result preserves consumed ownership")
+        hook.invalidate()
+        try check((ABIValidationCreateInitialized(1)?.value(forKey: "calls") as? NSNumber)?.int32Value == 1,
+            "Initializer invalidation restores native behavior")
+        try check(failures.isEmpty, "Initializer callbacks complete without conversion failures")
     case "hooks":
         let failures = ArchitectureHookErrors()
         let receiver = ArchitectureHookReceiver()

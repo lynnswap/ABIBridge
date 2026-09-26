@@ -10,13 +10,13 @@ public enum NativeObjCMethodHookError: Error, Sendable, Equatable {
     case wrongThread
     /// Another writer replaced the managed entry, or changed it during preparation.
     case displaced
-    /// This method requires an initializer, allocation, or lifecycle-specific contract.
+    /// The method does not satisfy the requested ordinary or initializer hook contract.
     case unsupportedMethod
     /// A registration disagrees with the existing entry's signature or ownership.
     case incompatibleContract
 }
 
-/// Owns one registration in an Objective-C method's managed hook chain.
+/// Owns one ordinary-method or initializer registration in an Objective-C hook chain.
 ///
 /// Keep the token alive to keep its callback installed. Invalidation and token
 /// destruction remove its behavior without waiting for in-flight snapshots.
@@ -66,6 +66,18 @@ public final class NativeObjCMethodHook: @unchecked Sendable {
         onFailure: @escaping @Sendable (any Error) -> Void,
         body: @escaping @Sendable (NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
     ) throws -> NativeObjCMethodHook {
+        try prepare(on: type, selector: selector, as: ((repeat each Argument) -> Result).self,
+            classMethod: classMethod, options: options, object: object, owner: owner, initializer: false) { signature in
+                ObjCReplacement<Result, repeat each Argument>.callback(signature,
+                    requiresMainThread: requiresMainThread, onFailure: onFailure, body: body)
+            }
+    }
+
+    static func prepare<Result, each Argument>(
+        on type: AnyClass, selector: String, as: ((repeat each Argument) -> Result).Type,
+        classMethod: Bool, options: NativeMethodOptions, object: AnyObject?, owner: Any?, initializer: Bool,
+        callback: (ObjCMethodSignature<Result, repeat each Argument>) -> ObjCReplacementCallback
+    ) throws -> NativeObjCMethodHook {
         guard !selector.utf8.contains(0) else {
             throw ABIResolutionError.unsupportedDeclaration("A selector cannot contain a NUL byte.")
         }
@@ -82,9 +94,8 @@ public final class NativeObjCMethodHook: @unchecked Sendable {
         defer { ABIReleaseObjCInvocation(binding) }
         let signature = try ObjCMethodSignature<Result, repeat each Argument>(handle: binding)
         let interface = try signature.callInterface()
-        let context = Unmanaged.passRetained(ObjCReplacement<Result, repeat each Argument>.callback(
-            signature, requiresMainThread: requiresMainThread, onFailure: onFailure, body: body))
-        guard let handle = ABICreateObjCMethodHook(type, sel, classMethod, binding, interface.handle,
+        let context = Unmanaged.passRetained(callback(signature))
+        guard let handle = ABICreateObjCMethodHook(type, sel, classMethod, initializer, binding, interface.handle,
             { context, call in Unmanaged<ObjCReplacementCallback>.fromOpaque(context).takeUnretainedValue().body(call) },
             context.toOpaque(), { context in Unmanaged<ObjCReplacementCallback>.fromOpaque(context).release() },
             object, owner.map { $0 as AnyObject }, &error) else {

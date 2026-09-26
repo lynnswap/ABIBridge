@@ -48,12 +48,12 @@ BOOL ABICopyObjCReplacementResult(ABIObjCReplacementCall *call, void *result,
 BOOL ABISetObjCReplacementResult(ABIObjCReplacementCall *call, const void *result,
     NSError * _Nullable * _Nullable error);
 
-/// Internal managed ordinary-method hooks. Context ownership transfers on entry,
+/// Internal managed Objective-C method hooks. Context ownership transfers on entry,
 /// including failure. Signature/ownership validation precedes method mutation.
 typedef struct ABIObjCMethodHook ABIObjCMethodHook;
 FOUNDATION_EXPORT NSString * const ABIObjCMethodHookErrorDomain;
 ABIObjCMethodHook * _Nullable ABICreateObjCMethodHook(
-    Class type, SEL selector, BOOL classMethod,
+    Class type, SEL selector, BOOL classMethod, BOOL initializer,
     ABIObjCInvocation *binding, ABICallInterface *interface,
     ABIObjCReplacementHandler handler, void *context, ABIObjCReplacementDestroy destroy,
     id _Nullable object, id _Nullable fallbackOwner,
