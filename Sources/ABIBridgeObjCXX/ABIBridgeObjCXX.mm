@@ -2,6 +2,7 @@
 #import <ABIBridgeObjCXX/Invocation.h>
 #import <CoreGraphics/CGGeometry.h>
 #include <optional>
+#include <atomic>
 #import <objc/message.h>
 #include <ABIBridgeCore.h>
 #include <dlfcn.h>
@@ -192,6 +193,7 @@ BOOL ABIObjCMethodReturnsRetained(const ABIObjCMethod *method) { return method->
 BOOL ABIObjCMethodConsumesReceiver(const ABIObjCMethod *method) { return method->consumesReceiver; }
 
 struct ABIObjCInvocation {
+    std::atomic<size_t> references{1};
     CFTypeRef receiver;
     CFTypeRef signature;
     SEL selector;
@@ -319,7 +321,13 @@ ABIObjCInvocation *ABICopyObjCImplementation(
     return plan.release();
 }
 
-void ABIReleaseObjCInvocation(ABIObjCInvocation *invocation) { delete invocation; }
+void ABIRetainObjCInvocation(ABIObjCInvocation *invocation) { ++invocation->references; }
+void ABIReleaseObjCInvocation(ABIObjCInvocation *invocation) {
+    if (invocation && --invocation->references == 0) delete invocation;
+}
+IMP ABIObjCInvocationImplementation(const ABIObjCInvocation *invocation) { return invocation->implementation; }
+BOOL ABIObjCInvocationReturnsRetained(const ABIObjCInvocation *invocation) { return invocation->ownership.retained; }
+BOOL ABIObjCInvocationConsumesReceiver(const ABIObjCInvocation *invocation) { return invocation->ownership.consumed; }
 size_t ABIObjCInvocationParameterCount(const ABIObjCInvocation *invocation) {
     return invocation->methodSignature().numberOfArguments - 2;
 }

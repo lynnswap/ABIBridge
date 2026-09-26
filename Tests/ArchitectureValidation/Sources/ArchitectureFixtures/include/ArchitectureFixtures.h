@@ -22,6 +22,8 @@ int32_t ABIValidationCounterOracle(const void *counter);
 int32_t ABIValidationCounterAdapter(void (*target)(void), void *counter, int32_t delta);
 /// Null on success; otherwise an owned-by-fixture diagnostic string.
 const char *ABIValidateNativeCalls(void);
+/// Internal Objective-C replacement entry, including cached authenticated IMPs.
+const char *ABIValidateObjCReplacement(void);
 /// Positive control using the same signing schema and call path as tamper mode.
 bool ABIValidateAuthenticatedFunction(void);
 /// Returns false if a signed-bit mutation could not be formed. A successful

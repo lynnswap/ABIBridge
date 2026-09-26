@@ -1,6 +1,7 @@
 module ABIBridgeObjCXX {
     header "ABIBridge/ObjectiveCInvocation.h"
     header "ABIBridgeObjCXX/Invocation.h"
+    header "ABIBridgeObjCXX/Replacement.h"
     export *
     module CXX {
         requires cplusplus, objc

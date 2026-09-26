@@ -2,6 +2,7 @@
 #include "NativeValueType.hpp"
 #include <ptrauth.h>
 #include <algorithm>
+#include <atomic>
 #include <climits>
 #include <cstddef>
 #include <cstring>
@@ -37,6 +38,7 @@ ffi_type *scalarType(int32_t kind) {
 
 
 struct ABICallInterface {
+    std::atomic<size_t> references{1};
     ffi_cif cif{};
     std::shared_ptr<TypeStorage> result;
     std::vector<std::shared_ptr<TypeStorage>> parameters;
@@ -118,7 +120,62 @@ ABICallInterface *ABICreateCCallInterface(
     return interface.release();
 }
 
-void ABIReleaseCallInterface(ABICallInterface *interface) { delete interface; }
+void ABIRetainCallInterface(ABICallInterface *interface) { ++interface->references; }
+void ABIReleaseCallInterface(ABICallInterface *interface) {
+    if (interface && --interface->references == 0) delete interface;
+}
+
+struct ABICallClosure {
+    ABICallInterface *interface;
+    ffi_closure *storage = nullptr;
+    void *code = nullptr;
+    ABICallClosureHandler handler;
+    void *context;
+
+    ~ABICallClosure() {
+        if (storage) ffi_closure_free(storage);
+        ABIReleaseCallInterface(interface);
+    }
+};
+
+ABICallClosure *ABICreateCallClosure(ABICallInterface *interface,
+    ABICallClosureHandler handler, void *context, ABIResolutionFailure **error) {
+    if (error) *error = nullptr;
+    if (!interface || !handler) {
+        fail(error, ABIFailureInvalidRequest, "A prepared interface and callback are required.");
+        return nullptr;
+    }
+    ABIRetainCallInterface(interface);
+    auto closure = std::make_unique<ABICallClosure>(interface, nullptr, nullptr, handler, context);
+    closure->storage = static_cast<ffi_closure *>(ffi_closure_alloc(sizeof(ffi_closure), &closure->code));
+    if (!closure->storage) {
+        fail(error, ABIFailureUnsupportedDeclaration, "The platform could not allocate a callback entry.");
+        return nullptr;
+    }
+    const auto status = ffi_prep_closure_loc(closure->storage, &interface->cif,
+        [](ffi_cif *, void *result, void **arguments, void *context) {
+            auto *closure = static_cast<ABICallClosure *>(context);
+            closure->handler(closure->context, result, arguments);
+        }, closure.get(), closure->code);
+    if (status != FFI_OK) {
+        fail(error, ABIFailureUnsupportedDeclaration, "The platform could not prepare a callback entry.");
+        return nullptr;
+    }
+    return closure.release();
+}
+
+ABIUnmanagedFunction ABICallClosureFunction(const ABICallClosure *closure) {
+    void *code = closure->code;
+#if __has_feature(ptrauth_calls)
+    // libffi's Apple trampoline allocator already signs this pointer with
+    // function key / discriminator zero. Signing it as a raw address corrupts
+    // it before the Objective-C runtime authenticates the installed IMP.
+    code = ptrauth_auth_and_resign(code, ptrauth_key_function_pointer, 0,
+        ptrauth_key_function_pointer, ptrauth_function_pointer_type_discriminator(void(void)));
+#endif
+    return reinterpret_cast<ABIUnmanagedFunction>(code);
+}
+void ABIReleaseCallClosure(ABICallClosure *closure) { delete closure; }
 
 ABIUnmanagedFunction ABIUnsafeFunctionAtAddress(const void *address) {
     if (!address) return nullptr;

@@ -22,6 +22,10 @@ FOUNDATION_EXPORT ABIObjCInvocation * _Nullable ABICopyObjCImplementation(
     Class type, SEL selector, BOOL classMethod, int32_t returnsRetained,
     int32_t consumesReceiver, NSError * _Nullable * _Nullable error);
 FOUNDATION_EXPORT void ABIReleaseObjCInvocation(ABIObjCInvocation *invocation);
+FOUNDATION_EXPORT void ABIRetainObjCInvocation(ABIObjCInvocation *invocation);
+FOUNDATION_EXPORT IMP _Nullable ABIObjCInvocationImplementation(const ABIObjCInvocation *invocation);
+FOUNDATION_EXPORT BOOL ABIObjCInvocationReturnsRetained(const ABIObjCInvocation *invocation);
+FOUNDATION_EXPORT BOOL ABIObjCInvocationConsumesReceiver(const ABIObjCInvocation *invocation);
 FOUNDATION_EXPORT size_t ABIObjCInvocationParameterCount(const ABIObjCInvocation *invocation);
 /// Encodings are borrowed for the plan's lifetime. Index excludes self/_cmd.
 FOUNDATION_EXPORT const char *ABIObjCInvocationParameterType(const ABIObjCInvocation *invocation, size_t index);

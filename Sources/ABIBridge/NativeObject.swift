@@ -251,8 +251,8 @@ public struct NativeMethod<Result, each Argument> {
 }
 
 struct ObjCMethodSignature<Result, each Argument> {
-    private let arguments: (repeat ObjCValueCodec<each Argument>)
-    private let result: ObjCValueCodec<Result>
+    let arguments: (repeat ObjCValueCodec<each Argument>)
+    let result: ObjCValueCodec<Result>
 
     init(handle: OpaquePointer) throws {
         var count = 0
