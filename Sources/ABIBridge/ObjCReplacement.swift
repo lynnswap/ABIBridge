@@ -4,8 +4,6 @@ import Darwin
 import Foundation
 
 package enum ObjCReplacementError: Error, Equatable {
-    case expiredInvocation
-    case wrongThread
     case unavailableReceiver
     case initializerRequiresDedicatedCallback
     case expectedInitializer
@@ -23,10 +21,10 @@ private final class ObjCReplacementFrame {
 
     func withCall<T>(_ body: (OpaquePointer) throws -> T) throws -> T {
         lock.lock()
-        guard let pointer else { lock.unlock(); throw ObjCReplacementError.expiredInvocation }
+        guard let pointer else { lock.unlock(); throw NativeObjCMethodHookError.expiredInvocation }
         guard pthread_equal(thread, pthread_self()) != 0 else {
             lock.unlock()
-            throw ObjCReplacementError.wrongThread
+            throw NativeObjCMethodHookError.wrongThread
         }
         lock.unlock()
         // Expiry runs only on this thread after the callback returns. Native
@@ -41,11 +39,17 @@ private final class ObjCReplacementFrame {
     }
 }
 
-package struct ObjCReplacementInvocation<Result, each Argument> {
+/// A scoped view of the receiver and next implementation in a method-hook call.
+///
+/// Use it synchronously on the callback's original thread. Saving this value
+/// does not extend the call: later access throws, and it is not Sendable.
+public struct NativeObjCMethodInvocation<Result, each Argument> {
     fileprivate let frame: ObjCReplacementFrame
     fileprivate let signature: ObjCMethodSignature<Result, repeat each Argument>
 
-    package var receiver: AnyObject {
+    /// The live instance or class object receiving this call.
+    /// - Throws: An expired-invocation or wrong-thread error outside the scope.
+    public var receiver: AnyObject {
         get throws {
             try frame.withCall {
                 guard let receiver = ABIObjCReplacementReceiver($0) else {
@@ -56,7 +60,15 @@ package struct ObjCReplacementInvocation<Result, each Argument> {
         }
     }
 
-    package func proceed(_ values: repeat each Argument) throws -> Result {
+    /// Invokes the next hook in this call's snapshot, or the native implementation.
+    ///
+    /// This does not send the selector again. Arguments can be changed, and an
+    /// ordinary method may proceed more than once. Each completed result replaces
+    /// the prior result used if this callback subsequently throws.
+    /// - Parameter values: Explicit arguments, excluding self and the selector.
+    /// - Returns: The next implementation's converted result.
+    /// - Throws: A scope, thread, value-conversion, or invocation error.
+    public func proceed(_ values: repeat each Argument) throws -> Result {
         try frame.withCall { call in
             try signature.invoke(repeat each values, using: { arguments, output in
                 var error: NSError?
@@ -72,16 +84,16 @@ package struct ObjCReplacementInvocation<Result, each Argument> {
     }
 }
 
-private final class ObjCReplacementCallback {
+final class ObjCReplacementCallback {
     let body: (OpaquePointer) -> Void
     init(_ body: @escaping (OpaquePointer) -> Void) { self.body = body }
 }
 
 // Only bridges the static Sendable result constraint of assumeIsolated. The
 // value is produced and consumed synchronously on the verified main thread.
-private struct ObjCReplacementIsolatedResult<Value>: @unchecked Sendable { let value: Value }
-private struct ObjCReplacementIsolatedArguments<Result, each Argument>: @unchecked Sendable {
-    let call: ObjCReplacementInvocation<Result, repeat each Argument>
+struct ObjCReplacementIsolatedResult<Value>: @unchecked Sendable { let value: Value }
+struct ObjCReplacementIsolatedArguments<Result, each Argument>: @unchecked Sendable {
+    let call: NativeObjCMethodInvocation<Result, repeat each Argument>
     let values: (repeat each Argument)
 }
 
@@ -97,27 +109,9 @@ package final class ObjCReplacement<Result, each Argument> {
          requiresMainThread: Bool = false,
          retaining owner: Any? = nil,
          onFailure: @escaping @Sendable (any Error) -> Void,
-         body: @escaping @Sendable (ObjCReplacementInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result) throws {
+         body: @escaping @Sendable (NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result) throws {
         handle = try Self.prepare(type, selector, classMethod, options, initializer: false, retaining: owner) { signature in
-            ObjCReplacementCallback { pointer in
-                guard !requiresMainThread || Thread.isMainThread else {
-                    onFailure(ObjCReplacementError.wrongThread)
-                    return
-                }
-                let frame = ObjCReplacementFrame(pointer)
-                defer { frame.expire() }
-                do {
-                    let values = try Self.decodeArguments(signature, pointer)
-                    let invocation = ObjCReplacementInvocation(frame: frame, signature: signature)
-                    let result = try body(invocation, repeat each values)
-                    let storage = try signature.result.encodeResult(result)
-                    var error: NSError?
-                    let success = withExtendedLifetime(storage) {
-                        ABISetObjCReplacementResult(pointer, storage.address, &error)
-                    }
-                    guard success else { throw error ?? ABIResolutionError.invalidAddress as NSError }
-                } catch { onFailure(error) }
-            }
+            Self.callback(signature, requiresMainThread: requiresMainThread, onFailure: onFailure, body: body)
         }
     }
 
@@ -125,9 +119,9 @@ package final class ObjCReplacement<Result, each Argument> {
          as signature: ((repeat each Argument) -> Result).Type,
          retaining owner: Any? = nil,
          onFailure: @escaping @Sendable (any Error) -> Void,
-         body: @escaping @MainActor @Sendable (ObjCReplacementInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result) throws {
+         body: @escaping @MainActor @Sendable (NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result) throws {
         try self.init(on: type, selector: selector, as: signature, requiresMainThread: true, retaining: owner, onFailure: onFailure) {
-            (call: ObjCReplacementInvocation<Result, repeat each Argument>, values: repeat each Argument) in
+            (call: NativeObjCMethodInvocation<Result, repeat each Argument>, values: repeat each Argument) in
             let input = ObjCReplacementIsolatedArguments(call: call, values: (repeat each values))
             return try MainActor.assumeIsolated {
                 ObjCReplacementIsolatedResult(value: try body(input.call, repeat each input.values))
@@ -157,6 +151,32 @@ package final class ObjCReplacement<Result, each Argument> {
                     try after(signature.result.decode(storage))
                 } catch { onFailure(error) }
             }
+        }
+    }
+
+    static func callback(_ signature: ObjCMethodSignature<Result, repeat each Argument>,
+        requiresMainThread: Bool,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        body: @escaping @Sendable (NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+    ) -> ObjCReplacementCallback {
+        ObjCReplacementCallback { pointer in
+            guard !requiresMainThread || Thread.isMainThread else {
+                onFailure(NativeObjCMethodHookError.wrongThread)
+                return
+            }
+            let frame = ObjCReplacementFrame(pointer)
+            defer { frame.expire() }
+            do {
+                let values = try Self.decodeArguments(signature, pointer)
+                let invocation = NativeObjCMethodInvocation(frame: frame, signature: signature)
+                let result = try body(invocation, repeat each values)
+                let storage = try signature.result.encodeResult(result)
+                var error: NSError?
+                let success = withExtendedLifetime(storage) {
+                    ABISetObjCReplacementResult(pointer, storage.address, &error)
+                }
+                guard success else { throw error ?? ABIResolutionError.invalidAddress as NSError }
+            } catch { onFailure(error) }
         }
     }
 

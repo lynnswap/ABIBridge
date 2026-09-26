@@ -216,7 +216,7 @@ struct ObjectiveCReplacementTests {
     }
 
     @Test func savedInvocationExpiresAndPublishedIMPOutlivesItsOwner() throws {
-        let saved = ReplacementBox<ObjCReplacementInvocation<Int32, Int32, Int32>?>(nil)
+        let saved = ReplacementBox<NativeObjCMethodInvocation<Int32, Int32, Int32>?>(nil)
         var capture: ReplacementCapture? = ReplacementCapture()
         weak var observed = capture
         var entry: ObjCReplacement<Int32, Int32, Int32>? = try ObjCReplacement(on: ABIReplacementFixture.self,
@@ -230,7 +230,7 @@ struct ObjectiveCReplacementTests {
         let receiver = ABIReplacementFixture()
         #expect(ABIReplacementCallAdd(imp, receiver, 20, 21) == 42)
         let expired = try #require(saved.read())
-        #expect(throws: ObjCReplacementError.expiredInvocation) { try expired.proceed(1, 2) }
+        #expect(throws: NativeObjCMethodHookError.expiredInvocation) { try expired.proceed(1, 2) }
         entry = nil
         #expect(observed == nil)
         #expect(ABIReplacementCallAdd(imp, receiver, 20, 22) == 42)
@@ -273,7 +273,7 @@ struct ObjectiveCReplacementTests {
         let started = DispatchSemaphore(value: 0)
         let resume = DispatchSemaphore(value: 0)
         let finished = DispatchGroup()
-        let saved = ReplacementBox<ObjCReplacementInvocation<Int32, Int32, Int32>?>(nil)
+        let saved = ReplacementBox<NativeObjCMethodInvocation<Int32, Int32, Int32>?>(nil)
         let result = ReplacementBox<Int32>(0)
         var capture: ReplacementCapture? = ReplacementCapture()
         weak var observed = capture
@@ -300,7 +300,7 @@ struct ObjectiveCReplacementTests {
             defer { resume.signal(); finished.wait() }
             started.wait()
             let invocation = try #require(saved.read())
-            #expect(throws: ObjCReplacementError.wrongThread) { try invocation.proceed(1, 2) }
+            #expect(throws: NativeObjCMethodHookError.wrongThread) { try invocation.proceed(1, 2) }
             entry.invalidate()
             #expect(observed != nil)
             resume.signal()

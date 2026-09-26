@@ -39,3 +39,20 @@ int32_t ABIReplacementCallAdd(IMP implementation, ABIReplacementFixture *receive
 @end
 
 NS_ASSUME_NONNULL_END
+
+NS_ASSUME_NONNULL_BEGIN
+@interface ABIManagedHookFixture : ABIReplacementFixture
+@property(nonatomic) NSInteger number;
+- (NSInteger)sumThrough:(NSInteger)value;
+- (int32_t)add:(int32_t)a to:(int32_t)b;
+- (CGSize)resize:(CGSize)value;
+@end
+@interface ABIHookParent : NSObject
+- (NSInteger)value;
++ (NSInteger)value;
+@end
+@interface ABIHookChild : ABIHookParent @end
+@interface ABIHookSibling : ABIHookParent @end
+@interface ABIHookExternalFixture : ABIManagedHookFixture @end
+@interface ABIHookBenchmarkControl : ABIReplacementFixture @end
+NS_ASSUME_NONNULL_END
