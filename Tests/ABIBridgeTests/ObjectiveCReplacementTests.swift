@@ -272,7 +272,7 @@ struct ObjectiveCReplacementTests {
     @Test func inFlightCallbacksKeepCapturesAndRejectCrossThreadContinuation() throws {
         let started = DispatchSemaphore(value: 0)
         let resume = DispatchSemaphore(value: 0)
-        let finished = DispatchSemaphore(value: 0)
+        let finished = DispatchGroup()
         let saved = ReplacementBox<ObjCReplacementInvocation<Int32, Int32, Int32>?>(nil)
         let result = ReplacementBox<Int32>(0)
         var capture: ReplacementCapture? = ReplacementCapture()
@@ -281,24 +281,30 @@ struct ObjectiveCReplacementTests {
             as: ((Int32, Int32) -> Int32).self, onFailure: { Issue.record($0) }) { [capture] call, a, b in
                 saved.update { $0 = call }
                 started.signal()
-                guard resume.wait(timeout: .now() + 5) == .success else { throw ReplacementFailure.deliberate }
+                resume.wait()
                 return try withExtendedLifetime(capture) { try call.proceed(a, b) + 1 }
             }
         capture = nil
         try withReplacement(entry, selector: "add:to:") {
-            DispatchQueue.global().async {
+            // This callback deliberately blocks. Give it a dedicated thread
+            // so unrelated tests cannot exhaust the pool it needs to enter.
+            finished.enter()
+            let worker = Thread {
+                defer { finished.leave() }
                 result.update { $0 = ABIReplacementFixture().add(20, to: 21) }
-                finished.signal()
             }
-            let didStart = started.wait(timeout: .now() + 5) == .success
-            defer { resume.signal() }
-            try #require(didStart)
+            worker.qualityOfService = .userInitiated
+            worker.start()
+            // Join before restoring the method even if a requirement throws;
+            // a late call must never enter another test's replacement.
+            defer { resume.signal(); finished.wait() }
+            started.wait()
             let invocation = try #require(saved.read())
             #expect(throws: ObjCReplacementError.wrongThread) { try invocation.proceed(1, 2) }
             entry.invalidate()
             #expect(observed != nil)
             resume.signal()
-            #expect(finished.wait(timeout: .now() + 5) == .success)
+            finished.wait()
             #expect(result.read() == 42)
             #expect(observed == nil)
             #expect(ABIReplacementFixture().add(20, to: 22) == 42)
@@ -382,11 +388,13 @@ struct ObjectiveCReplacementTests {
             #expect(ABIReplacementFixture().add(20, to: 21) == 42)
             let result = ReplacementBox<Int32>(0)
             let done = DispatchSemaphore(value: 0)
-            DispatchQueue.global().async {
+            let worker = Thread {
+                defer { done.signal() }
                 result.update { $0 = ABIReplacementFixture().add(20, to: 22) }
-                done.signal()
             }
-            #expect(done.wait(timeout: .now() + 5) == .success)
+            worker.qualityOfService = .userInitiated
+            worker.start()
+            done.wait()
             #expect(result.read() == 42)
         }
         #expect(calls.read() == 1 && errors.read() == 1)
