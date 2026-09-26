@@ -73,14 +73,20 @@ inline void hook_require(bool success, ABIResolutionFailure *owned) {
     if (!success) throw resolution_error(error ? ABIResolutionFailureCode(error.get()) : ABIFailureOther,
         error ? ABIResolutionFailureMessage(error.get()) : "The native hook operation failed.");
 }
-inline void *hook_object_pointer(id object) {
+inline void *hook_object_pointer(
+#ifdef __OBJC__
+    __unsafe_unretained id object
+#else
+    id object
+#endif
+) {
 #ifdef __OBJC__
     return (__bridge void *)object;
 #else
     return reinterpret_cast<void *>(object);
 #endif
 }
-inline ABIObjCHookOptions hook_options(objc_hook_options options) {
+inline ABIObjCHookOptions hook_options(const objc_hook_options& options) {
     return {options.class_method, options.requires_main_thread,
         options.returns_retained ? (*options.returns_retained ? 2 : 1) : 0,
         options.consumes_receiver ? (*options.consumes_receiver ? 2 : 1) : 0,
@@ -303,4 +309,102 @@ objc_hook_handle objc_object_hook(id object, std::string_view selector, Body&& b
     options.class_method = false;
     return objc_method_hook<Signature>(object_getClass(object), selector, std::forward<Body>(body), std::forward<OnFailure>(failure), options);
 }
+/// A reusable declaration for coordinated installation. Copies share callback
+/// storage; retaining a request retains its captures independently of handles.
+class objc_hook_request final {
+public:
+    template <typename Signature, typename Body, typename OnFailure>
+    static objc_hook_request method(Class type, std::string_view selector, Body&& body, OnFailure&& failure, objc_hook_options options = {}) {
+        static_assert(std::is_nothrow_invocable_v<OnFailure&, const resolution_error&>, "The failure callback must be noexcept.");
+        using State = typename detail::hook_installer<Signature>::template method_state<std::decay_t<Body>, std::decay_t<OnFailure>>;
+        return make<Signature>(type, selector, options, false,
+            std::make_shared<State>(std::forward<Body>(body), std::forward<OnFailure>(failure)));
+    }
+    template <typename Signature, typename Before, typename After, typename OnFailure>
+    static objc_hook_request initializer(Class type, std::string_view selector, Before&& before, After&& after, OnFailure&& failure, objc_hook_options options = {}) {
+        static_assert(std::is_nothrow_invocable_v<OnFailure&, const resolution_error&>, "The failure callback must be noexcept.");
+        using State = typename detail::hook_installer<Signature>::template initializer_state<std::decay_t<Before>, std::decay_t<After>, std::decay_t<OnFailure>>;
+        return make<Signature>(type, selector, options, true,
+            std::make_shared<State>(std::forward<Before>(before), std::forward<After>(after), std::forward<OnFailure>(failure)));
+    }
+private:
+    template <typename Signature> struct signature_storage;
+    template <typename R, typename... A> struct signature_storage<R(A...)> : detail::hook_signature<R, A...> {};
+    template <typename State> struct shared_context {
+        std::shared_ptr<State> state;
+        static void release(void *raw) noexcept { delete static_cast<shared_context *>(raw); }
+        static void failed(void *raw, const ABIResolutionFailure *error) noexcept { State::failed(static_cast<shared_context *>(raw)->state.get(), error); }
+    };
+    template <typename Signature, typename State>
+    static objc_hook_request make(Class type, std::string_view selector, objc_hook_options options, bool initializer, std::shared_ptr<State> state) {
+        auto name = detail::hook_selector(selector);
+        auto signature = std::make_shared<signature_storage<Signature>>();
+        return objc_hook_request([type, name = std::move(name), options, signature, state, initializer] {
+            using Context = shared_context<State>;
+            auto context = std::make_unique<Context>(state);
+            ABIObjCHookRequest request{};
+            request.type = type; request.selector = name.c_str(); request.signature = &signature->value;
+            request.options = detail::hook_options(options); request.initializer = initializer;
+            request.context = context.get(); request.releaseContext = Context::release; request.onFailure = Context::failed;
+            if constexpr (requires { State::callback; }) {
+                request.callback = [](void *raw, ABIObjCHookInvocation *call, ABIResolutionFailure **error) noexcept {
+                    return State::callback(static_cast<Context *>(raw)->state.get(), call, error);
+                };
+            } else {
+                request.before = [](void *raw, ABIObjCInitializerArguments *arguments, ABIResolutionFailure **error) noexcept {
+                    return State::preparing(static_cast<Context *>(raw)->state.get(), arguments, error);
+                };
+                request.after = [](void *raw, void *object, ABIResolutionFailure **error) noexcept {
+                    return State::initialized(static_cast<Context *>(raw)->state.get(), object, error);
+                };
+            }
+            context.release();
+            return request;
+        });
+    }
+    friend std::vector<objc_hook_handle> install_objc_hooks(const std::vector<objc_hook_request>&);
+    explicit objc_hook_request(std::function<ABIObjCHookRequest()> make) : make_(std::move(make)) {}
+    std::function<ABIObjCHookRequest()> make_;
+};
+
+/// A coordinated-installation failure retaining the original cause and partial
+/// handles, already invalidated. Reading status does not require healthy ownership.
+class objc_hook_installation_error final : public std::runtime_error {
+public:
+    objc_hook_installation_error(size_t index, int32_t phase, resolution_error cause, std::vector<objc_hook_handle> hooks)
+        : std::runtime_error(cause.what()), index_(index), phase_(phase), cause_(std::move(cause)), hooks_(std::move(hooks)) {}
+    size_t failed_index() const noexcept { return index_; }
+    int32_t phase() const noexcept { return phase_; }
+    const resolution_error& cause() const noexcept { return cause_; }
+    const std::vector<objc_hook_handle>& invalidated_hooks() const noexcept { return hooks_; }
+private:
+    size_t index_;
+    int32_t phase_;
+    resolution_error cause_;
+    std::vector<objc_hook_handle> hooks_;
+};
+
+/// Validates all requests before installation, then returns ordinary handles in
+/// order. On failure throws objc_hook_installation_error after logical rollback.
+/// Cross-method visibility is not atomic; published pass-through entries remain.
+inline std::vector<objc_hook_handle> install_objc_hooks(const std::vector<objc_hook_request>& requests) {
+    std::vector<ABIObjCHookRequest> native;
+    native.reserve(requests.size());
+    try { for (const auto& request : requests) native.push_back(request.make_()); }
+    catch (...) { for (const auto& request : native) request.releaseContext(request.context); throw; }
+    std::unique_ptr<ABIObjCHookInstallation, decltype(&ABIReleaseObjCHookInstallation)> installation(
+        ABIInstallObjCHooks(native.data(), native.size()), ABIReleaseObjCHookInstallation);
+    std::vector<objc_hook_handle> handles;
+    try {
+        for (size_t index = 0; index < ABIObjCHookInstallationCount(installation.get()); ++index)
+            handles.push_back(objc_hook_handle::retain(ABIObjCHookInstallationGet(installation.get(), index)));
+    } catch (...) { ABIInvalidateObjCHookInstallation(installation.get()); throw; }
+    if (const auto *error = ABIObjCHookInstallationFailure(installation.get())) {
+        throw objc_hook_installation_error(ABIObjCHookInstallationFailedIndex(installation.get()),
+            ABIObjCHookInstallationPhase(installation.get()),
+            resolution_error(ABIResolutionFailureCode(error), ABIResolutionFailureMessage(error)), std::move(handles));
+    }
+    return handles;
+}
+
 }

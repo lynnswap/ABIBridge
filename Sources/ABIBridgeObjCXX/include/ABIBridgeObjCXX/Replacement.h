@@ -52,6 +52,9 @@ BOOL ABISetObjCReplacementResult(ABIObjCReplacementCall *call, const void *resul
 /// including failure. Signature/ownership validation precedes method mutation.
 typedef struct ABIObjCMethodHook ABIObjCMethodHook;
 FOUNDATION_EXPORT NSString * const ABIObjCMethodHookErrorDomain;
+/// Checks operation/ownership compatibility without publishing an entry.
+BOOL ABIValidateObjCMethodHook(Class type, SEL selector, BOOL classMethod, BOOL initializer,
+    ABIObjCInvocation *binding, id _Nullable object, NSError * _Nullable * _Nullable error);
 ABIObjCMethodHook * _Nullable ABICreateObjCMethodHook(
     Class type, SEL selector, BOOL classMethod, BOOL initializer,
     ABIObjCInvocation *binding, ABICallInterface *interface,

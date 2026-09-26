@@ -25,6 +25,8 @@ let package = Package(
         .package(url: "https://github.com/lynnswap/ZDLibffi.git", exact: "0.380.1"),
     ],
     targets: [
+        .target(name: "HookCoordinationFixtures", path: "Tests/HookCoordinationFixtures",
+            cSettings: [.unsafeFlags(["-fno-objc-arc"])], linkerSettings: [.linkedFramework("Foundation")]),
         .target(
             name: "ABIBridge",
             dependencies: [
@@ -59,7 +61,7 @@ let package = Package(
         ),
         .testTarget(
             name: "ABIBridgeTests",
-            dependencies: ["ABIBridge", "ObjectiveCFixtures"],
+            dependencies: ["ABIBridge", "ObjectiveCFixtures", "HookCoordinationFixtures"],
             swiftSettings: strictSwiftSettings
         ),
     ],

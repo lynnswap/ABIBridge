@@ -32,6 +32,7 @@ const char *ABIValidateNativeCalls(void);
 /// Internal Objective-C replacement entry, including cached authenticated IMPs.
 const char *ABIValidateObjCReplacement(void);
 const char *ABIValidateNativeObjCHooks(void);
+const char *ABIValidateCoordinatedObjCHooks(void);
 /// Positive control using the same signing schema and call path as tamper mode.
 bool ABIValidateAuthenticatedFunction(void);
 /// Returns false if a signed-bit mutation could not be formed. A successful

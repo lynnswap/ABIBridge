@@ -65,30 +65,10 @@ extension ABIRuntime {
         before: (@MainActor @Sendable (repeat each Argument) throws -> Void)? = nil,
         after: @escaping @MainActor @Sendable (Result) throws -> Void = { _ in }
     ) throws -> NativeObjCMethodHook {
-        let transform: (@Sendable (repeat each Argument) throws -> (repeat each Argument))?
-        if let transformingArguments {
-            transform = { (values: repeat each Argument) in
-                let input = ObjCReplacementIsolatedResult(value: (repeat each values))
-                return try MainActor.assumeIsolated {
-                    ObjCReplacementIsolatedResult(value: try transformingArguments(repeat each input.value))
-                }.value
-            }
-        } else { transform = nil }
-        let prepare: (@Sendable (repeat each Argument) throws -> Void)?
-        if let before {
-            prepare = { (values: repeat each Argument) in
-                let input = ObjCReplacementIsolatedResult(value: (repeat each values))
-                try MainActor.assumeIsolated { try before(repeat each input.value) }
-            }
-        } else { prepare = nil }
-        return try NativeObjCMethodHook.prepare(on: type, selector: selector, as: signature,
+        try NativeObjCMethodHook.prepare(on: type, selector: selector, as: signature,
             classMethod: false, options: options, object: nil, owner: owner, initializer: true) { signature in
-                ObjCReplacement<Result, repeat each Argument>.initializerCallback(signature,
-                    requiresMainThread: true, onFailure: onFailure,
-                    transformingArguments: transform, before: prepare, after: { result in
-                        let input = ObjCReplacementIsolatedResult(value: result)
-                        try MainActor.assumeIsolated { try after(input.value) }
-                    })
+                ObjCReplacement<Result, repeat each Argument>.mainActorInitializerCallback(signature,
+                    onFailure: onFailure, transformingArguments: transformingArguments, before: before, after: after)
             }
     }
 }

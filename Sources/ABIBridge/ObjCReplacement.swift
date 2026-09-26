@@ -167,6 +167,48 @@ package final class ObjCReplacement<Result, each Argument> {
         }
     }
 
+    static func mainActorCallback(_ signature: ObjCMethodSignature<Result, repeat each Argument>,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        body: @escaping @MainActor @Sendable (NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+    ) -> ObjCReplacementCallback {
+        callback(signature, requiresMainThread: true, onFailure: onFailure) {
+            (call: NativeObjCMethodInvocation<Result, repeat each Argument>, values: repeat each Argument) in
+            let input = ObjCReplacementIsolatedArguments(call: call, values: (repeat each values))
+            return try MainActor.assumeIsolated {
+                ObjCReplacementIsolatedResult(value: try body(input.call, repeat each input.values))
+            }.value
+        }
+    }
+
+    static func mainActorInitializerCallback(_ signature: ObjCMethodSignature<Result, repeat each Argument>,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        transformingArguments: (@MainActor @Sendable (repeat each Argument) throws -> (repeat each Argument))?,
+        before: (@MainActor @Sendable (repeat each Argument) throws -> Void)?,
+        after: @escaping @MainActor @Sendable (Result) throws -> Void
+    ) -> ObjCReplacementCallback {
+        let transform: (@Sendable (repeat each Argument) throws -> (repeat each Argument))?
+        if let transformingArguments {
+            transform = { (values: repeat each Argument) in
+                let input = ObjCReplacementIsolatedResult(value: (repeat each values))
+                return try MainActor.assumeIsolated {
+                    ObjCReplacementIsolatedResult(value: try transformingArguments(repeat each input.value))
+                }.value
+            }
+        } else { transform = nil }
+        let prepare: (@Sendable (repeat each Argument) throws -> Void)?
+        if let before {
+            prepare = { (values: repeat each Argument) in
+                let input = ObjCReplacementIsolatedResult(value: (repeat each values))
+                try MainActor.assumeIsolated { try before(repeat each input.value) }
+            }
+        } else { prepare = nil }
+        return initializerCallback(signature, requiresMainThread: true, onFailure: onFailure,
+            transformingArguments: transform, before: prepare, after: { result in
+                let input = ObjCReplacementIsolatedResult(value: result)
+                try MainActor.assumeIsolated { try after(input.value) }
+            })
+    }
+
     static func initializerCallback(_ signature: ObjCMethodSignature<Result, repeat each Argument>,
         requiresMainThread: Bool,
         onFailure: @escaping @Sendable (any Error) -> Void,

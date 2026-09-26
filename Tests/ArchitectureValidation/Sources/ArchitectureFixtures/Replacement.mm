@@ -129,3 +129,26 @@ const char *ABIValidateNativeObjCHooks(void) {
     }
     return nullptr;
 }
+
+const char *ABIValidateCoordinatedObjCHooks(void) {
+    @autoreleasepool {
+        int failures = 0;
+        auto failed = [&](const abi_bridge::resolution_error&) noexcept { ++failures; };
+        auto method = abi_bridge::objc_hook_request::method<int32_t(int32_t, int32_t)>(ABIReplacementArchitectureReceiver.class, "add:to:",
+            [](auto& call, int32_t a, int32_t b) { return call.proceed(a,b) + 1; }, failed);
+        auto initializer = abi_bridge::objc_hook_request::initializer<ABIReplacementArchitectureReceiver *(int32_t)>(
+            ABIReplacementArchitectureReceiver.class, "initWithSeed:", [](int32_t seed) { return seed + 1; }, nullptr, failed);
+        auto hooks = abi_bridge::install_objc_hooks({method,initializer});
+        ABIReplacementArchitectureReceiver *receiver = [[ABIReplacementArchitectureReceiver alloc] initWithSeed:41];
+        if (receiver.calls != 42 || [receiver add:20 to:21] != 42) return "Coordinated native activation failed";
+        for (auto& hook : hooks) hook.invalidate();
+        if ([receiver add:20 to:22] != 42) return "Coordinated native invalidation failed";
+        auto missing = abi_bridge::objc_hook_request::method<void()>(ABIReplacementArchitectureReceiver.class, "missingSelector", [](auto&) {}, failed);
+        try { (void)abi_bridge::install_objc_hooks({method,missing}); return "Invalid batch unexpectedly installed"; }
+        catch (const abi_bridge::objc_hook_installation_error& error) {
+            if (error.failed_index() != 1 || !error.invalidated_hooks().empty()) return "Incorrect preflight failure details";
+        }
+        if (failures) return "Coordinated callbacks reported a failure";
+    }
+    return nullptr;
+}

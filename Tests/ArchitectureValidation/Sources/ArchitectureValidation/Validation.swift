@@ -53,6 +53,23 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
     }
     let runtime = ABIRuntime()
     switch mode {
+    case "coordinated-hooks":
+        let failures = ArchitectureHookErrors()
+        let receiver = ArchitectureHookReceiver()
+        func request(_ delta: Int32) -> NativeObjCHookRequest {
+            unsafe .method(on: ArchitectureHookReceiver.self, selector: "adding:", as: ((Int32) -> Int32).self,
+                onFailure: { failures.append($0) }) { call, value in try call.proceed(value) + delta }
+        }
+        let hooks = try unsafe runtime.installHooks([request(1),request(2)])
+        defer { hooks.forEach { $0.invalidate() } }
+        try check(receiver.adding(1) == 44, "Coordinated Swift hooks preserve request order")
+        hooks.forEach { $0.invalidate() }
+        try check(receiver.adding(2) == 42, "Coordinated invalidation restores pass-through")
+        try check(failures.isEmpty, "Coordinated callbacks complete without conversion failures")
+        if let error = ABIValidateCoordinatedObjCHooks() {
+            throw ArchitectureValidationFailure(description: String(cString: error))
+        }
+        checks.append("Coordinated C++ ordinary/initializer installation and preflight failure")
     case "native-hooks":
         if let error = ABIValidateNativeObjCHooks() {
             throw ArchitectureValidationFailure(description: String(cString: error))

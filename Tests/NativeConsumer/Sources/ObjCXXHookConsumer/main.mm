@@ -48,6 +48,18 @@ int main() {
         ABINativeHookFixture *initialized = [[ABINativeHookFixture alloc] initWithSeed:1];
         assert(initialized.seed == 42 && [[ABINativeHookFixture alloc] initWithSeed:-1] == nil);
         initializer.invalidate();
+        auto coordinated = abi_bridge::install_objc_hooks({
+            abi_bridge::objc_hook_request::method<ABINativeHookResult *()>(ABINativeHookFixture.class, "copyObject",
+                [](auto& call) { return call.proceed(); }, failed)
+        });
+        {
+            ABINativeHookResult *value = [object copyObject];
+            assert(value);
+#if !__has_feature(objc_arc)
+            [value release];
+#endif
+        }
+        coordinated.clear();
 #if !__has_feature(objc_arc)
         [initialized release]; [other release]; [object release];
 #endif
