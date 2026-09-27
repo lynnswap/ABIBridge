@@ -37,14 +37,16 @@ Secondary *replacementCovariant(Secondary *object) {
     return call(object);
 }
 bool protections(const void *slot, int32_t& protection, int32_t& maximum) {
-    vm_address_t address = reinterpret_cast<vm_address_t>(slot);
+    const auto target = reinterpret_cast<vm_address_t>(slot);
     vm_size_t size = 0;
     natural_t depth = 0;
     vm_region_submap_short_info_data_64_t info{};
     while (true) {
+        vm_address_t address = target;
         mach_msg_type_number_t count = VM_REGION_SUBMAP_SHORT_INFO_COUNT_64;
         if (vm_region_recurse_64(mach_task_self(), &address, &size, &depth,
             reinterpret_cast<vm_region_recurse_info_t>(&info), &count) != KERN_SUCCESS) return false;
+        if (address > target || target-address >= size || sizeof(uintptr_t) > size-(target-address)) return false;
         if (info.is_submap) { ++depth; continue; }
         protection = info.protection; maximum = info.max_protection; return true;
     }
