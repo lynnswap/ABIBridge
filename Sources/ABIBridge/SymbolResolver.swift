@@ -297,12 +297,17 @@ final class SymbolResolver: Sendable {
             }
             if !primary.isEmpty { return try select(declaration, from: primary) }
 
-            let missing = state.withLock { _ in candidates.indices.filter { !candidates[$0].hasSharedCacheSymbols(for: query) } }
+            let missing = state.withLock { _ in
+                candidates.indices.filter { !candidates[$0].hasSharedCacheSymbols(for: query) }
+                    .map { ($0, !candidates[$0].hasSharedSwiftFallback) }
+            }
             // MachOKit's host-cache discovery may call the dynamic loader.
             // Reuse file mappings within this lookup; retained per-image
             // indexes cache the resulting symbols across future lookups.
             let cache = SharedCacheSymbols()
-            let additions = missing.map { (candidates[$0], cache.symbols(in: candidates[$0].image, matching: query)) }
+            let additions = missing.map { index, includeFallback in
+                (candidates[index], cache.symbols(in: candidates[index].image, matching: query, includingSwiftFallback: includeFallback))
+            }
             let fallback = try state.withLock { _ in
                 for (index, symbols) in additions where !index.hasSharedCacheSymbols(for: query) {
                     index.appendSharedCacheSymbols(symbols, matching: query)

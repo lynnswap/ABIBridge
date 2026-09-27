@@ -34,6 +34,60 @@ struct SwiftSymbolIndexTests {
         #expect(SharedCacheSymbols.MappedSymbols(data: Data(), localSymbolsOffset: .max, layout: layout) == nil)
     }
 
+    @Test func sharedFallbackHandlesDifferentModulesExtensionsAndAmbiguity() async throws {
+        let module = "FallbackFixture"
+        let fixture = try FixtureLibrary(swiftModule: module, swiftSource: """
+        @_silgen_name("$s03FooA04echoyyF") public func first() {}
+        @_silgen_name("$s03BarA04echoyyF") public func second() {}
+        @_silgen_name("$s03FooA06answerSiyF") public func compressed() -> Int { 1 }
+        @_silgen_name("$s6FooFoo6answerSiyF") public func literal() -> Int { 2 }
+        public func ordinary() {}
+        extension Int { public func _abiFallbackOrderFixture() -> Int { self } }
+        """)
+        defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        let image = try #require(try await runtime.images(matching: .path(fixture.libraryURL)).first)
+        let index = SymbolIndex(image: image)
+        for name in ["FooFoo.echo() -> ()", "BarBar.echo() -> ()", module + ".ordinary() -> ()", "FooFoo.echo() -> ()"] {
+            #expect(try index.resolve(.init(name: name, language: .swift), source: .image) != nil)
+        }
+        let extensionName = "Swift.Int._abiFallbackOrderFixture() -> Swift.Int"
+        #expect(try index.resolve(.init(name: extensionName, language: .swift), source: .image, extensionsOnly: true) != nil)
+        #expect(try index.resolve(.init(name: "(extension in \(module)):" + extensionName, language: .swift), source: .image) != nil)
+        do {
+            _ = try index.resolve(.init(name: "FooFoo.answer() -> Swift.Int", language: .swift), source: .image)
+            Issue.record("Literal and compressed spellings at different addresses must remain ambiguous")
+        } catch ABIResolutionError.ambiguousDeclaration(_, let candidates) { #expect(candidates.count == 2) }
+    }
+
+    @Test func laterLocalSymbolsRefreshPartialFallbackAndPreserveUnrelatedGroups() async throws {
+        let fixture = try FixtureLibrary()
+        defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        let image = try #require(try await runtime.images(matching: .path(fixture.libraryURL)).first)
+        let index = SymbolIndex(image: image)
+        let address = UInt64(try fixture.address(kind: 0))
+        let foo = NativeDeclaration(name: "FooFoo.echo() -> ()", language: .swift)
+        let bar = NativeDeclaration(name: "BarBar.echo() -> ()", language: .swift)
+        #expect(try index.resolve(foo, source: .sharedCache) == nil)
+        let fooSymbol = IndexedSymbol(name: "_$s03FooA04echoyyF", address: address, source: .sharedCache)
+        let barSymbol = IndexedSymbol(name: "_$s03BarA04echoyyF", address: address, source: .sharedCache)
+        index.appendSharedCacheSymbols([fooSymbol], matching: SymbolQuery(.init(machOName: fooSymbol.name, language: .swift)))
+        #expect(try index.resolve(foo, source: .sharedCache) != nil)
+        #expect(try index.resolve(bar, source: .sharedCache) == nil)
+        let first = SymbolQuery(.init(name: "First.echo() -> ()", language: .swift))
+        index.appendSharedCacheSymbols([fooSymbol, barSymbol,
+            .init(name: "_$s5First4echoyyF", address: address, source: .sharedCache)], matching: first)
+        #expect(try index.resolve(bar, source: .sharedCache) != nil)
+        let second = SymbolQuery(.init(name: "Second.echo() -> ()", language: .swift))
+        index.appendSharedCacheSymbols([fooSymbol, barSymbol,
+            .init(name: "_$s6Second4echoyyF", address: address, source: .sharedCache)], matching: second)
+        #expect(try index.resolve(second, source: .sharedCache) != nil)
+        #expect(try index.resolve(first, source: .sharedCache) != nil)
+        #expect(try index.resolve(foo, source: .sharedCache) != nil)
+        #expect(try index.resolve(bar, source: .sharedCache) != nil)
+    }
+
     @Test func moduleScopedLocalSymbolsDoNotMarkOtherDeclarationsLoaded() async throws {
         let fixture = try FixtureLibrary()
         defer { fixture.cleanup() }
