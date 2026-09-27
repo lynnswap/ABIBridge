@@ -39,7 +39,7 @@ print(symbol.image.path)
 - ``NativeImportedHookInstallationError``
 - ``NativeImportedInvocationError``
 
-### Hooking Swift class methods
+### Hooking Swift methods
 
 - <doc:SwiftMethodHooks>
 - ``NativeSwiftMethodInvocation``

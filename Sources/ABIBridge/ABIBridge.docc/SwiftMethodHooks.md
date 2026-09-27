@@ -1,4 +1,4 @@
-# Hooking Swift class methods
+# Hooking Swift methods
 
 Inspect a Swift method's receiver, edit object properties or arguments, and transform the result through a scoped capturing closure.
 
@@ -25,7 +25,35 @@ hook.invalidate()
 
 When the receiver type is importable, `call.receiver(as: Renderer.self)` returns the same instance and permits ordinary property access before or after `proceed`. For a private type, prepare getter/setter handles before installing the hook, then call their synchronous `unsafeInvoke(on:)` operations using the receiver. These handles call their captured implementation rather than redispatching through the hooked entry.
 
-Use `method.hookImportedCalls(in:using:onFailure:body:)` to intercept references to a concrete member implementation in loaded callers. A final method has no virtual table entry, but can still have importing references. An ordinary virtual call does not necessarily use an import reference. Import selection follows the loaded-image, provider-filter and protection contracts in <doc:SwiftFunctionHooks>.
+Use `method.hookImportedCalls(in:using:onFailure:body:)` to intercept references to a concrete member implementation in loaded callers. A final method has no virtual table entry, but can still have importing references. An ordinary virtual call does not necessarily use an import reference. Value methods use importing references; they do not acquire a class metadata table. Import selection follows the loaded-image, provider-filter and protection contracts in <doc:SwiftFunctionHooks>.
+
+## Inspect value receivers
+
+Imported-member hooks also accept the concrete value representation selected during type lookup. For a native counter whose fixed storage is one `Int64`:
+
+```swift
+let counter = try await runtime.swiftType(
+    named: "Rendering.Counter", as: Int64.self
+)
+let increment = try await counter.method(
+    named: "increment(_:)", as: ((Int64) -> Int64).self,
+    mutating: true
+)
+let hook = try await unsafe increment.hookImportedCalls(
+    in: .framework(named: "PreviewClient"),
+    onFailure: { error in print(error) }
+) { call, delta in
+    let before = try call.receiver(as: Int64.self)
+    let result = try call.proceed(delta + 1)
+    let after = try call.receiver(as: Int64.self)
+    print(before, after)
+    return result
+}
+```
+
+Value reads return snapshots in the supplied representation. Changing that local copy does not replace native self. Reference fields keep their normal identity and pointer adapters keep their own lifetime rules. A mutating method proceeds with the original caller's receiver address, so native writes remain visible to the caller and later snapshots even if the hook throws afterward. Nonmutating small values retain their trailing-argument position; larger established values use their native indirect context.
+
+Select `consuming: true` only when the native member consumes self. Each continuation gets an independent owned copy using the selected codec, and the unused incoming ownership is disposed of once. This covers known String/reference representations and fixed trivial adapters; it does not infer destruction for arbitrary nontrivial foreign layouts. Ordinary setters consume their explicit value independently of a borrowing receiver. Registrations sharing a slot must agree on receiver representation and ownership.
 
 ## Understand the scope
 
@@ -37,7 +65,7 @@ Later registrations wrap earlier ones. Each `proceed` follows the captured snaps
 
 ## Preserve ownership and isolation
 
-Receiver reads and continuations are valid only on the entering thread while their callback is active. Escaped or cross-thread access throws `NativeSwiftHookInvocationError`. A copied class reference has its normal Swift ownership and can outlive the callback; a pointer adapter keeps its declared pointee-lifetime obligations. Saving the invocation itself does not retain the receiver instance or callback captures after return.
+Receiver reads and continuations are valid only on the entering thread while their callback is active. Escaped or cross-thread access throws `NativeSwiftHookInvocationError`. A copied class reference or managed value snapshot has its normal Swift ownership and can outlive the callback; a pointer adapter keeps its declared pointee-lifetime obligations. Saving the invocation itself does not retain the receiver instance or callback captures after return.
 
 A method resolved with `consuming: true` gets an independent owned receiver reference for each continuation. The bridge disposes of the unused incoming ownership if the closure skips the native implementation. Getter results and setter arguments keep their Swift ownership conventions; resolve a setter using `setter(named:as:)` so its consumed argument contract is established.
 
@@ -55,8 +83,10 @@ Preparation failures publish nothing. A failed virtual installation throws `Nati
 
 This interface requires initialized instances and a known synchronous, nonthrowing Swift calling convention. Initializers, deinitializers, yielding accessors and unestablished class metadata layouts require separate support. Known asynchronous virtual descriptors are rejected. Property getter names and ordinary getter descriptors do not encode throwing effects, so a source name and metatype cannot establish that a getter is nonthrowing; the caller must know that contract.
 
-The class interface preserves the selected method's receiver representation and requires a compatible class for typed receiver reads. Imported value receivers, native async/throws/generic effects and SwiftUI-specific layouts are separate workstreams. The low-level compiled replacement interfaces remain available for separately established ABI contracts.
+The class interface preserves the selected method's receiver representation and requires a compatible class for typed receiver reads. Native async/throws/generic effects, unestablished resilient/nontrivial value layouts, and SwiftUI-specific work remain separate workstreams. The low-level compiled replacement interfaces remain available for separately established ABI contracts.
 
 ## Validation boundary
 
 Compiled macOS fixtures verify class scope and receiver identity, mutable property access, getter/setter ownership, repeated consuming continuations, MainActor/background entry, escaped views, and shared imported/virtual selection. An arm64e iPhone run passed 16 checks, including authentication on the same inherited entry selected through both APIs. arm64e.x1 compilation is validated separately; matching-device execution remains outstanding.
+
+Value-receiver fixtures additionally cover original-address mutation, consuming String/reference ownership, large indirect receivers/results, nonmutating setters and trailing self after stack arguments. An arm64e iPhone run passed 12 value-hook checks with pointer authentication enabled. These tests establish the supplied concrete layouts; they do not establish arbitrary nontrivial or resilient value representations.
