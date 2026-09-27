@@ -20,7 +20,7 @@ struct ContentView: View {
         #if targetEnvironment(simulator)
         return standard
         #else
-        return standard + ["swift-function-hooks", "swift-import-replacement", "swift-method-hooks"]
+        return standard + ["swift-function-hooks", "swift-import-replacement", "swift-method-hooks", "swift-value-hooks"]
         #endif
     }
 
@@ -106,6 +106,8 @@ struct ContentView: View {
                     report = try await runSwiftImportReplacementValidation()
                 case "swift-method-hooks":
                     report = try await runSwiftClassHookValidation()
+                case "swift-value-hooks":
+                    report = try await runSwiftValueHookValidation()
                 default:
                     report = try await runArchitectureValidation(mode: selectedMode)
                 }

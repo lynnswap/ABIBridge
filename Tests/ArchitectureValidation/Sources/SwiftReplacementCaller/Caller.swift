@@ -28,3 +28,19 @@ open class CallerOverridingRenderer: ReplacementRenderer {
 @inline(never) public func hookConsume(_ object: HookRenderer, _ value: Int64) -> Int64 { object.consume(value) }
 @inline(never) public func hookSetText(_ object: HookRenderer, _ value: String) -> String { object.text = value; return object.text }
 @inline(never) public func makeCallerRenderer() -> CallerOverridingRenderer { CallerOverridingRenderer() }
+
+@inline(never) public func hookValueAdd(_ value: Int64) -> Int64 { HookCounter(40).adding(value) }
+@inline(never) public func hookValueIncrement(_ seed: Int64, _ delta: Int64) -> Int64 {
+    var value = HookCounter(seed)
+    let result = value.increment(delta)
+    return value.count * 1000 + result
+}
+@inline(never) public func hookValueStack() -> Int64 { HookCounter(40).stack(1,2,3,4,5,6,7,8,9,10,11,12) }
+@inline(never) public func hookValueConsumeText(_ text: String) -> String { HookTextValue(text).consume() }
+@inline(never) public func hookValueAppendText(_ input: String, _ suffix: String) -> String {
+    var value = HookTextValue(input)
+    let result = value.append(suffix)
+    return result + "|" + value.text
+}
+@inline(never) public func hookWideValueSum(_ seed: Int64, _ delta: Int64) -> Int64 { HookWideValue(seed).sum(delta) }
+@inline(never) public func hookWideValueConsume(_ seed: Int64, _ delta: Int64) -> Int64 { HookWideValue(seed).consume(delta) }

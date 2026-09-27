@@ -3,12 +3,16 @@ import ObjectiveC
 
 struct SwiftReceiverCodec: Sendable {
     let type: CValueType
+    let representation: ObjectIdentifier
     let encode: @Sendable (Any) throws -> NativeValueStorage
     let decode: @Sendable (NativeValueStorage, Any?) throws -> Any
+    let clone: @Sendable (NativeValueStorage) throws -> NativeValueStorage
+    let destroy: @Sendable (UnsafeMutableRawPointer) -> Void
 
     init<Value>(_ valueType: Value.Type) throws {
         let codec = try SwiftValueCodec<Value>()
         type = codec.type
+        representation = ObjectIdentifier(Value.self)
         encode = { value in
             guard let value = value as? Value else {
                 throw ABIInvocationError.incompatibleValue(
@@ -18,6 +22,8 @@ struct SwiftReceiverCodec: Sendable {
             return try codec.encode(value)
         }
         decode = { try codec.copy(from: $0, retaining: $1) }
+        clone = { try codec.copyNativeStorage($0) }
+        destroy = { codec.destroyNativeValue(at: $0) }
     }
 
     static func make(for type: Any.Type) throws -> Self {
