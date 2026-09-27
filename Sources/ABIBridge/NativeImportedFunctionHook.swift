@@ -119,10 +119,50 @@ public struct NativeImportedHookInstallationError: Error {
     public let registration: NativeImportedFunctionHook
 }
 
-private final class ImportedCallbackBox {
+final class ImportedCallbackBox {
+    let result: CValueType
+    let parameters: [CValueType]
     let invoke: (OpaquePointer) throws -> Void
     let failure: @Sendable (any Error) -> Void
-    init(invoke: @escaping (OpaquePointer) throws -> Void, failure: @escaping @Sendable (any Error) -> Void) { self.invoke=invoke; self.failure=failure }
+    init(result: CValueType, parameters: [CValueType], invoke: @escaping (OpaquePointer) throws -> Void,
+         failure: @escaping @Sendable (any Error) -> Void) {
+        self.result=result; self.parameters=parameters; self.invoke=invoke; self.failure=failure
+    }
+}
+
+func prepareImportedCallback<Result, each Argument>(
+    as signature: ((repeat each Argument) -> Result).Type,
+    onFailure: @escaping @Sendable (any Error) -> Void,
+    body: @escaping @Sendable (NativeImportedFunctionInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+) throws -> ImportedCallbackBox {
+    let prepared = try ImportedSignature<Result, repeat each Argument>()
+    var types: [CValueType] = []
+    for codec in repeat each prepared.arguments { types.append(codec.type) }
+    return ImportedCallbackBox(result: prepared.result.type, parameters: types, invoke: { pointer in
+        let frame = ImportedFrame(pointer); defer { frame.expire() }
+        let values = try prepared.decodeArguments(pointer)
+        let output = try body(.init(frame: frame,signature: prepared),repeat each values)
+        var error: OpaquePointer?
+        if Result.self == Void.self {
+            guard ABIImportedSetResult(pointer,nil,0,&error) else { throw consumeNativeCallFailure(error) }
+        } else {
+            let storage = try prepared.result.encode(output)
+            guard ABIImportedSetResult(pointer,storage.address,prepared.result.type.size,&error) else { throw consumeNativeCallFailure(error) }
+        }
+    }, failure: onFailure)
+}
+
+func invokeImportedCallback(_ box: ImportedCallbackBox, _ call: OpaquePointer) -> Bool {
+    do { try box.invoke(call) }
+    catch { box.failure(error) }
+    // A failure without an assigned result uses native fallback or the latest
+    // completed continuation, while preserving the original Swift error above.
+    return true
+}
+
+func importedHookFailure(_ error: OpaquePointer) -> NSError {
+    NSError(domain: "ABIBridge.ImportedHook", code: Int(ABIResolutionFailureCode(error)),
+        userInfo: [NSLocalizedDescriptionKey: String(cString: ABIResolutionFailureMessage(error))])
 }
 
 extension ABIRuntime {
@@ -149,39 +189,18 @@ extension ABIRuntime {
         body: @escaping @Sendable (NativeImportedFunctionInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
     ) throws -> NativeImportedFunctionHook {
         let selection = try ImportedFunctionSelection(resolver: resolver, declaration: declaration, importer: importer, provider: provider)
-        let prepared = try ImportedSignature<Result, repeat each Argument>()
-        var types: [CValueType] = []
-        for codec in repeat each prepared.arguments { types.append(codec.type) }
-        let box = ImportedCallbackBox(invoke: { pointer in
-            let frame = ImportedFrame(pointer); defer { frame.expire() }
-            let values = try prepared.decodeArguments(pointer)
-            let output = try body(.init(frame: frame,signature: prepared),repeat each values)
-            var error: OpaquePointer?
-            if Result.self == Void.self {
-                guard ABIImportedSetResult(pointer,nil,0,&error) else { throw consumeNativeCallFailure(error) }
-            } else {
-                let storage = try prepared.result.encode(output)
-                guard ABIImportedSetResult(pointer,storage.address,prepared.result.type.size,&error) else { throw consumeNativeCallFailure(error) }
-            }
-        }, failure: onFailure)
+        let box = try prepareImportedCallback(as: signature, onFailure: onFailure, body: body)
+        let types = box.parameters
         let context = Unmanaged.passRetained(box).toOpaque()
         let selected = selection.retainedHandle(); defer { ABIReleaseImportSelection(selected) }
         let handles: [OpaquePointer?] = types.map(\.handle)
-        let handle = withExtendedLifetime((prepared,types)) {
+        let handle = withExtendedLifetime(box) {
             handles.withUnsafeBufferPointer { parameters in
-                ABICreateImportedHook(selected,prepared.result.type.handle,parameters.baseAddress,parameters.count,context,
+                ABICreateImportedHook(selected,box.result.handle,parameters.baseAddress,parameters.count,context,
                     { context, call, error in
-                        do { try Unmanaged<ImportedCallbackBox>.fromOpaque(context!).takeUnretainedValue().invoke(call!); return true }
-                        catch let failure {
-                            // Report the original Swift error without erasing its
-                            // type or reporting it again through the C handler.
-                            Unmanaged<ImportedCallbackBox>.fromOpaque(context!).takeUnretainedValue().failure(failure)
-                            return true // No assigned result: native fallback/proceed result applies.
-                        }
+                        invokeImportedCallback(Unmanaged<ImportedCallbackBox>.fromOpaque(context!).takeUnretainedValue(), call!)
                     }, { context, error in
-                        let failure = NSError(domain: "ABIBridge.ImportedHook",code: Int(ABIResolutionFailureCode(error)),
-                            userInfo: [NSLocalizedDescriptionKey: String(cString: ABIResolutionFailureMessage(error))])
-                        Unmanaged<ImportedCallbackBox>.fromOpaque(context!).takeUnretainedValue().failure(failure)
+                        Unmanaged<ImportedCallbackBox>.fromOpaque(context!).takeUnretainedValue().failure(importedHookFailure(error!))
                     }, { context in Unmanaged<ImportedCallbackBox>.fromOpaque(context!).release() })!
             }
         }

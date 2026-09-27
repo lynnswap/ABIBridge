@@ -3,6 +3,7 @@ import ABIBridgeCore
 import ArchitectureFixtures
 import Darwin
 import Foundation
+import Synchronization
 
 public struct ArchitectureReport: Codable, Sendable {
     public let mode: String
@@ -69,6 +70,25 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         hook.invalidate()
         try check(ABIImportedUIDCall() == baseline, "Imported function passes through after logical invalidation")
         try check(failures.isEmpty, "Imported callbacks completed without conversion errors")
+        let applied = Mutex(false)
+        let monitor = try await unsafe runtime.monitorImportedFunction(.init(name: "getuid", language: .c), as: (() -> UInt32).self,
+            in: .path(URL(fileURLWithPath: String(cString: path))), onFailure: { failures.append($0) },
+            onImageUpdate: { update in
+                switch update.state {
+                case .installed: applied.withLock { $0 = true }
+                case .failed(let error): failures.append(error)
+                default: break
+                }
+            }) { call in try call.proceed()+3 }
+        defer { monitor.invalidate() }
+        let deadline = ContinuousClock.now + .seconds(10)
+        while !applied.withLock({ $0 }) && failures.isEmpty && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try check(applied.withLock { $0 } && failures.isEmpty && ABIImportedUIDCall() == baseline+3,
+            "Asynchronous monitor applies a typed callback to the imported function")
+        monitor.invalidate()
+        try check(ABIImportedUIDCall() == baseline, "Monitor invalidation leaves the imported function callable")
     case "import-replacement":
         checks = try validateImportReplacement()
     case "coordinated-hooks":

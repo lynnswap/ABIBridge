@@ -37,8 +37,9 @@ ABIImportedHookMonitor *ABIMonitorImportedFunction(const ABIDeclaration *, ABIIm
 /// process-lived, following the ordinary imported-hook lifetime contract.
 void ABIInvalidateImportedHookMonitor(ABIImportedHookMonitor *);
 void ABIReleaseImportedHookMonitor(ABIImportedHookMonitor *);
-/// Owned immutable snapshot of selected current image outcomes. Installed hooks
-/// can still be invalidated or displaced after this copy. Free with its release.
+/// Owned immutable snapshot of the latest observed selected-image outcomes.
+/// Invalidated monitors keep their final snapshot. Installed hooks can still be
+/// invalidated or displaced after this copy. Free with its release.
 ABIImportedImageList *ABICopyImportedHookMonitorImages(const ABIImportedHookMonitor *);
 size_t ABIImportedImageListCount(const ABIImportedImageList *);
 ABIImportedImageUpdate ABIImportedImageListGet(const ABIImportedImageList *, size_t index);

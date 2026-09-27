@@ -23,6 +23,8 @@ print(symbol.image.path)
 
 - <doc:ImportedFunctionHooks>
 - ``NativeImportedFunctionHook``
+- ``NativeImportedFunctionMonitor``
+- ``NativeImportedImageUpdate``
 - ``NativeImportedFunctionInvocation``
 - ``NativeImportedHookInstallationError``
 - ``NativeImportedInvocationError``

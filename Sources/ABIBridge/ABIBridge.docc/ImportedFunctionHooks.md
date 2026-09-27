@@ -73,3 +73,32 @@ auto hook = abi_bridge::hook_imported_function<int32_t(int32_t, int32_t)>(
 The C++ wrapper supports scalars and borrowed pointers. Specialize `imported_hook_type<T>::make()` with an owned `ABIValueType` for a naturally laid-out, trivially copyable C aggregate. Its size/alignment must match `T`. Callback exceptions are reported and recovered within the C++ wrapper; failure handlers must be `noexcept`. C/C++ invocation views must not escape their callback.
 
 The raw C installer takes ownership of the context when a release callback is provided, including lookup failure. Inspect the returned owner's `ABIImportedHookFailure` before treating installation as successful. The returned owner and its per-slot effects remain readable on failure and must be released. A null context-release callback is rejected without taking the context. C callback failures transfer an owned `ABIResolutionFailure`; failure-handler errors are borrowed.
+
+## Include subsequently loaded images
+
+Use ``NativeImportedFunctionMonitor`` when a scope should cover images loaded after registration:
+
+```swift
+let monitor = try await unsafe runtime.monitorImportedFunction(
+    NativeDeclaration(name: "Example::Math::add(int, int)", language: .cxx),
+    as: ((Int32, Int32) -> Int32).self,
+    in: .framework(named: "Renderer"),
+    onFailure: { print("Callback failed:", $0) },
+    onImageUpdate: { update in
+        if case .failed(let error) = update.state {
+            print("Image application failed:", update.path, error)
+        }
+    }
+) { call, a, b in try call.proceed(a, b) + 1 }
+
+let outcomes = monitor.images
+monitor.invalidate()
+```
+
+An unloaded explicit importer is valid. Both initial application and later changes run asynchronously on a serial queue outside dyld notification callbacks. `onImageUpdate` reports installed, no matching imports, failed and removed outcomes. Updates can start before registration returns. A failure affects that image; other selected images continue to be inspected. `images` copies the current outcomes, including partial installation diagnostics when a failure is a ``NativeImportedHookInstallationError``.
+
+Each observed generation is attempted once. If an unresolved lazy reference fails, call it normally and create a new monitor to retry. Invalidation prevents new callback entry and removes owned registrations without waiting for loader work or in-flight callbacks. Preparation that already started can finish with an inert pass-through entry before cleanup. Incoming calls and previously captured update callbacks may finish after invalidation.
+
+Monitoring coalesces catalog changes and does not retain nonmatching/failed images through a resolver cache. Removed generations are pruned. Successful or partially published entries retain their original process-lifetime code/image leases, so those images can remain loaded after the monitor ends. Calls from constructors, calls before asynchronous application completes, and images that unload before observation are not guaranteed to be intercepted. Registration order is the order callbacks are installed into each slot; independently scheduled monitors do not establish a global ordering across images.
+
+Native callers use `ABIMonitorImportedFunction` from `<ABIBridge/ImportedHookMonitoring.h>` or the typed `abi_bridge::monitor_imported_function<Signature>` wrapper from `<ABIBridge/ImportedHookMonitoring.hpp>`. The monitor owns its lookup request and temporary per-image resolution. C++ image/failure handlers must be `noexcept`; copied image updates own their descriptions and any hook handles. Raw C updates borrow their fields during delivery, while `ABICopyImportedHookMonitorImages` returns an owned snapshot.

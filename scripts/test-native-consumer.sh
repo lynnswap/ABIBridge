@@ -90,3 +90,12 @@ xcrun clang -dynamiclib -mmacosx-version-min=15.4 "$task_root/Tests/NativeConsum
 for task_hook_consumer in ImportedHookConsumer ObjCXXImportedHookConsumer; do
     xcrun swift run --package-path "$task_root/Tests/NativeConsumer" --scratch-path "$task_root/.build/native-consumer" "$task_hook_consumer" "$task_fixture/libImportedCaller.dylib"
 done
+
+# Run unload/reload monitoring in isolated consumers, without resolver test caches.
+xcrun clang -dynamiclib -mmacosx-version-min=15.4 "$task_root/Tests/NativeConsumer/ImportedHookProvider.c" "$task_root/Tests/NativeConsumer/ImportedMonitorProvider.c" -o "$task_fixture/libMonitorProvider.dylib"
+for task_monitor_caller in MonitorCaller MonitorCancel; do
+    xcrun clang -dynamiclib -mmacosx-version-min=15.4 "$task_root/Tests/NativeConsumer/ImportedMonitorLibrary.c" "$task_fixture/libMonitorProvider.dylib" -o "$task_fixture/lib$task_monitor_caller.dylib"
+done
+for task_monitor_consumer in ImportedMonitorConsumer ObjCXXImportedMonitorConsumer; do
+    xcrun swift run --package-path "$task_root/Tests/NativeConsumer" --scratch-path "$task_root/.build/native-consumer" "$task_monitor_consumer" "$task_fixture/libMonitorProvider.dylib" "$task_fixture/libMonitorCaller.dylib" "$task_fixture/libMonitorCancel.dylib"
+done
