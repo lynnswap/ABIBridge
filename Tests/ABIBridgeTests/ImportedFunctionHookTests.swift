@@ -168,7 +168,16 @@ struct ImportedFunctionHookTests {
                     return try next.proceed(a,b)+1
                 }
         }
-        let task=Task.detached { try unsafe call.unsafeInvoke(20,21) }
+        defer { finish.signal(); hook.invalidate() }
+        // The native callback waits for this async test to resume. Give that
+        // wait its own thread instead of occupying a cooperative executor worker.
+        let task=Task {
+            try await withCheckedThrowingContinuation { continuation in
+                let worker=Thread { continuation.resume(with: Result { try unsafe call.unsafeInvoke(20,21) }) }
+                worker.qualityOfService = .userInitiated
+                worker.start()
+            }
+        }
         await withCheckedContinuation { continuation in
             DispatchQueue.global().async { entered.wait(); continuation.resume() }
         }
