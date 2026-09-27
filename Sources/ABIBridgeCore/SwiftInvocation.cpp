@@ -1,5 +1,11 @@
 #include <ABIBridge/SwiftInvocation.h>
 #include "NativeValueType.hpp"
+#include "SwiftCallbackCode.hpp"
+#include <ABIBridge/SwiftCallbacks.h>
+#include <mutex>
+#include <pthread.h>
+#include <cstdlib>
+#include <cstddef>
 #include <ptrauth.h>
 #include <algorithm>
 #include <cstring>
@@ -217,4 +223,223 @@ bool ABIUnsafeInvokeSwiftCallInterface(
         }
     }
     return true;
+}
+
+namespace {
+struct SwiftHandler {
+    ABISwiftCallbackFunctions functions{};
+    void *context = nullptr;
+    ~SwiftHandler() { if (functions.releaseContext) functions.releaseContext(context); }
+};
+struct SwiftFallbackOwner {
+    void *context = nullptr;
+    void (*release)(void *) = nullptr;
+    ~SwiftFallbackOwner() { if (release) release(context); }
+};
+struct AlignedValue {
+    std::vector<std::max_align_t> words;
+    explicit AlignedValue(size_t size) : words(std::max(size_t(1), (size + sizeof(std::max_align_t) - 1) / sizeof(std::max_align_t))) {}
+    void *data() { return words.data(); }
+};
+struct SwiftOwnedResult {
+    AlignedValue value;
+    SwiftHandler &handler;
+    bool initialized = false;
+    SwiftOwnedResult(size_t size, SwiftHandler &handler) : value(size), handler(handler) {}
+    ~SwiftOwnedResult() { clear(); }
+    void clear() {
+        if (initialized && handler.functions.destroyResult)
+            handler.functions.destroyResult(handler.context, value.data());
+        initialized = false;
+    }
+};
+}
+
+struct ABISwiftCallback {
+    ABISwiftCallInterface interface;
+    ABIUnmanagedFunction fallback;
+    SwiftFallbackOwner fallbackOwner;
+    std::mutex mutex;
+    std::shared_ptr<SwiftHandler> handler;
+    std::unique_ptr<abibridge::SwiftCallbackCode> code;
+    ABISwiftCallback(const ABISwiftCallInterface &interface, ABIUnmanagedFunction fallback)
+        : interface(interface), fallback(fallback) {}
+};
+
+struct ABISwiftIncomingCall {
+    ABISwiftCallback &callback;
+    std::shared_ptr<SwiftHandler> handler;
+    std::vector<AlignedValue> storage;
+    std::vector<void *> arguments;
+    const void *receiver;
+    pthread_t thread = pthread_self();
+    SwiftOwnedResult completed;
+    SwiftOwnedResult assigned;
+    bool untouchedFallback = false;
+
+    ABISwiftIncomingCall(ABISwiftCallback &callback, std::shared_ptr<SwiftHandler> handler,
+                        const void *receiver)
+        : callback(callback), handler(std::move(handler)), receiver(receiver),
+          completed(callback.interface.result->size(), *this->handler),
+          assigned(callback.interface.result->size(), *this->handler) {}
+    ~ABISwiftIncomingCall() {
+        if (!untouchedFallback && handler->functions.destroyConsumedArguments)
+            handler->functions.destroyConsumedArguments(handler->context, receiver, arguments.data(), arguments.size());
+    }
+};
+
+ABISwiftCallback *ABICreateSwiftCallback(ABISwiftCallInterface *interface,
+    ABIUnmanagedFunction fallback, ABISwiftCallbackFunctions functions, void *context,
+    void *fallbackOwner, void (*releaseFallbackOwner)(void *), ABIResolutionFailure **error)
+{
+    if (error) *error = nullptr;
+    if (!interface || !fallback || !functions.invoke) {
+        fail(error, ABIFailureInvalidRequest, "A concrete Swift call interface, fallback and callback are required.");
+        return nullptr;
+    }
+    auto callback = std::make_unique<ABISwiftCallback>(*interface, fallback);
+    callback->code = std::make_unique<abibridge::SwiftCallbackCode>(callback.get(), error);
+    if (!callback->code->function()) return nullptr;
+    callback->handler = std::make_shared<SwiftHandler>();
+    callback->handler->functions = functions;
+    callback->handler->context = context;
+    callback->fallbackOwner.context = fallbackOwner;
+    callback->fallbackOwner.release = releaseFallbackOwner;
+    return callback.release();
+}
+ABIUnmanagedFunction ABISwiftCallbackFunction(const ABISwiftCallback *callback) {
+    return callback ? callback->code->function() : nullptr;
+}
+void ABIClearSwiftCallback(ABISwiftCallback *callback) {
+    if (!callback) return;
+    std::shared_ptr<SwiftHandler> previous;
+    { std::lock_guard lock(callback->mutex); previous = std::move(callback->handler); }
+}
+void ABIReleaseSwiftCallback(ABISwiftCallback *callback) { delete callback; }
+
+namespace {
+bool checkIncoming(ABISwiftIncomingCall *call, ABIResolutionFailure **error) {
+    if (error) *error = nullptr;
+    if (!call) { fail(error, ABIFailureInvalidRequest, "A live Swift callback invocation is required."); return false; }
+    if (!pthread_equal(call->thread, pthread_self())) {
+        fail(error, ABIFailureWrongThread, "A Swift callback invocation stays on its entering thread."); return false;
+    }
+    return true;
+}
+
+void unpackArguments(const ABISwiftCallInterface &interface, CallFrame &frame,
+                     std::vector<AlignedValue> &storage, std::vector<void *> &arguments) {
+    storage.reserve(interface.parameters.size());
+    arguments.reserve(interface.parameters.size());
+    for (const auto &type : interface.parameters) {
+        storage.emplace_back(type->size());
+        arguments.push_back(storage.back().data());
+    }
+    for (const auto &move : interface.moves) {
+        const void *source = nullptr;
+        switch (move.bank) {
+            case Bank::integer: source = &frame.integers[move.destination]; break;
+            case Bank::floating: source = &frame.floating[move.destination]; break;
+            case Bank::stack: source = reinterpret_cast<const uint8_t *>(frame.stack) + move.destination; break;
+        }
+        auto *destination = static_cast<uint8_t *>(arguments[move.argument]);
+        if (move.indirect) {
+            uintptr_t pointer = 0;
+            std::memcpy(&pointer, source, sizeof(pointer));
+            std::memcpy(destination, reinterpret_cast<const void *>(pointer), interface.parameters[move.argument]->size());
+        } else {
+            const auto available = interface.parameters[move.argument]->size() - move.component.offset;
+            std::memcpy(destination + move.component.offset, source, std::min(move.component.size, available));
+        }
+    }
+}
+
+void packResult(const ABISwiftCallInterface &interface, CallFrame &frame, const void *value) {
+    std::memset(frame.integerResults, 0, sizeof(frame.integerResults));
+    std::memset(frame.floatingResults, 0, sizeof(frame.floatingResults));
+    if (interface.resultLayout.indirect) {
+        std::memcpy(reinterpret_cast<void *>(frame.indirectResult), value, interface.result->size());
+        return;
+    }
+    size_t integers = 0, floating = 0;
+    for (const auto &component : interface.resultLayout.components) {
+        void *destination = component.floating ? static_cast<void *>(&frame.floatingResults[floating++])
+            : static_cast<void *>(&frame.integerResults[integers++]);
+        const auto available = interface.result->size() - component.offset;
+        std::memcpy(destination, static_cast<const uint8_t *>(value) + component.offset, std::min(component.size, available));
+    }
+}
+}
+
+size_t ABISwiftIncomingArgumentCount(const ABISwiftIncomingCall *call) { return call->arguments.size(); }
+const void *ABISwiftIncomingContext(const ABISwiftIncomingCall *call) { return call->receiver; }
+bool ABISwiftIncomingReadArgument(ABISwiftIncomingCall *call, size_t index,
+    void *output, size_t size, ABIResolutionFailure **error) {
+    if (!checkIncoming(call, error)) return false;
+    if (index >= call->arguments.size() || size != call->callback.interface.parameters[index]->size() || (size && !output)) {
+        fail(error, ABIFailureInvalidRequest, "The destination must match the selected Swift argument storage."); return false;
+    }
+    if (size) std::memcpy(output, call->arguments[index], size);
+    return true;
+}
+bool ABISwiftIncomingProceed(ABISwiftIncomingCall *call, void *const *arguments, size_t count,
+    const void *receiver, ABIResolutionFailure **error) {
+    if (!checkIncoming(call, error)) return false;
+    auto &interface = call->callback.interface;
+    if (count != interface.parameters.size()) {
+        fail(error, ABIFailureInvalidRequest, "The argument count must match the Swift call interface."); return false;
+    }
+    AlignedValue result(interface.result->size());
+    if (!ABIUnsafeInvokeSwiftCallInterface(&interface, call->callback.fallback, result.data(), arguments, receiver, error)) return false;
+    call->completed.clear();
+    call->completed.value = std::move(result);
+    call->completed.initialized = true;
+    return true;
+}
+bool ABISwiftIncomingCopyResult(ABISwiftIncomingCall *call, void *output, size_t size, ABIResolutionFailure **error) {
+    if (!checkIncoming(call, error)) return false;
+    if (!call->completed.initialized || size != call->callback.interface.result->size() || (size && !output)) {
+        fail(error, ABIFailureInvalidRequest, "A completed original call and matching result storage are required."); return false;
+    }
+    if (size) std::memcpy(output, call->completed.value.data(), size);
+    return true;
+}
+bool ABISwiftIncomingSetResult(ABISwiftIncomingCall *call, const void *value, size_t size, ABIResolutionFailure **error) {
+    if (!checkIncoming(call, error)) return false;
+    if (size != call->callback.interface.result->size() || (size && !value)) {
+        fail(error, ABIFailureInvalidRequest, "The owned result must match the Swift result storage."); return false;
+    }
+    call->assigned.clear();
+    if (size) std::memcpy(call->assigned.value.data(), value, size);
+    call->assigned.initialized = true;
+    return true;
+}
+
+extern "C" __attribute__((visibility("hidden"))) void ABIDispatchSwiftCallback(ABISwiftCallback *callback, CallFrame *frame) {
+    std::shared_ptr<SwiftHandler> handler;
+    { std::lock_guard lock(callback->mutex); handler = callback->handler; }
+    const auto receiver = reinterpret_cast<const void *>(frame->context);
+    if (!handler) {
+        std::vector<AlignedValue> storage;
+        std::vector<void *> arguments;
+        unpackArguments(callback->interface, *frame, storage, arguments);
+        AlignedValue result(callback->interface.result->size());
+        // The interface and original buffers were established before publishing
+        // this entry; failure here would violate an internal invocation contract.
+        if (!ABIUnsafeInvokeSwiftCallInterface(&callback->interface, callback->fallback, result.data(), arguments.data(), receiver, nullptr)) std::abort();
+        packResult(callback->interface, *frame, result.data());
+        return;
+    }
+    ABISwiftIncomingCall call(*callback, std::move(handler), receiver);
+    unpackArguments(callback->interface, *frame, call.storage, call.arguments);
+    call.handler->functions.invoke(call.handler->context, &call);
+    if (!call.assigned.initialized && !call.completed.initialized) {
+        if (!ABIUnsafeInvokeSwiftCallInterface(&callback->interface, callback->fallback,
+            call.completed.value.data(), call.arguments.data(), receiver, nullptr)) std::abort();
+        call.completed.initialized = true;
+        call.untouchedFallback = true;
+    }
+    auto &result = call.assigned.initialized ? call.assigned : call.completed;
+    packResult(callback->interface, *frame, result.value.data());
+    result.initialized = false; // The native caller now owns the result.
 }
