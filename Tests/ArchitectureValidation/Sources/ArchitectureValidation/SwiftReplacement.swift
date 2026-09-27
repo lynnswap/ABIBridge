@@ -168,5 +168,15 @@ private struct VirtualPayload: ABIBridgeValue {
         try check(coalescedValue(child) == 42 && coalescedExtra(child) == 100 && coalescedFinal(child) == 42,
             "Child declaration replacement leaves coalesced inherited and final calls unchanged")
     }
+    let externalReceiver = CallerOverridingRenderer()
+    let externalType = try await runtime.swiftType(named: "SwiftReplacementCaller.CallerOverridingRenderer")
+    let externalMethod = try await externalType.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
+    let externalPlan = try unsafe externalMethod.prepareVirtualReplacement(with: replacement)
+    try installed(externalPlan) {
+        try check(classScalar(externalReceiver, 40) == 240, "Cross-module override descriptor selects and authenticates the base slot")
+        try check(try unsafe externalPlan.original.unsafeInvoke(on: externalReceiver, 40) == 45,
+            "Cross-module override predecessor remains callable")
+    }
+    try check(classScalar(externalReceiver, 40) == 45, "Cross-module override restored")
     return checks
 }

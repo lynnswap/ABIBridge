@@ -20,14 +20,17 @@ struct SwiftClassDispatch {
         let selectedHeader = try Header(address: selectedAddress)
         var current: AnyClass? = selected
         var member: String?
+        var declaringLayout: Descriptor?
         while let type = current {
             let name = try swiftFunctionTypeName(type)
-            if member == nil, declaration.name.hasPrefix(name + ".") {
+            let isDeclarationOwner = member == nil && declaration.name.hasPrefix(name + ".")
+            if isDeclarationOwner {
                 member = String(declaration.name.dropFirst(name.count + 1))
             }
             if let member {
                 let header = try Header(address: UInt(bitPattern: unsafeBitCast(type, to: UnsafeRawPointer.self)))
                 if let classDescriptor = header.descriptor {
+                    if isDeclarationOwner { declaringLayout = try Descriptor(address: classDescriptor) }
                     let image = try swiftClassImage(type, named: name, resolver: resolver)
                     let request = NativeDeclaration(name: "method descriptor for " + name + "." + member,
                         language: .swift, kind: .data)
@@ -40,6 +43,15 @@ struct SwiftClassDispatch {
                         guard method >= layout.methods, method - layout.methods < UInt(layout.count * 8),
                               (method - layout.methods) % 8 == 0 else {
                             throw Self.unsupported("The method descriptor is outside its declaring class's virtual table description.")
+                        }
+                        guard let declaringLayout else {
+                            throw Self.unsupported("The selected declaration has no established class metadata layout.")
+                        }
+                        // A same-named ancestor can be inaccessible to this
+                        // declaration. Only an override record establishes that
+                        // it introduces this declaration's inherited slot.
+                        guard try declaringLayout.address == layout.address || declaringLayout.overrides(method) else {
+                            throw Self.unsupported("The selected declaration does not override this superclass method descriptor.")
                         }
                         let offset = try layout.offset() + Int(method - layout.methods) / 8 * Self.word
                         let flags: UInt32 = try Self.read(method)
@@ -88,6 +100,8 @@ struct SwiftClassDispatch {
         let methods: UInt
         let count: Int
         let vtableOffset: Int
+        let overrideEntries: UInt
+        let overrideCount: Int
 
         init(address: UInt) throws {
             self.address = address
@@ -112,7 +126,22 @@ struct SwiftClassDispatch {
             } else {
                 vtableOffset = 0; count = 0; methods = tail
             }
+            if flags & 0x40000000 != 0 {
+                overrideCount = Int(try read(tail) as UInt32)
+                overrideEntries = tail + 4
+            } else { overrideCount = 0; overrideEntries = tail }
+        }
 
+        func overrides(_ method: UInt) throws -> Bool {
+            for index in 0..<overrideCount {
+                let field = overrideEntries + UInt(index * 12 + 4)
+                let offset: Int32 = try read(field)
+                guard offset != 0 else { throw ABIResolutionError.invalidAddress }
+                let target = try add(field, Int(offset & ~1))
+                let descriptor = offset & 1 == 0 ? target : try pointer(target, discriminator: 26458)
+                if descriptor == method { return true }
+            }
+            return false
         }
 
         func offset() throws -> Int {

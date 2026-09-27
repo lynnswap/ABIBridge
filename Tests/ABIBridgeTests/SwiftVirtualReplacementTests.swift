@@ -156,5 +156,47 @@ struct SwiftVirtualReplacementTests {
         try extraPlan.restore()
     }
 
+    @Test func hiddenSuperclassMethodsDoNotTurnUnrelatedFinalMethodsIntoOverrides() async throws {
+        let suffix = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let parentModule = "HiddenBase_" + suffix, childModule = "HiddenChild_" + suffix
+        let parent = try FixtureLibrary(swiftModule: parentModule, swiftSource: """
+        open class Parent {
+            public init() {}
+            @inline(never) func value() -> Int64 { 42 }
+        }
+        class InternalChild: Parent {
+            @inline(never) override func value() -> Int64 { 43 }
+        }
+        @inline(never) public func invoke(_ object: Parent) -> Int64 { object.value() }
+        """, linkArguments: ["-O", "-emit-module"])
+        defer { parent.cleanup() }
+        let child = try FixtureLibrary(swiftModule: childModule, swiftSource: """
+        import \(parentModule)
+        public class Child: Parent {
+            @inline(never) public final func value() -> Int64 { 44 }
+            @inline(never) public func replacement() -> Int64 { 100 }
+        }
+        @inline(never) public func make() -> Child { Child() }
+        @inline(never) public func invoke(_ object: Child) -> Int64 { object.value() }
+        """, linkArguments: ["-O", "-emit-module", "-I", parent.directory.path, parent.libraryURL.path])
+        defer { child.cleanup() }
+        let runtime = ABIRuntime(), name = childModule + ".Child"
+        _ = try await runtime.resolve(.init(name: "method descriptor for " + parentModule + ".Parent.value() -> Swift.Int64",
+            language: .swift, kind: .data), in: .path(parent.libraryURL))
+        let type = try await runtime.swiftType(named: name, in: .path(child.libraryURL))
+        let method = try await type.method(named: "value()", as: (() -> Int64).self)
+        let replacement = try await type.method(named: "replacement()", as: (() -> Int64).self)
+        let make = try await runtime.swiftFunction(named: childModule + ".make() -> " + name,
+            as: (() -> AnyObject).self, in: .path(child.libraryURL))
+        let object = try unsafe make.unsafeInvoke()
+        let baseCall = try await runtime.swiftFunction(named: parentModule + ".invoke(" + parentModule + ".Parent) -> Swift.Int64",
+            as: ((AnyObject) -> Int64).self, in: .path(parent.libraryURL))
+        let childCall = try await runtime.swiftFunction(named: childModule + ".invoke(" + name + ") -> Swift.Int64",
+            as: ((AnyObject) -> Int64).self, in: .path(child.libraryURL))
+        #expect(throws: ABIResolutionError.self) { try unsafe method.prepareVirtualReplacement(with: replacement) }
+        #expect(try unsafe baseCall.unsafeInvoke(object) == 42)
+        #expect(try unsafe childCall.unsafeInvoke(object) == 44)
+    }
+
 }
 #endif

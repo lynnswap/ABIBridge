@@ -28,7 +28,7 @@ The replacement is compiled Swift code with the same physical receiver, argument
 
 ## Understand the class scope
 
-The type used for `method(named:as:)` determines the metadata to change. Looking up an inherited method on `PreviewRenderer` changes the copy in `PreviewRenderer` metadata, including when the symbol itself belongs to its superclass. An override uses the original introducing method descriptor to find the inherited slot and its pointer-authentication discriminator.
+The type used for `method(named:as:)` determines the metadata to change. Looking up an inherited method on `PreviewRenderer` changes the copy in `PreviewRenderer` metadata, including when the symbol itself belongs to its superclass. An override uses the original introducing method descriptor to find the inherited slot and its pointer-authentication discriminator. The declaring class's override table must reference that descriptor; an unrelated same-named method in a superclass is not sufficient.
 
 Existing superclass, sibling and subclass metadata copies are unchanged. A subclass initialized after installation can inherit a modified entry; restoration of the selected class does not rewrite copies made elsewhere. Coordinate metadata initialization if this boundary matters to the application.
 
