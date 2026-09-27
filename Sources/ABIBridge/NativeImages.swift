@@ -1,5 +1,6 @@
 import ABIBridgeCore
 import Foundation
+import Synchronization
 
 /// Selects images for declaration lookup or loaded-image inspection.
 ///
@@ -92,7 +93,13 @@ final class ImageLease: @unchecked Sendable {
     deinit { ABIReleaseImage(handle) }
 }
 
-struct ImageSnapshot {
+struct ImageCatalogSnapshot: Sendable {
+    let revision: UInt64
+    let images: [ImageSnapshot]
+}
+
+struct ImageSnapshot: Sendable {
+    private static let cachedCatalog = Mutex<ImageCatalogSnapshot?>(nil)
     let identity: NativeImageIdentity
     let path: String
 
@@ -132,13 +139,24 @@ struct ImageSnapshot {
         return NativeImage(identity: identity, path: path, lease: ImageLease(handle))
     }
 
-    static func current() throws -> [Self] {
+    static func current() throws -> [Self] { try catalog().images }
+
+    static func catalog() throws -> ImageCatalogSnapshot {
         guard let list = ABICopyLoadedImages() else { throw ABIResolutionError.imageUnavailable }
         defer { ABIFreeImageList(list) }
-        return (0..<ABIImageListCount(list)).map { index in
-            Self(ABIImageListGet(list, index))
+        let revision = ABIImageListRevision(list)
+        return cachedCatalog.withLock { cached in
+            if let cached, cached.revision == revision { return cached }
+            let snapshot = ImageCatalogSnapshot(revision: revision, images: (0..<ABIImageListCount(list)).map {
+                Self(ABIImageListGet(list, $0))
+            })
+            // Another caller can have captured a newer native list before this
+            // caller acquires the Swift lock. Its snapshot stays authoritative.
+            if cached == nil || cached!.revision < revision { cached = snapshot }
+            return snapshot
         }
     }
+
 }
 
 enum FrameworkImages {

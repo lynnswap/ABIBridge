@@ -170,6 +170,10 @@ void ABIResolveSymbols(
 ABIImageList *ABICopyLoadedImages(void);
 /// Returns the entry count. The list must be non-null and remain alive.
 size_t ABIImageListCount(const ABIImageList *list);
+/// Process-local catalog revision, changed by both image additions and removals.
+/// Equal revisions describe the same captured loads, not unchanged file contents.
+/// Requires a non-null live list.
+uint64_t ABIImageListRevision(const ABIImageList *list);
 /// Copies an entry. The non-null list must remain alive, and index must be less
 /// than its count. The returned path remains valid until the list is freed.
 /// The image itself may unload; acquire a lease before using its addresses.

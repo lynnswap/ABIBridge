@@ -130,3 +130,5 @@ Each image load has a process-local generation, so a later image at the same add
 ## Validation boundary
 
 The test suite resolves C++ functions, data, and vtables from temporary native libraries, resolves a Swift declaration, checks ambiguous and missing lookups, and verifies that retained handles survive release of the original loader handle. It also checks unload/reload generations. Generic platform builds verify compilation; they do not establish runtime behavior on every supported device.
+
+Automatic lookup reuses immutable catalog snapshots and declaration results while the loaded-image set is unchanged. Loading or unloading an image refreshes that scope, including previously missing or unique results. Explicit image/path/framework acquisition retains its loading and filesystem behavior. `removeCachedResults()` releases the runtime's retained indexes and results; existing handles remain valid.

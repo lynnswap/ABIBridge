@@ -12,6 +12,68 @@ final class SymbolResolver: Sendable {
         let loading: ImageLoadingPolicy
     }
 
+    private struct LookupKey: Hashable, Sendable {
+        let declaration: NativeDeclaration
+        let extensionsOnly: Bool
+    }
+
+    // Results have their own lock. Retiring the node releases all image leases
+    // outside the resolver lock, including after a concurrent cache clear.
+    private final class AutomaticScope: Sendable {
+        let revision: UInt64
+        let images: [NativeImage]
+        let results = Mutex<[LookupKey: Result<ResolvedSymbol, ABIResolutionError>]>([:])
+        init(revision: UInt64, images: [NativeImage]) { self.revision = revision; self.images = images }
+    }
+
+    private enum SearchScope {
+        case images([NativeImage])
+        case automatic(AutomaticScope)
+        var images: [NativeImage] {
+            switch self { case .images(let images): images; case .automatic(let scope): scope.images }
+        }
+    }
+
+    private func searchScope(_ selector: ImageSelector, loading: ImageLoadingPolicy) throws -> SearchScope {
+        guard selector == .automatic else { return .images(try acquire(selector, loading: loading)) }
+        let snapshot = try ImageSnapshot.catalog()
+        if let cached = state.withLock({ $0.automatic }), cached.revision == snapshot.revision { return .automatic(cached) }
+        let candidate = AutomaticScope(revision: snapshot.revision, images: try retain(snapshot.images))
+        let (selected, retired) = state.withLock { state -> (AutomaticScope, AutomaticScope?) in
+            if let existing = state.automatic {
+                if existing.revision == candidate.revision { return (existing, nil) }
+                if existing.revision > candidate.revision { return (candidate, nil) }
+            }
+            let previous = state.automatic
+            state.automatic = candidate
+            return (candidate, previous)
+        }
+        return withExtendedLifetime((candidate, retired)) { .automatic(selected) }
+    }
+
+    private func resolve(_ declaration: NativeDeclaration, in scope: SearchScope, extensionsOnly: Bool = false) throws -> ResolvedSymbol {
+        guard !scope.images.isEmpty else { throw ABIResolutionError.imageNotLoaded }
+        guard case .automatic(let cache) = scope else {
+            return try unique(declaration, images: scope.images, extensionsOnly: extensionsOnly)
+        }
+        let key = LookupKey(declaration: declaration, extensionsOnly: extensionsOnly)
+        if let cached = cache.results.withLock({ $0[key] }) { return try cached.get() }
+        let result: Result<ResolvedSymbol, ABIResolutionError>
+        do { result = .success(try unique(declaration, images: cache.images, extensionsOnly: extensionsOnly)) }
+        catch let failure as ABIResolutionError {
+            switch failure {
+            case .declarationNotFound, .ambiguousDeclaration, .invalidAddress: result = .failure(failure)
+            default: throw failure
+            }
+        }
+        cache.results.withLock { results in
+            // Never replace a cached symbol under the lock: releasing its last
+            // lease could reenter dyld even when another call retained the image.
+            if results[key] == nil { results[key] = result }
+        }
+        return try result.get()
+    }
+
     private func acquire(_ selector: ImageSelector, loading: ImageLoadingPolicy) throws -> [NativeImage] {
         guard loading == .ifNeeded, selector != .automatic else { return try images(matching: selector) }
         try selector.validateTarget()
@@ -36,6 +98,10 @@ final class SymbolResolver: Sendable {
 
     func images(matching selector: ImageSelector) throws -> [NativeImage] {
         let snapshots = try ImageSnapshot.matching(selector, in: ImageSnapshot.current())
+        return try retain(snapshots)
+    }
+
+    private func retain(_ snapshots: [ImageSnapshot]) throws -> [NativeImage] {
         let retained = state.withLock { state in
             snapshots.map { state.indexes[$0.identity]?.image }
         }
@@ -57,9 +123,7 @@ final class SymbolResolver: Sendable {
 
     func resolve(_ declaration: NativeDeclaration, in selector: ImageSelector, loading: ImageLoadingPolicy = .ifNeeded) throws -> ResolvedSymbol {
         try validate(declaration)
-        let images = try acquire(selector, loading: loading)
-        guard !images.isEmpty else { throw ABIResolutionError.imageNotLoaded }
-        return try unique(declaration, images: images)
+        return try resolve(declaration, in: searchScope(selector, loading: loading))
     }
 
     func resolve(_ declaration: NativeDeclaration, in image: NativeImage, loading: ImageLoadingPolicy = .ifNeeded) throws -> ResolvedSymbol {
@@ -68,12 +132,12 @@ final class SymbolResolver: Sendable {
     }
 
     func resolve(_ request: NativeSymbolRequest) throws -> ResolvedSymbol {
-        var scopes: [Scope: Result<[NativeImage], any Error>] = [:]
+        var scopes: [Scope: Result<SearchScope, any Error>] = [:]
         return try resolve(request, scopes: &scopes)
     }
 
     func resolve(_ requests: [NativeSymbolRequest]) -> [Result<ResolvedSymbol, any Error>] {
-        var scopes: [Scope: Result<[NativeImage], any Error>] = [:]
+        var scopes: [Scope: Result<SearchScope, any Error>] = [:]
         return requests.map { request in
             Result { try resolve(request, scopes: &scopes) }
         }
@@ -81,7 +145,7 @@ final class SymbolResolver: Sendable {
 
     private func resolve(
         _ request: NativeSymbolRequest,
-        scopes: inout [Scope: Result<[NativeImage], any Error>]
+        scopes: inout [Scope: Result<SearchScope, any Error>]
     ) throws -> ResolvedSymbol {
         var missing: ABIResolutionError = .imageNotLoaded
         for (index, candidate) in ([request.declaration] + request.fallbacks).enumerated() {
@@ -104,28 +168,28 @@ final class SymbolResolver: Sendable {
     private func resolveAliases(
         _ primary: NativeDeclaration, alternatives: [NativeDeclaration],
         in imageScopes: [ImageSelector], loading: ImageLoadingPolicy,
-        scopes: inout [Scope: Result<[NativeImage], any Error>]
+        scopes: inout [Scope: Result<SearchScope, any Error>]
     ) throws -> ResolvedSymbol {
         for declaration in [primary] + alternatives { try validate(declaration) }
         var missing: ABIResolutionError = .imageNotLoaded
         for scope in imageScopes {
             let key = Scope(selector: scope, loading: loading)
-            let scopeResult: Result<[NativeImage], any Error>
+            let scopeResult: Result<SearchScope, any Error>
             if let cached = scopes[key] {
                 scopeResult = cached
             } else {
                 // Even a failed dlopen can change the catalog through dependencies
                 // or constructors. Later requests must see those changes.
                 if loading == .ifNeeded && scope != .automatic { scopes.removeAll() }
-                scopeResult = Result { try acquire(scope, loading: loading) }
+                scopeResult = Result { try searchScope(scope, loading: loading) }
                 scopes[key] = scopeResult
             }
-            let images = try scopeResult.get()
-            guard !images.isEmpty else { continue }
+            let search = try scopeResult.get()
+            guard !search.images.isEmpty else { continue }
             var match: ResolvedSymbol?
             for declaration in [primary] + alternatives {
                 do {
-                    let found = try unique(declaration, images: images)
+                    let found = try resolve(declaration, in: search)
                     if let previous = match {
                         guard previous.address == found.address,
                               previous.image.identity == found.image.identity else {
@@ -148,15 +212,16 @@ final class SymbolResolver: Sendable {
     }
 
     func resolveSwiftExtension(_ declaration: NativeDeclaration) throws -> ResolvedSymbol {
-        try unique(declaration, images: images(matching: .automatic), extensionsOnly: true)
+        try resolve(declaration, in: searchScope(.automatic, loading: .loadedOnly), extensionsOnly: true)
     }
 
     func removeCachedResults() {
         let removed = state.withLock { state in
-            let indexes = (state.indexes, state.imports, state.virtualEntries)
+            let indexes = (state.indexes, state.imports, state.virtualEntries, state.automatic)
             state.indexes = [:]
             state.imports = [:]
             state.virtualEntries = [:]
+            state.automatic = nil
             return indexes
         }
         withExtendedLifetime(removed) {}
@@ -241,17 +306,18 @@ final class SymbolResolver: Sendable {
         }
         return result
     }
-}
 
-private struct ResolutionState {
-    var indexes: [NativeImageIdentity: SymbolIndex] = [:]
-    var imports: [NativeImageIdentity: ImportIndex] = [:]
-    var virtualEntries: [NativeImageIdentity: VirtualEntryIndex] = [:]
+    private struct ResolutionState {
+        var automatic: AutomaticScope?
+        var indexes: [NativeImageIdentity: SymbolIndex] = [:]
+        var imports: [NativeImageIdentity: ImportIndex] = [:]
+        var virtualEntries: [NativeImageIdentity: VirtualEntryIndex] = [:]
 
-    mutating func index(for image: NativeImage) -> SymbolIndex {
-        if let cached = indexes[image.identity] { return cached }
-        let index = SymbolIndex(image: image)
-        indexes[image.identity] = index
-        return index
+        mutating func index(for image: NativeImage) -> SymbolIndex {
+            if let cached = indexes[image.identity] { return cached }
+            let index = SymbolIndex(image: image)
+            indexes[image.identity] = index
+            return index
+        }
     }
 }
