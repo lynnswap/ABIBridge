@@ -96,6 +96,27 @@ template<class T> std::shared_ptr<ABIValueType> imported_type() {
         throw resolution_error(ABIFailureSignatureMismatch,"C++ type and imported hook layout disagree.");
     return type;
 }
+template<class Signature,class Body,class OnFailure> struct imported_callback_state;
+template<class R,class... A,class Body,class OnFailure>
+struct imported_callback_state<R(A...), Body, OnFailure> {
+    Body body; OnFailure failure;
+    static bool invoke(void *context,ABIImportedInvocation *call,ABIResolutionFailure **error) noexcept {
+        try {
+            auto& self=*static_cast<imported_callback_state*>(context); imported_hook_invocation<R(A...)> invocation(call);
+            auto values=[&]<size_t... I>(std::index_sequence<I...>) { return std::tuple<A...>{imported_read<A>(call,I)...}; }(std::index_sequence_for<A...>{});
+            if constexpr(std::is_void_v<R>) {
+                std::apply([&](auto... args){ self.body(invocation,args...); },values);
+                return ABIImportedSetResult(call,nullptr,0,error);
+            } else {
+                R output=std::apply([&](auto... args){ return self.body(invocation,args...); },values);
+                return ABIImportedSetResult(call,&output,sizeof(output),error);
+            }
+        } catch(const resolution_error& e) { *error=ABICreateResolutionFailure(e.code(),e.what()); }
+        catch(const std::exception& e) { *error=ABICreateResolutionFailure(ABIFailureOther,e.what()); }
+        catch(...) { *error=ABICreateResolutionFailure(ABIFailureOther,"Imported C++ callback threw."); }
+        return false;
+    }
+};
 template<class Signature> struct imported_installer;
 template<class R,class... A> struct imported_installer<R(A...)> {
     template<class Body,class OnFailure> static imported_hook_handle install(const Runtime& runtime,const declaration& query,
@@ -105,25 +126,7 @@ template<class R,class... A> struct imported_installer<R(A...)> {
         auto result=imported_type<R>(); std::array<std::shared_ptr<ABIValueType>,sizeof...(A)> parameters{imported_type<A>()...};
         std::array<const ABIValueType*,sizeof...(A)> pointers{};
         for(size_t i=0;i<pointers.size();++i) pointers[i]=parameters[i].get();
-        struct State {
-            Body body; OnFailure failure;
-            static bool invoke(void *context,ABIImportedInvocation *call,ABIResolutionFailure **error) noexcept {
-                try {
-                    auto& self=*static_cast<State*>(context); imported_hook_invocation<R(A...)> invocation(call);
-                    auto values=[&]<size_t... I>(std::index_sequence<I...>) { return std::tuple<A...>{imported_read<A>(call,I)...}; }(std::index_sequence_for<A...>{});
-                    if constexpr(std::is_void_v<R>) {
-                        std::apply([&](auto... args){ self.body(invocation,args...); },values);
-                        return ABIImportedSetResult(call,nullptr,0,error);
-                    } else {
-                        R output=std::apply([&](auto... args){ return self.body(invocation,args...); },values);
-                        return ABIImportedSetResult(call,&output,sizeof(output),error);
-                    }
-                } catch(const resolution_error& e) { *error=ABICreateResolutionFailure(e.code(),e.what()); }
-                catch(const std::exception& e) { *error=ABICreateResolutionFailure(ABIFailureOther,e.what()); }
-                catch(...) { *error=ABICreateResolutionFailure(ABIFailureOther,"Imported C++ callback threw."); }
-                return false;
-            }
-        };
+        using State = imported_callback_state<R(A...), Body, OnFailure>;
         auto state=std::make_unique<State>(State{std::move(body),std::move(onFailure)});
         const ABIDeclaration native{query.name.c_str(),static_cast<int32_t>(query.source_language),static_cast<int32_t>(query.kind),static_cast<int32_t>(query.form)};
         auto importing=importer.native_selector(); auto defining=provider ? provider->native_selector() : ABIImageSelector{};

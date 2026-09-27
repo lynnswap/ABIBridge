@@ -6,6 +6,8 @@ let package = Package(
     platforms: [.macOS("15.4")],
     dependencies: [.package(name: "ABIBridge", path: "../..")],
     targets: [
+        .executableTarget(name: "ImportedMonitorConsumer", dependencies: [.product(name: "ABIBridge", package: "ABIBridge")]),
+        .executableTarget(name: "ObjCXXImportedMonitorConsumer", dependencies: [.product(name: "ABIBridge", package: "ABIBridge")], cxxSettings: [.unsafeFlags(["-fobjc-arc"])], linkerSettings: [.linkedFramework("Foundation")]),
         .executableTarget(name: "ImportedHookConsumer", dependencies: [.product(name: "ABIBridge", package: "ABIBridge")]),
         .executableTarget(name: "ObjCXXImportedHookConsumer", dependencies: [.product(name: "ABIBridge", package: "ABIBridge")], cxxSettings: [.unsafeFlags(["-fobjc-arc"])], linkerSettings: [.linkedFramework("Foundation")]),
         .target(name: "CoordinationFixture", cSettings: [.unsafeFlags(["-fno-objc-arc"])], linkerSettings: [.linkedFramework("Foundation")]),

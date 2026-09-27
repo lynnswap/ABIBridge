@@ -41,7 +41,7 @@ The `native-hooks` mode runs the public C++/Objective-C++ wrappers on the signed
 
 The `coordinated-hooks` mode checks public Swift/C++ request arrays, ordinary and initializer registration, preflight failure details, and logical invalidation.
 
-The `import-hooks` mode registers typed Swift and C++ callbacks on a compiler-created mutable import pointer. It checks cross-language order, the captured predecessor and independent logical invalidation. Its volatile pointer read deliberately preserves import dispatch under optimization; direct/devirtualized calls remain outside this mechanism.
+The `import-hooks` mode registers typed Swift and C++ callbacks on a compiler-created mutable import pointer. It checks cross-language order, the captured predecessor and independent logical invalidation, then verifies asynchronous monitor application to that loaded image and pass-through after invalidation. Its volatile pointer read deliberately preserves import dispatch under optimization; direct/devirtualized calls remain outside this mechanism. Subsequent-load monitoring and constructor cancellation are covered by the isolated macOS native consumers.
 
 ## Imported-function replacement probe
 

@@ -7,11 +7,20 @@ final class ImportedFunctionSelection {
     let references: [ImportedReference]
     let slots: [ABIImportSlot]
 
-    init(resolver: SymbolResolver, declaration: NativeDeclaration, importer: ImageSelector, provider: ImageSelector?) throws {
+    static func validate(_ declaration: NativeDeclaration) throws {
         guard declaration.kind == .function, [.c, .cxx].contains(declaration.language), !declaration.name.utf8.contains(0) else {
             throw ABIResolutionError.unsupportedDeclaration("Imported callbacks require a C/C++ function declaration.")
         }
+    }
+
+    convenience init(resolver: SymbolResolver, declaration: NativeDeclaration, importer: ImageSelector, provider: ImageSelector?) throws {
+        try Self.validate(declaration)
         let images = try resolver.images(matching: importer)
+        try self.init(resolver: resolver, declaration: declaration, images: images, provider: provider)
+    }
+
+    init(resolver: SymbolResolver, declaration: NativeDeclaration, images: [NativeImage], provider: ImageSelector?) throws {
+        try Self.validate(declaration)
         guard !images.isEmpty else { throw ABIResolutionError.imageNotLoaded }
         var found: [ImportedReference] = []
         for image in images {
@@ -58,6 +67,36 @@ final class ImportedFunctionSelection {
     }
 
     func retainedHandle() -> OpaquePointer { OpaquePointer(Unmanaged.passRetained(self).toOpaque()) }
+}
+
+/// An immutable monitoring request. Per-image resolvers are short-lived so a
+/// no-match or failure cannot keep every inspected image in a resolver cache.
+final class ImportedFunctionQuery {
+    let declaration: NativeDeclaration
+    let importer: ImageSelector
+    let provider: ImageSelector?
+
+    init(declaration: NativeDeclaration, importer: ImageSelector, provider: ImageSelector?) throws {
+        try ImportedFunctionSelection.validate(declaration)
+        try importer.validateTarget()
+        try provider?.validateTarget()
+        self.declaration = declaration
+        self.importer = importer
+        self.provider = provider
+    }
+
+    func select(_ snapshot: ImageSnapshot) throws -> ImportedFunctionSelection? {
+        guard try !ImageSnapshot.matching(importer, in: [snapshot]).isEmpty else { return nil }
+        return try ImportedFunctionSelection(resolver: SymbolResolver(), declaration: declaration,
+            images: [snapshot.retain()], provider: provider)
+    }
+
+    func retainedHandle() -> OpaquePointer { OpaquePointer(Unmanaged.passRetained(self).toOpaque()) }
+}
+
+@_cdecl("ABIReleaseImportedQuery")
+package func releaseImportedQuery(_ query: OpaquePointer) {
+    Unmanaged<ImportedFunctionQuery>.fromOpaque(UnsafeRawPointer(query)).release()
 }
 
 @_cdecl("ABIRetainImportSelection")

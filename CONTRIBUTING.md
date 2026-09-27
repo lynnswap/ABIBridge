@@ -39,6 +39,8 @@ Debug-only `ImportIndexTests` cover the internal read-only import index with com
 
 `ImageObservationTests` exercise the internal asynchronous catalog boundary: initial snapshots, unload/reload generations without image retention, loader/catalog reentry, self-invalidation, constructor cancellation during an in-flight callback, and context release. Notifications are coalesced current-state snapshots; they do not establish interception before image initializers run.
 
+`ImportedFunctionMonitorTests` cover current/future application, per-image failures, inactive monitors and in-flight callback/error lifetimes. The isolated C++ and Objective-C++ monitor consumers verify that no-match generations can unload/reload without accumulating state, and that a constructor can reenter the catalog and cancel monitoring while another thread loads its image.
+
 Memory tests verify owned copies, region bounds, unaligned reads, zero-length requests, inaccessible source addresses, and readable prefixes before protected pages. The C, C++, and Objective-C++ consumers exercise the shared reader, including owner release and ARC/MRC builds. Runtime evidence is from macOS; other Apple platforms compile in CI.
 
 The internal pointer-slot tests verify atomic expected-value replacement, preservation of competing writers, data-page protection restoration, copy-on-write maximum protections and shared-page serialization. A VM fixture injects publication and cleanup failures into the production mutation sequence and checks that both restoration errors and partial effects remain observable. This is an internal prerequisite for managed rebinding; it does not own callback/code lifetimes or synchronize with external VM operations.
