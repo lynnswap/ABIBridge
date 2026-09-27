@@ -94,9 +94,11 @@ struct SymbolQuery {
     let key: [UInt8]
     let fingerprint: Int
     let filter: CXXSymbolFilter?
+    let swiftModule: SwiftModuleFilter?
 
     init(_ declaration: NativeDeclaration) {
         self.declaration = declaration
+        swiftModule = declaration.language == .swift && declaration.nameForm == .source ? SwiftModuleFilter(declaration.name) : nil
         if declaration.nameForm != .source || declaration.language == .c {
             let name = declaration.nameForm == .machO ? declaration.name : "_" + declaration.name
             exactName = name
@@ -108,6 +110,41 @@ struct SymbolQuery {
             key = DeclarationKey.make(declaration.name)
             fingerprint = DeclarationKey.fingerprint(key)
             filter = declaration.language == .cxx ? CXXSymbolFilter(declaration.name) : nil
+        }
+    }
+}
+
+/// Rejects only an explicitly spelled, different root module. Compressed,
+/// substituted and other mangling forms still reach the full demangler.
+struct SwiftModuleFilter {
+    let module: String
+    private let prefix: String
+
+    init?(_ declaration: String) {
+        var name = declaration.trimmingCharacters(in: .whitespacesAndNewlines)
+        for marker in ["nominal type descriptor for ", "type metadata accessor for ", "type metadata for ", "static "] {
+            if name.hasPrefix(marker) { name.removeFirst(marker.count); break }
+        }
+        guard let dot = name.firstIndex(of: ".") else { return nil }
+        let module = String(name[..<dot])
+        guard module.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) != nil else { return nil }
+        self.module = module
+        prefix = String(module.utf8.count) + module
+    }
+
+    func matches(_ raw: String) -> Bool {
+        raw.withCString { matches($0) }
+    }
+
+    func matches(_ name: UnsafePointer<CChar>, partial: Bool = false) -> Bool {
+        var body = name
+        if body.pointee == 95 { body += 1 }
+        guard body.pointee == 36, body[1] == 115 || body[1] == 83 else { return true }
+        body += 2
+        guard body.pointee >= 49 && body.pointee <= 57 else { return true }
+        return prefix.withCString { expected in
+            let count = partial ? min(strlen(body), prefix.utf8.count) : prefix.utf8.count
+            return strncmp(body, expected, count) == 0
         }
     }
 }
@@ -182,8 +219,9 @@ final class SymbolIndex {
     private let macho: MachOImage
     private lazy var exportTrie = macho.exportTrie
     private var localSymbols: [IndexedSymbol] = []
-    private var sourceSymbols: [NativeLanguage: [IndexedSymbol]] = [:]
-    var sharedCacheLoaded = false
+    private var sourceSymbols: [Scope: [IndexedSymbol]] = [:]
+    private var sharedCacheLoaded = false
+    private var sharedCacheModules: Set<String> = []
     private struct Scope: Hashable {
         let language: NativeLanguage
         let fragments: [String]
@@ -191,7 +229,7 @@ final class SymbolIndex {
     private var decoded: [Scope: [Int: [IndexedSymbol]]] = [:]
     private var cxxCandidates: [String: [IndexedSymbol]] = [:]
     private var linkerNames: [[UInt8]: [IndexedSymbol]] = [:]
-    private var swiftExtensions: [Int: [IndexedSymbol]]?
+    private var swiftExtensions: [Scope: [Int: [IndexedSymbol]]] = [:]
 
     init(image: NativeImage) {
         self.image = image
@@ -219,14 +257,19 @@ final class SymbolIndex {
         }
     }
 
-    func appendSharedCacheSymbols(_ more: [IndexedSymbol]) {
-        sharedCacheLoaded = true
+    func hasSharedCacheSymbols(for query: SymbolQuery) -> Bool {
+        sharedCacheLoaded || query.swiftModule.map { sharedCacheModules.contains($0.module) } == true
+    }
+
+    func appendSharedCacheSymbols(_ more: [IndexedSymbol], matching query: SymbolQuery? = nil) {
+        if let module = query?.swiftModule?.module { sharedCacheModules.insert(module) }
+        else { sharedCacheLoaded = true }
         guard !more.isEmpty else { return }
         localSymbols += more
         sourceSymbols.removeAll()
         decoded.removeAll()
         cxxCandidates.removeAll()
-        swiftExtensions = nil
+        swiftExtensions.removeAll()
         linkerNames.removeAll()
     }
 
@@ -295,27 +338,61 @@ final class SymbolIndex {
         return nil
     }
 
-    private func symbols(for language: NativeLanguage) -> [IndexedSymbol] {
-        if let cached = sourceSymbols[language] { return cached }
+    private func symbols(for language: NativeLanguage, swiftModule: SwiftModuleFilter?) -> [IndexedSymbol] {
+        let scope = Scope(language: language, fragments: swiftModule.map { [$0.module] } ?? [])
+        if let cached = sourceSymbols[scope] { return cached }
         let prefixes = DeclarationKey.symbolPrefixes(for: language)
         let needles = prefixes.map { Array($0.utf8CString) }
         var symbols = tableSymbols { raw in
             needles.contains { needle in
                 needle.withUnsafeBufferPointer { strncmp(raw, $0.baseAddress!, $0.count - 1) == 0 }
-            }
+            } && (swiftModule?.matches(raw) ?? true)
         }
         if let trie = exportTrie {
-            symbols += prefixes.flatMap { trie.search(byKeyPrefix: $0) }.compactMap { symbol in
-                guard let offset = symbol.offset else { return nil }
-                return imageSymbol(name: symbol.name, offset: offset)
+            if let swiftModule {
+                symbols += swiftExports(in: trie, prefixes: prefixes, module: swiftModule)
+            } else {
+                symbols += prefixes.flatMap { trie.search(byKeyPrefix: $0) }.compactMap { symbol in
+                    guard let offset = symbol.offset else { return nil }
+                    return imageSymbol(name: symbol.name, offset: offset)
+                }
             }
         }
-        symbols += localSymbols.filter { symbol in prefixes.contains { symbol.name.hasPrefix($0) } }
+        symbols += localSymbols.filter { symbol in
+            prefixes.contains { symbol.name.hasPrefix($0) } && (swiftModule?.matches(symbol.name) ?? true)
+        }
         // Definitions commonly occur in both nlist and the export trie.
         // Demangle each distinct spelling/address/source only once.
         var seen = Set<IndexedSymbol>()
         symbols = symbols.filter { seen.insert($0).inserted }
-        sourceSymbols[language] = symbols
+        sourceSymbols[scope] = symbols
+        return symbols
+    }
+
+    // Prune an unrelated literal module before materializing its descendants.
+    // Partial edges and compressed module spellings keep traversing; the full
+    // demangled declaration still determines equality and ambiguity.
+    private func swiftExports(in trie: MachOImage.ExportTrie, prefixes: [String], module: SwiftModuleFilter) -> [IndexedSymbol] {
+        var symbols: [IndexedSymbol] = []
+        var pending = [(name: "", offset: 0)]
+        while let entry = pending.popLast() {
+            var offset = entry.offset
+            guard let node = TrieNode<ExportTrieNodeContent>.readNext(
+                basePointer: trie.basePointer.assumingMemoryBound(to: UInt8.self),
+                trieSize: trie.exportSize, nextOffset: &offset
+            ) else { continue }
+            if let value = node.content?.symbolOffset,
+               let symbol = imageSymbol(name: entry.name, offset: Int(bitPattern: value)) {
+                symbols.append(symbol)
+            }
+            for child in node.children {
+                let name = entry.name + child.label
+                guard prefixes.contains(where: { name.hasPrefix($0) || $0.hasPrefix(name) }),
+                      name.withCString({ module.matches($0, partial: true) }),
+                      let next = Int(exactly: child.offset) else { continue }
+                pending.append((name, next))
+            }
+        }
         return symbols
     }
 
@@ -328,13 +405,13 @@ final class SymbolIndex {
         if let name = query.exactName {
             return exactSymbols(named: name, key: query.key)
         }
-        if extensionsOnly, let swiftExtensions {
-            return Self.matching(swiftExtensions[query.fingerprint] ?? [], query: query, extensionsOnly: true)
-        }
         let filter = query.filter
-        let scope = Scope(language: declaration.language, fragments: filter?.fragments ?? [])
+        let scope = Scope(language: declaration.language, fragments: filter?.fragments ?? query.swiftModule.map { [$0.module] } ?? [])
+        if extensionsOnly, let extensions = swiftExtensions[scope] {
+            return Self.matching(extensions[query.fingerprint] ?? [], query: query, extensionsOnly: true)
+        }
         if decoded[scope] == nil {
-            let symbols = symbols(for: declaration.language)
+            let symbols = symbols(for: declaration.language, swiftModule: query.swiftModule)
             let candidates: [IndexedSymbol]
             if let filter, let owner = filter.fragments.first {
                 if cxxCandidates[owner] == nil {
@@ -364,9 +441,9 @@ final class SymbolIndex {
                 }
             }
             if !extensionsOnly { decoded[scope] = index }
-            if declaration.language == .swift { swiftExtensions = extensions }
+            if declaration.language == .swift { swiftExtensions[scope] = extensions }
         }
-        let candidates = extensionsOnly ? swiftExtensions?[query.fingerprint] ?? [] : decoded[scope]?[query.fingerprint] ?? []
+        let candidates = extensionsOnly ? swiftExtensions[scope]?[query.fingerprint] ?? [] : decoded[scope]?[query.fingerprint] ?? []
         return Self.matching(candidates, query: query, extensionsOnly: extensionsOnly)
     }
 
