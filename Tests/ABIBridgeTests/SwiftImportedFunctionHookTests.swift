@@ -249,31 +249,45 @@ struct SwiftImportedFunctionHookTests {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
         let target = try await fixture.runtime.swiftFunction(named: fixture.module + ".scalar(_:)", as: ((Int64) -> Int64).self, in: fixture.providerScope)
         let oracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".importedScalar(_:)", as: ((Int64) -> Int64).self, in: fixture.callerScope)
-        let entered = AsyncStream<Void>.makeStream()
-        let resume = DispatchSemaphore(value: 0)
+        let entered = DispatchSemaphore(value: 0), resume = DispatchSemaphore(value: 0)
         let released = Mutex(false)
+        let failures = Mutex<[String]>([])
         var capture: SwiftHookCapture? = SwiftHookCapture { released.withLock { $0 = true } }
-        let hook = try await unsafe target.hookImportedCalls(in: fixture.callerScope, onFailure: { Issue.record("Unexpected: \($0)") }) { [capture] call, value in
-            entered.continuation.yield(())
+        let hook = try await unsafe target.hookImportedCalls(in: fixture.callerScope,
+            onFailure: { error in failures.withLock { $0.append(String(describing: error)) } }) { [capture] call, value in
+            entered.signal()
             guard resume.wait(timeout: .now() + 10) == .success else { throw SwiftHookTestFailure.timeout }
             return try withExtendedLifetime(capture) { try call.proceed(value + 1) }
         }
         capture = nil
-        let running = Task.detached {
-            defer { entered.continuation.finish() }
-            return try unsafe oracle.unsafeInvoke(40)
+        // Both sides of this intentionally blocked native call must progress
+        // independently of Swift's bounded cooperative executor on busy runners.
+        let observation: (Int64, Bool, Bool) = try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let done = DispatchSemaphore(value: 0)
+                let result = Mutex<Swift.Result<Int64, any Error>?>(nil)
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let value = Swift.Result { try unsafe oracle.unsafeInvoke(40) }
+                    result.withLock { $0 = value }
+                    done.signal()
+                }
+                let didEnter = entered.wait(timeout: .now() + 10) == .success
+                hook.invalidate()
+                let retainedDuringCall = !released.withLock { $0 }
+                resume.signal()
+                let didFinish = done.wait(timeout: .now() + 10) == .success
+                guard didEnter && didFinish else {
+                    continuation.resume(throwing: SwiftHookTestFailure.timeout)
+                    return
+                }
+                do {
+                    let value = try result.withLock { try $0!.get() }
+                    continuation.resume(returning: (value, retainedDuringCall, released.withLock { $0 }))
+                } catch { continuation.resume(throwing: error) }
+            }
         }
-        var iterator = entered.stream.makeAsyncIterator()
-        guard let _ = await iterator.next() else {
-            resume.signal(); hook.invalidate()
-            _ = try await running.value
-            throw SwiftHookTestFailure.timeout
-        }
-        hook.invalidate()
-        #expect(!released.withLock { $0 })
-        resume.signal()
-        #expect(try await running.value == 42)
-        #expect(released.withLock { $0 })
+        #expect(observation.0 == 42 && observation.1 && observation.2)
+        #expect(failures.withLock { $0.isEmpty })
         let next = try await unsafe target.hookImportedCalls(in: fixture.callerScope, onFailure: { Issue.record("Unexpected: \($0)") }) { call, value in
             try call.proceed(value + 1) + 1
         }
