@@ -15,7 +15,7 @@ struct ContentView: View {
         "initializers", "native-hooks", "coordinated-hooks",
         "import-replacement", "import-hooks", "virtual-replacement",
         "virtual-hooks", "virtual-entries", "virtual-public",
-        "swift-replacement", "swift-callback", "swift-lookup"
+        "swift-replacement", "swift-callback", "swift-lookup", "native-lookup"
         ]
         #if targetEnvironment(simulator)
         return standard

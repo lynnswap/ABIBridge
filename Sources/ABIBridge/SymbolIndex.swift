@@ -88,6 +88,15 @@ enum DeclarationKey {
     }
 }
 
+// Coverage describes names read from a source, independently of symbol kind.
+// A filtered scan must not mark other names or owners as already loaded.
+enum SymbolCandidateScope: Hashable {
+    case exact([UInt8])
+    case language(NativeLanguage)
+    case swiftModule(String)
+    case cxxOwner(String)
+}
+
 struct SymbolQuery {
     let declaration: NativeDeclaration
     let exactName: String?
@@ -95,6 +104,9 @@ struct SymbolQuery {
     let fingerprint: Int
     let filter: CXXSymbolFilter?
     let swiftModule: SwiftModuleFilter?
+    let candidateScope: SymbolCandidateScope
+    private let exactNeedle: [CChar]
+    private let prefixes: [[CChar]]
 
     init(_ declaration: NativeDeclaration) {
         self.declaration = declaration
@@ -105,12 +117,29 @@ struct SymbolQuery {
             key = Array(name.utf8)
             fingerprint = 0
             filter = nil
+            candidateScope = .exact(key)
+            exactNeedle = key.contains(0) ? [] : Array(name.utf8CString)
         } else {
             exactName = nil
             key = DeclarationKey.make(declaration.name)
             fingerprint = DeclarationKey.fingerprint(key)
             filter = declaration.language == .cxx ? CXXSymbolFilter(declaration.name) : nil
+            if let module = swiftModule?.module { candidateScope = .swiftModule(module) }
+            else if let owner = filter?.fragments.first { candidateScope = .cxxOwner(owner) }
+            else { candidateScope = .language(declaration.language) }
+            exactNeedle = []
         }
+        prefixes = DeclarationKey.symbolPrefixes(for: declaration.language).map { Array($0.utf8CString) }
+    }
+
+    func acceptsCandidate(_ raw: UnsafePointer<CChar>) -> Bool {
+        if exactName != nil {
+            return !exactNeedle.isEmpty && exactNeedle.withUnsafeBufferPointer { strcmp(raw, $0.baseAddress!) == 0 }
+        }
+        guard prefixes.contains(where: { prefix in
+            prefix.withUnsafeBufferPointer { strncmp(raw, $0.baseAddress!, $0.count - 1) == 0 }
+        }) else { return false }
+        return (swiftModule?.matches(raw) ?? true) && (filter?.matchesOwner(raw) ?? true)
     }
 }
 
@@ -197,10 +226,12 @@ struct CXXSymbolFilter {
     }
 
     func matchesOwner(_ rawName: String) -> Bool {
+        rawName.withCString { matchesOwner($0) }
+    }
+
+    func matchesOwner(_ raw: UnsafePointer<CChar>) -> Bool {
         guard let needle = needles.first else { return true }
-        return rawName.withCString { raw in
-            needle.withUnsafeBufferPointer { strstr(raw, $0.baseAddress!) != nil }
-        }
+        return needle.withUnsafeBufferPointer { strstr(raw, $0.baseAddress!) != nil }
     }
 
     func matches(_ rawName: String) -> Bool {
@@ -219,15 +250,13 @@ final class SymbolIndex {
     private let macho: MachOImage
     private lazy var exportTrie = macho.exportTrie
     private var localSymbols: [IndexedSymbol] = []
-    private var sourceSymbols: [Scope: [IndexedSymbol]] = [:]
-    private var sharedCacheLoaded = false
-    private var sharedCacheModules: Set<String> = []
+    private var sourceSymbols: [SymbolCandidateScope: [IndexedSymbol]] = [:]
+    private var sharedCacheScopes: Set<SymbolCandidateScope> = []
     private struct Scope: Hashable {
         let language: NativeLanguage
         let fragments: [String]
     }
     private var decoded: [Scope: [Int: [IndexedSymbol]]] = [:]
-    private var cxxCandidates: [String: [IndexedSymbol]] = [:]
     private var linkerNames: [[UInt8]: [IndexedSymbol]] = [:]
     private var swiftExtensions: [Scope: [Int: [IndexedSymbol]]] = [:]
 
@@ -258,17 +287,25 @@ final class SymbolIndex {
     }
 
     func hasSharedCacheSymbols(for query: SymbolQuery) -> Bool {
-        sharedCacheLoaded || query.swiftModule.map { sharedCacheModules.contains($0.module) } == true
+        if sharedCacheScopes.contains(query.candidateScope) { return true }
+        switch query.candidateScope {
+        case .swiftModule: return sharedCacheScopes.contains(.language(.swift))
+        case .cxxOwner: return sharedCacheScopes.contains(.language(.cxx))
+        case .exact(let name):
+            return [NativeLanguage.swift, .cxx].contains { language in
+                sharedCacheScopes.contains(.language(language))
+                    && DeclarationKey.symbolPrefixes(for: language).contains { name.starts(with: $0.utf8) }
+            }
+        default: return false
+        }
     }
 
-    func appendSharedCacheSymbols(_ more: [IndexedSymbol], matching query: SymbolQuery? = nil) {
-        if let module = query?.swiftModule?.module { sharedCacheModules.insert(module) }
-        else { sharedCacheLoaded = true }
+    func appendSharedCacheSymbols(_ more: [IndexedSymbol], matching query: SymbolQuery) {
+        sharedCacheScopes.insert(query.candidateScope)
         guard !more.isEmpty else { return }
         localSymbols += more
         sourceSymbols.removeAll()
         decoded.removeAll()
-        cxxCandidates.removeAll()
         swiftExtensions.removeAll()
         linkerNames.removeAll()
     }
@@ -338,41 +375,25 @@ final class SymbolIndex {
         return nil
     }
 
-    private func symbols(for language: NativeLanguage, swiftModule: SwiftModuleFilter?) -> [IndexedSymbol] {
-        let scope = Scope(language: language, fragments: swiftModule.map { [$0.module] } ?? [])
-        if let cached = sourceSymbols[scope] { return cached }
-        let prefixes = DeclarationKey.symbolPrefixes(for: language)
-        let needles = prefixes.map { Array($0.utf8CString) }
-        var symbols = tableSymbols { raw in
-            needles.contains { needle in
-                needle.withUnsafeBufferPointer { strncmp(raw, $0.baseAddress!, $0.count - 1) == 0 }
-            } && (swiftModule?.matches(raw) ?? true)
-        }
+    private func symbols(for query: SymbolQuery) -> [IndexedSymbol] {
+        if let cached = sourceSymbols[query.candidateScope] { return cached }
+        let prefixes = DeclarationKey.symbolPrefixes(for: query.declaration.language)
+        var symbols = tableSymbols(matching: query.acceptsCandidate)
         if let trie = exportTrie {
-            if let swiftModule {
-                symbols += swiftExports(in: trie, prefixes: prefixes, module: swiftModule)
-            } else {
-                symbols += prefixes.flatMap { trie.search(byKeyPrefix: $0) }.compactMap { symbol in
-                    guard let offset = symbol.offset else { return nil }
-                    return imageSymbol(name: symbol.name, offset: offset)
-                }
-            }
+            symbols += filteredExports(in: trie, prefixes: prefixes, query: query)
         }
-        symbols += localSymbols.filter { symbol in
-            prefixes.contains { symbol.name.hasPrefix($0) } && (swiftModule?.matches(symbol.name) ?? true)
-        }
+        symbols += localSymbols.filter { $0.name.withCString(query.acceptsCandidate) }
         // Definitions commonly occur in both nlist and the export trie.
         // Demangle each distinct spelling/address/source only once.
         var seen = Set<IndexedSymbol>()
         symbols = symbols.filter { seen.insert($0).inserted }
-        sourceSymbols[scope] = symbols
+        sourceSymbols[query.candidateScope] = symbols
         return symbols
     }
 
-    // Prune an unrelated literal module before materializing its descendants.
-    // Partial edges and compressed module spellings keep traversing; the full
-    // demangled declaration still determines equality and ambiguity.
-    private func swiftExports(in trie: MachOImage.ExportTrie, prefixes: [String], module: SwiftModuleFilter) -> [IndexedSymbol] {
+    // An owner substring can occur later in a C++ name, so only Swift's proven
+    // module prefix may prune a subtree. Other filters apply at terminals.
+    private func filteredExports(in trie: MachOImage.ExportTrie, prefixes: [String], query: SymbolQuery) -> [IndexedSymbol] {
         var symbols: [IndexedSymbol] = []
         var pending = [(name: "", offset: 0)]
         while let entry = pending.popLast() {
@@ -382,13 +403,14 @@ final class SymbolIndex {
                 trieSize: trie.exportSize, nextOffset: &offset
             ) else { continue }
             if let value = node.content?.symbolOffset,
+               entry.name.withCString(query.acceptsCandidate),
                let symbol = imageSymbol(name: entry.name, offset: Int(bitPattern: value)) {
                 symbols.append(symbol)
             }
             for child in node.children {
                 let name = entry.name + child.label
                 guard prefixes.contains(where: { name.hasPrefix($0) || $0.hasPrefix(name) }),
-                      name.withCString({ module.matches($0, partial: true) }),
+                      name.withCString({ query.swiftModule?.matches($0, partial: true) ?? true }),
                       let next = Int(exactly: child.offset) else { continue }
                 pending.append((name, next))
             }
@@ -411,16 +433,7 @@ final class SymbolIndex {
             return Self.matching(extensions[query.fingerprint] ?? [], query: query, extensionsOnly: true)
         }
         if decoded[scope] == nil {
-            let symbols = symbols(for: declaration.language, swiftModule: query.swiftModule)
-            let candidates: [IndexedSymbol]
-            if let filter, let owner = filter.fragments.first {
-                if cxxCandidates[owner] == nil {
-                    cxxCandidates[owner] = symbols.filter { filter.matchesOwner($0.name) }
-                }
-                candidates = cxxCandidates[owner]!
-            } else {
-                candidates = symbols
-            }
+            let candidates = symbols(for: query)
             var index: [Int: [IndexedSymbol]] = [:]
             var extensions: [Int: [IndexedSymbol]] = [:]
             for symbol in candidates {
