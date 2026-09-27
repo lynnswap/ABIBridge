@@ -2,6 +2,8 @@
 
 Replace selected importing references with another compiled Swift implementation, preserving typed access to the previous entries and explicit restoration.
 
+For a capturing closure with typed arguments and a scoped `proceed` continuation, use <doc:SwiftFunctionHooks>.
+
 ## Prepare before publishing
 
 Resolve the original declaration and its compiled replacement using ordinary Swift function types:

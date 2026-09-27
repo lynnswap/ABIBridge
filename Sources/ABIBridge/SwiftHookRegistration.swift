@@ -26,7 +26,7 @@ final class SwiftHookGroup: @unchecked Sendable {
         var bits: UInt = 0
         return ABIReadMemory(key.address, MemoryLayout<UInt>.size, &bits).status == ABIMemoryReadComplete ? bits : nil
     }
-    func retainPublishedOwner(_ owner: (any Sendable)?) {
+    func retainCodeOwner(_ owner: (any Sendable)?) {
         if let owner { additionalOwners.withLock { $0.append(owner) } }
     }
 }
@@ -54,14 +54,27 @@ final class SwiftHookSlotRecord: Sendable {
 /// copied native pointers can still call the captured predecessor.
 public final class NativeSwiftImportedFunctionHook: @unchecked Sendable {
     /// Logical registration state and current pointer observation.
-    public enum Status: Sendable { case invalidated, active, displaced, unreadable }
+    public enum Status: Sendable {
+        /// This callback is inactive, regardless of the physical pointer contents.
+        case invalidated
+        /// The callback is active and the observed pointer selects its dispatcher.
+        case active
+        /// Another writer changed the pointer while this callback remains registered.
+        case displaced
+        /// The registered pointer could not be read for this observation.
+        case unreadable
+    }
     /// One selected reference and this registration's physical operation outcomes.
     public struct Slot: Sendable {
+        /// Address of the importing reference, not its current code target.
         public let address: UInt
+        /// Logical state combined with a current, non-atomic pointer observation.
         public let status: Status
         /// Nil when this registration reused an already installed dispatcher.
         public let mutation: NativeSwiftReplacementMutation?
+        /// Latest physical rollback attempted after this registration failed.
         public let rollback: NativeSwiftReplacementMutation?
+        /// Latest attempt to repair page protections left by a failed operation.
         public let protectionRecovery: NativeSwiftReplacementMutation?
     }
     let node: SwiftHookNode
@@ -96,7 +109,9 @@ public final class NativeSwiftImportedFunctionHook: @unchecked Sendable {
 
 /// A managed Swift registration failed after slot activation began.
 public struct NativeSwiftHookInstallationError: Error {
+    /// The publication failure that initiated invalidation and rollback.
     public let underlyingError: any Error
+    /// Index into the registration's slots where publication failed.
     public let failedIndex: Int
     /// Already invalidated. Its observations preserve partial writes and rollback
     /// failures; use recoverFailedInstallation() to retry owned recovery.
@@ -143,6 +158,7 @@ actor SwiftHookRegistry {
         var activated: [SwiftHookSlotRecord] = []
         for (index, record) in records.enumerated() {
             let group = record.group
+            group.retainCodeOwner(codeOwner)
             group.dispatcher.append(node)
             do {
                 if install[index] {
@@ -150,7 +166,6 @@ actor SwiftHookRegistry {
                     try group.storage.install()
                     record.captureMutation()
                 }
-                group.retainPublishedOwner(codeOwner)
                 entries[group.key] = Entry(group: group)
             } catch {
                 record.captureMutation(); record.captureRollback()

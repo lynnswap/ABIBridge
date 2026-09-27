@@ -9,13 +9,20 @@ struct ContentView: View {
     @State private var reportURL: URL?
     @State private var didAutoRun = false
 
-    private let modes = [
+    private var modes: [String] {
+        let standard = [
         "native", "swift", "ffi", "memory", "replacement", "hooks",
         "initializers", "native-hooks", "coordinated-hooks",
         "import-replacement", "import-hooks", "virtual-replacement",
         "virtual-hooks", "virtual-entries", "virtual-public",
         "swift-replacement", "swift-callback"
-    ]
+        ]
+        #if targetEnvironment(simulator)
+        return standard
+        #else
+        return standard + ["swift-function-hooks", "swift-import-replacement"]
+        #endif
+    }
 
     var body: some View {
         NavigationStack {
@@ -91,7 +98,15 @@ struct ContentView: View {
 
             let data: Data
             do {
-                let report = try await runArchitectureValidation(mode: selectedMode)
+                let report: ArchitectureReport
+                switch selectedMode {
+                case "swift-function-hooks":
+                    report = try await runSwiftFunctionHookValidation()
+                case "swift-import-replacement":
+                    report = try await runSwiftImportReplacementValidation()
+                default:
+                    report = try await runArchitectureValidation(mode: selectedMode)
+                }
                 data = try encoder.encode(report)
             } catch {
                 data = try encoder.encode([
