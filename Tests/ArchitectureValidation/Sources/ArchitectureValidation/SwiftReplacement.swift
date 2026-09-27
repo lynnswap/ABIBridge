@@ -152,5 +152,21 @@ private struct VirtualPayload: ABIBridgeValue {
         try check(classPayload(objects[0], 40) == 1210, "Public virtual replacement preserves indirect result")
         try check(try unsafe payloadPlan.original.unsafeInvoke(on: objects[0], 40).a == 42, "Indirect predecessor preserves caller result storage")
     }
+    let child = CoalescedChild()
+    let childType = try await runtime.swiftType(named: module + ".CoalescedChild")
+    let valueMethod = try await childType.method(named: "value()", as: (() -> Int64).self)
+    let extraMethod = try await childType.method(named: "extra()", as: (() -> Int64).self)
+    let replacementMethod = try await childType.method(named: "replacement()", as: (() -> Int64).self)
+    let valuePlan = try unsafe valueMethod.prepareVirtualReplacement(with: replacementMethod)
+    let extraPlan = try unsafe extraMethod.prepareVirtualReplacement(with: replacementMethod)
+    try check(valuePlan.address != extraPlan.address, "Identical method bodies select distinct declaration slots")
+    try installed(valuePlan) {
+        try check(coalescedValue(child) == 100 && coalescedExtra(child) == 42 && coalescedFinal(child) == 42,
+            "Inherited declaration replacement leaves coalesced child and final calls unchanged")
+    }
+    try installed(extraPlan) {
+        try check(coalescedValue(child) == 42 && coalescedExtra(child) == 100 && coalescedFinal(child) == 42,
+            "Child declaration replacement leaves coalesced inherited and final calls unchanged")
+    }
     return checks
 }

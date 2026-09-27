@@ -62,11 +62,9 @@ extension NativeSwiftMethod {
             throw ABIResolutionError.unsupportedDeclaration("Virtual replacement requires Swift class instance methods.")
         }
         let metadata = type.metadata
-        let entry = try unsafe symbol.withUnsafeAddress {
-            try SwiftClassDispatch(metadata: metadata, implementation: UInt(bitPattern: $0))
-        }
+        let entry = try SwiftClassDispatch(metadata: metadata, declaration: symbol.declaration, resolver: type.resolver)
         let storage = try SwiftReplacementStorage(slots: [(entry.address, entry.authentication)],
-            replacement: replacement.symbol, retaining: (self, replacement), codeOwner: owner)
+            replacement: replacement.symbol, retaining: (self, replacement, entry.descriptor), codeOwner: owner)
         return try NativeSwiftVirtualReplacement(storage: storage) { NativeSwiftMethodImplementation(self, $0) }
     }
 }

@@ -22,7 +22,7 @@ let result = try unsafe previous.unsafeInvoke(on: renderer, "Preview")
 try plan.restore()
 ```
 
-`prepareVirtualReplacement(with:retaining:)` changes no pointers. Its `original` captures the current entry, including another writer's previously installed implementation. A class method entry must contain a nonnull predecessor; unlike a weak importing reference, it is returned as a nonoptional handle. Method selection uses compiler descriptors instead of searching for matching pointers in live metadata. An earlier replacement therefore does not prevent selecting the same source declaration again.
+`prepareVirtualReplacement(with:retaining:)` changes no pointers. Its `original` captures the current entry, including another writer's previously installed implementation. A class method entry must contain a nonnull predecessor; unlike a weak importing reference, it is returned as a nonoptional handle. Method selection resolves the introducing method descriptor by its source declaration, then locates that descriptor in its class layout. It compares neither the current slot target nor implementation code addresses, which optimizers may share between unrelated declarations. An earlier replacement therefore does not prevent selecting the same source declaration again.
 
 The replacement is compiled Swift code with the same physical receiver, argument/result lowering, ownership and isolation contract. It must accept every receiver that reaches the selected slot. Equal Swift function types do not prove these requirements. Capturing closure hooks require an incoming Swift ABI bridge and are a separate API.
 
@@ -34,7 +34,7 @@ Existing superclass, sibling and subclass metadata copies are unchanged. A subcl
 
 Only calls that read the changed metadata entry are affected. Direct, inlined, specialized or devirtualized calls and previously captured implementations can bypass it. The original `NativeSwiftMethod` remains a direct implementation handle. A compiler-instrumented `dynamic` method can independently consult Swift's dynamic-replacement machinery.
 
-The reader supports concrete nongeneric class descriptors, synchronous instance methods and ordinary getter/setter entries, including initialized resilient-superclass bounds. It reports unestablished generic layouts and unsupported initializer or coroutine descriptors instead of guessing offsets. It does not modify Objective-C selectors, protocol witness tables or arbitrary function bodies.
+The reader supports concrete nongeneric class descriptors, synchronous instance methods and ordinary getter/setter entries, including initialized resilient-superclass bounds. The introducing descriptor must be available to symbol lookup with a matching source signature; stripped descriptors or differently lowered override signatures require an adapter. It reports unestablished generic layouts and unsupported initializer or coroutine descriptors instead of guessing offsets. It does not modify Objective-C selectors, protocol witness tables or arbitrary function bodies.
 
 ## Inspect and restore
 

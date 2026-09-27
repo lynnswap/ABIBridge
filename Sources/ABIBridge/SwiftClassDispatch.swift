@@ -2,66 +2,66 @@ import ABIBridgeCore
 import ObjectiveC
 
 /// Reads the stable Swift class ABI, not the current contents of virtual slots.
-/// Descriptor identity keeps selection independent of an earlier interposer.
+/// Resolve the introducing descriptor by declaration: unrelated optimized
+/// methods can share code addresses, and current slots can contain interposers.
 /// Layouts follow swift/ABI/Metadata.h; arm64e descriptor-pointer constants
 /// and method discriminators are also checked against compiler-generated IR.
 struct SwiftClassDispatch {
     let address: UInt
     let authentication: NativePointerAuthentication
 
-    init(metadata: Any.Type, implementation: UInt) throws {
+    let descriptor: ResolvedSymbol
+
+    init(metadata: Any.Type, declaration: NativeDeclaration, resolver: SymbolResolver) throws {
         guard let selected = metadata as? AnyClass else {
             throw Self.unsupported("Virtual replacement requires a Swift class instance method.")
         }
         let selectedAddress = UInt(bitPattern: unsafeBitCast(selected, to: UnsafeRawPointer.self))
         let selectedHeader = try Header(address: selectedAddress)
         var current: AnyClass? = selected
+        var member: String?
         while let type = current {
-            let header = try Header(address: UInt(bitPattern: unsafeBitCast(type, to: UnsafeRawPointer.self)))
-            if let descriptor = header.descriptor {
-                let layout = try Descriptor(address: descriptor)
-                var matches: [(Int, UInt32)] = []
-                for index in 0..<layout.count {
-                    let method = layout.methods + UInt(index * 8)
-                    if try Self.relative(method + 4) == implementation {
-                        matches.append((try layout.offset() + index * Self.word, try Self.read(method)))
+            let name = try swiftFunctionTypeName(type)
+            if member == nil, declaration.name.hasPrefix(name + ".") {
+                member = String(declaration.name.dropFirst(name.count + 1))
+            }
+            if let member {
+                let header = try Header(address: UInt(bitPattern: unsafeBitCast(type, to: UnsafeRawPointer.self)))
+                if let classDescriptor = header.descriptor {
+                    let image = try swiftClassImage(type, named: name, resolver: resolver)
+                    let request = NativeDeclaration(name: "method descriptor for " + name + "." + member,
+                        language: .swift, kind: .data)
+                    let resolved: ResolvedSymbol?
+                    do { resolved = try resolver.resolve(request, in: image, loading: .loadedOnly) }
+                    catch ABIResolutionError.declarationNotFound { resolved = nil }
+                    if let resolved {
+                        let layout = try Descriptor(address: classDescriptor)
+                        let method = UInt(resolved.address)
+                        guard method >= layout.methods, method - layout.methods < UInt(layout.count * 8),
+                              (method - layout.methods) % 8 == 0 else {
+                            throw Self.unsupported("The method descriptor is outside its declaring class's virtual table description.")
+                        }
+                        let offset = try layout.offset() + Int(method - layout.methods) / 8 * Self.word
+                        let flags: UInt32 = try Self.read(method)
+                        let kind = flags & 0xf
+                        guard flags & 0x10 != 0, flags & 0x40 == 0, [0, 2, 3].contains(kind) else {
+                            throw Self.unsupported("This virtual descriptor is not a synchronous instance method, getter or setter.")
+                        }
+                        guard offset >= -selectedHeader.addressPoint,
+                              offset <= selectedHeader.size - selectedHeader.addressPoint - Self.word else {
+                            throw Self.unsupported("The virtual entry lies outside the selected class metadata allocation.")
+                        }
+                        address = try Self.add(selectedAddress, offset)
+                        authentication = NativePointerAuthentication.isEnabled
+                            ? .signed(key: .instructionA, discriminator: UInt(flags >> 16), addressDiversity: true) : .unsigned
+                        descriptor = resolved
+                        return
                     }
-                }
-                for index in 0..<layout.overrideCount {
-                    let entry = layout.overrides + UInt(index * 12)
-                    guard try Self.relative(entry + 8) == implementation else { continue }
-                    let base = try Descriptor(address: Self.indirect(entry, discriminator: 44678))
-                    let method = try Self.indirect(entry + 4, discriminator: 26458)
-                    guard method >= base.methods, method - base.methods < UInt(base.count * 8),
-                          (method - base.methods) % 8 == 0 else {
-                        throw Self.unsupported("The override does not reference an established base method descriptor.")
-                    }
-                    matches.append((try base.offset() + Int(method - base.methods) / 8 * Self.word, try Self.read(method)))
-                }
-                if !matches.isEmpty {
-                    guard matches.count == 1 else {
-                        throw Self.unsupported("Multiple virtual descriptors share this implementation address.")
-                    }
-                    let (offset, flags) = matches[0]
-                    let kind = flags & 0xf
-                    // Initializers, async entries and coroutine accessors have
-                    // different context or continuation contracts.
-                    guard flags & 0x10 != 0, flags & 0x40 == 0, [0, 2, 3].contains(kind) else {
-                        throw Self.unsupported("This virtual descriptor is not a synchronous instance method, getter or setter.")
-                    }
-                    guard offset >= -selectedHeader.addressPoint,
-                          offset <= selectedHeader.size - selectedHeader.addressPoint - Self.word else {
-                        throw Self.unsupported("The virtual entry lies outside the selected class metadata allocation.")
-                    }
-                    address = try Self.add(selectedAddress, offset)
-                    authentication = NativePointerAuthentication.isEnabled
-                        ? .signed(key: .instructionA, discriminator: UInt(flags >> 16), addressDiversity: true) : .unsigned
-                    return
                 }
             }
             current = class_getSuperclass(type)
         }
-        throw Self.unsupported("No virtual metadata entry describes this implementation. Direct and final methods have no replaceable class slot.")
+        throw Self.unsupported("No introducing virtual method descriptor matches this declaration. Direct and final methods have no class slot; stripped or differently lowered descriptors require an adapter.")
     }
 
     private static let word = MemoryLayout<UInt>.size
@@ -87,8 +87,6 @@ struct SwiftClassDispatch {
         let flags: UInt32
         let methods: UInt
         let count: Int
-        let overrides: UInt
-        let overrideCount: Int
         let vtableOffset: Int
 
         init(address: UInt) throws {
@@ -114,10 +112,7 @@ struct SwiftClassDispatch {
             } else {
                 vtableOffset = 0; count = 0; methods = tail
             }
-            if flags & 0x40000000 != 0 {
-                overrideCount = Int(try read(tail) as UInt32)
-                overrides = tail + 4
-            } else { overrideCount = 0; overrides = tail }
+
         }
 
         func offset() throws -> Int {
@@ -150,12 +145,6 @@ struct SwiftClassDispatch {
     private static func relative(_ field: UInt) throws -> UInt {
         let offset: Int32 = try read(field)
         return offset == 0 ? 0 : try add(field, Int(offset))
-    }
-    private static func indirect(_ field: UInt, discriminator: UInt) throws -> UInt {
-        let offset: Int32 = try read(field)
-        guard offset != 0 else { throw ABIResolutionError.invalidAddress }
-        let address = try add(field, Int(offset & ~1))
-        return offset & 1 == 0 ? address : try pointer(address, discriminator: discriminator)
     }
     private static func pointer(_ field: UInt, discriminator: UInt) throws -> UInt {
         let _: UInt = try read(field)

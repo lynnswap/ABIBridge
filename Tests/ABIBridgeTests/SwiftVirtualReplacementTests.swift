@@ -117,5 +117,44 @@ struct SwiftVirtualReplacementTests {
             #expect(try unsafe oracle.unsafeInvoke(object, 40) == expected)
         }
     }
+    @Test func mergedCodeAddressesDoNotChangeDeclarationIdentity() async throws {
+        let fixture = try CompiledSwiftReplacementFixture(writable: false)
+        defer { fixture.cleanup() }
+        let childName = fixture.module + ".CoalescedChild", parentName = fixture.module + ".CoalescedParent"
+        let type = try await fixture.runtime.swiftType(named: childName, in: fixture.providerScope)
+        let make = try await fixture.runtime.swiftFunction(named: fixture.module + ".makeCoalescedChild() -> " + childName,
+            as: (() -> AnyObject).self, in: fixture.providerScope)
+        let object = try unsafe make.unsafeInvoke()
+        let inherited = try await type.method(named: "value()", as: (() -> Int64).self)
+        let extra = try await type.method(named: "extra()", as: (() -> Int64).self)
+        let final = try await type.method(named: "finalValue()", as: (() -> Int64).self)
+        let replacement = try await type.method(named: "replacement()", as: (() -> Int64).self)
+        let valueCall = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".coalescedValue(" + parentName + ") -> Swift.Int64",
+            as: ((AnyObject) -> Int64).self, in: fixture.callerScope)
+        let extraCall = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".coalescedExtra(" + childName + ") -> Swift.Int64",
+            as: ((AnyObject) -> Int64).self, in: fixture.callerScope)
+        let finalCall = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".coalescedFinal(" + childName + ") -> Swift.Int64",
+            as: ((AnyObject) -> Int64).self, in: fixture.callerScope)
+        // Establish that this fixture exercises the aliasing regression.
+        #expect(inherited.symbol.address == extra.symbol.address)
+        #expect(inherited.symbol.address == final.symbol.address)
+        let inheritedPlan = try unsafe inherited.prepareVirtualReplacement(with: replacement)
+        let extraPlan = try unsafe extra.prepareVirtualReplacement(with: replacement)
+        #expect(inheritedPlan.address != extraPlan.address)
+        #expect(throws: ABIResolutionError.self) { try unsafe final.prepareVirtualReplacement(with: replacement) }
+        try unsafe inheritedPlan.install()
+        defer { try? inheritedPlan.restore() }
+        #expect(try unsafe valueCall.unsafeInvoke(object) == 100)
+        #expect(try unsafe extraCall.unsafeInvoke(object) == 42)
+        #expect(try unsafe finalCall.unsafeInvoke(object) == 42)
+        try inheritedPlan.restore()
+        try unsafe extraPlan.install()
+        defer { try? extraPlan.restore() }
+        #expect(try unsafe valueCall.unsafeInvoke(object) == 42)
+        #expect(try unsafe extraCall.unsafeInvoke(object) == 100)
+        #expect(try unsafe finalCall.unsafeInvoke(object) == 42)
+        try extraPlan.restore()
+    }
+
 }
 #endif

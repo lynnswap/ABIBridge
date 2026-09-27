@@ -261,7 +261,7 @@ public actor NativeSwiftType {
 
 }
 
-private func swiftClassImage(_ type: AnyClass, named name: String, resolver: SymbolResolver) throws -> NativeImage {
+func swiftClassImage(_ type: AnyClass, named name: String, resolver: SymbolResolver) throws -> NativeImage {
     guard let path = class_getImageName(type) else {
         throw ABIResolutionError.declarationNotFound(
             .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data)
