@@ -122,6 +122,30 @@ def swift_replacement_probe(root, output, arch, sdk, authenticated, expected):
     return schemas
 
 
+def swift_callback_probe(common, root, output, arch, authenticated, expected):
+    object_file = output / f"{arch}-swift-callback.o"
+    run(*common, "-c", str(root / "Sources/ABIBridgeCore/SwiftCallback.S"), "-o", str(object_file))
+    require(header(object_file) == (0x0100000C, expected), f"Unexpected callback CPU subtype for {arch}")
+    symbols = {}
+    for line in run("xcrun", "nm", "-n", str(object_file)).splitlines():
+        match = re.match(r"^([0-9a-fA-F]+)\s+\w\s+(_ABISwiftCallback\w+)$", line)
+        if match:
+            symbols[match[2]] = int(match[1], 16)
+    page_size = symbols["_ABISwiftCallbackAssembly"] - symbols["_ABISwiftCallbackCodePage"]
+    require(page_size == 16384, f"Callback entries do not fill one maximum page on {arch}")
+    listing = run("xcrun", "otool", "-tvV", str(object_file))
+    object_file.with_suffix(".asm").write_text(listing)
+    table = function_body(listing, "ABISwiftCallbackCodePage")
+    branch = r"\bbraa\s+x16, x9\b" if authenticated else r"\bbr\s+x16\b"
+    require(len(re.findall(branch, table)) == page_size // 32, f"Incorrect callback entry stride or branch for {arch}")
+    require(len(re.findall(r"\bdmb\s+ishld\b", table)) == page_size // 32, f"Missing callback publication ordering for {arch}")
+    entry = function_body(listing, "ABISwiftCallbackAssembly")
+    require(re.search(r"\bstr\s+x20, \[sp, #(0xc8|200)\]", entry), f"Swift self register not captured for {arch}")
+    require(re.search(r"\bstr\s+x8, \[sp, #(0xc0|192)\]", entry), f"Swift indirect-result register not captured for {arch}")
+    require(("retab" in entry) == authenticated, f"Wrong callback return authentication for {arch}")
+    return {"pageBytes": page_size, "entryStride": 32, "entries": page_size // 32}
+
+
 def main():
     root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(description=__doc__)
@@ -162,9 +186,10 @@ def main():
                 f"Unexpected compilerAdvanceInteger arithmetic for {arch}")
         schemas = virtual_table_probe(common, root, arguments.output, arch, authenticated, expected)
         swift_schemas = swift_replacement_probe(root, arguments.output, arch, sdk, authenticated, expected)
+        callbacks = swift_callback_probe(common, root, arguments.output, arch, authenticated, expected)
         reports.append({"architecture": arch, "cpuType": "0x0100000c", "rawCPUSubtype": f"0x{expected:08x}",
                         "authenticatedCalls": authenticated, "checkedPointerArithmetic": arch == "arm64e.x1",
-                        "virtualTableDiscriminators": schemas, "swiftMethodSchemas": swift_schemas})
+                        "virtualTableDiscriminators": schemas, "swiftMethodSchemas": swift_schemas, "swiftCallbackEntries": callbacks})
     result = {"compiler": run("xcrun", "clang", "--version").splitlines()[0], "runtimeTested": False, "objects": reports}
     (arguments.output / "report.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2))

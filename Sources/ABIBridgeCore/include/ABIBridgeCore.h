@@ -33,5 +33,6 @@ void ABIFreeString(char *string);
 #include <ABIBridge/ImageObservation.h>
 #include <ABIBridge/ImportedHookMonitoring.h>
 #include <ABIBridge/SwiftInvocation.h>
+#include <ABIBridge/SwiftCallbacks.h>
 
 #endif

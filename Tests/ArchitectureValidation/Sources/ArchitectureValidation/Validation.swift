@@ -54,6 +54,8 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
     }
     let runtime = ABIRuntime()
     switch mode {
+    case "swift-callback":
+        checks += try await validateSwiftCallbacks()
     case "swift-replacement":
         checks += try await validateSwiftReplacement()
     case "virtual-public":

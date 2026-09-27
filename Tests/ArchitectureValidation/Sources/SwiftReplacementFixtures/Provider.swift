@@ -56,3 +56,34 @@ open class CoalescedChild: CoalescedParent {
     @inline(never) public final func finalValue() -> Int64 { 42 }
 }
 @inline(never) public func makeCoalescedChild() -> CoalescedChild { CoalescedChild() }
+
+public struct CallbackMixedResult {
+    public var a: Int64
+    public var b: Double
+    public var c: Int64
+    public var d: Double
+    public var checksum: Double { Double(a + c) + b + d }
+}
+public struct CallbackQuartet {
+    public var a, b, c, d: Int64
+    public var checksum: Int64 { a + b + c + d }
+}
+open class CallbackRenderer {
+    public let seed: Int64
+    public init(_ seed: Int64) { self.seed = seed }
+    @inline(never) open func mixed(
+        _ a0: Int64, _ a1: Int64, _ a2: Int64, _ a3: Int64, _ a4: Int64,
+        _ a5: Int64, _ a6: Int64, _ a7: Int64, _ a8: Int64,
+        _ d0: Double, _ d1: Double, _ d2: Double, _ d3: Double, _ d4: Double,
+        _ d5: Double, _ d6: Double, _ d7: Double, _ d8: Double
+    ) -> CallbackMixedResult {
+        let integers = a0 + a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8
+        let floating = d0 + d1 + d2 + d3 + d4 + d5 + d6 + d7 + d8
+        return .init(a: seed + integers, b: floating, c: seed + integers * 2, d: floating * 2)
+    }
+    @inline(never) open consuming func consumeSelf(_ value: Int64) -> Int64 { seed + value }
+    @inline(never) open func quartet(_ value: Int64) -> CallbackQuartet {
+        .init(a: seed + value, b: seed + value + 1, c: seed + value + 2, d: seed + value + 3)
+    }
+}
+@inline(never) public func makeCallbackRenderer(_ seed: Int64) -> CallbackRenderer { CallbackRenderer(seed) }

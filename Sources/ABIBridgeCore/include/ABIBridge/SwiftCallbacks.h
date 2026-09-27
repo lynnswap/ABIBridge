@@ -1,0 +1,66 @@
+#ifndef ABIBRIDGE_SWIFT_CALLBACKS_H
+#define ABIBRIDGE_SWIFT_CALLBACKS_H
+#include <ABIBridge/SwiftInvocation.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct ABISwiftCallback ABISwiftCallback;
+typedef struct ABISwiftIncomingCall ABISwiftIncomingCall;
+
+/// Functions describing one callback and its native value ownership. None may
+/// throw a language exception through this C boundary. The borrowed invocation
+/// is usable only during invoke, on its entering thread.
+typedef struct ABISwiftCallbackFunctions {
+    void (*invoke)(void *context, ABISwiftIncomingCall *call);
+    void (*releaseContext)(void *context);
+    /// Destroys an owned native result that was superseded or not returned.
+    /// Null is appropriate for trivially destructible result storage.
+    void (*destroyResult)(void *context, void *result);
+    /// Releases incoming consumed arguments/self when the untouched fallback
+    /// did not consume them. Ordinary guaranteed arguments need no destructor.
+    void (*destroyConsumedArguments)(void *context, const void *receiver, void *const *arguments, size_t count);
+} ABISwiftCallbackFunctions;
+
+/// Creates a native Swift entry from a copied concrete call interface and a
+/// nonnull fallback with the same physical ABI. Executable bytes are precompiled
+/// and remapped; no generated writable executable code is used.
+/// On success this takes ownership of context and fallbackOwner through their
+/// release functions; failure consumes neither. Keep fallback code alive via
+/// fallbackOwner or a lifetime managed by the caller.
+ABISwiftCallback *ABICreateSwiftCallback(ABISwiftCallInterface *interface,
+    ABIUnmanagedFunction fallback, ABISwiftCallbackFunctions functions, void *context,
+    void *fallbackOwner, void (*releaseFallbackOwner)(void *), ABIResolutionFailure **error);
+/// Borrows code while the callback remains alive. A published entry's owner must
+/// outlive all saved native pointers, including after logical invalidation.
+ABIUnmanagedFunction ABISwiftCallbackFunction(const ABISwiftCallback *callback);
+/// Releases captures once already-entered callbacks finish. Future entries call
+/// the fallback with their original register/stack arguments and Swift context.
+void ABIClearSwiftCallback(ABISwiftCallback *callback);
+/// Requires no future or in-flight users of the borrowed code address.
+void ABIReleaseSwiftCallback(ABISwiftCallback *callback);
+
+size_t ABISwiftIncomingArgumentCount(const ABISwiftIncomingCall *call);
+const void *ABISwiftIncomingContext(const ABISwiftIncomingCall *call);
+bool ABISwiftIncomingReadArgument(ABISwiftIncomingCall *call, size_t index,
+    void *output, size_t size, ABIResolutionFailure **error);
+/// Calls the captured fallback with supplied storage and receiver context. Each
+/// successful completion replaces the previous completed result. It does not
+/// change the incoming arguments used by automatic fallback. Consumed values
+/// and self require independently owned copies for each call.
+bool ABISwiftIncomingProceed(ABISwiftIncomingCall *call, void *const *arguments, size_t count,
+    const void *receiver, ABIResolutionFailure **error);
+/// Copies borrowed result bits. Nontrivial callers make their own value copy;
+/// the invocation still owns this result until it is replaced or returned.
+bool ABISwiftIncomingCopyResult(ABISwiftIncomingCall *call, void *output, size_t size,
+    ABIResolutionFailure **error);
+/// Transfers an independently owned result into this invocation on success.
+/// The source must not subsequently destroy the transferred value. No result
+/// assignment means the latest completed result, or untouched fallback if none.
+bool ABISwiftIncomingSetResult(ABISwiftIncomingCall *call, const void *value, size_t size,
+    ABIResolutionFailure **error);
+
+#ifdef __cplusplus
+}
+#endif
+#endif
