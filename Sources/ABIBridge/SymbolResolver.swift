@@ -211,17 +211,31 @@ final class SymbolResolver: Sendable {
         throw missing
     }
 
+    func image(forSwiftClass type: AnyClass, lookup: () throws -> NativeImage) throws -> NativeImage {
+        let key = ObjectIdentifier(type)
+        if let cached = state.withLock({ $0.classImages[key] }) { return cached }
+        let candidate = try lookup()
+        return withExtendedLifetime(candidate) {
+            state.withLock { state in
+                if let cached = state.classImages[key] { return cached }
+                state.classImages[key] = candidate
+                return candidate
+            }
+        }
+    }
+
     func resolveSwiftExtension(_ declaration: NativeDeclaration) throws -> ResolvedSymbol {
         try resolve(declaration, in: searchScope(.automatic, loading: .loadedOnly), extensionsOnly: true)
     }
 
     func removeCachedResults() {
         let removed = state.withLock { state in
-            let indexes = (state.indexes, state.imports, state.virtualEntries, state.automatic)
+            let indexes = (state.indexes, state.imports, state.virtualEntries, state.automatic, state.classImages)
             state.indexes = [:]
             state.imports = [:]
             state.virtualEntries = [:]
             state.automatic = nil
+            state.classImages = [:]
             return indexes
         }
         withExtendedLifetime(removed) {}
@@ -309,6 +323,7 @@ final class SymbolResolver: Sendable {
 
     private struct ResolutionState {
         var automatic: AutomaticScope?
+        var classImages: [ObjectIdentifier: NativeImage] = [:]
         var indexes: [NativeImageIdentity: SymbolIndex] = [:]
         var imports: [NativeImageIdentity: ImportIndex] = [:]
         var virtualEntries: [NativeImageIdentity: VirtualEntryIndex] = [:]

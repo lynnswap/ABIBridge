@@ -317,6 +317,13 @@ struct SymbolResolutionTests {
         #expect(try unsafe method.unsafeInvoke(on: child) == 42)
         let bound = try await runtime.object(child).method(named: "answer()", as: (() -> Int).self)
         #expect(try unsafe bound.unsafeInvoke() == 42)
+        let otherType = try await runtime.swiftType(named: module + ".Child", in: .path(second.libraryURL))
+        let otherInitialize = try await otherType.initializer(named: "init()", as: (() -> AnyObject).self)
+        let otherChild = try unsafe otherInitialize.unsafeInvoke()
+        for (object, expected) in [(child, 42), (otherChild, 7), (child, 42)] {
+            let method = try await runtime.object(object).method(named: "answer()", as: (() -> Int).self)
+            #expect(try unsafe method.unsafeInvoke() == expected)
+        }
     }
 
     @Test func automaticLookupToleratesUnrelatedLoaderChurn() async throws {
