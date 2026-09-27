@@ -103,7 +103,7 @@ public enum NativeDispatchError: Error, Sendable, Equatable {
 public final class NativeVTable {
     /// The number of function-pointer slots accessible from the address point.
     public let entryCount: Int
-    private let storage: NativeValue
+    let storage: NativeValue
 
     /// Borrows a readable absolute function-pointer table.
     ///
@@ -145,7 +145,7 @@ public final class NativeVTable {
         try unsafe self.init(borrowing: address, entryCount: entryCount, retaining: receiver)
     }
 
-    func target(at index: Int, authentication: NativePointerAuthentication) throws -> VirtualCallTarget {
+    func target(at index: Int, authentication: NativePointerAuthentication, retaining image: NativeImage? = nil) throws -> VirtualCallTarget {
         guard index >= 0, index < entryCount else {
             throw NativeDispatchError.entryOutOfBounds(index: index, count: entryCount)
         }
@@ -156,7 +156,7 @@ public final class NativeVTable {
                 authentication.keyCode, authentication.discriminator, authentication.addressDiversity,
                 &failure
             ) else { throw consumeNativeCallFailure(failure) }
-            return VirtualCallTarget(handle: handle, retaining: storage)
+            return VirtualCallTarget(handle: handle, retaining: storage, image: image)
         }
     }
 }
@@ -166,13 +166,18 @@ public final class NativeVTable {
 final class VirtualCallTarget {
     let handle: OpaquePointer
     private var owner: NativeValue?
-    init(handle: OpaquePointer, retaining owner: NativeValue) {
+    private let image: NativeImage?
+    init(handle: OpaquePointer, retaining owner: NativeValue, image: NativeImage?) {
         self.handle = handle
         self.owner = owner
+        self.image = image
     }
     deinit {
-        owner = nil
-        ABIReleaseVirtualCallTarget(handle)
+        // A replaced target may belong to a different image than its table.
+        withExtendedLifetime(image) {
+            owner = nil
+            ABIReleaseVirtualCallTarget(handle)
+        }
     }
     var function: ABIUnmanagedFunction? { ABIVirtualCallTargetFunction(handle) }
 }

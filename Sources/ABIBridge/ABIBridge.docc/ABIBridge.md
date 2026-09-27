@@ -79,6 +79,7 @@ print(symbol.image.path)
 - ``NativeCXXObject``
 - ``NativeCXXMethod``
 - ``NativeVTable``
+- ``NativeVTable/Entry``
 - ``NativePointerAuthentication``
 - ``NativeDispatchError``
 

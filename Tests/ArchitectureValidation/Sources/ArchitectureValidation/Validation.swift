@@ -54,6 +54,26 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
     }
     let runtime = ABIRuntime()
     switch mode {
+    case "virtual-entries":
+        for (kind, name, slot, discriminator) in [
+            (UInt32(0), "ABIVTable::Derived::value(int) const", 0, UInt(42474)),
+            (UInt32(1), "ABIVTable::Derived::adjusted(int) const", 0, UInt(2811)),
+            (UInt32(1), "ABIVTable::Derived::identity()", 1, UInt(62021))
+        ] {
+            let table = try unsafe NativeVTable(borrowing: ABINamedVirtualTable(kind)!, entryCount: kind == 0 ? 1 : 2)
+            let entry = try await table.entry(named: name, using: runtime)
+            let expected: NativePointerAuthentication = ABIValidationPACCompiled() ? .cxxVirtualFunction(discriminator: discriminator) : .unsigned
+            try check(entry.index == slot && entry.authentication == expected, "Original metadata identifies \(name) and its compiler slot schema")
+            let receiver = ABINamedVirtualReceiver(kind)!
+            let object = runtime.cxxObject(unsafe NativeValue(borrowing: receiver, as: try .opaque(named: "subobject")), typeNamed: "ABIVTable::Derived")
+            if slot == 1 {
+                let method = try unsafe object.virtualMethod(entry, as: (() -> UnsafeMutableRawPointer?).self)
+                try check(try unsafe method.unsafeInvoke() == receiver, "Named covariant thunk preserves the secondary return pointer")
+            } else {
+                let method = try unsafe object.virtualMethod(entry, as: ((Int32) -> Int32).self)
+                try check(try unsafe method.unsafeInvoke(2) == (kind == 0 ? 42 : 62), "Named virtual entry invokes the captured implementation")
+            }
+        }
     case "virtual-hooks":
         var published = false
         if let error = ABIValidateManagedVirtualHooks(false, &published) {

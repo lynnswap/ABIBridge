@@ -1,4 +1,5 @@
 import Synchronization
+import Darwin
 
 // Loader operations run outside the index lock: constructors and destructors
 // may reenter the native API while dyld holds its own lock.
@@ -152,9 +153,10 @@ final class SymbolResolver: Sendable {
 
     func removeCachedResults() {
         let removed = state.withLock { state in
-            let indexes = (state.indexes, state.imports)
+            let indexes = (state.indexes, state.imports, state.virtualEntries)
             state.indexes = [:]
             state.imports = [:]
+            state.virtualEntries = [:]
             return indexes
         }
         withExtendedLifetime(removed) {}
@@ -171,6 +173,32 @@ final class SymbolResolver: Sendable {
                 return candidate
             }
         }
+    }
+
+    func virtualEntry(named name: String, addressPoint: UInt, entryCount: Int) throws -> VirtualEntryResolution {
+        let (size, overflow) = entryCount.multipliedReportingOverflow(by: MemoryLayout<UInt>.size)
+        guard entryCount >= 0, !overflow, addressPoint != 0, UInt(size) <= UInt.max - addressPoint else {
+            throw ABIResolutionError.invalidAddress
+        }
+        var info = Dl_info()
+        guard dladdr(UnsafeRawPointer(bitPattern: addressPoint), &info) != 0, let header = info.dli_fbase,
+              let snapshot = try ImageSnapshot.current().first(where: { $0.identity.headerAddress == UInt64(UInt(bitPattern: header)) }) else {
+            throw ABIResolutionError.metadataUnavailable("The virtual table has no loaded-image metadata; supply explicit adapter metadata")
+        }
+        let cached = state.withLock { $0.virtualEntries[snapshot.identity] }
+        let index: VirtualEntryIndex
+        if let cached { index = cached }
+        else {
+            let candidate = try VirtualEntryIndex(image: snapshot.retain())
+            index = withExtendedLifetime(candidate) {
+                state.withLock { state in
+                    if let cached = state.virtualEntries[snapshot.identity] { return cached }
+                    state.virtualEntries[snapshot.identity] = candidate
+                    return candidate
+                }
+            }
+        }
+        return try index.match(named: name, addressPoint: addressPoint, entryCount: entryCount)
     }
 
     private func validate(_ declaration: NativeDeclaration) throws {
@@ -218,6 +246,7 @@ final class SymbolResolver: Sendable {
 private struct ResolutionState {
     var indexes: [NativeImageIdentity: SymbolIndex] = [:]
     var imports: [NativeImageIdentity: ImportIndex] = [:]
+    var virtualEntries: [NativeImageIdentity: VirtualEntryIndex] = [:]
 
     mutating func index(for image: NativeImage) -> SymbolIndex {
         if let cached = indexes[image.identity] { return cached }

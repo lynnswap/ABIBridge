@@ -68,6 +68,33 @@ An absolute table's address point starts at its first function slot, excluding R
 
 Lookup captures the selected function pointer and retains its implementation image when loader metadata is available. It also retains the supplied table owner, including any generated-code owner. Later table changes do not modify an existing handle.
 
+## Select by implementation name
+
+When the table's image has recoverable original chained fixups and symbols, select an entry using its implementation declaration:
+
+```swift
+let entry = try await table.entry(
+    named: "Example::Derived::current() const"
+)
+let current = try unsafe counter.virtualMethod(
+    entry, as: (() -> Int32).self
+)
+let value = try unsafe current.unsafeInvoke()
+```
+
+The table still supplies a known address point, entry count and subobject view. The name identifies the implementation recorded in that table, so an overridden slot uses the derived method's qualified name. Receiver-adjustment and covariant-return thunks match the method they implement and retain their original pointer-authentication schema. Lookup uses original file metadata, so a live slot already containing a hook still selects the same entry. Capturing the method subsequently reads the current slot.
+
+Queries share per-image metadata through `ABIRuntime.shared`; pass `using:` for an independent runtime. Missing files, stripped entry identities and unsupported fixup layouts produce `metadataUnavailable`. Multiple matching slots or folded symbol aliases produce `ambiguousDeclaration`. These results do not fall back to guessing from live target addresses. Shared-cache rewritten tables and relative layouts require an explicit adapter:
+
+```swift
+let entry = try unsafe table.entry(
+    at: layout.currentSlot,
+    authentication: layout.currentAuthentication
+)
+```
+
+C callers include `<ABIBridge/VirtualEntries.h>` and use `ABICopyVirtualEntry(runtime, addressPoint, entryCount, name, &failure)`. The returned owner retains the table image; `ABIVirtualEntryGet` copies its slot and authentication metadata, and `ABIReleaseVirtualEntry` releases it. Table acquisition and bounds remain caller responsibilities in every frontend.
+
 ## Match pointer authentication to the target
 
 ``NativePointerAuthentication`` accepts an explicit key, discriminator, and address-diversity setting. Use `unsigned` only for actually unsigned storage. On builds without the authenticated-call ABI, the stored pointer is used unchanged.

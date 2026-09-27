@@ -1,4 +1,5 @@
 #include <ABIBridge/Inspection.h>
+#include <ABIBridge/VirtualEntries.h>
 #include <assert.h>
 #include <dlfcn.h>
 #include <stdio.h>
@@ -95,6 +96,18 @@ int main(int argc, char **argv) {
     // Independent address oracle for this compiler-generated fixture.
     assert(ABIResolvedSymbolAddress(table) ==
            dlsym(library, "_ZTVN16ABIBridgeFixture14VirtualCounterE"));
+    // This fixture has one primary absolute entry after two ABI header words.
+    const void *address_point = (const char *)ABIResolvedSymbolAddress(table) + 2 * sizeof(void *);
+    ABIVirtualEntry *entry = ABICopyVirtualEntry(runtime, address_point, 1,
+        "ABIBridgeFixture::VirtualCounter::current() const", &failure);
+    assert(entry && !failure);
+    ABIVirtualEntryInfo selected = ABIVirtualEntryGet(entry);
+    assert(selected.addressPoint == address_point && selected.index == 0 && selected.entryCount == 1);
+    assert(selected.key == ABIAuthenticationUnsigned);
+    assert(strstr(ABIVirtualEntrySymbolName(entry), "current"));
+    ABIReleaseVirtualEntry(entry);
+    ABIReleaseVirtualEntry(NULL);
+
     ABIImageInfo image;
     ABIResolvedSymbolImage(table, &image);
     assert(image.header && image.generation && image.path);
