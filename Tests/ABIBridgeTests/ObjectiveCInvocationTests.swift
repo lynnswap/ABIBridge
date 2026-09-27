@@ -228,6 +228,16 @@ struct ObjectiveCInvocationTests {
         #expect(try unsafe method.unsafeInvoke() == 61)
     }
 
+    @Test func forwardedInvocationsRemainIndependentAfterLaterCalls() throws {
+        let fixture = ABIEscapingForwardingFixture()
+        let method = try ABIRuntime.shared.object(fixture).method(
+            selector: "remember:", as: ((Int) -> Int).self
+        )
+        #expect(try unsafe method.unsafeInvoke(10) == 11)
+        #expect(try unsafe method.unsafeInvoke(20) == 21)
+        #expect(fixture.savedArguments.map(\.intValue) == [10, 20])
+    }
+
     @Test func runtimeMethodWithoutOffsets() throws {
         let className = "ABIInvocationDynamic_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
         let cls = try #require(objc_allocateClassPair(NSObject.self, className, 0))

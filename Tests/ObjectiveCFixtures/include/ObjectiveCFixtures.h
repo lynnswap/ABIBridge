@@ -30,6 +30,11 @@ typedef union ABIUnionFixture { NSInteger integer; double real; } ABIUnionFixtur
 /// A forwarding-only receiver with no concrete implementation of answer.
 @interface ABIForwardingFixture : NSObject
 @end
+/// Keeps forwarded invocations to inspect their arguments after later calls.
+@interface ABIEscapingForwardingFixture : NSObject
+@property(nonatomic, readonly) NSArray<NSNumber *> *savedArguments;
+@end
+
 typedef int32_t (^ABIIntegerBlock)(int32_t);
 typedef id _Nonnull (^ABIObjectBlock)(void);
 typedef void (^ABIArrayCompletion)(NSArray<NSString *> *);
