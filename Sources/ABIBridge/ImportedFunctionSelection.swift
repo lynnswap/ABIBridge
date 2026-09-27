@@ -3,7 +3,9 @@ import Foundation
 import MachO
 import MachOKit
 
-final class ImportedFunctionSelection {
+// Selection metadata and retained image leases are immutable. The C slot records
+// contain addresses; reading or changing their pointees uses the native transport.
+final class ImportedFunctionSelection: @unchecked Sendable {
     let references: [ImportedReference]
     let slots: [ABIImportSlot]
 

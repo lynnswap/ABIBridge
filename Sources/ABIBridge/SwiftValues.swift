@@ -45,7 +45,23 @@ struct SwiftValueCodec<Value>: Sendable {
 
     func copy(from storage: NativeValueStorage, retaining owner: Any?) throws -> Value {
         if let cValue { return try cValue.decode(storage, retaining: owner) }
+        if objectResult, !(Value.self is any NativeOptionalValue.Type), storage.address.load(as: UnsafeRawPointer?.self) == nil {
+            throw ABIInvocationError.unexpectedNilResult(expected: String(reflecting: Value.self))
+        }
         return storage.address.load(as: Value.self)
+    }
+
+    func copyNativeStorage(_ storage: NativeValueStorage) throws -> NativeValueStorage {
+        if cValue != nil {
+            let copy = NativeValueStorage(size: type.size, alignment: type.alignment)
+            if type.size != 0 { copy.address.copyMemory(from: storage.address, byteCount: type.size) }
+            return copy
+        }
+        return try encode(copy(from: storage, retaining: nil))
+    }
+
+    func destroyNativeValue(at address: UnsafeMutableRawPointer) {
+        if cValue == nil { address.assumingMemoryBound(to: Value.self).deinitialize(count: 1) }
     }
 
     func decode(_ storage: NativeValueStorage, retaining owner: Any?) throws -> Value {

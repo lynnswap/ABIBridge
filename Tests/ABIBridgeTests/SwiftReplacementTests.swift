@@ -12,18 +12,19 @@ final class CompiledSwiftReplacementFixture {
     let runtime = ABIRuntime()
     var callerModule: String { module + "Caller" }
 
-    init(interposable: Bool = false, writable: Bool = true) throws {
+    init(interposable: Bool = false, writable: Bool = true,
+         providerExtra: String = "", callerExtra: String = "") throws {
         // Writable linking is confined to this disposable validation library.
         let writableFlags = writable ? ["-Xlinker", "-no_data_const"] : []
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("ArchitectureValidation/Sources")
         let source = try String(contentsOf: root.appendingPathComponent("SwiftReplacementFixtures/Provider.swift"), encoding: .utf8)
-        provider = try FixtureLibrary(load: false, swiftModule: module, swiftSource: source,
+        provider = try FixtureLibrary(load: false, swiftModule: module, swiftSource: source + "\n" + providerExtra,
             linkArguments: ["-O", "-swift-version", "6", "-emit-module"] + writableFlags + (interposable ? ["-Xlinker", "-interposable"] : []))
         // swiftc places a module next to the output library when no path is given.
         let callerSource = try String(contentsOf: root.appendingPathComponent("SwiftReplacementCaller/Caller.swift"), encoding: .utf8)
             .replacingOccurrences(of: "SwiftReplacementFixtures", with: module)
-        caller = try FixtureLibrary(load: false, swiftModule: module + "Caller", swiftSource: callerSource,
+        caller = try FixtureLibrary(load: false, swiftModule: module + "Caller", swiftSource: callerSource + "\n" + callerExtra,
             linkArguments: ["-O", "-swift-version", "6", "-I", provider.directory.path, provider.libraryURL.path] + writableFlags)
         try provider.load(); try caller.load()
     }

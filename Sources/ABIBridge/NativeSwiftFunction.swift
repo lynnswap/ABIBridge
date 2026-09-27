@@ -79,10 +79,12 @@ public struct NativeSwiftFunction<Result, each Argument>: Sendable {
     private let call: SwiftCall<Result, repeat each Argument>
     private let context: UInt
     private let typeOwner: NativeSwiftType?
+    let consumesArguments: Bool
 
     init(symbol: ResolvedSymbol, metadata: Any.Type? = nil, owner: NativeSwiftType? = nil,
          consumesArguments: Bool = false) throws {
         self.symbol = symbol
+        self.consumesArguments = consumesArguments
         context = metadata.map { unsafeBitCast($0, to: UInt.self) } ?? 0
         typeOwner = owner
         call = try SwiftCall(consumesArguments: consumesArguments)

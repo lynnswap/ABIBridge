@@ -36,6 +36,8 @@ ABIVirtualCallTarget *ABICopyVirtualCallTarget(
 // the original storage address, not the temporary copy. Zero is a null target.
 ABIVirtualCallTarget *ABICopyFunctionSlotTarget(uintptr_t bits, const void *storage,
     int32_t key, uintptr_t discriminator, bool addressDiversity, ABIResolutionFailure **error);
+/// Captures an already signed generic function pointer and its containing image.
+ABIVirtualCallTarget *ABICopyFunctionTarget(ABIUnmanagedFunction function, ABIResolutionFailure **error);
 uint64_t ABIVirtualCallTargetGeneration(const ABIVirtualCallTarget *target);
 void ABIReleaseVirtualCallTarget(ABIVirtualCallTarget *target);
 /// A signed generic C function pointer borrowed from a retained target.
