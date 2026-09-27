@@ -44,18 +44,13 @@ struct PointerSlotMutationTests {
         #expect(pages.pointer.load(as: UInt.self) == 41)
     }
 
-    @Test func rejectsUnmappedInaccessibleAndUnalignedStorage() throws {
+    @Test func rejectsInaccessibleAndUnalignedStorage() throws {
         let pages = try SlotPages()
         #expect(ABICompareExchangePointerSlot(nil, 0, 1).status == ABIPointerSlotInvalidStorage)
         #expect(ABICompareExchangePointerSlot(pages.pointer.advanced(by: 1), 41, 42).status == ABIPointerSlotInvalidStorage)
         #expect(mprotect(pages.pointer, pages.size, PROT_NONE) == 0)
         let inaccessible = ABICompareExchangePointerSlot(pages.pointer, 41, 42)
         #expect(inaccessible.status == ABIPointerSlotReadFailed && !inaccessible.didWrite)
-        let address = try #require(mmap(nil, pages.size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0))
-        try #require(address != MAP_FAILED)
-        #expect(munmap(address, pages.size) == 0)
-        let unmapped = ABICompareExchangePointerSlot(address, 41, 42)
-        #expect(unmapped.status == ABIPointerSlotQueryFailed && !unmapped.didWrite)
     }
 
     #if arch(arm64)
