@@ -2,6 +2,7 @@ import ABIBridgeCore
 import Foundation
 import MachOKit
 import MachO
+import Synchronization
 
 struct VirtualEntryResolution: Sendable {
     let image: NativeImage
@@ -17,6 +18,26 @@ final class VirtualEntryIndex: Sendable {
     }
     let image: NativeImage
     private let targets: [UInt64: Result<Target, ABIResolutionError>]
+    private struct DecodedTarget: Sendable {
+        let declarations: Set<[UInt8]>
+        let uniqueSymbol: String?
+    }
+    private let decoded = Mutex<[UInt64: DecodedTarget]>([:])
+
+    private func declarations(at address: UInt64, for target: Target) -> DecodedTarget {
+        decoded.withLock { cache in
+            if let cached = cache[address] { return cached }
+            let keys = target.symbols.compactMap { symbol -> [UInt8]? in
+                guard let name = DeclarationKey.demangle(symbol, language: .cxx) else { return nil }
+                let prefixes = ["non-virtual thunk to ", "virtual thunk to ", "covariant return thunk to "]
+                let method = prefixes.first(where: name.hasPrefix).map { String(name.dropFirst($0.count)) } ?? name
+                return DeclarationKey.make(method)
+            }
+            let result = DecodedTarget(declarations: Set(keys), uniqueSymbol: target.symbols.count == 1 ? target.symbols.first : nil)
+            cache[address] = result
+            return result
+        }
+    }
 
     init(image: NativeImage) throws {
         self.image = image
@@ -90,17 +111,12 @@ final class VirtualEntryIndex: Sendable {
                 throw ABIResolutionError.metadataUnavailable("No original absolute fixup identifies virtual entry \(index); supply explicit adapter metadata")
             }
             let info = try target.get()
-            let spellings = info.symbols.compactMap { symbol -> (String, String)? in
-                guard let decoded = DeclarationKey.demangle(symbol, language: .cxx) else { return nil }
-                let prefixes = ["non-virtual thunk to ", "virtual thunk to ", "covariant return thunk to "]
-                let method = prefixes.first(where: decoded.hasPrefix).map { String(decoded.dropFirst($0.count)) } ?? decoded
-                return (symbol, method)
-            }
             guard !info.symbols.isEmpty else {
                 throw ABIResolutionError.metadataUnavailable("Original virtual entry \(index) has no recoverable symbol identity; supply explicit adapter metadata")
             }
-            guard spellings.contains(where: { DeclarationKey.make($0.1) == key }) else { continue }
-            guard info.symbols.count == 1, let symbol = spellings.first?.0 else {
+            let parsed = declarations(at: address, for: info)
+            guard parsed.declarations.contains(key) else { continue }
+            guard let symbol = parsed.uniqueSymbol else {
                 throw ABIResolutionError.ambiguousDeclaration(declaration, candidates: info.symbols.sorted())
             }
             found.append(.init(image: image, index: index, symbol: symbol, authentication: info.authentication))

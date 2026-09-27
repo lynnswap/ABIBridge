@@ -138,3 +138,5 @@ Run `swift-lookup` in `ArchitectureTestHost` to measure automatic nominal-descri
 ## C and C++ lookup performance
 
 Run `native-lookup` in `ArchitectureTestHost` to compare cold C function lookup and the mean of 100 repeated lookups, C++ member lookup, a second member of the same class, and missing C/C++ names. Successful calls must match the compiler fixture; missing names must report `declarationNotFound`. The missing-name controls exercise shared-cache fallback. As with `swift-lookup`, cold means cleared runtime indexes, and timing reports have no hardware-dependent pass/fail threshold.
+
+The `virtual-entries` report includes 1000-lookup means for the primary, secondary, and covariant fixture entries. Each repeated selection must preserve the slot index and original authentication schema.
