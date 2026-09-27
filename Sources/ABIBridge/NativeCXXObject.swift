@@ -101,8 +101,11 @@ public final class NativeCXXObject {
         as signature: ((repeat each Argument) -> Result).Type,
         using adapter: ResolvedSymbol? = nil
     ) throws -> NativeCXXMethod<Result, repeat each Argument> {
-        try unsafe virtualMethod(at: entry.index, in: entry.table,
-            authentication: entry.authentication, as: signature, using: adapter)
+        try NativeCXXMethod(binding: CXXMethodBinding(
+            receiver: storage,
+            target: .virtual(entry.table.target(at: entry.index, authentication: entry.authentication, retaining: entry.image)),
+            adapter: adapter
+        ))
     }
 
     /// Captures an absolute virtual-function entry and binds this receiver.

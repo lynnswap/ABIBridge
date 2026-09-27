@@ -98,6 +98,31 @@ struct VirtualEntryTests {
         }
     }
 
+    @Test func capturedReplacementRetainsOriginalClassImage() async throws {
+        let library = try fixture(); defer { library.cleanup() }
+        let replacement = try FixtureLibrary(cxxSource: "extern \"C\" int ABINamedReplacement(void *, int x) { return x + 100; }")
+        defer { replacement.cleanup() }
+        let runtime = ABIRuntime()
+        let address = try pointer(library, "ABINamedTable", 0)
+        let table = try unsafe NativeVTable(borrowing: address, entryCount: 1)
+        var entry: NativeVTable.Entry? = try await table.entry(named: "NamedVirtual::Derived::value(int) const", using: runtime)
+        weak var originalLease = entry?.image?.lease
+        let target = try SymbolResolver().resolve(.init(name: "ABINamedReplacement", language: .c), in: .path(replacement.libraryURL))
+        let bits = address.assumingMemoryBound(to: UInt.self)
+        let saved = bits.pointee
+        bits.pointee = unsafe target.withUnsafeAddress { UInt(bitPattern: $0) }
+        defer { bits.pointee = saved }
+        let receiver = try pointer(library, "ABINamedReceiver", 0)
+        let object = runtime.cxxObject(unsafe NativeValue(borrowing: receiver, as: try .opaque(named: "receiver")), typeNamed: "NamedVirtual::Derived")
+        var method: NativeCXXMethod<Int32, Int32>? = try unsafe object.virtualMethod(entry!, as: ((Int32) -> Int32).self)
+        entry = nil
+        await runtime.removeCachedResults()
+        #expect(originalLease != nil)
+        #expect(try unsafe method!.unsafeInvoke(2) == 102)
+        method = nil
+        #expect(originalLease == nil)
+    }
+
     @Test func duplicateEntriesAreAmbiguousAndExplicitBoundsRemainAvailable() async throws {
         let library = try fixture(); defer { library.cleanup() }
         let address = try pointer(library, "ABINamedTable", 2)
