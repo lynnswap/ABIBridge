@@ -254,6 +254,7 @@ public struct NativeMethod<Result, each Argument> {
 struct ObjCMethodSignature<Result, each Argument> {
     let arguments: (repeat ObjCValueCodec<each Argument>)
     let result: ObjCValueCodec<Result>
+    private let argumentCount: Int
 
     init(handle: OpaquePointer) throws {
         var count = 0
@@ -264,6 +265,7 @@ struct ObjCMethodSignature<Result, each Argument> {
                 found: ["\(ABIObjCInvocationParameterCount(handle)) arguments"]
             )
         }
+        argumentCount = count
         var index = 0
         func makeCodec<Value>(_ type: Value.Type) throws -> ObjCValueCodec<Value> {
             defer { index += 1 }
@@ -290,6 +292,7 @@ struct ObjCMethodSignature<Result, each Argument> {
         using body: ([UnsafeRawPointer], UnsafeMutableRawPointer) throws -> Void
     ) throws -> Result {
         var storage: [NativeValueStorage] = []
+        storage.reserveCapacity(argumentCount)
         for (codec, value) in repeat (each arguments, each values) {
             storage.append(try codec.encode(value))
         }

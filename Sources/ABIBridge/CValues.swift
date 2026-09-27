@@ -17,8 +17,8 @@ func consumeNativeCallFailure(_ failure: OpaquePointer?, domain: String = "ABIBr
 // field types and permits concurrent preparation without mutating them.
 final class CValueType: @unchecked Sendable {
     let handle: OpaquePointer
-    var size: Int { ABIValueTypeSize(handle) }
-    var alignment: Int { ABIValueTypeAlignment(handle) }
+    let size: Int
+    let alignment: Int
 
     init(scalar: Int) throws {
         var failure: OpaquePointer?
@@ -26,6 +26,8 @@ final class CValueType: @unchecked Sendable {
             throw consumeNativeCallFailure(failure)
         }
         self.handle = handle
+        size = ABIValueTypeSize(handle)
+        alignment = ABIValueTypeAlignment(handle)
     }
 
     init(fields: [CValueType]) throws {
@@ -39,6 +41,8 @@ final class CValueType: @unchecked Sendable {
         }
         guard let handle else { throw consumeNativeCallFailure(failure) }
         self.handle = handle
+        size = ABIValueTypeSize(handle)
+        alignment = ABIValueTypeAlignment(handle)
     }
 
     deinit { ABIReleaseValueType(handle) }

@@ -28,6 +28,7 @@ struct CFunctionCall<Result, each Argument>: Sendable {
     private let arguments: (repeat CValueCodec<each Argument>)
     private let result: CValueCodec<Result>
     private let hiddenPointerCount: Int
+    private let argumentCount: Int
 
     init(hiddenPointerCount: Int = 0) throws {
         self.hiddenPointerCount = hiddenPointerCount
@@ -38,6 +39,7 @@ struct CFunctionCall<Result, each Argument>: Sendable {
             types = Array(repeating: try CValueType(scalar: ABIValuePointer), count: hiddenPointerCount)
         }
         for codec in repeat each arguments { types.append(codec.type) }
+        argumentCount = types.count
         interface = try CCallInterface(result: result.type, parameters: types)
         self.arguments = arguments
         self.result = result
@@ -50,13 +52,15 @@ struct CFunctionCall<Result, each Argument>: Sendable {
         _ values: repeat each Argument
     ) throws -> Result {
         precondition(hiddenPointers.count == hiddenPointerCount)
-        var storage = hiddenPointers.map { pointer in
+        var storage: [NativeValueStorage] = []
+        storage.reserveCapacity(argumentCount)
+        for pointer in hiddenPointers {
             let value = NativeValueStorage(
                 size: MemoryLayout<UnsafeRawPointer>.size,
                 alignment: MemoryLayout<UnsafeRawPointer>.alignment
             )
             value.store(pointer)
-            return value
+            storage.append(value)
         }
         for (codec, value) in repeat (each arguments, each values) {
             storage.append(try codec.encode(value))

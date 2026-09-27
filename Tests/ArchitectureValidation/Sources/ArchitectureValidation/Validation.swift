@@ -54,6 +54,8 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
     }
     let runtime = ABIRuntime()
     switch mode {
+    case "invocation-timing":
+        checks += try await validateInvocationTiming()
     case "native-lookup":
         checks += try await validateNativeLookup()
     case "swift-lookup":
