@@ -86,14 +86,14 @@ extension NativeSwiftMethod {
         onFailure: @escaping @Sendable (any Error) -> Void,
         body: @escaping @Sendable (NativeSwiftMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
     ) async throws -> NativeSwiftVirtualHook {
-        let receiverView = try SwiftClassHookReceiver(self)
+        let receiverView = SwiftHookReceiverView(self)
         let entry = try SwiftClassDispatch(metadata: type.metadata, declaration: symbol.declaration, resolver: type.resolver)
         guard !entry.isSetter || consumesArguments else {
             throw ABIResolutionError.unsupportedDeclaration("Resolve a Swift setter through setter(named:as:) to establish its consumed argument ownership.")
         }
         let prepared = try SwiftHookCallbackSignature<Result, repeat each Argument>()
         let signature = try prepared.erased(consumingArguments: consumesArguments,
-            classReceiver: receiver.isConsuming, retaining: self)
+            receiver: receiver, retaining: self)
         let handler = prepareSwiftMethodHandler(method: self, prepared: prepared, receiver: receiverView,
             requiresMainActor: requiresMainActor, onFailure: onFailure, body: body)
         // A file-backed inherited entry can also be an importing reference. Use

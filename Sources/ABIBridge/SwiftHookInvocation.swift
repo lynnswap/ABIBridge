@@ -92,12 +92,12 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
         }
         return (repeat try decode(each arguments))
     }
-    func erased(consumingArguments: Bool, classReceiver: Bool? = nil, retaining owner: any Sendable) throws -> SwiftHookSignature {
+    func erased(consumingArguments: Bool, receiver: SwiftReceiverPlan? = nil, retaining owner: any Sendable) throws -> SwiftHookSignature {
         var types: [CValueType] = [], identities: [ObjectIdentifier] = [ObjectIdentifier(Result.self)]
         for codec in repeat each arguments { types.append(codec.type) }
         for type in repeat (each Argument).self { identities.append(ObjectIdentifier(type)) }
         return try SwiftHookSignature(result: result.type, arguments: types, identities: identities,
-            consumesArguments: consumingArguments, classReceiver: classReceiver, owner: owner, cloneArguments: { storage in
+            consumesArguments: consumingArguments, receiver: receiver, owner: owner, cloneArguments: { storage in
                 var index = 0, result: [NativeValueStorage] = []
                 for codec in repeat each arguments {
                     result.append(try codec.copyNativeStorage(storage[index])); index += 1
@@ -116,9 +116,8 @@ final class SwiftHookSignature: @unchecked Sendable {
     let arguments: [CValueType]
     let identities: [ObjectIdentifier]
     let consumesArguments: Bool
-    // Nil denotes a function's uninterpreted context; false/true are borrowing
-    // and consuming class instances. Each callback owns its own receiver codec.
-    let classReceiver: Bool?
+    let explicitArgumentCount: Int
+    let receiver: SwiftReceiverPlan?
     let owner: any Sendable
     let interface: SwiftCallInterface
     let cloneArguments: ([NativeValueStorage]) throws -> [NativeValueStorage]
@@ -126,22 +125,39 @@ final class SwiftHookSignature: @unchecked Sendable {
     let destroyResult: (UnsafeMutableRawPointer) -> Void
     let destroyArguments: (UnsafeBufferPointer<UnsafeMutableRawPointer?>) -> Void
     init(result: CValueType, arguments: [CValueType], identities: [ObjectIdentifier], consumesArguments: Bool,
-         classReceiver: Bool?,
+         receiver: SwiftReceiverPlan?,
          owner: any Sendable, cloneArguments: @escaping ([NativeValueStorage]) throws -> [NativeValueStorage],
          cloneResult: @escaping (NativeValueStorage) throws -> NativeValueStorage,
          destroyResult: @escaping (UnsafeMutableRawPointer) -> Void,
          destroyArguments: @escaping (UnsafeBufferPointer<UnsafeMutableRawPointer?>) -> Void) throws {
-        self.result = result; self.arguments = arguments; self.identities = identities
+        self.result = result; self.identities = identities
+        explicitArgumentCount = arguments.count
+        self.arguments = arguments + (receiver?.trailingType.map { [$0] } ?? [])
         self.consumesArguments = consumesArguments; self.owner = owner
-        self.classReceiver = classReceiver
+        self.receiver = receiver
         self.cloneArguments = cloneArguments; self.cloneResult = cloneResult
         self.destroyResult = destroyResult; self.destroyArguments = destroyArguments
-        interface = try SwiftCallInterface(result: result, parameters: arguments)
+        interface = try SwiftCallInterface(result: result, parameters: self.arguments)
     }
     func matches(_ other: SwiftHookSignature) -> Bool {
-        identities == other.identities && consumesArguments == other.consumesArguments && classReceiver == other.classReceiver
+        identities == other.identities && consumesArguments == other.consumesArguments && matchesReceiver(other.receiver)
             && ABIValueTypesEqual(result.handle, other.result.handle) && arguments.count == other.arguments.count
             && zip(arguments, other.arguments).allSatisfy { ABIValueTypesEqual($0.handle, $1.handle) }
+    }
+    private func matchesReceiver(_ other: SwiftReceiverPlan?) -> Bool {
+        switch (receiver, other) {
+        case (nil, nil): return true
+        case let (first?, second?):
+            guard first.mode == second.mode, first.isConsuming == second.isConsuming else { return false }
+            if first.mode == .object { return true }
+            return first.isMutating == second.isMutating && first.codec.representation == second.codec.representation
+                && ABIValueTypesEqual(first.codec.type.handle, second.codec.type.handle)
+        default: return false
+        }
+    }
+
+    func preservingReceiver(_ explicit: [NativeValueStorage], from incoming: [NativeValueStorage]) -> [NativeValueStorage] {
+        receiver?.mode == .value ? explicit + [incoming[explicitArgumentCount]] : explicit
     }
     func readArguments(_ call: OpaquePointer) throws -> [NativeValueStorage] {
         try arguments.enumerated().map { index, type in
@@ -152,23 +168,35 @@ final class SwiftHookSignature: @unchecked Sendable {
         }
     }
     func proceed(_ call: OpaquePointer, arguments: [NativeValueStorage]) throws -> NativeValueStorage {
-        let values = consumesArguments ? try cloneArguments(arguments) : arguments
-        let addresses: [UnsafeMutableRawPointer?] = values.map(\.address)
-        var error: OpaquePointer?
-        let context = ABISwiftIncomingContext(call)
-        var consumedReceiver: Unmanaged<AnyObject>?
-        if classReceiver == true {
-            guard let context else { throw ABIInvocationError.incompatibleValue(expected: "a live Swift receiver", actual: "nil") }
-            consumedReceiver = Unmanaged<AnyObject>.fromOpaque(context).retain()
+        var values = consumesArguments ? try cloneArguments(arguments) : Array(arguments.prefix(explicitArgumentCount))
+        if let receiver, receiver.mode == .value {
+            let value = arguments[explicitArgumentCount]
+            values.append(receiver.isConsuming ? try receiver.codec.clone(value) : value)
         }
+        var error: OpaquePointer?
+        var context = ABISwiftIncomingContext(call)
+        var consumedObject: Unmanaged<AnyObject>?
+        var consumedValue: NativeValueStorage?
+        if let receiver, receiver.isConsuming && receiver.mode != .value {
+            guard let context else { throw ABIInvocationError.incompatibleValue(expected: "a live Swift receiver", actual: "nil") }
+            if receiver.mode == .object {
+                consumedObject = Unmanaged<AnyObject>.fromOpaque(context).retain()
+            } else {
+                consumedValue = try receiver.codec.clone(readReceiver(call, arguments: arguments))
+            }
+        }
+        if let consumedValue { context = UnsafeRawPointer(consumedValue.address) }
+        let addresses: [UnsafeMutableRawPointer?] = values.map(\.address)
         var invoked = false
-        defer { if !invoked { consumedReceiver?.release() } }
-        let ok = withExtendedLifetime(values) { addresses.withUnsafeBufferPointer {
+        defer { if !invoked { consumedObject?.release() } }
+        let ok = withExtendedLifetime((values, consumedValue)) { addresses.withUnsafeBufferPointer {
             ABISwiftIncomingProceed(call, $0.baseAddress, $0.count, context, &error)
         } }
         guard ok else { throw consumeNativeCallFailure(error) }
         invoked = true
-        if consumesArguments { for value in values { value.relinquishValue() } }
+        if consumesArguments { for value in values.prefix(explicitArgumentCount) { value.relinquishValue() } }
+        if receiver?.isConsuming == true && receiver?.mode == .value { values[explicitArgumentCount].relinquishValue() }
+        consumedValue?.relinquishValue()
         let bytes = NativeValueStorage(size: result.size, alignment: result.alignment)
         do {
             guard ABISwiftIncomingCopyResult(call, bytes.address, result.size, &error) else { throw consumeNativeCallFailure(error) }
@@ -176,18 +204,31 @@ final class SwiftHookSignature: @unchecked Sendable {
         } catch { throw SwiftHookCompletedResultError(underlying: error) }
     }
 
-    func readReceiver(_ call: OpaquePointer) throws -> NativeValueStorage {
-        guard classReceiver != nil, let context = ABISwiftIncomingContext(call) else {
+    func readReceiver(_ call: OpaquePointer, arguments: [NativeValueStorage]) throws -> NativeValueStorage {
+        guard let receiver else {
+            throw ABIResolutionError.unsupportedDeclaration("This invocation has no instance receiver.")
+        }
+        if receiver.mode == .value { return arguments[explicitArgumentCount] }
+        guard let context = ABISwiftIncomingContext(call) else {
             throw ABIInvocationError.incompatibleValue(expected: "a live Swift receiver", actual: "nil")
         }
-        let storage = NativeValueStorage(size: MemoryLayout<UnsafeRawPointer>.size, alignment: MemoryLayout<UnsafeRawPointer>.alignment)
-        storage.address.storeBytes(of: context, as: UnsafeRawPointer.self)
+        let storage = NativeValueStorage(size: receiver.codec.type.size, alignment: receiver.codec.type.alignment)
+        if receiver.mode == .object { storage.address.storeBytes(of: context, as: UnsafeRawPointer.self) }
+        else { storage.address.copyMemory(from: context, byteCount: receiver.codec.type.size) }
         return storage
     }
 
     func destroyConsumedInputs(context: UnsafeRawPointer?, arguments: UnsafeBufferPointer<UnsafeMutableRawPointer?>) {
         if consumesArguments { destroyArguments(arguments) }
-        if classReceiver == true, let context { Unmanaged<AnyObject>.fromOpaque(context).release() }
+        guard let receiver, receiver.isConsuming else { return }
+        switch receiver.mode {
+        case .object:
+            if let context { Unmanaged<AnyObject>.fromOpaque(context).release() }
+        case .address:
+            if let context { receiver.codec.destroy(UnsafeMutableRawPointer(mutating: context)) }
+        case .value:
+            receiver.codec.destroy(arguments[explicitArgumentCount]!)
+        }
     }
 }
 

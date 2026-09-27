@@ -69,10 +69,10 @@ extension NativeSwiftMethod {
         onFailure: @escaping @Sendable (any Error) -> Void,
         body: @escaping @Sendable (NativeSwiftMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
     ) async throws -> NativeSwiftImportedFunctionHook {
-        let receiverView = try SwiftClassHookReceiver(self)
+        let receiverView = SwiftHookReceiverView(self)
         let prepared = try SwiftHookCallbackSignature<Result, repeat each Argument>()
         let signature = try prepared.erased(consumingArguments: consumesArguments,
-            classReceiver: receiver.isConsuming, retaining: self)
+            receiver: receiver, retaining: self)
         let handler = prepareSwiftMethodHandler(method: self, prepared: prepared, receiver: receiverView,
             requiresMainActor: requiresMainActor, onFailure: onFailure, body: body)
         let selection = try await runtime.swiftHookSelection(declaration: symbol.declaration, importer: importer, provider: provider)

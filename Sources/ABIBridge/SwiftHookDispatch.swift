@@ -49,10 +49,10 @@ private final class SwiftHookExecution {
             return try invoke(count - 1, arguments: arguments)
         }
         let step = SwiftHookStep()
-        let readReceiver: (() throws -> NativeValueStorage)? = signature.classReceiver == nil ? nil : { [self] in try signature.readReceiver(call) }
+        let readReceiver: (() throws -> NativeValueStorage)? = signature.receiver == nil ? nil : { [self] in try signature.readReceiver(call, arguments: arguments) }
         let frame = SwiftHookFrame(receiver: readReceiver) { [self] values in
             do {
-                let result = try invoke(count - 1, arguments: values)
+                let result = try invoke(count - 1, arguments: signature.preservingReceiver(values, from: arguments))
                 step.record(.success(result))
                 return result
             } catch let error as SwiftHookCompletedResultError {
