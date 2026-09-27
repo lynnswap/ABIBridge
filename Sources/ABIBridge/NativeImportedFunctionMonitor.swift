@@ -69,9 +69,9 @@ public final class NativeImportedFunctionMonitor: @unchecked Sendable {
 }
 
 private final class ImportedMonitorCallbacks {
-    let callback: ImportedCallbackBox
+    let callback: FunctionCallbackBox
     let update: @Sendable (NativeImportedImageUpdate) -> Void
-    init(_ callback: ImportedCallbackBox, update: @escaping @Sendable (NativeImportedImageUpdate) -> Void) {
+    init(_ callback: FunctionCallbackBox, update: @escaping @Sendable (NativeImportedImageUpdate) -> Void) {
         self.callback = callback; self.update = update
     }
 }
@@ -105,7 +105,7 @@ extension ABIRuntime {
             parameters.withUnsafeBufferPointer { types in
                 ABICreateImportedHookMonitor(query.retainedHandle(), callback.result.handle, types.baseAddress, types.count,
                     context, { context, call, _ in
-                        invokeImportedCallback(Unmanaged<ImportedMonitorCallbacks>.fromOpaque(context!).takeUnretainedValue().callback, call!)
+                        invokeFunctionCallback(Unmanaged<ImportedMonitorCallbacks>.fromOpaque(context!).takeUnretainedValue().callback, call!)
                     }, { context, error in
                         Unmanaged<ImportedMonitorCallbacks>.fromOpaque(context!).takeUnretainedValue().callback.failure(importedHookFailure(error!))
                     }, { context, update in

@@ -47,8 +47,8 @@ template<class R,class... A> struct imported_monitor_factory<R(A...)> {
         static_assert(std::is_nothrow_invocable_v<OnFailure,const resolution_error&>, "Failure handlers must be noexcept.");
         static_assert(std::is_nothrow_invocable_v<OnImageUpdate,const imported_image_update&>, "Image handlers must be noexcept.");
         if (query.name.find('\0') != std::string::npos) throw resolution_error(ABIFailureInvalidRequest, "Declaration contains a NUL.");
-        auto result = imported_type<R>();
-        std::array<std::shared_ptr<ABIValueType>,sizeof...(A)> parameters{imported_type<A>()...};
+        auto result = callback_type<R>();
+        std::array<std::shared_ptr<ABIValueType>,sizeof...(A)> parameters{callback_type<A>()...};
         std::array<const ABIValueType*,sizeof...(A)> pointers{};
         for (size_t i=0; i<pointers.size(); ++i) pointers[i]=parameters[i].get();
         using Callback = imported_callback_state<R(A...),Body,OnFailure>;
@@ -66,7 +66,7 @@ template<class R,class... A> struct imported_monitor_factory<R(A...)> {
             }, [](void *context, ABIImportedImageUpdate update) {
                 static_cast<State*>(context)->update(imported_image_update(update));
             }, [](void *context) { delete static_cast<State*>(context); }, &error);
-        imported_require(handle != nullptr, error);
+        callback_require(handle != nullptr, error);
         return imported_hook_monitor::adopt(handle);
     }
 };

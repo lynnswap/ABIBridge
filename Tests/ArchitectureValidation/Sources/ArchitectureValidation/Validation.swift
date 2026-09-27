@@ -54,6 +54,45 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
     }
     let runtime = ABIRuntime()
     switch mode {
+    case "virtual-public":
+        var nativePublished = false
+        if let error = ABIValidatePublicVirtualHooks(false, &nativePublished) {
+            throw ArchitectureValidationFailure(description: String(cString: error))
+        }
+        checks.append(nativePublished ? "Public C/C++ virtual hooks preserve shared chains and thunks" : "Public C/C++ hooks report TPRO refusal without changing dispatch")
+        for (kind, name, slot) in [
+            (UInt32(0), "ABIVTable::Derived::value(int) const", 0),
+            (UInt32(1), "ABIVTable::Derived::adjusted(int) const", 0),
+            (UInt32(1), "ABIVTable::Derived::identity()", 1)
+        ] {
+            let table = try unsafe NativeVTable(borrowing: ABINamedVirtualTable(kind)!, entryCount: kind == 0 ? 1 : 2)
+            let entry = try await table.entry(named: name, using: runtime)
+            let receiver = ABINamedVirtualReceiver(kind)!
+            let object = runtime.cxxObject(unsafe NativeValue(borrowing: receiver, as: try .opaque(named: "subobject")), typeNamed: "ABIVTable::Derived")
+            let errors = ArchitectureHookErrors()
+            do {
+                if slot == 1 {
+                    let hook = try unsafe entry.hookSharedCalls(as: (() -> UnsafeMutableRawPointer?).self, onFailure: { errors.append($0) }) { call in try call.proceed() }
+                    defer { hook.invalidate() }
+                    let method = try unsafe object.virtualMethod(entry, as: (() -> UnsafeMutableRawPointer?).self)
+                    try check(try unsafe method.unsafeInvoke() == receiver, "Public Swift covariant callback preserves the return subobject")
+                } else {
+                    let hook = try unsafe entry.hookSharedCalls(as: ((Int32) -> Int32).self, onFailure: { errors.append($0) }) { call, value in try call.proceed(value + 1) + 10 }
+                    defer { hook.invalidate() }
+                    let method = try unsafe object.virtualMethod(entry, as: ((Int32) -> Int32).self)
+                    try check(try unsafe method.unsafeInvoke(2) == (kind == 0 ? 53 : 73), "Public Swift shared callback preserves the incoming receiver")
+                    hook.invalidate()
+                    try check(try unsafe method.unsafeInvoke(2) == (kind == 0 ? 42 : 62), "Captured published entry passes through after invalidation")
+                }
+                try check(errors.isEmpty, "Public Swift callback reports no failure")
+            } catch let error as NativeVirtualHookInstallationError {
+                let mutation = error.registration.slot?.mutation
+                guard !nativePublished, let mutation, !mutation.didWrite,
+                      mutation.status == ABIPointerSlotProtectFailed, mutation.systemErrorCode == KERN_PROTECTION_FAILURE,
+                      mutation.regionFlags & UInt32(VM_REGION_FLAG_TPRO_ENABLED) != 0 else { throw error }
+                try check(errors.isEmpty, "Public Swift hook reports TPRO refusal before invoking callbacks")
+            }
+        }
     case "virtual-entries":
         for (kind, name, slot, discriminator) in [
             (UInt32(0), "ABIVTable::Derived::value(int) const", 0, UInt(42474)),

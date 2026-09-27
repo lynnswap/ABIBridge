@@ -29,6 +29,7 @@ void ABIFreeString(char *string);
 #include <ABIBridge/ImportedHooks.h>
 #include <ABIBridge/ManagedVirtualEntry.h>
 #include <ABIBridge/VirtualEntries.h>
+#include <ABIBridge/VirtualHooks.h>
 #include <ABIBridge/ImageObservation.h>
 #include <ABIBridge/ImportedHookMonitoring.h>
 #include <ABIBridge/SwiftInvocation.h>
