@@ -19,6 +19,18 @@ xcodebuild test \
   -destination 'platform=macOS,arch=arm64'
 ```
 
+CI runs the package in three independent processes. Use the same selections locally:
+
+```sh
+bash scripts/test-package.sh core
+bash scripts/test-package.sh invocation
+bash scripts/test-package.sh hooks
+```
+
+Each command has a separate default build directory under `.build/package-tests`, so they can run concurrently. `ABI_TEST_BUILD_DIR` selects a cache location; do not share it between simultaneous builds. Additional arguments are forwarded to `xcodebuild`. Use `all` for the full suite.
+
+The core shard is the complement of the explicit invocation/hook suite lists, so new or otherwise unassigned tests remain covered automatically. Keep those lists disjoint when moving suites. Existing suite serialization and intentional concurrency inside tests are preserved. CI retains failing shard test logs and result bundles for seven days; the test step has its own timeout so diagnostic upload can run before the job limit.
+
 Verify the native bridge in an optimized build as well:
 
 ```sh
@@ -64,7 +76,7 @@ xcodebuild build \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-For watchOS, add `WATCHOS_DEPLOYMENT_TARGET=11.4` so dependencies also build within the supported deployment range. CI uses Xcode 26.6 on `macos-26` for macOS tests and iOS, visionOS, watchOS, and tvOS builds. The package suite, optimized bridge tests, native consumers, and architecture validation run as four independent macOS jobs. Each owns its build directories; PR and release validation require every job to succeed.
+For watchOS, add `WATCHOS_DEPLOYMENT_TARGET=11.4` so dependencies also build within the supported deployment range. CI uses Xcode 26.6 on `macos-26` for macOS tests and iOS, visionOS, watchOS, and tvOS builds. Three package test shards, optimized bridge tests, native consumers, and architecture validation run as six independent macOS jobs. Each owns its build directories; PR and release validation require every job to succeed. Release targets that predate the shard script run the original full package suite in the core job.
 
 ## Architecture validation
 
