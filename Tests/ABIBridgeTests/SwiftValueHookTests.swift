@@ -160,6 +160,36 @@ struct SwiftValueHookTests {
         #expect(try unsafe oracle.unsafeInvoke(text) == "value:" + text)
     }
 
+    @Test func mutatingStringSnapshotsObserveNativeWriteback() async throws {
+        let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
+        public struct MutableTextValue {
+            public var text: String
+            public init(_ text: String) { self.text = text }
+            @inline(never) public mutating func append(_ suffix: String) -> String { text += suffix; return text }
+        }
+        """, callerExtra: """
+        @inline(never) public func appendTextValue(_ input: String, _ suffix: String) -> String {
+            var value = MutableTextValue(input)
+            let result = value.append(suffix)
+            return result + "|" + value.text
+        }
+        """); defer { fixture.cleanup() }
+        let type = try await fixture.runtime.swiftType(named: fixture.module + ".MutableTextValue", as: String.self, in: fixture.providerScope)
+        let method = try await type.method(named: "append(_:)", as: ((String) -> String).self, mutating: true)
+        let oracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".appendTextValue(_:_:)", as: ((String, String) -> String).self, in: fixture.callerScope)
+        let hook = try await unsafe method.hookImportedCalls(in: fixture.callerScope, onFailure: { Issue.record("Unexpected: \($0)") }) { call, suffix in
+            let before = try call.receiver(as: String.self)
+            let result = try call.proceed(suffix + " edited")
+            #expect(try call.receiver(as: String.self) == before + suffix + " edited")
+            return result + " returned"
+        }
+        defer { hook.invalidate() }
+        let input = String(repeating: "mutable receiver", count: 100)
+        for _ in 0..<20 {
+            #expect(try unsafe oracle.unsafeInvoke(input, " suffix") == input + " suffix edited returned|" + input + " suffix edited")
+        }
+    }
+
     @Test func consumingReferenceFieldReleasesUnusedIncomingOwnership() async throws {
         let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
         public final class ValueToken { public init() {} }

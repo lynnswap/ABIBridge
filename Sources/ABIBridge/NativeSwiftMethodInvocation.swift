@@ -51,7 +51,10 @@ public struct NativeSwiftMethodInvocation<Result, each Argument>: CustomStringCo
     ///
     /// A class reference preserves the incoming object's identity and ordinary
     /// Swift lifetime. Property changes are visible to subsequent implementations
-    /// and to the native caller. Pointer adapters retain their own pointee rules.
+    /// and to the native caller. A value receiver is a snapshot in its selected
+    /// representation; editing that copy does not write back. A later read sees
+    /// native changes made through an original mutating receiver address.
+    /// Pointer adapters retain their own pointee rules.
     /// - Throws: Scope/thread errors or an incompatible receiver representation.
     public func receiver<Receiver>(as type: Receiver.Type) throws -> Receiver {
         try frame.receiver { try receiverView.decode($0, as: type) }
@@ -59,8 +62,9 @@ public struct NativeSwiftMethodInvocation<Result, each Argument>: CustomStringCo
 
     /// Calls the next implementation with replacement explicit arguments.
     ///
-    /// The incoming receiver is preserved. A consuming method receives an
-    /// independent owned reference for each continuation, so the callback can
+    /// The incoming receiver is preserved. Mutating value methods use its
+    /// original address. A consuming method receives an independent owned
+    /// receiver copy for each continuation, so the callback can
     /// inspect its receiver before and after proceeding. Errors after a completed
     /// continuation preserve its latest result without repeating native effects.
     public func proceed(_ values: repeat each Argument) throws -> Result {

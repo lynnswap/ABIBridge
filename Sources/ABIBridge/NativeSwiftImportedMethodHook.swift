@@ -27,13 +27,16 @@ private func validateImportedSwiftMember(_ selection: ImportedFunctionSelection,
 }
 
 extension NativeSwiftMethod {
-    /// Intercepts importing references to this ordinary Swift class member.
+    /// Intercepts importing references to this concrete Swift instance member.
     ///
     /// The callback receives scoped access to the actual incoming receiver.
     /// Import selection, chaining, failure recovery and process-lived code follow
     /// the Swift imported-function hook contract. These imports are independent
     /// of metadata dispatch unless both operations select the same pointer slot.
-    /// Value receivers and lifecycle/coroutine entries require separate support.
+    /// Value receivers use the representation selected during type lookup.
+    /// Mutating methods keep the caller's receiver address; consuming methods
+    /// receive independent owned receiver storage for each continuation.
+    /// Lifecycle/coroutine entries and unestablished layouts require separate support.
     /// - Parameters:
     ///   - importer: Loaded images containing references to the implementation.
     ///   - provider: Optional recorded-dependency filter, including reexports.

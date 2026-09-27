@@ -97,3 +97,23 @@ open class HookRenderer {
     @inline(never) open consuming func consume(_ value: Int64) -> Int64 { count + value }
 }
 @inline(never) public func makeHookRenderer(_ count: Int64) -> HookRenderer { HookRenderer(count) }
+
+public struct HookCounter {
+    public var count: Int64
+    public init(_ count: Int64) { self.count = count }
+    @inline(never) public func adding(_ value: Int64) -> Int64 { count + value }
+    @inline(never) public mutating func increment(_ value: Int64) -> Int64 { count += value; return count }
+    @inline(never) public func stack(_ a: Int64, _ b: Int64, _ c: Int64, _ d: Int64, _ e: Int64, _ f: Int64, _ g: Int64, _ h: Int64, _ i: Int64, _ j: Int64, _ k: Int64, _ l: Int64) -> Int64 { count+a+b+c+d+e+f+g+h+i+j+k+l }
+}
+public struct HookTextValue {
+    public var text: String
+    public init(_ text: String) { self.text = text }
+    @inline(never) public consuming func consume() -> String { "value:" + text }
+    @inline(never) public mutating func append(_ suffix: String) -> String { text += suffix; return text }
+}
+public struct HookWideValue {
+    public var a,b,c,d,e: Int64
+    public init(_ seed: Int64) { a=seed; b=seed+1; c=seed+2; d=seed+3; e=seed+4 }
+    @inline(never) public func sum(_ value: Int64) -> Int64 { a+b+c+d+e+value }
+    @inline(never) public consuming func consume(_ value: Int64) -> Int64 { a+b+c+d+e+value }
+}
