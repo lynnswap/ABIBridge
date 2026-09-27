@@ -1,6 +1,7 @@
 #include <ABIBridge/VirtualHooks.h>
 #include <ABIBridge/ManagedVirtualEntry.h>
 #include "ManagedFunctionHooks.hpp"
+#include <climits>
 
 namespace {
 ABIImportedHook *transport(ABIVirtualHook *hook) { return reinterpret_cast<ABIImportedHook*>(hook); }
@@ -26,7 +27,7 @@ ABIVirtualHook *ABIInstallSharedVirtualHook(ABIVirtualEntryInfo entry,
     abibridge::TransferredContext storage{storageContext,releaseStorage};
     // Create directly: a temporary Callback would release context on destruction.
     std::unique_ptr<Callback> state(new Callback{context,callback,failure,release});
-    if ((count && !parameters) || count == SIZE_MAX) return failed("Invalid explicit virtual argument list.");
+    if ((count && !parameters) || count >= UINT_MAX) return failed("Invalid explicit virtual argument list.");
     ABIResolutionFailure *error=nullptr;
     std::unique_ptr<ABIValueType,decltype(&ABIReleaseValueType)> receiver(ABICreateScalarType(ABIValuePointer,&error),ABIReleaseValueType);
     if (!receiver) return reinterpret_cast<ABIVirtualHook*>(ABICreateFailedImportedHook(error));
@@ -64,7 +65,7 @@ bool ABIVirtualReadArgument(ABIVirtualInvocation *call,size_t index,void *bytes,
     return ABIImportedReadArgument(transport(call),index+1,bytes,size,error);
 }
 bool ABIVirtualProceed(ABIVirtualInvocation *call,void *const *arguments,size_t count,ABIResolutionFailure **error) {
-    if ((count && !arguments) || count == SIZE_MAX) {
+    if ((count && !arguments) || count >= UINT_MAX) {
         if (error) *error=ABICreateResolutionFailure(ABIFailureInvalidRequest,"Invalid explicit virtual arguments.");
         return false;
     }

@@ -1,5 +1,6 @@
 #include <ABIBridge/VirtualHooks.h>
 #include <assert.h>
+#include <limits.h>
 #include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,6 +15,10 @@ static bool callback(void *context,ABIVirtualInvocation *call,ABIResolutionFailu
     int value=0;
     if(!ABIVirtualReadArgument(call,0,&value,sizeof(value),error)) return false;
     ++value; void *arguments[]={&value};
+    ABIResolutionFailure *oversized=NULL;
+    assert(!ABIVirtualProceed(call,arguments,UINT_MAX,&oversized));
+    assert(oversized && ABIResolutionFailureCode(oversized)==ABIFailureInvalidRequest);
+    ABIReleaseResolutionFailure(oversized);
     if(!ABIVirtualProceed(call,arguments,1,error)) return false;
     int result=0;
     if(!ABIVirtualCopyResult(call,&result,sizeof(result),error)) return false;
@@ -48,11 +53,12 @@ int main(int argc,char **argv) {
     ABIReleaseVirtualHook(hook); assert(released==1);
     ABIReleaseVirtualHook(NULL);
     integer=ABICreateScalarType(ABIValueInt32,&error); assert(integer && !error);
-    for(int inner=0; inner<2; ++inner) {
+    for(int inner=0; inner<4; ++inner) {
         const ABIValueType *invalid[]={NULL};
         expected_released=released+1;
         ABIVirtualHook *bad=ABIInstallSharedVirtualHook(info,malloc(1),release_storage,
-            integer,inner ? invalid : NULL,1,malloc(1),callback,failure,release);
+            integer,inner ? invalid : NULL,inner==2 ? UINT_MAX : inner==3 ? SIZE_MAX : 1,
+            malloc(1),callback,failure,release);
         assert(bad && ABIVirtualHookFailure(bad));
         assert(released==expected_released && storage_released==inner+1);
         ABIReleaseVirtualHook(bad);

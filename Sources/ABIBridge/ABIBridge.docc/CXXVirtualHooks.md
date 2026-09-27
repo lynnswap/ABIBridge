@@ -31,6 +31,26 @@ let entry = try unsafe table.entry(
 
 The adapter must establish the actual slot and schema. Direct interception of relative tables is unsupported. An adapter can be used here only when the calls of interest dispatch through its absolute entry. A method declaration alone does not establish a callable signature or reconstruct class layout.
 
+## Edit argument objects
+
+A pointer argument or pointer-backed `ABIBridgeValue` adapter refers to the original native object. Its writable properties can be changed before continuing, and the native result or resulting state can be processed afterward. For an adapter named `RequestView` that describes a live C++ request pointer:
+
+```swift
+let hook = try unsafe entry.hookSharedCalls(
+    as: ((RequestView) -> Int32).self,
+    onFailure: { print($0) }
+) { call, request in
+    request.value = 7
+    let result = try call.proceed(request)
+    request.observed += 1
+    return result
+}
+```
+
+`RequestView` supplies the actual pointer/layout or compiled accessor contract; ABIBridge does not infer arbitrary C++ properties from their names. Passing a different adapter/pointer to `proceed` changes the argument seen by the downstream call. Mutating an object's properties changes that object for every owner, while replacing the argument does not overwrite the caller's reference variable. Supported value-type arguments are copied; modify a local copy and pass it to `proceed` to change the downstream value. Native `inout` and ownership-transfer conventions are separate contracts.
+
+Object mutations made before a callback fails are not rolled back. If no continuation completed, fallback receives the original argument references, which may now point to modified objects. If a continuation completed, its result is preserved without repeating the native call. See <doc:ObjectiveCMethodHooks> for directly typed Objective-C object arguments and dynamic setter calls.
+
 ## Understand scope and lifetime
 
 This operation changes one **shared table entry**. Calls on every object using it can enter the callback, including objects other than the one used to obtain the table. It does not create a per-object shadow table. Direct, qualified, inlined or devirtualized calls bypass that entry. A function pointer captured before installation also bypasses the new dispatcher.
