@@ -450,7 +450,7 @@ struct SymbolResolutionTests {
         #expect(index.matches(exact).isEmpty)
         index.appendSharedCacheSymbols([
             IndexedSymbol(name: "__ZN15ABICacheFixture3addEii", address: UInt64(expected), source: .sharedCache)
-        ])
+        ], matching: SymbolQuery(declaration))
         let resolved = try #require(try index.resolve(declaration, source: .sharedCache))
         #expect(unsafe resolved.withUnsafeAddress { UInt(bitPattern: $0) } == expected)
         let exactResolved = try #require(try index.resolve(exact, source: .sharedCache))

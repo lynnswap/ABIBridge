@@ -223,7 +223,7 @@ final class SymbolResolver: Sendable {
             // Reuse file mappings within this lookup; retained per-image
             // indexes cache the resulting symbols across future lookups.
             let cache = SharedCacheSymbols()
-            let additions = missing.map { (candidates[$0], cache.symbols(in: candidates[$0].image, swiftModule: query.swiftModule)) }
+            let additions = missing.map { (candidates[$0], cache.symbols(in: candidates[$0].image, matching: query)) }
             let fallback = try state.withLock { _ in
                 for (index, symbols) in additions where !index.hasSharedCacheSymbols(for: query) {
                     index.appendSharedCacheSymbols(symbols, matching: query)

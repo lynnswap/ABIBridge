@@ -54,7 +54,8 @@ struct SwiftSymbolIndexTests {
         index.appendSharedCacheSymbols([.init(name: "_$s6Second4echoyyF", address: address, source: .sharedCache)], matching: second)
         #expect(try index.resolve(first, source: .sharedCache) != nil)
         #expect(try index.resolve(second, source: .sharedCache) != nil)
-        index.appendSharedCacheSymbols([])
+        let unfiltered = SymbolQuery(.init(name: "protocol conformance descriptor for First.Value : Swift.Equatable in First", language: .swift, kind: .data))
+        index.appendSharedCacheSymbols([], matching: unfiltered)
         #expect(index.hasSharedCacheSymbols(for: exact))
         #expect(try index.resolve(exact, source: .sharedCache) != nil)
     }
