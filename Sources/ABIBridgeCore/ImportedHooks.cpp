@@ -1,6 +1,7 @@
 #include <ABIBridge/ImportedHooks.h>
 #include <ABIBridge/Memory.h>
 #include "NativeValueType.hpp"
+#include "ManagedFunctionHooks.hpp"
 #include <atomic>
 #include <algorithm>
 #include <cstring>
@@ -18,19 +19,25 @@ bool fail(ABIResolutionFailure **out, int32_t code, const char *message) {
     if (out) *out = ABICreateResolutionFailure(code, message);
     return false;
 }
+struct SlotLifetime {
+    std::shared_ptr<void> owner;
+    Target target{nullptr, ABIReleaseVirtualCallTarget};
+    ~SlotLifetime() { owner.reset(); }
+};
 struct Callback {
     void *context;
     ABIImportedCallback callback;
     ABIImportedFailureHandler failure;
     ABIImportedContextRelease release;
+    std::vector<std::shared_ptr<SlotLifetime>> lifetimes;
     ~Callback() { release(context); }
 };
 using Chain = std::vector<std::shared_ptr<Callback>>;
 struct Entry {
     ABIImportSlot slot;
-    std::shared_ptr<ABIImportSelection> owner;
+    std::shared_ptr<SlotLifetime> lifetime;
+    std::vector<std::shared_ptr<void>> joinedOwners;
     Interface interface{nullptr, ABIReleaseCallInterface};
-    Target target{nullptr, ABIReleaseVirtualCallTarget};
     ABICallClosure *closure = nullptr;
     uintptr_t original = 0, installed = 0;
     bool published = false, detached = false;
@@ -39,7 +46,12 @@ struct Entry {
     std::vector<size_t> contract;
     std::mutex mutex;
     std::shared_ptr<const Chain> chain = std::make_shared<Chain>();
-    ~Entry() { if (closure && !published) ABIReleaseCallClosure(closure); }
+    ~Entry() {
+        if (closure && !published) ABIReleaseCallClosure(closure);
+        chain.reset(); joinedOwners.clear(); lifetime.reset();
+        // Caller cleanup can execute native destruction code. Keep the
+        // captured implementation leased until those owners have retired.
+    }
 };
 struct Registry { std::mutex mutex; std::map<std::pair<uintptr_t,uint64_t>, std::unique_ptr<Entry>> entries; };
 Registry& registry() { static auto *r = new Registry; return *r; }
@@ -81,7 +93,7 @@ void invoke(Entry& entry, const Chain& chain, size_t count, void *const *args, v
         // Preparation establishes the full non-null call contract. No foreign
         // exception may unwind across this C/libffi boundary.
         ABIResolutionFailure *error = nullptr;
-        const bool ok = ABIUnsafeInvokeCCallInterface(entry.interface.get(), ABIVirtualCallTargetFunction(entry.target.get()), output, args, &error);
+        const bool ok = ABIUnsafeInvokeCCallInterface(entry.interface.get(), ABIVirtualCallTargetFunction(entry.lifetime->target.get()), output, args, &error);
         if (!ok) std::terminate(); // Internal prepared-call invariant.
         return;
     }
@@ -150,39 +162,46 @@ ABIImportedHook *ABICreateFailedImportedHook(ABIResolutionFailure *error) {
     auto hook = std::make_unique<ABIImportedHook>(); hook->failure.reset(error); return hook.release();
 }
 
-ABIImportedHook *ABICreateImportedHook(ABIImportSelection *selection, const ABIValueType *resultType,
-    const ABIValueType *const *parameters, size_t count, void *context, ABIImportedCallback callback,
-    ABIImportedFailureHandler onFailure, ABIImportedContextRelease release) {
+ABIImportedHook *abibridge::createManagedFunctionHook(std::vector<ManagedFunctionSlot> selected,
+    const ABIValueType *resultType, const ABIValueType *const *parameters, size_t count,
+    void *context, ABIImportedCallback callback, ABIImportedFailureHandler onFailure,
+    ABIImportedContextRelease release) {
     if (!release) return nullptr;
-    auto behavior = std::shared_ptr<Callback>(new Callback{context,callback,onFailure,release});
+    TransferredContext transferred{context, release};
+    auto ownedCallback = std::unique_ptr<Callback>(new Callback{context,callback,onFailure,release});
+    transferred.relinquish();
+    auto behavior = std::shared_ptr<Callback>(std::move(ownedCallback));
     auto hook = std::make_unique<ABIImportedHook>();
-    if (!selection || !callback || !onFailure) {
-        hook->failure.reset(ABICreateResolutionFailure(ABIFailureInvalidRequest, "A selection, callback and failure handler are required.")); return hook.release();
+    if (selected.empty() || !callback || !onFailure) {
+        hook->failure.reset(ABICreateResolutionFailure(ABIFailureInvalidRequest, "Function slots, a callback and a failure handler are required.")); return hook.release();
     }
     ABIResolutionFailure *failure = nullptr;
     Interface interface(ABICreateCCallInterface(resultType,parameters,count,&failure), ABIReleaseCallInterface);
     if (!interface) { hook->failure.reset(failure); return hook.release(); }
     std::vector<size_t> contract; typeKey(resultType->storage,contract); contract.push_back(count);
     for (size_t i=0;i<count;++i) typeKey(parameters[i]->storage,contract);
-    const auto slots = ABIImportSelectionCount(selection);
-    if (!slots) { hook->failure.reset(ABICreateResolutionFailure(ABIFailureDeclarationNotFound,"No matching imported function slots.")); return hook.release(); }
-    ABIRetainImportSelection(selection);
-    auto owner = std::shared_ptr<ABIImportSelection>(selection, ABIReleaseImportSelection);
+    const auto slots = selected.size();
     hook->slots.reserve(slots);
+    behavior->lifetimes.reserve(slots);
+    for (auto& slot : selected) {
+        auto lifetime=std::make_shared<SlotLifetime>();
+        lifetime->owner=std::move(slot.owner);
+        behavior->lifetimes.push_back(std::move(lifetime));
+    }
     std::vector<std::unique_ptr<Entry>> candidates(slots);
     // Capturing/retaining target images may enter dyld. Do that before writer locks.
     for (size_t i=0;i<slots;++i) {
-        const auto slot = ABIImportSelectionGet(selection,i);
+        const auto slot = selected[i].description;
         hook->slots.push_back({slot});
-        auto entry = std::make_unique<Entry>(); entry->slot = slot; entry->owner = owner;
+        auto entry = std::make_unique<Entry>(); entry->slot = slot; entry->lifetime = behavior->lifetimes[i];
         entry->contract = contract; entry->resultSize = ABIValueTypeSize(resultType);
         for (size_t p=0;p<count;++p) entry->parameterSizes.push_back(ABIValueTypeSize(parameters[p]));
         ABIRetainCallInterface(interface.get()); entry->interface.reset(interface.get());
         if (!readBits(*entry, entry->original) || !entry->original) {
-            hook->failedIndex=i; hook->failure.reset(ABICreateResolutionFailure(ABIFailureInvalidAddress,"An imported function slot is unreadable or null.")); return hook.release();
+            hook->failedIndex=i; hook->failure.reset(ABICreateResolutionFailure(ABIFailureInvalidAddress,"A function slot is unreadable or null.")); return hook.release();
         }
-        entry->target.reset(ABICopyVirtualCallTarget(reinterpret_cast<void*>(slot.slot),slot.key,slot.discriminator,slot.addressDiversity,&failure));
-        if (!entry->target) { hook->failedIndex=i; hook->failure.reset(failure); return hook.release(); }
+        entry->lifetime->target.reset(ABICopyVirtualCallTarget(reinterpret_cast<void*>(slot.slot),slot.key,slot.discriminator,slot.addressDiversity,&failure));
+        if (!entry->lifetime->target) { hook->failedIndex=i; hook->failure.reset(failure); return hook.release(); }
         entry->chain = std::make_shared<Chain>(Chain{behavior});
         entry->closure = ABICreateCallClosure(interface.get(), [](void *context, void *result, void *const *args) {
             auto& entry = *static_cast<Entry*>(context);
@@ -192,7 +211,7 @@ ABIImportedHook *ABICreateImportedHook(ABIImportSelection *selection, const ABIV
         }, entry.get(), &failure);
         if (!entry->closure) { hook->failedIndex=i; hook->failure.reset(failure); return hook.release(); }
         if (!ABIEncodePointerSlotFunction(ABICallClosureFunction(entry->closure),reinterpret_cast<void*>(slot.slot),slot.key,slot.discriminator,slot.addressDiversity,&entry->installed)) {
-            hook->failedIndex=i; hook->failure.reset(ABICreateResolutionFailure(ABIFailureInvalidRequest,"Invalid import authentication schema.")); return hook.release();
+            hook->failedIndex=i; hook->failure.reset(ABICreateResolutionFailure(ABIFailureInvalidRequest,"Invalid function-slot authentication schema.")); return hook.release();
         }
         candidates[i]=std::move(entry);
     }
@@ -202,12 +221,13 @@ ABIImportedHook *ABICreateImportedHook(ABIImportSelection *selection, const ABIV
         Entry *entry = nullptr;
         bool inserted = false, activated = false;
         std::shared_ptr<const Chain> before, after;
+        std::shared_ptr<void> joinedOwner;
     };
     std::vector<Plan> plans(slots);
     const auto empty = std::make_shared<const Chain>();
-    Failure changedError(ABICreateResolutionFailure(ABIFailureHookDisplaced,"Another writer displaced the imported hook."),ABIReleaseResolutionFailure);
-    Failure contractError(ABICreateResolutionFailure(ABIFailureSignatureMismatch,"Existing import hook uses a different signature or authentication schema."),ABIReleaseResolutionFailure);
-    Failure mutationError(ABICreateResolutionFailure(ABIFailureOther,"Imported slot publication or protection restoration failed; inspect the mutation result."),ABIReleaseResolutionFailure);
+    Failure changedError(ABICreateResolutionFailure(ABIFailureHookDisplaced,"Another writer displaced the function hook."),ABIReleaseResolutionFailure);
+    Failure contractError(ABICreateResolutionFailure(ABIFailureSignatureMismatch,"Existing function hook uses a different signature or authentication schema."),ABIReleaseResolutionFailure);
+    Failure mutationError(ABICreateResolutionFailure(ABIFailureOther,"Function-slot publication or protection restoration failed; inspect the mutation result."),ABIReleaseResolutionFailure);
     hook->identity = behavior.get();
     {
         auto& r=registry(); std::lock_guard writer(r.mutex);
@@ -228,6 +248,10 @@ ABIImportedHook *ABICreateImportedHook(ABIImportSelection *selection, const ABIV
                     std::lock_guard lock(entry.mutex);
                     plan.before=entry.chain;
                     auto next=std::make_shared<Chain>(*entry.chain); next->push_back(behavior); plan.after=next;
+                    if (selected[i].retainOwnerOnOverlap) {
+                        plan.joinedOwner=candidates[i]->lifetime;
+                        entry.joinedOwners.reserve(entry.joinedOwners.size()+1);
+                    }
                 } else {
                     plan.before=empty; plan.after=candidates[i]->chain;
                     const auto position=r.entries.emplace(key,std::move(candidates[i])).first;
@@ -249,6 +273,7 @@ ABIImportedHook *ABICreateImportedHook(ABIImportSelection *selection, const ABIV
                 hook->failure=std::move(changedError); hook->failedIndex=i; break;
             }
             { std::lock_guard lock(entry.mutex); entry.chain=plan.after; }
+            if(plan.joinedOwner) entry.joinedOwners.push_back(plan.joinedOwner);
             plan.activated=true; state.entry=&entry;
             if(publish) {
                 state.mutation=ABICompareExchangePointerSlot(reinterpret_cast<void*>(entry.slot.slot),entry.original,entry.installed);
@@ -265,6 +290,7 @@ ABIImportedHook *ABICreateImportedHook(ABIImportSelection *selection, const ABIV
                 if(plan.activated) {
                     auto& entry=*plan.entry;
                     { std::lock_guard lock(entry.mutex); entry.chain=plan.before; }
+                    if(plan.joinedOwner) entry.joinedOwners.pop_back();
                     if(state.mutation.didWrite) {
                         state.rollback=ABICompareExchangePointerSlot(reinterpret_cast<void*>(entry.slot.slot),entry.installed,entry.original);
                         if(state.rollback.didWrite) entry.detached=true;
@@ -279,6 +305,20 @@ ABIImportedHook *ABICreateImportedHook(ABIImportSelection *selection, const ABIV
         } else hook->active=true;
     }
     return hook.release();
+}
+
+ABIImportedHook *ABICreateImportedHook(ABIImportSelection *selection, const ABIValueType *result,
+    const ABIValueType *const *parameters, size_t count, void *context, ABIImportedCallback callback,
+    ABIImportedFailureHandler failure, ABIImportedContextRelease release) {
+    if (!release) return nullptr;
+    abibridge::TransferredContext transferred{context,release};
+    if (!selection) return ABICreateFailedImportedHook(ABICreateResolutionFailure(ABIFailureInvalidRequest,"An import selection is required."));
+    ABIRetainImportSelection(selection);
+    auto owner = std::shared_ptr<ABIImportSelection>(selection, ABIReleaseImportSelection);
+    std::vector<abibridge::ManagedFunctionSlot> slots;
+    for (size_t i=0; i<ABIImportSelectionCount(selection); ++i) slots.push_back({ABIImportSelectionGet(selection,i),owner});
+    transferred.relinquish();
+    return abibridge::createManagedFunctionHook(std::move(slots),result,parameters,count,context,callback,failure,release);
 }
 
 ABIImportedHook *ABIRetainImportedHook(ABIImportedHook *hook) { if(hook) ++hook->references; return hook; }

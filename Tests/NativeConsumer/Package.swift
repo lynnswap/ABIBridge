@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.macOS("15.4")],
     dependencies: [.package(name: "ABIBridge", path: "../..")],
     targets: [
+        .executableTarget(name: "ManagedVirtualConsumer", dependencies: [.product(name: "ABIBridge", package: "ABIBridge")], cxxSettings: [.unsafeFlags(["-O2"])], linkerSettings: [.unsafeFlags(["-Xlinker", "-no_data_const"])]),
         // Test-only writable control; production products retain default protections.
         .executableTarget(name: "VirtualMutationConsumer", dependencies: [.product(name: "ABIBridge", package: "ABIBridge")], cxxSettings: [.unsafeFlags(["-O2"])], linkerSettings: [.unsafeFlags(["-Xlinker", "-no_data_const"])]),
         .executableTarget(name: "ImportedMonitorConsumer", dependencies: [.product(name: "ABIBridge", package: "ABIBridge")]),

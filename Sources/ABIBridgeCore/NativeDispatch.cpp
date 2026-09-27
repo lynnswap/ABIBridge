@@ -1,3 +1,4 @@
+#include "ImageOwner.hpp"
 #include <ABIBridge/NativeDispatch.h>
 #include <ptrauth.h>
 #include <dlfcn.h>
@@ -101,23 +102,11 @@ ABIVirtualCallTarget *ABICopyVirtualCallTarget(
 #if __has_feature(ptrauth_calls)
     address = ptrauth_strip(address, ptrauth_key_function_pointer);
 #endif
-    Dl_info info{};
-    if (dladdr(address, &info) && info.dli_fbase) {
-        std::unique_ptr<ABIImageList, decltype(&ABIFreeImageList)> images(ABICopyLoadedImages(), ABIFreeImageList);
-        if (!images) {
-            fail(error, ABIFailureImageUnavailable, "The loaded image catalog is unavailable.");
-            return nullptr;
-        }
-        for (size_t index = 0; index < ABIImageListCount(images.get()); ++index) {
-            const auto image = ABIImageListGet(images.get(), index);
-            if (image.header != reinterpret_cast<uintptr_t>(info.dli_fbase)) continue;
-            target->image.reset(ABIRetainLoadedImage(image.generation));
-            break;
-        }
-        if (!target->image) {
-            fail(error, ABIFailureImageChanged, "The virtual implementation image could not be retained.");
-            return nullptr;
-        }
+    ABIResolutionFailure *imageError = nullptr;
+    target->image.reset(abibridge::copyContainingImage(address,&imageError));
+    if (imageError) {
+        if (error) *error=imageError; else ABIReleaseResolutionFailure(imageError);
+        return nullptr;
     }
     return target.release();
 }

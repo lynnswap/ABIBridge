@@ -58,6 +58,19 @@ struct PointerSlotMutationTests {
         #expect(unmapped.status == ABIPointerSlotQueryFailed && !unmapped.didWrite)
     }
 
+    #if arch(arm64)
+    @Test func taggedStorageUsesItsVirtualAddressForRegionLookup() throws {
+        let pages = try SlotPages()
+        #expect(mprotect(pages.pointer, pages.size, PROT_NONE) == 0)
+        let tagged = try #require(UnsafeMutableRawPointer(bitPattern: UInt(bitPattern: pages.pointer) | (UInt(14) << 56)))
+        // An inaccessible mapping exercises the real Mach query without ever
+        // dereferencing a fabricated logical tag. Actual tagged writes are
+        // exercised by the allocator-backed arm64e architecture fixture.
+        let result = ABICompareExchangePointerSlot(tagged, 41, 42)
+        #expect(result.status == ABIPointerSlotReadFailed && !result.didWrite)
+    }
+    #endif
+
     @Test func rejectsExecutableStorageWithoutChangingIt() throws {
         let handle = try #require(dlopen(nil, RTLD_NOW))
         defer { dlclose(handle) }

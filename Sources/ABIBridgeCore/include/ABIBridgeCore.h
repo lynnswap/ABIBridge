@@ -27,6 +27,7 @@ void ABIFreeString(char *string);
 #include <ABIBridge/NativeDispatch.h>
 #include <ABIBridge/PointerSlot.h>
 #include <ABIBridge/ImportedHooks.h>
+#include <ABIBridge/ManagedVirtualEntry.h>
 #include <ABIBridge/ImageObservation.h>
 #include <ABIBridge/ImportedHookMonitoring.h>
 #include <ABIBridge/SwiftInvocation.h>

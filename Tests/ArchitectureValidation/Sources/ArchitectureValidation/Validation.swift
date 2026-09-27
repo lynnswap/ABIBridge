@@ -54,6 +54,12 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
     }
     let runtime = ABIRuntime()
     switch mode {
+    case "virtual-hooks":
+        var published = false
+        if let error = ABIValidateManagedVirtualHooks(false, &published) {
+            throw ArchitectureValidationFailure(description: String(cString: error))
+        }
+        checks.append(published ? "Managed virtual callbacks, thunks, snapshots and ownership passed" : "Managed virtual registration reports TPRO refusal without changing dispatch or retaining callbacks")
     case "virtual-replacement":
         for (index, name) in ["primary", "secondary", "covariant"].enumerated() {
             var result = ABIVirtualMutationProbeResult()
