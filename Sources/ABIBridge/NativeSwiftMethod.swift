@@ -21,6 +21,7 @@ public struct NativeSwiftMethod<Result, each Argument>: Sendable {
     private var implementation: SwiftImplementation?
     let type: NativeSwiftType
     let receiver: SwiftReceiverPlan
+    let consumesArguments: Bool
     private let call: SwiftCall<Result, repeat each Argument>
 
     init(symbol: ResolvedSymbol, type: NativeSwiftType, receiver: SwiftReceiverPlan,
@@ -28,6 +29,7 @@ public struct NativeSwiftMethod<Result, each Argument>: Sendable {
         self.symbol = symbol
         self.type = type
         self.receiver = receiver
+        self.consumesArguments = consumesArguments
         call = try SwiftCall(trailingType: receiver.trailingType, consumesArguments: consumesArguments)
     }
 

@@ -14,19 +14,34 @@ public enum NativeSwiftHookInvocationError: Error, Sendable {
 // when a consumer saves the public invocation for later diagnostics.
 final class SwiftHookFrame {
     typealias Operation = ([NativeValueStorage]) throws -> NativeValueStorage
+    struct Operations {
+        let invoke: Operation
+        let receiver: (() throws -> NativeValueStorage)?
+    }
     private let lock = NSLock()
     private let thread = pthread_self()
-    private var operation: Operation?
-    init(_ operation: @escaping Operation) { self.operation = operation }
-    func use<T>(_ body: (Operation) throws -> T) throws -> T {
+    private var operations: Operations?
+    init(receiver: (() throws -> NativeValueStorage)? = nil, _ operation: @escaping Operation) {
+        operations = Operations(invoke: operation, receiver: receiver)
+    }
+    private func current() throws -> Operations {
         lock.lock()
-        guard let operation else { lock.unlock(); throw NativeSwiftHookInvocationError.expiredInvocation }
+        guard let operations else { lock.unlock(); throw NativeSwiftHookInvocationError.expiredInvocation }
         guard pthread_equal(thread, pthread_self()) != 0 else { lock.unlock(); throw NativeSwiftHookInvocationError.wrongThread }
         lock.unlock()
-        return try body(operation)
+        return operations
+    }
+    func use<T>(_ body: (Operation) throws -> T) throws -> T {
+        try body(current().invoke)
+    }
+    func receiver<T>(_ body: (NativeValueStorage) throws -> T) throws -> T {
+        guard let read = try current().receiver else {
+            throw ABIResolutionError.unsupportedDeclaration("This invocation has no instance receiver.")
+        }
+        return try body(read())
     }
     func expire() {
-        lock.lock(); let previous = operation; operation = nil; lock.unlock()
+        lock.lock(); let previous = operations; operations = nil; lock.unlock()
         withExtendedLifetime(previous) {}
     }
 }
@@ -77,12 +92,12 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
         }
         return (repeat try decode(each arguments))
     }
-    func erased(consumingArguments: Bool, retaining owner: any Sendable) throws -> SwiftHookSignature {
+    func erased(consumingArguments: Bool, classReceiver: Bool? = nil, retaining owner: any Sendable) throws -> SwiftHookSignature {
         var types: [CValueType] = [], identities: [ObjectIdentifier] = [ObjectIdentifier(Result.self)]
         for codec in repeat each arguments { types.append(codec.type) }
         for type in repeat (each Argument).self { identities.append(ObjectIdentifier(type)) }
         return try SwiftHookSignature(result: result.type, arguments: types, identities: identities,
-            consumesArguments: consumingArguments, owner: owner, cloneArguments: { storage in
+            consumesArguments: consumingArguments, classReceiver: classReceiver, owner: owner, cloneArguments: { storage in
                 var index = 0, result: [NativeValueStorage] = []
                 for codec in repeat each arguments {
                     result.append(try codec.copyNativeStorage(storage[index])); index += 1
@@ -101,6 +116,9 @@ final class SwiftHookSignature: @unchecked Sendable {
     let arguments: [CValueType]
     let identities: [ObjectIdentifier]
     let consumesArguments: Bool
+    // Nil denotes a function's uninterpreted context; false/true are borrowing
+    // and consuming class instances. Each callback owns its own receiver codec.
+    let classReceiver: Bool?
     let owner: any Sendable
     let interface: SwiftCallInterface
     let cloneArguments: ([NativeValueStorage]) throws -> [NativeValueStorage]
@@ -108,18 +126,20 @@ final class SwiftHookSignature: @unchecked Sendable {
     let destroyResult: (UnsafeMutableRawPointer) -> Void
     let destroyArguments: (UnsafeBufferPointer<UnsafeMutableRawPointer?>) -> Void
     init(result: CValueType, arguments: [CValueType], identities: [ObjectIdentifier], consumesArguments: Bool,
+         classReceiver: Bool?,
          owner: any Sendable, cloneArguments: @escaping ([NativeValueStorage]) throws -> [NativeValueStorage],
          cloneResult: @escaping (NativeValueStorage) throws -> NativeValueStorage,
          destroyResult: @escaping (UnsafeMutableRawPointer) -> Void,
          destroyArguments: @escaping (UnsafeBufferPointer<UnsafeMutableRawPointer?>) -> Void) throws {
         self.result = result; self.arguments = arguments; self.identities = identities
         self.consumesArguments = consumesArguments; self.owner = owner
+        self.classReceiver = classReceiver
         self.cloneArguments = cloneArguments; self.cloneResult = cloneResult
         self.destroyResult = destroyResult; self.destroyArguments = destroyArguments
         interface = try SwiftCallInterface(result: result, parameters: arguments)
     }
     func matches(_ other: SwiftHookSignature) -> Bool {
-        identities == other.identities && consumesArguments == other.consumesArguments
+        identities == other.identities && consumesArguments == other.consumesArguments && classReceiver == other.classReceiver
             && ABIValueTypesEqual(result.handle, other.result.handle) && arguments.count == other.arguments.count
             && zip(arguments, other.arguments).allSatisfy { ABIValueTypesEqual($0.handle, $1.handle) }
     }
@@ -135,16 +155,39 @@ final class SwiftHookSignature: @unchecked Sendable {
         let values = consumesArguments ? try cloneArguments(arguments) : arguments
         let addresses: [UnsafeMutableRawPointer?] = values.map(\.address)
         var error: OpaquePointer?
+        let context = ABISwiftIncomingContext(call)
+        var consumedReceiver: Unmanaged<AnyObject>?
+        if classReceiver == true {
+            guard let context else { throw ABIInvocationError.incompatibleValue(expected: "a live Swift receiver", actual: "nil") }
+            consumedReceiver = Unmanaged<AnyObject>.fromOpaque(context).retain()
+        }
+        var invoked = false
+        defer { if !invoked { consumedReceiver?.release() } }
         let ok = withExtendedLifetime(values) { addresses.withUnsafeBufferPointer {
-            ABISwiftIncomingProceed(call, $0.baseAddress, $0.count, ABISwiftIncomingContext(call), &error)
+            ABISwiftIncomingProceed(call, $0.baseAddress, $0.count, context, &error)
         } }
         guard ok else { throw consumeNativeCallFailure(error) }
+        invoked = true
         if consumesArguments { for value in values { value.relinquishValue() } }
         let bytes = NativeValueStorage(size: result.size, alignment: result.alignment)
         do {
             guard ABISwiftIncomingCopyResult(call, bytes.address, result.size, &error) else { throw consumeNativeCallFailure(error) }
             return try cloneResult(bytes)
         } catch { throw SwiftHookCompletedResultError(underlying: error) }
+    }
+
+    func readReceiver(_ call: OpaquePointer) throws -> NativeValueStorage {
+        guard classReceiver != nil, let context = ABISwiftIncomingContext(call) else {
+            throw ABIInvocationError.incompatibleValue(expected: "a live Swift receiver", actual: "nil")
+        }
+        let storage = NativeValueStorage(size: MemoryLayout<UnsafeRawPointer>.size, alignment: MemoryLayout<UnsafeRawPointer>.alignment)
+        storage.address.storeBytes(of: context, as: UnsafeRawPointer.self)
+        return storage
+    }
+
+    func destroyConsumedInputs(context: UnsafeRawPointer?, arguments: UnsafeBufferPointer<UnsafeMutableRawPointer?>) {
+        if consumesArguments { destroyArguments(arguments) }
+        if classReceiver == true, let context { Unmanaged<AnyObject>.fromOpaque(context).release() }
     }
 }
 
