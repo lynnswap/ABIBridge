@@ -20,43 +20,53 @@ final class SharedCacheSymbols {
         }
         return files
     }()
-    private var filesByCache: [UUID: [DyldCache]] = [:]
+    private var filesByCache: [UUID: [SymbolFile]] = [:]
+    private var rangesByTable: [UUID: [UInt64: Range<Int>]] = [:]
 
-    func symbols(in image: NativeImage) -> [IndexedSymbol] {
+    func symbols(in image: NativeImage, swiftModule: SwiftModuleFilter? = nil) -> [IndexedSymbol] {
         let macho = MachOImage(ptr: UnsafePointer<mach_header>(bitPattern: UInt(image.identity.headerAddress))!)
         guard macho.header.flags.contains(.dylib_in_cache),
               macho.is64Bit,
               let text = macho.segments64.first(where: { $0.segmentName == "__TEXT" }) else { return [] }
         var result: [IndexedSymbol] = []
-        func record(_ name: String, _ address: UInt64) {
-            if let address = SymbolIndex.slid(address, by: image.identity.slide) {
-                result.append(IndexedSymbol(name: name, address: address, source: .sharedCache))
+        var foundDefinitions = false
+        func accepts(_ raw: UnsafePointer<CChar>) -> Bool {
+            guard let swiftModule else { return true }
+            var name = raw
+            if name.pointee == 95 { name += 1 }
+            return name.pointee == 36 && (name[1] == 115 || name[1] == 83) && swiftModule.matches(raw)
+        }
+        func record(_ name: UnsafePointer<CChar>, _ value: UInt64) {
+            guard let address = SymbolIndex.slid(value, by: image.identity.slide) else { return }
+            foundDefinitions = true
+            if accepts(name) {
+                result.append(IndexedSymbol(name: String(cString: name), address: address, source: .sharedCache))
             }
         }
         if let cache = loadedCache, let cacheSlide = cache.slide, cacheSlide == image.identity.slide,
            UInt64(text.virtualMemoryAddress) >= cache.mainCacheHeader.sharedRegionStart {
             let offset = UInt64(text.virtualMemoryAddress) - cache.mainCacheHeader.sharedRegionStart
             if let info = cache.localSymbolsInfo, let symbols = info.symbols64(in: cache),
-               let range = localRange(offset, entries: Array(info.entries(in: cache)), count: symbols.count) {
+               let range = localRange(offset, table: cache.mainCacheHeader.uuid, entries: Array(info.entries(in: cache)), count: symbols.count) {
                 for index in range {
                     let symbol = symbols.symbols.advanced(by: index).pointee
                     let name = symbols.stringBase.advanced(by: numericCast(symbol.n_un.n_strx))
                     let address = symbols.addressStart + numericCast(symbol.n_value)
-                    if address >= 0 { record(String(cString: name), UInt64(address)) }
+                    if address >= 0 { record(name, UInt64(address)) }
                 }
             }
             readSymbolFiles(header: cache.mainCacheHeader, offset: offset, record: record)
         }
-        if result.isEmpty, let cache = fullCache, let expectedUUID = image.identity.uuid,
+        if !foundDefinitions, let cache = fullCache, let expectedUUID = image.identity.uuid,
            let file = filesByUUID[expectedUUID],
            let fileText = file.segments64.first(where: { $0.segmentName == "__TEXT" }),
            UInt64(fileText.virtualMemoryAddress) >= cache.mainCacheHeader.sharedRegionStart {
             let offset = UInt64(fileText.virtualMemoryAddress) - cache.mainCacheHeader.sharedRegionStart
             if let info = cache.localSymbolsInfo, let symbols = info.symbols64(in: cache),
-               let range = localRange(offset, entries: Array(info.entries(in: cache)), count: symbols.count) {
+               let range = localRange(offset, table: cache.mainCacheHeader.uuid, entries: Array(info.entries(in: cache)), count: symbols.count) {
                 for index in range {
                     let symbol = symbols[index]
-                    if symbol.offset >= 0 { record(symbol.name, UInt64(symbol.offset)) }
+                    if symbol.offset >= 0 { symbol.name.withCString { record($0, UInt64(symbol.offset)) } }
                 }
             }
             readSymbolFiles(header: cache.mainCacheHeader, offset: offset, record: record)
@@ -65,30 +75,98 @@ final class SharedCacheSymbols {
     }
 
     private func localRange(
-        _ offset: UInt64, entries: [any DyldCacheLocalSymbolsEntryProtocol], count: Int
+        _ offset: UInt64, table: UUID,
+        entries: @autoclosure () -> [any DyldCacheLocalSymbolsEntryProtocol], count: Int
     ) -> Range<Int>? {
-        guard let entry = entries.first(where: { UInt64($0.dylibOffset) == offset }),
-              entry.nlistStartIndex >= 0, entry.nlistCount >= 0,
-              entry.nlistStartIndex <= count, entry.nlistCount <= count - entry.nlistStartIndex else { return nil }
-        return entry.nlistStartIndex..<(entry.nlistStartIndex + entry.nlistCount)
+        if rangesByTable[table] == nil {
+            var ranges: [UInt64: Range<Int>] = [:]
+            var seen: Set<UInt64> = []
+            for entry in entries() {
+                let address = UInt64(entry.dylibOffset)
+                guard seen.insert(address).inserted,
+                      entry.nlistStartIndex >= 0, entry.nlistCount >= 0,
+                      entry.nlistStartIndex <= count, entry.nlistCount <= count - entry.nlistStartIndex else { continue }
+                ranges[address] = entry.nlistStartIndex..<(entry.nlistStartIndex + entry.nlistCount)
+            }
+            rangesByTable[table] = ranges
+        }
+        return rangesByTable[table]?[offset]
     }
 
     private func readSymbolFiles(
-        header: DyldCacheHeader, offset: UInt64, record: (String, UInt64) -> Void
+        header: DyldCacheHeader, offset: UInt64, record: (UnsafePointer<CChar>, UInt64) -> Void
     ) {
         if filesByCache[header.uuid] == nil {
             filesByCache[header.uuid] = Self.symbolFileURLs().compactMap { url in
                 guard let file = try? DyldCache(subcacheUrl: url, mainCacheHeader: header),
                       file.header.uuid == header.symbolFileUUID else { return nil }
-                return file
+                return SymbolFile(file)
             }
         }
         for file in filesByCache[header.uuid] ?? [] {
-            guard let info = file.localSymbolsInfo, let symbols = info.symbols64(in: file),
-                  let range = localRange(offset, entries: Array(info.entries(in: file)), count: symbols.count) else { continue }
-            for index in range {
-                let symbol = symbols[index]
-                if symbol.offset >= 0 { record(symbol.name, UInt64(symbol.offset)) }
+            guard let range = localRange(offset, table: file.cache.header.uuid,
+                entries: Array(file.info.entries(in: file.cache)), count: file.symbols.count) else { continue }
+            if let mapping = file.mapping {
+                mapping.forEach(in: range, record: record)
+            } else {
+                for index in range {
+                    let symbol = file.symbols[index]
+                    if symbol.offset >= 0 { symbol.name.withCString { record($0, UInt64(symbol.offset)) } }
+                }
+            }
+        }
+    }
+
+    private struct SymbolFile {
+        let cache: DyldCache
+        let info: DyldCacheLocalSymbolsInfo
+        let symbols: MachOFile.Symbols64
+        let mapping: MappedSymbols?
+
+        init?(_ cache: DyldCache) {
+            guard let info = cache.localSymbolsInfo, let symbols = info.symbols64(in: cache) else { return nil }
+            self.cache = cache
+            self.info = info
+            self.symbols = symbols
+            mapping = MappedSymbols(cache, info: info)
+        }
+    }
+
+    // Keep names in the mapped string table until the query accepts them. The
+    // ordinary MachOKit collection remains available when mapping is unavailable.
+    struct MappedSymbols {
+        let data: Data
+        let symbolStart: Int
+        let strings: Range<Int>
+
+        init?(_ cache: DyldCache, info: DyldCacheLocalSymbolsInfo) {
+            guard let data = try? Data(contentsOf: cache.url, options: .alwaysMapped),
+                  data.count >= MemoryLayout<DyldCacheHeader.Layout>.size,
+                  data.withUnsafeBytes({ UUID(uuid: $0.loadUnaligned(as: DyldCacheHeader.Layout.self).uuid) }) == cache.header.uuid else { return nil }
+            self.init(data: data, localSymbolsOffset: cache.header.localSymbolsOffset, layout: info.layout)
+        }
+
+        init?(data: Data, localSymbolsOffset: UInt64, layout: DyldCacheLocalSymbolsInfo.Layout) {
+            guard let base = Int(exactly: localSymbolsOffset), base <= data.count,
+                  let namesOffset = Int(exactly: layout.stringsOffset), namesOffset <= data.count - base,
+                  let namesCount = Int(exactly: layout.stringsSize), namesCount <= data.count - base - namesOffset,
+                  let symbolsOffset = Int(exactly: layout.nlistOffset), symbolsOffset <= data.count - base,
+                  let count = Int(exactly: layout.nlistCount),
+                  count <= (data.count - base - symbolsOffset) / MemoryLayout<nlist_64>.stride else { return nil }
+            self.data = data
+            symbolStart = base + symbolsOffset
+            strings = (base + namesOffset)..<(base + namesOffset + namesCount)
+        }
+
+        func forEach(in range: Range<Int>, record: (UnsafePointer<CChar>, UInt64) -> Void) {
+            data.withUnsafeBytes { bytes in
+                for index in range {
+                    let entry = bytes.loadUnaligned(fromByteOffset: symbolStart + index * MemoryLayout<nlist_64>.stride, as: nlist_64.self)
+                    guard let offset = Int(exactly: entry.n_un.n_strx), offset < strings.count else { continue }
+                    let name = bytes.baseAddress!.advanced(by: strings.lowerBound + offset)
+                    guard memchr(name, 0, strings.count - offset) != nil else { continue }
+                    record(name.assumingMemoryBound(to: CChar.self), entry.n_value)
+                }
             }
         }
     }

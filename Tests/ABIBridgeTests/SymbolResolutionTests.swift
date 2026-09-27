@@ -419,6 +419,7 @@ struct SymbolResolutionTests {
         let fixture = try FixtureLibrary(swiftModule: module, swiftSource: """
         public func echo() -> Int { 42 }
         extension Int { public func café() -> Int { self } }
+        extension String { public func café() -> Int { count } }
         """)
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
@@ -431,6 +432,8 @@ struct SymbolResolutionTests {
                 extensionsOnly ? member : ordinary, source: .image, extensionsOnly: extensionsOnly
             ))
             #expect(symbol.image.identity == image.identity)
+            let stringMember = NativeDeclaration(name: "Swift.String.café() -> Swift.Int", language: .swift)
+            #expect(try index.resolve(stringMember, source: .image, extensionsOnly: true) != nil)
         }
     }
 
@@ -610,12 +613,13 @@ struct SymbolResolutionTests {
         }
     }
 
-    @Test func resolvesCompressedSwiftModuleNames() async throws {
-        let fixture = try FixtureLibrary(swiftModule: "FooFoo")
+    @Test(arguments: ["FooFoo", "Cafe\u{301}", "ModuleWithLongName"])
+    func resolvesSwiftModuleEncodings(module: String) async throws {
+        let fixture = try FixtureLibrary(swiftModule: module, stripped: true)
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
         let symbol = try await runtime.resolve(
-            .init(name: "FooFoo.echo() -> ()", language: .swift),
+            .init(name: module + ".echo() -> ()", language: .swift),
             in: .path(fixture.libraryURL)
         )
         #expect(symbol.source == .image)
