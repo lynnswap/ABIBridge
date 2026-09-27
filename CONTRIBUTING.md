@@ -103,6 +103,8 @@ For automatic-loading validation on a device, build the standalone `ABIBridgeLoa
 
 The native consumer script includes a separate `@rpath` fixture that reenters the resolver from its constructor and performs concurrent acquisitions. macOS package fixtures also verify missing-dependency failures, retries, framework-name ambiguity, local symbols, Swift metadata, and refreshed batch scopes. The C symbol-resolution functions now take a loading-policy argument; update direct C calls along with the `ABISymbolRequest` layout when building against the new headers.
 
+The `swift-replacement` architecture mode validates compiled native Swift class replacements, including authenticated metadata slots and owned/indirect results. Root `SwiftReplacementTests` additionally cover separate-image imports, same-image interposable controls, direct/devirtualized boundaries and compiler dynamic replacement. See the [architecture validation guide](Tests/ArchitectureValidation/README.md#compiled-swift-replacements) for the tested subset and platform evidence.
+
 ## Documentation
 
 The supported consumer interfaces are the Swift `ABIBridge` module and the native headers documented in the DocC consumer guides, all linked through the `ABIBridge` product. Other native headers remain implementation details. SwiftPM may make transitive modules importable; that does not make their entire contents supported public API.

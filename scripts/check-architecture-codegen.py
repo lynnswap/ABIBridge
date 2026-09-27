@@ -66,6 +66,62 @@ def virtual_table_probe(common, root, output, arch, authenticated, expected):
     return schemas
 
 
+def swift_replacement_probe(root, output, arch, sdk, authenticated, expected):
+    directory = output / (arch + "-swift-replacement")
+    directory.mkdir(exist_ok=True)
+    sources = root / "Tests/ArchitectureValidation/Sources"
+    provider = sources / "SwiftReplacementFixtures/Provider.swift"
+    caller = sources / "SwiftReplacementCaller/Caller.swift"
+    common = ["xcrun", "swiftc", "-target", f"{arch}-apple-ios18.4", "-sdk", sdk,
+              "-O", "-swift-version", "6", "-parse-as-library"]
+    module = directory / "SwiftReplacementFixtures.swiftmodule"
+    run(*common, "-module-name", "SwiftReplacementFixtures", "-emit-module", str(provider), "-o", str(module))
+    provider_ir = directory / "provider.ll"
+    caller_ir = directory / "caller.ll"
+    object_file = directory / "provider.o"
+    run(*common, "-module-name", "SwiftReplacementFixtures", "-emit-ir", str(provider), "-o", str(provider_ir))
+    run(*common, "-module-name", "SwiftReplacementFixtures", "-c", str(provider), "-o", str(object_file))
+    run(*common, "-module-name", "SwiftReplacementCaller", "-I", str(directory), "-emit-ir", str(caller), "-o", str(caller_ir))
+    require(header(object_file) == (0x0100000C, expected), f"Unexpected Swift fixture CPU subtype for {arch}")
+    definitions, calls = provider_ir.read_text(), caller_ir.read_text()
+    methods = re.findall(r'%swift.method_descriptor \{ i32 (-?\d+), i32 trunc \(i64 sub \(i64 ptrtoint \(ptr @"([^"]+)"', definitions)
+    method_flags = {symbol: int(flags) & 0xffffffff for flags, symbol in methods}
+    demangled = dict(zip(method_flags, run("xcrun", "swift-demangle", "--compact", *method_flags).splitlines()))
+    functions = re.findall(r'^define[^\n]*@"([^"\n]+)"[^\n]*\{\n(.*?)^\}', calls, re.M | re.S)
+    names = run("xcrun", "swift-demangle", "--compact", *(name for name, _ in functions)).splitlines()
+    bodies = dict(zip(names, (body for _, body in functions)))
+    def oracle_body(name):
+        matches = [body for declaration, body in bodies.items() if declaration.startswith("SwiftReplacementCaller." + name + "(")]
+        require(len(matches) == 1, f"Expected one compiled oracle {name}")
+        return matches[0]
+    schemas = {}
+    for method, oracle in [("scalar", "classScalar"), ("text", "classText"), ("payload", "classPayload")]:
+        candidates = [(symbol, flags) for symbol, flags in method_flags.items()
+                      if ".ReplacementRenderer." + method + "(" in demangled[symbol]]
+        require(len(candidates) == 1, f"Expected one Swift method descriptor for {method} on {arch}")
+        symbol, flags = candidates[0]
+        require(flags & 0x7f == 0x10, f"Unexpected Swift method flags for {method}")
+        body = oracle_body(oracle)
+        require("swiftself" in body, f"Missing Swift receiver convention in {oracle}")
+        offset = re.search(r'getelementptr inbounds (?:nuw )?i8, ptr .*?, i64 (\d+)\b', body)
+        require(offset is not None, f"Missing Swift metadata slot in {oracle}")
+        discriminator = flags >> 16
+        if authenticated:
+            schema = re.search(r'^@"' + re.escape(symbol) + r'\.ptrauth" = [^\n]*i32 0, i64 ptrtoint [^\n]*, i64 (\d+) \}, section "llvm.ptrauth"', definitions, re.M)
+            require(schema is not None and int(schema[1]) == discriminator, f"Swift metadata/descriptor authentication differs for {method}")
+            require(re.search(r'@llvm.ptrauth.blend\(i64 .*?, i64 ' + str(discriminator) + r'\)', body) is not None
+                    and '"ptrauth"(i32 0,' in body, f"Swift caller does not authenticate {oracle} with the descriptor schema")
+        else:
+            require('"ptrauth"' not in body, f"Unexpected signed Swift call in {oracle}")
+        schemas[oracle] = {"offset": int(offset[1]), "discriminator": discriminator, "addressDiversity": authenticated}
+    final = oracle_body("classFinal")
+    require(re.search(r'call swiftcc[^\n]*@"', final) is not None and "getelementptr" not in final,
+            "Final Swift control stopped using a direct declaration")
+    require(re.search(r'call swiftcc void @"[^"\n]+"\(ptr [^\n]*sret\(', oracle_body("importedPayload")) is not None,
+            "Large Swift fixture result is no longer indirect")
+    return schemas
+
+
 def main():
     root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(description=__doc__)
@@ -105,9 +161,10 @@ def main():
                 and re.search(r"\baddpt\b", integer) is None,
                 f"Unexpected compilerAdvanceInteger arithmetic for {arch}")
         schemas = virtual_table_probe(common, root, arguments.output, arch, authenticated, expected)
+        swift_schemas = swift_replacement_probe(root, arguments.output, arch, sdk, authenticated, expected)
         reports.append({"architecture": arch, "cpuType": "0x0100000c", "rawCPUSubtype": f"0x{expected:08x}",
                         "authenticatedCalls": authenticated, "checkedPointerArithmetic": arch == "arm64e.x1",
-                        "virtualTableDiscriminators": schemas})
+                        "virtualTableDiscriminators": schemas, "swiftMethodSchemas": swift_schemas})
     result = {"compiler": run("xcrun", "clang", "--version").splitlines()[0], "runtimeTested": False, "objects": reports}
     (arguments.output / "report.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2))
