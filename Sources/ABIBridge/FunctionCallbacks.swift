@@ -65,4 +65,3 @@ func invokeFunctionCallback(_ box: FunctionCallbackBox, _ call: OpaquePointer) -
     // completed continuation, while preserving the original Swift error above.
     return true
 }
-
