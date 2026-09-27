@@ -102,3 +102,5 @@ done
 
 # This executable deliberately permits writes to its compiler-emitted vtables.
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" --scratch-path "$task_root/.build/native-consumer" VirtualMutationConsumer
+
+xcrun swift run --package-path "$task_root/Tests/NativeConsumer" --scratch-path "$task_root/.build/native-consumer" ManagedVirtualConsumer "$task_fixture/libImportedCaller.dylib"

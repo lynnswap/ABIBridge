@@ -5,8 +5,18 @@
 
 namespace {
 std::mutex slotWriter;
+uintptr_t vmAddress(uintptr_t pointer) {
+#if defined(__arm64__) && defined(__LP64__)
+    // Mach region/protection queries take virtual addresses, while an
+    // AArch64 data pointer may carry a logical tag in its top byte.
+    return pointer & UINT64_C(0x00ffffffffffffff);
+#else
+    return pointer;
+#endif
+}
 struct Memory {
     kern_return_t query(uintptr_t slot, abibridge::SlotRegion& region) {
+        slot = vmAddress(slot);
         vm_address_t address = slot;
         vm_size_t size = 0;
         natural_t depth = 0;
@@ -29,9 +39,11 @@ struct Memory {
         return code != KERN_SUCCESS ? code : size == sizeof(value) ? KERN_SUCCESS : KERN_INVALID_ADDRESS;
     }
     kern_return_t protect(uintptr_t address, bool maximum, vm_prot_t protection) {
+        address = vmAddress(address);
         return vm_protect(mach_task_self(), address - address % vm_page_size, vm_page_size, maximum, protection);
     }
     bool exchange(uintptr_t address, uintptr_t& expected, uintptr_t replacement) {
+        // Keep the original logical tag for the actual memory access.
         return __atomic_compare_exchange_n(reinterpret_cast<uintptr_t *>(address), &expected, replacement,
             false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
     }
