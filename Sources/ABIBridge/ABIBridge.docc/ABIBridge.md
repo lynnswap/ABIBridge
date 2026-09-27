@@ -83,6 +83,14 @@ print(symbol.image.path)
 - ``NativePointerAuthentication``
 - ``NativeDispatchError``
 
+### Hooking shared C++ virtual entries
+
+- <doc:CXXVirtualHooks>
+- ``NativeVirtualHook``
+- ``NativeVirtualInvocation``
+- ``NativeVirtualHookInstallationError``
+- ``NativeVirtualInvocationError``
+
 ### Discovering referenced objects
 
 - <doc:PointerDiscovery>

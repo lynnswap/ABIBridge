@@ -50,6 +50,7 @@ const char *ABIValidateVirtualEntry(uint32_t kind, ABIVirtualMutationProbeResult
 void *ABINamedVirtualReceiver(uint32_t kind);
 const void *ABINamedVirtualTable(uint32_t kind);
 const char *ABIValidateManagedVirtualHooks(bool requireWritable, bool *published);
+const char *ABIValidatePublicVirtualHooks(bool requireWritable, bool *published);
 typedef struct {
     bool changed;
     int32_t protectionResult;

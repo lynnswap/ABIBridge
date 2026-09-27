@@ -5,7 +5,8 @@
 #include <stdlib.h>
 
 typedef struct { void *first, *second; } Context;
-static int released;
+static int released, storage_released, expected_released;
+static void release_storage(void *context) { assert(released==expected_released); ++storage_released; free(context); }
 static bool callback(void *context,ABIVirtualInvocation *call,ABIResolutionFailure **error) {
     Context *state=context;
     void *receiver=ABIVirtualInvocationReceiver(call,error);
@@ -35,7 +36,8 @@ int main(int argc,char **argv) {
     const ABIValueType *parameters[]={integer};
     Context *context=malloc(sizeof(Context)); assert(context);
     context->first=object(0); context->second=object(1);
-    ABIVirtualHook *hook=ABIInstallSharedVirtualHook(ABIVirtualEntryGet(selected),NULL,NULL,
+    ABIVirtualEntryInfo info=ABIVirtualEntryGet(selected);
+    ABIVirtualHook *hook=ABIInstallSharedVirtualHook(info,NULL,NULL,
         integer,parameters,1,context,callback,failure,release);
     assert(hook && !ABIVirtualHookFailure(hook));
     ABIReleaseVirtualEntry(selected); ABIReleaseSymbolRuntime(runtime); ABIReleaseValueType(integer);
@@ -45,6 +47,18 @@ int main(int argc,char **argv) {
     assert(released==1 && invoke(0,2)==42);
     ABIReleaseVirtualHook(hook); assert(released==1);
     ABIReleaseVirtualHook(NULL);
+    integer=ABICreateScalarType(ABIValueInt32,&error); assert(integer && !error);
+    for(int inner=0; inner<2; ++inner) {
+        const ABIValueType *invalid[]={NULL};
+        expected_released=released+1;
+        ABIVirtualHook *bad=ABIInstallSharedVirtualHook(info,malloc(1),release_storage,
+            integer,inner ? invalid : NULL,1,malloc(1),callback,failure,release);
+        assert(bad && ABIVirtualHookFailure(bad));
+        assert(released==expected_released && storage_released==inner+1);
+        ABIReleaseVirtualHook(bad);
+        assert(released==expected_released && invoke(0,2)==42);
+    }
+    ABIReleaseValueType(integer);
     assert(dlclose(library)==0 && invoke(1,2)==92);
     puts("C virtual hook consumer passed");
 }
