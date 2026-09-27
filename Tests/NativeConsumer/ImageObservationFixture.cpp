@@ -21,7 +21,7 @@ template<class Predicate> void wait(Context& state, Predicate predicate) {
 }
 
 int main(int argc, char **argv) {
-    assert(argc == 2);
+    assert(argc == 4);
     Context state;
     state.path = argv[1];
     ABIResolutionFailure *error = nullptr;
@@ -75,6 +75,29 @@ int main(int argc, char **argv) {
         ABIFreeImageList(before);
         ABIFreeImageList(loaded);
         ABIFreeImageList(removed);
+    }
+    void *libraries[3];
+    uint64_t generations[3]{};
+    for (unsigned i = 0; i < 3; ++i) {
+        libraries[i] = dlopen(argv[i + 1], RTLD_NOW | RTLD_LOCAL);
+        assert(libraries[i]);
+        auto *list = ABICopyLoadedImages();
+        for (size_t j = 0; j < ABIImageListCount(list); ++j) {
+            auto image = ABIImageListGet(list, j);
+            if (std::string(image.path).ends_with(argv[i + 1])) generations[i] = image.generation;
+        }
+        ABIFreeImageList(list);
+        assert(generations[i] && (!i || generations[i] > generations[i - 1]));
+    }
+    assert(dlclose(libraries[1]) == 0);
+    for (auto generation : {uint64_t(0), generations[1], UINT64_MAX}) {
+        assert(ABIRetainLoadedImage(generation) == nullptr);
+    }
+    for (auto index : {0, 2}) {
+        auto *lease = ABIRetainLoadedImage(generations[index]);
+        assert(lease);
+        ABIReleaseImage(lease);
+        assert(dlclose(libraries[index]) == 0);
     }
     ABIReleaseImageObservation(observation);
     wait(state, [&] { return state.released; });

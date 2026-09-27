@@ -52,7 +52,9 @@ private func waitForObservation(_ condition: @escaping @Sendable () -> Bool) asy
 struct ImageObservationTests {
     @Test func snapshotsTrackUnloadAndReloadWithoutRetainingImages() async throws {
         let fixture = try FixtureLibrary(load: false, cxxSource: "extern \"C\" int observedValue() { return 42; }")
-        defer { fixture.cleanup() }
+        let middle = try FixtureLibrary(load: false, cxxSource: "extern \"C\" int middleValue() { return 1; }")
+        let last = try FixtureLibrary(load: false, cxxSource: "extern \"C\" int lastValue() { return 2; }")
+        defer { fixture.cleanup(); middle.cleanup(); last.cleanup() }
         // Other suites legitimately retain images during automatic symbol
         // lookup. An isolated process gives this test sole loader ownership.
         let root = URL(fileURLWithPath: #filePath)
@@ -67,7 +69,7 @@ struct ImageObservationTests {
             core.appendingPathComponent("NativeFailure.cpp").path,
             "-L/usr/lib/swift", "-lswiftCore", "-o", executable.path,
         ])
-        try FixtureLibrary.run([executable.path, fixture.libraryURL.path])
+        try FixtureLibrary.run([executable.path, fixture.libraryURL.path, middle.libraryURL.path, last.libraryURL.path])
     }
 
     @Test func deliveryAndContextReleaseCanReenterTheCatalog() async throws {
