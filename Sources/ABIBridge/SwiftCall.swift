@@ -6,12 +6,14 @@ struct SwiftCall<Result, each Argument>: Sendable {
     private let result: SwiftValueCodec<Result>
     private let hasTrailingValue: Bool
     private let consumesArguments: Bool
+    private let argumentCount: Int
 
     init(trailingType: CValueType? = nil, consumesArguments: Bool = false) throws {
         let arguments = (repeat try SwiftValueCodec<each Argument>())
         let result = try SwiftValueCodec<Result>()
         var parameters: [CValueType] = []
         for argument in repeat each arguments { parameters.append(argument.type) }
+        argumentCount = parameters.count
         if let trailingType { parameters.append(trailingType) }
         interface = try SwiftCallInterface(result: result.type, parameters: parameters)
         self.arguments = arguments
@@ -28,6 +30,7 @@ struct SwiftCall<Result, each Argument>: Sendable {
     ) throws -> Result {
         precondition(hasTrailingValue == (trailingValue != nil))
         var storage: [NativeValueStorage] = []
+        storage.reserveCapacity(argumentCount)
         for (codec, value) in repeat (each arguments, each values) {
             storage.append(try codec.encode(value))
         }
