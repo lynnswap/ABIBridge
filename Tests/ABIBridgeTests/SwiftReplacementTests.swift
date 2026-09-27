@@ -1,4 +1,4 @@
-#if os(macOS)
+#if DEBUG && os(macOS)
 @testable import ABIBridge
 import ABIBridgeCore
 import Foundation
