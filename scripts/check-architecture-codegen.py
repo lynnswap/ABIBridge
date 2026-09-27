@@ -32,6 +32,40 @@ def function_body(listing, name):
     return "\n".join(lines[start:end])
 
 
+def virtual_table_probe(common, root, output, arch, authenticated, expected):
+    source = root / "Tests/ArchitectureValidation/VirtualTableCompilerProbe.cpp"
+    assembly = output / f"{arch}-virtual-tables.s"
+    object_file = assembly.with_suffix(".o")
+    options = ["-std=c++20", "-O2", f"-DEXPECT_PTRAUTH={int(authenticated)}"]
+    run(*common, *options, "-S", str(source), "-o", str(assembly))
+    run(*common, *options, "-c", str(source), "-o", str(object_file))
+    require(header(object_file) == (0x0100000C, expected), f"Unexpected virtual-table CPU subtype for {arch}")
+    text = assembly.read_text()
+    schemas = {}
+    for name in ["PrimaryVptr", "SecondaryVptr", "PrimarySlot", "SecondarySlot", "CovariantSlot"]:
+        value = re.search(rf"^_ABICompiler{name}:\s*\n\s*\.quad\s+(0x[0-9a-fA-F]+|\d+)", text, re.M)
+        require(value is not None, f"Missing compiler discriminator {name} for {arch}")
+        schemas[name] = int(value[1], 0)
+    if authenticated:
+        for name in ["Primary", "Secondary"]:
+            body = re.search(rf"^_ABICompiler{name}Table:[^\n]*\n(.*?)\.cfi_endproc", text, re.M | re.S)
+            require(body is not None and re.search(r"\bautda\b", body[1]), f"Missing compiler vptr authentication for {arch}")
+            salts = re.findall(r"\bmovk\s+x\d+,\s*#(0x[0-9a-fA-F]+|\d+),\s*lsl\s*#48", body[1])
+            require(schemas[name + "Vptr"] in [int(value, 0) for value in salts], f"Wrong inherited vptr schema for {arch}")
+        entries = [
+            (r"__ZNK9ABIVTable7Derived5valueEi", "PrimarySlot"),
+            (r"__ZThn\d+_NK9ABIVTable7Derived8adjustedEi", "SecondarySlot"),
+            (r"__ZTchn\d+_h\d+_N9ABIVTable7Derived8identityEv", "CovariantSlot"),
+        ]
+        for symbol, name in entries:
+            require(re.search(rf"\.quad\s+{symbol}@AUTH\(ia,{schemas[name]},addr\)", text) is not None,
+                    f"Wrong introducing-declaration schema for {name} on {arch}")
+    else:
+        require(all(value == 0 for value in schemas.values()) and "@AUTH(" not in text,
+                "Unexpected authentication in arm64 virtual tables")
+    return schemas
+
+
 def main():
     root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(description=__doc__)
@@ -70,8 +104,10 @@ def main():
         require(re.search(r"\badd\s+x\d+, (?:x0, x1|x1, x0)\b", integer) is not None
                 and re.search(r"\baddpt\b", integer) is None,
                 f"Unexpected compilerAdvanceInteger arithmetic for {arch}")
+        schemas = virtual_table_probe(common, root, arguments.output, arch, authenticated, expected)
         reports.append({"architecture": arch, "cpuType": "0x0100000c", "rawCPUSubtype": f"0x{expected:08x}",
-                        "authenticatedCalls": authenticated, "checkedPointerArithmetic": arch == "arm64e.x1"})
+                        "authenticatedCalls": authenticated, "checkedPointerArithmetic": arch == "arm64e.x1",
+                        "virtualTableDiscriminators": schemas})
     result = {"compiler": run("xcrun", "clang", "--version").splitlines()[0], "runtimeTested": False, "objects": reports}
     (arguments.output / "report.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2))

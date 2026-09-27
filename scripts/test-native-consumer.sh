@@ -99,3 +99,6 @@ done
 for task_monitor_consumer in ImportedMonitorConsumer ObjCXXImportedMonitorConsumer; do
     xcrun swift run --package-path "$task_root/Tests/NativeConsumer" --scratch-path "$task_root/.build/native-consumer" "$task_monitor_consumer" "$task_fixture/libMonitorProvider.dylib" "$task_fixture/libMonitorCaller.dylib" "$task_fixture/libMonitorCancel.dylib"
 done
+
+# This executable deliberately permits writes to its compiler-emitted vtables.
+xcrun swift run --package-path "$task_root/Tests/NativeConsumer" --scratch-path "$task_root/.build/native-consumer" VirtualMutationConsumer

@@ -54,6 +54,15 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
     }
     let runtime = ABIRuntime()
     switch mode {
+    case "virtual-replacement":
+        for (index, name) in ["primary", "secondary", "covariant"].enumerated() {
+            var result = ABIVirtualMutationProbeResult()
+            if let error = ABIValidateVirtualEntry(UInt32(index), &result) {
+                throw ArchitectureValidationFailure(description: String(cString: error))
+            }
+            checks.append("\(name): compiler dispatch, predecessor and RTTI preserved; secondary offset=\(result.secondaryOffset), vptr discriminator=\(result.tableDiscriminator), slot discriminator=\(result.slotDiscriminator)")
+            checks.append("\(name): write=\(result.publication.didWrite), status=\(result.publication.status), kernel=\(result.publication.systemErrorCode), flags=\(result.publication.regionFlags), protections=\(result.protectionAfter)/\(result.maximumAfter)")
+        }
     case "import-hooks":
         var location = Dl_info()
         guard let header = ABIImportProbeImage(), dladdr(header, &location) != 0, let path = location.dli_fname else {

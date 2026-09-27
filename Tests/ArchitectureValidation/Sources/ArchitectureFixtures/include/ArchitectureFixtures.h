@@ -1,6 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
+#include <ABIBridge/PointerSlot.h>
 #ifdef __OBJC__
 #import <Foundation/Foundation.h>
 #endif
@@ -38,6 +39,14 @@ const void *ABIImportProbeImage(void);
 int32_t ABIImportProbeCall(void);
 uint32_t ABIImportedUIDCall(void);
 const char *ABIValidateImportedHookFrontend(const char *importer, uint32_t expected);
+typedef struct {
+    intptr_t secondaryOffset;
+    uintptr_t tableDiscriminator, slotDiscriminator;
+    ABIPointerSlotResult publication, restoration;
+    int32_t protectionAfter, maximumAfter;
+} ABIVirtualMutationProbeResult;
+/// Kinds 0/1/2 cover primary, secondary-receiver, and covariant-return entries.
+const char *ABIValidateVirtualEntry(uint32_t kind, ABIVirtualMutationProbeResult *result);
 typedef struct {
     bool changed;
     int32_t protectionResult;
