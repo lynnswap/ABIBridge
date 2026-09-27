@@ -2,6 +2,10 @@ import ABIBridgeCore
 import Synchronization
 
 struct SwiftHookSlotKey: Hashable, Sendable { let address: UInt; let generation: UInt64 }
+struct SwiftHookReference: Sendable {
+    let key: SwiftHookSlotKey
+    let authentication: NativePointerAuthentication
+}
 
 final class SwiftHookGroup: @unchecked Sendable {
     let key: SwiftHookSlotKey
@@ -125,13 +129,21 @@ actor SwiftHookRegistry {
 
     func register(selection: ImportedFunctionSelection, signature: SwiftHookSignature, handler: SwiftHookHandler,
                   codeOwner: (any Sendable)? = nil, transport: SwiftReplacementTransport = .live) throws -> NativeSwiftImportedFunctionHook {
+        try register(references: selection.references.map {
+            SwiftHookReference(key: .init(address: UInt($0.address), generation: $0.image.identity.loadGeneration), authentication: $0.authentication!)
+        }, retaining: selection, signature: signature, handler: handler, codeOwner: codeOwner, transport: transport)
+    }
+
+    func register(references: [SwiftHookReference], retaining owner: any Sendable,
+                  signature: SwiftHookSignature, handler: SwiftHookHandler,
+                  codeOwner: (any Sendable)? = nil, transport: SwiftReplacementTransport = .live) throws -> NativeSwiftImportedFunctionHook {
         var records: [SwiftHookSlotRecord] = []
         var install: [Bool] = []
         // Resolve/capture every predecessor and allocate callback state before
         // exposing the new node through any existing or newly written entry.
-        for reference in selection.references {
-            let key = SwiftHookSlotKey(address: UInt(reference.address), generation: reference.image.identity.loadGeneration)
-            let authentication = reference.authentication!
+        for reference in references {
+            let key = reference.key
+            let authentication = reference.authentication
             let group: SwiftHookGroup
             if let entry = entries[key] {
                 guard entry.recoveryOwner == nil else {
@@ -148,7 +160,7 @@ actor SwiftHookRegistry {
                 install.append(current != snapshot.after)
             } else {
                 group = try SwiftHookGroup(key: key, authentication: authentication, signature: signature,
-                    retaining: selection, codeOwner: codeOwner, transport: transport)
+                    retaining: owner, codeOwner: codeOwner, transport: transport)
                 install.append(true)
             }
             records.append(SwiftHookSlotRecord(group))

@@ -22,3 +22,9 @@ open class CallerOverridingRenderer: ReplacementRenderer {
 @inline(never) public func callbackQuartet(_ object: CallbackRenderer, _ value: Int64) -> Int64 { object.quartet(value).checksum }
 
 @inline(never) public func callbackConsumeSelf(_ object: CallbackRenderer, _ value: Int64) -> Int64 { object.consumeSelf(value) }
+
+@inline(never) public func hookRender(_ object: HookRenderer, _ value: Int64) -> Int64 { object.render(value) }
+@inline(never) public func hookDirectRender(_ object: HookRenderer, _ value: Int64) -> Int64 { object.directRender(value) }
+@inline(never) public func hookConsume(_ object: HookRenderer, _ value: Int64) -> Int64 { object.consume(value) }
+@inline(never) public func hookSetText(_ object: HookRenderer, _ value: String) -> String { object.text = value; return object.text }
+@inline(never) public func makeCallerRenderer() -> CallerOverridingRenderer { CallerOverridingRenderer() }

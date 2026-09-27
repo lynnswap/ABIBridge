@@ -9,6 +9,7 @@ import ObjectiveC
 struct SwiftClassDispatch {
     let address: UInt
     let authentication: NativePointerAuthentication
+    let isSetter: Bool
 
     let descriptor: ResolvedSymbol
 
@@ -67,6 +68,7 @@ struct SwiftClassDispatch {
                         authentication = NativePointerAuthentication.isEnabled
                             ? .signed(key: .instructionA, discriminator: UInt(flags >> 16), addressDiversity: true) : .unsigned
                         descriptor = resolved
+                        isSetter = kind == 3
                         return
                     }
                 }

@@ -6,9 +6,10 @@ final class SwiftHookHandler: @unchecked Sendable {
     let invoke: (SwiftHookFrame, [NativeValueStorage]) throws -> NativeValueStorage
     let failure: @Sendable (any Error) -> Void
     let requiresMainActor: Bool
-    init(requiresMainActor: Bool = false, failure: @escaping @Sendable (any Error) -> Void,
+    let owner: (any Sendable)?
+    init(requiresMainActor: Bool = false, retaining owner: (any Sendable)? = nil, failure: @escaping @Sendable (any Error) -> Void,
          invoke: @escaping (SwiftHookFrame, [NativeValueStorage]) throws -> NativeValueStorage) {
-        self.requiresMainActor = requiresMainActor; self.failure = failure; self.invoke = invoke
+        self.requiresMainActor = requiresMainActor; self.owner = owner; self.failure = failure; self.invoke = invoke
     }
 }
 
@@ -48,7 +49,8 @@ private final class SwiftHookExecution {
             return try invoke(count - 1, arguments: arguments)
         }
         let step = SwiftHookStep()
-        let frame = SwiftHookFrame { [self] values in
+        let readReceiver: (() throws -> NativeValueStorage)? = signature.classReceiver == nil ? nil : { [self] in try signature.readReceiver(call) }
+        let frame = SwiftHookFrame(receiver: readReceiver) { [self] values in
             do {
                 let result = try invoke(count - 1, arguments: values)
                 step.record(.success(result))
@@ -116,9 +118,9 @@ final class SwiftGeneratedCallback: @unchecked Sendable {
         functions.destroyResult = { context, value in
             Unmanaged<SwiftHookDispatcher>.fromOpaque(context!).takeUnretainedValue().signature.destroyResult(value!)
         }
-        functions.destroyConsumedArguments = { context, _, arguments, count in
+        functions.destroyConsumedArguments = { context, receiver, arguments, count in
             let signature = Unmanaged<SwiftHookDispatcher>.fromOpaque(context!).takeUnretainedValue().signature
-            if signature.consumesArguments { signature.destroyArguments(UnsafeBufferPointer(start: arguments, count: count)) }
+            signature.destroyConsumedInputs(context: receiver, arguments: UnsafeBufferPointer(start: arguments, count: count))
         }
         let context = Unmanaged.passRetained(dispatcher), owner = Unmanaged.passRetained(original)
         var error: OpaquePointer?
