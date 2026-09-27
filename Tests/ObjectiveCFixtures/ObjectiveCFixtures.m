@@ -73,3 +73,37 @@
     }
 }
 @end
+
+@implementation ABIEscapingForwardingFixture {
+    NSMutableArray<NSInvocation *> *_saved;
+}
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)selector {
+    if (sel_isEqual(selector, NSSelectorFromString(@"remember:"))) {
+        return [NSMethodSignature signatureWithObjCTypes:"q@:q"];
+    }
+    return [super methodSignatureForSelector:selector];
+}
+- (void)forwardInvocation:(NSInvocation *)invocation {
+    if (!sel_isEqual(invocation.selector, NSSelectorFromString(@"remember:"))) {
+        [super forwardInvocation:invocation];
+        return;
+    }
+    NSInteger value = 0;
+    [invocation getArgument:&value atIndex:2];
+    NSInteger result = value + 1;
+    [invocation setReturnValue:&result];
+    [invocation retainArguments];
+    invocation.target = nil; // Keep the recorded call without retaining this fixture.
+    if (!_saved) _saved = [NSMutableArray new];
+    [_saved addObject:invocation];
+}
+- (NSArray<NSNumber *> *)savedArguments {
+    NSMutableArray<NSNumber *> *values = [NSMutableArray new];
+    for (NSInvocation *invocation in _saved) {
+        NSInteger value = 0;
+        [invocation getArgument:&value atIndex:2];
+        [values addObject:@(value)];
+    }
+    return values;
+}
+@end

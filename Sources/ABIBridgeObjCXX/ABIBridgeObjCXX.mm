@@ -198,6 +198,9 @@ struct ABIObjCInvocation {
     CFTypeRef signature;
     SEL selector;
     Ownership ownership;
+    const size_t parameterCount;
+    const size_t resultSize;
+    const bool objectResult;
     Class receiverType = Nil;
     bool classMethod = false;
     IMP implementation = nullptr;
@@ -206,7 +209,9 @@ struct ABIObjCInvocation {
 
     ABIObjCInvocation(id receiver, NSMethodSignature *signature, SEL selector, Ownership ownership)
         : receiver(CFBridgingRetain(receiver)), signature(CFBridgingRetain(signature)),
-          selector(selector), ownership(ownership) {}
+          selector(selector), ownership(ownership),
+          parameterCount(signature.numberOfArguments - 2), resultSize(signature.methodReturnLength),
+          objectResult(*unqualified(signature.methodReturnType) == '@' || *unqualified(signature.methodReturnType) == '#') {}
     ~ABIObjCInvocation() { if (receiver) CFRelease(receiver); CFRelease(signature); }
     NSMethodSignature *methodSignature() const { return (__bridge NSMethodSignature *)signature; }
 };
@@ -329,7 +334,7 @@ IMP ABIObjCInvocationImplementation(const ABIObjCInvocation *invocation) { retur
 BOOL ABIObjCInvocationReturnsRetained(const ABIObjCInvocation *invocation) { return invocation->ownership.retained; }
 BOOL ABIObjCInvocationConsumesReceiver(const ABIObjCInvocation *invocation) { return invocation->ownership.consumed; }
 size_t ABIObjCInvocationParameterCount(const ABIObjCInvocation *invocation) {
-    return invocation->methodSignature().numberOfArguments - 2;
+    return invocation->parameterCount;
 }
 const char *ABIObjCInvocationParameterType(const ABIObjCInvocation *invocation, size_t index) {
     return [invocation->methodSignature() getArgumentTypeAtIndex:index + 2];
@@ -343,7 +348,7 @@ size_t ABIObjCInvocationParameterSize(const ABIObjCInvocation *invocation, size_
     return size;
 }
 size_t ABIObjCInvocationResultSize(const ABIObjCInvocation *invocation) {
-    return invocation->methodSignature().methodReturnLength;
+    return invocation->resultSize;
 }
 BOOL ABIInvokeObjCInvocation(
     ABIObjCInvocation *plan, void *result, const void *const *arguments, NSError **error)
@@ -355,6 +360,8 @@ BOOL ABIInvokeObjCInvocation(
         fail(error, ABIFailureInvalidRequest, @"Argument and result storage are required.");
         return NO;
     }
+    // Forwarding may retain or mutate this invocation. Reusing it across calls
+    // would let a later call overwrite that externally observable state.
     NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:plan->methodSignature()];
     invocation.selector = plan->selector;
     for (size_t index = 0; index < count; ++index) {
@@ -367,8 +374,7 @@ BOOL ABIInvokeObjCInvocation(
     if (plan->ownership.consumed) CFRetain(plan->receiver);
     [invocation invokeWithTarget:(__bridge id)plan->receiver];
     if (resultSize) {
-        const char *type = unqualified(plan->methodSignature().methodReturnType);
-        if (*type == '@' || *type == '#') {
+        if (plan->objectResult) {
             __unsafe_unretained id object = nil;
             [invocation getReturnValue:&object];
             CFTypeRef owned = object
@@ -429,8 +435,7 @@ BOOL ABIInvokeObjCImplementation(
         if (failure) ABIReleaseResolutionFailure(failure);
         return NO;
     }
-    const char *encoding = unqualified(plan->methodSignature().methodReturnType);
-    if (*encoding == '@' || *encoding == '#') {
+    if (plan->objectResult) {
         CFTypeRef object = nullptr;
         std::memcpy(&object, result, sizeof(object));
         if (object && !plan->ownership.retained) CFRetain(object);
