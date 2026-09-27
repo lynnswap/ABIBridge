@@ -120,6 +120,16 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
                 let method = try unsafe object.virtualMethod(entry, as: ((Int32) -> Int32).self)
                 try check(try unsafe method.unsafeInvoke(2) == (kind == 0 ? 42 : 62), "Named virtual entry invokes the captured implementation")
             }
+            let start = ContinuousClock.now
+            for _ in 0..<1000 {
+                let repeated = try await table.entry(named: name, using: runtime)
+                guard repeated.index == slot && repeated.authentication == expected else {
+                    throw ArchitectureValidationFailure(description: "Repeated virtual lookup changed its selected entry")
+                }
+            }
+            let duration = start.duration(to: .now).components
+            let seconds = (Double(duration.seconds) + Double(duration.attoseconds) / 1e18) / 1000
+            checks.append("\(name) lookup: \(seconds) s (mean of 1000)")
         }
     case "virtual-hooks":
         var published = false

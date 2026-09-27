@@ -127,10 +127,15 @@ struct VirtualEntryTests {
         let library = try fixture(); defer { library.cleanup() }
         let address = try pointer(library, "ABINamedTable", 2)
         let table = try unsafe NativeVTable(borrowing: address, entryCount: 2, retaining: library)
-        do {
-            _ = try await table.entry(named: "NamedVirtual::duplicate(int)", using: ABIRuntime())
-            Issue.record("Duplicate entries must be ambiguous")
-        } catch ABIResolutionError.ambiguousDeclaration(_, let candidates) { #expect(candidates.count == 2) }
+        let runtime = ABIRuntime()
+        let bounded = try unsafe NativeVTable(borrowing: address, entryCount: 1, retaining: library)
+        for _ in 0..<3 {
+            #expect(try await bounded.entry(named: "NamedVirtual::duplicate(int)", using: runtime).index == 0)
+            do {
+                _ = try await table.entry(named: "NamedVirtual::duplicate(int)", using: runtime)
+                Issue.record("Wider bounds must remain ambiguous after a narrower cached lookup")
+            } catch ABIResolutionError.ambiguousDeclaration(_, let candidates) { #expect(candidates.count == 2) }
+        }
         let explicit = try unsafe table.entry(at: 1, authentication: .unsigned)
         #expect(explicit.index == 1 && explicit.symbolName == nil)
         #expect(throws: NativeDispatchError.entryOutOfBounds(index: 2, count: 2)) {
@@ -171,10 +176,16 @@ struct VirtualEntryTests {
         let resolver = SymbolResolver()
         let symbol = try resolver.resolve(.init(name: "ABIFoldedTable", language: .c, kind: .data), in: .path(library.libraryURL))
         let table = try unsafe symbol.withUnsafeAddress { try unsafe NativeVTable(borrowing: $0, entryCount: 1, retaining: symbol) }
-        do {
-            _ = try await table.entry(named: "Folded::first(int)", using: ABIRuntime())
-            Issue.record("An address shared by two symbols cannot establish the original declaration")
-        } catch ABIResolutionError.ambiguousDeclaration(_, let candidates) { #expect(candidates.count == 2) }
+        let runtime = ABIRuntime()
+        for name in ["Folded::first(int)", "Folded::second(int)", "Folded::first(int)"] {
+            do {
+                _ = try await table.entry(named: name, using: runtime)
+                Issue.record("An address shared by two symbols cannot establish the original declaration")
+            } catch ABIResolutionError.ambiguousDeclaration(let declaration, let candidates) {
+                #expect(declaration.name == name)
+                #expect(candidates.count == 2)
+            }
+        }
     }
 
     @Test(arguments: [false, true]) func missingOriginalIdentitiesRequireAdapter(legacy: Bool) async throws {

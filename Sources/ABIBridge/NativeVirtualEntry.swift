@@ -23,7 +23,7 @@ extension NativeVTable {
     /// Reads the matching loaded image's original chained fixups and symbols.
     /// Secondary/covariant thunks keep their slot identity and authentication.
     /// Existing hooks do not affect selection. Repeated queries share the runtime's
-    /// image index. Stripped identities, missing files, ambiguous aliases and
+    /// retained table owner and normalized original declarations. Stripped identities, missing files, ambiguous aliases and
     /// unsupported layouts require ``entry(at:authentication:)`` adapter metadata.
     /// The table bounds and subobject were established when constructing this view;
     /// neither class layouts nor method signatures are inferred from the name.
