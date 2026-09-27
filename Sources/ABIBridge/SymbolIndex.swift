@@ -94,6 +94,7 @@ enum SymbolCandidateScope: Hashable {
     case exact([UInt8])
     case language(NativeLanguage)
     case swiftModule(String)
+    case swiftFallback
     case cxxOwner(String)
 }
 
@@ -159,6 +160,17 @@ struct SwiftModuleFilter {
         guard module.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) != nil else { return nil }
         self.module = module
         prefix = String(module.utf8.count) + module
+    }
+
+    // Nil also describes an incomplete trie edge. Only a literal root can be
+    // excluded from the conservative bucket without interpreting substitutions.
+    static func literalModulePrefix(_ name: UnsafePointer<CChar>) -> Bool? {
+        var body = name
+        if body.pointee == 95 { body += 1 }
+        guard body.pointee == 36, body[1] == 115 || body[1] == 83 else { return nil }
+        body += 2
+        guard body.pointee != 0 else { return nil }
+        return body.pointee >= 49 && body.pointee <= 57
     }
 
     func matches(_ raw: String) -> Bool {
@@ -250,12 +262,16 @@ final class SymbolIndex {
     private let macho: MachOImage
     private lazy var exportTrie = macho.exportTrie
     private var localSymbols: [IndexedSymbol] = []
+    private var swiftTableIndices: [Int]?
     private var sourceSymbols: [SymbolCandidateScope: [IndexedSymbol]] = [:]
     private var sharedCacheScopes: Set<SymbolCandidateScope> = []
-    private struct Scope: Hashable {
+    private enum SwiftBucket { case literal, fallback }
+    private struct Scope: Hashable, Sendable {
         let language: NativeLanguage
         let fragments: [String]
+        let swiftFallback: Bool
     }
+    private static let swiftFallbackScope = Scope(language: .swift, fragments: [], swiftFallback: true)
     private var decoded: [Scope: [Int: [IndexedSymbol]]] = [:]
     private var linkerNames: [[UInt8]: [IndexedSymbol]] = [:]
     private var swiftExtensions: [Scope: [Int: [IndexedSymbol]]] = [:]
@@ -286,12 +302,17 @@ final class SymbolIndex {
         }
     }
 
+    var hasSharedSwiftFallback: Bool {
+        sharedCacheScopes.contains(.swiftFallback) || sharedCacheScopes.contains(.language(.swift))
+    }
+
     func hasSharedCacheSymbols(for query: SymbolQuery) -> Bool {
         if sharedCacheScopes.contains(query.candidateScope) { return true }
         switch query.candidateScope {
         case .swiftModule: return sharedCacheScopes.contains(.language(.swift))
         case .cxxOwner: return sharedCacheScopes.contains(.language(.cxx))
         case .exact(let name):
+            if hasSharedSwiftFallback, query.exactName?.withCString({ SwiftModuleFilter.literalModulePrefix($0) == false }) == true { return true }
             return [NativeLanguage.swift, .cxx].contains { language in
                 sharedCacheScopes.contains(.language(language))
                     && DeclarationKey.symbolPrefixes(for: language).contains { name.starts(with: $0.utf8) }
@@ -301,13 +322,32 @@ final class SymbolIndex {
     }
 
     func appendSharedCacheSymbols(_ more: [IndexedSymbol], matching query: SymbolQuery) {
+        let hasFallback = hasSharedSwiftFallback
+        // The first Swift module read already includes all uncertain roots.
+        // Concurrent or broader reads must not append that same payload again.
+        let additions = hasFallback ? more.filter {
+            $0.name.withCString { SwiftModuleFilter.literalModulePrefix($0) != false }
+        } : more
+        let changesFallback = !hasFallback && additions.contains {
+            $0.name.withCString { SwiftModuleFilter.literalModulePrefix($0) == false }
+        }
         sharedCacheScopes.insert(query.candidateScope)
-        guard !more.isEmpty else { return }
-        localSymbols += more
+        switch query.candidateScope {
+        case .swiftModule, .language(.swift): sharedCacheScopes.insert(.swiftFallback)
+        default: break
+        }
+        guard !additions.isEmpty else { return }
+        let fallback = (sourceSymbols[.swiftFallback], decoded[Self.swiftFallbackScope], swiftExtensions[Self.swiftFallbackScope])
+        localSymbols += additions
         sourceSymbols.removeAll()
         decoded.removeAll()
         swiftExtensions.removeAll()
         linkerNames.removeAll()
+        if !changesFallback {
+            sourceSymbols[.swiftFallback] = fallback.0
+            decoded[Self.swiftFallbackScope] = fallback.1
+            swiftExtensions[Self.swiftFallbackScope] = fallback.2
+        }
     }
 
     private func imageSymbol(name: String, offset: Int) -> IndexedSymbol? {
@@ -338,6 +378,30 @@ final class SymbolIndex {
         }
         if let symbols = macho.symbols32 { return collect(symbols) }
         return []
+    }
+
+    // Keep offsets rather than names: another module can reuse the language
+    // scan without materializing unrelated strings or pinning a second copy.
+    private func swiftSymbols(matching predicate: (UnsafePointer<CChar>) -> Bool) -> [IndexedSymbol] {
+        guard let table = macho.symbols64 else { return tableSymbols(matching: predicate) }
+        if swiftTableIndices == nil {
+            var indexes: [Int] = []
+            for index in 0..<table.numberOfSymbols {
+                let entry = table.symbols[index]
+                guard Int32(entry.n_type) & N_TYPE == N_SECT else { continue }
+                let name = table.stringBase.advanced(by: Int(entry.n_un.n_strx))
+                var prefix = name
+                if prefix.pointee == 95 { prefix += 1 }
+                if prefix.pointee == 36 && (prefix[1] == 115 || prefix[1] == 83) { indexes.append(index) }
+            }
+            swiftTableIndices = indexes
+        }
+        return swiftTableIndices!.compactMap { index in
+            let entry = table.symbols[index]
+            let name = table.stringBase.advanced(by: Int(entry.n_un.n_strx))
+            guard predicate(name) else { return nil }
+            return imageSymbol(name: String(cString: name), offset: table.addressStart + Int(entry.n_value))
+        }
     }
 
     private func exactSymbols(named name: String, key: [UInt8]) -> [IndexedSymbol] {
@@ -375,25 +439,33 @@ final class SymbolIndex {
         return nil
     }
 
-    private func symbols(for query: SymbolQuery) -> [IndexedSymbol] {
-        if let cached = sourceSymbols[query.candidateScope] { return cached }
+    private func symbols(for query: SymbolQuery, swiftBucket: SwiftBucket?) -> [IndexedSymbol] {
+        let scope = swiftBucket == .fallback ? SymbolCandidateScope.swiftFallback : query.candidateScope
+        if let cached = sourceSymbols[scope] { return cached }
         let prefixes = DeclarationKey.symbolPrefixes(for: query.declaration.language)
-        var symbols = tableSymbols(matching: query.acceptsCandidate)
-        if let trie = exportTrie {
-            symbols += filteredExports(in: trie, prefixes: prefixes, query: query)
+        let accepts: (UnsafePointer<CChar>) -> Bool = { raw in
+            guard query.acceptsCandidate(raw) else { return false }
+            guard let swiftBucket else { return true }
+            return SwiftModuleFilter.literalModulePrefix(raw) == (swiftBucket == .literal)
         }
-        symbols += localSymbols.filter { $0.name.withCString(query.acceptsCandidate) }
+        var symbols = query.declaration.language == .swift
+            ? swiftSymbols(matching: accepts) : tableSymbols(matching: accepts)
+        if let trie = exportTrie {
+            symbols += filteredExports(in: trie, prefixes: prefixes, query: query, swiftBucket: swiftBucket, accepts: accepts)
+        }
+        symbols += localSymbols.filter { $0.name.withCString(accepts) }
         // Definitions commonly occur in both nlist and the export trie.
         // Demangle each distinct spelling/address/source only once.
         var seen = Set<IndexedSymbol>()
         symbols = symbols.filter { seen.insert($0).inserted }
-        sourceSymbols[query.candidateScope] = symbols
+        sourceSymbols[scope] = symbols
         return symbols
     }
 
     // An owner substring can occur later in a C++ name, so only Swift's proven
     // module prefix may prune a subtree. Other filters apply at terminals.
-    private func filteredExports(in trie: MachOImage.ExportTrie, prefixes: [String], query: SymbolQuery) -> [IndexedSymbol] {
+    private func filteredExports(in trie: MachOImage.ExportTrie, prefixes: [String], query: SymbolQuery,
+                                 swiftBucket: SwiftBucket?, accepts: (UnsafePointer<CChar>) -> Bool) -> [IndexedSymbol] {
         var symbols: [IndexedSymbol] = []
         var pending = [(name: "", offset: 0)]
         while let entry = pending.popLast() {
@@ -403,7 +475,7 @@ final class SymbolIndex {
                 trieSize: trie.exportSize, nextOffset: &offset
             ) else { continue }
             if let value = node.content?.symbolOffset,
-               entry.name.withCString(query.acceptsCandidate),
+               entry.name.withCString(accepts),
                let symbol = imageSymbol(name: entry.name, offset: Int(bitPattern: value)) {
                 symbols.append(symbol)
             }
@@ -412,6 +484,8 @@ final class SymbolIndex {
                 guard prefixes.contains(where: { name.hasPrefix($0) || $0.hasPrefix(name) }),
                       name.withCString({ query.swiftModule?.matches($0, partial: true) ?? true }),
                       let next = Int(exactly: child.offset) else { continue }
+                if let swiftBucket, let literal = name.withCString(SwiftModuleFilter.literalModulePrefix),
+                   literal != (swiftBucket == .literal) { continue }
                 pending.append((name, next))
             }
         }
@@ -427,13 +501,23 @@ final class SymbolIndex {
         if let name = query.exactName {
             return exactSymbols(named: name, key: query.key)
         }
+        if declaration.language == .swift {
+            return indexedMatches(query, extensionsOnly: extensionsOnly, swiftBucket: .literal)
+                + indexedMatches(query, extensionsOnly: extensionsOnly, swiftBucket: .fallback)
+        }
+        return indexedMatches(query, extensionsOnly: extensionsOnly, swiftBucket: nil)
+    }
+
+    private func indexedMatches(_ query: SymbolQuery, extensionsOnly: Bool, swiftBucket: SwiftBucket?) -> [IndexedSymbol] {
+        let declaration = query.declaration
         let filter = query.filter
-        let scope = Scope(language: declaration.language, fragments: filter?.fragments ?? query.swiftModule.map { [$0.module] } ?? [])
+        let scope = swiftBucket == .fallback ? Self.swiftFallbackScope
+            : Scope(language: declaration.language, fragments: filter?.fragments ?? query.swiftModule.map { [$0.module] } ?? [], swiftFallback: false)
         if extensionsOnly, let extensions = swiftExtensions[scope] {
             return Self.matching(extensions[query.fingerprint] ?? [], query: query, extensionsOnly: true)
         }
         if decoded[scope] == nil {
-            let candidates = symbols(for: query)
+            let candidates = symbols(for: query, swiftBucket: swiftBucket)
             var index: [Int: [IndexedSymbol]] = [:]
             var extensions: [Int: [IndexedSymbol]] = [:]
             for symbol in candidates {

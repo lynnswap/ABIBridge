@@ -23,7 +23,7 @@ final class SharedCacheSymbols {
     private var filesByCache: [UUID: [SymbolFile]] = [:]
     private var rangesByTable: [UUID: [UInt64: Range<Int>]] = [:]
 
-    func symbols(in image: NativeImage, matching query: SymbolQuery) -> [IndexedSymbol] {
+    func symbols(in image: NativeImage, matching query: SymbolQuery, includingSwiftFallback: Bool = true) -> [IndexedSymbol] {
         let macho = MachOImage(ptr: UnsafePointer<mach_header>(bitPattern: UInt(image.identity.headerAddress))!)
         guard macho.header.flags.contains(.dylib_in_cache),
               macho.is64Bit,
@@ -33,7 +33,7 @@ final class SharedCacheSymbols {
         func record(_ name: UnsafePointer<CChar>, _ value: UInt64) {
             guard let address = SymbolIndex.slid(value, by: image.identity.slide) else { return }
             foundDefinitions = true
-            if query.acceptsCandidate(name) {
+            if query.acceptsCandidate(name), includingSwiftFallback || SwiftModuleFilter.literalModulePrefix(name) != false {
                 result.append(IndexedSymbol(name: String(cString: name), address: address, source: .sharedCache))
             }
         }

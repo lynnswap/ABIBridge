@@ -133,7 +133,7 @@ The permanent host's `swift-value-hooks` mode passed 12 checks on iPhone Air / i
 
 ## Swift lookup performance
 
-Run `swift-lookup` in `ArchitectureTestHost` to measure automatic nominal-descriptor lookup and direct/inherited method lookup. Each operation reports its first lookup and the mean of 100 repeated lookups in seconds, and resolved methods must return the compiler fixture's expected result. The probe clears the runtime's indexes between operation groups while retaining the type handles; “cold” refers to those indexes, not the OS file cache. Use a fresh launch for each Debug/Release comparison with the same toolchain, architecture, signing, and linked dependencies. The probe reports timings without a hardware-dependent pass/fail threshold.
+Run `swift-lookup` in `ArchitectureTestHost` to measure automatic nominal-descriptor lookup and direct/inherited method lookup. Each operation reports its first lookup and the mean of 100 repeated lookups in seconds, and resolved methods must return the compiler fixture's expected result. The probe clears the runtime's indexes between operation groups while retaining the type handles; “cold” refers to those indexes, not the OS file cache. Use a fresh launch for each Debug/Release comparison with the same toolchain, architecture, signing, and linked dependencies. It also measures successive lookups across different modules, including missing-module controls, without clearing indexes within each sequence. The probe reports timings without a hardware-dependent pass/fail threshold.
 
 ## C and C++ lookup performance
 

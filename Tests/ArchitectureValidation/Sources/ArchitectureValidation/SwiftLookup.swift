@@ -38,5 +38,21 @@ import SwiftReplacementFixtures
             }
         }
     }
+    await runtime.removeCachedResults()
+    for typeName in ["ABIBridge.ABIRuntime", "ArchitectureValidation.ArchitectureCounter", "SwiftReplacementFixtures.ReplacementRenderer"] {
+        try await measure("different module: \(typeName)") {
+            _ = try await runtime.resolve(.init(name: "nominal type descriptor for " + typeName, language: .swift, kind: .data))
+        }
+    }
+    await runtime.removeCachedResults()
+    for module in ["ABIBridgeAbsentFirst", "ABIBridgeAbsentSecond", "ABIBridgeAbsentThird"] {
+        let absent = NativeDeclaration(name: module + ".missing() -> ()", language: .swift)
+        try await measure("absent module: \(module)") {
+            do {
+                _ = try await runtime.resolve(absent)
+                throw ArchitectureValidationFailure(description: "Absent module unexpectedly resolved")
+            } catch ABIResolutionError.declarationNotFound(let declaration) where declaration == absent {}
+        }
+    }
     return checks
 }
