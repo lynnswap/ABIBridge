@@ -7,6 +7,7 @@
 
 struct ABIVirtualCallTarget {
     ABIUnmanagedFunction function = nullptr;
+    uint64_t generation = 0;
     std::unique_ptr<ABIImageLease, decltype(&ABIReleaseImage)> image{nullptr, ABIReleaseImage};
 };
 
@@ -93,6 +94,17 @@ ABIVirtualCallTarget *ABICopyVirtualCallTarget(
         fail(error, ABIFailureInvalidAddress, "The virtual table entry is null.");
         return nullptr;
     }
+    return ABICopyFunctionSlotTarget(bits, storage, key, discriminator, addressDiversity, error);
+}
+
+ABIVirtualCallTarget *ABICopyFunctionSlotTarget(uintptr_t bits, const void *storage,
+    int32_t key, uintptr_t discriminator, bool addressDiversity, ABIResolutionFailure **error) {
+    if (error) *error = nullptr;
+    if (!storage || !validKey(key)) {
+        fail(error, ABIFailureInvalidRequest, "A function slot and authentication schema are required.");
+        return nullptr;
+    }
+    if (!bits) return nullptr;
     auto target = std::make_unique<ABIVirtualCallTarget>();
     target->function = authenticateFunction(bits, storage, key, discriminator, addressDiversity);
 
@@ -103,7 +115,7 @@ ABIVirtualCallTarget *ABICopyVirtualCallTarget(
     address = ptrauth_strip(address, ptrauth_key_function_pointer);
 #endif
     ABIResolutionFailure *imageError = nullptr;
-    target->image.reset(abibridge::copyContainingImage(address,&imageError));
+    target->image.reset(abibridge::copyContainingImage(address,&imageError,&target->generation));
     if (imageError) {
         if (error) *error=imageError; else ABIReleaseResolutionFailure(imageError);
         return nullptr;
@@ -119,3 +131,5 @@ const void *ABIFunctionPointerBits(ABIUnmanagedFunction function) {
     std::memcpy(&bits, &function, sizeof(bits));
     return bits;
 }
+
+uint64_t ABIVirtualCallTargetGeneration(const ABIVirtualCallTarget *target) { return target->generation; }

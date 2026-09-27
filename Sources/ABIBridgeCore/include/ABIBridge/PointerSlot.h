@@ -44,6 +44,10 @@ typedef struct {
 /// Executable pages are rejected; this operation never patches instructions.
 ABIPointerSlotResult ABICompareExchangePointerSlot(void *storage, uintptr_t expected, uintptr_t replacement);
 
+// Internal retry of failed protection restoration. Does not write a pointer.
+ABIPointerSlotResult ABIRestorePointerSlotProtection(void *storage, uintptr_t expected,
+    int32_t protection, int32_t maximum, bool restoreCurrent, bool restoreMaximum);
+
 /// Re-signs an already valid generic C function pointer for the target slot's
 /// explicit schema. On unsigned storage it authenticates before removing the
 /// signature. A nil function encodes zero. Invalid storage/schema returns false.

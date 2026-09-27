@@ -32,6 +32,11 @@ const void *ABIUnsafeReadAuthenticatedPointer(
 ABIVirtualCallTarget *ABICopyVirtualCallTarget(
     const void *storage, int32_t key, uintptr_t discriminator, bool addressDiversity,
     ABIResolutionFailure **error);
+// Internal capture from one already-read representation. Authentication uses
+// the original storage address, not the temporary copy. Zero is a null target.
+ABIVirtualCallTarget *ABICopyFunctionSlotTarget(uintptr_t bits, const void *storage,
+    int32_t key, uintptr_t discriminator, bool addressDiversity, ABIResolutionFailure **error);
+uint64_t ABIVirtualCallTargetGeneration(const ABIVirtualCallTarget *target);
 void ABIReleaseVirtualCallTarget(ABIVirtualCallTarget *target);
 /// A signed generic C function pointer borrowed from a retained target.
 ABIUnmanagedFunction ABIVirtualCallTargetFunction(const ABIVirtualCallTarget *target);

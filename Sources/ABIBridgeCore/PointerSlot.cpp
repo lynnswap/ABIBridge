@@ -77,3 +77,11 @@ bool ABIEncodePointerSlotFunction(ABIUnmanagedFunction function, const void *sto
     std::memcpy(bits, &pointer, sizeof(pointer));
     return true;
 }
+
+ABIPointerSlotResult ABIRestorePointerSlotProtection(void *storage, uintptr_t expected,
+    int32_t protection, int32_t maximum, bool restoreCurrent, bool restoreMaximum) {
+    std::lock_guard lock(slotWriter);
+    Memory memory;
+    return abibridge::restorePointerSlotProtection(memory, reinterpret_cast<uintptr_t>(storage), expected,
+        protection, maximum, restoreCurrent, restoreMaximum);
+}

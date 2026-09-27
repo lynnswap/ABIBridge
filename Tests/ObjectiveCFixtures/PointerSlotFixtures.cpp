@@ -82,5 +82,24 @@ const char *ABITestPointerSlotRecovery() {
             || m.requests.size() != 3 || m.value != (displaced ? 99u : 42u))
             return "Publication/displacement and both restoration failures must survive together";
     }
+    {
+        Memory m; m.region = {3, 3, 0};
+        auto r = abibridge::restorePointerSlotProtection(m, 0x4000, 41, 1, 1, true, true);
+        if (r.status || r.didWrite || m.exchanges || m.requests != std::vector<std::pair<bool, vm_prot_t>>{{false, 1}, {true, 1}})
+            return "Protection repair must leave the pointer alone and restore both requested protections";
+    }
+    {
+        Memory m; m.value = 99;
+        auto r = abibridge::restorePointerSlotProtection(m, 0x4000, 41, 1, 1, true, true);
+        if (r.status != ABIPointerSlotDisplaced || !m.requests.empty())
+            return "Protection repair must not overwrite a displaced slot's protections";
+    }
+    {
+        Memory m; m.region = {3, 3, 0}; m.protectionResults = {KERN_INVALID_ADDRESS, KERN_PROTECTION_FAILURE};
+        auto r = abibridge::restorePointerSlotProtection(m, 0x4000, 41, 1, 1, true, true);
+        if (r.status != ABIPointerSlotRestoreFailed || r.restoreProtectionError != KERN_INVALID_ADDRESS
+            || r.restoreMaximumError != KERN_PROTECTION_FAILURE || r.didWrite)
+            return "Protection repair must preserve both failures";
+    }
     return nullptr;
 }

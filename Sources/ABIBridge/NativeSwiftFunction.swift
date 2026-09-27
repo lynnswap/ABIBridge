@@ -75,6 +75,7 @@ public struct NativeSwiftFunction<Result, each Argument>: Sendable {
     /// The declaration and image retained for this function.
     public let symbol: ResolvedSymbol
 
+    private var implementation: SwiftImplementation?
     private let call: SwiftCall<Result, repeat each Argument>
     private let context: UInt
     private let typeOwner: NativeSwiftType?
@@ -85,6 +86,12 @@ public struct NativeSwiftFunction<Result, each Argument>: Sendable {
         context = metadata.map { unsafeBitCast($0, to: UInt.self) } ?? 0
         typeOwner = owner
         call = try SwiftCall(consumesArguments: consumesArguments)
+    }
+
+    func capturing(_ implementation: SwiftImplementation) -> Self {
+        var result = self
+        result.implementation = implementation
+        return result
     }
 
     /// Calls the concrete Swift entry point using the prepared signature.
@@ -102,7 +109,7 @@ public struct NativeSwiftFunction<Result, each Argument>: Sendable {
     @unsafe public func unsafeInvoke(_ values: repeat each Argument) throws -> Result {
         try unsafe call.unsafeInvoke(
             symbol: symbol, context: UnsafeRawPointer(bitPattern: context),
-            retaining: (symbol, typeOwner), repeat each values
+            retaining: (symbol, typeOwner), implementation: implementation, repeat each values
         )
     }
 }
