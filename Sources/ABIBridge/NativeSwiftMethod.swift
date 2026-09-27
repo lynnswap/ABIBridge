@@ -19,8 +19,8 @@ public struct NativeSwiftMethod<Result, each Argument>: Sendable {
     public let symbol: ResolvedSymbol
 
     private var implementation: SwiftImplementation?
-    private let type: NativeSwiftType
-    private let receiver: SwiftReceiverPlan
+    let type: NativeSwiftType
+    let receiver: SwiftReceiverPlan
     private let call: SwiftCall<Result, repeat each Argument>
 
     init(symbol: ResolvedSymbol, type: NativeSwiftType, receiver: SwiftReceiverPlan,

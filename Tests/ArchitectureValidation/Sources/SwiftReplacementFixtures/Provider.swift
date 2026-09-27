@@ -36,3 +36,23 @@ open class ReplacementRenderer {
 
 @inline(never) public func makeRenderer() -> ReplacementRenderer { ReplacementRenderer() }
 @inline(never) public func knownClassScalar(_ value: Int64) -> Int64 { ReplacementRenderer().scalar(value) }
+
+open class InheritedRenderer: ReplacementRenderer {}
+open class OverridingRenderer: ReplacementRenderer {
+    @inline(never) public override func scalar(_ value: Int64) -> Int64 { value + 4 }
+}
+@inline(never) public func makeInheritedRenderer() -> ReplacementRenderer { InheritedRenderer() }
+@inline(never) public func makeOverridingRenderer() -> ReplacementRenderer { OverridingRenderer() }
+
+// Optimizers may coalesce these bodies. Their declarations still own distinct
+// metadata entries, and the final method has no virtual entry at all.
+open class CoalescedParent {
+    public init() {}
+    @inline(never) open func value() -> Int64 { 42 }
+    @inline(never) public func replacement() -> Int64 { 100 }
+}
+open class CoalescedChild: CoalescedParent {
+    @inline(never) public func extra() -> Int64 { 42 }
+    @inline(never) public final func finalValue() -> Int64 { 42 }
+}
+@inline(never) public func makeCoalescedChild() -> CoalescedChild { CoalescedChild() }
