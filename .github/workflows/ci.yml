@@ -44,7 +44,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [Package, Optimized bridge, Native consumers, Architecture]
+        suite: [Core, Invocation, Hooks, Optimized bridge, Native consumers, Architecture]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -56,17 +56,26 @@ jobs:
           xcodebuild -version
           xcrun swift --version
       - name: Check whitespace and manifest
-        if: matrix.suite == 'Package'
+        if: matrix.suite == 'Core'
         run: |
           git diff --check HEAD^ HEAD
           xcrun swift package dump-package
-      - name: Test package
-        if: matrix.suite == 'Package'
-        run: >-
-          xcodebuild test
-          -scheme ABIBridge
-          -destination 'platform=macOS,arch=arm64'
-          -derivedDataPath "$RUNNER_TEMP/DerivedData"
+      - name: Test package shard
+        id: package-tests
+        timeout-minutes: 12
+        if: contains(fromJSON('["Core", "Invocation", "Hooks"]'), matrix.suite)
+        env:
+          PACKAGE_SUITE: ${{ matrix.suite }}
+          ABI_TEST_BUILD_DIR: ${{ runner.temp }}/DerivedData
+        run: bash scripts/test-package.sh "$(printf '%s' "$PACKAGE_SUITE" | tr '[:upper:]' '[:lower:]')"
+      - name: Preserve failed package test diagnostics
+        if: always() && contains(fromJSON('["Core", "Invocation", "Hooks"]'), matrix.suite) && steps.package-tests.outcome != 'success' && steps.package-tests.outcome != 'skipped'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: package-test-${{ matrix.suite }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/DerivedData/Logs/Test
+          if-no-files-found: warn
+          retention-days: 7
       - name: Test optimized native bridge
         if: matrix.suite == 'Optimized bridge'
         run: >-
