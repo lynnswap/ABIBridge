@@ -88,5 +88,69 @@ import SwiftReplacementFixtures
         try check(classPayload(receiver, 40) == 1210, "Compiler-generated indirect result preserves storage")
     }
     try check(classPayload(receiver, 40) == 220, "Indirect Swift result restored")
+    checks += try await validateSwiftVirtualReplacement()
+    return checks
+}
+
+private struct VirtualPayload: ABIBridgeValue {
+    var a, b, c, d, e: Int64
+    static let abiType = try! NativeType.structure(named: "VirtualPayload", fields: Array(repeating: .int64, count: 5))
+    init(nativeValue: NativeValue) throws { self = try unsafe nativeValue.read(as: Self.self) }
+    static func nativeValue(from value: Self) throws -> NativeValue { try .init(copying: value, as: abiType) }
+}
+
+@MainActor private func validateSwiftVirtualReplacement() async throws -> [String] {
+    let runtime = ABIRuntime(), module = "SwiftReplacementFixtures"
+    let base = try await runtime.swiftType(named: module + ".ReplacementRenderer")
+    let replacement = try await base.method(named: "replacementScalar(_:)", as: ((Int64) -> Int64).self)
+    let objects: [ReplacementRenderer] = [ReplacementRenderer(), InheritedRenderer(), OverridingRenderer()]
+    let names = ["ReplacementRenderer", "InheritedRenderer", "OverridingRenderer"]
+    var checks: [String] = []
+    func check(_ result: Bool, _ message: String) throws {
+        guard result else { throw ArchitectureValidationFailure(description: message) }
+        checks.append(message)
+    }
+    @MainActor func installed<Implementation>(_ plan: NativeSwiftVirtualReplacement<Implementation>,
+        _ body: @MainActor () throws -> Void) throws {
+        try unsafe plan.install()
+        let result = Result { try body() }
+        do { try plan.restore() } catch let cleanup {
+            if case .failure(let failure) = result {
+                throw ArchitectureValidationFailure(description: "\(failure); restoration: \(cleanup)")
+            }
+            throw cleanup
+        }
+        try result.get()
+    }
+    for (index, name) in names.enumerated() {
+        let type = try await runtime.swiftType(named: module + "." + name)
+        let method = try await type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
+        let plan = try unsafe method.prepareVirtualReplacement(with: replacement)
+        try installed(plan) {
+            for (other, object) in objects.enumerated() {
+                try check(classScalar(object, 40) == (other == index ? 240 : (other == 2 ? 44 : 42)),
+                    "\(name) virtual replacement scope: \(names[other])")
+            }
+            try check(try unsafe plan.original.unsafeInvoke(on: objects[index], 40) == (index == 2 ? 44 : 42),
+                "\(name) typed predecessor preserves receiver context")
+        }
+        try check(classScalar(objects[index], 40) == (index == 2 ? 44 : 42), "\(name) restored")
+    }
+    let text = try await base.method(named: "text(_:)", as: ((String) -> String).self)
+    let textReplacement = try await base.method(named: "replacementText(_:)", as: ((String) -> String).self)
+    let textPlan = try unsafe text.prepareVirtualReplacement(with: textReplacement)
+    let input = String(repeating: "native Swift receiver", count: 100)
+    try installed(textPlan) {
+        try check(classText(objects[0], input) == "replacement-method:" + input, "Public virtual replacement preserves owned String result")
+        try check(try unsafe textPlan.original.unsafeInvoke(on: objects[0], input) == "method:" + input, "String predecessor remains callable")
+    }
+    let suffix = "(Swift.Int64) -> \(module).ReplacementPayload"
+    let payload = try await base.method(named: "payload" + suffix, as: ((Int64) -> VirtualPayload).self)
+    let payloadReplacement = try await base.method(named: "replacementPayload" + suffix, as: ((Int64) -> VirtualPayload).self)
+    let payloadPlan = try unsafe payload.prepareVirtualReplacement(with: payloadReplacement)
+    try installed(payloadPlan) {
+        try check(classPayload(objects[0], 40) == 1210, "Public virtual replacement preserves indirect result")
+        try check(try unsafe payloadPlan.original.unsafeInvoke(on: objects[0], 40).a == 42, "Indirect predecessor preserves caller result storage")
+    }
     return checks
 }

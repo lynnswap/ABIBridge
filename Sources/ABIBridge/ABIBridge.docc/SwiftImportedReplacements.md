@@ -36,6 +36,16 @@ The replacement must be a compiler-generated entry with the same physical callin
 
 Direct, inlined and specialized calls that bypass the selected pointers are unaffected. Same-image calls need suitable interposable linking to have replaceable references. The optional provider filter matches the dependency recorded in the binding, including reexport facades. It does not match the address of the currently installed implementation. No importing images are loaded automatically.
 
+For a nullable captured member, unwrap the handle before invoking it:
+
+```swift
+if let previous = plan.slots.first?.original {
+    try unsafe previous.unsafeInvoke(on: receiver, argument)
+}
+```
+
+Swift 6.3.3 Debug code generation can over-release a reference receiver when optional chaining a member that forwards a parameter pack. A local unwrapped handle avoids that compiler issue. This was reproduced without ABIBridge; see [the minimal reproduction](https://github.com/lynnswap/ABIBridge/issues/157). The concrete virtual-method API returns a nonoptional predecessor.
+
 ## Restore and inspect partial effects
 
 Keep the plan to call `restore()` explicitly. Releasing it does not undo dispatch changes or run hidden cleanup that could fail. Preparation is reversible without any restoration because it publishes nothing.

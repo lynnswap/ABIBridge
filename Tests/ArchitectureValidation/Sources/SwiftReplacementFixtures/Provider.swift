@@ -36,3 +36,10 @@ open class ReplacementRenderer {
 
 @inline(never) public func makeRenderer() -> ReplacementRenderer { ReplacementRenderer() }
 @inline(never) public func knownClassScalar(_ value: Int64) -> Int64 { ReplacementRenderer().scalar(value) }
+
+open class InheritedRenderer: ReplacementRenderer {}
+open class OverridingRenderer: ReplacementRenderer {
+    @inline(never) public override func scalar(_ value: Int64) -> Int64 { value + 4 }
+}
+@inline(never) public func makeInheritedRenderer() -> ReplacementRenderer { InheritedRenderer() }
+@inline(never) public func makeOverridingRenderer() -> ReplacementRenderer { OverridingRenderer() }
