@@ -453,3 +453,16 @@ extern "C" __attribute__((visibility("hidden"))) void ABIDispatchSwiftCallback(A
     packResult(callback->interface, *frame, result->value.data());
     result->initialized = false; // The native caller now owns the result.
 }
+
+namespace {
+bool swiftStorageTypesEqual(const std::shared_ptr<TypeStorage> &first, const std::shared_ptr<TypeStorage> &second) {
+    if (first->native()->type != second->native()->type || first->size() != second->size()
+        || first->native()->alignment != second->native()->alignment || first->fields.size() != second->fields.size()) return false;
+    for (size_t index = 0; index < first->fields.size(); ++index)
+        if (!swiftStorageTypesEqual(first->fields[index], second->fields[index])) return false;
+    return true;
+}
+}
+bool ABIValueTypesEqual(const ABIValueType *first, const ABIValueType *second) {
+    return first && second && swiftStorageTypesEqual(first->storage, second->storage);
+}

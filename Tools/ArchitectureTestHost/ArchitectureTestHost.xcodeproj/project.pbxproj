@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 71;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -15,21 +15,17 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		AB673B7230692B5E007E9CFA /* ArchitectureTestHost */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
-			path = ArchitectureTestHost;
-			sourceTree = "<group>";
-		};
+		AB673B7230692B5E007E9CFA /* ArchitectureTestHost */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = ArchitectureTestHost; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		AB673B6D30692B5E007E9CFA /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
 			files = (
 				95DD713C4DFA5AE6D9BC2F41 /* ArchitectureValidation in Frameworks */,
 			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
@@ -60,6 +56,7 @@
 				AB673B6C30692B5E007E9CFA /* Sources */,
 				AB673B6D30692B5E007E9CFA /* Frameworks */,
 				AB673B6E30692B5E007E9CFA /* Resources */,
+				00B0D6CABDB01867E0E63D7B /* Embed Swift import fixtures */,
 			);
 			buildRules = (
 			);
@@ -102,9 +99,8 @@
 			mainGroup = AB673B6730692B5E007E9CFA;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				9B1EFD6E9130B0D9C1951CDC /* XCLocalSwiftPackageReference "ArchitectureValidation" */,
+				9B1EFD6E9130B0D9C1951CDC /* XCLocalSwiftPackageReference "../../Tests/ArchitectureValidation" */,
 			);
-			preferredProjectObjectVersion = 77;
 			productRefGroup = AB673B7130692B5E007E9CFA /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -117,16 +113,42 @@
 /* Begin PBXResourcesBuildPhase section */
 		AB673B6E30692B5E007E9CFA /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
 			files = (
 			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		00B0D6CABDB01867E0E63D7B /* Embed Swift import fixtures */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Embed Swift import fixtures";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "bash \"$PROJECT_DIR/../../scripts/embed-swift-import-fixtures.sh\"";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		AB673B6C30692B5E007E9CFA /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
 			files = (
 			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
@@ -255,6 +277,7 @@
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
@@ -298,6 +321,7 @@
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
@@ -340,6 +364,7 @@
 				AB673B7930692B5F007E9CFA /* Debug */,
 				AB673B7A30692B5F007E9CFA /* Release */,
 			);
+			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 		AB673B7B30692B5F007E9CFA /* Build configuration list for PBXNativeTarget "ArchitectureTestHost" */ = {
@@ -348,12 +373,13 @@
 				AB673B7C30692B5F007E9CFA /* Debug */,
 				AB673B7D30692B5F007E9CFA /* Release */,
 			);
+			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		9B1EFD6E9130B0D9C1951CDC /* XCLocalSwiftPackageReference "ArchitectureValidation" */ = {
+		9B1EFD6E9130B0D9C1951CDC /* XCLocalSwiftPackageReference "../../Tests/ArchitectureValidation" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../../Tests/ArchitectureValidation;
 		};
@@ -362,7 +388,7 @@
 /* Begin XCSwiftPackageProductDependency section */
 		0B096C359624F56CC30D795F /* ArchitectureValidation */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 9B1EFD6E9130B0D9C1951CDC /* XCLocalSwiftPackageReference "ArchitectureValidation" */;
+			package = 9B1EFD6E9130B0D9C1951CDC /* XCLocalSwiftPackageReference "../../Tests/ArchitectureValidation" */;
 			productName = ArchitectureValidation;
 		};
 /* End XCSwiftPackageProductDependency section */

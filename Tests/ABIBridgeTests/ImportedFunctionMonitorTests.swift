@@ -161,7 +161,15 @@ struct ImportedFunctionMonitorTests {
         defer { finish.signal(); monitor.invalidate() }
         #expect(try await waitForMonitoring { applied.withLock { $0 } })
         let call = try await ABIRuntime().cFunction(named: "ABIMonitoredCall", as: ((Int32) -> Int32).self, in: .path(url))
-        let task = Task.detached { try unsafe call.unsafeInvoke(41) }
+        // This callback deliberately blocks until the async controller releases
+        // it; the blocked call must not consume a cooperative executor worker.
+        let task = Task {
+            try await withCheckedThrowingContinuation { continuation in
+                let worker = Thread { continuation.resume(with: Result { try unsafe call.unsafeInvoke(41) }) }
+                worker.qualityOfService = .userInitiated
+                worker.start()
+            }
+        }
         #expect(try await waitForMonitoring { entered.withLock { $0 } })
         monitor.invalidate()
         #expect(!released.withLock { $0 })

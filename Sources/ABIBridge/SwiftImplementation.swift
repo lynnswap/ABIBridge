@@ -19,6 +19,12 @@ final class SwiftImplementation: @unchecked Sendable {
         self.handle = handle
         self.owner = owner
     }
+    init(function: ABIUnmanagedFunction, retaining owner: (any Sendable)?) throws {
+        var error: OpaquePointer?
+        guard let handle = ABICopyFunctionTarget(function, &error) else { throw consumeNativeCallFailure(error) }
+        self.handle = handle
+        self.owner = owner
+    }
     deinit { ABIReleaseVirtualCallTarget(handle) }
 }
 
@@ -150,25 +156,45 @@ final class SwiftReplacementStorage: @unchecked Sendable {
     private let storageOwners: Any
     private let transport: SwiftReplacementTransport
 
-    init(slots: [(UInt, NativePointerAuthentication)], replacement symbol: ResolvedSymbol,
+    struct CapturedSlot {
+        let address: UInt
+        let before: UInt
+        let original: SwiftImplementation?
+        let authentication: NativePointerAuthentication
+    }
+
+    static func capture(_ slots: [(UInt, NativePointerAuthentication)], retaining owner: (any Sendable)?) throws -> [CapturedSlot] {
+        try slots.map { address, authentication in
+            var before: UInt = 0
+            guard ABIReadMemory(address, MemoryLayout<UInt>.size, &before).status == ABIMemoryReadComplete,
+                  let storage = UnsafeRawPointer(bitPattern: address) else { throw ABIResolutionError.invalidAddress }
+            return CapturedSlot(address: address, before: before,
+                original: try SwiftImplementation(bits: before, storage: storage, authentication: authentication, retaining: owner),
+                authentication: authentication)
+        }
+    }
+
+    convenience init(slots: [(UInt, NativePointerAuthentication)], replacement symbol: ResolvedSymbol,
          retaining owners: Any, codeOwner: (any Sendable)?, transport: SwiftReplacementTransport = .live) throws {
-        self.transport = transport
-        storageOwners = owners
-        replacement = try unsafe symbol.withUnsafeAddress { address in
-            // Unsigned input is an already resolved code address, not a closure value.
+        let replacement = try unsafe symbol.withUnsafeAddress { address in
             try SwiftImplementation(bits: UInt(bitPattern: address), storage: address,
                 authentication: .unsigned, retaining: codeOwner)!
         }
-        var prepared: [Slot] = []
-        for (address, authentication) in slots {
-            var before: UInt = 0
-            guard ABIReadMemory(address, MemoryLayout<UInt>.size, &before).status == ABIMemoryReadComplete,
-                  let storage = UnsafeMutableRawPointer(bitPattern: address) else { throw ABIResolutionError.invalidAddress }
-            let original = try SwiftImplementation(bits: before, storage: storage, authentication: authentication, retaining: codeOwner)
+        try self.init(captured: Self.capture(slots, retaining: codeOwner), replacement: replacement,
+            retaining: owners, transport: transport)
+    }
+
+    init(captured: [CapturedSlot], replacement: SwiftImplementation, retaining owners: Any,
+         transport: SwiftReplacementTransport = .live) throws {
+        self.transport = transport
+        storageOwners = owners
+        self.replacement = replacement
+        let prepared = try captured.map { slot in
+            let authentication = slot.authentication
             var after: UInt = 0
-            guard ABIEncodePointerSlotFunction(replacement.function, storage, authentication.keyCode,
+            guard ABIEncodePointerSlotFunction(replacement.function, UnsafeMutableRawPointer(bitPattern: slot.address), authentication.keyCode,
                 authentication.discriminator, authentication.addressDiversity, &after) else { throw ABIResolutionError.invalidAddress }
-            prepared.append(Slot(address: address, before: before, after: after, original: original))
+            return Slot(address: slot.address, before: slot.before, after: after, original: slot.original)
         }
         state = Mutex(State(slots: prepared))
     }

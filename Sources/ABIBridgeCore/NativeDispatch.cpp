@@ -105,8 +105,14 @@ ABIVirtualCallTarget *ABICopyFunctionSlotTarget(uintptr_t bits, const void *stor
         return nullptr;
     }
     if (!bits) return nullptr;
+    return ABICopyFunctionTarget(authenticateFunction(bits, storage, key, discriminator, addressDiversity), error);
+}
+
+ABIVirtualCallTarget *ABICopyFunctionTarget(ABIUnmanagedFunction function, ABIResolutionFailure **error) {
+    if (error) *error = nullptr;
+    if (!function) return nullptr;
     auto target = std::make_unique<ABIVirtualCallTarget>();
-    target->function = authenticateFunction(bits, storage, key, discriminator, addressDiversity);
+    target->function = function;
 
     // Strip only for loader lookup. Calls use the authenticated/resigned value,
     // preserving authentication failure instead of turning it into a valid signature.
