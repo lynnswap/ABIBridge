@@ -10,7 +10,10 @@ _ABISwiftCallbackCodePage:
 .rept PAGE_MAX_SIZE / 32
 #if defined(__aarch64__)
     bti c
-    adr x16, -PAGE_MAX_SIZE-4
+    // Native slot loads need not be acquire loads. Order configuration reads
+    // after the caller's load of the published function pointer.
+    dmb ishld
+    adr x16, -PAGE_MAX_SIZE-8
     ldr x17, [x16]
     ldp x16, x9, [x16, #8]
 #if __has_feature(ptrauth_calls)
@@ -18,7 +21,6 @@ _ABISwiftCallbackCodePage:
 #else
     br x16
 #endif
-    nop
     nop
     nop
 #elif defined(__x86_64__)

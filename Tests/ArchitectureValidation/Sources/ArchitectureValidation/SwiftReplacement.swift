@@ -92,7 +92,7 @@ import SwiftReplacementFixtures
     return checks
 }
 
-private struct VirtualPayload: ABIBridgeValue {
+struct VirtualPayload: ABIBridgeValue {
     var a, b, c, d, e: Int64
     static let abiType = try! NativeType.structure(named: "VirtualPayload", fields: Array(repeating: .int64, count: 5))
     init(nativeValue: NativeValue) throws { self = try unsafe nativeValue.read(as: Self.self) }

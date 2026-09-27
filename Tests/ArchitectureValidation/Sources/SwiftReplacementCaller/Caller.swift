@@ -16,3 +16,9 @@ import SwiftReplacementFixtures
 open class CallerOverridingRenderer: ReplacementRenderer {
     @inline(never) public override func scalar(_ value: Int64) -> Int64 { value + 5 }
 }
+@inline(never) public func callbackMixed(_ object: CallbackRenderer) -> Double {
+    object.mixed(0, 1, 2, 3, 4, 5, 6, 7, 8, 0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5).checksum
+}
+@inline(never) public func callbackQuartet(_ object: CallbackRenderer, _ value: Int64) -> Int64 { object.quartet(value).checksum }
+
+@inline(never) public func callbackConsumeSelf(_ object: CallbackRenderer, _ value: Int64) -> Int64 { object.consumeSelf(value) }

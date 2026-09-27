@@ -248,9 +248,10 @@ struct SwiftOwnedResult {
     SwiftOwnedResult(size_t size, SwiftHandler &handler) : value(size), handler(handler) {}
     ~SwiftOwnedResult() { clear(); }
     void clear() {
-        if (initialized && handler.functions.destroyResult)
-            handler.functions.destroyResult(handler.context, value.data());
+        const bool owned = initialized;
         initialized = false;
+        if (owned && handler.functions.destroyResult)
+            handler.functions.destroyResult(handler.context, value.data());
     }
 };
 }
@@ -273,15 +274,14 @@ struct ABISwiftIncomingCall {
     std::vector<void *> arguments;
     const void *receiver;
     pthread_t thread = pthread_self();
-    SwiftOwnedResult completed;
-    SwiftOwnedResult assigned;
+    std::unique_ptr<SwiftOwnedResult> completed;
+    std::unique_ptr<SwiftOwnedResult> assigned;
+    bool active = true;
     bool untouchedFallback = false;
 
     ABISwiftIncomingCall(ABISwiftCallback &callback, std::shared_ptr<SwiftHandler> handler,
                         const void *receiver)
-        : callback(callback), handler(std::move(handler)), receiver(receiver),
-          completed(callback.interface.result->size(), *this->handler),
-          assigned(callback.interface.result->size(), *this->handler) {}
+        : callback(callback), handler(std::move(handler)), receiver(receiver) {}
     ~ABISwiftIncomingCall() {
         if (!untouchedFallback && handler->functions.destroyConsumedArguments)
             handler->functions.destroyConsumedArguments(handler->context, receiver, arguments.data(), arguments.size());
@@ -300,11 +300,14 @@ ABISwiftCallback *ABICreateSwiftCallback(ABISwiftCallInterface *interface,
     auto callback = std::make_unique<ABISwiftCallback>(*interface, fallback);
     callback->code = std::make_unique<abibridge::SwiftCallbackCode>(callback.get(), error);
     if (!callback->code->function()) return nullptr;
-    callback->handler = std::make_shared<SwiftHandler>();
-    callback->handler->functions = functions;
-    callback->handler->context = context;
-    callback->fallbackOwner.context = fallbackOwner;
-    callback->fallbackOwner.release = releaseFallbackOwner;
+    {
+        std::lock_guard lock(callback->mutex);
+        callback->handler = std::make_shared<SwiftHandler>();
+        callback->handler->functions = functions;
+        callback->handler->context = context;
+        callback->fallbackOwner.context = fallbackOwner;
+        callback->fallbackOwner.release = releaseFallbackOwner;
+    }
     return callback.release();
 }
 ABIUnmanagedFunction ABISwiftCallbackFunction(const ABISwiftCallback *callback) {
@@ -324,6 +327,7 @@ bool checkIncoming(ABISwiftIncomingCall *call, ABIResolutionFailure **error) {
     if (!pthread_equal(call->thread, pthread_self())) {
         fail(error, ABIFailureWrongThread, "A Swift callback invocation stays on its entering thread."); return false;
     }
+    if (!call->active) { fail(error, ABIFailureInvalidRequest, "The Swift callback invocation has expired."); return false; }
     return true;
 }
 
@@ -389,19 +393,21 @@ bool ABISwiftIncomingProceed(ABISwiftIncomingCall *call, void *const *arguments,
     if (count != interface.parameters.size()) {
         fail(error, ABIFailureInvalidRequest, "The argument count must match the Swift call interface."); return false;
     }
-    AlignedValue result(interface.result->size());
-    if (!ABIUnsafeInvokeSwiftCallInterface(&interface, call->callback.fallback, result.data(), arguments, receiver, error)) return false;
-    call->completed.clear();
-    call->completed.value = std::move(result);
-    call->completed.initialized = true;
+    auto result = std::make_unique<SwiftOwnedResult>(interface.result->size(), *call->handler);
+    if (!ABIUnsafeInvokeSwiftCallInterface(&interface, call->callback.fallback, result->value.data(), arguments, receiver, error)) return false;
+    result->initialized = true;
+    // Publish the new state before releasing an old value. Its destructor may
+    // reenter this invocation; detached storage stays alive during destruction.
+    auto previous = std::move(call->completed);
+    call->completed = std::move(result);
     return true;
 }
 bool ABISwiftIncomingCopyResult(ABISwiftIncomingCall *call, void *output, size_t size, ABIResolutionFailure **error) {
     if (!checkIncoming(call, error)) return false;
-    if (!call->completed.initialized || size != call->callback.interface.result->size() || (size && !output)) {
+    if (!call->completed || size != call->callback.interface.result->size() || (size && !output)) {
         fail(error, ABIFailureInvalidRequest, "A completed original call and matching result storage are required."); return false;
     }
-    if (size) std::memcpy(output, call->completed.value.data(), size);
+    if (size) std::memcpy(output, call->completed->value.data(), size);
     return true;
 }
 bool ABISwiftIncomingSetResult(ABISwiftIncomingCall *call, const void *value, size_t size, ABIResolutionFailure **error) {
@@ -409,9 +415,11 @@ bool ABISwiftIncomingSetResult(ABISwiftIncomingCall *call, const void *value, si
     if (size != call->callback.interface.result->size() || (size && !value)) {
         fail(error, ABIFailureInvalidRequest, "The owned result must match the Swift result storage."); return false;
     }
-    call->assigned.clear();
-    if (size) std::memcpy(call->assigned.value.data(), value, size);
-    call->assigned.initialized = true;
+    auto result = std::make_unique<SwiftOwnedResult>(size, *call->handler);
+    if (size) std::memcpy(result->value.data(), value, size);
+    result->initialized = true;
+    auto previous = std::move(call->assigned);
+    call->assigned = std::move(result);
     return true;
 }
 
@@ -433,13 +441,15 @@ extern "C" __attribute__((visibility("hidden"))) void ABIDispatchSwiftCallback(A
     ABISwiftIncomingCall call(*callback, std::move(handler), receiver);
     unpackArguments(callback->interface, *frame, call.storage, call.arguments);
     call.handler->functions.invoke(call.handler->context, &call);
-    if (!call.assigned.initialized && !call.completed.initialized) {
+    call.active = false;
+    if (!call.assigned && !call.completed) {
+        call.completed = std::make_unique<SwiftOwnedResult>(callback->interface.result->size(), *call.handler);
         if (!ABIUnsafeInvokeSwiftCallInterface(&callback->interface, callback->fallback,
-            call.completed.value.data(), call.arguments.data(), receiver, nullptr)) std::abort();
-        call.completed.initialized = true;
+            call.completed->value.data(), call.arguments.data(), receiver, nullptr)) std::abort();
+        call.completed->initialized = true;
         call.untouchedFallback = true;
     }
-    auto &result = call.assigned.initialized ? call.assigned : call.completed;
-    packResult(callback->interface, *frame, result.value.data());
-    result.initialized = false; // The native caller now owns the result.
+    auto &result = call.assigned ? call.assigned : call.completed;
+    packResult(callback->interface, *frame, result->value.data());
+    result->initialized = false; // The native caller now owns the result.
 }
