@@ -49,3 +49,29 @@ ABIPointerSlotResult exchangePointerSlot(Memory& memory, uintptr_t address, uint
     return result;
 }
 }
+
+namespace abibridge {
+// Retry only protections that a preceding pointer operation failed to restore.
+// The expected representation prevents repairing a slot already displaced by
+// another writer; callers still coordinate changes elsewhere on the same page.
+template <class Memory>
+ABIPointerSlotResult restorePointerSlotProtection(Memory& memory, uintptr_t address, uintptr_t expected,
+    vm_prot_t protection, vm_prot_t maximum, bool restoreCurrent, bool restoreMaximum) {
+    ABIPointerSlotResult result{};
+    if (!address || address % alignof(uintptr_t) != 0 || address > UINTPTR_MAX - sizeof(uintptr_t)) {
+        result.status = ABIPointerSlotInvalidStorage; return result;
+    }
+    SlotRegion region;
+    auto code = memory.query(address, region);
+    if (code != KERN_SUCCESS) { result.status = ABIPointerSlotQueryFailed; result.systemErrorCode = code; return result; }
+    result.protectionBefore = region.protection; result.maximumBefore = region.maximum; result.regionFlags = region.flags;
+    if (region.protection & VM_PROT_EXECUTE) { result.status = ABIPointerSlotExecutableStorage; return result; }
+    code = memory.read(address, result.observed);
+    if (code != KERN_SUCCESS) { result.status = ABIPointerSlotReadFailed; result.systemErrorCode = code; return result; }
+    if (result.observed != expected) { result.status = ABIPointerSlotDisplaced; return result; }
+    if (restoreCurrent && region.protection != protection) result.restoreProtectionError = memory.protect(address, false, protection);
+    if (restoreMaximum && region.maximum != maximum) result.restoreMaximumError = memory.protect(address, true, maximum);
+    if (result.restoreProtectionError || result.restoreMaximumError) result.status = ABIPointerSlotRestoreFailed;
+    return result;
+}
+}

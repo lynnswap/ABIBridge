@@ -18,6 +18,7 @@ public struct NativeSwiftMethod<Result, each Argument>: Sendable {
     /// The selected source-level declaration and retained implementation image.
     public let symbol: ResolvedSymbol
 
+    private var implementation: SwiftImplementation?
     private let type: NativeSwiftType
     private let receiver: SwiftReceiverPlan
     private let call: SwiftCall<Result, repeat each Argument>
@@ -28,6 +29,12 @@ public struct NativeSwiftMethod<Result, each Argument>: Sendable {
         self.type = type
         self.receiver = receiver
         call = try SwiftCall(trailingType: receiver.trailingType, consumesArguments: consumesArguments)
+    }
+
+    func capturing(_ implementation: SwiftImplementation) -> Self {
+        var result = self
+        result.implementation = implementation
+        return result
     }
 
     /// Calls a class member or nonmutating value member.
@@ -70,7 +77,7 @@ public struct NativeSwiftMethod<Result, each Argument>: Sendable {
         }
         if invoked && self.receiver.isMutating && self.receiver.mode != .object {
             do {
-                let value = try self.receiver.codec.decode(storage, storage.writebackOwner(retaining: [symbol.image, type.image]))
+                let value = try self.receiver.codec.decode(storage, (storage.writebackOwner(retaining: [symbol.image, type.image]), implementation))
                 guard let updated = value as? Receiver else {
                     throw ABIInvocationError.incompatibleValue(
                         expected: String(reflecting: Receiver.self), actual: String(reflecting: Swift.type(of: value))
@@ -104,7 +111,7 @@ public struct NativeSwiftMethod<Result, each Argument>: Sendable {
                 invoked = true
                 if receiver.isConsuming && receiver.mode != .object { storage.relinquishValue() }
                 didInvoke?()
-            }, repeat each values
+            }, implementation: implementation, repeat each values
         )
     }
 }

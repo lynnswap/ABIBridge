@@ -23,7 +23,7 @@ struct SwiftCall<Result, each Argument>: Sendable {
     @unsafe func unsafeInvoke(
         symbol: ResolvedSymbol, context: UnsafeRawPointer? = nil,
         trailingValue: NativeValueStorage? = nil, retaining owner: Any? = nil,
-        didInvoke: (() -> Void)? = nil,
+        didInvoke: (() -> Void)? = nil, implementation: SwiftImplementation? = nil,
         _ values: repeat each Argument
     ) throws -> Result {
         precondition(hasTrailingValue == (trailingValue != nil))
@@ -34,12 +34,12 @@ struct SwiftCall<Result, each Argument>: Sendable {
         var addresses: [UnsafeMutableRawPointer?] = storage.map(\.address)
         if let trailingValue { addresses.append(trailingValue.address) }
         let output = NativeValueStorage(size: result.type.size, alignment: result.type.alignment)
-        return try withExtendedLifetime((storage, trailingValue, owner)) {
+        return try withExtendedLifetime((storage, trailingValue, owner, implementation)) {
             var failure: OpaquePointer?
             let success = unsafe symbol.withUnsafeAddress { address in
                 addresses.withUnsafeBufferPointer {
                     ABIUnsafeInvokeSwiftCallInterface(
-                        interface.handle, ABIUnsafeFunctionAtAddress(address), output.address,
+                        interface.handle, implementation?.function ?? ABIUnsafeFunctionAtAddress(address), output.address,
                         $0.baseAddress, context, &failure
                     )
                 }
@@ -51,7 +51,7 @@ struct SwiftCall<Result, each Argument>: Sendable {
                 for value in storage { value.relinquishValue() }
             }
             didInvoke?()
-            return try result.decode(output, retaining: owner ?? symbol)
+            return try result.decode(output, retaining: (owner ?? symbol, implementation))
         }
     }
 }

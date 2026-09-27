@@ -26,6 +26,7 @@ print(symbol.image.path)
 ### Hooking imported functions
 
 - <doc:ImportedFunctionHooks>
+- <doc:SwiftImportedReplacements>
 - ``NativeImportedFunctionHook``
 - ``NativeImportedFunctionMonitor``
 - ``NativeImportedImageUpdate``

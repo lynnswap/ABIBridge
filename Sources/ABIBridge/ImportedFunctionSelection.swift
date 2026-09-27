@@ -7,20 +7,20 @@ final class ImportedFunctionSelection {
     let references: [ImportedReference]
     let slots: [ABIImportSlot]
 
-    static func validate(_ declaration: NativeDeclaration) throws {
-        guard declaration.kind == .function, [.c, .cxx].contains(declaration.language), !declaration.name.utf8.contains(0) else {
-            throw ABIResolutionError.unsupportedDeclaration("Imported callbacks require a C/C++ function declaration.")
+    static func validate(_ declaration: NativeDeclaration, language: NativeLanguage? = nil) throws {
+        guard declaration.kind == .function, (language.map { declaration.language == $0 } ?? [.c, .cxx].contains(declaration.language)), !declaration.name.utf8.contains(0) else {
+            throw ABIResolutionError.unsupportedDeclaration("The imported declaration does not match this operation's function language.")
         }
     }
 
-    convenience init(resolver: SymbolResolver, declaration: NativeDeclaration, importer: ImageSelector, provider: ImageSelector?) throws {
-        try Self.validate(declaration)
+    convenience init(resolver: SymbolResolver, declaration: NativeDeclaration, importer: ImageSelector, provider: ImageSelector?, language: NativeLanguage? = nil) throws {
+        try Self.validate(declaration, language: language)
         let images = try resolver.images(matching: importer)
-        try self.init(resolver: resolver, declaration: declaration, images: images, provider: provider)
+        try self.init(resolver: resolver, declaration: declaration, images: images, provider: provider, language: language)
     }
 
-    init(resolver: SymbolResolver, declaration: NativeDeclaration, images: [NativeImage], provider: ImageSelector?) throws {
-        try Self.validate(declaration)
+    init(resolver: SymbolResolver, declaration: NativeDeclaration, images: [NativeImage], provider: ImageSelector?, language: NativeLanguage? = nil) throws {
+        try Self.validate(declaration, language: language)
         guard !images.isEmpty else { throw ABIResolutionError.imageNotLoaded }
         var found: [ImportedReference] = []
         for image in images {

@@ -5,7 +5,7 @@ import Foundation
 import Darwin
 import Testing
 
-private final class CompiledSwiftReplacementFixture {
+final class CompiledSwiftReplacementFixture {
     let module = "Replacement_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
     let provider: FixtureLibrary
     let caller: FixtureLibrary
