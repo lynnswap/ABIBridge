@@ -2,6 +2,8 @@
 
 Select an absolute virtual-table entry by its implementation declaration, then intercept calls that dispatch through that shared table.
 
+See <doc:HookArguments> for editing object arguments, replacing references, and printing declaration/signature diagnostics.
+
 ## Select the table and method
 
 Start with a ``NativeVTable`` whose address point, accessible function-entry count and base subobject are known. A native adapter can acquire the table using the target compiler; the table view does not infer object layout. See <doc:CXXObjectInvocation> for receiver and vptr acquisition.

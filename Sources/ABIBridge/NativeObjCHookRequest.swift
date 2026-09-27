@@ -129,7 +129,7 @@ public struct NativeObjCHookRequest {
         }, install: { _ in
             try NativeObjCMethodHook.prepare(on: type, selector: selector, as: signature,
                 classMethod: classMethod, options: options, object: nil, owner: owner, initializer: false) { signature in
-                    ObjCReplacement<Result, repeat each Argument>.mainActorCallback(signature, onFailure: onFailure, body: body)
+                    ObjCReplacement<Result, repeat each Argument>.mainActorCallback(signature, declaration: objcHookDeclaration(on: type, selector: selector, classMethod: classMethod), onFailure: onFailure, body: body)
                 }
         })
     }

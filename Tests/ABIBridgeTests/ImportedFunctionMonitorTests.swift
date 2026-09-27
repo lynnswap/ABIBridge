@@ -62,6 +62,7 @@ struct ImportedFunctionMonitorTests {
         try fixture.load(current)
         let runtime = ABIRuntime()
         let applied = Mutex<[String]>([])
+        let expectedDeclaration = fixture.declaration
         let monitor = try await unsafe runtime.monitorImportedFunction(fixture.declaration, as: ((Int32) -> Int32).self,
             in: fixture.scope, onFailure: { Issue.record($0) }, onImageUpdate: { update in
                 switch update.state {
@@ -69,7 +70,11 @@ struct ImportedFunctionMonitorTests {
                 case .failed(let error): Issue.record(error)
                 default: break
                 }
-            }) { next, value in try next.proceed(value) + 1 }
+            }) { next, value in
+                #expect(next.declaration == expectedDeclaration)
+                #expect(ObjectIdentifier(next.signature) == ObjectIdentifier(((Int32) -> Int32).self))
+                return try next.proceed(value) + 1
+            }
         defer { monitor.invalidate() }
         #expect(try await waitForMonitoring { applied.withLock { $0.count == 1 } })
         try fixture.load(future)

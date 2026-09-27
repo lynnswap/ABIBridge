@@ -13,6 +13,9 @@ private let events = Events()
 let type: AnyClass = ABIHookFixtureClass()
 let swift = try unsafe ABIRuntime.shared.hookMethod(on: type, selector: "add:to:",
     as: ((Int32, Int32) -> Int32).self, onFailure: { _ in events.append(999) }) { call, a, b in
+        precondition(call.declaration.name == "-[\(NSStringFromClass(type)) add:to:]")
+        precondition(ObjectIdentifier(call.signature) == ObjectIdentifier(((Int32, Int32) -> Int32).self))
+        precondition(String(describing: call).contains("add:to:"))
         events.append(10); let result = try call.proceed(a,b); events.append(-10); return result + 10
     }
 let native = ABIHookFixtureInstallMethod(Unmanaged.passRetained(events).toOpaque(), { context, event in
