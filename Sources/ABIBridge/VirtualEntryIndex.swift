@@ -1,0 +1,114 @@
+import ABIBridgeCore
+import Foundation
+import MachOKit
+import MachO
+
+struct VirtualEntryResolution: Sendable {
+    let image: NativeImage
+    let index: Int
+    let symbol: String
+    let authentication: NativePointerAuthentication
+}
+
+final class VirtualEntryIndex: Sendable {
+    struct Target: Sendable {
+        let symbols: [String]
+        let authentication: NativePointerAuthentication
+    }
+    let image: NativeImage
+    private let targets: [UInt64: Result<Target, ABIResolutionError>]
+
+    init(image: NativeImage) throws {
+        self.image = image
+        let original = try OriginalImageMetadata(image: image)
+        let file = original.file
+        guard file.is64Bit, let preferred = file.preferredLoadAddress else {
+            throw ABIResolutionError.metadataUnavailable("Named virtual entries require a 64-bit absolute table")
+        }
+        let code = file.sections.filter { $0.flags.attributes.contains(.pure_instructions) || $0.flags.attributes.contains(.some_instructions) }
+        var symbols: [UInt64: [[UInt8]: String]] = [:]
+        func add(_ name: String, at address: UInt64) {
+            guard !name.isEmpty, code.contains(where: { $0.address >= 0 && $0.size > 0 && address >= UInt64($0.address) && address - UInt64($0.address) < UInt64($0.size) }) else { return }
+            symbols[address, default: [:]][Array(name.utf8)] = name
+        }
+        for symbol in file.symbols64.map(Array.init) ?? [] {
+            // STABS records can share a function address without defining an alias.
+            guard let flags = symbol.nlist.flags, flags.rawValue & N_STAB == 0,
+                  flags.type == .sect, symbol.offset >= 0 else { continue }
+            add(symbol.name, at: UInt64(symbol.offset))
+        }
+        if let trie = file.exportTrie {
+            for symbol in trie.exportedSymbols {
+                if let offset = symbol.offset, offset >= 0 {
+                    let address = preferred.addingReportingOverflow(UInt64(offset))
+                    if !address.overflow { add(symbol.name, at: address.partialValue) }
+                }
+            }
+        }
+        let imports = file.dyldChainedFixups?.imports ?? []
+        var targets: [UInt64: Result<Target, ABIResolutionError>] = [:]
+        for entry in try original.chainedPointers() where entry.width == 8 {
+            do {
+                let names: [String]
+                let authentication: NativePointerAuthentication
+                if let bind = entry.pointer.fixupInfo.bind {
+                    guard imports.indices.contains(bind.ordinal) else { throw ABIResolutionError.metadataUnavailable("Virtual entry has an invalid import ordinal") }
+                    let item = ImportMetadata.chainedImport(imports[bind.ordinal])
+                    guard bind.signExtendedAddend &+ UInt64(bitPattern: item.addend) == 0,
+                          let name = file.dyldChainedFixups?.symbolName(for: item.nameOffset) else {
+                        throw ABIResolutionError.metadataUnavailable("Virtual entry needs a named zero-addend binding")
+                    }
+                    names = [name]
+                    authentication = try OriginalImageMetadata.authentication(bind)
+                } else if let rebase = entry.pointer.fixupInfo.rebase {
+                    // Decode the original target, not the current slot. The latter
+                    // can already contain a hook and has lost declaration identity.
+                    let raw = rebase.unpackedTarget
+                    let format = entry.pointer.fixupInfo.pointerFormat
+                    let absolute = !rebase.isAuth && (format == ._64 || format == .arm64e || format == .arm64e_firmware)
+                    let target = absolute ? (raw, false) : preferred.addingReportingOverflow(raw)
+                    guard !target.1 else { throw ABIResolutionError.metadataUnavailable("Virtual entry target overflow") }
+                    names = Array(symbols[target.0]?.values ?? [:].values)
+                    authentication = try OriginalImageMetadata.authentication(rebase)
+                } else { continue }
+                targets[entry.address] = .success(Target(symbols: names, authentication: authentication))
+            } catch let error as ABIResolutionError { targets[entry.address] = .failure(error) }
+        }
+        self.targets = targets
+    }
+
+    func match(named name: String, addressPoint: UInt, entryCount: Int) throws -> VirtualEntryResolution {
+        guard !name.isEmpty, !name.utf8.contains(0) else {
+            throw ABIResolutionError.unsupportedDeclaration("Use a qualified C++ method declaration")
+        }
+        let declaration = NativeDeclaration(name: name, language: .cxx)
+        let key = DeclarationKey.make(name)
+        var found: [VirtualEntryResolution] = []
+        for index in 0..<entryCount {
+            let address = UInt64(addressPoint) + UInt64(index) * 8
+            guard let target = targets[address] else {
+                throw ABIResolutionError.metadataUnavailable("No original absolute fixup identifies virtual entry \(index); supply explicit adapter metadata")
+            }
+            let info = try target.get()
+            let spellings = info.symbols.compactMap { symbol -> (String, String)? in
+                guard let decoded = DeclarationKey.demangle(symbol, language: .cxx) else { return nil }
+                let prefixes = ["non-virtual thunk to ", "virtual thunk to ", "covariant return thunk to "]
+                let method = prefixes.first(where: decoded.hasPrefix).map { String(decoded.dropFirst($0.count)) } ?? decoded
+                return (symbol, method)
+            }
+            guard !info.symbols.isEmpty else {
+                throw ABIResolutionError.metadataUnavailable("Original virtual entry \(index) has no recoverable symbol identity; supply explicit adapter metadata")
+            }
+            guard spellings.contains(where: { DeclarationKey.make($0.1) == key }) else { continue }
+            guard info.symbols.count == 1, let symbol = spellings.first?.0 else {
+                throw ABIResolutionError.ambiguousDeclaration(declaration, candidates: info.symbols.sorted())
+            }
+            found.append(.init(image: image, index: index, symbol: symbol, authentication: info.authentication))
+        }
+        guard let result = found.first else { throw ABIResolutionError.declarationNotFound(declaration) }
+        guard found.count == 1 else {
+            throw ABIResolutionError.ambiguousDeclaration(declaration, candidates: found.map { "entry \($0.index): \($0.symbol)" })
+        }
+        return result
+    }
+}

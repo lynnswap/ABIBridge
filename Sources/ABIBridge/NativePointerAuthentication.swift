@@ -103,7 +103,7 @@ public enum NativeDispatchError: Error, Sendable, Equatable {
 public final class NativeVTable {
     /// The number of function-pointer slots accessible from the address point.
     public let entryCount: Int
-    private let storage: NativeValue
+    let storage: NativeValue
 
     /// Borrows a readable absolute function-pointer table.
     ///

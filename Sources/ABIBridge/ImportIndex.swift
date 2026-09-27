@@ -156,71 +156,20 @@ struct ImportMetadata {
         return try indirect()
     }
 
-    func originalFile() throws -> MachOFile {
-        let files: [MachOFile]
-        do {
-            switch try MachOKit.loadFromFile(url: URL(fileURLWithPath: image.path)) {
-            case .machO(let file): files = [file]
-            case .fat(let file): files = try file.machOFiles()
-            }
-        } catch { throw unavailable("original chained-fixup file is unavailable: \(error)") }
-        guard let uuid = image.identity.uuid else { throw unavailable("no UUID identifies the original chained-fixup file") }
-        guard let file = files.first(where: { file in
-            file.header.layout.cputype == macho.header.layout.cputype
-                && file.header.layout.cpusubtype == macho.header.layout.cpusubtype
-                && file.loadCommands.contains { if case .uuid(let command) = $0 { command.uuid == uuid } else { false } }
-        }) else { throw unavailable("original file does not match the loaded image") }
-        return file
-    }
-
     func chained() throws -> [ImportedReference] {
-        let file = try originalFile()
-        guard let fixups = file.dyldChainedFixups, let starts = fixups.startsInImage else { throw unavailable("chain starts are unavailable") }
+        let original = try OriginalImageMetadata(image: image)
+        guard let fixups = original.file.dyldChainedFixups else { throw unavailable("chain starts are unavailable") }
         let imports = fixups.imports
-        let fileOffsets: [UInt64] = file.is64Bit ? file.segments64.map(\.fileoff) : file.segments32.map { UInt64($0.fileoff) }
-        var result: [ImportedReference] = []
-        for segment in fixups.startsInSegments(of: starts) where segment.offset != starts.offset {
-            guard let format = segment.pointerFormat else { throw unavailable("unknown chained pointer format") }
-            let width: Int
-            switch format {
-            case ._32: width = 4
-            case ._64, ._64_offset, .arm64e, .arm64e_kernel, .arm64e_firmware, .arm64e_userland, .arm64e_userland24: width = 8
-            default: throw unavailable("unsupported chained pointer format \(format)")
-            }
-            guard fileOffsets.indices.contains(segment.segmentIndex) else { throw unavailable("chain segment is out of range") }
-            // MachOKit 0.53's file walker interprets segment_offset as a file
-            // offset. Zero-fill can make that differ from the VM offset stored
-            // in the actual command; translate only the walker's input/output.
-            let fileOffset = fileOffsets[segment.segmentIndex]
-            var fileSegment = segment
-            fileSegment.layout.segment_offset = fileOffset
-            guard !fixups.pages(of: segment).contains(where: { !$0.isNone && $0.isMulti }) else {
-                throw unavailable("the current file walker cannot decode multi-start chain overflow entries")
-            }
-            for pointer in fixups.pointers(of: fileSegment, in: file) {
-                guard let bind = pointer.fixupInfo.bind else { continue }
-                guard imports.indices.contains(bind.ordinal) else { throw unavailable("chained import ordinal is out of range") }
-                let item = Self.chainedImport(imports[bind.ordinal])
-                guard let name = fixups.symbolName(for: item.nameOffset) else { throw unavailable("chained import name is unavailable") }
-                let authentication: NativePointerAuthentication
-                if let auth = bind as? DyldChainedPtrArm64eAuthBind {
-                    guard let key = NativePointerAuthentication.Key(rawValue: Int32(auth.layout.key)) else { throw unavailable("unknown authentication key") }
-                    authentication = .signed(key: key, discriminator: UInt(auth.layout.diversity), addressDiversity: auth.layout.addrDiv != 0)
-                } else if let auth = bind as? DyldChainedPtrArm64eAuthBind24 {
-                    guard let key = NativePointerAuthentication.Key(rawValue: Int32(auth.layout.key)) else { throw unavailable("unknown authentication key") }
-                    authentication = .signed(key: key, discriminator: UInt(auth.layout.diversity), addressDiversity: auth.layout.addrDiv != 0)
-                } else {
-                    guard !bind.isAuth else { throw unavailable("unknown authenticated bind") }
-                    authentication = .unsigned
-                }
-                guard pointer.offset >= 0, UInt64(pointer.offset) >= fileOffset else { throw unavailable("invalid chain offset") }
-                let slot = try address(segment: segment.segmentIndex, offset: UInt64(pointer.offset) - fileOffset, width: width)
-                let addend = Int64(bitPattern: bind.signExtendedAddend &+ UInt64(bitPattern: item.addend))
-                result.append(try reference(name, ordinal: item.ordinal, weak: item.weak, addend: addend,
-                    address: slot, width: width, authentication: authentication, source: .chained))
-            }
+        return try original.chainedPointers().compactMap { entry in
+            guard let bind = entry.pointer.fixupInfo.bind else { return nil }
+            guard imports.indices.contains(bind.ordinal) else { throw unavailable("chained import ordinal is out of range") }
+            let item = Self.chainedImport(imports[bind.ordinal])
+            guard let name = fixups.symbolName(for: item.nameOffset) else { throw unavailable("chained import name is unavailable") }
+            let addend = Int64(bitPattern: bind.signExtendedAddend &+ UInt64(bitPattern: item.addend))
+            return try reference(name, ordinal: item.ordinal, weak: item.weak, addend: addend,
+                address: entry.address, width: entry.width,
+                authentication: OriginalImageMetadata.authentication(bind), source: .chained)
         }
-        return result
     }
 
     // Only the reserved high ordinal range is signed. MachOKit 0.53's accessors

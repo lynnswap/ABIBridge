@@ -47,6 +47,8 @@ typedef struct {
 } ABIVirtualMutationProbeResult;
 /// Kinds 0/1/2 cover primary, secondary-receiver, and covariant-return entries.
 const char *ABIValidateVirtualEntry(uint32_t kind, ABIVirtualMutationProbeResult *result);
+void *ABINamedVirtualReceiver(uint32_t kind);
+const void *ABINamedVirtualTable(uint32_t kind);
 const char *ABIValidateManagedVirtualHooks(bool requireWritable, bool *published);
 typedef struct {
     bool changed;

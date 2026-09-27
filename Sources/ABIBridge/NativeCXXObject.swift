@@ -93,6 +93,18 @@ public final class NativeCXXObject {
         )
     }
 
+    /// Captures a selected virtual entry and binds this receiver/subobject.
+    /// The entry retains its original adjustment thunk and authentication schema;
+    /// the caller must supply the corresponding live base-subobject view.
+    @unsafe public func virtualMethod<Result, each Argument>(
+        _ entry: NativeVTable.Entry,
+        as signature: ((repeat each Argument) -> Result).Type,
+        using adapter: ResolvedSymbol? = nil
+    ) throws -> NativeCXXMethod<Result, repeat each Argument> {
+        try unsafe virtualMethod(at: entry.index, in: entry.table,
+            authentication: entry.authentication, as: signature, using: adapter)
+    }
+
     /// Captures an absolute virtual-function entry and binds this receiver.
     ///
     /// The slot, authentication schema, receiver adjustment, and C-compatible
