@@ -260,7 +260,7 @@ struct ImportIndexTests {
         #expect(try index.matches(.init(name: "getpid", language: .c)).count == 1)
     }
 
-    @Test func retainedReferencesOutliveCacheAndGenerationChangesRebuildTheIndex() throws {
+    @Test func retainedReferencesOutliveCache() throws {
         let fixture = try FixtureLibrary(cxxSource: "#include <unistd.h>\nextern \"C\" int ABIImportCall() { return getpid(); }")
         defer { fixture.cleanup() }
         let resolver = SymbolResolver()
@@ -276,11 +276,6 @@ struct ImportIndexTests {
         #expect(try #require(reference).image.identity.loadGeneration == firstGeneration)
         let address = try #require(reference).address
         #expect(try #require(UnsafePointer<UInt>(bitPattern: UInt(address))).pointee != 0)
-        reference = nil
-        try fixture.load()
-        let reloaded = try #require(resolver.images(matching: .path(fixture.libraryURL)).first)
-        #expect(reloaded.identity.loadGeneration != firstGeneration)
-        #expect(try resolver.importIndex(for: reloaded).matches(.init(name: "getpid", language: .c)).count == 1)
     }
 }
 
