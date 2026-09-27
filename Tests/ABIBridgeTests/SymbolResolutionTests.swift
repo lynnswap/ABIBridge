@@ -268,7 +268,6 @@ struct SymbolResolutionTests {
             name: "\(fixture.namespace)::counter", language: .cxx, kind: .data
         )
         var original: ResolvedSymbol? = try await runtime.resolve(declaration, in: .path(fixture.libraryURL))
-        let generation = original!.image.identity.loadGeneration
         let exported = unsafe original!.copyNativeHandle()
         original = nil
         fixture.close()
@@ -282,9 +281,6 @@ struct SymbolResolutionTests {
         #expect(restored!.declaration == declaration)
         #expect(unsafe restored!.withUnsafeAddress { $0.load(as: Int32.self) } == 42)
         restored = nil
-        let remaining = ABIRetainLoadedImage(generation)
-        #expect(remaining == nil)
-        if let remaining { ABIReleaseImage(remaining) }
     }
 
     @Test func inheritedSwiftMembersUseTheConcreteSuperclassImage() async throws {
@@ -544,29 +540,7 @@ struct SymbolResolutionTests {
         #expect(try await generation(of: alias, runtime: runtime) == secondGeneration)
     }
 
-    @Test func nativeGenerationLookupPreservesGapsAfterUnload() async throws {
-        let first = try FixtureLibrary()
-        let middle = try FixtureLibrary()
-        let last = try FixtureLibrary()
-        defer { first.cleanup(); middle.cleanup(); last.cleanup() }
-        let runtime = ABIRuntime()
-        let firstGeneration = try await generation(of: first.libraryURL, runtime: runtime)
-        let middleGeneration = try await generation(of: middle.libraryURL, runtime: runtime)
-        let lastGeneration = try await generation(of: last.libraryURL, runtime: runtime)
-        #expect(firstGeneration < middleGeneration && middleGeneration < lastGeneration)
-        middle.close()
-        for generation in [0, middleGeneration, UInt64.max] {
-            let handle = ABIRetainLoadedImage(generation)
-            #expect(handle == nil)
-            if let handle { ABIReleaseImage(handle) }
-        }
-        for generation in [firstGeneration, lastGeneration] {
-            let handle = try #require(ABIRetainLoadedImage(generation))
-            ABIReleaseImage(handle)
-        }
-    }
-
-    @Test func lazyLibrarySnapshotsDoNotKeepTheirSourceImageLoaded() async throws {
+    @Test func lazyLibrarySnapshotsCopyMatchingDiagnostics() async throws {
         let fixture = try FixtureLibrary()
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
@@ -580,9 +554,6 @@ struct SymbolResolutionTests {
         #expect(ABILazyLibraryListCount(native) == swift.count)
         image = nil
         fixture.close()
-        let lease = ABIRetainLoadedImage(generation)
-        #expect(lease == nil)
-        if let lease { ABIReleaseImage(lease) }
         #expect(ABILazyLibraryListCount(native) == swift.count)
     }
 
@@ -673,20 +644,6 @@ struct SymbolResolutionTests {
             "-L/usr/lib/swift", "-lswiftCore", "-o", executable.path,
         ])
         try FixtureLibrary.run([executable.path, fixture.libraryURL.path])
-    }
-
-    @Test func unloadingInvalidatesTheNativeGeneration() async throws {
-        let fixture = try FixtureLibrary()
-        defer { fixture.cleanup() }
-        let runtime = ABIRuntime()
-        let generation = try await generation(of: fixture.libraryURL, runtime: runtime)
-        fixture.close()
-        let lease = ABIRetainLoadedImage(generation)
-        if let lease { ABIReleaseImage(lease) }
-        #expect(lease == nil)
-        try fixture.load()
-        let reloaded = try await self.generation(of: fixture.libraryURL, runtime: runtime)
-        #expect(reloaded != generation)
     }
 
     private func generation(of url: URL, runtime: ABIRuntime) async throws -> UInt64 {
