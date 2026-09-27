@@ -39,6 +39,13 @@ print(symbol.image.path)
 - ``NativeImportedHookInstallationError``
 - ``NativeImportedInvocationError``
 
+### Hooking Swift class methods
+
+- <doc:SwiftMethodHooks>
+- ``NativeSwiftMethodInvocation``
+- ``NativeSwiftVirtualHook``
+- ``NativeSwiftVirtualHookInstallationError``
+
 ### Replacing compiled Swift virtual methods
 
 - <doc:SwiftVirtualReplacements>

@@ -87,3 +87,13 @@ open class CallbackRenderer {
     }
 }
 @inline(never) public func makeCallbackRenderer(_ seed: Int64) -> CallbackRenderer { CallbackRenderer(seed) }
+
+open class HookRenderer {
+    public var count: Int64
+    public var text: String = "initial"
+    public init(_ count: Int64) { self.count = count }
+    @inline(never) open func render(_ value: Int64) -> Int64 { count + value }
+    @inline(never) public final func directRender(_ value: Int64) -> Int64 { count + value }
+    @inline(never) open consuming func consume(_ value: Int64) -> Int64 { count + value }
+}
+@inline(never) public func makeHookRenderer(_ count: Int64) -> HookRenderer { HookRenderer(count) }
