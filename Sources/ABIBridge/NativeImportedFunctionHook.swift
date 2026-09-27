@@ -5,60 +5,19 @@ import Darwin
 /// A scoped imported-function continuation was used after return or on another thread.
 public enum NativeImportedInvocationError: Error, Sendable { case expiredInvocation, wrongThread }
 
-private final class ImportedFrame {
-    let lock = NSLock()
-    let thread = pthread_self()
-    var pointer: OpaquePointer?
-    init(_ pointer: OpaquePointer) { self.pointer = pointer }
-    func use<T>(_ body: (OpaquePointer) throws -> T) throws -> T {
-        lock.lock()
-        guard let pointer else { lock.unlock(); throw NativeImportedInvocationError.expiredInvocation }
-        guard pthread_equal(thread, pthread_self()) != 0 else { lock.unlock(); throw NativeImportedInvocationError.wrongThread }
-        lock.unlock()
-        return try body(pointer)
-    }
-    func expire() { lock.lock(); pointer = nil; lock.unlock() }
-}
-
-private struct ImportedSignature<Result, each Argument>: Sendable {
-    let result: CValueCodec<Result>
-    let arguments: (repeat CValueCodec<each Argument>)
-    init() throws { result = try CValueCodec(); arguments = (repeat try CValueCodec<each Argument>()) }
-    func proceed(_ pointer: OpaquePointer, _ values: repeat each Argument) throws -> Result {
-        var storage: [NativeValueStorage] = []
-        for (codec, value) in repeat (each arguments, each values) { storage.append(try codec.encode(value)) }
-        let addresses: [UnsafeMutableRawPointer?] = storage.map(\.address)
-        var error: OpaquePointer?
-        let ok = withExtendedLifetime(storage) { addresses.withUnsafeBufferPointer { ABIImportedProceed(pointer,$0.baseAddress,$0.count,&error) } }
-        guard ok else { throw consumeNativeCallFailure(error) }
-        let output = NativeValueStorage(size: result.type.size, alignment: result.type.alignment)
-        guard ABIImportedCopyResult(pointer,output.address,result.type.size,&error) else { throw consumeNativeCallFailure(error) }
-        return try result.decode(output)
-    }
-    func decodeArguments(_ pointer: OpaquePointer) throws -> (repeat each Argument) {
-        var index = 0
-        func decode<T>(_ codec: CValueCodec<T>) throws -> T {
-            defer { index += 1 }
-            let storage = NativeValueStorage(size: codec.type.size, alignment: codec.type.alignment)
-            var error: OpaquePointer?
-            guard ABIImportedReadArgument(pointer,index,storage.address,codec.type.size,&error) else { throw consumeNativeCallFailure(error) }
-            return try codec.decode(storage)
-        }
-        return (repeat try decode(each arguments))
-    }
-}
-
 /// A continuation valid only during this callback and on its incoming thread.
 /// `proceed` calls the next registered callback and then this slot's predecessor;
 /// it does not call the imported symbol again. Escaping this value does not keep
 /// its invocation alive. Native arguments and pointer results remain borrowed.
 public struct NativeImportedFunctionInvocation<Result, each Argument> {
-    fileprivate let frame: ImportedFrame
-    fileprivate let signature: ImportedSignature<Result, repeat each Argument>
+    fileprivate let frame: FunctionCallbackFrame
+    fileprivate let signature: FunctionCallbackSignature<Result, repeat each Argument>
     /// Calls the next implementation with the supplied arguments. A later
     /// callback error preserves the most recently completed continuation result.
     public func proceed(_ values: repeat each Argument) throws -> Result {
-        try frame.use { try signature.proceed($0,repeat each values) }
+        do { return try frame.use { try signature.proceed($0,repeat each values) } }
+        catch FunctionCallbackFrameError.expiredInvocation { throw NativeImportedInvocationError.expiredInvocation }
+        catch FunctionCallbackFrameError.wrongThread { throw NativeImportedInvocationError.wrongThread }
     }
 }
 
@@ -119,27 +78,16 @@ public struct NativeImportedHookInstallationError: Error {
     public let registration: NativeImportedFunctionHook
 }
 
-final class ImportedCallbackBox {
-    let result: CValueType
-    let parameters: [CValueType]
-    let invoke: (OpaquePointer) throws -> Void
-    let failure: @Sendable (any Error) -> Void
-    init(result: CValueType, parameters: [CValueType], invoke: @escaping (OpaquePointer) throws -> Void,
-         failure: @escaping @Sendable (any Error) -> Void) {
-        self.result=result; self.parameters=parameters; self.invoke=invoke; self.failure=failure
-    }
-}
-
 func prepareImportedCallback<Result, each Argument>(
     as signature: ((repeat each Argument) -> Result).Type,
     onFailure: @escaping @Sendable (any Error) -> Void,
     body: @escaping @Sendable (NativeImportedFunctionInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
-) throws -> ImportedCallbackBox {
-    let prepared = try ImportedSignature<Result, repeat each Argument>()
+) throws -> FunctionCallbackBox {
+    let prepared = try FunctionCallbackSignature<Result, repeat each Argument>()
     var types: [CValueType] = []
     for codec in repeat each prepared.arguments { types.append(codec.type) }
-    return ImportedCallbackBox(result: prepared.result.type, parameters: types, invoke: { pointer in
-        let frame = ImportedFrame(pointer); defer { frame.expire() }
+    return FunctionCallbackBox(result: prepared.result.type, parameters: types, invoke: { pointer in
+        let frame = FunctionCallbackFrame(pointer); defer { frame.expire() }
         let values = try prepared.decodeArguments(pointer)
         let output = try body(.init(frame: frame,signature: prepared),repeat each values)
         var error: OpaquePointer?
@@ -150,14 +98,6 @@ func prepareImportedCallback<Result, each Argument>(
             guard ABIImportedSetResult(pointer,storage.address,prepared.result.type.size,&error) else { throw consumeNativeCallFailure(error) }
         }
     }, failure: onFailure)
-}
-
-func invokeImportedCallback(_ box: ImportedCallbackBox, _ call: OpaquePointer) -> Bool {
-    do { try box.invoke(call) }
-    catch { box.failure(error) }
-    // A failure without an assigned result uses native fallback or the latest
-    // completed continuation, while preserving the original Swift error above.
-    return true
 }
 
 func importedHookFailure(_ error: OpaquePointer) -> NSError {
@@ -198,10 +138,10 @@ extension ABIRuntime {
             handles.withUnsafeBufferPointer { parameters in
                 ABICreateImportedHook(selected,box.result.handle,parameters.baseAddress,parameters.count,context,
                     { context, call, error in
-                        invokeImportedCallback(Unmanaged<ImportedCallbackBox>.fromOpaque(context!).takeUnretainedValue(), call!)
+                        invokeFunctionCallback(Unmanaged<FunctionCallbackBox>.fromOpaque(context!).takeUnretainedValue(), call!)
                     }, { context, error in
-                        Unmanaged<ImportedCallbackBox>.fromOpaque(context!).takeUnretainedValue().failure(importedHookFailure(error!))
-                    }, { context in Unmanaged<ImportedCallbackBox>.fromOpaque(context!).release() })!
+                        Unmanaged<FunctionCallbackBox>.fromOpaque(context!).takeUnretainedValue().failure(importedHookFailure(error!))
+                    }, { context in Unmanaged<FunctionCallbackBox>.fromOpaque(context!).release() })!
             }
         }
         let hook = NativeImportedFunctionHook(handle)

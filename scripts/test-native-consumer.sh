@@ -104,3 +104,13 @@ done
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" --scratch-path "$task_root/.build/native-consumer" VirtualMutationConsumer
 
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" --scratch-path "$task_root/.build/native-consumer" ManagedVirtualConsumer "$task_fixture/libImportedCaller.dylib"
+
+# Shared-table mutation control; this writable setting applies only to the fixture.
+xcrun clang++ -std=c++20 -O2 -dynamiclib -mmacosx-version-min=15.4 -Wl,-no_data_const \
+    "$task_root/Tests/NativeConsumer/VirtualHookFixture.cpp" -o "$task_fixture/libVirtualHook.dylib"
+printf '#include <ABIBridge/VirtualHooks.h>\n' | xcrun clang -x c -std=c11 -pedantic-errors -fsyntax-only \
+    -I "$task_root/Sources/ABIBridgeCore/include" -
+for task_virtual_consumer in CVirtualHookConsumer VirtualHookConsumer ObjCXXVirtualHookConsumer; do
+    xcrun swift run --package-path "$task_root/Tests/NativeConsumer" --scratch-path "$task_root/.build/native-consumer" \
+        "$task_virtual_consumer" "$task_fixture/libVirtualHook.dylib"
+done

@@ -70,7 +70,7 @@ auto hook = abi_bridge::hook_imported_function<int32_t(int32_t, int32_t)>(
 );
 ```
 
-The C++ wrapper supports scalars and borrowed pointers. Specialize `imported_hook_type<T>::make()` with an owned `ABIValueType` for a naturally laid-out, trivially copyable C aggregate. Its size/alignment must match `T`. Callback exceptions are reported and recovered within the C++ wrapper; failure handlers must be `noexcept`. C/C++ invocation views must not escape their callback.
+The C++ wrapper supports scalars and borrowed pointers. Specialize `callback_value_type<T>::make()` with an owned `ABIValueType` for a naturally laid-out, trivially copyable C aggregate. Its size/alignment must match `T`. Callback exceptions are reported and recovered within the C++ wrapper; failure handlers must be `noexcept`. C/C++ invocation views must not escape their callback.
 
 The raw C installer takes ownership of the context when a release callback is provided, including lookup failure. Inspect the returned owner's `ABIImportedHookFailure` before treating installation as successful. The returned owner and its per-slot effects remain readable on failure and must be released. A null context-release callback is rejected without taking the context. C callback failures transfer an owned `ABIResolutionFailure`; failure-handler errors are borrowed.
 
