@@ -10,6 +10,9 @@ extension NativeVTable {
         public let authentication: NativePointerAuthentication
         /// The original method or adjustment-thunk symbol, when metadata is available.
         public let symbolName: String?
+        /// The source declaration used for named selection; nil for an explicit
+        /// adapter entry. This does not identify an already replaced live target.
+        public let declaration: NativeDeclaration?
         let table: NativeVTable
         let image: NativeImage?
     }
@@ -29,7 +32,7 @@ extension NativeVTable {
     ) async throws -> Entry {
         let address = unsafe storage.withUnsafeBytes { UInt(bitPattern: $0.baseAddress!) }
         let result = try await runtime.virtualEntry(named: name, addressPoint: address, entryCount: entryCount)
-        return Entry(index: result.index, authentication: result.authentication, symbolName: result.symbol, table: self, image: result.image)
+        return Entry(index: result.index, authentication: result.authentication, symbolName: result.symbol, declaration: .init(name: name, language: .cxx), table: self, image: result.image)
     }
 
     /// Selects a bounded slot using a target-specific native adapter's schema.
@@ -39,7 +42,7 @@ extension NativeVTable {
         guard index >= 0, index < entryCount else {
             throw NativeDispatchError.entryOutOfBounds(index: index, count: entryCount)
         }
-        return Entry(index: index, authentication: authentication, symbolName: nil, table: self, image: nil)
+        return Entry(index: index, authentication: authentication, symbolName: nil, declaration: nil, table: self, image: nil)
     }
 }
 

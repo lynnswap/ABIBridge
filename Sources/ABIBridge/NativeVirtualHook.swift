@@ -6,11 +6,26 @@ public enum NativeVirtualInvocationError: Error, Sendable { case expiredInvocati
 
 /// The incoming subobject and a callback-scoped continuation. The receiver and
 /// other pointers remain borrowed; this value does not extend the native call.
-public struct NativeVirtualInvocation<Result, each Argument> {
+public struct NativeVirtualInvocation<Result, each Argument>: CustomStringConvertible {
+    /// The source declaration used for named selection; nil for explicit adapter
+    /// entries. It does not identify an already interposed predecessor and its
+    /// copied value remains usable after the callback ends.
+    public let declaration: NativeDeclaration?
+
+    /// The Swift function type supplied at registration, excluding the receiver
+    /// and other hidden arguments. It is not an inferred native signature.
+    public var signature: ((repeat each Argument) -> Result).Type {
+        ((repeat each Argument) -> Result).self
+    }
+
+    /// Cached declaration and supplied signature, without reading native state
+    /// or formatting argument objects. Available after callback expiry too.
+    public let description: String
+
     /// The exact incoming base-subobject pointer, without a complete-object cast.
     public let receiver: UnsafeMutableRawPointer
     fileprivate let frame: FunctionCallbackFrame
-    fileprivate let signature: FunctionCallbackSignature<Result, repeat each Argument>
+    fileprivate let callSignature: FunctionCallbackSignature<Result, repeat each Argument>
 
     /// Calls the next callback or captured adjustment thunk with the same receiver.
     /// May run only on the incoming thread before this callback returns.
@@ -19,7 +34,7 @@ public struct NativeVirtualInvocation<Result, each Argument> {
             return try frame.use { pointer in
                 let storage = NativeValueStorage(size: MemoryLayout<UnsafeMutableRawPointer>.size, alignment: MemoryLayout<UnsafeMutableRawPointer>.alignment)
                 storage.store(receiver)
-                return try signature.proceed(pointer, prefix: [storage], repeat each values)
+                return try callSignature.proceed(pointer, prefix: [storage], repeat each values)
             }
         }
         catch FunctionCallbackFrameError.expiredInvocation { throw NativeVirtualInvocationError.expiredInvocation }
@@ -118,6 +133,8 @@ extension NativeVTable.Entry {
         body: @escaping @Sendable (NativeVirtualInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
     ) throws -> NativeVirtualHook {
         let prepared = try FunctionCallbackSignature<Result, repeat each Argument>()
+        let declaration = self.declaration
+        let description = hookDescription(declaration: declaration, signature: signature, unnamed: "<virtual entry \(index)>")
         var types: [CValueType] = []
         for codec in repeat each prepared.arguments { types.append(codec.type) }
         let box = FunctionCallbackBox(result: prepared.result.type, parameters: types, invoke: { pointer in
@@ -128,7 +145,7 @@ extension NativeVTable.Entry {
                 throw ABIResolutionError.invalidAddress
             }
             let values = try prepared.decodeArguments(pointer, startingAt: 1)
-            let output = try body(.init(receiver: receiver, frame: frame, signature: prepared), repeat each values)
+            let output = try body(.init(declaration: declaration, description: description, receiver: receiver, frame: frame, callSignature: prepared), repeat each values)
             if Result.self == Void.self {
                 guard ABIVirtualSetResult(pointer, nil, 0, &error) else { throw consumeNativeCallFailure(error) }
             } else {

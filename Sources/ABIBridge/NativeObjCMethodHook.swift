@@ -69,7 +69,7 @@ public final class NativeObjCMethodHook: @unchecked Sendable {
         try prepare(on: type, selector: selector, as: ((repeat each Argument) -> Result).self,
             classMethod: classMethod, options: options, object: object, owner: owner, initializer: false) { signature in
                 ObjCReplacement<Result, repeat each Argument>.callback(signature,
-                    requiresMainThread: requiresMainThread, onFailure: onFailure, body: body)
+                    declaration: objcHookDeclaration(on: type, selector: selector, classMethod: classMethod), requiresMainThread: requiresMainThread, onFailure: onFailure, body: body)
             }
     }
 
@@ -167,9 +167,9 @@ extension ABIRuntime {
             classMethod: classMethod, options: options, object: nil, owner: owner,
             requiresMainThread: true, onFailure: onFailure) {
                 (call: NativeObjCMethodInvocation<Result, repeat each Argument>, values: repeat each Argument) in
-                let input = ObjCReplacementIsolatedArguments(call: call, values: (repeat each values))
+                let input = ObjCReplacementIsolatedValue(value: (call, (repeat each values)))
                 return try MainActor.assumeIsolated {
-                    ObjCReplacementIsolatedResult(value: try body(input.call, repeat each input.values))
+                    ObjCReplacementIsolatedValue(value: try body(input.value.0, repeat each input.value.1))
                 }.value
             }
     }
@@ -213,9 +213,9 @@ extension NativeObject {
             classMethod: false, options: options, object: object, owner: owner,
             requiresMainThread: true, onFailure: onFailure) {
                 (call: NativeObjCMethodInvocation<Result, repeat each Argument>, values: repeat each Argument) in
-                let input = ObjCReplacementIsolatedArguments(call: call, values: (repeat each values))
+                let input = ObjCReplacementIsolatedValue(value: (call, (repeat each values)))
                 return try MainActor.assumeIsolated {
-                    ObjCReplacementIsolatedResult(value: try body(input.call, repeat each input.values))
+                    ObjCReplacementIsolatedValue(value: try body(input.value.0, repeat each input.value.1))
                 }.value
             }
     }

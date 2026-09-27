@@ -2,6 +2,8 @@
 
 Change calls through selected Mach-O import slots with typed callbacks, scoped continuations and managed registration lifetime.
 
+See <doc:HookArguments> for editing object arguments, replacing references, and printing declaration/signature diagnostics.
+
 ## Select the callers
 
 For a library importing `int Example::Math::add(int, int)`, specify the importing image and the source declaration:

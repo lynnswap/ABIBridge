@@ -9,13 +9,28 @@ public enum NativeImportedInvocationError: Error, Sendable { case expiredInvocat
 /// `proceed` calls the next registered callback and then this slot's predecessor;
 /// it does not call the imported symbol again. Escaping this value does not keep
 /// its invocation alive. Native arguments and pointer results remain borrowed.
-public struct NativeImportedFunctionInvocation<Result, each Argument> {
+public struct NativeImportedFunctionInvocation<Result, each Argument>: CustomStringConvertible {
     fileprivate let frame: FunctionCallbackFrame
-    fileprivate let signature: FunctionCallbackSignature<Result, repeat each Argument>
+    fileprivate let callSignature: FunctionCallbackSignature<Result, repeat each Argument>
+
+    /// The declaration used for registration, excluding any claim about an
+    /// already interposed predecessor. This value outlives the callback.
+    public let declaration: NativeDeclaration
+
+    /// The Swift function type supplied at registration, excluding the receiver
+    /// and other hidden arguments. It is not an inferred native signature.
+    public var signature: ((repeat each Argument) -> Result).Type {
+        ((repeat each Argument) -> Result).self
+    }
+
+    /// Cached declaration and supplied signature, without reading native state
+    /// or formatting argument objects. Available after callback expiry too.
+    public let description: String
+
     /// Calls the next implementation with the supplied arguments. A later
     /// callback error preserves the most recently completed continuation result.
     public func proceed(_ values: repeat each Argument) throws -> Result {
-        do { return try frame.use { try signature.proceed($0,repeat each values) } }
+        do { return try frame.use { try callSignature.proceed($0,repeat each values) } }
         catch FunctionCallbackFrameError.expiredInvocation { throw NativeImportedInvocationError.expiredInvocation }
         catch FunctionCallbackFrameError.wrongThread { throw NativeImportedInvocationError.wrongThread }
     }
@@ -79,17 +94,18 @@ public struct NativeImportedHookInstallationError: Error {
 }
 
 func prepareImportedCallback<Result, each Argument>(
-    as signature: ((repeat each Argument) -> Result).Type,
+    declaration: NativeDeclaration, as signature: ((repeat each Argument) -> Result).Type,
     onFailure: @escaping @Sendable (any Error) -> Void,
     body: @escaping @Sendable (NativeImportedFunctionInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
 ) throws -> FunctionCallbackBox {
     let prepared = try FunctionCallbackSignature<Result, repeat each Argument>()
+    let description = hookDescription(declaration: declaration, signature: signature, unnamed: "<imported function>")
     var types: [CValueType] = []
     for codec in repeat each prepared.arguments { types.append(codec.type) }
     return FunctionCallbackBox(result: prepared.result.type, parameters: types, invoke: { pointer in
         let frame = FunctionCallbackFrame(pointer); defer { frame.expire() }
         let values = try prepared.decodeArguments(pointer)
-        let output = try body(.init(frame: frame,signature: prepared),repeat each values)
+        let output = try body(.init(frame: frame, callSignature: prepared, declaration: declaration, description: description),repeat each values)
         var error: OpaquePointer?
         if Result.self == Void.self {
             guard ABIImportedSetResult(pointer,nil,0,&error) else { throw consumeNativeCallFailure(error) }
@@ -129,7 +145,7 @@ extension ABIRuntime {
         body: @escaping @Sendable (NativeImportedFunctionInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
     ) throws -> NativeImportedFunctionHook {
         let selection = try ImportedFunctionSelection(resolver: resolver, declaration: declaration, importer: importer, provider: provider)
-        let box = try prepareImportedCallback(as: signature, onFailure: onFailure, body: body)
+        let box = try prepareImportedCallback(declaration: declaration, as: signature, onFailure: onFailure, body: body)
         let types = box.parameters
         let context = Unmanaged.passRetained(box).toOpaque()
         let selected = selection.retainedHandle(); defer { ABIReleaseImportSelection(selected) }

@@ -19,6 +19,10 @@ print(symbol.image.path)
 
 ## Topics
 
+### Editing and inspecting hook calls
+
+- <doc:HookArguments>
+
 ### Hooking imported functions
 
 - <doc:ImportedFunctionHooks>

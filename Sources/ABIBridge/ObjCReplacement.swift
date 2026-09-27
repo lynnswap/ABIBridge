@@ -42,10 +42,26 @@ private final class ObjCReplacementFrame {
 /// A scoped view of the receiver and next implementation in a method-hook call.
 ///
 /// Use it synchronously on the callback's original thread. Saving this value
-/// does not extend the call: later access throws, and it is not Sendable.
-public struct NativeObjCMethodInvocation<Result, each Argument> {
+/// does not extend the call: later receiver/continuation access throws. Copied
+/// diagnostic metadata remains readable. The invocation itself is not Sendable.
+public struct NativeObjCMethodInvocation<Result, each Argument>: CustomStringConvertible {
     fileprivate let frame: ObjCReplacementFrame
-    fileprivate let signature: ObjCMethodSignature<Result, repeat each Argument>
+    fileprivate let callSignature: ObjCMethodSignature<Result, repeat each Argument>
+
+    /// The registration class and selector in Objective-C method notation,
+    /// such as `-[Renderer render:]`. It describes the requested scope, not an
+    /// inherited or already interposed implementation. This value outlives the callback.
+    public let declaration: NativeDeclaration
+
+    /// The Swift function type supplied at registration, excluding the receiver
+    /// and other hidden arguments. It is not an inferred native signature.
+    public var signature: ((repeat each Argument) -> Result).Type {
+        ((repeat each Argument) -> Result).self
+    }
+
+    /// Cached declaration and supplied signature, without reading native state
+    /// or formatting argument objects. Available after callback expiry too.
+    public let description: String
 
     /// The live instance or class object receiving this call.
     /// - Throws: An expired-invocation or wrong-thread error outside the scope.
@@ -70,7 +86,7 @@ public struct NativeObjCMethodInvocation<Result, each Argument> {
     /// - Throws: A scope, thread, value-conversion, or invocation error.
     public func proceed(_ values: repeat each Argument) throws -> Result {
         try frame.withCall { call in
-            try signature.invoke(repeat each values, using: { arguments, output in
+            try callSignature.invoke(repeat each values, using: { arguments, output in
                 var error: NSError?
                 let success = arguments.withUnsafeBufferPointer {
                     ABIObjCReplacementProceed(call, $0.baseAddress, &error)
@@ -90,12 +106,10 @@ final class ObjCReplacementCallback {
 }
 
 // Bridges Sendable constraints around synchronous assumeIsolated calls.
-// Values are produced and consumed on the verified main thread.
-struct ObjCReplacementIsolatedResult<Value>: @unchecked Sendable { let value: Value }
-struct ObjCReplacementIsolatedArguments<Result, each Argument>: @unchecked Sendable {
-    let call: NativeObjCMethodInvocation<Result, repeat each Argument>
-    let values: (repeat each Argument)
-}
+// Values are produced and consumed on the verified main thread. The invocation
+// and arguments travel as one tuple: a second variadic container around the
+// invocation fails runtime metadata initialization for reference arguments on 6.3.
+struct ObjCReplacementIsolatedValue<Value>: @unchecked Sendable { let value: Value }
 
 /// Internal executable-entry owner. It does not install or restore a method.
 /// Published entry code remains callable after invalidation; callback captures
@@ -111,7 +125,7 @@ package final class ObjCReplacement<Result, each Argument> {
          onFailure: @escaping @Sendable (any Error) -> Void,
          body: @escaping @Sendable (NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result) throws {
         handle = try Self.prepare(type, selector, classMethod, options, initializer: false, retaining: owner) { signature in
-            Self.callback(signature, requiresMainThread: requiresMainThread, onFailure: onFailure, body: body)
+            Self.callback(signature, declaration: objcHookDeclaration(on: type, selector: selector, classMethod: classMethod), requiresMainThread: requiresMainThread, onFailure: onFailure, body: body)
         }
     }
 
@@ -122,9 +136,9 @@ package final class ObjCReplacement<Result, each Argument> {
          body: @escaping @MainActor @Sendable (NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result) throws {
         try self.init(on: type, selector: selector, as: signature, requiresMainThread: true, retaining: owner, onFailure: onFailure) {
             (call: NativeObjCMethodInvocation<Result, repeat each Argument>, values: repeat each Argument) in
-            let input = ObjCReplacementIsolatedArguments(call: call, values: (repeat each values))
+            let input = ObjCReplacementIsolatedValue(value: (call, (repeat each values)))
             return try MainActor.assumeIsolated {
-                ObjCReplacementIsolatedResult(value: try body(input.call, repeat each input.values))
+                ObjCReplacementIsolatedValue(value: try body(input.value.0, repeat each input.value.1))
             }.value
         }
     }
@@ -142,11 +156,13 @@ package final class ObjCReplacement<Result, each Argument> {
     }
 
     static func callback(_ signature: ObjCMethodSignature<Result, repeat each Argument>,
-        requiresMainThread: Bool,
+        declaration: NativeDeclaration, requiresMainThread: Bool,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body: @escaping @Sendable (NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
     ) -> ObjCReplacementCallback {
-        ObjCReplacementCallback { pointer in
+        let description = hookDescription(declaration: declaration,
+            signature: ((repeat each Argument) -> Result).self, unnamed: "<Objective-C method>")
+        return ObjCReplacementCallback { pointer in
             guard !requiresMainThread || Thread.isMainThread else {
                 onFailure(NativeObjCMethodHookError.wrongThread)
                 return
@@ -155,7 +171,7 @@ package final class ObjCReplacement<Result, each Argument> {
             defer { frame.expire() }
             do {
                 let values = try Self.decodeArguments(signature, pointer)
-                let invocation = NativeObjCMethodInvocation(frame: frame, signature: signature)
+                let invocation = NativeObjCMethodInvocation(frame: frame, callSignature: signature, declaration: declaration, description: description)
                 let result = try body(invocation, repeat each values)
                 let storage = try signature.result.encodeResult(result)
                 var error: NSError?
@@ -168,14 +184,14 @@ package final class ObjCReplacement<Result, each Argument> {
     }
 
     static func mainActorCallback(_ signature: ObjCMethodSignature<Result, repeat each Argument>,
-        onFailure: @escaping @Sendable (any Error) -> Void,
+        declaration: NativeDeclaration, onFailure: @escaping @Sendable (any Error) -> Void,
         body: @escaping @MainActor @Sendable (NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
     ) -> ObjCReplacementCallback {
-        callback(signature, requiresMainThread: true, onFailure: onFailure) {
+        callback(signature, declaration: declaration, requiresMainThread: true, onFailure: onFailure) {
             (call: NativeObjCMethodInvocation<Result, repeat each Argument>, values: repeat each Argument) in
-            let input = ObjCReplacementIsolatedArguments(call: call, values: (repeat each values))
+            let input = ObjCReplacementIsolatedValue(value: (call, (repeat each values)))
             return try MainActor.assumeIsolated {
-                ObjCReplacementIsolatedResult(value: try body(input.call, repeat each input.values))
+                ObjCReplacementIsolatedValue(value: try body(input.value.0, repeat each input.value.1))
             }.value
         }
     }
@@ -189,22 +205,22 @@ package final class ObjCReplacement<Result, each Argument> {
         let transform: (@Sendable (repeat each Argument) throws -> (repeat each Argument))?
         if let transformingArguments {
             transform = { (values: repeat each Argument) in
-                let input = ObjCReplacementIsolatedResult(value: (repeat each values))
+                let input = ObjCReplacementIsolatedValue(value: (repeat each values))
                 return try MainActor.assumeIsolated {
-                    ObjCReplacementIsolatedResult(value: try transformingArguments(repeat each input.value))
+                    ObjCReplacementIsolatedValue(value: try transformingArguments(repeat each input.value))
                 }.value
             }
         } else { transform = nil }
         let prepare: (@Sendable (repeat each Argument) throws -> Void)?
         if let before {
             prepare = { (values: repeat each Argument) in
-                let input = ObjCReplacementIsolatedResult(value: (repeat each values))
+                let input = ObjCReplacementIsolatedValue(value: (repeat each values))
                 try MainActor.assumeIsolated { try before(repeat each input.value) }
             }
         } else { prepare = nil }
         return initializerCallback(signature, requiresMainThread: true, onFailure: onFailure,
             transformingArguments: transform, before: prepare, after: { result in
-                let input = ObjCReplacementIsolatedResult(value: result)
+                let input = ObjCReplacementIsolatedValue(value: result)
                 try MainActor.assumeIsolated { try after(input.value) }
             })
     }

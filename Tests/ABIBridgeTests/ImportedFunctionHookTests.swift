@@ -41,8 +41,14 @@ struct ImportedFunctionHookTests {
         let fixture=try ImportHookFixture(); defer { fixture.cleanup() }
         let runtime=ABIRuntime(), call=try await fixture.call(ABIRuntime())
         let errors=Mutex<[String]>([])
+        let expectedDeclaration = fixture.declaration
         let first=try await unsafe runtime.hookImportedFunction(fixture.declaration,as: ((Int32,Int32)->Int32).self,
-            in: fixture.scope,onFailure: { e in errors.withLock { $0.append(String(describing:e)) } }) { call,a,b in try call.proceed(a,b)+1 }
+            in: fixture.scope,onFailure: { e in errors.withLock { $0.append(String(describing:e)) } }) { call,a,b in
+                #expect(call.declaration == expectedDeclaration)
+                #expect(ObjectIdentifier(call.signature) == ObjectIdentifier(((Int32, Int32) -> Int32).self))
+                #expect(call.description.contains(expectedDeclaration.name))
+                return try call.proceed(a,b)+1
+            }
         let second=try await unsafe runtime.hookImportedFunction(fixture.declaration,as: ((Int32,Int32)->Int32).self,
             in: fixture.scope,from: .path(fixture.provider.libraryURL),onFailure: { Issue.record($0) }) { call,a,b in try call.proceed(a*2,b) }
         #expect(try unsafe call.unsafeInvoke(20,1)==42)

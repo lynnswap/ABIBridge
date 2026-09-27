@@ -2,6 +2,8 @@
 
 Intercept concrete synchronous methods with ordinary Swift argument and result types.
 
+See <doc:HookArguments> for editing object arguments, replacing references, and printing declaration/signature diagnostics.
+
 ## Install and retain a hook
 
 Use ``ABIRuntime/hookMethod(on:selector:as:classMethod:options:retaining:onFailure:body:)`` to install an instance-method hook. Keep its ``NativeObjCMethodHook`` token for as long as the callback should run.

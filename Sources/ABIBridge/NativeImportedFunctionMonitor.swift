@@ -97,7 +97,7 @@ extension ABIRuntime {
         body: @escaping @Sendable (NativeImportedFunctionInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
     ) throws -> NativeImportedFunctionMonitor {
         let query = try ImportedFunctionQuery(declaration: declaration, importer: importer, provider: provider)
-        let callback = try prepareImportedCallback(as: signature, onFailure: onFailure, body: body)
+        let callback = try prepareImportedCallback(declaration: declaration, as: signature, onFailure: onFailure, body: body)
         let context = Unmanaged.passRetained(ImportedMonitorCallbacks(callback, update: onImageUpdate)).toOpaque()
         let parameters: [OpaquePointer?] = callback.parameters.map(\.handle)
         var error: OpaquePointer?

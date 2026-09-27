@@ -73,8 +73,12 @@ struct VirtualHookTests {
         let fixture = try Fixture(); defer { fixture.library.cleanup() }
         let entry = try await fixture.entry()
         let before = try unsafe fixture.object().virtualMethod(entry, as: ((Int32) -> Int32).self)
+        let declaration = entry.declaration
         let first = try unsafe entry.hookSharedCalls(as: ((Int32) -> Int32).self, onFailure: { Issue.record(Comment(rawValue: "\($0)")) }) { call, value in
-            try call.proceed(value + 1) + 10
+            #expect(call.declaration == declaration)
+            #expect(ObjectIdentifier(call.signature) == ObjectIdentifier(((Int32) -> Int32).self))
+            #expect(call.description.contains("::Derived::value(int) const"))
+            return try call.proceed(value + 1) + 10
         }
         let captured = try unsafe fixture.object().virtualMethod(entry, as: ((Int32) -> Int32).self)
         let second = try unsafe entry.hookSharedCalls(as: ((Int32) -> Int32).self, onFailure: { Issue.record(Comment(rawValue: "\($0)")) }) { call, value in
@@ -188,7 +192,9 @@ struct VirtualHookTests {
         let fixture = try Fixture(); defer { fixture.library.cleanup() }
         let saved = Saved()
         let entry = try await fixture.entry()
-        let hook = try unsafe entry.hookSharedCalls(as: ((Int32) -> Int32).self, onFailure: { Issue.record(Comment(rawValue: "\($0)")) }) { call, value in
+        let explicit = try unsafe entry.table.entry(at: entry.index, authentication: entry.authentication)
+        let hook = try unsafe explicit.hookSharedCalls(as: ((Int32) -> Int32).self, onFailure: { Issue.record(Comment(rawValue: "\($0)")) }) { call, value in
+            #expect(call.declaration == nil && call.description.contains("<virtual entry 0>"))
             saved.call = call
             let done = DispatchSemaphore(value: 0)
             DispatchQueue.global().async {
@@ -199,6 +205,7 @@ struct VirtualHookTests {
             return try call.proceed(value)
         }
         #expect(fixture.oracle(0, 2) == 42)
+        #expect(saved.call?.description.contains("Swift.Int32") == true)
         #expect(throws: NativeVirtualInvocationError.expiredInvocation) { try saved.call!.proceed(2) }
         hook.invalidate()
     }
