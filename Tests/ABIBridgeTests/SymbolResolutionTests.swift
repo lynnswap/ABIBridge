@@ -736,7 +736,7 @@ final class FixtureLibrary {
             let target = "\(architecture)-apple-macosx15.4"
             try (swiftSource ?? "public func echo() {}").write(to: source, atomically: true, encoding: .utf8)
             try Self.run(["--sdk", "macosx", "swiftc", "-module-name", swiftModule, "-target", target,
-                          "-emit-library", source.path, "-o", libraryURL.path])
+                          "-emit-library", source.path, "-o", libraryURL.path] + linkArguments)
         } else {
             try cxxSource.write(to: source, atomically: true, encoding: .utf8)
             try Self.run(["--sdk", "macosx", "clang++", "-arch", architecture, "-std=c++20", "-mmacosx-version-min=15.4",

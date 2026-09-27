@@ -20,7 +20,9 @@ let package = Package(
             cSettings: [.unsafeFlags(["-fno-profile-instr-generate", "-fno-coverage-mapping"])]
         ),
         .target(name: "ArchitectureFixtures", dependencies: [.product(name: "ABIBridge", package: "ABIBridge")]),
-        .target(name: "ArchitectureValidation", dependencies: ["ArchitectureFixtures", .product(name: "ABIBridge", package: "ABIBridge"), .product(name: "MachOKit", package: "MachOKit")]),
+        .target(name: "SwiftReplacementFixtures"),
+        .target(name: "SwiftReplacementCaller", dependencies: ["SwiftReplacementFixtures"]),
+        .target(name: "ArchitectureValidation", dependencies: ["ArchitectureFixtures", "SwiftReplacementFixtures", "SwiftReplacementCaller", .product(name: "ABIBridge", package: "ABIBridge"), .product(name: "MachOKit", package: "MachOKit")]),
         .executableTarget(name: "ArchitectureProbe", dependencies: ["ArchitectureValidation"]),
         .testTarget(name: "ArchitectureValidationTests", dependencies: ["ArchitectureValidation"]),
     ],
