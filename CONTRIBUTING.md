@@ -64,7 +64,7 @@ xcodebuild build \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-For watchOS, add `WATCHOS_DEPLOYMENT_TARGET=11.4` so dependencies also build within the supported deployment range. CI uses Xcode 26.6 on `macos-26` for macOS tests and iOS, visionOS, watchOS, and tvOS builds.
+For watchOS, add `WATCHOS_DEPLOYMENT_TARGET=11.4` so dependencies also build within the supported deployment range. CI uses Xcode 26.6 on `macos-26` for macOS tests and iOS, visionOS, watchOS, and tvOS builds. The package suite, optimized bridge tests, native consumers, and architecture validation run as four independent macOS jobs. Each owns its build directories; PR and release validation require every job to succeed.
 
 ## Architecture validation
 
