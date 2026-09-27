@@ -1,15 +1,26 @@
-// ABI Mangling.rst identifies direct member and lifecycle roles. Inspect each
-// binding, not a current code address: optimized methods and constructors can
-// share implementations, and escaped ordinary methods can be named `init`.
+// Inspect the demangled declaration role, not an arbitrary raw suffix or the
+// current code address. For example, an ordinary Float parameter followed by
+// the function marker ends in `fF`, also used by property init accessors.
 private func validateImportedSwiftMember(_ selection: ImportedFunctionSelection, consumesArguments: Bool) throws {
-    let lifecycle = ["fC", "fc", "fD", "fZ", "fd", "fe", "fE", "fP", "fF", "fW"]
     for reference in selection.references {
         let name = reference.symbol
-        guard !lifecycle.contains(where: name.hasSuffix),
-              name.hasSuffix("F") || name.hasSuffix("g") || name.hasSuffix("s") else {
+        guard let declaration = DeclarationKey.demangle(name, language: .swift) else {
+            throw ABIResolutionError.metadataUnavailable("The imported Swift member has no decoded declaration.")
+        }
+        let isSetter: Bool
+        let isOrdinary: Bool
+        if let separator = declaration.range(of: " : ") {
+            let accessor = declaration[..<separator.lowerBound]
+            isSetter = accessor.hasSuffix(".setter") && name.hasSuffix("s")
+            isOrdinary = isSetter || (accessor.hasSuffix(".getter") && name.hasSuffix("g"))
+        } else {
+            isSetter = false
+            isOrdinary = declaration.contains(" -> ") && name.hasSuffix("F")
+        }
+        guard isOrdinary else {
             throw ABIResolutionError.unsupportedDeclaration("Swift member hooks require ordinary instance methods or getters/setters, not lifecycle or coroutine imports.")
         }
-        if name.hasSuffix("s") && !consumesArguments {
+        if isSetter && !consumesArguments {
             throw ABIResolutionError.unsupportedDeclaration("Resolve a Swift setter through setter(named:as:) to establish its consumed argument ownership.")
         }
     }

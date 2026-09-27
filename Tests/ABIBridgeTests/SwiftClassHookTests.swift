@@ -197,11 +197,13 @@ struct SwiftClassHookTests {
             public init() {}
             @inline(never) public func `init`(_ value: Int64) -> Int64 { value + 1 }
             @inline(never) public final func `deinit`(_ value: Int64) -> Int64 { value + 2 }
+            @inline(never) public final func takeFloat(_ value: Float) -> Int64 { Int64(value) }
         }
         @inline(never) public func makeEscaped() -> Escaped { Escaped() }
         """, callerExtra: """
         @inline(never) public func escapedInit(_ object: Escaped, _ value: Int64) -> Int64 { object.`init`(value) }
         @inline(never) public func escapedDeinit(_ object: Escaped, _ value: Int64) -> Int64 { object.`deinit`(value) }
+        @inline(never) public func callFloat(_ object: Escaped, _ value: Float) -> Int64 { object.takeFloat(value) }
         """); defer { fixture.cleanup() }
         let name = fixture.module + ".Escaped"
         let type = try await fixture.runtime.swiftType(named: name, in: fixture.providerScope)
@@ -220,6 +222,13 @@ struct SwiftClassHookTests {
         defer { imported.invalidate() }
         #expect(try unsafe firstCall.unsafeInvoke(object, 40) == 51)
         #expect(try unsafe secondCall.unsafeInvoke(object, 40) == 62)
+        let floating = try await type.method(named: "takeFloat(_:)", as: ((Float) -> Int64).self)
+        let floatCall = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".callFloat(\(name), Swift.Float) -> Swift.Int64",
+            as: ((AnyObject, Float) -> Int64).self, in: fixture.callerScope)
+        let floatHook = try await unsafe floating.hookImportedCalls(in: fixture.callerScope,
+            onFailure: { Issue.record("Unexpected: \($0)") }) { call, value in try call.proceed(value + 1) + 100 }
+        defer { floatHook.invalidate() }
+        #expect(try unsafe floatCall.unsafeInvoke(object, 42) == 143)
     }
 
     @Test func importedAndVirtualSelectionsShareTheSameInheritedEntry() async throws {
