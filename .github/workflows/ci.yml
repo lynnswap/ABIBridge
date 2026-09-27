@@ -67,7 +67,15 @@ jobs:
         env:
           PACKAGE_SUITE: ${{ matrix.suite }}
           ABI_TEST_BUILD_DIR: ${{ runner.temp }}/DerivedData
-        run: bash scripts/test-package.sh "$(printf '%s' "$PACKAGE_SUITE" | tr '[:upper:]' '[:lower:]')"
+        run: |
+          if [[ -f scripts/test-package.sh ]]; then
+            bash scripts/test-package.sh "$(printf '%s' "$PACKAGE_SUITE" | tr '[:upper:]' '[:lower:]')"
+          elif [[ "$PACKAGE_SUITE" == Core ]]; then
+            # Release validation can check out a revision older than the shard script.
+            xcodebuild test -scheme ABIBridge \
+              -destination 'platform=macOS,arch=arm64' \
+              -derivedDataPath "$ABI_TEST_BUILD_DIR"
+          fi
       - name: Preserve failed package test diagnostics
         if: always() && contains(fromJSON('["Core", "Invocation", "Hooks"]'), matrix.suite) && steps.package-tests.outcome != 'success' && steps.package-tests.outcome != 'skipped'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
