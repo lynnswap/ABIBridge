@@ -46,13 +46,35 @@ int main(int argc, char **argv) {
     wait(state, [&] { return state.initialized; });
     uint64_t previous = 0;
     for (unsigned i = 0; i < 3; ++i) {
+        auto *before = ABICopyLoadedImages();
+        auto *unchanged = ABICopyLoadedImages();
+        assert(before && unchanged && ABIImageListRevision(before) == ABIImageListRevision(unchanged));
+        const auto beforeCount = ABIImageListCount(before);
+        const auto beforeRevision = ABIImageListRevision(before);
+        ABIFreeImageList(unchanged);
         auto *library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
         assert(library);
         wait(state, [&] { return state.generation > previous; });
         { std::lock_guard lock(state.mutex); previous = state.generation; }
+        auto *loaded = ABICopyLoadedImages();
+        assert(loaded && ABIImageListRevision(loaded) > beforeRevision);
+        assert(ABIImageListCount(before) == beforeCount && ABIImageListRevision(before) == beforeRevision);
+        ABIImageInfo saved{};
+        for (size_t index = 0; index < ABIImageListCount(loaded); ++index) {
+            auto entry = ABIImageListGet(loaded, index);
+            if (entry.generation == previous) saved = entry;
+        }
+        assert(saved.generation == previous);
+        const std::string path(saved.path);
         assert(dlclose(library) == 0);
         wait(state, [&] { return state.generation == 0; });
         assert(ABIRetainLoadedImage(previous) == nullptr);
+        auto *removed = ABICopyLoadedImages();
+        assert(removed && ABIImageListRevision(removed) > ABIImageListRevision(loaded));
+        assert(std::string(saved.path) == path); // Snapshot strings survive unload.
+        ABIFreeImageList(before);
+        ABIFreeImageList(loaded);
+        ABIFreeImageList(removed);
     }
     ABIReleaseImageObservation(observation);
     wait(state, [&] { return state.released; });

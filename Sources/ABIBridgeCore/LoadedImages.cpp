@@ -45,7 +45,9 @@ struct Observation {
 struct Catalog {
     std::mutex mutex;
     uint64_t generation = 0;
+    uint64_t revision = 0;
     std::vector<Image> images;
+    std::shared_ptr<const std::vector<Image>> snapshot;
     std::vector<std::weak_ptr<Observation>> observations;
 };
 
@@ -102,6 +104,8 @@ void addedImage(const mach_header *header, intptr_t slide)
     std::lock_guard lock(state.mutex);
     image.generation = ++state.generation;
     state.images.push_back(std::move(image));
+    ++state.revision;
+    state.snapshot.reset();
     signalObservations(state);
 }
 
@@ -111,6 +115,8 @@ void removedImage(const mach_header *header, intptr_t)
     std::lock_guard lock(state.mutex);
     const auto address = reinterpret_cast<uintptr_t>(header);
     std::erase_if(state.images, [address](const Image& image) { return image.header == address; });
+    ++state.revision;
+    state.snapshot.reset();
     signalObservations(state);
 }
 
@@ -149,7 +155,8 @@ auto findGeneration(const std::vector<Image>& images, uint64_t generation)
 } // namespace
 
 struct ABIImageList {
-    std::vector<Image> images;
+    std::shared_ptr<const std::vector<Image>> images;
+    uint64_t revision;
 };
 
 struct ABIImageLease {
@@ -243,17 +250,23 @@ ABIImageList *ABICopyLoadedImages(void)
         return nullptr;
     auto& state = catalog();
     std::lock_guard lock(state.mutex);
-    return new ABIImageList { state.images };
+    if (!state.snapshot) state.snapshot = std::make_shared<const std::vector<Image>>(state.images);
+    return new ABIImageList { state.snapshot, state.revision };
 }
 
 size_t ABIImageListCount(const ABIImageList *list)
 {
-    return list->images.size();
+    return list->images->size();
+}
+
+uint64_t ABIImageListRevision(const ABIImageList *list)
+{
+    return list->revision;
 }
 
 ABIImageInfo ABIImageListGet(const ABIImageList *list, size_t index)
 {
-    const auto& image = list->images.at(index);
+    const auto& image = list->images->at(index);
     ABIImageInfo result { image.header, image.slide, image.generation, {}, image.path.c_str() };
     std::copy(image.uuid.begin(), image.uuid.end(), std::begin(result.uuid));
     return result;

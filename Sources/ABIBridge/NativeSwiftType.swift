@@ -262,14 +262,18 @@ public actor NativeSwiftType {
 }
 
 func swiftClassImage(_ type: AnyClass, named name: String, resolver: SymbolResolver) throws -> NativeImage {
-    guard let path = class_getImageName(type) else {
-        throw ABIResolutionError.declarationNotFound(
-            .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data)
-        )
+    // A live class has one defining image. Retaining that image also prevents
+    // class-address reuse; this does not cache user-supplied filesystem selectors.
+    try resolver.image(forSwiftClass: type) {
+        guard let path = class_getImageName(type) else {
+            throw ABIResolutionError.declarationNotFound(
+                .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data)
+            )
+        }
+        let images = try resolver.images(matching: .path(URL(fileURLWithPath: String(cString: path))))
+        guard let image = images.first else { throw ABIResolutionError.imageNotLoaded }
+        return image
     }
-    let images = try resolver.images(matching: .path(URL(fileURLWithPath: String(cString: path))))
-    guard let image = images.first else { throw ABIResolutionError.imageNotLoaded }
-    return image
 }
 
 extension ABIRuntime {

@@ -88,7 +88,7 @@ public actor ABIRuntime {
         resolver.resolve(requests)
     }
 
-    /// Releases cached image indexes.
+    /// Releases cached declarations and image indexes.
     ///
     /// Existing image and symbol handles remain valid. Subsequent lookups rebuild
     /// indexes as needed. The process-lifetime native image catalog remains active.
