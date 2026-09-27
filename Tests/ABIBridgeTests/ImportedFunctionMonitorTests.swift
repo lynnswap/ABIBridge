@@ -41,10 +41,10 @@ private final class ImportMonitorFixture {
     var scope: ImageSelector { .framework(named: framework) }
 }
 
-private func waitForMonitoring(_ predicate: @escaping @Sendable () -> Bool) async throws -> Bool {
-    let deadline = ContinuousClock.now + .seconds(10)
-    while !predicate() && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
-    return predicate()
+private func waitForMonitoring(_ predicate: @escaping @Sendable () -> Bool) async throws {
+    // The API has no delivery-latency guarantee. The test's time limit cancels
+    // this sleep if the required state never arrives.
+    while !predicate() { try await Task.sleep(for: .milliseconds(10)) }
 }
 
 private final class MonitorCapture: Sendable {
@@ -53,7 +53,7 @@ private final class MonitorCapture: Sendable {
     deinit { onRelease() }
 }
 
-@Suite(.serialized)
+@Suite(.serialized, .timeLimit(.minutes(1)))
 struct ImportedFunctionMonitorTests {
     private enum CallbackFailure: Error { case expected }
     @Test func hooksCurrentAndSubsequentlyLoadedImages() async throws {
@@ -76,9 +76,9 @@ struct ImportedFunctionMonitorTests {
                 return try next.proceed(value) + 1
             }
         defer { monitor.invalidate() }
-        #expect(try await waitForMonitoring { applied.withLock { $0.count == 1 } })
+        try await waitForMonitoring { applied.withLock { $0.count == 1 } }
         try fixture.load(future)
-        #expect(try await waitForMonitoring { applied.withLock { $0.count == 2 } })
+        try await waitForMonitoring { applied.withLock { $0.count == 2 } }
         #expect(monitor.images.count == 2)
         for url in [current, future] {
             let call = try await runtime.cFunction(named: "ABIMonitoredCall", as: ((Int32) -> Int32).self, in: .path(url))
@@ -103,9 +103,9 @@ struct ImportedFunctionMonitorTests {
             }) { next, value in try next.proceed(value) + 1 }
         defer { monitor.invalidate() }
         try fixture.load(bad)
-        #expect(try await waitForMonitoring { failed.withLock { $0 } })
+        try await waitForMonitoring { failed.withLock { $0 } }
         try fixture.load(good)
-        #expect(try await waitForMonitoring { installed.withLock { $0 } })
+        try await waitForMonitoring { installed.withLock { $0 } }
         #expect(monitor.images.count == 2)
     }
 
@@ -118,16 +118,20 @@ struct ImportedFunctionMonitorTests {
             let capture = MonitorCapture { released.withLock { $0 = true } }
             monitor = try await unsafe ABIRuntime().monitorImportedFunction(fixture.declaration, as: ((Int32) -> Int32).self,
                 in: fixture.scope, onFailure: { Issue.record($0) }, onImageUpdate: { update in
-                    if case .installed = update.state { applied.withLock { $0 = true } }
+                    switch update.state {
+                    case .installed: applied.withLock { $0 = true }
+                    case .failed(let error): Issue.record(error)
+                    default: break
+                    }
                 }) { next, value in
                     withExtendedLifetime(capture) {}
                     return try next.proceed(value) + 1
                 }
         }
         try fixture.load(first)
-        #expect(try await waitForMonitoring { applied.withLock { $0 } })
+        try await waitForMonitoring { applied.withLock { $0 } }
         monitor.invalidate()
-        #expect(try await waitForMonitoring { released.withLock { $0 } })
+        try await waitForMonitoring { released.withLock { $0 } }
         try fixture.load(later)
         let runtime = ABIRuntime()
         for url in [first, later] {
@@ -150,7 +154,11 @@ struct ImportedFunctionMonitorTests {
                     #expect(error is CallbackFailure)
                     failures.withLock { $0 += 1 }
                 }, onImageUpdate: { update in
-                    if case .installed = update.state { applied.withLock { $0 = true } }
+                    switch update.state {
+                    case .installed: applied.withLock { $0 = true }
+                    case .failed(let error): Issue.record(error)
+                    default: break
+                    }
                 }) { next, value in
                     entered.withLock { $0 = true }; finish.wait()
                     withExtendedLifetime(capture) {}
@@ -159,7 +167,7 @@ struct ImportedFunctionMonitorTests {
                 }
         }
         defer { finish.signal(); monitor.invalidate() }
-        #expect(try await waitForMonitoring { applied.withLock { $0 } })
+        try await waitForMonitoring { applied.withLock { $0 } }
         let call = try await ABIRuntime().cFunction(named: "ABIMonitoredCall", as: ((Int32) -> Int32).self, in: .path(url))
         // This callback deliberately blocks until the async controller releases
         // it; the blocked call must not consume a cooperative executor worker.
@@ -170,14 +178,14 @@ struct ImportedFunctionMonitorTests {
                 worker.start()
             }
         }
-        #expect(try await waitForMonitoring { entered.withLock { $0 } })
+        try await waitForMonitoring { entered.withLock { $0 } }
         monitor.invalidate()
         #expect(!released.withLock { $0 })
         #expect(try unsafe call.unsafeInvoke(42) == 42)
         finish.signal()
         #expect(try await task.value == 41)
         #expect(failures.withLock { $0 } == 1)
-        #expect(try await waitForMonitoring { released.withLock { $0 } })
+        try await waitForMonitoring { released.withLock { $0 } }
     }
 }
 #endif
