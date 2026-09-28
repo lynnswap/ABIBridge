@@ -20,8 +20,19 @@ struct SwiftValueCodec<Value>: Sendable {
         let base = (Value.self as? any NativeOptionalValue.Type)?.wrappedType ?? Value.self
         let isObject = base is AnyClass || base == AnyObject.self
         let isAdapter = base is any ABIBridgeValue.Type
-        objectResult = isObject && !isAdapter
-        if isAdapter {
+        let managed = Value.self as? any ABIBridgeSwiftValue.Type
+        objectResult = isObject && (!isAdapter || managed != nil)
+        if let managed {
+            let components = try managed.swiftABIType.requireCType()
+            guard (MemoryLayout<Value>.size...MemoryLayout<Value>.stride).contains(components.size) else {
+                throw ABIResolutionError.unsupportedDeclaration(
+                    "Swift ABI components must cover the value without exceeding its stride: \(String(reflecting: Value.self))."
+                )
+            }
+            type = try CValueType(swiftComponents: components, size: MemoryLayout<Value>.size,
+                                  alignment: MemoryLayout<Value>.alignment)
+            cValue = nil
+        } else if isAdapter {
             let codec = try CValueCodec<Value>()
             cValue = codec
             type = codec.type
@@ -40,7 +51,7 @@ struct SwiftValueCodec<Value>: Sendable {
             cValue = codec
             type = codec.type
         }
-        if cValue == nil {
+        if cValue == nil && managed == nil {
             guard type.size == MemoryLayout<Value>.size, type.alignment == MemoryLayout<Value>.alignment else {
                 throw ABIResolutionError.unsupportedDeclaration(
                     "Unsupported Swift storage layout for \(String(reflecting: Value.self))."
@@ -49,11 +60,16 @@ struct SwiftValueCodec<Value>: Sendable {
         }
     }
 
+    func makeStorage() -> NativeValueStorage {
+        NativeValueStorage(size: cValue == nil && closure == nil ? MemoryLayout<Value>.stride : type.size,
+                           alignment: type.alignment)
+    }
+
     func encode(_ value: Value) throws -> NativeValueStorage {
         if closure != nil { return (value as! any SwiftClosureValue).closureStorage.encoded() }
         if Value.self == Void.self { return NativeValueStorage(size: 0, alignment: 1) }
         if let cValue { return try cValue.encode(value) }
-        let storage = NativeValueStorage(size: type.size, alignment: type.alignment)
+        let storage = makeStorage()
         storage.initialize(value)
         return storage
     }

@@ -24,6 +24,13 @@ const void *ABISignSwiftClosureFunction(ABIUnmanagedFunction function, uint16_t 
 void ABIRetainSwiftClosureContext(void *context);
 void ABIReleaseSwiftClosureContext(void *context);
 
+/// Combines ABI scalar components and offsets with compiler-known Swift storage.
+/// Scalar field extents must fit size; component aggregate tail padding is
+/// excluded. Alignment must be a power of two.
+/// This layout is for Swift interfaces, not a libffi C calling convention.
+ABIValueType *ABICreateSwiftStorageType(
+    const ABIValueType *components, size_t size, size_t alignment, ABIResolutionFailure **error);
+
 /// Prepares a concrete synchronous, nonthrowing Swift call from fixed value
 /// layouts. These are storage descriptions, not a C calling convention.
 /// Parameters must use ordinary guaranteed ownership; consumed/inout values,

@@ -53,7 +53,7 @@ struct SwiftCall<Result, each Argument>: Sendable {
         }
         var addresses: [UnsafeMutableRawPointer?] = storage.map(\.address)
         if let trailingValue { addresses.append(trailingValue.address) }
-        let output = NativeValueStorage(size: result.type.size, alignment: result.type.alignment)
+        let output = result.makeStorage()
         return try withExtendedLifetime((storage, trailingValue, owner)) {
             var failure: OpaquePointer?
             let success = addresses.withUnsafeBufferPointer {

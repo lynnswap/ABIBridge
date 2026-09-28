@@ -37,7 +37,8 @@ private final class SwiftClosureCallbackOwner {
 /// requirements and are not assumed Sendable.
 ///
 /// The initial callback subset accepts the built-in Swift representations
-/// supported by the direct frontend. Custom ABIBridgeValue conversions and
+/// supported by the direct frontend, plus established ABIBridgeSwiftValue layouts.
+/// Custom ABIBridgeValue conversions and
 /// nested closures require a compiler adapter. Void values and zero-argument
 /// closures are supported.
 /// See <doc:SwiftClosureValues>.
