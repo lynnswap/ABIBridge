@@ -44,7 +44,8 @@ func swiftFunctionDeclaration(
                     expected: "\(parameters.count) argument labels", found: [name]
                 )
             }
-            let fields = zip(labels, parameters).map { label, type in label == "_" ? type : label + ": " + type }
+            let omitLabels = labels.allSatisfy { $0 == "_" }
+            let fields = zip(labels, parameters).map { label, type in omitLabels ? type : label + ": " + type }
             declaration = String(name[..<opening]) + "(" + fields.joined(separator: ", ") + ")" + effects + " -> " + (try resultName ?? swiftFunctionTypeName(resultType))
         }
     }

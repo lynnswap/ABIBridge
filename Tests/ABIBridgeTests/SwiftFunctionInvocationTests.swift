@@ -3,6 +3,13 @@ import CoreGraphics
 import Foundation
 import Testing
 
+@inline(never) public func swiftABIMixedLabels(_ value: Int64, increment: Int64) -> Int64 { value + increment }
+@inline(never) public func swiftABIAllNamed(value: Int64, increment: Int64) -> Int64 { value + increment }
+@inline(never) public func swiftABIAllUnnamed(_ value: Int64, _ increment: Int64) -> Int64 { value + increment }
+@inline(never) @concurrent public func swiftABIAsyncMixedLabels(_ value: Int64, increment: Int64) async -> Int64 { await Task.yield(); return value + increment }
+@inline(never) @concurrent public func swiftABIAsyncAllNamed(value: Int64, increment: Int64) async -> Int64 { await Task.yield(); return value + increment }
+@inline(never) @concurrent public func swiftABIAsyncAllUnnamed(_ value: Int64, _ increment: Int64) async -> Int64 { await Task.yield(); return value + increment }
+
 @inline(never) public func swiftABIVoid(_ value: Void) -> Int32 { 42 }
 @inline(never) public func swiftABIStore(_ pointer: UnsafeMutablePointer<Int32>) { pointer.pointee = 42 }
 @inline(never) public func swiftABIAnswer() -> Int32 { 42 }
@@ -92,6 +99,23 @@ private final class ForeignSwiftFour: ABIBridgeValue {
 }
 
 struct SwiftFunctionInvocationTests {
+    @Test func labelOnlyLookupHandlesMixedNamedAndUnnamedArguments() async throws {
+        for name in ["swiftABIMixedLabels(_:increment:)", "swiftABIAllNamed(value:increment:)", "swiftABIAllUnnamed(_:_:)"] {
+            let function = try await ABIRuntime.shared.swiftFunction(named: "ABIBridgeTests." + name,
+                as: ((Int64, Int64) -> Int64).self)
+            #expect(try unsafe function.unsafeInvoke(35, 7) == 42)
+        }
+    }
+
+    @Test func asyncLabelOnlyLookupHandlesMixedNamedAndUnnamedArguments() async throws {
+        for name in ["swiftABIAsyncMixedLabels(_:increment:)", "swiftABIAsyncAllNamed(value:increment:)", "swiftABIAsyncAllUnnamed(_:_:)"] {
+            let function = try await ABIRuntime.shared.swiftFunction(named: "ABIBridgeTests." + name,
+                as: (@concurrent (Int64, Int64) async -> Int64).self)
+            #expect(try unsafe await function.unsafeInvoke(35, 7) == 42)
+        }
+    }
+
+
     @MainActor @Test func labelOnlyNamesUseCanonicalImportedClassNames() async throws {
         let function = try await ABIRuntime.shared.swiftFunction(
             named: "ABIBridgeTests.swiftABIImportedObject(_:)", as: ((NSString) -> NSString).self

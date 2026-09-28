@@ -112,7 +112,7 @@ struct NativeSwiftAsyncClosureTests {
     }
 
     @MainActor @Test func returnedCallerClosureKeepsItsNativeIsolation() async throws {
-        let factory = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.makeCallerAsyncClosure(_: ManagedSwiftFixtures.ErrorLifetimeToken, expectMainActor: Swift.Bool) -> nonisolated(nonsending) @Sendable (ManagedSwiftFixtures.AsyncGate, Swift.Int64) async -> Swift.Int64",
+        let factory = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.makeCallerAsyncClosure(_:expectMainActor:)",
             as: ((ErrorLifetimeToken, Bool) -> NativeSwiftAsyncClosure<Int64, Never, AsyncGate, Int64>).self)
         let gate = AsyncGate()
         let task = Task { @MainActor in
