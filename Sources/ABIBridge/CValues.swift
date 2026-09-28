@@ -45,6 +45,16 @@ final class CValueType: @unchecked Sendable {
         alignment = ABIValueTypeAlignment(handle)
     }
 
+    init(indirectSwiftSize size: Int, alignment: Int) throws {
+        var failure: OpaquePointer?
+        guard let handle = ABICreateSwiftIndirectStorageType(size, alignment, &failure) else {
+            throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftInvocation")
+        }
+        self.handle = handle
+        self.size = size
+        self.alignment = alignment
+    }
+
     init(swiftComponents components: CValueType, size: Int, alignment: Int) throws {
         var failure: OpaquePointer?
         let handle = withExtendedLifetime(components) {

@@ -28,7 +28,7 @@ The framework/path and retained-image overloads use the same symbol indexes as o
 | NativeSwiftClosure | Owned concrete synchronous, nonthrowing callbacks and returned closures |
 | Unsafe pointers, OpaquePointer, Selector, and optional pointers | Borrowed pointer values |
 | CGPoint, CGSize, CGRect, NSRange | Known fixed value layouts lowered with the Swift ABI |
-| ABIBridgeSwiftValue | Actual Swift values with explicit fixed layouts and compiler-owned copying/destruction |
+| ABIBridgeSwiftValue | Actual Swift values with explicit fixed or formally indirect conventions and compiler-owned copying/destruction |
 | ABIBridgeValue | Explicit trivial native layouts representable by NativeType's scalar/structure descriptions |
 | Void | An empty result or explicit empty-tuple argument |
 

@@ -42,6 +42,22 @@ Typed Swift operations inspect the actual case when copying or destroying the va
 
 ``NativeType`` computes natural C field offsets. A Swift struct may reuse a nested value's trailing padding; flatten the scalar descriptions when needed to describe the actual offsets. The compiler supplies storage size, stride, and alignment independently of the component descriptor. For this enum on arm64_32, two UInt32 payload components precede the tag, while the actual Swift value retains 8-byte alignment. The component descriptor's extent must cover the Swift size without exceeding its stride, and each scalar field must lie within the value's accessible bytes. Native transfers exclude aggregate trailing padding, while owned allocations preserve Swift alignment and stride. These bounds do not verify the semantic ABI.
 
+## Declare formally indirect values
+
+A non-frozen value imported from a library-evolution module can require addresses for its arguments and results even when its current storage is small. Select that convention explicitly:
+
+```swift
+extension Sample.ResilientRecord: ABIBridgeSwiftValue {
+    public static var swiftABIType: NativeType {
+        try! .opaque(named: "ResilientRecord")
+    }
+}
+```
+
+Within this Swift-specific conformance, an opaque descriptor declares formally indirect passing. The actual Swift metatype supplies live size, stride, alignment, and value operations; the descriptor's optional size/alignment fields are not used. This does not change opaque NativeValue storage or permit opaque C by-value calls. The C backend rejects these indirect Swift representations before preparing a libffi interface.
+
+The caller must establish the declaration's indirect convention. Selecting opaque storage does not convert a direct fixed-layout declaration into an indirect one, and small storage is not a reason to change the declared convention.
+
 ## Use callbacks and members
 
 The same conformance works with ``NativeSwiftClosure``:
@@ -52,7 +68,7 @@ let callback = try NativeSwiftClosure<Sample.Record, Sample.Record> { value in
 }
 ```
 
-Concrete nongeneric nominal callback signatures use the native type identity for pointer authentication; indirectly lowered large values use the compiler's indirect identity. Returned values transfer their ordinary Swift ownership. Initializers and setters transfer argument copies under their existing contracts, and borrowed calls preserve the caller's value. Array elements can already use arbitrary compiler-supported storage without adopting this protocol individually.
+Concrete nominal callback signatures use the native declaration identity for pointer authentication. Generic substitutions can change register lowering while retaining the same nominal discriminator. The bridge derives that identity from the supplied metatype using validated Swift demangling, including nested and Unicode names; callers do not write mangled strings. Formally indirect values and indirectly lowered large fixed values use the compiler's indirect identity. Returned values transfer their ordinary Swift ownership. Initializers and setters transfer argument copies under their existing contracts, and borrowed calls preserve the caller's value. Array elements can already use arbitrary compiler-supported storage without adopting this protocol individually.
 
 The captured body retains the existing synchronous, nonthrowing, Sendable contract. A conformance does not make the value itself Sendable or establish an actor/thread requirement.
 
@@ -60,7 +76,7 @@ The captured body retains the existing synchronous, nonthrowing, Sendable contra
 
 ``ABIBridgeSwiftValue`` describes the actual Swift type. ``ABIBridgeValue`` converts between a user wrapper and a possibly different foreign representation; its methods can throw and own foreign-resource adoption. C and C++ calls keep using that conversion contract. If a type adopts both protocols, Swift calls use its explicit Swift layout and compiler-owned value operations.
 
-Formally indirect resilient signatures need a separate convention contract even when their current storage is small. Direct generic nominal closure identities, arbitrary protocol existentials, tuples without an established representation, noncopyable values, async/throwing callbacks, and nested closure values remain separate work. Do not treat metadata size, a matching descriptor extent, or this conformance as proof that such a declaration is callable.
+Generic native declarations still require hidden metadata and witness arguments beyond this value contract. Arbitrary protocol existentials, tuples without an established representation, noncopyable values, async/throwing callbacks, and nested closure values remain separate work. If the nominal identity cannot be established from the metatype, closure preparation reports that limitation before publishing an entry. Do not treat metadata size, a matching descriptor extent, or this conformance as proof that such a declaration is callable.
 
 The fixtures verify mixed reference/floating structs, tagged reference-bearing enums, large indirect fixed values, callbacks and returned closures, member ownership, and rejected undersized layouts. Compiler probes cover arm64, x86_64, arm64e, and arm64_32; execution evidence is recorded separately.
 

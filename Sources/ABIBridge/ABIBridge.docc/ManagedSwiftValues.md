@@ -12,7 +12,7 @@ A concrete metatype lets Swift code allocate and operate on a value through the 
 | Fixed trivial layouts described by ABIBridgeValue | Supported within the documented Swift subset | Required if the declaration has additional unsupported conventions |
 | A struct or enum containing a reference | An explicit ABIBridgeSwiftValue conformance supports an established fixed ABI | The compiler adapts additional calling conventions |
 | A value Optional, such as Int64? | No general by-value support | The compiler handles both the payload and the nil representation |
-| A non-frozen struct from a library-evolution module | No general by-value support | An importing adapter handles resilient metadata and indirect results |
+| A non-frozen struct from a library-evolution module | An explicit opaque ABIBridgeSwiftValue descriptor selects its declared indirect convention | Available for additional signature adaptation |
 | A type unavailable to the adapter's compiler | No inferred by-value ABI | Requires an existing compatible adapter supplied by the owning module |
 
 Compiled adapters handle signatures beyond the explicit fixed-layout support in <doc:ExplicitSwiftValues>. Metadata and storage size alone do not infer layouts for tuples or enums, or establish generic, existential, opaque-result, noncopyable, async, or throwing Swift invocation.

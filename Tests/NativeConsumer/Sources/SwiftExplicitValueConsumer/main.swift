@@ -17,6 +17,16 @@ public final class Payload {}
 }
 @inline(never) public func apply(_ callback: (Choice) -> Choice, _ value: Choice) -> Choice { callback(value) }
 
+@frozen public struct Box<Value> {
+    public let value: Value
+}
+extension Box: ABIBridgeSwiftValue where Value == Int64 {
+    public static var swiftABIType: NativeType { .int64 }
+}
+@inline(never) public func applyBox(_ callback: (Box<Int64>) -> Box<Int64>, _ value: Box<Int64>) -> Box<Int64> {
+    callback(value)
+}
+
 let runtime = ABIRuntime()
 let transform = try await runtime.swiftFunction(named: "SwiftExplicitValueConsumer.change(_:)", as: ((Record) -> Record).self)
 let apply = try await runtime.swiftFunction(
@@ -36,4 +46,11 @@ do {
 withExtendedLifetime(result) { precondition(observed != nil) }
 result = nil
 precondition(observed == nil)
+let boxed = try await runtime.swiftFunction(
+    named: "SwiftExplicitValueConsumer.applyBox(_:_:)",
+    as: ((NativeSwiftClosure<Box<Int64>, Box<Int64>>, Box<Int64>) -> Box<Int64>).self
+)
+let boxBody = try NativeSwiftClosure { (value: Box<Int64>) in Box(value: value.value + 7) }
+let boxResult = try unsafe boxed.unsafeInvoke(boxBody, Box(value: 35))
+precondition(boxResult.value == 42)
 print("Explicit Swift value consumer passed")

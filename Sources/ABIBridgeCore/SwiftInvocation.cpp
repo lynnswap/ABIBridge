@@ -100,6 +100,7 @@ void flatten(TypeStorage &type, size_t offset, std::vector<Component> &component
 }
 
 Layout lower(TypeStorage &type) {
+    if (type.swiftIndirect) return Layout{{}, true};
     std::vector<Component> fields;
     flatten(type, 0, fields);
     Layout result;
@@ -140,7 +141,7 @@ ABIValueType *ABICreateSwiftStorageType(
     const ABIValueType *components, size_t size, size_t alignment, ABIResolutionFailure **error)
 {
     if (error) *error = nullptr;
-    if (!components || !alignment ||
+    if (!components || components->storage->swiftIndirect || !alignment ||
         (alignment & (alignment - 1)) || alignment > std::numeric_limits<unsigned short>::max()) {
         fail(error, ABIFailureInvalidRequest, "Swift storage must contain its components and have a valid alignment.");
         return nullptr;
@@ -161,6 +162,21 @@ ABIValueType *ABICreateSwiftStorageType(
     storage->offsets.push_back(0);
     storage->elements = {source->native(), nullptr};
     storage->aggregate = {size, static_cast<unsigned short>(alignment), FFI_TYPE_STRUCT, storage->elements.data()};
+    return new ABIValueType{std::move(storage)};
+}
+
+ABIValueType *ABICreateSwiftIndirectStorageType(
+    size_t size, size_t alignment, ABIResolutionFailure **error)
+{
+    if (error) *error = nullptr;
+    if (!alignment || (alignment & (alignment - 1)) ||
+        alignment > std::numeric_limits<unsigned short>::max()) {
+        fail(error, ABIFailureInvalidRequest, "Indirect Swift storage requires a valid alignment.");
+        return nullptr;
+    }
+    auto storage = std::make_shared<TypeStorage>();
+    storage->swiftIndirect = true;
+    storage->aggregate = {size, static_cast<unsigned short>(alignment), FFI_TYPE_STRUCT, nullptr};
     return new ABIValueType{std::move(storage)};
 }
 

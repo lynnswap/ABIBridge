@@ -1,6 +1,7 @@
 import ABIBridge
 import CoreGraphics
 import SwiftReplacementFixtures
+import SwiftValueFixtures
 import Synchronization
 
 extension ExplicitVector: ABIBridgeSwiftValue {
@@ -17,6 +18,16 @@ extension ExplicitLarge: ABIBridgeSwiftValue {
     public static var swiftABIType: NativeType {
         try! .structure(named: "ExplicitLarge", fields: [.pointer, .int64, .int64, .int64, .int64])
     }
+}
+
+extension ResilientValue: ABIBridgeSwiftValue {
+    public static var swiftABIType: NativeType { try! .opaque(named: "ResilientValue") }
+}
+extension GenericValue: ABIBridgeSwiftValue where Value == Int64 {
+    public static var swiftABIType: NativeType { .int64 }
+}
+extension Namespace.箱: ABIBridgeSwiftValue where Value == Int64 {
+    public static var swiftABIType: NativeType { .int64 }
 }
 
 private final class ClosureProbeCounter: Sendable {
@@ -201,5 +212,50 @@ private final class ClosureProbeCapture: Sendable {
     let large = try unsafe largeCall.unsafeInvoke(largeBody, ExplicitLarge(token: token, a: 1, b: 2, c: 3, d: 4))
     try check(large.token === token && large.a == 1 && large.d == 4,
               "Indirect large managed value uses the compiler's closure discriminator")
+    let echoResilient = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.echoResilient(_:)", as: ((ResilientValue) -> ResilientValue).self
+    )
+    let valueToken = ValueToken()
+    let resilient = ResilientValue(token: valueToken, number: 35)
+    let echoed = try unsafe echoResilient.unsafeInvoke(resilient)
+    try check(echoed.token === valueToken && echoed.number == 35,
+              "Small resilient value uses declared indirect arguments and results")
+    let applyResilient = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.applyResilient(_:_:)",
+        as: ((NativeSwiftClosure<ResilientValue, ResilientValue>, ResilientValue) -> ResilientValue).self
+    )
+    let resilientBody = try NativeSwiftClosure { (value: ResilientValue) in value.advanced(7) }
+    let resilientResult = try unsafe applyResilient.unsafeInvoke(resilientBody, resilient)
+    try check(resilientResult.token === valueToken && resilientResult.number == 42,
+              "Resilient callback reabstracts indirect storage with native authentication")
+    let makeResilient = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.returnResilient(_:)",
+        as: ((Int64) -> NativeSwiftClosure<ResilientValue, ResilientValue>).self
+    )
+    let returnedResilient = try unsafe makeResilient.unsafeInvoke(7)
+    let indirectResult = try unsafe returnedResilient.unsafeInvoke(resilient)
+    try check(indirectResult.token === valueToken && indirectResult.number == 42,
+              "Returned resilient closure preserves ownership and authenticated indirect convention")
+    let applyGeneric = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.applyGeneric(_:_:)",
+        as: ((NativeSwiftClosure<GenericValue<Int64>, GenericValue<Int64>>, GenericValue<Int64>) -> GenericValue<Int64>).self
+    )
+    let genericBody = try NativeSwiftClosure { (value: GenericValue<Int64>) in GenericValue(value.value + 7) }
+    try check(try unsafe applyGeneric.unsafeInvoke(genericBody, GenericValue(35)).value == 42,
+              "Generic closure authentication uses the unspecialized nominal declaration")
+    let makeGeneric = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.returnGeneric(_:)",
+        as: ((Int64) -> NativeSwiftClosure<GenericValue<Int64>, GenericValue<Int64>>).self
+    )
+    let returnedGeneric = try unsafe makeGeneric.unsafeInvoke(7)
+    try check(try unsafe returnedGeneric.unsafeInvoke(GenericValue(35)).value == 42,
+              "Returned generic closure uses the same nominal authentication")
+    let applyNested = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.applyNested(_:_:)",
+        as: ((NativeSwiftClosure<Namespace.箱<Int64>, Namespace.箱<Int64>>, Namespace.箱<Int64>) -> Namespace.箱<Int64>).self
+    )
+    let nestedBody = try NativeSwiftClosure { (value: Namespace.箱<Int64>) in Namespace.箱(value.value + 7) }
+    try check(try unsafe applyNested.unsafeInvoke(nestedBody, Namespace.箱(35)).value == 42,
+              "Nested Unicode generic identity matches compiler-authenticated calls")
     return checks
 }
