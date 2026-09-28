@@ -207,6 +207,7 @@ public struct ResolvedSymbol: Sendable {
     /// Where the resolver found the symbol metadata.
     public let source: Source
     let address: UInt64
+    let linkageName: String
 
     /// Borrows the symbol address while retaining its image.
     ///

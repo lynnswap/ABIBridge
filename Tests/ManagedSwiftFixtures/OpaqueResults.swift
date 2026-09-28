@@ -1,3 +1,5 @@
+import Foundation
+
 private struct HiddenOpaqueValue: ExistentialValue, ExistentialLabel {
     let token: ErrorLifetimeToken
     let number: Int64
@@ -47,3 +49,29 @@ private struct HiddenGenericOpaque<Value> { let value: Value }
 @inline(never) public func makeGenericOpaque<Value>(_ value: Value) -> some Any { HiddenGenericOpaque(value: value) }
 private struct HiddenNoncopyableOpaque: ~Copyable { let value: Int64 }
 @inline(never) public func makeNoncopyableOpaque() -> some ~Copyable { HiddenNoncopyableOpaque(value: 42) }
+
+public class OpaqueBase: @unchecked Sendable {
+    public let token: ErrorLifetimeToken
+    public let number: Int64
+    public init(_ token: ErrorLifetimeToken, _ number: Int64) { self.token = token; self.number = number }
+}
+private final class HiddenOpaqueObject: OpaqueBase, ExistentialObjectValue, ExistentialValue, @unchecked Sendable {}
+@inline(never) public func makeOpaqueClassAny(_ token: ErrorLifetimeToken) -> some AnyObject { HiddenOpaqueObject(token, 41) }
+@inline(never) public func makeOpaqueClassProtocol(_ token: ErrorLifetimeToken) -> some ExistentialObjectValue { HiddenOpaqueObject(token, 42) }
+@inline(never) public func makeOpaqueSuperclass(_ token: ErrorLifetimeToken) -> some OpaqueBase & ExistentialObjectValue { HiddenOpaqueObject(token, 43) }
+@inline(never) public func makeOpaqueUnconstrainedClass(_ token: ErrorLifetimeToken) -> some ExistentialValue { HiddenOpaqueObject(token, 44) }
+@inline(never) public func makeOpaqueClassThrowing(_ token: ErrorLifetimeToken, _ fail: Bool) throws(ScalarFailure) -> some ExistentialObjectValue {
+    let object = HiddenOpaqueObject(token, 45)
+    if fail { throw ScalarFailure(42) }
+    return object
+}
+@inline(never) @concurrent public func makeOpaqueClassAsync(_ gate: AsyncGate, _ token: ErrorLifetimeToken) async -> some ExistentialObjectValue {
+    await gate.wait()
+    return HiddenOpaqueObject(token, 46)
+}
+
+private final class HiddenOpaqueObjC: NSObject {
+    let token: ErrorLifetimeToken
+    init(_ token: ErrorLifetimeToken) { self.token = token }
+}
+@inline(never) public func makeOpaqueObjC(_ token: ErrorLifetimeToken) -> some NSObjectProtocol { HiddenOpaqueObjC(token) }

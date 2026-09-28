@@ -29,7 +29,10 @@ def main():
         text = (directory / 'provider.ll').read_text()
         caller = (directory / 'caller.ll').read_text()
         declarations = {}
-        for name in ['makeOpaque', 'makeOpaqueInteger', 'makeOpaqueEmpty', 'makeOpaqueThrowing', 'makeOpaqueAsync']:
+        direct = ['makeOpaqueClassAny', 'makeOpaqueClassProtocol', 'makeOpaqueSuperclass', 'makeOpaqueObjC']
+        names = ['makeOpaque', 'makeOpaqueInteger', 'makeOpaqueEmpty', 'makeOpaqueThrowing', 'makeOpaqueAsync',
+                 'makeOpaqueUnconstrainedClass', 'makeOpaqueClassAsync', *direct]
+        for name in names:
             # Avoid treating makeOpaqueInteger as makeOpaque; manglings spell the identifier length.
             fragment = str(len(name)) + name
             lines = [line for line in caller.splitlines() if line.startswith('declare ') and fragment in line]
@@ -39,11 +42,17 @@ def main():
             if name == 'makeOpaqueAsync':
                 if 'swifttailcc void' not in line or not re.search(r'\(ptr[^,]*, ptr swiftasync', line):
                     raise RuntimeError(f'{target}: async opaque output must be the leading ordinary pointer: {line}')
+            elif name == 'makeOpaqueClassAsync':
+                if 'swifttailcc void' not in line or not re.search(r'\(ptr swiftasync', line):
+                    raise RuntimeError(f'{target}: class-constrained async result must not add an output pointer: {line}')
+            elif name in direct:
+                if not line.startswith('declare swiftcc ptr '):
+                    raise RuntimeError(f'{target}: class-constrained opaque result must be direct: {line}')
             elif 'swiftcc void' not in line or 'sret(' not in line:
                 raise RuntimeError(f'{target}: opaque outputs must remain indirect: {line}')
             declarations[name] = line
         descriptors = {}
-        for name in ['makeOpaque', 'makeOpaqueInteger', 'makeOpaqueEmpty', 'makeOpaqueThrowing', 'makeOpaqueAsync', 'makeGenericOpaque', 'makeNoncopyableOpaque']:
+        for name in [*names, 'makeGenericOpaque', 'makeNoncopyableOpaque']:
             fragment = str(len(name)) + name
             lines = [line for line in text.splitlines() if line.startswith('@') and fragment in line and 'QOMQ" = ' in line]
             if len(lines) != 1:

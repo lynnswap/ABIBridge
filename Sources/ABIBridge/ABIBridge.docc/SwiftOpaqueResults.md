@@ -1,6 +1,6 @@
 # Calling Swift functions with opaque results
 
-Use NativeSwiftOpaqueValue for a native declaration whose result is a single `some P`. The bridge obtains complete underlying metadata from the declaration's opaque descriptor and prepares an indirect result using that type's actual size and alignment.
+Use NativeSwiftOpaqueValue for a native declaration whose result is a single `some P`. The bridge obtains complete underlying metadata from the matched declaration's opaque descriptor. Its class constraints select a direct object result or indirect storage; the metadata supplies the actual storage size and alignment.
 
 For a loaded module declaring `func makeSummary(_ title: String) -> some Summary`:
 
@@ -17,7 +17,7 @@ result.withValue { value in
 }
 ```
 
-The same result type works with supported synchronous, throwing, and async functions, methods, static methods, and property getters. Match the native effects, argument ownership, receiver, and isolation conventions exactly as for ordinary calls.
+The same result type works with supported synchronous, throwing, and async functions, methods, static methods, and property getters, including declarations in another module's extension. Match the native effects, argument ownership, receiver, and isolation conventions exactly as for ordinary calls.
 
 ## Values and lifetime
 
@@ -33,11 +33,11 @@ Only native success adopts the output storage. Native errors and cooperative can
 
 ## Why an existential result is different
 
-A function returning `some P` does not directly initialize an `any P` or Any container. Even a hidden integer or empty tuple uses the opaque declaration's indirect result convention. The bridge first receives the actual concrete value, then lets the compiler build the Any copy inside withValue. See <doc:SwiftExistentialValues> for declarations that themselves accept or return existential containers.
+A function returning `some P` does not directly initialize an `any P` or Any container. Class-constrained opaque contracts return an owned object pointer. Unconstrained contracts use indirect storage, including hidden integers, empty tuples, and class instances. The bridge first receives the actual concrete value, then lets the compiler build the Any copy inside withValue. See <doc:SwiftExistentialValues> for declarations that themselves accept or return existential containers.
 
 ## Scope
 
-The first supported contract is a nongeneric declaration with one direct opaque result whose interface guarantees Copyable and Escapable. Enclosing generic metadata/witness substitutions, opaque results nested inside tuples or closures, noncopyable/nonescapable contracts, opaque callback results, and managed hook bodies require a compiled adapter. Lookup checks captured generic arguments and inverse Copyable/Escapable requirements before asking the runtime to instantiate or erase the type.
+The first supported contract is a nongeneric declaration with one opaque result at the outermost return position whose interface guarantees Copyable and Escapable. Enclosing generic metadata/witness substitutions, opaque results nested inside tuples or closures, noncopyable/nonescapable contracts, opaque callback results, and managed hook bodies require a compiled adapter. Lookup checks captured generic arguments and inverse Copyable/Escapable requirements before asking the runtime to instantiate or erase the type.
 
 This does not synthesize protocol witnesses or provide automatic conversion to AnyView or another framework wrapper. Use the native protocol API or an explicitly compiled adapter for the desired operation.
 
