@@ -94,6 +94,22 @@ python3 scripts/check-managed-swift-codegen.py
 
 The compiler probe emits LLVM IR and a report under `.build/managed-swift-codegen`. It compares direct frozen/Optional results with resilient indirect results and compiler-generated value operations on arm64, x86_64, arm64e, and arm64_32. The native-consumer CI job runs this probe; the invocation shard runs the runtime tests. A compilation check does not establish runtime support on that target. See the managed Swift values DocC guide for the supported adapter contract.
 
+## Swift closure ABI fixtures
+
+`SwiftClosureABITests` compares concrete Swift calls with compiler-authored C adapters using the same managed fixture modules. It covers noncapturing/capturing inputs, nonescaping use, a callback retained by its native callee, returned callbacks after their output storage is released, and explicit Sendable/MainActor signatures.
+
+```sh
+xcodebuild test -scheme ABIBridge -destination 'platform=macOS,arch=arm64' \
+  -only-testing:ABIBridgeTests/SwiftClosureABITests
+xcodebuild test -scheme ABIBridge -destination 'platform=macOS,arch=arm64' \
+  -configuration Release -only-testing:ABIBridgeTests/SwiftClosureABITests
+python3 scripts/check-swift-closure-codegen.py
+```
+
+The compiler probe records SIL and LLVM IR under `.build/swift-closure-codegen` for the same four architecture targets as the managed-value probe. An unoptimized build preserves the concrete-to-generic and generic-to-concrete reabstraction boundaries for inspection. It verifies the native closure's two-word result and the generic callback's indirect argument/result plus hidden context. The invocation shard and native-consumer CI job run the runtime and compiler checks respectively.
+
+These fixtures establish the compiler-adapter boundary; they do not enable direct closure marshalling in the Swift frontend. A generic function value's two words cannot be copied into a concrete callback parameter without establishing its invocation convention. Likewise, a C symbol does not carry an actor or Sendable contract: the MainActor fixture is invoked from an explicitly isolated test, and no actor hop is inferred from lookup.
+
 ## Architecture validation
 
 Run the focused consumer fixtures on macOS:
