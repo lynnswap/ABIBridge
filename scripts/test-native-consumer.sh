@@ -13,6 +13,7 @@ python3 "$task_root/scripts/check-explicit-swift-value-codegen.py"
 python3 "$task_root/scripts/check-indirect-swift-value-codegen.py"
 python3 "$task_root/scripts/check-swift-error-codegen.py"
 python3 "$task_root/scripts/check-swift-async-codegen.py"
+python3 "$task_root/scripts/check-swift-throwing-closure-codegen.py"
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" SwiftExplicitValueConsumer
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \

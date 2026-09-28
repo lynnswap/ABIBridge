@@ -1,15 +1,17 @@
 import ABIBridgeCore
 
-private final class SwiftClosureBody {
+final class SwiftClosureBody {
     let invoke: (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer) -> Void
     init(_ invoke: @escaping (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer) -> Void) {
         self.invoke = invoke
     }
 }
 
-private final class SwiftClosureCallbackOwner {
+final class SwiftClosureCallbackOwner {
     let handle: OpaquePointer
     var function: ABIUnmanagedFunction { ABISwiftClosureCallbackFunction(handle)! }
+
+    init(handle: OpaquePointer) { self.handle = handle }
 
     init(interface: SwiftCallInterface, body: SwiftClosureBody) throws {
         var functions = ABISwiftClosureCallbackFunctions()
@@ -139,7 +141,7 @@ extension NativeSwiftClosure: SwiftClosureValue {
                 function: ABISignSwiftClosureFunction(callback.function, prepared.discriminator),
                 context: Unmanaged.passRetained(callback).toOpaque()
             )
-            let storage = try SwiftClosureStorage(adopting: forwarded, discriminator: prepared.discriminator, retaining: nil)
+            let storage = try SwiftClosureStorage(adopting: forwarded, discriminator: prepared.discriminator, retaining: original.codeOwner)
             return Self(storage: storage, call: prepared.call)
         }
     }

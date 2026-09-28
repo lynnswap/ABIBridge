@@ -110,7 +110,7 @@ struct SwiftClosureCodec: Sendable {
 final class SwiftClosureStorage {
     let value: ABISwiftClosureValue
     let implementation: SwiftImplementation
-    private let owner: Any?
+    let codeOwner: Any?
 
     // Consumes one native context reference, including on preparation failure.
     init(adopting value: ABISwiftClosureValue, discriminator: UInt16, retaining owner: Any?) throws {
@@ -124,11 +124,11 @@ final class SwiftClosureStorage {
             throw error
         }
         self.value = value
-        self.owner = owner
+        codeOwner = owner
     }
 
     deinit {
-        withExtendedLifetime((implementation, owner)) { ABIReleaseSwiftClosureContext(value.context) }
+        withExtendedLifetime((implementation, codeOwner)) { ABIReleaseSwiftClosureContext(value.context) }
     }
 
     func encoded() -> NativeValueStorage { Self.copy(value, retaining: self) }

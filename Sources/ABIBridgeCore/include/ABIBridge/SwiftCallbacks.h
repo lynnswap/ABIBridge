@@ -17,6 +17,15 @@ typedef struct ABISwiftClosureCallbackFunctions {
     void (*releaseContext)(void *context);
 } ABISwiftClosureCallbackFunctions;
 
+/// Returns true after initializing an owned error, false after initializing
+/// the ordinary result. Error storage is null for a nonthrowing interface.
+typedef struct ABISwiftThrowingClosureCallbackFunctions {
+    bool (*invoke)(void *context, void *const *arguments, void *result, void *errorResult);
+    void (*releaseContext)(void *context);
+} ABISwiftThrowingClosureCallbackFunctions;
+ABISwiftClosureCallback *ABICreateSwiftThrowingClosureCallback(ABISwiftCallInterface *interface,
+    ABISwiftThrowingClosureCallbackFunctions functions, void *context, ABIResolutionFailure **error);
+
 /// Owns generated concrete closure entry code. Unlike a hook, this entry has
 /// no predecessor or invalidation operation. Success consumes context; failure
 /// consumes neither context nor its release responsibility.

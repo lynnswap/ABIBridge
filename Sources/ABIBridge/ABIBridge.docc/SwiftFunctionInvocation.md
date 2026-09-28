@@ -25,7 +25,7 @@ The framework/path and retained-image overloads use the same symbol indexes as o
 | Bool, signed/unsigned 8–64-bit integers, Int, UInt, Float, Double, CGFloat | Native Swift scalar arguments and results |
 | Class references, AnyObject, and their optional forms | Guaranteed arguments and owned results |
 | String, Array<Element>, and their single-level optional forms | Stable Swift storage with Swift ownership, including array element lifetimes |
-| NativeSwiftClosure | Owned concrete synchronous, nonthrowing callbacks and returned closures |
+| NativeSwiftClosure, NativeSwiftThrowingClosure | Owned concrete synchronous callbacks and returned closures, with declared error effects |
 | Unsafe pointers, OpaquePointer, Selector, and optional pointers | Borrowed pointer values |
 | CGPoint, CGSize, CGRect, NSRange | Known fixed value layouts lowered with the Swift ABI |
 | ABIBridgeSwiftValue | Actual Swift values with explicit fixed or formally indirect conventions and compiler-owned copying/destruction |

@@ -174,3 +174,9 @@ All six checks passed in a Release arm64e build on iPhone Air (iOS 27, build 24A
 The `swift-async` mode exercises public async functions and members through the native transport. It verifies owned String results, caller-isolation payloads and task-local state, executor restoration, cooperative cancellation, native errors, independent indirect success/error outputs, and stack arguments.
 
 All eight checks passed in a Release arm64e build on iPhone Air (iOS 27, build 24A435), with pointer authentication enabled. The report is `Documents/architecture-swift-async.json`. macOS tests also execute the transport on arm64 and under Rosetta on x86_64; arm64_32 is separately compiled.
+
+## Throwing Swift closure values
+
+The `swift-throwing-closures` mode checks generated typed callbacks, zero-valued errors, independent indirect success/error outputs, returned native captures, forwarding into escaping native storage, and final capture release.
+
+All seven checks passed in a Release arm64e build on iPhone Air (iOS 27, build 24A435), with pointer authentication enabled. The report is `Documents/architecture-swift-throwing-closures.json`. macOS tests also cover untyped and Never errors and preservation of the caller's error register by nonthrowing callbacks.

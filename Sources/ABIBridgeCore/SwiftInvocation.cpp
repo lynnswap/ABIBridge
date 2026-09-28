@@ -578,9 +578,11 @@ struct SwiftHandler {
     ~SwiftHandler() { if (functions.releaseContext) functions.releaseContext(context); }
 };
 struct SwiftClosureHandler {
-    ABISwiftClosureCallbackFunctions functions{};
+    void (*invoke)(void *, void *const *, void *) = nullptr;
+    bool (*invokeThrowing)(void *, void *const *, void *, void *) = nullptr;
+    void (*releaseContext)(void *) = nullptr;
     void *context = nullptr;
-    ~SwiftClosureHandler() { if (functions.releaseContext) functions.releaseContext(context); }
+    ~SwiftClosureHandler() { if (releaseContext) releaseContext(context); }
 };
 struct SwiftFallbackOwner {
     void *context = nullptr;
@@ -633,14 +635,15 @@ struct ABISwiftClosureCallback {
     explicit ABISwiftClosureCallback(const ABISwiftCallInterface &interface) : entry(interface, nullptr) {}
 };
 
-ABISwiftClosureCallback *ABICreateSwiftClosureCallback(ABISwiftCallInterface *interface,
-    ABISwiftClosureCallbackFunctions functions, void *context, ABIResolutionFailure **error) {
+static ABISwiftClosureCallback *createSwiftClosureCallback(ABISwiftCallInterface *interface,
+    ABISwiftClosureCallbackFunctions normal, ABISwiftThrowingClosureCallbackFunctions throwing,
+    void *context, ABIResolutionFailure **error) {
     if (error) *error = nullptr;
-    if (interface && interface->errorResult) {
+    if (interface && interface->errorResult && !throwing.invoke) {
         fail(error, ABIFailureUnsupportedDeclaration, "Throwing Swift callbacks require an error-result handler.");
         return nullptr;
     }
-    if (!interface || !functions.invoke) {
+    if (!interface || (!normal.invoke && !throwing.invoke)) {
         fail(error, ABIFailureInvalidRequest, "A concrete Swift call interface and closure callback are required.");
         return nullptr;
     }
@@ -649,9 +652,19 @@ ABISwiftClosureCallback *ABICreateSwiftClosureCallback(ABISwiftCallInterface *in
     entry.code = std::make_unique<abibridge::SwiftCallbackCode>(&entry, error, true);
     if (!entry.code->function()) return nullptr;
     entry.closure = std::make_unique<SwiftClosureHandler>();
-    entry.closure->functions = functions;
+    entry.closure->invoke = normal.invoke;
+    entry.closure->invokeThrowing = throwing.invoke;
+    entry.closure->releaseContext = throwing.invoke ? throwing.releaseContext : normal.releaseContext;
     entry.closure->context = context;
     return callback.release();
+}
+ABISwiftClosureCallback *ABICreateSwiftClosureCallback(ABISwiftCallInterface *interface,
+    ABISwiftClosureCallbackFunctions functions, void *context, ABIResolutionFailure **error) {
+    return createSwiftClosureCallback(interface, functions, {}, context, error);
+}
+ABISwiftClosureCallback *ABICreateSwiftThrowingClosureCallback(ABISwiftCallInterface *interface,
+    ABISwiftThrowingClosureCallbackFunctions functions, void *context, ABIResolutionFailure **error) {
+    return createSwiftClosureCallback(interface, {}, functions, context, error);
 }
 ABIUnmanagedFunction ABISwiftClosureCallbackFunction(const ABISwiftClosureCallback *callback) {
     return callback ? callback->entry.code->function() : nullptr;
@@ -730,7 +743,7 @@ bool checkIncoming(ABISwiftIncomingCall *call, ABIResolutionFailure **error) {
 }
 
 void unpackArguments(const ABISwiftCallInterface &interface, CallFrame &frame,
-                     std::vector<AlignedValue> &storage, std::vector<void *> &arguments) {
+                     std::vector<AlignedValue> &storage, std::vector<void *> &arguments, void **errorResult = nullptr) {
     storage.reserve(interface.parameters.size());
     arguments.reserve(interface.parameters.size());
     for (const auto &type : interface.parameters) {
@@ -744,6 +757,11 @@ void unpackArguments(const ABISwiftCallInterface &interface, CallFrame &frame,
             case Bank::floating: source = &frame.floating[move.destination]; break;
             case Bank::stack: source = reinterpret_cast<const uint8_t *>(frame.stack) + move.destination; break;
         }
+        if (move.argument == interface.parameters.size()) {
+            // The trailing typed-error pointer is hidden from the Swift body.
+            if (errorResult) std::memcpy(errorResult, source, sizeof(void *));
+            continue;
+        }
         auto *destination = static_cast<uint8_t *>(arguments[move.argument]);
         if (move.indirect) {
             uintptr_t pointer = 0;
@@ -756,19 +774,33 @@ void unpackArguments(const ABISwiftCallInterface &interface, CallFrame &frame,
     }
 }
 
-void packResult(const ABISwiftCallInterface &interface, CallFrame &frame, const void *value) {
+void packRegisters(const Layout &layout, TypeStorage &type, CallFrame &frame, const void *value) {
     std::memset(frame.integerResults, 0, sizeof(frame.integerResults));
     std::memset(frame.floatingResults, 0, sizeof(frame.floatingResults));
+    size_t integers = 0, floating = 0;
+    for (const auto &component : layout.components) {
+        void *destination = component.floating ? static_cast<void *>(&frame.floatingResults[floating++])
+            : static_cast<void *>(&frame.integerResults[integers++]);
+        const auto available = type.size() - component.offset;
+        std::memcpy(destination, static_cast<const uint8_t *>(value) + component.offset, std::min(component.size, available));
+    }
+}
+void packResult(const ABISwiftCallInterface &interface, CallFrame &frame, const void *value) {
     if (interface.resultLayout.indirect) {
         std::memcpy(reinterpret_cast<void *>(frame.indirectResult), value, interface.result->size());
         return;
     }
-    size_t integers = 0, floating = 0;
-    for (const auto &component : interface.resultLayout.components) {
-        void *destination = component.floating ? static_cast<void *>(&frame.floatingResults[floating++])
-            : static_cast<void *>(&frame.integerResults[integers++]);
-        const auto available = interface.result->size() - component.offset;
-        std::memcpy(destination, static_cast<const uint8_t *>(value) + component.offset, std::min(component.size, available));
+    packRegisters(interface.resultLayout, *interface.result, frame, value);
+}
+void packError(const ABISwiftCallInterface &interface, CallFrame &frame, const void *value, void *indirect) {
+    // A throwing callback promises an initialized error of its declared type.
+    if (!interface.errorResult) std::abort();
+    if (!interface.typedError) {
+        std::memcpy(&frame.error, value, sizeof(void *));
+    } else {
+        frame.error = 1;
+        if (interface.indirectError) std::memcpy(indirect, value, interface.errorResult->size());
+        else packRegisters(interface.errorLayout, *interface.errorResult, frame, value);
     }
 }
 }
@@ -825,11 +857,25 @@ extern "C" __attribute__((visibility("hidden"))) void ABIDispatchSwiftCallback(A
     if (callback->closure) {
         std::vector<AlignedValue> storage;
         std::vector<void *> arguments;
-        unpackArguments(callback->interface, *frame, storage, arguments);
-        AlignedValue result(callback->interface.result->size(), callback->interface.result->native()->alignment);
-        callback->closure->functions.invoke(callback->closure->context, arguments.data(), result.data());
-        packResult(callback->interface, *frame, result.data());
-        return; // The native caller owns the initialized result.
+        auto &interface = callback->interface;
+        void *indirectError = nullptr;
+        unpackArguments(interface, *frame, storage, arguments, &indirectError);
+        AlignedValue result(interface.result->size(), interface.result->native()->alignment);
+        if (interface.errorResult) frame->error = 0;
+        if (callback->closure->invokeThrowing) {
+            AlignedValue error(interface.errorResult ? interface.errorResult->size() : 0,
+                               interface.errorResult ? interface.errorResult->native()->alignment : 1);
+            const bool threw = callback->closure->invokeThrowing(callback->closure->context, arguments.data(),
+                result.data(), interface.errorResult ? error.data() : nullptr);
+            if (threw) {
+                packError(interface, *frame, error.data(), indirectError);
+                return;
+            }
+        } else {
+            callback->closure->invoke(callback->closure->context, arguments.data(), result.data());
+        }
+        packResult(interface, *frame, result.data());
+        return; // The native caller owns the selected result or error.
     }
     std::shared_ptr<SwiftHandler> handler;
     { std::lock_guard lock(callback->mutex); handler = callback->handler; }

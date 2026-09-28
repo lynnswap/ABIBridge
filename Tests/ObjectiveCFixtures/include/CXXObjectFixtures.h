@@ -13,6 +13,7 @@ const void *ABICXXRecordReceiver(void);
 int32_t ABICNextRecordMode(int32_t value);
 
 typedef void (*ABICXXGenericFunction)(void);
+int32_t ABIProbeSwiftErrorRegister(ABICXXGenericFunction function, const void *context);
 extern const int32_t ABICXXFixtureData;
 void *ABICXXCreateCounter(int32_t value);
 void ABICXXDeleteCounter(void *value);
