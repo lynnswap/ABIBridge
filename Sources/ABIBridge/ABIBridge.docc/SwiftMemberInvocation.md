@@ -59,6 +59,8 @@ An object scope also provides getter(named:as:) and setter(named:as:) returning 
 
 Setters transfer ownership of the incoming value. Getters must be synchronous and nonthrowing: getter symbol names do not encode all effect annotations, so lookup cannot establish this contract.
 
+Concrete callback parameters and returned closures use ``NativeSwiftClosure`` in the function-type metatype, as described in <doc:SwiftClosureValues>. Initializers transfer the encoded owned context; ordinary methods borrow it for the call.
+
 ## Fixed value receivers and adapters
 
 For a supported fixed-layout value or a value conforming to ABIBridgeValue:

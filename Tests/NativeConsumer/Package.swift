@@ -69,6 +69,10 @@ let package = Package(
             dependencies: [.product(name: "ABIBridge", package: "ABIBridge")]
         ),
         .executableTarget(
+            name: "SwiftClosureConsumer",
+            dependencies: [.product(name: "ABIBridge", package: "ABIBridge")]
+        ),
+        .executableTarget(
             name: "SwiftFunctionConsumer",
             dependencies: [.product(name: "ABIBridge", package: "ABIBridge")]
         ),

@@ -7,6 +7,24 @@ extern "C" {
 
 typedef struct ABISwiftCallback ABISwiftCallback;
 typedef struct ABISwiftIncomingCall ABISwiftIncomingCall;
+typedef struct ABISwiftClosureCallback ABISwiftClosureCallback;
+
+/// The callback borrows native Swift argument storage and must initialize one
+/// owned result with the prepared signature. It cannot fail or throw through
+/// this nonthrowing Swift boundary.
+typedef struct ABISwiftClosureCallbackFunctions {
+    void (*invoke)(void *context, void *const *arguments, void *result);
+    void (*releaseContext)(void *context);
+} ABISwiftClosureCallbackFunctions;
+
+/// Owns generated concrete closure entry code. Unlike a hook, this entry has
+/// no predecessor or invalidation operation. Success consumes context; failure
+/// consumes neither context nor its release responsibility.
+ABISwiftClosureCallback *ABICreateSwiftClosureCallback(ABISwiftCallInterface *interface,
+    ABISwiftClosureCallbackFunctions functions, void *context, ABIResolutionFailure **error);
+ABIUnmanagedFunction ABISwiftClosureCallbackFunction(const ABISwiftClosureCallback *callback);
+/// Requires that the last native closure context and all in-flight calls have ended.
+void ABIReleaseSwiftClosureCallback(ABISwiftClosureCallback *callback);
 
 /// Functions describing one callback and its native value ownership. None may
 /// throw a language exception through this C boundary. The borrowed invocation

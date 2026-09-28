@@ -60,6 +60,8 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         checks += try await validateNativeLookup()
     case "swift-lookup":
         checks += try await validateSwiftLookup()
+    case "swift-closures":
+        checks += try await validateSwiftClosureValues()
     case "swift-callback":
         checks += try await validateSwiftCallbacks()
     case "swift-replacement":

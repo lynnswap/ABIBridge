@@ -76,6 +76,8 @@ xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" SwiftFunctionConsumer "$task_fixture/libSwiftFixture.dylib"
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
+    --scratch-path "$task_root/.build/native-consumer" SwiftClosureConsumer "$task_fixture/libSwiftFixture.dylib"
+xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" SwiftMemberConsumer "$task_fixture/libSwiftFixture.dylib" "$task_fixture/libSwiftExtensionFixture.dylib"
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" SwiftInitializerHookConsumer

@@ -4,8 +4,15 @@ struct SwiftValueCodec<Value>: Sendable {
     let type: CValueType
     private let cValue: CValueCodec<Value>?
     private let objectResult: Bool
+    private let closure: SwiftClosureCodec?
 
     init() throws {
+        if let closureType = Value.self as? any SwiftClosureValue.Type {
+            let codec = try closureType.makeClosureCodec()
+            closure = codec; type = codec.type; cValue = nil; objectResult = false
+            return
+        }
+        closure = nil
         let base = (Value.self as? any NativeOptionalValue.Type)?.wrappedType ?? Value.self
         let isObject = base is AnyClass || base == AnyObject.self
         let isAdapter = base is any ABIBridgeValue.Type
@@ -36,6 +43,7 @@ struct SwiftValueCodec<Value>: Sendable {
     }
 
     func encode(_ value: Value) throws -> NativeValueStorage {
+        if closure != nil { return (value as! any SwiftClosureValue).closureStorage.encoded() }
         if Value.self == Void.self { return NativeValueStorage(size: 0, alignment: 1) }
         if let cValue { return try cValue.encode(value) }
         let storage = NativeValueStorage(size: type.size, alignment: type.alignment)
@@ -44,6 +52,7 @@ struct SwiftValueCodec<Value>: Sendable {
     }
 
     func copy(from storage: NativeValueStorage, retaining owner: Any?) throws -> Value {
+        if let closure { return try closure.makeValue(storage.address.load(as: ABISwiftClosureValue.self), owner, false) as! Value }
         if let cValue { return try cValue.decode(storage, retaining: owner) }
         if objectResult, !(Value.self is any NativeOptionalValue.Type), storage.address.load(as: UnsafeRawPointer?.self) == nil {
             throw ABIInvocationError.unexpectedNilResult(expected: String(reflecting: Value.self))
@@ -52,6 +61,9 @@ struct SwiftValueCodec<Value>: Sendable {
     }
 
     func copyNativeStorage(_ storage: NativeValueStorage) throws -> NativeValueStorage {
+        if closure != nil {
+            return SwiftClosureStorage.copy(storage.address.load(as: ABISwiftClosureValue.self), retaining: storage)
+        }
         if cValue != nil {
             let copy = NativeValueStorage(size: type.size, alignment: type.alignment)
             if type.size != 0 { copy.address.copyMemory(from: storage.address, byteCount: type.size) }
@@ -61,10 +73,12 @@ struct SwiftValueCodec<Value>: Sendable {
     }
 
     func destroyNativeValue(at address: UnsafeMutableRawPointer) {
+        if closure != nil { SwiftClosureStorage.destroy(address); return }
         if cValue == nil { address.assumingMemoryBound(to: Value.self).deinitialize(count: 1) }
     }
 
     func decode(_ storage: NativeValueStorage, retaining owner: Any?) throws -> Value {
+        if let closure { return try closure.makeValue(storage.address.load(as: ABISwiftClosureValue.self), owner, true) as! Value }
         if let cValue { return try cValue.decode(storage, retaining: owner) }
         if objectResult, !(Value.self is any NativeOptionalValue.Type),
            storage.address.load(as: UnsafeRawPointer?.self) == nil {

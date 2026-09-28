@@ -1,7 +1,7 @@
 import ABIBridgeCore
 
 struct SwiftCall<Result, each Argument>: Sendable {
-    private let interface: SwiftCallInterface
+    let interface: SwiftCallInterface
     private let arguments: (repeat SwiftValueCodec<each Argument>)
     private let result: SwiftValueCodec<Result>
     private let hasTrailingValue: Bool
@@ -28,6 +28,20 @@ struct SwiftCall<Result, each Argument>: Sendable {
         didInvoke: (() -> Void)? = nil, implementation: SwiftImplementation? = nil,
         _ values: repeat each Argument
     ) throws -> Result {
+        try unsafe symbol.withUnsafeAddress { address in
+            try unsafe unsafeInvoke(
+                function: implementation?.function ?? ABIUnsafeFunctionAtAddress(address),
+                context: context, trailingValue: trailingValue, retaining: (owner ?? symbol, implementation),
+                didInvoke: didInvoke, repeat each values
+            )
+        }
+    }
+
+    @unsafe func unsafeInvoke(
+        function: ABIUnmanagedFunction, context: UnsafeRawPointer? = nil,
+        trailingValue: NativeValueStorage? = nil, retaining owner: Any?,
+        didInvoke: (() -> Void)? = nil, _ values: repeat each Argument
+    ) throws -> Result {
         precondition(hasTrailingValue == (trailingValue != nil))
         var storage: [NativeValueStorage] = []
         storage.reserveCapacity(argumentCount)
@@ -37,15 +51,12 @@ struct SwiftCall<Result, each Argument>: Sendable {
         var addresses: [UnsafeMutableRawPointer?] = storage.map(\.address)
         if let trailingValue { addresses.append(trailingValue.address) }
         let output = NativeValueStorage(size: result.type.size, alignment: result.type.alignment)
-        return try withExtendedLifetime((storage, trailingValue, owner, implementation)) {
+        return try withExtendedLifetime((storage, trailingValue, owner)) {
             var failure: OpaquePointer?
-            let success = unsafe symbol.withUnsafeAddress { address in
-                addresses.withUnsafeBufferPointer {
-                    ABIUnsafeInvokeSwiftCallInterface(
-                        interface.handle, implementation?.function ?? ABIUnsafeFunctionAtAddress(address), output.address,
-                        $0.baseAddress, context, &failure
-                    )
-                }
+            let success = addresses.withUnsafeBufferPointer {
+                ABIUnsafeInvokeSwiftCallInterface(
+                    interface.handle, function, output.address, $0.baseAddress, context, &failure
+                )
             }
             guard success else {
                 throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftInvocation")
@@ -54,7 +65,7 @@ struct SwiftCall<Result, each Argument>: Sendable {
                 for value in storage { value.relinquishValue() }
             }
             didInvoke?()
-            return try result.decode(output, retaining: (owner ?? symbol, implementation))
+            return try result.decode(output, retaining: owner)
         }
     }
 }

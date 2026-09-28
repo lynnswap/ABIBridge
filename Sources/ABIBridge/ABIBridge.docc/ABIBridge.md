@@ -169,6 +169,8 @@ print(symbol.image.path)
 
 - <doc:SwiftFunctionInvocation>
 - <doc:ManagedSwiftValues>
+- <doc:SwiftClosureValues>
+- ``NativeSwiftClosure``
 - ``NativeSwiftFunction``
 
 ### Swift types and members

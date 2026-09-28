@@ -1,6 +1,11 @@
 @inline(never) public func answer() -> Int64 { 42 }
 @inline(never) public func decorate(_ value: String) -> String { value + "!" }
 
+@inline(never) public func makeAdder(_ bias: Int64) -> (Int64) -> Int64 { { $0 + bias } }
+@inline(never) public func applyClosure(_ callback: (Int64) -> Int64, _ value: Int64) -> Int64 {
+    callback(value)
+}
+
 @frozen public struct Three {
     public var a, b, c: Int64
 }
