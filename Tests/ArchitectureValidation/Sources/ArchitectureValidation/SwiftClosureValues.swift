@@ -33,6 +33,15 @@ private final class ClosureProbeCapture: Sendable {
     try check(try unsafe callback.unsafeInvoke(35) == 42,
               "The retained closure invokes its entry with the hidden context")
 
+    let echo = try await runtime.swiftFunction(
+        named: "SwiftReplacementFixtures.echoClosureValue(_:)",
+        as: ((NativeSwiftClosure<Int64, Int64>) -> NativeSwiftClosure<Int64, Int64>).self
+    )
+    var roundTrip = callback
+    for _ in 0..<10_000 { roundTrip = try unsafe echo.unsafeInvoke(roundTrip) }
+    try check(try unsafe roundTrip.unsafeInvoke(35) == 42,
+              "Repeated native handoffs reuse the owning callback entry")
+
     let retain = try await runtime.swiftFunction(
         named: "SwiftReplacementFixtures.holdClosureValue(_:)",
         as: ((NativeSwiftClosure<Int64, Int64>) -> ClosureValueHolder).self

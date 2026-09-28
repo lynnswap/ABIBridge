@@ -118,7 +118,27 @@ extension NativeSwiftClosure: SwiftClosureValue {
         let pointer = try CValueType(scalar: ABIValuePointer)
         return SwiftClosureCodec(type: try CValueType(fields: [pointer, pointer])) { value, owner, taking in
             if !taking { ABIRetainSwiftClosureContext(value.context) }
-            let storage = try SwiftClosureStorage(adopting: value, discriminator: prepared.discriminator, retaining: owner)
+            let original = try SwiftClosureStorage(adopting: value, discriminator: prepared.discriminator, retaining: owner)
+            if ABIIsSwiftClosureCallbackFunction(original.implementation.function) {
+                return Self(storage: original, call: prepared.call)
+            }
+            // Native copies retain only the two-word closure's heap context.
+            // Keep code owners in that context as well, so an escaping callee
+            // does not depend on the lifetime of this Swift wrapper.
+            let callback = try SwiftClosureCallbackOwner(interface: prepared.call.interface, body: SwiftClosureBody { arguments, output in
+                let succeeded = ABIUnsafeInvokeSwiftCallInterface(
+                    prepared.call.interface.handle, original.implementation.function,
+                    output, arguments, original.value.context, nil
+                )
+                // Both this entry and the forwarded call use the same prepared
+                // signature and frame storage; failure is an internal ABI bug.
+                precondition(succeeded, "The prepared Swift closure forwarding call must be valid.")
+            })
+            let forwarded = ABISwiftClosureValue(
+                function: ABISignSwiftClosureFunction(callback.function, prepared.discriminator),
+                context: Unmanaged.passRetained(callback).toOpaque()
+            )
+            let storage = try SwiftClosureStorage(adopting: forwarded, discriminator: prepared.discriminator, retaining: nil)
             return Self(storage: storage, call: prepared.call)
         }
     }

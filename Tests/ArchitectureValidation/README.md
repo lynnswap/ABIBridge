@@ -6,7 +6,7 @@ This package compares compiler-generated calls with ABIBridge's invocation machi
 
 The `swift-closures` mode calls the public `NativeSwiftClosure` API against the separately compiled `SwiftReplacementFixtures` provider. It checks generated callbacks, native escaping storage after wrapper release, final capture destruction, returned String closures, CGRect's floating registers, typed/optional pointers, and zero-argument Void callbacks.
 
-An iPhone Air running iOS 27.0 passed all 10 checks with an arm64e Release build from Xcode 27.0 / Swift 6.4. The report recorded CPU subtype `0x80000002` and `pacCompiled: true`. macOS arm64 runs use the same validation path. Other architecture builds are separate from runtime execution evidence.
+An iPhone Air running iOS 27.0 passed all 11 checks with an arm64e Release build from Xcode 27.0 / Swift 6.4. The report recorded CPU subtype `0x80000002` and `pacCompiled: true`. macOS arm64 runs use the same validation path. Other architecture builds are separate from runtime execution evidence.
 
 ```sh
 bash scripts/build-device-validation.sh arm64e -allowProvisioningUpdates DEVELOPMENT_TEAM=<team>

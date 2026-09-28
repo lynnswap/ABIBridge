@@ -322,7 +322,7 @@ ABISwiftClosureCallback *ABICreateSwiftClosureCallback(ABISwiftCallInterface *in
     }
     auto callback = std::make_unique<ABISwiftClosureCallback>(*interface);
     auto &entry = callback->entry;
-    entry.code = std::make_unique<abibridge::SwiftCallbackCode>(&entry, error);
+    entry.code = std::make_unique<abibridge::SwiftCallbackCode>(&entry, error, true);
     if (!entry.code->function()) return nullptr;
     entry.closure = std::make_unique<SwiftClosureHandler>();
     entry.closure->functions = functions;
@@ -333,6 +333,9 @@ ABIUnmanagedFunction ABISwiftClosureCallbackFunction(const ABISwiftClosureCallba
     return callback ? callback->entry.code->function() : nullptr;
 }
 void ABIReleaseSwiftClosureCallback(ABISwiftClosureCallback *callback) { delete callback; }
+bool ABIIsSwiftClosureCallbackFunction(ABIUnmanagedFunction function) {
+    return abibridge::SwiftCallbackCode::isClosureFunction(function);
+}
 
 struct ABISwiftIncomingCall {
     ABISwiftCallback &callback;

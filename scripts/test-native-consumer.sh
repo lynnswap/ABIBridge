@@ -8,6 +8,10 @@ trap 'find "$task_fixture" -delete' EXIT
 python3 "$task_root/scripts/check-managed-swift-codegen.py"
 python3 "$task_root/scripts/check-swift-closure-codegen.py"
 
+xcrun clang -std=c11 -dynamiclib -mmacosx-version-min=15.4 \
+    "$task_root/Tests/NativeConsumer/ClosureLeaseFixture.c" \
+    -o "$task_fixture/libClosureLease.dylib"
+
 xcrun clang++ -std=c++20 -dynamiclib -mmacosx-version-min=15.4 \
     "$task_root/Tests/NativeConsumer/Fixture.cpp" \
     -o "$task_fixture/libFixture.dylib"
@@ -76,7 +80,7 @@ xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" SwiftFunctionConsumer "$task_fixture/libSwiftFixture.dylib"
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
-    --scratch-path "$task_root/.build/native-consumer" SwiftClosureConsumer "$task_fixture/libSwiftFixture.dylib"
+    --scratch-path "$task_root/.build/native-consumer" SwiftClosureConsumer "$task_fixture/libSwiftFixture.dylib" "$task_fixture/libClosureLease.dylib"
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" SwiftMemberConsumer "$task_fixture/libSwiftFixture.dylib" "$task_fixture/libSwiftExtensionFixture.dylib"
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \

@@ -25,6 +25,9 @@ ABISwiftClosureCallback *ABICreateSwiftClosureCallback(ABISwiftCallInterface *in
 ABIUnmanagedFunction ABISwiftClosureCallbackFunction(const ABISwiftClosureCallback *callback);
 /// Requires that the last native closure context and all in-flight calls have ended.
 void ABIReleaseSwiftClosureCallback(ABISwiftClosureCallback *callback);
+/// Whether this live entry belongs to the closure allocator. Such a closure's
+/// native heap context owns its callback code and captures.
+bool ABIIsSwiftClosureCallbackFunction(ABIUnmanagedFunction function);
 
 /// Functions describing one callback and its native value ownership. None may
 /// throw a language exception through this C boundary. The borrowed invocation

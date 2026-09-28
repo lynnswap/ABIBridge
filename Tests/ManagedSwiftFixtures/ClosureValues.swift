@@ -1,4 +1,6 @@
 import CoreGraphics
+
+@inline(never) public func echoClosure(_ callback: @escaping (Int64) -> Int64) -> (Int64) -> Int64 { callback }
 import Dispatch
 import Synchronization
 

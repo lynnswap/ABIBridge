@@ -1,5 +1,7 @@
 import CoreGraphics
 
+@inline(never) public func echoClosureValue(_ callback: @escaping (Int64) -> Int64) -> (Int64) -> Int64 { callback }
+
 public final class ClosureValueHolder {
     private let callback: (Int64) -> Int64
     init(_ callback: @escaping (Int64) -> Int64) { self.callback = callback }
