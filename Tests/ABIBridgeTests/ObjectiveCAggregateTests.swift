@@ -114,6 +114,26 @@ struct ObjectiveCAggregateTests {
         #expect(type == nil && failure != nil)
     }
 
+    @Test func cumulativeFieldAndTailPaddingOverflowReturnErrors() throws {
+        for encoding in [
+            "{S=[\(Int.max)c][\(Int.max)c][\(Int.max)c]}",
+            "{S=c[\(Int.max)c]}",
+            "{S=s[\(Int.max - 2)c]}"
+        ] {
+            var failure: OpaquePointer?
+            let type = encoding.withCString { ABICopyObjCHookValueType($0, &failure) }
+            defer { if let type { ABIReleaseValueType(type) }; if let failure { ABIReleaseResolutionFailure(failure) } }
+            #expect(type == nil && failure != nil)
+        }
+        var failure: OpaquePointer?
+        let large = try #require("{S=[\(Int.max)c]}".withCString { ABICopyObjCHookValueType($0, &failure) })
+        defer { ABIReleaseValueType(large); if let failure { ABIReleaseResolutionFailure(failure) } }
+        let fields: [OpaquePointer?] = [large, large]
+        let aggregate = fields.withUnsafeBufferPointer { ABICreateStructType($0.baseAddress, $0.count, &failure) }
+        defer { if let aggregate { ABIReleaseValueType(aggregate) } }
+        #expect(aggregate == nil && failure != nil)
+    }
+
     @Test func longDoubleFieldsFollowThePlatformABI() throws {
         let runtime = ABIRuntime.shared
 #if arch(x86_64)

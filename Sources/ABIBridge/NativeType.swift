@@ -100,13 +100,6 @@ public struct NativeType: Sendable, Hashable {
         let layouts = fields.enumerated().map {
             Field(type: $0.element, offset: ABIValueTypeFieldOffset(cType.handle, $0.offset))
         }
-        // Field extents must fit the Swift-addressable storage even when a
-        // synthetic aggregate overflows libffi's unsigned layout arithmetic.
-        guard cType.size >= 0, layouts.allSatisfy({
-            $0.offset >= 0 && $0.offset <= cType.size && $0.type.size <= cType.size - $0.offset
-        }) else {
-            throw NativeValueError.invalidLayout(size: cType.size, alignment: cType.alignment)
-        }
         return .init(name: name, representation: .structure, cType: cType, fields: layouts)
     }
 
