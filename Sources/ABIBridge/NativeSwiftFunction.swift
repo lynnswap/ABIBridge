@@ -1,6 +1,7 @@
 import ABIBridgeCore
 
 func swiftFunctionTypeName(_ type: Any.Type) throws -> String {
+    if let closure = type as? any SwiftClosureValue.Type { return try swiftFunctionTypeName(closure.swiftFunctionType) }
     // Objective-C metatypes can print an unqualified runtime name (NSString),
     // while Swift declarations use their imported identity (__C.NSString).
     guard let mangled = _mangledTypeName(type),
@@ -68,7 +69,8 @@ final class SwiftCallInterface: @unchecked Sendable {
 /// The prepared call uses the platform Swift calling convention. Supported
 /// representations include scalar values, pointers, class references, String,
 /// standard C value types, and fixed trivial layouts supplied by ABIBridgeValue.
-/// Generic declarations, resilient values, closures, inout and consumed
+/// Use NativeSwiftClosure for supported concrete callbacks. Generic declarations,
+/// resilient values, ordinary unwrapped closures, inout and consumed
 /// arguments, async functions, and throwing functions require separate adapters.
 /// See <doc:SwiftFunctionInvocation>.
 public struct NativeSwiftFunction<Result, each Argument>: Sendable {
@@ -111,7 +113,8 @@ public struct NativeSwiftFunction<Result, each Argument>: Sendable {
     @unsafe public func unsafeInvoke(_ values: repeat each Argument) throws -> Result {
         try unsafe call.unsafeInvoke(
             symbol: symbol, context: UnsafeRawPointer(bitPattern: context),
-            retaining: (symbol, typeOwner), implementation: implementation, repeat each values
+            retaining: (symbol, typeOwner), retainingCode: typeOwner?.image,
+            implementation: implementation, repeat each values
         )
     }
 }

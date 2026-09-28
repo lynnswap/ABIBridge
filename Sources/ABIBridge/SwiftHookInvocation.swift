@@ -78,7 +78,19 @@ public struct NativeSwiftFunctionInvocation<Result, each Argument>: CustomString
 struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
     let result: SwiftValueCodec<Result>
     let arguments: (repeat SwiftValueCodec<each Argument>)
-    init() throws { result = try SwiftValueCodec(); arguments = (repeat try SwiftValueCodec<each Argument>()) }
+    init() throws {
+        for type in repeat (each Argument).self {
+            if type is any SwiftClosureValue.Type {
+                // A native nonescaping closure can carry a stack context that
+                // cannot be retained as an owned closure value.
+                throw ABIResolutionError.unsupportedDeclaration(
+                    "Incoming Swift closure hook arguments require a scoped nonescaping representation."
+                )
+            }
+        }
+        result = try SwiftValueCodec()
+        arguments = (repeat try SwiftValueCodec<each Argument>())
+    }
     func encodeArguments(_ values: repeat each Argument) throws -> [NativeValueStorage] {
         var storage: [NativeValueStorage] = []
         for (codec, value) in repeat (each arguments, each values) { storage.append(try codec.encode(value)) }

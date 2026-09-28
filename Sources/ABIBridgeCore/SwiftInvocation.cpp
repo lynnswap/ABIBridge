@@ -11,6 +11,41 @@
 #include <cstring>
 #include <memory>
 
+// Swift's stable runtime uses preserve_most for reference counting on AArch64.
+// These operations also handle capture contexts, whose metadata need not be
+// ordinary class metadata (https://github.com/swiftlang/swift/blob/main/include/swift/Runtime/HeapObject.h).
+#if defined(__aarch64__)
+#define ABI_SWIFT_REFCOUNT_CC __attribute__((preserve_most))
+#else
+#define ABI_SWIFT_REFCOUNT_CC
+#endif
+extern "C" void *ABI_SWIFT_REFCOUNT_CC swift_retain(void *);
+extern "C" void ABI_SWIFT_REFCOUNT_CC swift_release(void *);
+
+void ABIRetainSwiftClosureContext(void *context) { swift_retain(context); }
+void ABIReleaseSwiftClosureContext(void *context) { swift_release(context); }
+
+ABIUnmanagedFunction ABIAuthenticateSwiftClosureFunction(const void *function, uint16_t discriminator) {
+    if (!function) return nullptr;
+#if __has_feature(ptrauth_calls)
+    function = ptrauth_auth_and_resign(function, ptrauth_key_function_pointer, discriminator,
+        ptrauth_key_function_pointer, ptrauth_function_pointer_type_discriminator(void(void)));
+#endif
+    ABIUnmanagedFunction result;
+    std::memcpy(&result, &function, sizeof(result));
+    return result;
+}
+const void *ABISignSwiftClosureFunction(ABIUnmanagedFunction function, uint16_t discriminator) {
+    if (!function) return nullptr;
+    const void *result;
+    std::memcpy(&result, &function, sizeof(result));
+#if __has_feature(ptrauth_calls)
+    result = ptrauth_auth_and_resign(result, ptrauth_key_function_pointer,
+        ptrauth_function_pointer_type_discriminator(void(void)), ptrauth_key_function_pointer, discriminator);
+#endif
+    return result;
+}
+
 namespace {
 using abibridge::TypeStorage;
 
@@ -231,6 +266,11 @@ struct SwiftHandler {
     void *context = nullptr;
     ~SwiftHandler() { if (functions.releaseContext) functions.releaseContext(context); }
 };
+struct SwiftClosureHandler {
+    ABISwiftClosureCallbackFunctions functions{};
+    void *context = nullptr;
+    ~SwiftClosureHandler() { if (functions.releaseContext) functions.releaseContext(context); }
+};
 struct SwiftFallbackOwner {
     void *context = nullptr;
     void (*release)(void *) = nullptr;
@@ -262,10 +302,40 @@ struct ABISwiftCallback {
     SwiftFallbackOwner fallbackOwner;
     std::mutex mutex;
     std::shared_ptr<SwiftHandler> handler;
+    std::unique_ptr<SwiftClosureHandler> closure;
     std::unique_ptr<abibridge::SwiftCallbackCode> code;
     ABISwiftCallback(const ABISwiftCallInterface &interface, ABIUnmanagedFunction fallback)
         : interface(interface), fallback(fallback) {}
 };
+
+struct ABISwiftClosureCallback {
+    ABISwiftCallback entry;
+    explicit ABISwiftClosureCallback(const ABISwiftCallInterface &interface) : entry(interface, nullptr) {}
+};
+
+ABISwiftClosureCallback *ABICreateSwiftClosureCallback(ABISwiftCallInterface *interface,
+    ABISwiftClosureCallbackFunctions functions, void *context, ABIResolutionFailure **error) {
+    if (error) *error = nullptr;
+    if (!interface || !functions.invoke) {
+        fail(error, ABIFailureInvalidRequest, "A concrete Swift call interface and closure callback are required.");
+        return nullptr;
+    }
+    auto callback = std::make_unique<ABISwiftClosureCallback>(*interface);
+    auto &entry = callback->entry;
+    entry.code = std::make_unique<abibridge::SwiftCallbackCode>(&entry, error, true);
+    if (!entry.code->function()) return nullptr;
+    entry.closure = std::make_unique<SwiftClosureHandler>();
+    entry.closure->functions = functions;
+    entry.closure->context = context;
+    return callback.release();
+}
+ABIUnmanagedFunction ABISwiftClosureCallbackFunction(const ABISwiftClosureCallback *callback) {
+    return callback ? callback->entry.code->function() : nullptr;
+}
+void ABIReleaseSwiftClosureCallback(ABISwiftClosureCallback *callback) { delete callback; }
+bool ABIIsSwiftClosureCallbackFunction(ABIUnmanagedFunction function) {
+    return abibridge::SwiftCallbackCode::isClosureFunction(function);
+}
 
 struct ABISwiftIncomingCall {
     ABISwiftCallback &callback;
@@ -424,6 +494,15 @@ bool ABISwiftIncomingSetResult(ABISwiftIncomingCall *call, const void *value, si
 }
 
 extern "C" __attribute__((visibility("hidden"))) void ABIDispatchSwiftCallback(ABISwiftCallback *callback, CallFrame *frame) {
+    if (callback->closure) {
+        std::vector<AlignedValue> storage;
+        std::vector<void *> arguments;
+        unpackArguments(callback->interface, *frame, storage, arguments);
+        AlignedValue result(callback->interface.result->size());
+        callback->closure->functions.invoke(callback->closure->context, arguments.data(), result.data());
+        packResult(callback->interface, *frame, result.data());
+        return; // The native caller owns the initialized result.
+    }
     std::shared_ptr<SwiftHandler> handler;
     { std::lock_guard lock(callback->mutex); handler = callback->handler; }
     const auto receiver = reinterpret_cast<const void *>(frame->context);

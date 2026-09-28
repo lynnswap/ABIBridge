@@ -6,6 +6,7 @@ public final class StoredIntegerClosure {
     private let callback: IntegerClosure
     public init(_ callback: @escaping IntegerClosure) { self.callback = callback }
     public func callAsFunction(_ value: Int64) -> Int64 { callback(value) }
+    public func apply(_ transform: IntegerClosure, _ value: Int64) -> Int64 { transform(callback(value)) }
 }
 
 @inline(never) public func applyIntegerClosure(_ callback: IntegerClosure, _ value: Int64) -> Int64 {

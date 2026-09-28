@@ -109,7 +109,7 @@ public struct NativeSwiftMethod<Result, each Argument>: Sendable {
         return try unsafe call.unsafeInvoke(
             symbol: symbol, context: context,
             trailingValue: receiver.mode == .value ? storage : nil,
-            retaining: (symbol, type, storage), didInvoke: {
+            retaining: (symbol, type, storage), retainingCode: type.image, didInvoke: {
                 invoked = true
                 if receiver.isConsuming && receiver.mode != .object { storage.relinquishValue() }
                 didInvoke?()

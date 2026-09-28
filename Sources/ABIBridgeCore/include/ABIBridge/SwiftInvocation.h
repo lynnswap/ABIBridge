@@ -9,6 +9,21 @@ extern "C" {
 
 typedef struct ABISwiftCallInterface ABISwiftCallInterface;
 
+/// A concrete thick Swift closure. Its context is a Swift heap reference,
+/// including closure capture contexts that are not ordinary class instances.
+typedef struct ABISwiftClosureValue {
+    const void *function;
+    void *context;
+} ABISwiftClosureValue;
+
+/// Converts between the compiler's type-discriminated Swift function pointer
+/// and the backend's authenticated C function pointer. The discriminator must
+/// describe the concrete SIL signature, not its generic reabstraction.
+ABIUnmanagedFunction ABIAuthenticateSwiftClosureFunction(const void *function, uint16_t discriminator);
+const void *ABISignSwiftClosureFunction(ABIUnmanagedFunction function, uint16_t discriminator);
+void ABIRetainSwiftClosureContext(void *context);
+void ABIReleaseSwiftClosureContext(void *context);
+
 /// Prepares a concrete synchronous, nonthrowing Swift call from fixed value
 /// layouts. These are storage descriptions, not a C calling convention.
 /// Parameters must use ordinary guaranteed ownership; consumed/inout values,

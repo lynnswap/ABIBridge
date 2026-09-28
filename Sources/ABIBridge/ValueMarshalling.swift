@@ -60,10 +60,12 @@ final class NativeValueStorage {
     let owner: AnyObject?
     private var destroyValue: ((UnsafeMutableRawPointer) -> Void)?
 
-    init(size: Int, alignment: Int, owner: AnyObject? = nil) {
+    init(size: Int, alignment: Int, owner: AnyObject? = nil,
+         destroyingWith destroy: ((UnsafeMutableRawPointer) -> Void)? = nil) {
         address = .allocate(byteCount: max(size, 1), alignment: max(alignment, 1))
         address.initializeMemory(as: UInt8.self, repeating: 0, count: max(size, 1))
         self.owner = owner
+        destroyValue = destroy
     }
     deinit {
         withExtendedLifetime(owner) { destroyValue?(address) }

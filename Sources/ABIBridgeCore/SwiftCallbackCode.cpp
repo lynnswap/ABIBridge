@@ -3,6 +3,7 @@
 #include <mach/machine/vm_param.h>
 #include <ptrauth.h>
 #include <cstring>
+#include <algorithm>
 #include <mutex>
 #include <vector>
 
@@ -12,7 +13,7 @@ extern "C" void ABISwiftCallbackAssembly(void);
 namespace {
 // The code and configuration have matching 32-byte strides on every target,
 // including arm64_32. Only data is written; executable bytes come from __TEXT.
-struct Configuration { uint64_t context, entry, discriminator, reserved; };
+struct Configuration { uint64_t context, entry, discriminator, closure; };
 static_assert(sizeof(Configuration) == 32);
 constexpr size_t entryCount = PAGE_MAX_SIZE / sizeof(Configuration);
 struct Page {
@@ -68,7 +69,7 @@ struct SwiftCallbackCode::Storage {
     }
 };
 
-SwiftCallbackCode::SwiftCallbackCode(void *context, ABIResolutionFailure **error) {
+SwiftCallbackCode::SwiftCallbackCode(void *context, ABIResolutionFailure **error, bool closure) {
     if (error) *error = nullptr;
     auto &registry = pageRegistry();
     std::lock_guard lock(registry.mutex);
@@ -93,11 +94,37 @@ SwiftCallbackCode::SwiftCallbackCode(void *context, ABIResolutionFailure **error
     auto *configuration = reinterpret_cast<Configuration *>(storage->page->base) + index;
     *configuration = {};
     configuration->context = reinterpret_cast<uintptr_t>(context);
+    configuration->closure = closure;
     ABIUnmanagedFunction entry = ABISwiftCallbackAssembly;
     std::memcpy(&configuration->entry, &entry, sizeof(entry));
 #if __has_feature(ptrauth_calls)
     configuration->discriminator = ptrauth_function_pointer_type_discriminator(void(void));
 #endif
+}
+
+bool SwiftCallbackCode::isClosureFunction(ABIUnmanagedFunction function) {
+    if (!function) return false;
+    const void *pointer;
+    std::memcpy(&pointer, &function, sizeof(pointer));
+#if __has_feature(ptrauth_calls)
+    pointer = ptrauth_auth_data(pointer, ptrauth_key_function_pointer,
+        ptrauth_function_pointer_type_discriminator(void(void)));
+#endif
+    const auto address = reinterpret_cast<uintptr_t>(pointer);
+    auto &registry = pageRegistry();
+    std::lock_guard lock(registry.mutex);
+    for (const auto &weak : registry.pages) {
+        auto page = weak.lock();
+        if (!page) continue;
+        const auto start = page->base + PAGE_MAX_SIZE;
+        if (address < start || address - start >= PAGE_MAX_SIZE) continue;
+        const auto offset = address - start;
+        if (offset % sizeof(Configuration)) return false;
+        const auto index = offset / sizeof(Configuration);
+        if (std::find(page->free.begin(), page->free.end(), index) != page->free.end()) return false;
+        return (reinterpret_cast<const Configuration *>(page->base) + index)->closure != 0;
+    }
+    return false;
 }
 
 SwiftCallbackCode::~SwiftCallbackCode() = default;

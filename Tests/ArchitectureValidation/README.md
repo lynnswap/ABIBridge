@@ -2,6 +2,18 @@
 
 This package compares compiler-generated calls with ABIBridge's invocation machinery. Run its tests with Xcode using the commands in [CONTRIBUTING](../../CONTRIBUTING.md). The `replacement` mode additionally checks the internal Objective-C callback boundary on a signed device host. It is not a public hook-installation API.
 
+## Concrete Swift closure values
+
+The `swift-closures` mode calls the public `NativeSwiftClosure` API against the separately compiled `SwiftReplacementFixtures` provider. It checks generated callbacks, native escaping storage after wrapper release, final capture destruction, returned String closures, CGRect's floating registers, typed/optional pointers, and zero-argument Void callbacks.
+
+An iPhone Air running iOS 27.0 passed all 11 checks with an arm64e Release build from Xcode 27.0 / Swift 6.4. The report recorded CPU subtype `0x80000002` and `pacCompiled: true`. macOS arm64 runs use the same validation path. Other architecture builds are separate from runtime execution evidence.
+
+```sh
+bash scripts/build-device-validation.sh arm64e -allowProvisioningUpdates DEVELOPMENT_TEAM=<team>
+```
+
+Install the resulting host and launch it with `--probe swift-closures`, or select that mode in the app. The completed result is written to `Documents/architecture-swift-closures.json`; a leftover `started` marker does not count as a completed run.
+
 ## Objective-C replacement boundary
 
 The package-private Swift `ObjCReplacement` and internal `ABIBridgeObjCXX/Replacement.h` entry points prepare a callable implementation without mutating a method table. The root package's `ObjectiveCReplacementTests` temporarily install that implementation on dedicated compiler-authored fixture classes. Managed registration, inheritance, and multiple-hook ordering are covered by `ObjectiveCMethodHookTests` and the public [method-hook guide](../../Sources/ABIBridge/ABIBridge.docc/ObjectiveCMethodHooks.md). Public initializer hooks are covered by `ObjectiveCInitializerHookTests` and the Swift initializer consumer; the native frontend consumers exercise C, C++, ARC/MRC Objective-C++, and mixed Swift/C chains.
