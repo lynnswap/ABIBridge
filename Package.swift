@@ -18,6 +18,7 @@ let package = Package(
     ],
     products: [
         .library(name: "ABIBridge", targets: ["ABIBridge"]),
+        .library(name: "ABIBridgeSwiftUI", targets: ["ABIBridgeSwiftUI"]),
     ],
     dependencies: [
         .package(url: "https://github.com/p-x9/MachOKit.git", exact: "0.53.0"),
@@ -25,6 +26,7 @@ let package = Package(
         .package(url: "https://github.com/lynnswap/ZDLibffi.git", exact: "0.380.1"),
     ],
     targets: [
+        .target(name: "ABIBridgeSwiftUI", dependencies: ["ABIBridge"], swiftSettings: strictSwiftSettings),
         .target(name: "HookCoordinationFixtures", path: "Tests/HookCoordinationFixtures",
             cSettings: [.unsafeFlags(["-fno-objc-arc"])], linkerSettings: [.linkedFramework("Foundation")]),
         .target(

@@ -6,7 +6,7 @@ let package = Package(
     platforms: [.macOS("15.4")],
     dependencies: [.package(name: "ABIBridge", path: "../..")],
     targets: [
-        .executableTarget(name: "SwiftUIConsumer", dependencies: [.product(name: "ABIBridge", package: "ABIBridge")]),
+        .executableTarget(name: "SwiftUIConsumer", dependencies: [.product(name: "ABIBridgeSwiftUI", package: "ABIBridge")]),
         .executableTarget(name: "SwiftAsyncConsumer", dependencies: [.product(name: "ABIBridge", package: "ABIBridge")]),
         .executableTarget(name: "SwiftErrorConsumer", dependencies: [.product(name: "ABIBridge", package: "ABIBridge")]),
         .executableTarget(name: "VirtualHookConsumer", dependencies: [.product(name: "ABIBridge", package: "ABIBridge")]),

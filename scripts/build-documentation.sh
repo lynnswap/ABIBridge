@@ -9,7 +9,7 @@ trap 'find "$task_derived" -delete' EXIT
 
 cd "$task_root"
 xcodebuild docbuild \
-  -scheme ABIBridge \
+  -scheme ABIBridgeSwiftUI \
   -destination 'generic/platform=macOS' \
   -derivedDataPath "$task_derived"
 
@@ -22,8 +22,19 @@ xcrun docc convert Sources/ABIBridge/ABIBridge.docc \
   --warnings-as-errors \
   --output-dir "$task_derived/ABIBridge.doccarchive"
 
+xcrun docc convert Sources/ABIBridgeSwiftUI/ABIBridgeSwiftUI.docc \
+  --additional-symbol-graph-dir "$task_derived/Build/Intermediates.noindex/ABIBridge.build/Debug/ABIBridgeSwiftUI.build/symbol-graph" \
+  --fallback-display-name ABIBridgeSwiftUI \
+  --fallback-bundle-identifier ABIBridgeSwiftUI \
+  --warnings-as-errors \
+  --output-dir "$task_derived/ABIBridgeSwiftUI.doccarchive"
+
+xcrun docc merge "$task_derived/ABIBridge.doccarchive" "$task_derived/ABIBridgeSwiftUI.doccarchive" \
+  --synthesized-landing-page-name ABIBridge \
+  --output-path "$task_derived/Combined.doccarchive"
+
 xcrun docc process-archive transform-for-static-hosting \
-  "$task_derived/ABIBridge.doccarchive" \
+  "$task_derived/Combined.doccarchive" \
   --output-path "$task_output" \
   --hosting-base-path "$task_base_path"
 

@@ -1,4 +1,5 @@
 import ABIBridge
+import ABIBridgeSwiftUI
 import SwiftUI
 import AppKit
 import Synchronization
@@ -10,20 +11,6 @@ private final class Capture: Sendable {
     func next(_ value: Int64) -> Int64 { value + 1 }
     deinit { destroyed.state.withLock { $0 = true } }
 }
-
-@MainActor private struct RetainedView: View {
-    let owner: NativeSwiftOpaqueValue
-    let content: AnyView
-    init(_ owner: NativeSwiftOpaqueValue) throws {
-        self.owner = owner
-        content = try owner.withValue {
-            guard let view = $0 as? any View else { throw Failure.notAView }
-            return AnyView(view)
-        }
-    }
-    var body: some View { content }
-}
-private enum Failure: Error { case notAView }
 
 @MainActor private func pixels<V: View>(_ view: V) -> Data {
     let renderer = ImageRenderer(content: view)
@@ -59,15 +46,28 @@ do {
     let callback = try NativeSwiftClosure<Int64, Int64> { capture.next($0) }
     opaque = try unsafe make.unsafeInvoke(title, callback)
 }
-await runtime.removeCachedResults()
-try autoreleasepool {
-    let view = try RetainedView(opaque!)
-    precondition(pixels(view) == expected)
-}
-precondition(observed != nil)
+var retainedView: NativeSwiftView? = try NativeSwiftView(opaque!)
 opaque = nil
+await runtime.removeCachedResults()
+precondition(observed != nil)
+var copiedView = retainedView
+retainedView = nil
+autoreleasepool { precondition(pixels(copiedView!) == expected) }
+precondition(observed != nil)
+copiedView = nil
 precondition(observed == nil)
 destroyed.state.withLock { precondition($0) }
+
+let number = try await runtime.swiftFunction(named: "SwiftUIPlugin.makeNumber()",
+    as: (() -> NativeSwiftOpaqueValue).self, in: .path(library))
+let numberResult = try unsafe number.unsafeInvoke()
+do {
+    _ = try NativeSwiftView(numberResult)
+    fatalError("Expected non-View rejection")
+} catch let error as ABIInvocationError {
+    precondition(error == .incompatibleValue(expected: "any SwiftUI.View", actual: "Swift.Int64"))
+}
+numberResult.withValue { precondition($0 as? Int64 == 42) }
 
 var hostReference: NSView?
 weak var observedHost: NSView?

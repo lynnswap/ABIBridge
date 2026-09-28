@@ -48,30 +48,18 @@ let make = try await runtime.swiftFunction(
 let result = try unsafe make.unsafeInvoke("Native panel")
 ```
 
-On MainActor, use a retaining view around ordinary AnyView erasure:
+Add the ABIBridgeSwiftUI product and create its owned NativeSwiftView on MainActor:
 
 ```swift
-@MainActor
-struct NativePanel: View {
-    let owner: NativeSwiftOpaqueValue
-    let content: AnyView
+import ABIBridgeSwiftUI
 
-    init(_ value: NativeSwiftOpaqueValue) throws {
-        owner = value
-        content = try value.withValue { payload in
-            guard let view = payload as? any View else {
-                throw PanelError.notAView
-            }
-            return AnyView(view)
-        }
-    }
-
-    var body: some View { content }
-}
-enum PanelError: Error { case notAView }
+let panel = try NativeSwiftView(result)
+let controller = UIHostingController(rootView: panel)
 ```
 
-Keep the opaque owner with the resulting view hierarchy. Extracting AnyView from a temporary withValue body alone does not retain the implementation-image owner. The prototype uses this wrapper in UIHostingController and NSHostingView; a dedicated supported convenience API is tracked in [#228](https://github.com/lynnswap/ABIBridge/issues/228).
+NativeSwiftView retains the opaque result and implementation images through the view's lifetime. Copies share that owner; the original result and call handle may be released after construction. It throws ABIInvocationError.incompatibleValue when the result is not a View. The core ABIBridge product remains independent of SwiftUI.
+
+Use ordinary SwiftUI composition or platform hosting with the returned view. See [ABIBridgeSwiftUI](https://lynnswap.github.io/ABIBridge/documentation/abibridgeswiftui) for the public API and lifetime contract.
 
 ## Concrete values and composition
 
