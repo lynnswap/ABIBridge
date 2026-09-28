@@ -68,6 +68,21 @@ try unsafe setImage.unsafeInvoke(image, true)
 try unsafe setImage.unsafeInvoke(nil, false)
 ```
 
+### Display a native SwiftUI view
+
+For a nongeneric factory returning `some View`, add the optional `ABIBridgeSwiftUI` product and use its owned wrapper on `MainActor`:
+
+```swift
+import ABIBridgeSwiftUI
+
+let makePanel = try await runtime.swiftFunction(
+    named: "Example.makePanel(_:)", as: ((String) -> NativeSwiftOpaqueValue).self
+)
+let panel = try NativeSwiftView(unsafe makePanel.unsafeInvoke("Hello"))
+```
+
+Place `panel` in your SwiftUI hierarchy or a standard hosting controller. It retains the hidden view and its implementation images; the provider module does not need to be importable. The core `ABIBridge` product remains independent of SwiftUI.
+
 ## Documentation
 
 More examples and API contracts are available in [DocC](https://lynnswap.github.io/ABIBridge/documentation/abibridge/):

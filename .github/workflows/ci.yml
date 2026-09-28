@@ -141,3 +141,15 @@ jobs:
           ABI_VALIDATION_BUILD_DIR="$RUNNER_TEMP/DerivedData"
           bash scripts/build-device-validation.sh arm64
           CODE_SIGNING_ALLOWED=NO
+      - name: Build optional SwiftUI product
+        # Release validation may check out a revision from before this product existed.
+        if: hashFiles('Sources/ABIBridgeSwiftUI/*.swift') != ''
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: >-
+          xcodebuild build
+          -scheme ABIBridgeSwiftUI
+          -destination "generic/platform=$PLATFORM"
+          -derivedDataPath "$RUNNER_TEMP/DerivedData"
+          WATCHOS_DEPLOYMENT_TARGET=11.4
+          CODE_SIGNING_ALLOWED=NO

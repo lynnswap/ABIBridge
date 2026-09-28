@@ -49,6 +49,8 @@ import AppKit
 
 #endif
 
+@MainActor @inline(never) public func makeNumber() -> some Any { Int64(42) }
+
 @MainActor @inline(never) public func echoText(_ value: Text) -> Text { value }
 @MainActor @inline(never) public func echoImage(_ value: Image) -> Image { value }
 @MainActor @inline(never) public func echoColor(_ value: Color) -> Color { value }

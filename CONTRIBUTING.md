@@ -178,6 +178,8 @@ The `swift-replacement` architecture mode validates compiled native Swift class 
 
 The supported consumer interfaces are the Swift `ABIBridge` module and the native headers documented in the DocC consumer guides, all linked through the `ABIBridge` product. Other native headers remain implementation details. SwiftPM may make transitive modules importable; that does not make their entire contents supported public API.
 
+SwiftUI clients can select the separate `ABIBridgeSwiftUI` product. Its `NativeSwiftView` retains opaque native values and their image owners. The core product has no SwiftUI dependency. Architecture validation and the external SwiftUI consumer test rendering, updates, error conversion, and release; CI builds the optional product for all four device platforms. The documentation script builds and merges both module catalogs while preserving the existing ABIBridge URLs.
+
 Describe public Swift API contracts in DocC comments. Put guides in the DocC catalog and keep the README at installation and quick-start level. Write prose without manual line wrapping.
 
 Build the same static site that is published by CI:

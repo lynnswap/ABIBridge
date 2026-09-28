@@ -1,4 +1,5 @@
 import ABIBridge
+import ABIBridgeSwiftUI
 import SwiftUI
 import SwiftUIFixtures
 import Foundation
@@ -24,22 +25,6 @@ extension Container: ABIBridgeSwiftValue {
     public static var swiftABIType: NativeType { try! .opaque(named: "SwiftUIFixtures.Container") }
 }
 
-@MainActor private struct RetainedOpaqueView: View {
-    let owner: NativeSwiftOpaqueValue
-    let content: AnyView
-
-    init(_ value: NativeSwiftOpaqueValue) throws {
-        owner = value
-        content = try value.withValue {
-            guard let view = $0 as? any View else {
-                throw ArchitectureValidationFailure(description: "Opaque result does not conform to View")
-            }
-            return AnyView(view)
-        }
-    }
-    var body: some View { content }
-}
-
 /// A visible consumer of three existing ABIBridge invocation paths.
 @MainActor public final class SwiftUIValidationSession {
     public let model: PanelModel
@@ -63,7 +48,7 @@ extension Container: ABIBridgeSwiftValue {
             let make = try await runtime.swiftFunction(named: "SwiftUIFixtures." + name + "(_:_:_:)",
                 as: ((PanelModel, RenderEvents, NativeSwiftClosure<Int64, Int64>) -> NativeSwiftOpaqueValue).self)
             let result = try unsafe make.unsafeInvoke(model, events, increment)
-            let view = try RetainedOpaqueView(result)
+            let view = try NativeSwiftView(result)
             #if canImport(UIKit)
             host = UIHostingController(rootView: view)
             #else
@@ -143,12 +128,39 @@ private struct SwiftUIRender {
         as: ((PanelModel, RenderEvents, NativeSwiftClosure<Int64, Int64>) -> NativeSwiftOpaqueValue).self)
     let model = PanelModel(), events = RenderEvents()
     let result = try unsafe opaque.unsafeInvoke(model, events, .init { $0 + 1 })
-    let view = try RetainedOpaqueView(result)
+    let view = try NativeSwiftView(result)
     let before = try swiftUIImage(view)
     model.count = 1
     let after = try swiftUIImage(view)
     try check(!before.matches(after), "Private some View composition renders an observable state change")
     try check(after.matches(swiftUIImage(SwiftUIFixtures.makeComposedPanel(model, events, { $0 + 1 }))), "Opaque View erasure matches the ordinary compiler call")
+    let number = try await runtime.swiftFunction(named: "SwiftUIFixtures.makeNumber()", as: (() -> NativeSwiftOpaqueValue).self)
+    let nonView = try unsafe number.unsafeInvoke()
+    do {
+        _ = try NativeSwiftView(nonView)
+        throw ArchitectureValidationFailure(description: "Non-View opaque result unexpectedly created a view")
+    } catch let error as ABIInvocationError {
+        try check(error == .incompatibleValue(expected: "any SwiftUI.View", actual: "Swift.Int64"),
+                  "Non-View result reports its actual type through ABIInvocationError")
+    }
+    try nonView.withValue { try check($0 as? Int64 == 42, "Failed view conversion leaves the owned result usable") }
+
+    weak var capturedModel: PanelModel?
+    var ownedView: NativeSwiftView?
+    do {
+        let model = PanelModel()
+        capturedModel = model
+        let result = try unsafe opaque.unsafeInvoke(model, RenderEvents(), .init { $0 + 1 })
+        ownedView = try NativeSwiftView(result)
+    }
+    var copiedView = ownedView
+    ownedView = nil
+    try check(capturedModel != nil, "Copied NativeSwiftView keeps its hidden model after the original result is released")
+    _ = try swiftUIImage(copiedView!)
+    copiedView = nil
+    let deadline = ContinuousClock.now + .seconds(5)
+    while capturedModel != nil && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    try check(capturedModel == nil, "Final NativeSwiftView release destroys the hidden model after rendering")
     return checks
 }
 

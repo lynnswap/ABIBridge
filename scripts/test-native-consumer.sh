@@ -164,3 +164,5 @@ for task_virtual_consumer in CVirtualHookConsumer VirtualHookConsumer ObjCXXVirt
     xcrun swift run --package-path "$task_root/Tests/NativeConsumer" --scratch-path "$task_root/.build/native-consumer" \
         "$task_virtual_consumer" "$task_fixture/libVirtualHook.dylib"
 done
+
+python3 "$task_root/scripts/check-swiftui-consumer-contract.py" "$task_loading_bin"

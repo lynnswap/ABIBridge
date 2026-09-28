@@ -1,6 +1,8 @@
 import SwiftUI
 import AppKit
 
+@MainActor public func makeNumber() -> some Any { Int64(42) }
+
 @MainActor private struct PrivatePanel: View {
     let title: String
     let next: (Int64) -> Int64
