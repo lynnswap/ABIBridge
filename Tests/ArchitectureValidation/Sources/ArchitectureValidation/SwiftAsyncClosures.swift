@@ -1,8 +1,9 @@
 import ABIBridge
 import SwiftValueFixtures
+import Darwin
 
 private nonisolated(nonsending) func concurrentValueBody(_ gate: AsyncValueGate, _ value: Int64) async -> String {
-    let isConcurrent = #isolation == nil
+    let isConcurrent = pthread_main_np() == 0
     await gate.wait()
     return isConcurrent ? "value:\(value + AsyncProbeLocal.value)" : "wrong isolation"
 }
