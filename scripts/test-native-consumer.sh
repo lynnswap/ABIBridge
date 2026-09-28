@@ -18,6 +18,12 @@ python3 "$task_root/scripts/check-swift-async-closure-codegen.py"
 python3 "$task_root/scripts/check-swift-argument-codegen.py"
 python3 "$task_root/scripts/check-swift-existential-codegen.py"
 python3 "$task_root/scripts/check-swift-opaque-codegen.py"
+python3 "$task_root/scripts/check-swiftui-codegen.py"
+xcrun swiftc -swift-version 6 -parse-as-library -emit-library -enable-library-evolution \
+    -module-name SwiftUIPlugin "$task_root/Tests/NativeConsumer/SwiftUIPlugin.swift" \
+    -o "$task_fixture/libSwiftUIPlugin.dylib"
+xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
+    --scratch-path "$task_root/.build/native-consumer" SwiftUIConsumer "$task_fixture/libSwiftUIPlugin.dylib"
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" SwiftExplicitValueConsumer
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
