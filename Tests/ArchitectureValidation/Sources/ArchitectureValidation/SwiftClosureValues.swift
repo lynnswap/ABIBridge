@@ -99,5 +99,46 @@ private final class ClosureProbeCapture: Sendable {
     let empty = try NativeSwiftClosure<Void> { calls.increment() }
     try unsafe applyVoid.unsafeInvoke(empty)
     try check(calls.count == 1, "Zero-argument Void closure matches the native signature")
+    let applyArray = try await runtime.swiftFunction(
+        named: "SwiftReplacementFixtures.callArrayClosureValue(_:_:)",
+        as: ((NativeSwiftClosure<[String], [String]>, [String]) -> [String]).self
+    )
+    let arrayCallback = try NativeSwiftClosure { (value: [String]) in value + ["callback"] }
+    try check(try unsafe applyArray.unsafeInvoke(arrayCallback, ["input"]) == ["input", "callback"],
+              "Array callback uses the native nominal discriminator and buffer ownership")
+    let makeArray = try await runtime.swiftFunction(
+        named: "SwiftReplacementFixtures.makeArrayClosureValue(_:)",
+        as: ((String) -> NativeSwiftClosure<[String], [String]>).self
+    )
+    let returnedArray = try unsafe makeArray.unsafeInvoke(prefix)
+    try check(try unsafe returnedArray.unsafeInvoke([]) == [prefix],
+              "Returned Array closure retains its capture and transfers its result")
+    let optionalArrays = try await runtime.swiftFunction(
+        named: "SwiftReplacementFixtures.callOptionalArrayClosureValue(_:_:)",
+        as: ((NativeSwiftClosure<[String]?, [String]?>, [String]?) -> [String]?).self
+    )
+    let optionalArrayCallback = try NativeSwiftClosure { (value: [String]?) in value }
+    let absentArray = try unsafe optionalArrays.unsafeInvoke(optionalArrayCallback, nil)
+    let emptyArray = try unsafe optionalArrays.unsafeInvoke(optionalArrayCallback, [])
+    try check(absentArray == nil && emptyArray == [],
+              "Optional Array preserves nil and empty with authenticated callback calls")
+    let optionalStrings = try await runtime.swiftFunction(
+        named: "SwiftReplacementFixtures.callOptionalStringClosureValue(_:_:)",
+        as: ((NativeSwiftClosure<String?, String?>, String?) -> String?).self
+    )
+    let optionalStringCallback = try NativeSwiftClosure { (value: String?) in value.map { $0 + "!" } }
+    let absentString = try unsafe optionalStrings.unsafeInvoke(optionalStringCallback, nil)
+    let presentString = try unsafe optionalStrings.unsafeInvoke(optionalStringCallback, prefix)
+    try check(absentString == nil && presentString == prefix + "!",
+              "Optional String callback preserves its spare-bit payload and ownership")
+    let makeOptionalString = try await runtime.swiftFunction(
+        named: "SwiftReplacementFixtures.makeOptionalStringClosureValue(_:)",
+        as: ((String) -> NativeSwiftClosure<String?, String?>).self
+    )
+    let returnedOptional = try unsafe makeOptionalString.unsafeInvoke(prefix)
+    let absentResult = try unsafe returnedOptional.unsafeInvoke(nil)
+    let presentResult = try unsafe returnedOptional.unsafeInvoke("input")
+    try check(absentResult == nil && presentResult == "input" + prefix,
+              "Returned Optional String closure matches native pointer authentication")
     return checks
 }

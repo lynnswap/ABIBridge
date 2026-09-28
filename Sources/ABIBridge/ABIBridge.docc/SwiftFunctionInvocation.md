@@ -24,7 +24,7 @@ The framework/path and retained-image overloads use the same symbol indexes as o
 | --- | --- |
 | Bool, signed/unsigned 8–64-bit integers, Int, UInt, Float, Double, CGFloat | Native Swift scalar arguments and results |
 | Class references, AnyObject, and their optional forms | Guaranteed arguments and owned results |
-| String | Stable Swift storage with Swift ownership |
+| String, Array<Element>, and their single-level optional forms | Stable Swift storage with Swift ownership, including array element lifetimes |
 | NativeSwiftClosure | Owned concrete synchronous, nonthrowing callbacks and returned closures |
 | Unsafe pointers, OpaquePointer, Selector, and optional pointers | Borrowed pointer values |
 | CGPoint, CGSize, CGRect, NSRange | Known fixed value layouts lowered with the Swift ABI |
@@ -37,7 +37,7 @@ A custom adapter's layout must match the declaration, including field offsets, p
 
 ## Ownership and isolation
 
-Swift object and String arguments stay alive through the call. The returned object or String transfers Swift ownership to the caller. Pointer results remain borrowed. Custom wrappers are responsible for their own native value contract; their returned NativeValue retains the resolved symbol.
+Swift object, String, and Array arguments stay alive through the call, including supported optional forms. Their results transfer Swift ownership to the caller. Array elements use the compiler's own copying and destruction operations; the element type does not need a standalone direct-call representation. Array values retain ordinary copy-on-write behavior, and an optional array distinguishes nil from an empty array. Pointer results remain borrowed. Custom wrappers are responsible for their own native value contract; their returned NativeValue retains the resolved symbol.
 
 The function retains its implementation image. Keep an image owner alive while a foreign value can execute code from that image, including destruction. A loaded Swift image can also be retained by the Swift runtime independently of explicit loader references.
 

@@ -38,6 +38,26 @@ func isLoaded(_ path: String) -> Bool {
 }
 
 @MainActor
+func prepareCollectionClosure(_ path: String) async throws -> NativeSwiftClosure<String?, String?> {
+    let runtime = ABIRuntime()
+    let scope = ImageSelector.path(URL(fileURLWithPath: path))
+    let apply = try await runtime.swiftFunction(
+        named: "SwiftFunctionFixture.applyArray(_:_:)",
+        as: ((NativeSwiftClosure<[String], [String]>, [String]) -> [String]).self, in: scope
+    )
+    let callback = try NativeSwiftClosure { (value: [String]) in value + ["callback"] }
+    let actual = try unsafe apply.unsafeInvoke(callback, ["input"])
+    precondition(actual == ["input", "callback"])
+    let make = try await runtime.swiftFunction(
+        named: "SwiftFunctionFixture.makeOptionalString(_:)",
+        as: ((String) -> NativeSwiftClosure<String?, String?>).self, in: scope
+    )
+    let result = try unsafe make.unsafeInvoke("!")
+    await runtime.removeCachedResults()
+    return result
+}
+
+@MainActor
 func prepareClosure(_ path: String) async throws -> NativeSwiftClosure<Int64, Int64> {
     guard let original = dlopen(path, RTLD_NOW | RTLD_LOCAL) else {
         fatalError(String(cString: dlerror()))
@@ -62,6 +82,10 @@ func prepareClosure(_ path: String) async throws -> NativeSwiftClosure<Int64, In
 }
 
 let callback = try await prepareClosure(CommandLine.arguments[1])
+let collection = try await prepareCollectionClosure(CommandLine.arguments[1])
+let absent = try unsafe collection.unsafeInvoke(nil)
+let present = try unsafe collection.unsafeInvoke("value")
+precondition(absent == nil && present == "value!")
 // The lookup runtime, factory handles, and original loader reference have ended.
 for value: Int64 in [0, 35, 100] {
     let result = try unsafe callback.unsafeInvoke(value)

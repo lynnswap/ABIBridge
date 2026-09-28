@@ -1,5 +1,9 @@
 import ABIBridgeCore
 
+// Array's frozen representation holds one buffer reference regardless of Element.
+protocol SwiftArrayValue {}
+extension Array: SwiftArrayValue {}
+
 struct SwiftValueCodec<Value>: Sendable {
     let type: CValueType
     private let cValue: CValueCodec<Value>?
@@ -24,7 +28,10 @@ struct SwiftValueCodec<Value>: Sendable {
         } else if isObject {
             type = try CValueType(scalar: ABIValuePointer)
             cValue = nil
-        } else if Value.self == String.self {
+        } else if base is any SwiftArrayValue.Type {
+            type = try CValueType(scalar: ABIValuePointer)
+            cValue = nil
+        } else if base == String.self {
             let word = try CValueType(scalar: MemoryLayout<UInt>.size == 8 ? ABIValueUInt64 : ABIValueUInt32)
             type = try CValueType(fields: Array(repeating: word, count: MemoryLayout<String>.size / MemoryLayout<UInt>.size))
             cValue = nil

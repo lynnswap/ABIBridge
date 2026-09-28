@@ -68,7 +68,8 @@ final class SwiftCallInterface: @unchecked Sendable {
 ///
 /// The prepared call uses the platform Swift calling convention. Supported
 /// representations include scalar values, pointers, class references, String,
-/// standard C value types, and fixed trivial layouts supplied by ABIBridgeValue.
+/// Array, their supported optional forms, standard C value types, and fixed
+/// trivial layouts supplied by ABIBridgeValue.
 /// Use NativeSwiftClosure for supported concrete callbacks. Generic declarations,
 /// resilient values, ordinary unwrapped closures, inout and consumed
 /// arguments, async functions, and throwing functions require separate adapters.
@@ -103,7 +104,7 @@ public struct NativeSwiftFunction<Result, each Argument>: Sendable {
     /// The signature must match the declaration's Swift ABI and ordinary
     /// ownership selected by lookup. Initializers transfer ordinary arguments
     /// to the callee; free/static functions borrow them. The caller satisfies actor/thread
-    /// requirements. Object and String results transfer Swift ownership to the
+    /// requirements. Managed object, String, and Array results transfer Swift ownership to the
     /// caller; custom native wrappers must establish their own value contract.
     ///
     /// - Parameter values: Fixed arguments in declaration order.

@@ -30,6 +30,26 @@ public final class ClosureValueHolder {
     callback(value)
 }
 
+@inline(never) public func callArrayClosureValue(
+    _ callback: ([String]) -> [String], _ value: [String]
+) -> [String] { callback(value) }
+
+@inline(never) public func makeArrayClosureValue(_ suffix: String) -> ([String]) -> [String] {
+    { $0 + [suffix] }
+}
+
+@inline(never) public func callOptionalArrayClosureValue(
+    _ callback: ([String]?) -> [String]?, _ value: [String]?
+) -> [String]? { callback(value) }
+
+@inline(never) public func callOptionalStringClosureValue(
+    _ callback: (String?) -> String?, _ value: String?
+) -> String? { callback(value) }
+
+@inline(never) public func makeOptionalStringClosureValue(_ suffix: String) -> (String?) -> String? {
+    { $0.map { $0 + suffix } }
+}
+
 @inline(never) public func callVoidClosureValue(_ callback: () -> Void) {
     callback()
 }

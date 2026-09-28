@@ -6,6 +6,13 @@
     callback(value)
 }
 
+@inline(never) public func applyArray(_ callback: ([String]) -> [String], _ value: [String]) -> [String] {
+    callback(value)
+}
+@inline(never) public func makeOptionalString(_ suffix: String) -> (String?) -> String? {
+    { $0.map { $0 + suffix } }
+}
+
 @frozen public struct Three {
     public var a, b, c: Int64
 }

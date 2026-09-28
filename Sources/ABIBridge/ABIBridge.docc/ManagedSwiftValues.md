@@ -8,7 +8,7 @@ A concrete metatype lets Swift code allocate and operate on a value through the 
 
 | Value | Direct Swift frontend | Compiled adapter |
 | --- | --- | --- |
-| String and class references | Supported with Swift ownership | Available when another part of the signature needs adaptation |
+| String, Array<Element>, their single-level optional forms, and class references | Supported with Swift ownership | Available when another part of the signature needs adaptation |
 | Fixed trivial layouts described by ABIBridgeValue | Supported within the documented Swift subset | Required if the declaration has additional unsupported conventions |
 | A struct containing a reference | No general by-value support | The compiler copies and destroys the actual Swift type |
 | A value Optional, such as Int64? | No general by-value support | The compiler handles both the payload and the nil representation |
