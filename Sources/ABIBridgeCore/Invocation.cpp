@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstring>
 #include <memory>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -66,13 +67,30 @@ ABIValueType *ABICreateStructType(
         return nullptr;
     }
     auto storage = std::make_shared<TypeStorage>();
+    size_t extent = 0, aggregateAlignment = 1;
+    // libffi's aggregate arithmetic is unchecked. Bridge buffers and Swift
+    // offsets need a signed addressable extent, including alignment padding.
+    constexpr size_t limit = std::numeric_limits<std::ptrdiff_t>::max();
     for (size_t index = 0; index < count; ++index) {
         if (!fields[index] || fields[index]->storage->swiftIndirect || fields[index]->storage->native()->type == FFI_TYPE_VOID) {
             fail(error, ABIFailureInvalidRequest, "A C aggregate field must have a value type.");
             return nullptr;
         }
+        auto *field = fields[index]->storage->native();
+        const size_t padding = (field->alignment - extent % field->alignment) % field->alignment;
+        if (padding > limit - extent || field->size > limit - extent - padding) {
+            fail(error, ABIFailureInvalidRequest, "The aggregate field extent is not representable.");
+            return nullptr;
+        }
+        extent += padding + field->size;
+        aggregateAlignment = std::max(aggregateAlignment, size_t(field->alignment));
         storage->fields.push_back(fields[index]->storage);
         storage->elements.push_back(fields[index]->storage->native());
+    }
+    const size_t tailPadding = (aggregateAlignment - extent % aggregateAlignment) % aggregateAlignment;
+    if (tailPadding > limit - extent) {
+        fail(error, ABIFailureInvalidRequest, "The aggregate's aligned extent is not representable.");
+        return nullptr;
     }
     storage->elements.push_back(nullptr);
     storage->aggregate.elements = storage->elements.data();

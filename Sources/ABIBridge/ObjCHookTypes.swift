@@ -61,10 +61,6 @@ func objcValueType(_ type: ObjCType) throws -> OpaquePointer {
         var chunk = try objcValueType(element)
         var owned = [chunk]
         defer { owned.forEach(ABIReleaseValueType) }
-        let size = ABIValueTypeSize(chunk)
-        guard size > 0, count <= Int.max / size else {
-            throw ABIResolutionError.unsupportedDeclaration("The array field's byte extent is not representable.")
-        }
         // Nested groups of identical elements have the same offsets, alignment,
         // and aggregate ABI as a flat array. Keep descriptors logarithmic in the
         // element count instead of allocating one pointer for every element.
