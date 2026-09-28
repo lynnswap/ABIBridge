@@ -182,7 +182,9 @@ public final class NativeObject {
     /// The signature includes only explicit arguments; the receiver and selector
     /// are supplied automatically. Each call uses normal Objective-C dispatch.
     /// Lookup runs synchronously on the caller's executor and validates argument
-    /// count and supported runtime type encodings. No task or actor hop is needed.
+    /// count and supported runtime type encodings. Structure encodings supply
+    /// the native layout; callers guarantee that their selected Swift type has
+    /// compatible storage and ownership. No task or actor hop is needed.
     ///
     /// - Parameters:
     ///   - selector: The Objective-C selector, including argument colons.
@@ -285,11 +287,15 @@ struct ObjCMethodSignature<Result, each Argument> {
                 size: ABIObjCInvocationParameterSize(handle, index)
             )
         }
-        arguments = (repeat try makeCodec((each Argument).self))
-        result = try .init(
+        // Swift 6.3 IRGen cannot clean up an incompletely initialized stored
+        // parameter pack when the result codec throws. Prepare both locally.
+        let arguments = (repeat try makeCodec((each Argument).self))
+        let result = try ObjCValueCodec<Result>(
             encoding: String(cString: ABIObjCInvocationResultType(handle)),
             size: ABIObjCInvocationResultSize(handle)
         )
+        self.arguments = arguments
+        self.result = result
     }
 
     func callInterface() throws -> CCallInterface {

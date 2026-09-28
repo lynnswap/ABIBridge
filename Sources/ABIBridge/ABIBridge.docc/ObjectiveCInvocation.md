@@ -76,10 +76,23 @@ The frontend supports these mappings:
 | Objective-C class | Class metatypes, optionally wrapped in `Optional` |
 | Objective-C block | Typed `@convention(block)` values, optionally wrapped in `Optional` |
 | Pointer or selector | Swift pointer types, `OpaquePointer`, or `Selector`; pointer values may be optional |
-| Standard structures | `CGPoint`, `CGSize`, `CGRect`, and `NSRange` |
+| Structures with complete field encodings | Caller-selected compatible Swift values, including SDK and user-defined structures, nested structures, and fixed-size array fields |
 | Void result | `Void` |
 
-There is no fixed argument-count limit. Signatures are synchronous and fixed: C variadic tails, arbitrary structures, unions, and nontrivial C++ values are not supported by this frontend.
+There is no fixed argument-count limit. Signatures are synchronous and fixed. Structure layouts come from the method's native type encoding, including the ABI used for captured implementations and managed hooks. The library does not require a registration for each structure name.
+
+For example, a method declared with UIEdgeInsets can use the SDK type directly:
+
+```swift
+let adjusted = try runtime.object(receiver).method(
+    selector: "adjustInsets:", as: ((UIEdgeInsets) -> UIEdgeInsets).self
+)
+let result = try unsafe adjusted.unsafeInvoke(insets)
+```
+
+The unsafe caller guarantees that the selected Swift type's field offsets, representation, alignment, and ownership are compatible with the native value. It may be an imported SDK type or a caller-defined byte-compatible structure. Type names do not need to match. The native extent must cover the Swift value without exceeding its stride, so native tail padding does not require artificial Swift fields. A size check protects storage bounds; it does not prove ABI compatibility.
+
+C variadic tails, incomplete structure encodings, bitfields, unions, and nontrivial C++ values still need an appropriate native adapter. Long-double fields use the platform's double representation on Apple ARM; x86_64 x87 long-double fields require a native adapter.
 
 Class arguments are checked before native dispatch, so an instance supplied for a `Class` parameter throws a value-conversion error. Class results remain metatypes during Swift conversion and cannot masquerade as instances. These conversions happen during invocation; lookup does not introspect Swift metatype metadata.
 

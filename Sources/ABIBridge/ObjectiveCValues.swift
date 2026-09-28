@@ -1,7 +1,6 @@
 import ABIBridgeObjCXX
 import ABIBridgeCore
 import Foundation
-import CoreGraphics
 import ObjCTypeDecodeKit
 
 struct ObjCValueCodec<Value> {
@@ -11,6 +10,7 @@ struct ObjCValueCodec<Value> {
     let alignment: Int
     private let pointerType: (any NativePointerValue.Type)?
     private let signedBoolean: Bool
+    private let aggregateType: CValueType?
 
     init(encoding: String, size: Int) throws {
         guard let decoded = ObjCTypeDecoder.decode(encoding) else {
@@ -23,6 +23,11 @@ struct ObjCValueCodec<Value> {
         alignment = max(MemoryLayout<Value>.alignment, MemoryLayout<UnsafeRawPointer>.alignment)
         let baseType = (Value.self as? any NativeOptionalValue.Type)?.wrappedType ?? Value.self
         pointerType = baseType as? any NativePointerValue.Type
+        if case .struct = type {
+            aggregateType = try CValueType(adopting: objcValueType(type))
+        } else {
+            aggregateType = nil
+        }
 
         if type == .void && Value.self == Void.self {
             kind = .void
@@ -49,9 +54,8 @@ struct ObjCValueCodec<Value> {
                     || (type == .double && (Value.self == Double.self || Value.self == CGFloat.self)) {
             guard size == MemoryLayout<Value>.size else { throw Self.mismatch(encoding) }
             kind = .bytes
-        } else if let expected = Self.standardValueEncoding(),
-                  let expectedType = ObjCTypeDecoder.decode(expected),
-                  type == expectedType, size == MemoryLayout<Value>.size {
+        } else if let aggregateType, aggregateType.size == size,
+                  (MemoryLayout<Value>.size...MemoryLayout<Value>.stride).contains(size) {
             kind = .bytes
         } else if pointerType != nil, Self.isPointer(type), size == MemoryLayout<UnsafeRawPointer>.size {
             kind = .pointer
@@ -61,7 +65,8 @@ struct ObjCValueCodec<Value> {
     }
 
     func cType() throws -> CValueType {
-        switch kind {
+        if let aggregateType { return aggregateType }
+        return switch kind {
         case .object, .classObject, .pointer, .block:
             try CValueType(scalar: ABIValuePointer)
         case .boolean:
@@ -223,11 +228,4 @@ struct ObjCValueCodec<Value> {
         }
     }
 
-    private static func standardValueEncoding() -> String? {
-        if Value.self == CGPoint.self { return String(cString: ABIObjCEncodingPoint()) }
-        if Value.self == CGSize.self { return String(cString: ABIObjCEncodingSize()) }
-        if Value.self == CGRect.self { return String(cString: ABIObjCEncodingRect()) }
-        if Value.self == NSRange.self { return String(cString: ABIObjCEncodingRange()) }
-        return nil
-    }
 }
