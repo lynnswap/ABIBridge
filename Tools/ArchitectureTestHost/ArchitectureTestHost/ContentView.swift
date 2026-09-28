@@ -8,6 +8,8 @@ struct ContentView: View {
     @State private var output = "Choose a probe and run it on this device."
     @State private var reportURL: URL?
     @State private var didAutoRun = false
+    @State private var showingSwiftUIDemo = false
+    @State private var demoRoute = "opaque"
 
     private var modes: [String] {
         let standard = [
@@ -15,7 +17,7 @@ struct ContentView: View {
         "initializers", "native-hooks", "coordinated-hooks",
         "import-replacement", "import-hooks", "virtual-replacement",
         "virtual-hooks", "virtual-entries", "virtual-public",
-        "swift-replacement", "swift-callback", "swift-closures", "swift-throwing-closures", "swift-errors", "swift-async", "swift-async-closures", "swift-arguments", "swift-existentials", "swift-opaque", "objc-values", "swift-lookup", "native-lookup", "invocation-timing"
+        "swift-replacement", "swift-callback", "swift-closures", "swift-throwing-closures", "swift-errors", "swift-async", "swift-async-closures", "swift-arguments", "swift-existentials", "swift-opaque", "swiftui", "objc-values", "swift-lookup", "native-lookup", "invocation-timing"
         ]
         #if targetEnvironment(simulator)
         return standard
@@ -40,6 +42,9 @@ struct ContentView: View {
                         ProgressView("Running \(mode)…")
                     }
                 }
+                Section("SwiftUI") {
+                    Button("Open SwiftUI demo") { showingSwiftUIDemo = true }
+                }
                 Section("Result") {
                     Text(output)
                         .font(.system(.caption, design: .monospaced))
@@ -54,10 +59,16 @@ struct ContentView: View {
                 }
             }
             .navigationTitle("ABI Architecture")
+            .sheet(isPresented: $showingSwiftUIDemo) { SwiftUIDemo(route: demoRoute) }
             .task {
                 guard !didAutoRun else { return }
                 didAutoRun = true
                 let arguments = ProcessInfo.processInfo.arguments
+                if let index = arguments.firstIndex(of: "--swiftui-demo"), arguments.indices.contains(index + 1) {
+                    demoRoute = arguments[index + 1]
+                    showingSwiftUIDemo = true
+                    return
+                }
                 if let index = arguments.firstIndex(of: "--probe"),
                    arguments.indices.contains(index + 1) {
                     let requested = arguments[index + 1]
