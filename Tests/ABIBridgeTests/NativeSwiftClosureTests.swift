@@ -1,4 +1,8 @@
+#if DEBUG
 @testable import ABIBridge
+#else
+import ABIBridge
+#endif
 import ABIBridgeCore
 import CoreGraphics
 import Foundation
@@ -29,7 +33,7 @@ private struct RejectingClosureArgument: ABIBridgeValue {
 
 struct NativeSwiftClosureTests {
     @Test func sendableNativeCallersCanInvokeOneContextConcurrently() async throws {
-        let callbackType = try swiftFunctionTypeName((@Sendable (Int64) -> Int64).self)
+        let callbackType = String(reflecting: (@Sendable (Int64) -> Int64).self)
         let apply = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.applyConcurrentClosure(\(callbackType)) -> Swift.Int64",
             as: ((NativeSwiftClosure<Int64, Int64>) -> Int64).self
@@ -65,7 +69,7 @@ struct NativeSwiftClosureTests {
         try check(UnsafeRawPointer?.none)
     }
 
-#if os(macOS)
+#if DEBUG && os(macOS)
     @Test func builtInAuthenticationMatchesNativeCompilerCalls() throws {
         let cases: [(Any.Type, String)] = [
             (Bool.self, "Bool"), (Int8.self, "Int8"), (UInt8.self, "UInt8"),
@@ -335,6 +339,7 @@ struct NativeSwiftClosureTests {
         #expect(try unsafe many.unsafeInvoke(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12) == 78)
     }
 
+#if DEBUG
     @Test func closureDiscriminatorsMatchCompilerEvidence() throws {
         #expect(swiftClosureDiscriminator(parameters: [try swiftClosureAuthType(Int64.self)],
                                           result: try swiftClosureAuthType(Int64.self)) == 21761)
@@ -352,4 +357,5 @@ struct NativeSwiftClosureTests {
         }
         #expect(destroyed.count == 1)
     }
+#endif
 }
