@@ -1,8 +1,15 @@
 import ABIBridgeCore
 
+final class SwiftClosureCodeOwner {
+    let value: Any
+    init(_ value: Any) { self.value = value }
+}
+
 final class SwiftClosureBody {
+    let codeOwner: SwiftClosureCodeOwner?
     let invoke: (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer) -> Void
-    init(_ invoke: @escaping (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer) -> Void) {
+    init(retainingCode codeOwner: Any? = nil, _ invoke: @escaping (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer) -> Void) {
+        self.codeOwner = codeOwner.map(SwiftClosureCodeOwner.init)
         self.invoke = invoke
     }
 }
@@ -19,6 +26,10 @@ final class SwiftClosureCallbackOwner {
             Unmanaged<SwiftClosureBody>.fromOpaque(context!).takeUnretainedValue().invoke(arguments, result!)
         }
         functions.releaseContext = { Unmanaged<SwiftClosureBody>.fromOpaque($0!).release() }
+        functions.copyCodeOwner = { context in
+            let owner = Unmanaged<SwiftClosureBody>.fromOpaque(context!).takeUnretainedValue().codeOwner
+            return owner.map { Unmanaged.passRetained($0).toOpaque() }
+        }
         let context = Unmanaged.passRetained(body)
         var failure: OpaquePointer?
         guard let handle = ABICreateSwiftClosureCallback(interface.handle, functions, context.toOpaque(), &failure) else {
@@ -128,7 +139,7 @@ extension NativeSwiftClosure: SwiftClosureValue {
             // Native copies retain only the two-word closure's heap context.
             // Keep code owners in that context as well, so an escaping callee
             // does not depend on the lifetime of this Swift wrapper.
-            let callback = try SwiftClosureCallbackOwner(interface: prepared.call.interface, body: SwiftClosureBody { arguments, output in
+            let callback = try SwiftClosureCallbackOwner(interface: prepared.call.interface, body: SwiftClosureBody(retainingCode: original.codeOwner) { arguments, output in
                 let succeeded = ABIUnsafeInvokeSwiftCallInterface(
                     prepared.call.interface.handle, original.implementation.function,
                     output, arguments, original.value.context, nil
@@ -141,7 +152,7 @@ extension NativeSwiftClosure: SwiftClosureValue {
                 function: ABISignSwiftClosureFunction(callback.function, prepared.discriminator),
                 context: Unmanaged.passRetained(callback).toOpaque()
             )
-            let storage = try SwiftClosureStorage(adopting: forwarded, discriminator: prepared.discriminator, retaining: original.codeOwner)
+            let storage = try SwiftClosureStorage(adopting: forwarded, discriminator: prepared.discriminator, retaining: nil)
             return Self(storage: storage, call: prepared.call)
         }
     }

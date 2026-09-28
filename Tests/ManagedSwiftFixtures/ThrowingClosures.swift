@@ -1,3 +1,5 @@
+@inline(never) public func handoffScalarThrowing(_ body: @escaping () throws(ScalarFailure) -> Int64) -> () throws(ScalarFailure) -> Int64 { body }
+
 public typealias UntypedThrowingClosure = (Bool) throws -> String
 public typealias TypedThrowingClosure = (Bool) throws(ManagedFailure) -> String
 public typealias LargeThrowingClosure = (ErrorLifetimeToken, Bool) throws(LargeFailure) -> ErrorSuccessPayload

@@ -580,6 +580,7 @@ struct SwiftHandler {
 struct SwiftClosureHandler {
     void (*invoke)(void *, void *const *, void *) = nullptr;
     bool (*invokeThrowing)(void *, void *const *, void *, void *) = nullptr;
+    void *(*copyCodeOwner)(void *) = nullptr;
     void (*releaseContext)(void *) = nullptr;
     void *context = nullptr;
     ~SwiftClosureHandler() { if (releaseContext) releaseContext(context); }
@@ -655,6 +656,7 @@ static ABISwiftClosureCallback *createSwiftClosureCallback(ABISwiftCallInterface
     entry.closure->invoke = normal.invoke;
     entry.closure->invokeThrowing = throwing.invoke;
     entry.closure->releaseContext = throwing.invoke ? throwing.releaseContext : normal.releaseContext;
+    entry.closure->copyCodeOwner = throwing.invoke ? throwing.copyCodeOwner : normal.copyCodeOwner;
     entry.closure->context = context;
     return callback.release();
 }
@@ -671,7 +673,12 @@ ABIUnmanagedFunction ABISwiftClosureCallbackFunction(const ABISwiftClosureCallba
 }
 void ABIReleaseSwiftClosureCallback(ABISwiftClosureCallback *callback) { delete callback; }
 bool ABIIsSwiftClosureCallbackFunction(ABIUnmanagedFunction function) {
-    return abibridge::SwiftCallbackCode::isClosureFunction(function);
+    return abibridge::SwiftCallbackCode::closureContext(function) != nullptr;
+}
+void *ABICopySwiftClosureCallbackCodeOwner(ABIUnmanagedFunction function) {
+    auto *callback = static_cast<ABISwiftCallback *>(abibridge::SwiftCallbackCode::closureContext(function));
+    if (!callback || !callback->closure->copyCodeOwner) return nullptr;
+    return callback->closure->copyCodeOwner(callback->closure->context);
 }
 
 struct ABISwiftIncomingCall {

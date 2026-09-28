@@ -15,6 +15,9 @@ typedef struct ABISwiftClosureCallback ABISwiftClosureCallback;
 typedef struct ABISwiftClosureCallbackFunctions {
     void (*invoke)(void *context, void *const *arguments, void *result);
     void (*releaseContext)(void *context);
+    /// Returns a retained Swift class instance holding code leases, or null.
+    /// It must not retain callback captures. The caller uses swift_release.
+    void *(*copyCodeOwner)(void *context);
 } ABISwiftClosureCallbackFunctions;
 
 /// Returns true after initializing an owned error, false after initializing
@@ -22,6 +25,8 @@ typedef struct ABISwiftClosureCallbackFunctions {
 typedef struct ABISwiftThrowingClosureCallbackFunctions {
     bool (*invoke)(void *context, void *const *arguments, void *result, void *errorResult);
     void (*releaseContext)(void *context);
+    /// Same code-only ownership contract as ABISwiftClosureCallbackFunctions.
+    void *(*copyCodeOwner)(void *context);
 } ABISwiftThrowingClosureCallbackFunctions;
 ABISwiftClosureCallback *ABICreateSwiftThrowingClosureCallback(ABISwiftCallInterface *interface,
     ABISwiftThrowingClosureCallbackFunctions functions, void *context, ABIResolutionFailure **error);
@@ -37,6 +42,9 @@ void ABIReleaseSwiftClosureCallback(ABISwiftClosureCallback *callback);
 /// Whether this live entry belongs to the closure allocator. Such a closure's
 /// native heap context owns its callback code and captures.
 bool ABIIsSwiftClosureCallbackFunction(ABIUnmanagedFunction function);
+/// Copies a callback's code-only Swift owner, if supplied. The live native
+/// closure must remain retained during this operation. Release with swift_release.
+void *ABICopySwiftClosureCallbackCodeOwner(ABIUnmanagedFunction function);
 
 /// Functions describing one callback and its native value ownership. None may
 /// throw a language exception through this C boundary. The borrowed invocation

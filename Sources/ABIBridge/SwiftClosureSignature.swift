@@ -124,7 +124,10 @@ final class SwiftClosureStorage {
             throw error
         }
         self.value = value
-        codeOwner = (owner, implementation)
+        let callbackOwner = ABICopySwiftClosureCallbackCodeOwner(implementation.function).map {
+            Unmanaged<AnyObject>.fromOpaque($0).takeRetainedValue()
+        }
+        codeOwner = (owner, implementation, callbackOwner)
     }
 
     deinit {

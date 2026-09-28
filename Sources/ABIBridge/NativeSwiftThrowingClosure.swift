@@ -1,8 +1,10 @@
 import ABIBridgeCore
 
 private final class SwiftThrowingClosureBody {
+    let codeOwner: SwiftClosureCodeOwner?
     let invoke: (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer, UnsafeMutableRawPointer?) -> Bool
-    init(_ invoke: @escaping (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer, UnsafeMutableRawPointer?) -> Bool) {
+    init(retainingCode codeOwner: Any? = nil, _ invoke: @escaping (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer, UnsafeMutableRawPointer?) -> Bool) {
+        self.codeOwner = codeOwner.map(SwiftClosureCodeOwner.init)
         self.invoke = invoke
     }
 }
@@ -12,6 +14,10 @@ private func throwingClosureOwner(_ interface: SwiftCallInterface, body: SwiftTh
         Unmanaged<SwiftThrowingClosureBody>.fromOpaque(context!).takeUnretainedValue().invoke(arguments, result!, error)
     }
     functions.releaseContext = { Unmanaged<SwiftThrowingClosureBody>.fromOpaque($0!).release() }
+    functions.copyCodeOwner = { context in
+        let owner = Unmanaged<SwiftThrowingClosureBody>.fromOpaque(context!).takeUnretainedValue().codeOwner
+        return owner.map { Unmanaged.passRetained($0).toOpaque() }
+    }
     let context = Unmanaged.passRetained(body)
     var failure: OpaquePointer?
     guard let handle = ABICreateSwiftThrowingClosureCallback(interface.handle, functions, context.toOpaque(), &failure) else {
@@ -61,10 +67,10 @@ public struct NativeSwiftThrowingClosure<Result, Failure: Error, each Argument> 
         self.call = call
     }
 
-    private static func storage(_ owner: SwiftClosureCallbackOwner, discriminator: UInt16, retainingCode codeOwner: Any? = nil) throws -> SwiftClosureStorage {
+    private static func storage(_ owner: SwiftClosureCallbackOwner, discriminator: UInt16) throws -> SwiftClosureStorage {
         try SwiftClosureStorage(adopting: ABISwiftClosureValue(
             function: ABISignSwiftClosureFunction(owner.function, discriminator),
-            context: Unmanaged.passRetained(owner).toOpaque()), discriminator: discriminator, retaining: codeOwner)
+            context: Unmanaged.passRetained(owner).toOpaque()), discriminator: discriminator, retaining: nil)
     }
 
     private static func prepare() throws -> (call: SwiftCall<Result, repeat each Argument>, discriminator: UInt16) {
@@ -99,7 +105,7 @@ extension NativeSwiftThrowingClosure: SwiftClosureValue {
             if ABIIsSwiftClosureCallbackFunction(original.implementation.function) {
                 return Self(storage: original, call: prepared.call)
             }
-            let callback = try throwingClosureOwner(prepared.call.interface, body: SwiftThrowingClosureBody { arguments, result, failure in
+            let callback = try throwingClosureOwner(prepared.call.interface, body: SwiftThrowingClosureBody(retainingCode: original.codeOwner) { arguments, result, failure in
                 var didThrow = false
                 let succeeded = ABIUnsafeInvokeSwiftThrowingCallInterface(
                     prepared.call.interface.handle, original.implementation.function,
@@ -107,7 +113,7 @@ extension NativeSwiftThrowingClosure: SwiftClosureValue {
                 precondition(succeeded, "The prepared throwing closure forwarding call must be valid.")
                 return didThrow
             })
-            return Self(storage: try storage(callback, discriminator: prepared.discriminator, retainingCode: original.codeOwner), call: prepared.call)
+            return Self(storage: try storage(callback, discriminator: prepared.discriminator), call: prepared.call)
         }
     }
 }

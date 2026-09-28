@@ -13,7 +13,7 @@ class SwiftCallbackCode {
     std::unique_ptr<Storage> storage;
 public:
     SwiftCallbackCode(void *context, ABIResolutionFailure **error, bool closure = false);
-    static bool isClosureFunction(ABIUnmanagedFunction function);
+    static void *closureContext(ABIUnmanagedFunction function);
     ~SwiftCallbackCode();
     ABIUnmanagedFunction function() const;
 };

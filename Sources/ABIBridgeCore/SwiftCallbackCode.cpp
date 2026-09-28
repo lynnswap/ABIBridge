@@ -102,8 +102,8 @@ SwiftCallbackCode::SwiftCallbackCode(void *context, ABIResolutionFailure **error
 #endif
 }
 
-bool SwiftCallbackCode::isClosureFunction(ABIUnmanagedFunction function) {
-    if (!function) return false;
+void *SwiftCallbackCode::closureContext(ABIUnmanagedFunction function) {
+    if (!function) return nullptr;
     const void *pointer;
     std::memcpy(&pointer, &function, sizeof(pointer));
 #if __has_feature(ptrauth_calls)
@@ -119,12 +119,13 @@ bool SwiftCallbackCode::isClosureFunction(ABIUnmanagedFunction function) {
         const auto start = page->base + PAGE_MAX_SIZE;
         if (address < start || address - start >= PAGE_MAX_SIZE) continue;
         const auto offset = address - start;
-        if (offset % sizeof(Configuration)) return false;
+        if (offset % sizeof(Configuration)) return nullptr;
         const auto index = offset / sizeof(Configuration);
-        if (std::find(page->free.begin(), page->free.end(), index) != page->free.end()) return false;
-        return (reinterpret_cast<const Configuration *>(page->base) + index)->closure != 0;
+        if (std::find(page->free.begin(), page->free.end(), index) != page->free.end()) return nullptr;
+        const auto *configuration = reinterpret_cast<const Configuration *>(page->base) + index;
+        return configuration->closure ? reinterpret_cast<void *>(configuration->context) : nullptr;
     }
-    return false;
+    return nullptr;
 }
 
 SwiftCallbackCode::~SwiftCallbackCode() = default;

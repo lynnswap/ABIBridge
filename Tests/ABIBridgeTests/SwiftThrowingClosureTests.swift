@@ -138,19 +138,24 @@ struct SwiftThrowingClosureTests {
         #expect(observed == nil)
     }
 
-    @Test func escapedErrorsDoNotRetainUnrelatedCallbackCaptures() throws {
-        weak var observed: ThrowingCapture?
-        var error: NativeSwiftError?
-        do {
-            let capture = ThrowingCapture()
-            observed = capture
-            let body = try NativeSwiftThrowingClosure<Int64, ScalarFailure> { () throws(ScalarFailure) in
-                withExtendedLifetime(capture) { () }
-                throw ScalarFailure(42)
+    @Test func escapedErrorsDoNotRetainUnrelatedCallbackCaptures() async throws {
+        let identity = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.handoffScalarThrowing(_:)",
+            as: ((NativeSwiftThrowingClosure<Int64, ScalarFailure>) -> NativeSwiftThrowingClosure<Int64, ScalarFailure>).self)
+        for handoffs in [0, 1, 5] {
+            weak var observed: ThrowingCapture?
+            var error: NativeSwiftError?
+            do {
+                let capture = ThrowingCapture()
+                observed = capture
+                var body = try NativeSwiftThrowingClosure<Int64, ScalarFailure> { () throws(ScalarFailure) in
+                    withExtendedLifetime(capture) { () }
+                    throw ScalarFailure(42)
+                }
+                for _ in 0..<handoffs { body = try unsafe identity.unsafeInvoke(body) }
+                error = try closureFailure { try unsafe body.unsafeInvoke() }
             }
-            error = try closureFailure { try unsafe body.unsafeInvoke() }
+            withExtendedLifetime(error) { #expect(observed == nil) }
+            error?.withUnderlyingError { #expect(($0 as? ScalarFailure)?.code == 42) }
         }
-        withExtendedLifetime(error) { #expect(observed == nil) }
-        error?.withUnderlyingError { #expect(($0 as? ScalarFailure)?.code == 42) }
     }
 }
