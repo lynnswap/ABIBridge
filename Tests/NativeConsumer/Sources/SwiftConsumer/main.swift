@@ -2,6 +2,12 @@ import ABIBridge
 import Darwin
 import Foundation
 
+private struct PaddedValue: BitwiseCopyable, ABIBridgeValue {
+    var value: Double
+    var tag: Int8
+    static let abiType = try! NativeType.structure(named: "Padded", fields: [.double, .int8])
+}
+
 private struct LargeValue: ABIBridgeValue {
     static let abiType = try! NativeType.structure(
         named: "ABIBridgeFixture::LargeResult", fields: Array(repeating: .int, count: 8)
@@ -84,6 +90,15 @@ struct SwiftConsumer {
             named: "ABIBridgeFixture::large(long)",
             signature: .init(parameters: [.int], returns: LargeValue.abiType), in: image
         )
+        let padded = try await runtime.cxxFunction(named: "ABIBridgeFixture::shift(ABIBridgeFixture::Padded)",
+            as: ((PaddedValue) -> PaddedValue).self, in: image)
+        let paddedC = try await runtime.cFunction(named: "ABIBridgeFixtureShiftPadded",
+            signature: .init(parameters: [PaddedValue.abiType], returns: PaddedValue.abiType), in: image)
+        let paddedResult = try unsafe padded.unsafeInvoke(PaddedValue(value: 2, tag: 3))
+        let rawResult = try unsafe paddedC.unsafeInvoke(with: [NativeValue(copying: PaddedValue(value: 2, tag: 3), as: PaddedValue.abiType)])
+        let readResult = try unsafe rawResult.read(as: PaddedValue.self)
+        precondition(paddedResult.value == 3.5 && paddedResult.tag == 5)
+        precondition(readResult.value == 3.5 && readResult.tag == 5)
         dlclose(loader!)
         loader = nil
         await runtime.removeCachedResults()

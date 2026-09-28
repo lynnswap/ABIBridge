@@ -5,6 +5,13 @@
 extern "C" {
 #endif
 
+typedef struct ABICXXRecord { double value; int8_t tag; } ABICXXRecord;
+typedef struct ABICXXNestedRecord { ABICXXRecord first; double second; } ABICXXNestedRecord;
+ABICXXRecord ABICTransformRecord(ABICXXRecord value);
+ABICXXNestedRecord ABICTransformNestedRecord(ABICXXNestedRecord value);
+const void *ABICXXRecordReceiver(void);
+int32_t ABICNextRecordMode(int32_t value);
+
 typedef void (*ABICXXGenericFunction)(void);
 extern const int32_t ABICXXFixtureData;
 void *ABICXXCreateCounter(int32_t value);

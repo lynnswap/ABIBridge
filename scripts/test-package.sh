@@ -10,7 +10,7 @@ shift
 root=$(cd "$(dirname "$0")/.." && pwd)
 
 invocation=(
-    CFunctionInvocationTests CXXObjectInvocationTests NativeRuntimeTests
+    CFunctionInvocationTests CXXObjectInvocationTests CallerDescribedValueTests NativeRuntimeTests
     ObjectiveCAggregateTests ObjectiveCBlockTests ObjectiveCImplementationTests ObjectiveCInvocationTests
     ObjectiveCIvarTests SwiftCallBoundaryTests SwiftFunctionInvocationTests
     SwiftMemberInvocationTests ManagedSwiftValueTests SwiftClosureABITests NativeSwiftClosureTests

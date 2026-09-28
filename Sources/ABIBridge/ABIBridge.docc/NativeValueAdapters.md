@@ -2,49 +2,33 @@
 
 Describe a foreign representation once and use a Swift wrapper in typed calls.
 
-## Define a wrapper
+## Choose the native calling convention
 
-For a C-compatible structure containing two doubles, declare its native field layout and the conversions between that storage and your Swift type:
+Caller-described types work across C, C++, Objective-C, and Swift. The native declaration determines how a value crosses the call boundary; a Swift metatype determines how the caller interprets it.
+
+| Declaration | Where its value layout comes from |
+| --- | --- |
+| C or C-compatible C++ | `ABIBridgeValue.abiType`, or `NativeSignature` and `NativeValue` |
+| Objective-C | The method's runtime type encoding; select a compatible Swift function metatype |
+| Swift | Built-in representations or `ABIBridgeSwiftValue.swiftABIType` for the actual imported Swift value |
+
+These paths do not require a new library-side case for every struct or enum. They preserve the native language's ownership and register conventions. A C++ value requiring constructors, destruction, or a special nontrivial calling convention still needs a compiler adapter.
+
+## Declare a byte-compatible layout once
+
+For a C-compatible structure containing two doubles, declare the native layout on a bitwise-copyable Swift value:
 
 ```swift
 import ABIBridge
 
-struct Pair: ABIBridgeValue {
+struct Pair: BitwiseCopyable, ABIBridgeValue {
     static let abiType = try! NativeType.structure(
         named: "Example::Pair", fields: [.double, .double]
     )
-
     var left: Double
     var right: Double
-
-    init(left: Double, right: Double) {
-        self.left = left
-        self.right = right
-    }
-
-    init(nativeValue: NativeValue) throws {
-        left = try unsafe nativeValue.field(at: 0).read(as: Double.self)
-        right = try unsafe nativeValue.field(at: 1).read(as: Double.self)
-    }
-
-    static func nativeValue(from value: Self) -> NativeValue {
-        NativeValue(type: abiType) { bytes in
-            bytes.baseAddress!.storeBytes(
-                of: value.left, toByteOffset: abiType.fields[0].offset, as: Double.self
-            )
-            bytes.baseAddress!.storeBytes(
-                of: value.right, toByteOffset: abiType.fields[1].offset, as: Double.self
-            )
-        }
-    }
 }
-```
 
-The wrapper's Swift layout does not need to match its native representation. ABIBridge uses the layout from `abiType` and the bytes returned by the conversion. Keep `abiType` stable for every prepared handle that uses it. The constant layout above contains supported fields, so its initialization is a program invariant; use ordinary error handling for layouts obtained at runtime.
-
-Once an image defining the following C-compatible declaration is loaded:
-
-```swift
 let translate = try await ABIRuntime.shared.cxxFunction(
     named: "Example::translate(Example::Pair)",
     as: ((Pair) -> Pair).self
@@ -52,7 +36,11 @@ let translate = try await ABIRuntime.shared.cxxFunction(
 let result = try unsafe translate.unsafeInvoke(Pair(left: 2, right: 3))
 ```
 
-No value container is required at the call site. Pointer-representation wrappers also support `Optional`: nil becomes a null pointer, and null results become nil without calling the wrapper initializer. Optional wrappers with other representations require an explicit native adapter.
+``ABIBridgeValue`` supplies default byte conversions for `BitwiseCopyable` conformers. The caller's conformance guarantees field representations, offsets, and valid values. Native tail padding can extend to the Swift value's stride and is zero-filled when copied. Pointer fields copy their bits; they do not retain pointees.
+
+The same conformance works in C functions, C-compatible C++ members, and their supported callback paths because they share the value codec. Keep `abiType` stable for each prepared handle. Use custom `init(nativeValue:)` and `nativeValue(from:)` implementations when Swift storage differs from the native representation or referenced resources require ownership.
+
+Raw-value enums need the native enum's representation. A Swift enum's raw value can differ from its in-memory tag; for example, a two-case Swift enum with Int32 raw values can have a one-byte Swift tag. For a C/C++ call, pass the matching raw-value type or provide conversions that read and write `rawValue`. For an actual Swift enum, describe its Swift ABI through ``ABIBridgeSwiftValue`` instead. See <doc:ExplicitSwiftValues> for managed structs, payload enums, and formally indirect values.
 
 ## Use layouts discovered at runtime
 
@@ -63,10 +51,26 @@ let translate = try await ABIRuntime.shared.cxxFunction(
     named: "Example::translate(Example::Pair)",
     signature: .init(parameters: [Pair.abiType], returns: Pair.abiType)
 )
-let input = Pair.nativeValue(from: Pair(left: 2, right: 3))
+let input = try Pair.nativeValue(from: Pair(left: 2, right: 3))
 let value = try unsafe translate.unsafeInvoke(with: [input])
 let pair = try value.cast(to: Pair.self)
 ```
+
+If the caller type does not conform to `ABIBridgeValue`, pass its byte-compatible value and read the result with its metatype:
+
+```swift
+struct PairBytes: BitwiseCopyable {
+    var left: Double
+    var right: Double
+}
+let input = try NativeValue(
+    copying: PairBytes(left: 2, right: 3), as: Pair.abiType
+)
+let nativeResult = try unsafe translate.unsafeInvoke(with: [input])
+let result = try unsafe nativeResult.read(as: PairBytes.self)
+```
+
+Here `translate` is the runtime-signature handle above. The unsafe read checks accessible bounds; the caller guarantees the representation and valid bit patterns. No protocol conformance or type registration is required for `PairBytes`.
 
 Argument count and layouts are checked before native dispatch. `cast(to:)` checks representations, sizes, alignments, and field layouts before calling the wrapper's initializer. Diagnostic names may differ without preventing a compatible conversion. A matching description cannot prove that an external function or memory region actually has that ABI; the adapter remains responsible for that contract.
 

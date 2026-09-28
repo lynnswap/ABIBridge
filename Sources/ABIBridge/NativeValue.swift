@@ -35,6 +35,24 @@ public protocol ABIBridgeValue: SendableMetatype {
     static func nativeValue(from value: Self) throws -> NativeValue
 }
 
+extension ABIBridgeValue where Self: BitwiseCopyable {
+    /// Reads a byte-compatible value using the caller-declared ABI layout.
+    ///
+    /// Field offsets and valid value representations remain the conformance's
+    /// responsibility. Use custom conversions when Swift and native storage differ.
+    public init(nativeValue: NativeValue) throws {
+        self = try unsafe nativeValue.read(as: Self.self)
+    }
+
+    /// Copies the value, including zero-filled native tail padding when needed.
+    ///
+    /// Pointer fields remain borrowed. The conformance must establish matching
+    /// field representations and the lifetime of any referenced native resources.
+    public static func nativeValue(from value: Self) throws -> NativeValue {
+        try NativeValue(copying: value, as: abiType)
+    }
+}
+
 extension ABIBridgeValue {
     func nativeValueForCall() throws -> NativeValue {
         try Self.nativeValue(from: self)
@@ -126,8 +144,9 @@ public final class NativeValue {
 
     /// Copies a bitwise-copyable Swift value into native storage.
     ///
-    /// Size is checked, but the adapter must ensure the field representations
-    /// match. This copies pointer bits without retaining pointees or performing
+    /// The native extent must cover the Swift value without exceeding its
+    /// stride. Additional native tail padding is zero-filled. The adapter must
+    /// ensure field representations and offsets match. This copies pointer bits without retaining pointees or performing
     /// a foreign copy constructor.
     ///
     /// - Parameters:
@@ -138,11 +157,14 @@ public final class NativeValue {
     public convenience init<Value: BitwiseCopyable>(
         copying value: Value, as type: NativeType, retaining owner: Any? = nil
     ) throws {
-        guard MemoryLayout<Value>.size == type.size else {
+        guard (MemoryLayout<Value>.size...MemoryLayout<Value>.stride).contains(type.size) else {
             throw NativeValueError.incompatibleSize(expected: type.size, actual: MemoryLayout<Value>.size)
         }
         self.init(type: type, retaining: owner) { destination in
-            Swift.withUnsafeBytes(of: value) { destination.copyMemory(from: $0) }
+            destination.initializeMemory(as: UInt8.self, repeating: 0)
+            Swift.withUnsafeBytes(of: value) { source in
+                destination.copyMemory(from: source)
+            }
         }
     }
 
