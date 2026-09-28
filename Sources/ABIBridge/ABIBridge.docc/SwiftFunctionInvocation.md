@@ -47,7 +47,7 @@ The prepared handle is Sendable and can be reused concurrently. Each call uses s
 
 ## Unsupported declarations
 
-Generic declarations, inout parameters, and consuming parameters need separate adapters. Async function metatypes produce NativeSwiftAsyncFunction handles; see <doc:SwiftAsyncABI>. Synchronous throwing calls use the function metatype's declared error type; see <doc:SwiftErrorABI>. Lookup rejects these conventions when they are present in the source-level declaration. The caller still establishes the exact native signature: the resolver does not prove ABI compatibility from a name, a metatype, or a storage size.
+Use NativeSwiftInout, NativeSwiftBorrowing, and NativeSwiftConsuming for explicit parameter conventions; see <doc:SwiftArgumentConventions>. Generic declarations with hidden metadata or witness arguments need separate adapters. Async function metatypes produce NativeSwiftAsyncFunction handles; see <doc:SwiftAsyncABI>. Synchronous throwing calls use the function metatype's declared error type; see <doc:SwiftErrorABI>. The caller still establishes the exact native signature: the resolver does not prove ABI compatibility from a name, a metatype, or a storage size.
 
 Incorrect signatures, invalid pointers, and violated ownership or isolation contracts can corrupt memory. The unsafe invocation boundary exposes that responsibility; conversion and resolution failures use Swift errors.
 

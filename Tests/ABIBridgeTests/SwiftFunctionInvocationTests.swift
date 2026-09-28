@@ -272,8 +272,6 @@ struct SwiftFunctionInvocationTests {
             "Example.generic<A>(A) -> A",
             "Example.asyncFunction() async -> Swift.Int",
             "Example.throwing() throws -> Swift.Int",
-            "Example.mutate(inout Swift.Int) -> Swift.Int",
-            "Example.consume(__owned Swift.String) -> Swift.Int",
         ] {
             await #expect(throws: ABIResolutionError.self) {
                 _ = try await ABIRuntime.shared.swiftFunction(named: name, as: (() -> Int).self)

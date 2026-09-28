@@ -48,4 +48,22 @@ do {
 } catch let error as NativeSwiftError {
     error.withUnderlyingError { precondition(($0 as? Failure)?.code == 43) }
 }
-print("Public async consumer passed: native suspension, task locals, caller executor, and typed errors")
+@concurrent public func update(_ text: inout String, _ suffix: consuming String, _ prefix: borrowing String) async throws(Failure) -> String {
+    await Task.yield()
+    text += suffix
+    if prefix.isEmpty { throw Failure(code: 44) }
+    return prefix + text
+}
+let update = try await runtime.swiftFunction(named: "SwiftAsyncConsumer.update(_:_:_:)",
+    as: (@concurrent (NativeSwiftInout<String>, NativeSwiftConsuming<String>, NativeSwiftBorrowing<String>) async throws(Failure) -> String).self)
+let buffer = try NativeSwiftInout("value")
+let updated = try unsafe await update.unsafeInvoke(buffer, .init("!"), .init("public:"))
+precondition(updated == "public:value!" && buffer.value == "value!")
+do {
+    _ = try unsafe await update.unsafeInvoke(buffer, .init("?"), .init(""))
+    fatalError("Expected inout failure")
+} catch let error as NativeSwiftError {
+    error.withUnderlyingError { precondition(($0 as? Failure)?.code == 44) }
+}
+precondition(buffer.value == "value!?")
+print("Public async consumer passed: suspension, task locals, caller executor, typed errors, inout, and per-argument ownership")

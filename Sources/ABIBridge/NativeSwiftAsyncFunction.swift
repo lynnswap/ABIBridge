@@ -24,12 +24,12 @@ public struct NativeSwiftAsyncFunction<Result, each Argument>: Sendable {
     }
 
     static func declaration<Failure: Error>(
-        named name: String, failure: Failure.Type, resultName: String? = nil
+        named name: String, failure: Failure.Type, resultName: String? = nil, defaultConsuming: Bool = false
     ) throws -> NativeDeclaration {
         var types: [Any.Type] = []
         for type in repeat (each Argument).self { types.append(type) }
         return try swiftFunctionDeclaration(named: name, parameterTypes: types, resultType: Result.self,
-            failureType: Failure.self, isAsync: true, resultName: resultName)
+            failureType: Failure.self, isAsync: true, resultName: resultName, defaultConsuming: defaultConsuming)
     }
 
     /// Awaits the native implementation without creating a replacement task.

@@ -4,6 +4,9 @@ import ABIBridgeCore
 // Class identity, isolation, and ownership qualifiers are intentionally erased.
 // https://github.com/swiftlang/swift/blob/main/lib/SIL/IR/SILFunctionType.cpp
 func swiftClosureAuthType(_ type: Any.Type) throws -> String {
+    guard !(type is any SwiftConventionArgument.Type) else {
+        throw ABIResolutionError.unsupportedDeclaration("Inout and ownership-qualified callback parameters require a scoped native adapter.")
+    }
     let base = (type as? any NativeOptionalValue.Type)?.wrappedType ?? type
     let managed = type is any ABIBridgeSwiftValue.Type
     guard (!(base is any ABIBridgeValue.Type) || managed), !(base is any SwiftClosureValue.Type) else {

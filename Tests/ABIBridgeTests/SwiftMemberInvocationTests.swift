@@ -218,7 +218,7 @@ struct SwiftMemberInvocationTests {
         #expect(try unsafe change.unsafeInvoke(on: large, 10) == 24 && large.a == 1)
     }
 
-    @Test func throwingDeclarationsNeedEffectsAndBorrowedInitializersNeedAdapters() async throws {
+    @Test func throwingDeclarationsNeedEffectsAndInitializersCanBorrow() async throws {
         let runtime = ABIRuntime()
         let type = try await runtime.swiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
         let member = "typedFailure() throws(ABIBridgeTests.SwiftMemberFailure) -> Swift.Int"
@@ -236,10 +236,11 @@ struct SwiftMemberInvocationTests {
         } catch ABIResolutionError.unsupportedDeclaration {}
         let initializer = "init(borrowedChild: __shared ABIBridgeTests.SwiftMemberRenderer) -> ABIBridgeTests.SwiftMemberRenderer"
         _ = try await runtime.resolve(.init(name: type.name + ".__allocating_" + initializer, language: .swift), in: type.image)
-        do {
-            _ = try await type.initializer(named: initializer, as: ((SwiftMemberRenderer) -> SwiftMemberRenderer).self)
-            Issue.record("Borrowing initializers must not transfer argument ownership")
-        } catch ABIResolutionError.unsupportedDeclaration {}
+        let make = try await type.initializer(named: initializer,
+            as: ((NativeSwiftBorrowing<SwiftMemberRenderer>) -> SwiftMemberRenderer).self)
+        let child = SwiftMemberRenderer(text: "borrowed")
+        let parent = try unsafe make.unsafeInvoke(.init(child))
+        #expect(parent.object === child && parent.text == "borrowed")
     }
 
     @Test func operatorsResolveByLabelsAndReportFixityAmbiguity() async throws {

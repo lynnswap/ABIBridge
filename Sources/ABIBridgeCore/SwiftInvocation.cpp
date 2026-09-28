@@ -196,7 +196,8 @@ struct ABISwiftCallInterface {
 
 static ABISwiftCallInterface *createSwiftCallInterface(
     const ABIValueType *result, const ABIValueType *const *parameters,
-    size_t count, const ABIValueType *errorResult, bool typedError, ABIResolutionFailure **error)
+    size_t count, const ABIValueType *errorResult, bool typedError, ABIResolutionFailure **error,
+    bool asyncEntry = false)
 {
     if (error) *error = nullptr;
 #if !defined(__aarch64__) && !defined(__x86_64__)
@@ -267,7 +268,13 @@ static ABISwiftCallInterface *createSwiftCallInterface(
             interface->moves.push_back(move);
         }
     }
+#if defined(__x86_64__)
+    // swifttailcc reuses the caller's reserved eight-byte slot. Assembly copies
+    // every argument byte, but only whole 16-byte groups change the stack pointer.
+    interface->stackSize = asyncEntry ? stack : aligned(stack, 16);
+#else
     interface->stackSize = aligned(stack, 16);
+#endif
     return interface.release();
 #endif
 }
@@ -481,7 +488,7 @@ ABISwiftAsyncCallInterface *ABICreateSwiftAsyncCallInterface(
     for (size_t index = 0; index < count; ++index) inputs.push_back(parameters[index]);
     if (completion->indirectError) inputs.push_back(pointer.get());
     auto entry = std::shared_ptr<ABISwiftCallInterface>(
-        createSwiftCallInterface(empty.get(), inputs.data(), inputs.size(), nullptr, false, error));
+        createSwiftCallInterface(empty.get(), inputs.data(), inputs.size(), nullptr, false, error, true));
     if (!entry) return nullptr;
     return new ABISwiftAsyncCallInterface{std::move(entry), std::move(completion), count, inheritsCallerIsolation};
 }

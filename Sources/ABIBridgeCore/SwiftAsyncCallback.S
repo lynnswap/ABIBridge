@@ -81,7 +81,9 @@ _ABISwiftAsyncCallbackAssembly:
     movq %rax, %r10
     leave
     movq (%rsp), %rax
-    addq 216(%r10), %rsp
+    movq 216(%r10), %rcx
+    andq $-16, %rcx
+    addq %rcx, %rsp
     movq %rax, (%rsp)
     movq 232(%r10), %r11
     movq 240(%r10), %r14
