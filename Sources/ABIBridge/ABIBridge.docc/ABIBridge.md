@@ -168,6 +168,7 @@ print(symbol.image.path)
 ### Swift function invocation
 
 - <doc:SwiftFunctionInvocation>
+- <doc:SwiftErrorABI>
 - <doc:ManagedSwiftValues>
 - <doc:ExplicitSwiftValues>
 - ``ABIBridgeSwiftValue``
