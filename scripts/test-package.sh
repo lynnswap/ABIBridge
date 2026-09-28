@@ -13,7 +13,7 @@ invocation=(
     CFunctionInvocationTests CXXObjectInvocationTests NativeRuntimeTests
     ObjectiveCBlockTests ObjectiveCImplementationTests ObjectiveCInvocationTests
     ObjectiveCIvarTests SwiftCallBoundaryTests SwiftFunctionInvocationTests
-    SwiftMemberInvocationTests
+    SwiftMemberInvocationTests ManagedSwiftValueTests
 )
 hooks=(
     CoordinatedObjectiveCHookTests HookInvocationDiagnosticsTests

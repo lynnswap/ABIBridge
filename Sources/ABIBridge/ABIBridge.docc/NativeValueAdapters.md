@@ -72,6 +72,8 @@ Argument count and layouts are checked before native dispatch. `cast(to:)` check
 
 ``NativeType/structure(named:fields:)`` computes the platform C layout. Packed structures, unions, and nontrivial C++ values require a compatible native entry point. ``NativeType/opaque(named:size:alignment:)`` describes an accessible byte extent for adapters and resource owners; byte size alone is insufficient for by-value invocation.
 
+For Swift values containing managed references or resilient layouts, see <doc:ManagedSwiftValues>. The value's allocation and ownership are separate from its declaration's Swift calling convention.
+
 ## Establish storage and resource lifetime
 
 Native values provide three ownership paths:

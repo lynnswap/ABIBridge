@@ -60,9 +60,20 @@ let package = Package(
             path: "Tests/ObjectiveCFixtures",
             publicHeadersPath: "include"
         ),
+        .target(
+            name: "ManagedSwiftFixtures",
+            path: "Tests/ManagedSwiftFixtures",
+            swiftSettings: [.unsafeFlags(["-enable-library-evolution"])]
+        ),
+        .target(
+            name: "ManagedSwiftAdapters",
+            dependencies: ["ManagedSwiftFixtures"],
+            path: "Tests/ManagedSwiftAdapters"
+        ),
         .testTarget(
             name: "ABIBridgeTests",
-            dependencies: ["ABIBridge", "ObjectiveCFixtures", "HookCoordinationFixtures"],
+            dependencies: ["ABIBridge", "ObjectiveCFixtures", "HookCoordinationFixtures",
+                           "ManagedSwiftFixtures", "ManagedSwiftAdapters"],
             swiftSettings: strictSwiftSettings
         ),
     ],

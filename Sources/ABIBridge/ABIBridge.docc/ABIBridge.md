@@ -168,6 +168,7 @@ print(symbol.image.path)
 ### Swift function invocation
 
 - <doc:SwiftFunctionInvocation>
+- <doc:ManagedSwiftValues>
 - ``NativeSwiftFunction``
 
 ### Swift types and members

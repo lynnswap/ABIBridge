@@ -5,6 +5,8 @@ task_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 task_fixture=$(mktemp -d "${TMPDIR:-/tmp}/abibridge-native.XXXXXX")
 trap 'find "$task_fixture" -delete' EXIT
 
+python3 "$task_root/scripts/check-managed-swift-codegen.py"
+
 xcrun clang++ -std=c++20 -dynamiclib -mmacosx-version-min=15.4 \
     "$task_root/Tests/NativeConsumer/Fixture.cpp" \
     -o "$task_fixture/libFixture.dylib"
