@@ -125,8 +125,8 @@ public final class NativeObject {
     ///   - isConsuming: Whether the Swift member consumes its receiver copy.
     /// - Returns: A reusable method bound to this receiver.
     /// - Throws: A lookup or unsupported-representation error.
-    public nonisolated(nonsending) func method<Result, each Argument>(
-        named name: String, as signature: ((repeat each Argument) -> Result).Type,
+    public nonisolated(nonsending) func method<Result, Failure: Error, each Argument>(
+        named name: String, as signature: ((repeat each Argument) throws(Failure) -> Result).Type,
         consuming isConsuming: Bool = false
     ) async throws -> NativeBoundSwiftMethod<Result, repeat each Argument> {
         let object = receiver!
@@ -147,6 +147,17 @@ public final class NativeObject {
         named name: String, as valueType: Value.Type, consuming isConsuming: Bool = false
     ) async throws -> NativeBoundSwiftMethod<Value> {
         let method = try await swiftType().getter(named: name, as: valueType, consuming: isConsuming)
+        return NativeBoundSwiftMethod(method: method, receiver: receiver!)
+    }
+
+    /// Resolves a throwing Swift getter bound to this object.
+    ///
+    /// The signature supplies the native error type and ordinary result.
+    public nonisolated(nonsending) func getter<Value, Failure: Error>(
+        named name: String, as signature: (() throws(Failure) -> Value).Type,
+        consuming isConsuming: Bool = false
+    ) async throws -> NativeBoundSwiftMethod<Value> {
+        let method = try await swiftType().getter(named: name, as: signature, consuming: isConsuming)
         return NativeBoundSwiftMethod(method: method, receiver: receiver!)
     }
 

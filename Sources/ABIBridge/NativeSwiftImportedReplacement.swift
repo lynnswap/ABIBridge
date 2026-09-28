@@ -102,6 +102,7 @@ extension NativeSwiftFunction {
         with replacement: NativeSwiftFunction<Result, repeat each Argument>, in importer: ImageSelector,
         from provider: ImageSelector? = nil, using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil
     ) async throws -> NativeSwiftImportedReplacement<NativeSwiftFunctionImplementation<Result, repeat each Argument>> {
+        try SwiftErrorPlan.validateReplacement(replacement.errorPlan, for: errorPlan)
         let storage = try await runtime.prepareSwiftImportReplacement(target: symbol, replacement: replacement.symbol,
             importer: importer, provider: provider, owner: owner)
         return NativeSwiftImportedReplacement(storage: storage) { NativeSwiftFunctionImplementation(self, $0) }
@@ -120,6 +121,7 @@ extension NativeSwiftMethod {
         with replacement: NativeSwiftMethod<Result, repeat each Argument>, in importer: ImageSelector,
         from provider: ImageSelector? = nil, using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil
     ) async throws -> NativeSwiftImportedReplacement<NativeSwiftMethodImplementation<Result, repeat each Argument>> {
+        try SwiftErrorPlan.validateReplacement(replacement.errorPlan, for: errorPlan)
         let storage = try await runtime.prepareSwiftImportReplacement(target: symbol, replacement: replacement.symbol,
             importer: importer, provider: provider, owner: owner)
         return NativeSwiftImportedReplacement(storage: storage) { NativeSwiftMethodImplementation(self, $0) }

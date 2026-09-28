@@ -1,6 +1,6 @@
 /// A native invocation and receiver writeback both failed.
 ///
-/// The native member ran before its result conversion failed. The receiver's
+/// The native member ran and either threw or failed its result conversion. The receiver's
 /// writeback conversion then failed too; both errors remain available.
 public struct NativeSwiftWritebackError: Error {
     /// The invocation or result-conversion failure.
@@ -22,15 +22,16 @@ public struct NativeSwiftMethod<Result, each Argument>: Sendable {
     let type: NativeSwiftType
     let receiver: SwiftReceiverPlan
     let consumesArguments: Bool
+    var errorPlan: SwiftErrorPlan? { call.errorPlan }
     private let call: SwiftCall<Result, repeat each Argument>
 
     init(symbol: ResolvedSymbol, type: NativeSwiftType, receiver: SwiftReceiverPlan,
-         consumesArguments: Bool = false) throws {
+         consumesArguments: Bool = false, errorPlan: SwiftErrorPlan? = nil) throws {
         self.symbol = symbol
         self.type = type
         self.receiver = receiver
         self.consumesArguments = consumesArguments
-        call = try SwiftCall(trailingType: receiver.trailingType, consumesArguments: consumesArguments)
+        call = try SwiftCall(trailingType: receiver.trailingType, consumesArguments: consumesArguments, errorPlan: errorPlan)
     }
 
     func capturing(_ implementation: SwiftImplementation) -> Self {
@@ -48,7 +49,7 @@ public struct NativeSwiftMethod<Result, each Argument>: Sendable {
     ///   - receiver: An instance or adapter matching the declaring native type.
     ///   - values: Explicit method arguments.
     /// - Returns: The converted result.
-    /// - Throws: A receiver conversion or invocation error. Use the inout
+    /// - Throws: A NativeSwiftError or a receiver conversion/invocation error. Use the inout
     ///   overload for a mutating value member.
     @unsafe public func unsafeInvoke<Receiver>(
         on receiver: Receiver, _ values: repeat each Argument
@@ -68,7 +69,7 @@ public struct NativeSwiftMethod<Result, each Argument>: Sendable {
     ///   - receiver: A caller-owned value updated by a mutating member.
     ///   - values: Explicit method arguments.
     /// - Returns: The converted method result.
-    /// - Throws: A receiver, result, or writeback conversion error.
+    /// - Throws: A NativeSwiftError or a receiver, result, or writeback conversion error.
     @unsafe public func unsafeInvoke<Receiver>(
         on receiver: inout Receiver, _ values: repeat each Argument
     ) throws -> Result {

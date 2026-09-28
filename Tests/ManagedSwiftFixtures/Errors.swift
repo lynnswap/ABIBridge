@@ -87,6 +87,30 @@ public final class ReferenceFailure: Error {
     return String(repeating: "success", count: 100)
 }
 
+@frozen public struct ThrowingCounter {
+    public var count: Int64
+    public init(_ count: Int64) { self.count = count }
+    @inline(never) public mutating func advance(_ fail: Bool) throws(ScalarFailure) -> Int64 {
+        count += 1
+        if fail { throw ScalarFailure(count) }
+        return count
+    }
+    public var rejected: Int64 { get throws(ScalarFailure) { throw ScalarFailure(count) } }
+    public static var rejected: Int64 { get throws(ScalarFailure) { throw ScalarFailure(99) } }
+    @inline(never) public static func result(_ fail: Bool) throws(ScalarFailure) -> Int8 {
+        if fail { throw ScalarFailure(42) }
+        return 7
+    }
+}
+
+@inline(never) public func stackedErrorResult(
+    _ a: Int64, _ b: Int64, _ c: Int64, _ d: Int64, _ e: Int64, _ f: Int64, _ g: Int64, _ h: Int64,
+    _ token: ErrorLifetimeToken, _ fail: Bool
+) throws(LargeFailure) -> Int64 {
+    if fail { throw LargeFailure(token) }
+    return a + b + c + d + e + f + g + h
+}
+
 public final class ThrowingOwner {
     public let token: ErrorLifetimeToken
     public init(_ token: ErrorLifetimeToken, _ fail: Bool) throws(ManagedFailure) {

@@ -58,6 +58,7 @@ extension NativeSwiftMethod {
     @unsafe public func prepareVirtualReplacement(
         with replacement: NativeSwiftMethod<Result, repeat each Argument>, retaining owner: (any Sendable)? = nil
     ) throws -> NativeSwiftVirtualReplacement<NativeSwiftMethodImplementation<Result, repeat each Argument>> {
+        try SwiftErrorPlan.validateReplacement(replacement.errorPlan, for: errorPlan)
         guard receiver.mode == .object, replacement.receiver.mode == .object else {
             throw ABIResolutionError.unsupportedDeclaration("Virtual replacement requires Swift class instance methods.")
         }

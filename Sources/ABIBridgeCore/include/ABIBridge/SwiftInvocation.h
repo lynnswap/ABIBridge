@@ -44,6 +44,11 @@ ABIValueType *ABICreateSwiftIndirectStorageType(
 ABISwiftCallInterface *ABICreateSwiftCallInterface(
     const ABIValueType *result, const ABIValueType *const *parameters,
     size_t count, ABIResolutionFailure **error);
+/// Prepares synchronous throwing invocation. Untyped errors use a pointer-sized
+/// owned Swift error reference; typed errors use their declared value layout.
+ABISwiftCallInterface *ABICreateSwiftThrowingCallInterface(
+    const ABIValueType *result, const ABIValueType *const *parameters, size_t count,
+    const ABIValueType *errorResult, bool typedError, ABIResolutionFailure **error);
 void ABIReleaseSwiftCallInterface(ABISwiftCallInterface *interface);
 /// Whether a fixed value uses indirect Swift parameter/result storage.
 bool ABISwiftValueIsIndirect(const ABIValueType *type);
@@ -57,6 +62,14 @@ bool ABIUnsafeInvokeSwiftCallInterface(
     ABISwiftCallInterface *interface, ABIUnmanagedFunction function,
     void *result, void *const *arguments, const void *context,
     ABIResolutionFailure **error);
+
+/// Invokes a prepared throwing interface. didThrow selects the initialized
+/// output: result on success, errorResult on native failure. Bridge preparation
+/// failures return false without entering native code. Each native error is +1.
+bool ABIUnsafeInvokeSwiftThrowingCallInterface(
+    ABISwiftCallInterface *interface, ABIUnmanagedFunction function,
+    void *result, void *const *arguments, const void *context,
+    void *errorResult, bool *didThrow, ABIResolutionFailure **error);
 
 #ifdef __cplusplus
 }

@@ -100,14 +100,15 @@ public actor NativeSwiftType {
     ///   - isConsuming: Whether the member consumes its receiver copy.
     /// - Returns: A reusable method with an explicit receiver.
     /// - Throws: A lookup, representation, or preparation error.
-    public func method<Result, each Argument>(
-        named name: String, as signature: ((repeat each Argument) -> Result).Type,
+    public func method<Result, Failure: Error, each Argument>(
+        named name: String, as signature: ((repeat each Argument) throws(Failure) -> Result).Type,
         mutating isMutating: Bool = false, consuming isConsuming: Bool = false
     ) throws -> NativeSwiftMethod<Result, repeat each Argument> {
+        let errorPlan = try SwiftErrorPlan.make(Failure.self)
         let symbol = try resolveMember { try swiftFunctionDeclaration(named: $0 + "." + name, as: signature) }
         return try NativeSwiftMethod(
             symbol: symbol, type: self,
-            receiver: receiverPlan(mutating: isMutating, consuming: isConsuming)
+            receiver: receiverPlan(mutating: isMutating, consuming: isConsuming), errorPlan: errorPlan
         )
     }
     /// Resolves a concrete allocating initializer.
@@ -121,9 +122,10 @@ public actor NativeSwiftType {
     ///   - signature: Explicit arguments and constructed result.
     /// - Returns: A reusable initializer retaining its type and implementation.
     /// - Throws: A lookup, representation, or preparation error.
-    public func initializer<Result, each Argument>(
-        named name: String, as signature: ((repeat each Argument) -> Result).Type
+    public func initializer<Result, Failure: Error, each Argument>(
+        named name: String, as signature: ((repeat each Argument) throws(Failure) -> Result).Type
     ) throws -> NativeSwiftFunction<Result, repeat each Argument> {
+        let errorPlan = try SwiftErrorPlan.make(Failure.self)
         guard name.hasPrefix("init(") else {
             throw ABIResolutionError.unsupportedDeclaration("An initializer name must start with init(.")
         }
@@ -137,7 +139,7 @@ public actor NativeSwiftType {
         }
         return try NativeSwiftFunction(
             symbol: resolveDeclaredMember(declaration, in: image), metadata: metadata, owner: self,
-            consumesArguments: true
+            consumesArguments: true, errorPlan: errorPlan
         )
     }
 
@@ -149,11 +151,12 @@ public actor NativeSwiftType {
     ///   - signature: Explicit arguments and result.
     /// - Returns: A reusable function retaining its type and implementation.
     /// - Throws: A lookup, representation, or preparation error.
-    public func staticMethod<Result, each Argument>(
-        named name: String, as signature: ((repeat each Argument) -> Result).Type
+    public func staticMethod<Result, Failure: Error, each Argument>(
+        named name: String, as signature: ((repeat each Argument) throws(Failure) -> Result).Type
     ) throws -> NativeSwiftFunction<Result, repeat each Argument> {
+        let errorPlan = try SwiftErrorPlan.make(Failure.self)
         let symbol = try resolveMember { try swiftFunctionDeclaration(named: "static " + $0 + "." + name, as: signature) }
-        return try NativeSwiftFunction(symbol: symbol, metadata: metadata, owner: self)
+        return try NativeSwiftFunction(symbol: symbol, metadata: metadata, owner: self, errorPlan: errorPlan)
     }
 
     private func accessorDeclaration(
@@ -193,6 +196,24 @@ public actor NativeSwiftType {
         return try NativeSwiftMethod(
             symbol: symbol, type: self,
             receiver: receiverPlan(mutating: isMutating, consuming: isConsuming)
+        )
+    }
+
+    /// Resolves a throwing instance getter using its complete effect signature.
+    ///
+    /// The metatype must match the getter's native error type and result.
+    /// Receiver ownership follows the same rules as the nonthrowing getter.
+    public func getter<Value, Failure: Error>(
+        named name: String, as signature: (() throws(Failure) -> Value).Type,
+        mutating isMutating: Bool = false, consuming isConsuming: Bool = false
+    ) throws -> NativeSwiftMethod<Value> {
+        let errorPlan = try SwiftErrorPlan.make(Failure.self)
+        let symbol = try resolveMember {
+            try accessorDeclaration(named: name, ownerName: $0, valueType: Value.self, setter: false, isStatic: false)
+        }
+        return try NativeSwiftMethod(
+            symbol: symbol, type: self,
+            receiver: receiverPlan(mutating: isMutating, consuming: isConsuming), errorPlan: errorPlan
         )
     }
 
@@ -238,6 +259,17 @@ public actor NativeSwiftType {
         return try NativeSwiftFunction(
             symbol: symbol, metadata: metadata, owner: self
         )
+    }
+
+    /// Resolves a throwing static getter with an explicit error and result type.
+    public func staticGetter<Value, Failure: Error>(
+        named name: String, as signature: (() throws(Failure) -> Value).Type
+    ) throws -> NativeSwiftFunction<Value> {
+        let errorPlan = try SwiftErrorPlan.make(Failure.self)
+        let symbol = try resolveMember {
+            try accessorDeclaration(named: name, ownerName: $0, valueType: Value.self, setter: false, isStatic: true)
+        }
+        return try NativeSwiftFunction(symbol: symbol, metadata: metadata, owner: self, errorPlan: errorPlan)
     }
 
     /// Resolves a static property setter that consumes its incoming value.

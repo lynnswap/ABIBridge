@@ -26,6 +26,11 @@ xcrun swiftc -parse-as-library -emit-library -module-name ManagedSwiftAdapters \
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" SwiftGenericConsumer "$task_fixture/libManagedSwiftAdapters.dylib"
 
+xcrun clang -std=c11 -dynamiclib -mmacosx-version-min=15.4 -undefined dynamic_lookup \
+    "$task_root/Tests/NativeConsumer/ErrorLeaseFixture.c" -o "$task_fixture/libErrorLease.dylib"
+xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
+    --scratch-path "$task_root/.build/native-consumer" SwiftErrorConsumer "$task_fixture/libErrorLease.dylib"
+
 xcrun clang -std=c11 -dynamiclib -mmacosx-version-min=15.4 \
     "$task_root/Tests/NativeConsumer/ClosureLeaseFixture.c" \
     -o "$task_fixture/libClosureLease.dylib"

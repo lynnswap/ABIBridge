@@ -176,6 +176,7 @@ print(symbol.image.path)
 - <doc:SwiftClosureValues>
 - ``NativeSwiftClosure``
 - ``NativeSwiftFunction``
+- ``NativeSwiftError``
 
 ### Swift types and members
 
