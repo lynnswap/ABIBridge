@@ -162,3 +162,9 @@ Run `invocation-timing` in `ArchitectureTestHost` to compare prepared C scalar/p
 The `swift-errors` mode exercises untyped NSError, zero-valued typed errors, floating errors, resilient errors, independent large result/error storage, and mutating receiver writeback. Launch with `--probe swift-errors` and read `Documents/architecture-swift-errors.json`. NSError lifetime checks drain their autorelease pool before asserting final release.
 
 A Release arm64e build completed all 12 checks on iPhone Air (iOS 27, build 24A435), with CPU subtype 0x80000002 and pointer authentication compiled in. This records an executed configuration rather than an additional deployment requirement.
+
+## Runtime-described Objective-C structures
+
+The `objc-values` mode checks normal and captured aggregate calls with CGAffineTransform. On UIKit platforms it also checks UIEdgeInsets, NSDirectionalEdgeInsets, and an aggregate managed hook. These structures use the shared runtime type-encoding path with no library-side registration.
+
+All six checks passed in a Release arm64e build on iPhone Air (iOS 27, build 24A435), with pointer authentication enabled. The report is `Documents/architecture-objc-values.json`.

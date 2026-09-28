@@ -14,17 +14,17 @@ package func nativeCopyObjCHookValueType(
               let type = node.decoded, node.trailing?.isEmpty != false else {
             throw ABIResolutionError.unsupportedDeclaration("Invalid Objective-C type encoding.")
         }
-        return try hookValueType(type)
+        return try objcValueType(type)
     } catch let failure {
         error?.pointee = nativeFailure(failure)
         return nil
     }
 }
 
-private func hookValueType(_ type: ObjCType) throws -> OpaquePointer {
+func objcValueType(_ type: ObjCType) throws -> OpaquePointer {
     let kind: Int
     switch type {
-    case .modified(_, let type): return try hookValueType(type)
+    case .modified(_, let type): return try objcValueType(type)
     case .void: kind = ABIValueVoid
     case .char: kind = ABIValueInt8
     case .uchar, .bool: kind = ABIValueUInt8
@@ -39,13 +39,25 @@ private func hookValueType(_ type: ObjCType) throws -> OpaquePointer {
     case .float: kind = ABIValueFloat
     case .double: kind = ABIValueDouble
     case .pointer, .charPtr, .functionPointer, .object, .class, .selector, .block: kind = ABIValuePointer
+    case .array(let element, let count):
+        guard let count, count > 0 else {
+            throw ABIResolutionError.unsupportedDeclaration("An aggregate array field requires a positive element count.")
+        }
+        let elementType = try objcValueType(element)
+        defer { ABIReleaseValueType(elementType) }
+        let fields = Array(repeating: Optional(elementType), count: count)
+        var failure: OpaquePointer?
+        guard let result = fields.withUnsafeBufferPointer({ ABICreateStructType($0.baseAddress, $0.count, &failure) }) else {
+            throw consumeNativeCallFailure(failure)
+        }
+        return result
     case .struct(_, let fields):
         guard let fields, !fields.isEmpty, fields.allSatisfy({ $0.bitWidth == nil }) else {
             throw ABIResolutionError.unsupportedDeclaration("Opaque or bitfield structures need an adapter.")
         }
         var types: [OpaquePointer?] = []
         defer { for case let type? in types { ABIReleaseValueType(type) } }
-        for field in fields { types.append(try hookValueType(field.type)) }
+        for field in fields { types.append(try objcValueType(field.type)) }
         var failure: OpaquePointer?
         guard let result = types.withUnsafeBufferPointer({ ABICreateStructType($0.baseAddress, $0.count, &failure) }) else {
             throw consumeNativeCallFailure(failure)

@@ -5,7 +5,23 @@
 #import "ReplacementFixtures.h"
 #include "PointerSlotFixtures.h"
 
+#import <CoreGraphics/CoreGraphics.h>
+
 NS_ASSUME_NONNULL_BEGIN
+
+typedef struct ABIInsetsFixture { double top, left, bottom, right; } ABIInsetsFixture;
+typedef struct ABINestedAggregate {
+    ABIInsetsFixture insets;
+    double values[3];
+    int32_t tag;
+} ABINestedAggregate;
+typedef struct ABIPaddedAggregate { double value; int8_t tag; } ABIPaddedAggregate;
+@interface ABIAggregateFixture : NSObject
+- (ABIPaddedAggregate)transformPadded:(ABIPaddedAggregate)value;
+- (ABIInsetsFixture)transformInsets:(ABIInsetsFixture)value;
+- (ABINestedAggregate)transformNested:(ABINestedAggregate)value;
+- (CGAffineTransform)transformAffine:(CGAffineTransform)value;
+@end
 
 typedef union ABIUnionFixture { NSInteger integer; double real; } ABIUnionFixture;
 @interface ABIOwnershipFixture : NSObject

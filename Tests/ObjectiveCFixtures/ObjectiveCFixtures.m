@@ -1,6 +1,27 @@
 #import "ObjectiveCFixtures.h"
 #import <objc/runtime.h>
 
+@implementation ABIAggregateFixture
+- (ABIPaddedAggregate)transformPadded:(ABIPaddedAggregate)value {
+    value.value += 1.5; value.tag += 2;
+    return value;
+}
+- (ABIInsetsFixture)transformInsets:(ABIInsetsFixture)value {
+    value.top += 1; value.left += 2; value.bottom += 3; value.right += 4;
+    return value;
+}
+- (ABINestedAggregate)transformNested:(ABINestedAggregate)value {
+    value.insets = [self transformInsets:value.insets];
+    value.values[0] += 10; value.values[1] += 20; value.values[2] += 30;
+    value.tag += 1;
+    return value;
+}
+- (CGAffineTransform)transformAffine:(CGAffineTransform)value {
+    value.tx += 3; value.ty += 4;
+    return value;
+}
+@end
+
 @implementation ABIIvarFixture
 @end
 @implementation ABIIvarChild

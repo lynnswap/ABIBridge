@@ -20,6 +20,12 @@ final class CValueType: @unchecked Sendable {
     let size: Int
     let alignment: Int
 
+    init(adopting handle: OpaquePointer) {
+        self.handle = handle
+        size = ABIValueTypeSize(handle)
+        alignment = ABIValueTypeAlignment(handle)
+    }
+
     init(scalar: Int) throws {
         var failure: OpaquePointer?
         guard let handle = ABICreateScalarType(Int32(scalar), &failure) else {
