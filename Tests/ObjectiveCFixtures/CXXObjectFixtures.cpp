@@ -11,6 +11,27 @@ std::atomic<int32_t> tokens{0};
 }
 
 namespace ABICXXFixture {
+enum class RecordMode : int32_t { slow = 7, fast = 42 };
+__attribute__((noinline)) RecordMode nextMode(RecordMode value) {
+    return value == RecordMode::slow ? RecordMode::fast : RecordMode::slow;
+}
+__attribute__((noinline)) ABICXXRecord transformRecord(ABICXXRecord value) { return ABICTransformRecord(value); }
+struct RecordReceiver {
+    double bias = 10;
+    ABICXXRecord shifted(ABICXXRecord value) const;
+};
+ABICXXRecord RecordReceiver::shifted(ABICXXRecord value) const {
+    value.value += bias; value.tag += 1;
+    return value;
+}
+}
+
+const void *ABICXXRecordReceiver(void) {
+    static const ABICXXFixture::RecordReceiver receiver;
+    return &receiver;
+}
+
+namespace ABICXXFixture {
 struct Token {
     int32_t value;
     explicit Token(int32_t value) : value(value) { ++tokens; }

@@ -1,5 +1,18 @@
 #import "CFunctionFixtures.h"
 #include <stdlib.h>
+#include "CXXObjectFixtures.h"
+
+int32_t ABICNextRecordMode(int32_t value) { return value == 7 ? 42 : 7; }
+
+ABICXXRecord ABICTransformRecord(ABICXXRecord value) {
+    value.value += 1.5; value.tag += 2;
+    return value;
+}
+ABICXXNestedRecord ABICTransformNestedRecord(ABICXXNestedRecord value) {
+    value.first = ABICTransformRecord(value.first);
+    value.second += 3;
+    return value;
+}
 
 int32_t ABICAnswer(void) { return 42; }
 int8_t ABICNegative(void) { return -42; }

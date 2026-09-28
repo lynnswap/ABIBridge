@@ -18,6 +18,8 @@ std::string consume(std::string&& value) {
 LargeResult large(long value) {
     return {{value, value + 1, value + 2, value + 3, value + 4, value + 5, value + 6, value + 7}};
 }
+struct Padded { double value; int8_t tag; };
+Padded shift(Padded value) { value.value += 1.5; value.tag += 2; return value; }
 int counter = 42;
 int VirtualCounter::current() const { return value; }
 
@@ -33,6 +35,8 @@ double Counter::many(int a, int b, int c, int d, int e, int f,
     return (value + a + b + c + d + e + f + g + h + i + j + extra) * scale;
 }
 }
+
+extern "C" ABIBridgeFixture::Padded ABIBridgeFixtureShiftPadded(ABIBridgeFixture::Padded value) { return ABIBridgeFixture::shift(value); }
 
 extern "C" int ABIBridgeFixtureCAdd(int left, int right) { return left + right; }
 
