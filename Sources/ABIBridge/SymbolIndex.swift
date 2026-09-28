@@ -612,7 +612,7 @@ final class SymbolIndex {
             throw ABIResolutionError.ambiguousDeclaration(declaration, candidates: candidates.map(\.name).sorted())
         }
         return ResolvedSymbol(declaration: declaration, image: image, sectionRange: match.1.range,
-                              source: match.0.source, address: match.0.address)
+                              source: match.0.source, address: match.0.address, linkageName: match.0.name)
     }
 
     static func slid(_ value: UInt64, by slide: Int64) -> UInt64? {

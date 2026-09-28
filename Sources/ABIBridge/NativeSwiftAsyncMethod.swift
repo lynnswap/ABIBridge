@@ -18,7 +18,8 @@ public struct NativeSwiftAsyncMethod<Result, each Argument>: Sendable {
         self.type = type
         self.receiver = receiver
         call = try SwiftAsyncCall(trailingType: receiver.trailingType, errorPlan: errorPlan,
-                                   inheritsCallerIsolation: inheritsCallerIsolation)
+                                   inheritsCallerIsolation: inheritsCallerIsolation,
+                                   opaqueResult: SwiftOpaqueResultPlan.make(for: Result.self, symbol: symbol, resolver: type.resolver))
     }
 
     /// Awaits a class member or nonmutating value member.

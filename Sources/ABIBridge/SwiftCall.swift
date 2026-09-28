@@ -4,15 +4,15 @@ struct SwiftCall<Result, each Argument>: Sendable {
     let interface: SwiftCallInterface
     let errorPlan: SwiftErrorPlan?
     private let arguments: (repeat SwiftArgumentCodec<each Argument>)
-    private let result: SwiftValueCodec<Result>
+    private let result: SwiftResultCodec<Result>
     private let hasTrailingValue: Bool
     private let consumedArguments: [Int]
     private let argumentCount: Int
 
-    init(trailingType: CValueType? = nil, consumesArguments: Bool = false, errorPlan: SwiftErrorPlan? = nil) throws {
+    init(trailingType: CValueType? = nil, consumesArguments: Bool = false, errorPlan: SwiftErrorPlan? = nil, opaqueResult: SwiftOpaqueResultPlan? = nil) throws {
         self.errorPlan = errorPlan
         let arguments = (repeat try SwiftArgumentCodec<each Argument>(defaultConsuming: consumesArguments))
-        let result = try SwiftValueCodec<Result>()
+        let result = try SwiftResultCodec<Result>(opaque: opaqueResult)
         var parameters: [CValueType] = []
         for argument in repeat each arguments { parameters.append(argument.type) }
         argumentCount = parameters.count

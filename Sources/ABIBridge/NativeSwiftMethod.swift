@@ -31,7 +31,8 @@ public struct NativeSwiftMethod<Result, each Argument>: Sendable {
         self.type = type
         self.receiver = receiver
         self.consumesArguments = consumesArguments
-        call = try SwiftCall(trailingType: receiver.trailingType, consumesArguments: consumesArguments, errorPlan: errorPlan)
+        call = try SwiftCall(trailingType: receiver.trailingType, consumesArguments: consumesArguments, errorPlan: errorPlan,
+            opaqueResult: SwiftOpaqueResultPlan.make(for: Result.self, symbol: symbol, resolver: type.resolver))
     }
 
     func capturing(_ implementation: SwiftImplementation) -> Self {

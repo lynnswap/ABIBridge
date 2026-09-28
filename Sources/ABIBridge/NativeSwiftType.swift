@@ -7,7 +7,7 @@ struct SwiftTypeCacheKey: Hashable {
     let representation: ObjectIdentifier?
 }
 
-private struct SwiftMetadataResponse: BitwiseCopyable, ABIBridgeValue {
+struct SwiftMetadataResponse: BitwiseCopyable, ABIBridgeValue {
     let address: UInt
     let state: UInt
     static let abiType = try! NativeType.structure(

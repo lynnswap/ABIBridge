@@ -32,6 +32,8 @@ Untyped and concrete typed native failures are returned as ``NativeSwiftError``,
 
 Async closure arguments and results use NativeSwiftAsyncClosure or NativeSwiftConcurrentClosure; see <doc:SwiftClosureValues>. Inout and per-argument ownership use the same typed wrappers as synchronous calls; see <doc:SwiftArgumentConventions>. Generic signatures with hidden metadata or witness arguments require a compiled adapter. Calls require a valid async descriptor. See <doc:SwiftFunctionInvocation> for value support and <doc:SwiftErrorABI> for error inspection.
 
+Opaque some results can use NativeSwiftOpaqueValue in the async signature. Their dynamic storage is adopted only on success; see <doc:SwiftOpaqueResults>.
+
 ## Entry and completion
 
 Swift async entries use LLVM's `swifttailcc`. This convention lets the callee remove stack arguments for mandatory tail calls. A compiler-emitted async function descriptor contains a relative function address and a 32-bit context size. The descriptor and code must remain loaded throughout the operation.

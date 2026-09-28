@@ -77,6 +77,11 @@ final class NativeValueStorage {
         destroyValue = { $0.assumingMemoryBound(to: Value.self).deinitialize(count: 1) }
     }
 
+    // Native success has initialized this storage; failure paths never adopt it.
+    func assumeInitialized<Value>(as type: Value.Type) {
+        destroyValue = { $0.assumingMemoryBound(to: type).deinitialize(count: 1) }
+    }
+
     func take<Value>(as type: Value.Type) -> Value {
         let value = address.assumingMemoryBound(to: type).move()
         destroyValue = nil

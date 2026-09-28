@@ -18,7 +18,8 @@ public struct NativeSwiftAsyncFunction<Result, each Argument>: Sendable {
          consumesArguments: Bool = false) throws {
         implementation = try SwiftAsyncImplementation(symbol: symbol, resolver: resolver)
         call = try SwiftAsyncCall(consumesArguments: consumesArguments, errorPlan: errorPlan,
-                                   inheritsCallerIsolation: inheritsCallerIsolation)
+                                   inheritsCallerIsolation: inheritsCallerIsolation,
+                                   opaqueResult: SwiftOpaqueResultPlan.make(for: Result.self, symbol: symbol, resolver: resolver))
         context = metadata.map { unsafeBitCast($0, to: UInt.self) } ?? 0
         self.owner = owner
     }

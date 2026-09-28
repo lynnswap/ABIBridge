@@ -56,15 +56,15 @@ final class SwiftAsyncCallInterface: @unchecked Sendable {
 struct SwiftAsyncCall<Result, each Argument>: Sendable {
     let interface: SwiftAsyncCallInterface
     private let arguments: (repeat SwiftArgumentCodec<each Argument>)
-    private let result: SwiftValueCodec<Result>
+    private let result: SwiftResultCodec<Result>
     let errorPlan: SwiftErrorPlan?
     private let hasTrailingValue: Bool
     private let consumedArguments: [Int]
 
     init(trailingType: CValueType? = nil, consumesArguments: Bool = false,
-         errorPlan: SwiftErrorPlan? = nil, inheritsCallerIsolation: Bool) throws {
+         errorPlan: SwiftErrorPlan? = nil, inheritsCallerIsolation: Bool, opaqueResult: SwiftOpaqueResultPlan? = nil) throws {
         let arguments = (repeat try SwiftArgumentCodec<each Argument>(defaultConsuming: consumesArguments))
-        let result = try SwiftValueCodec<Result>()
+        let result = try SwiftResultCodec<Result>(opaque: opaqueResult)
         var types: [CValueType] = []
         for argument in repeat each arguments { types.append(argument.type) }
         if let trailingType { types.append(trailingType) }

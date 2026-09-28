@@ -9,6 +9,10 @@ extern "C" {
 
 typedef struct ABISwiftCallInterface ABISwiftCallInterface;
 
+/// Reads a valid compiler-emitted generic protocol-requirement reference.
+/// Authenticates indirect Swift descriptor pointers before reading their flags.
+bool ABISwiftProtocolRequirementIsClassBound(const void *reference);
+
 /// A concrete thick Swift closure. Its context is a Swift heap reference,
 /// including closure capture contexts that are not ordinary class instances.
 typedef struct ABISwiftClosureValue {
