@@ -94,6 +94,10 @@ python3 scripts/check-managed-swift-codegen.py
 
 The compiler probe emits LLVM IR and a report under `.build/managed-swift-codegen`. It compares direct frozen/Optional results with resilient indirect results and compiler-generated value operations on arm64, x86_64, arm64e, and arm64_32. The native-consumer CI job runs this probe; the invocation shard runs the runtime tests. A compilation check does not establish runtime support on that target. See the managed Swift values DocC guide for the supported adapter contract.
 
+## Swift generic metadata prototype
+
+`SwiftGenericMetadataTests` verifies the compiler-adapter route for a known generic nominal declaration and existing protocol conformances. It checks canonical metadata identity, conditional conformance success/failure, managed/resilient substitutions, generic result ownership, and untouched output on rejection. Run this suite in Debug and Release with the same scheme/destination above. `scripts/check-swift-generic-codegen.py` records hidden metadata and witness arguments plus indirect value lowering on four architectures. `SwiftGenericConsumer` loads separate provider/adapter libraries without importing their types and destroys the value after the lookup runtime and original loader reference end. These fixtures do not enable general direct generic invocation; see the generic Swift values DocC guide.
+
 ## Swift closure ABI fixtures
 
 `SwiftClosureABITests` compares concrete Swift calls with compiler-authored C adapters using the same managed fixture modules. It covers noncapturing/capturing inputs, nonescaping use, a callback retained by its native callee, returned callbacks after their output storage is released, and explicit Sendable/MainActor signatures.

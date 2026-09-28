@@ -8,6 +8,18 @@ trap 'find "$task_fixture" -delete' EXIT
 python3 "$task_root/scripts/check-managed-swift-codegen.py"
 python3 "$task_root/scripts/check-swift-closure-codegen.py"
 python3 "$task_root/scripts/check-swift-collection-codegen.py"
+python3 "$task_root/scripts/check-swift-generic-codegen.py"
+
+xcrun swiftc -parse-as-library -emit-library -emit-module -enable-library-evolution \
+    -module-name ManagedSwiftFixtures -emit-module-path "$task_fixture/ManagedSwiftFixtures.swiftmodule" \
+    "$task_root/Tests/ManagedSwiftFixtures/Values.swift" "$task_root/Tests/ManagedSwiftFixtures/Generics.swift" \
+    -o "$task_fixture/libManagedSwiftFixtures.dylib"
+xcrun swiftc -parse-as-library -emit-library -module-name ManagedSwiftAdapters \
+    -I "$task_fixture" -L "$task_fixture" -lManagedSwiftFixtures -Xlinker -rpath -Xlinker "$task_fixture" \
+    "$task_root/Tests/ManagedSwiftAdapters/Adapters.swift" "$task_root/Tests/ManagedSwiftAdapters/GenericAdapters.swift" \
+    -o "$task_fixture/libManagedSwiftAdapters.dylib"
+xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
+    --scratch-path "$task_root/.build/native-consumer" SwiftGenericConsumer "$task_fixture/libManagedSwiftAdapters.dylib"
 
 xcrun clang -std=c11 -dynamiclib -mmacosx-version-min=15.4 \
     "$task_root/Tests/NativeConsumer/ClosureLeaseFixture.c" \

@@ -100,4 +100,4 @@ The executable managed-value fixtures compare ordinary compiler calls with ABIBr
 
 The compiler probe separately records the generated call signatures and resilient copy/take/destroy operations for arm64, x86_64, arm64e, and arm64_32 targets. Compilation evidence is not runtime execution coverage. The initial runtime checks use macOS arm64 in Debug and Release; other targets require their own execution evidence.
 
-See <doc:SwiftFunctionInvocation> for direct-call support and <doc:NativeValueAdapters> for the underlying storage API.
+See <doc:SwiftFunctionInvocation> for direct-call support, <doc:NativeValueAdapters> for the underlying storage API, and <doc:GenericSwiftValues> for metatype substitutions and existing protocol conformances.
