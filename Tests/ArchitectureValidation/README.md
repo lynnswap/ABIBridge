@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 6851)
-Total output lines: 158
-
 # Architecture and replacement validation
 
 This package compares compiler-generated calls with ABIBridge's invocation machinery. Run its tests with Xcode using the commands in [CONTRIBUTING](../../CONTRIBUTING.md). The `replacement` mode additionally checks the internal Objective-C callback boundary on a signed device host. It is not a public hook-installation API.
@@ -86,7 +83,15 @@ On iPhone Air / iOS 27.0 / arm64e, the ordinary signed host preserved all three 
 
 The `virtual-hooks` mode exercises the internal managed transport on the same compiler tables. It covers callback order, independent and in-flight invalidation, secondary/covariant predecessors, saved callable entries, external displacement, failed preparation cleanup, and a caller-supplied keepalive joining an existing borrowed entry. `ManagedVirtualConsumer` requires a writable control and additionally combines imported and explicit virtual registrations on one C-compatible dispatch slot. Public operation-specific frontends are a separate interface layer.
 
-The `virtual-entries` mode resolves primary, secondary and covariant entries by their source-level implementation declarations and invokes them with the original fixup auth…351 tokens truncated…ts internal indexes; it builds optimized provider and caller dylibs from the `SwiftReplacementFixtures` and `SwiftReplacementCaller` sources. It resolves declarations through ABIBridge's source-name indexes, replaces compatible compiler-generated Swift entries through the pointer-slot transport, and restores each original representation before releasing its images. It does not install a C callback at a Swift entry point or reinterpret a capturing Swift closure as code.
+The `virtual-entries` mode resolves primary, secondary and covariant entries by their source-level implementation declarations and invokes them with the original fixup authentication schema. It runs against compiler-emitted tables with normal page protections. An iPhone Air / iOS 27.0 / arm64e run passed the three named selections and their captured calls. arm64e.x1 runtime behavior remains unverified.
+
+The `virtual-public` mode exercises the public Swift and C/C++ shared-entry APIs, including mixed registrations, secondary/covariant continuations and captured dispatchers after invalidation. On iPhone Air / iOS 27.0 / arm64e, the normal host reported TPRO refusal without mutation, and a disposable `-no_data_const` control passed all callback checks. Production link settings remain unchanged. The native consumer suite also covers the public C and Objective-C++ interfaces, including ARC capture release.
+
+The arm64e iPhone Air writable control passed these managed cases, including allocator-backed storage with a logical pointer tag. VM region/protection operations use an untagged address; actual loads and atomic stores keep the caller's pointer tag. Normal signed-host registration reports TPRO refusal and releases its callback without changing dispatch. Published entries retain their storage/code dependencies for process lifetime; explicit keepalives supplied by later registrations can add retained owners, independently of callback capture cleanup.
+
+## Compiled Swift replacements
+
+`SwiftReplacementTests` runs in the Debug test harness because it inspects internal indexes; it builds optimized provider and caller dylibs from the `SwiftReplacementFixtures` and `SwiftReplacementCaller` sources. It resolves declarations through ABIBridge's source-name indexes, replaces compatible compiler-generated Swift entries through the pointer-slot transport, and restores each original representation before releasing its images. It does not install a C callback at a Swift entry point or reinterpret a capturing Swift closure as code.
 
 | Path | Validation |
 | --- | --- |
