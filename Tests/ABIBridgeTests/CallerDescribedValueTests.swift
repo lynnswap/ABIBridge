@@ -140,6 +140,12 @@ struct CallerDescribedValueTests {
     @Test func layoutsOutsideTheValuesExtentStillFail() throws {
         let value = CallerRecord(value: 2, tag: 3)
         #expect(throws: NativeValueError.self) { try NativeValue(copying: value, as: .int64) }
+        let narrow = try NativeValue(copying: Int64(42), as: .int64)
+        #expect(throws: NativeValueError.self) { try CallerRecord(nativeValue: narrow) }
+        let wide = NativeValue(type: try .opaque(named: "too-wide", size: MemoryLayout<CallerRecord>.stride + 1)) {
+            $0.initializeMemory(as: UInt8.self, repeating: 0)
+        }
+        #expect(throws: NativeValueError.self) { try CallerRecord(nativeValue: wide) }
         #expect(throws: NativeValueError.self) {
             try NativeValue(copying: value, as: .opaque(named: "oversized", size: MemoryLayout<CallerRecord>.stride + 1))
         }

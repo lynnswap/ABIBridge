@@ -41,6 +41,9 @@ extension ABIBridgeValue where Self: BitwiseCopyable {
     /// Field offsets and valid value representations remain the conformance's
     /// responsibility. Use custom conversions when Swift and native storage differ.
     public init(nativeValue: NativeValue) throws {
+        guard (MemoryLayout<Self>.size...MemoryLayout<Self>.stride).contains(nativeValue.type.size) else {
+            throw NativeValueError.incompatibleSize(expected: MemoryLayout<Self>.size, actual: nativeValue.type.size)
+        }
         self = try unsafe nativeValue.read(as: Self.self)
     }
 
