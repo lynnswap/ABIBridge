@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <cstring>
 #include <memory>
+#include <new>
+#include <limits>
 
 // Swift's stable runtime uses preserve_most for reference counting on AArch64.
 // These operations also handle capture contexts, whose metadata need not be
@@ -132,6 +134,34 @@ void fail(ABIResolutionFailure **error, int code, const char *message) {
 size_t aligned(size_t value, size_t alignment) {
     return (value + alignment - 1) & ~(alignment - 1);
 }
+}
+
+ABIValueType *ABICreateSwiftStorageType(
+    const ABIValueType *components, size_t size, size_t alignment, ABIResolutionFailure **error)
+{
+    if (error) *error = nullptr;
+    if (!components || !alignment ||
+        (alignment & (alignment - 1)) || alignment > std::numeric_limits<unsigned short>::max()) {
+        fail(error, ABIFailureInvalidRequest, "Swift storage must contain its components and have a valid alignment.");
+        return nullptr;
+    }
+    std::vector<Component> fields;
+    flatten(*components->storage, 0, fields);
+    if (std::any_of(fields.begin(), fields.end(), [size](const Component &field) {
+        return field.offset > size || field.size > size - field.offset;
+    })) {
+        fail(error, ABIFailureInvalidRequest, "Swift ABI components exceed the value's accessible bytes.");
+        return nullptr;
+    }
+    auto source = components->storage;
+    if (source->size() == size && source->native()->alignment == alignment)
+        return new ABIValueType{std::move(source)};
+    auto storage = std::make_shared<TypeStorage>();
+    storage->fields.push_back(source);
+    storage->offsets.push_back(0);
+    storage->elements = {source->native(), nullptr};
+    storage->aggregate = {size, static_cast<unsigned short>(alignment), FFI_TYPE_STRUCT, storage->elements.data()};
+    return new ABIValueType{std::move(storage)};
 }
 
 struct ABISwiftCallInterface {
@@ -277,15 +307,24 @@ struct SwiftFallbackOwner {
     ~SwiftFallbackOwner() { if (release) release(context); }
 };
 struct AlignedValue {
-    std::vector<std::max_align_t> words;
-    explicit AlignedValue(size_t size) : words(std::max(size_t(1), (size + sizeof(std::max_align_t) - 1) / sizeof(std::max_align_t))) {}
-    void *data() { return words.data(); }
+    struct Delete {
+        std::align_val_t alignment;
+        void operator()(void *address) const { ::operator delete(address, alignment); }
+    };
+    std::unique_ptr<void, Delete> storage;
+    AlignedValue(size_t size, size_t alignment)
+        : storage(::operator new(aligned(std::max(size_t(1), size), alignment), std::align_val_t(std::max(alignment, alignof(std::max_align_t)))),
+                  Delete{std::align_val_t(std::max(alignment, alignof(std::max_align_t)))}) {
+        std::memset(storage.get(), 0, size);
+    }
+    void *data() { return storage.get(); }
 };
 struct SwiftOwnedResult {
     AlignedValue value;
     SwiftHandler &handler;
     bool initialized = false;
-    SwiftOwnedResult(size_t size, SwiftHandler &handler) : value(size), handler(handler) {}
+    SwiftOwnedResult(TypeStorage &type, SwiftHandler &handler)
+        : value(type.size(), type.native()->alignment), handler(handler) {}
     ~SwiftOwnedResult() { clear(); }
     void clear() {
         const bool owned = initialized;
@@ -406,7 +445,7 @@ void unpackArguments(const ABISwiftCallInterface &interface, CallFrame &frame,
     storage.reserve(interface.parameters.size());
     arguments.reserve(interface.parameters.size());
     for (const auto &type : interface.parameters) {
-        storage.emplace_back(type->size());
+        storage.emplace_back(type->size(), type->native()->alignment);
         arguments.push_back(storage.back().data());
     }
     for (const auto &move : interface.moves) {
@@ -463,7 +502,7 @@ bool ABISwiftIncomingProceed(ABISwiftIncomingCall *call, void *const *arguments,
     if (count != interface.parameters.size()) {
         fail(error, ABIFailureInvalidRequest, "The argument count must match the Swift call interface."); return false;
     }
-    auto result = std::make_unique<SwiftOwnedResult>(interface.result->size(), *call->handler);
+    auto result = std::make_unique<SwiftOwnedResult>(*interface.result, *call->handler);
     if (!ABIUnsafeInvokeSwiftCallInterface(&interface, call->callback.fallback, result->value.data(), arguments, receiver, error)) return false;
     result->initialized = true;
     // Publish the new state before releasing an old value. Its destructor may
@@ -485,7 +524,7 @@ bool ABISwiftIncomingSetResult(ABISwiftIncomingCall *call, const void *value, si
     if (size != call->callback.interface.result->size() || (size && !value)) {
         fail(error, ABIFailureInvalidRequest, "The owned result must match the Swift result storage."); return false;
     }
-    auto result = std::make_unique<SwiftOwnedResult>(size, *call->handler);
+    auto result = std::make_unique<SwiftOwnedResult>(*call->callback.interface.result, *call->handler);
     if (size) std::memcpy(result->value.data(), value, size);
     result->initialized = true;
     auto previous = std::move(call->assigned);
@@ -498,7 +537,7 @@ extern "C" __attribute__((visibility("hidden"))) void ABIDispatchSwiftCallback(A
         std::vector<AlignedValue> storage;
         std::vector<void *> arguments;
         unpackArguments(callback->interface, *frame, storage, arguments);
-        AlignedValue result(callback->interface.result->size());
+        AlignedValue result(callback->interface.result->size(), callback->interface.result->native()->alignment);
         callback->closure->functions.invoke(callback->closure->context, arguments.data(), result.data());
         packResult(callback->interface, *frame, result.data());
         return; // The native caller owns the initialized result.
@@ -510,7 +549,7 @@ extern "C" __attribute__((visibility("hidden"))) void ABIDispatchSwiftCallback(A
         std::vector<AlignedValue> storage;
         std::vector<void *> arguments;
         unpackArguments(callback->interface, *frame, storage, arguments);
-        AlignedValue result(callback->interface.result->size());
+        AlignedValue result(callback->interface.result->size(), callback->interface.result->native()->alignment);
         // The interface and original buffers were established before publishing
         // this entry; failure here would violate an internal invocation contract.
         if (!ABIUnsafeInvokeSwiftCallInterface(&callback->interface, callback->fallback, result.data(), arguments.data(), receiver, nullptr)) std::abort();
@@ -522,7 +561,7 @@ extern "C" __attribute__((visibility("hidden"))) void ABIDispatchSwiftCallback(A
     call.handler->functions.invoke(call.handler->context, &call);
     call.active = false;
     if (!call.assigned && !call.completed) {
-        call.completed = std::make_unique<SwiftOwnedResult>(callback->interface.result->size(), *call.handler);
+        call.completed = std::make_unique<SwiftOwnedResult>(*callback->interface.result, *call.handler);
         if (!ABIUnsafeInvokeSwiftCallInterface(&callback->interface, callback->fallback,
             call.completed->value.data(), call.arguments.data(), receiver, nullptr)) std::abort();
         call.completed->initialized = true;

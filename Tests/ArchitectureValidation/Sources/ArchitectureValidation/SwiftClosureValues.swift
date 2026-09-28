@@ -3,6 +3,22 @@ import CoreGraphics
 import SwiftReplacementFixtures
 import Synchronization
 
+extension ExplicitVector: ABIBridgeSwiftValue {
+    public static var swiftABIType: NativeType {
+        try! .structure(named: "ExplicitVector", fields: [.pointer, .double, .double])
+    }
+}
+extension ExplicitChoice: ABIBridgeSwiftValue {
+    public static var swiftABIType: NativeType {
+        try! .structure(named: "ExplicitChoice", fields: Array(repeating: .uint, count: MemoryLayout<Int64>.size / MemoryLayout<UInt>.size) + [.uint8])
+    }
+}
+extension ExplicitLarge: ABIBridgeSwiftValue {
+    public static var swiftABIType: NativeType {
+        try! .structure(named: "ExplicitLarge", fields: [.pointer, .int64, .int64, .int64, .int64])
+    }
+}
+
 private final class ClosureProbeCounter: Sendable {
     let value = Mutex(0)
     func increment() { value.withLock { $0 += 1 } }
@@ -140,5 +156,50 @@ private final class ClosureProbeCapture: Sendable {
     let presentResult = try unsafe returnedOptional.unsafeInvoke("input")
     try check(absentResult == nil && presentResult == "input" + prefix,
               "Returned Optional String closure matches native pointer authentication")
+    let vectorCall = try await runtime.swiftFunction(
+        named: "SwiftReplacementFixtures.callExplicitVector(_:_:)",
+        as: ((NativeSwiftClosure<ExplicitVector, ExplicitVector>, ExplicitVector) -> ExplicitVector).self
+    )
+    let vectorBody = try NativeSwiftClosure { (value: ExplicitVector) in
+        ExplicitVector(token: value.token, x: value.x + 1, y: value.y + 2)
+    }
+    let token = ExplicitValueToken(42)
+    let vector = try unsafe vectorCall.unsafeInvoke(vectorBody, ExplicitVector(token: token, x: 1, y: 2))
+    try check(vector.token === token && vector.x == 2 && vector.y == 4,
+              "Explicit managed struct preserves mixed registers, ownership, and authentication")
+    let choiceCall = try await runtime.swiftFunction(
+        named: "SwiftReplacementFixtures.callExplicitChoice(_:_:)",
+        as: ((NativeSwiftClosure<ExplicitChoice, ExplicitChoice>, ExplicitChoice) -> ExplicitChoice).self
+    )
+    let choiceBody = try NativeSwiftClosure<ExplicitChoice, ExplicitChoice> { $0 }
+    let choice = try unsafe choiceCall.unsafeInvoke(choiceBody, .number(-42))
+    if case .number(let actual) = choice {
+        try check(actual == -42, "Explicit enum preserves its payload and tag in an authenticated callback")
+    } else { throw ArchitectureValidationFailure(description: "Explicit enum lost its number tag") }
+    let choiceFactory = try await runtime.swiftFunction(
+        named: "SwiftReplacementFixtures.makeExplicitChoice()",
+        as: (() -> NativeSwiftClosure<ExplicitChoice, ExplicitChoice>).self
+    )
+    let returnedChoice = try unsafe choiceFactory.unsafeInvoke()
+    weak var observedValue: ExplicitValueToken?
+    var heldChoice: ExplicitChoice?
+    do {
+        let value = ExplicitValueToken(7)
+        observedValue = value
+        heldChoice = try unsafe returnedChoice.unsafeInvoke(.token(value))
+    }
+    try withExtendedLifetime(heldChoice) {
+        try check(observedValue != nil, "Returned enum closure transfers its reference payload")
+    }
+    heldChoice = nil
+    try check(observedValue == nil, "Explicit enum destruction releases its reference payload")
+    let largeCall = try await runtime.swiftFunction(
+        named: "SwiftReplacementFixtures.callExplicitLarge(_:_:)",
+        as: ((NativeSwiftClosure<ExplicitLarge, ExplicitLarge>, ExplicitLarge) -> ExplicitLarge).self
+    )
+    let largeBody = try NativeSwiftClosure<ExplicitLarge, ExplicitLarge> { $0 }
+    let large = try unsafe largeCall.unsafeInvoke(largeBody, ExplicitLarge(token: token, a: 1, b: 2, c: 3, d: 4))
+    try check(large.token === token && large.a == 1 && large.d == 4,
+              "Indirect large managed value uses the compiler's closure discriminator")
     return checks
 }

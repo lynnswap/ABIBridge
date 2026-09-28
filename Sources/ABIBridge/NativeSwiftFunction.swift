@@ -68,8 +68,8 @@ final class SwiftCallInterface: @unchecked Sendable {
 ///
 /// The prepared call uses the platform Swift calling convention. Supported
 /// representations include scalar values, pointers, class references, String,
-/// Array, their supported optional forms, standard C value types, and fixed
-/// trivial layouts supplied by ABIBridgeValue.
+/// Array, their supported optional forms, standard C value types, managed fixed
+/// layouts supplied by ABIBridgeSwiftValue, and trivial ABIBridgeValue layouts.
 /// Use NativeSwiftClosure for supported concrete callbacks. Generic declarations,
 /// resilient values, ordinary unwrapped closures, inout and consumed
 /// arguments, async functions, and throwing functions require separate adapters.

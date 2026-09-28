@@ -5,12 +5,24 @@ import ABIBridgeCore
 // https://github.com/swiftlang/swift/blob/main/lib/SIL/IR/SILFunctionType.cpp
 func swiftClosureAuthType(_ type: Any.Type) throws -> String {
     let base = (type as? any NativeOptionalValue.Type)?.wrappedType ?? type
-    guard !(base is any ABIBridgeValue.Type), !(base is any SwiftClosureValue.Type) else {
+    let managed = type is any ABIBridgeSwiftValue.Type
+    guard (!(base is any ABIBridgeValue.Type) || managed), !(base is any SwiftClosureValue.Type) else {
         throw ABIResolutionError.unsupportedDeclaration(
-            "Closure signatures require built-in Swift representations; custom adapters and nested closures are not supported."
+            "Closure signatures require built-in or explicitly described Swift values; foreign conversions and nested closures are not supported."
         )
     }
     if base is AnyClass || base == AnyObject.self { return "-class" }
+    if let value = type as? any ABIBridgeSwiftValue.Type {
+        let components = try value.swiftABIType.requireCType()
+        if withExtendedLifetime(components, { ABISwiftValueIsIndirect(components.handle) }) {
+            return "-indirect"
+        }
+    }
+    if managed && String(reflecting: type).contains("<") {
+        throw ABIResolutionError.unsupportedDeclaration(
+            "Generic Swift value closure authentication requires a compiler adapter."
+        )
+    }
     guard var name = _mangledTypeName(base) else {
         throw ABIResolutionError.metadataUnavailable("No Swift closure type identity for \(String(reflecting: type)).")
     }

@@ -48,9 +48,12 @@ The initial subset supports synchronous, nonthrowing closures with ordinary guar
 | Managed values | String, Array<Element>, and their single-level optional forms; class references and AnyObject, including optional references |
 | Pointer values | UnsafePointer, UnsafeMutablePointer, UnsafeRawPointer, UnsafeMutableRawPointer, OpaquePointer, Selector, and their optional forms |
 | Standard value layouts | CGPoint, CGSize, CGRect, NSRange |
+| Explicit Swift layouts | Nongeneric ABIBridgeSwiftValue conformances with established fixed lowering; large indirectly lowered values |
 | Empty values | Zero arguments, explicit empty-tuple arguments, and Void results |
 
 An array's element type can itself be a managed struct, enum, optional, or another array without requiring direct-call support for that element. The compiler manages elements through the buffer's value operations. This does not make a standalone element value a supported callback argument. String and Array optionals preserve nil separately from empty payloads; nested optional containers still require an adapter.
+
+`ABIBridgeSwiftValue` conformances use compiler-owned value operations and can therefore pass actual managed Swift values without custom conversion callbacks; see <doc:ExplicitSwiftValues>.
 
 Custom `ABIBridgeValue` conversions can throw, while a nonthrowing native callback has no error-result channel. They are therefore outside this callback subset. Nested closures, value Optionals without an established direct representation, generic declarations, async/throwing callbacks, and explicit inout/consuming callback conventions require a compiler adapter.
 

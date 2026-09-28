@@ -1,6 +1,6 @@
 # Working with managed Swift values
 
-Use a compiled adapter when a Swift value needs copying, destruction, or a calling convention that the direct Swift frontend does not support.
+Use a compiled adapter for managed Swift values whose calling convention is not described by the direct Swift frontend.
 
 ## Choose the invocation boundary
 
@@ -10,12 +10,12 @@ A concrete metatype lets Swift code allocate and operate on a value through the 
 | --- | --- | --- |
 | String, Array<Element>, their single-level optional forms, and class references | Supported with Swift ownership | Available when another part of the signature needs adaptation |
 | Fixed trivial layouts described by ABIBridgeValue | Supported within the documented Swift subset | Required if the declaration has additional unsupported conventions |
-| A struct containing a reference | No general by-value support | The compiler copies and destroys the actual Swift type |
+| A struct or enum containing a reference | An explicit ABIBridgeSwiftValue conformance supports an established fixed ABI | The compiler adapts additional calling conventions |
 | A value Optional, such as Int64? | No general by-value support | The compiler handles both the payload and the nil representation |
 | A non-frozen struct from a library-evolution module | No general by-value support | An importing adapter handles resilient metadata and indirect results |
 | A type unavailable to the adapter's compiler | No inferred by-value ABI | Requires an existing compatible adapter supplied by the owning module |
 
-This is a bounded adapter-based contract. It does not add arbitrary managed values to ``NativeSwiftFunction``, infer layouts for tuples or enums, or implement generic, existential, opaque-result, noncopyable, async, or throwing Swift invocation.
+Compiled adapters handle signatures beyond the explicit fixed-layout support in <doc:ExplicitSwiftValues>. Metadata and storage size alone do not infer layouts for tuples or enums, or establish generic, existential, opaque-result, noncopyable, async, or throwing Swift invocation.
 
 ## Pass imported values through storage
 

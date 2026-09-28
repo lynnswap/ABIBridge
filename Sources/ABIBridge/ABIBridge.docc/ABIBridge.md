@@ -169,6 +169,8 @@ print(symbol.image.path)
 
 - <doc:SwiftFunctionInvocation>
 - <doc:ManagedSwiftValues>
+- <doc:ExplicitSwiftValues>
+- ``ABIBridgeSwiftValue``
 - <doc:GenericSwiftValues>
 - <doc:SwiftClosureValues>
 - ``NativeSwiftClosure``
