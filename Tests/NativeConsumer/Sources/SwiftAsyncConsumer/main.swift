@@ -66,4 +66,11 @@ do {
     error.withUnderlyingError { precondition(($0 as? Failure)?.code == 44) }
 }
 precondition(buffer.value == "value!?")
-print("Public async consumer passed: suspension, task locals, caller executor, typed errors, inout, and per-argument ownership")
+public protocol Summary: Sendable { var number: Int64 { get } }
+public struct SummaryValue: Summary { public let number: Int64 }
+public func echoSummary(_ value: any Summary) -> any Summary { value }
+let echoSummary = try await runtime.swiftFunction(named: "SwiftAsyncConsumer.echoSummary(_:)",
+    as: ((any Summary) -> any Summary).self)
+let summary = try unsafe echoSummary.unsafeInvoke(SummaryValue(number: 42))
+precondition(summary.number == 42 && summary is SummaryValue)
+print("Public async consumer passed: suspension, task locals, caller executor, typed errors, inout, per-argument ownership, and protocol existentials")

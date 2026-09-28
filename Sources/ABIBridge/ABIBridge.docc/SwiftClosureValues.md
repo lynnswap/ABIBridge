@@ -21,6 +21,8 @@ The initializer accepts a nonisolated, synchronous, nonthrowing `@Sendable` body
 
 A retained native callback owns the Swift context that keeps its generated entry and body alive. Releasing the original wrapper does not invalidate a copy held by the callee. The last native context release releases the body and its captures; there is no separate invalidate or close operation.
 
+Simple existential arguments and results, including Any, protocol compositions, class constraints, and Error, use their compiler-established container and authentication conventions; see <doc:SwiftExistentialValues>.
+
 ## Call a returned closure
 
 For a loaded module declaring `func makeAdder(_ bias: Int64) -> (Int64) -> Int64`:

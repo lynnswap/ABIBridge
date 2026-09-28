@@ -46,6 +46,9 @@ struct SwiftValueCodec<Value>: Sendable {
         } else if isObject {
             type = try CValueType(scalar: ABIValuePointer)
             cValue = nil
+        } else if let existential = SwiftExistentialRepresentation(base) {
+            type = try existential.valueType(for: Value.self)
+            cValue = nil
         } else if base is any SwiftArrayValue.Type {
             type = try CValueType(scalar: ABIValuePointer)
             cValue = nil
