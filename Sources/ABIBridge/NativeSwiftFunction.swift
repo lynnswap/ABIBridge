@@ -1,6 +1,7 @@
 import ABIBridgeCore
 
 func swiftFunctionTypeName(_ type: Any.Type) throws -> String {
+    if type == NativeSwiftOpaqueValue.self { return "some" }
     if let closure = type as? any SwiftClosureValue.Type { return try swiftFunctionTypeName(closure.swiftFunctionType) }
     // Objective-C metatypes can print an unqualified runtime name (NSString),
     // while Swift declarations use their imported identity (__C.NSString).
@@ -53,7 +54,7 @@ func swiftFunctionDeclaration(
     let member = prefix.split(separator: ".").last ?? prefix
     let generic = prefix.last(where: { !$0.isWhitespace }) == ">"
         && member.contains { $0.isLetter || $0.isNumber || $0 == "_" }
-    let outerSignature = swiftOuterSignature(declaration)
+    let outerSignature = swiftOuterSignature(declaration).text
     guard !generic, (isAsync || !outerSignature.contains(" async ")),
           (failureType != Never.self || !outerSignature.contains(" throws")) else {
         throw ABIResolutionError.unsupportedDeclaration(
@@ -65,20 +66,22 @@ func swiftFunctionDeclaration(
 
 // Effect annotations inside parameter/result closure types do not describe the
 // enclosing function. Keep only top-level text before its result arrow.
-private func swiftOuterSignature(_ declaration: String) -> String {
+func swiftOuterSignature(_ declaration: String) -> (text: String, result: Substring?) {
     var depth = 0
     var result = ""
     var index = declaration.startIndex
     while index < declaration.endIndex {
         let character = declaration[index]
         let next = declaration.index(after: index)
-        if depth == 0, character == "-", next < declaration.endIndex, declaration[next] == ">" { break }
+        if depth == 0, character == "-", next < declaration.endIndex, declaration[next] == ">" {
+            return (result, declaration[declaration.index(after: next)...])
+        }
         if character == "(" { depth += 1 }
         else if character == ")" { depth -= 1 }
         else if depth == 0 { result.append(character) }
         index = next
     }
-    return result
+    return (result, nil)
 }
 
 final class SwiftCallInterface: @unchecked Sendable {
@@ -128,12 +131,13 @@ public struct NativeSwiftFunction<Result, each Argument>: Sendable {
     var errorPlan: SwiftErrorPlan? { call.errorPlan }
 
     init(symbol: ResolvedSymbol, metadata: Any.Type? = nil, owner: NativeSwiftType? = nil,
-         consumesArguments: Bool = false, errorPlan: SwiftErrorPlan? = nil) throws {
+         consumesArguments: Bool = false, errorPlan: SwiftErrorPlan? = nil, resolver: SymbolResolver? = nil) throws {
         self.symbol = symbol
         self.consumesArguments = consumesArguments
         context = metadata.map { unsafeBitCast($0, to: UInt.self) } ?? 0
         typeOwner = owner
-        call = try SwiftCall(consumesArguments: consumesArguments, errorPlan: errorPlan)
+        call = try SwiftCall(consumesArguments: consumesArguments, errorPlan: errorPlan,
+            opaqueResult: SwiftOpaqueResultPlan.make(for: Result.self, symbol: symbol, resolver: resolver ?? owner?.resolver))
     }
 
     func capturing(_ implementation: SwiftImplementation) -> Self {
@@ -182,7 +186,7 @@ extension ABIRuntime {
         let errorPlan = try SwiftErrorPlan.make(Failure.self)
         return try NativeSwiftFunction(
             symbol: resolve(swiftFunctionDeclaration(named: name, as: signature), in: scope, loading: loading),
-            errorPlan: errorPlan
+            errorPlan: errorPlan, resolver: resolver
         )
     }
 
@@ -204,7 +208,7 @@ extension ABIRuntime {
         let errorPlan = try SwiftErrorPlan.make(Failure.self)
         return try NativeSwiftFunction(
             symbol: resolve(swiftFunctionDeclaration(named: name, as: signature), in: image, loading: loading),
-            errorPlan: errorPlan
+            errorPlan: errorPlan, resolver: resolver
         )
     }
 }

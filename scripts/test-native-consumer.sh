@@ -17,6 +17,7 @@ python3 "$task_root/scripts/check-swift-throwing-closure-codegen.py"
 python3 "$task_root/scripts/check-swift-async-closure-codegen.py"
 python3 "$task_root/scripts/check-swift-argument-codegen.py"
 python3 "$task_root/scripts/check-swift-existential-codegen.py"
+python3 "$task_root/scripts/check-swift-opaque-codegen.py"
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" SwiftExplicitValueConsumer
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \

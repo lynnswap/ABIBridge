@@ -183,6 +183,8 @@ All seven checks passed in a Release arm64e build on iPhone Air (iOS 27, build 2
 
 ## Async Swift closure values
 
+The `swift-opaque` mode verifies hidden aligned managed results, complete metadata, protocol erasure, copied-handle lifetime, cache removal, scalar/empty opaque results, throwing completion, getters, and async suspension/cancellation. All 10 checks passed in a Release arm64e build on iPhone Air (iOS 27, build 24A435), with pointer authentication enabled. Its report is `Documents/architecture-swift-opaque.json`.
+
 The `swift-existentials` mode verifies Any and protocol compositions, inline/out-of-line payload ownership, class-constrained layouts, generated/returned callbacks, optional class/error authentication, and async existential results. All 14 checks passed in a Release arm64e build on iPhone Air (iOS 27, build 24A435), with pointer authentication enabled. Its report is `Documents/architecture-swift-existentials.json`.
 
 The `swift-arguments` mode verifies typed inout storage, managed/scalar writeback on success and failure, consumed indirect-value lifetimes, mixed initializer ownership, and async suspension/cancellation. All nine checks passed in a Release arm64e build on iPhone Air (iOS 27, build 24A435), with pointer authentication enabled. Its report is `Documents/architecture-swift-arguments.json`.

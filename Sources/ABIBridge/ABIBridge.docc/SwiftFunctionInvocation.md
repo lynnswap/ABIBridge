@@ -32,6 +32,7 @@ The framework/path and retained-image overloads use the same symbol indexes as o
 | Any, simple protocol existentials, and their single-level optional forms | Compiler-managed containers with the native existential calling convention; see <doc:SwiftExistentialValues> |
 | ABIBridgeSwiftValue | Actual Swift values with explicit fixed or formally indirect conventions and compiler-owned copying/destruction |
 | ABIBridgeValue | Explicit trivial native layouts representable by NativeType's scalar/structure descriptions |
+| NativeSwiftOpaqueValue | Owned hidden result of a single native some declaration; see <doc:SwiftOpaqueResults> |
 | Void | An empty result or explicit empty-tuple argument |
 
 The call interface expands values into Swift integer/floating components, spills excess arguments to the stack, and handles direct or indirect results. There is no fixed argument-count limit. It does not call a Swift implementation through a C ABI interface or cast its address to an ordinary Swift closure.

@@ -62,6 +62,8 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         checks += try await validateSwiftLookup()
     case "objc-values":
         checks += try validateObjectiveCValues()
+    case "swift-opaque":
+        checks += try await validateSwiftOpaqueResults()
     case "swift-existentials":
         checks += try await validateSwiftExistentials()
     case "swift-arguments":
