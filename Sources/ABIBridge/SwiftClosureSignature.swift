@@ -15,6 +15,9 @@ func swiftClosureAuthType(_ type: Any.Type) throws -> String {
         )
     }
     if base is AnyClass || base == AnyObject.self { return "-class" }
+    if let existential = SwiftExistentialRepresentation(base) {
+        return existential.closureAuthType(optional: type is any NativeOptionalValue.Type)
+    }
     if let value = type as? any ABIBridgeSwiftValue.Type {
         guard let components = value.swiftABIType.cType else { return "-indirect" }
         if withExtendedLifetime(components, { ABISwiftValueIsIndirect(components.handle) }) {

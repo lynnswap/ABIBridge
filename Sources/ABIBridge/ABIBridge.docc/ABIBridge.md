@@ -169,6 +169,7 @@ print(symbol.image.path)
 
 - <doc:SwiftFunctionInvocation>
 - <doc:SwiftArgumentConventions>
+- <doc:SwiftExistentialValues>
 - ``NativeSwiftInout``
 - ``NativeSwiftBorrowing``
 - ``NativeSwiftConsuming``

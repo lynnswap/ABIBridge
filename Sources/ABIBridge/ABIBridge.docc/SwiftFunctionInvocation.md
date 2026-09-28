@@ -29,13 +29,14 @@ The framework/path and retained-image overloads use the same symbol indexes as o
 | NativeSwiftAsyncClosure, NativeSwiftConcurrentClosure | Owned async closures with caller-isolated or concurrent conventions and declared error effects |
 | Unsafe pointers, OpaquePointer, Selector, and optional pointers | Borrowed pointer values |
 | CGPoint, CGSize, CGRect, NSRange | Known fixed value layouts lowered with the Swift ABI |
+| Any, simple protocol existentials, and their single-level optional forms | Compiler-managed containers with the native existential calling convention; see <doc:SwiftExistentialValues> |
 | ABIBridgeSwiftValue | Actual Swift values with explicit fixed or formally indirect conventions and compiler-owned copying/destruction |
 | ABIBridgeValue | Explicit trivial native layouts representable by NativeType's scalar/structure descriptions |
 | Void | An empty result or explicit empty-tuple argument |
 
 The call interface expands values into Swift integer/floating components, spills excess arguments to the stack, and handles direct or indirect results. There is no fixed argument-count limit. It does not call a Swift implementation through a C ABI interface or cast its address to an ordinary Swift closure.
 
-Use ``ABIBridgeSwiftValue`` for an imported managed struct or enum with an established fixed ABI; see <doc:ExplicitSwiftValues>. A custom adapter's layout must match the declaration, including field offsets, padding, and whether its ABI is fixed. C-compatible storage descriptions do not describe every Swift struct or enum. Nontrivial foreign values, resilient layouts, existential containers, ordinary unwrapped function values, and generic metadata or witness arguments require a compiled native adapter. Use ``NativeSwiftClosure`` for the concrete callback subset described in <doc:SwiftClosureValues>. Use a C-compatible bridge with the C frontend for those cases. See <doc:ManagedSwiftValues> for a verified compiler-adapter path for managed structs, value Optionals, and imported resilient values.
+Use ``ABIBridgeSwiftValue`` for an imported managed struct or enum with an established fixed ABI; see <doc:ExplicitSwiftValues>. A custom adapter's layout must match the declaration, including field offsets, padding, and whether its ABI is fixed. C-compatible storage descriptions do not describe every Swift struct or enum. Nontrivial foreign values, undescribed resilient layouts, extended existentials, ordinary unwrapped function values, and generic metadata or witness arguments require a compiled native adapter. Use ``NativeSwiftClosure`` for the concrete callback subset described in <doc:SwiftClosureValues>. Use a C-compatible bridge with the C frontend for those cases. See <doc:ManagedSwiftValues> for a verified compiler-adapter path for managed structs, value Optionals, and imported resilient values.
 
 ## Ownership and isolation
 
