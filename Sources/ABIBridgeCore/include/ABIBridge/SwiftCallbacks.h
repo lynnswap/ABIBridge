@@ -58,6 +58,8 @@ typedef struct ABISwiftAsyncClosureCallbackFunctions {
     void (*releaseContext)(void *context);
     void *(*copyCodeOwner)(void *context);
 } ABISwiftAsyncClosureCallbackFunctions;
+/// Success consumes context; failure consumes neither context nor its release
+/// responsibility. Native closure contexts keep the callback alive through all calls.
 ABISwiftAsyncClosureCallback *ABICreateSwiftAsyncClosureCallback(ABISwiftAsyncCallInterface *interface,
     ABISwiftAsyncClosureCallbackFunctions functions, void *context, ABIResolutionFailure **error);
 const void *ABISwiftAsyncClosureCallbackDescriptor(const ABISwiftAsyncClosureCallback *callback);
