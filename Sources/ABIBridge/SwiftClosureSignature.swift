@@ -14,8 +14,10 @@ func swiftClosureAuthType(_ type: Any.Type) throws -> String {
     guard var name = _mangledTypeName(base) else {
         throw ABIResolutionError.metadataUnavailable("No Swift closure type identity for \(String(reflecting: type)).")
     }
-    // SIL ignores the pointee substitution for these standard nominal types.
-    if base is any NativePointerValue.Type {
+    // SIL hashes these nominal declarations without their generic substitutions.
+    if base is any SwiftArrayValue.Type {
+        name = "Sa"
+    } else if base is any NativePointerValue.Type {
         if name.hasPrefix("SPy") { name = "SP" }
         else if name.hasPrefix("Spy") { name = "Sp" }
     }

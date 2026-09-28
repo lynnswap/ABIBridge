@@ -45,10 +45,12 @@ The initial subset supports synchronous, nonthrowing closures with ordinary guar
 | Family | Accepted representations |
 | --- | --- |
 | Scalars | Bool; signed/unsigned 8-, 16-, 32-, and 64-bit integers; Int, UInt, Float, Double, CGFloat |
-| Managed values | String; class references and AnyObject, including optional references |
+| Managed values | String, Array<Element>, and their single-level optional forms; class references and AnyObject, including optional references |
 | Pointer values | UnsafePointer, UnsafeMutablePointer, UnsafeRawPointer, UnsafeMutableRawPointer, OpaquePointer, Selector, and their optional forms |
 | Standard value layouts | CGPoint, CGSize, CGRect, NSRange |
 | Empty values | Zero arguments, explicit empty-tuple arguments, and Void results |
+
+An array's element type can itself be a managed struct, enum, optional, or another array without requiring direct-call support for that element. The compiler manages elements through the buffer's value operations. This does not make a standalone element value a supported callback argument. String and Array optionals preserve nil separately from empty payloads; nested optional containers still require an adapter.
 
 Custom `ABIBridgeValue` conversions can throw, while a nonthrowing native callback has no error-result channel. They are therefore outside this callback subset. Nested closures, value Optionals without an established direct representation, generic declarations, async/throwing callbacks, and explicit inout/consuming callback conventions require a compiler adapter.
 

@@ -112,6 +112,8 @@ These fixtures establish the compiler-adapter boundary. `NativeSwiftClosureTests
 
 ## Architecture validation
 
+`SwiftCollectionValueTests` covers direct Array and optional String/Array calls, members and initializers, copy-on-write, element ownership, later conversion failure, and capturing/returned callbacks. Array element storage can contain types outside the direct-call subset. The closure authentication test compares these nominal identities with arm64e compiler calls. `scripts/check-swift-collection-codegen.py` records the physical argument/result lowering for arm64, x86_64, arm64e, and arm64_32; the native-consumer script runs it and exercises collection callbacks from an external package. The `swift-closures` device mode includes authenticated Array and optional String/Array calls.
+
 Run the focused consumer fixtures on macOS:
 
 ```sh

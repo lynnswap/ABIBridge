@@ -85,7 +85,10 @@ struct NativeSwiftClosureTests {
             (UnsafeMutableRawPointer?.self, "UnsafeMutableRawPointer?"),
             (UnsafePointer<Int64>.self, "UnsafePointer<Int64>"),
             (UnsafeMutablePointer<UInt8>?.self, "UnsafeMutablePointer<UInt8>?"),
-            (OpaquePointer?.self, "OpaquePointer?")
+            (OpaquePointer?.self, "OpaquePointer?"),
+            ([String].self, "[String]"), ([Int].self, "[Int]"),
+            ([[String?]].self, "[[String?]]"), ([String]?.self, "[String]?"),
+            (String?.self, "String?")
         ]
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

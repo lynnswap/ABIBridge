@@ -7,6 +7,7 @@ trap 'find "$task_fixture" -delete' EXIT
 
 python3 "$task_root/scripts/check-managed-swift-codegen.py"
 python3 "$task_root/scripts/check-swift-closure-codegen.py"
+python3 "$task_root/scripts/check-swift-collection-codegen.py"
 
 xcrun clang -std=c11 -dynamiclib -mmacosx-version-min=15.4 \
     "$task_root/Tests/NativeConsumer/ClosureLeaseFixture.c" \
