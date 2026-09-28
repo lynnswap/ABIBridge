@@ -11,10 +11,12 @@ func swiftFunctionTypeName(_ type: Any.Type) throws -> String {
     return name
 }
 
-func swiftFunctionDeclaration<Result, each Argument>(
-    named name: String, as signature: ((repeat each Argument) -> Result).Type,
+func swiftFunctionDeclaration<Result, Failure: Error, each Argument>(
+    named name: String, as signature: ((repeat each Argument) throws(Failure) -> Result).Type,
     resultName: String? = nil
 ) throws -> NativeDeclaration {
+    let effects = Failure.self == Never.self ? "" : Failure.self == (any Error).self
+        ? " throws" : " throws(" + (try swiftFunctionTypeName(Failure.self)) + ")"
     var declaration = name
     // A full demangled declaration is useful when a foreign wrapper's Swift
     // type name differs from the native type. Label-only names infer types.
@@ -33,7 +35,7 @@ func swiftFunctionDeclaration<Result, each Argument>(
                 )
             }
             let fields = zip(labels, parameters).map { label, type in label == "_" ? type : label + ": " + type }
-            declaration = String(name[..<opening]) + "(" + fields.joined(separator: ", ") + ") -> " + (try resultName ?? swiftFunctionTypeName(Result.self))
+            declaration = String(name[..<opening]) + "(" + fields.joined(separator: ", ") + ")" + effects + " -> " + (try resultName ?? swiftFunctionTypeName(Result.self))
         }
     }
     let prefix = declaration.prefix { $0 != "(" }
@@ -41,10 +43,10 @@ func swiftFunctionDeclaration<Result, each Argument>(
     let generic = prefix.last(where: { !$0.isWhitespace }) == ">"
         && member.contains { $0.isLetter || $0.isNumber || $0 == "_" }
     guard !generic, !declaration.contains(" async "),
-          !declaration.contains(" throws "), !declaration.contains(" throws("), !declaration.contains("inout "),
-          !declaration.contains("__owned ") else {
+          (Failure.self != Never.self || (!declaration.contains(" throws ") && !declaration.contains(" throws("))),
+          !declaration.contains("inout "), !declaration.contains("__owned ") else {
         throw ABIResolutionError.unsupportedDeclaration(
-            "Generic signatures, async/throwing effects, and inout/consuming parameters require a native adapter."
+            "Generic signatures, async effects, and inout/consuming parameters require a native adapter; throwing calls require a throwing function type."
         )
     }
     return NativeDeclaration(name: declaration, language: .swift)
@@ -53,18 +55,27 @@ func swiftFunctionDeclaration<Result, each Argument>(
 final class SwiftCallInterface: @unchecked Sendable {
     let handle: OpaquePointer
 
-    init(result: CValueType, parameters: [CValueType]) throws {
+    init(result: CValueType, parameters: [CValueType], errorPlan: SwiftErrorPlan? = nil) throws {
         let handles: [OpaquePointer?] = parameters.map(\.handle)
         var failure: OpaquePointer?
-        guard let handle = handles.withUnsafeBufferPointer({
-            ABICreateSwiftCallInterface(result.handle, $0.baseAddress, $0.count, &failure)
-        }) else { throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftInvocation") }
+        let handle = withExtendedLifetime((result, parameters, errorPlan)) {
+            handles.withUnsafeBufferPointer { handles in
+                if let errorPlan {
+                    return ABICreateSwiftThrowingCallInterface(
+                        result.handle, handles.baseAddress, handles.count,
+                        errorPlan.type.handle, errorPlan.isTyped, &failure
+                    )
+                }
+                return ABICreateSwiftCallInterface(result.handle, handles.baseAddress, handles.count, &failure)
+            }
+        }
+        guard let handle else { throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftInvocation") }
         self.handle = handle
     }
     deinit { ABIReleaseSwiftCallInterface(handle) }
 }
 
-/// A concrete synchronous, nonthrowing Swift function with a retained image.
+/// A concrete synchronous Swift function with a retained image.
 ///
 /// The prepared call uses the platform Swift calling convention. Supported
 /// representations include scalar values, pointers, class references, String,
@@ -72,7 +83,8 @@ final class SwiftCallInterface: @unchecked Sendable {
 /// layouts supplied by ABIBridgeSwiftValue, and trivial ABIBridgeValue layouts.
 /// Use NativeSwiftClosure for supported concrete callbacks. Generic declarations,
 /// undescribed resilient values, ordinary unwrapped closures, inout and consumed
-/// arguments, async functions, and throwing functions require separate adapters.
+/// arguments and async functions require separate adapters. Throwing signatures
+/// return native failures as NativeSwiftError.
 /// See <doc:SwiftFunctionInvocation>.
 public struct NativeSwiftFunction<Result, each Argument>: Sendable {
     /// The declaration and image retained for this function.
@@ -83,14 +95,15 @@ public struct NativeSwiftFunction<Result, each Argument>: Sendable {
     private let context: UInt
     private let typeOwner: NativeSwiftType?
     let consumesArguments: Bool
+    var errorPlan: SwiftErrorPlan? { call.errorPlan }
 
     init(symbol: ResolvedSymbol, metadata: Any.Type? = nil, owner: NativeSwiftType? = nil,
-         consumesArguments: Bool = false) throws {
+         consumesArguments: Bool = false, errorPlan: SwiftErrorPlan? = nil) throws {
         self.symbol = symbol
         self.consumesArguments = consumesArguments
         context = metadata.map { unsafeBitCast($0, to: UInt.self) } ?? 0
         typeOwner = owner
-        call = try SwiftCall(consumesArguments: consumesArguments)
+        call = try SwiftCall(consumesArguments: consumesArguments, errorPlan: errorPlan)
     }
 
     func capturing(_ implementation: SwiftImplementation) -> Self {
@@ -109,7 +122,7 @@ public struct NativeSwiftFunction<Result, each Argument>: Sendable {
     ///
     /// - Parameter values: Fixed arguments in declaration order.
     /// - Returns: The result with its Swift ownership, or a custom native wrapper.
-    /// - Throws: An argument conversion or invocation error. An incorrect ABI
+    /// - Throws: A NativeSwiftError from native code, or a conversion/invocation error. An incorrect ABI
     ///   description can corrupt memory and is not a recoverable Swift error.
     @unsafe public func unsafeInvoke(_ values: repeat each Argument) throws -> Result {
         try unsafe call.unsafeInvoke(
@@ -125,35 +138,43 @@ extension ABIRuntime {
     ///
     /// - Parameters:
     ///   - name: A qualified label-only name, such as Example.decorate(_:), or a complete demangled declaration.
-    ///   - signature: A synchronous, nonthrowing function-type metatype.
+    ///   - signature: A synchronous function-type metatype, including its native throws type.
     ///   - scope: Images to search; automatic scope considers only loaded images.
     ///   - loading: Whether an explicit image may be acquired and initialized.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
     /// - Throws: A resolution, unsupported representation, or call preparation error.
-    public func swiftFunction<Result, each Argument>(
+    public func swiftFunction<Result, Failure: Error, each Argument>(
         named name: String,
-        as signature: ((repeat each Argument) -> Result).Type,
+        as signature: ((repeat each Argument) throws(Failure) -> Result).Type,
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftFunction<Result, repeat each Argument> {
-        try NativeSwiftFunction(symbol: resolve(swiftFunctionDeclaration(named: name, as: signature), in: scope, loading: loading))
+        let errorPlan = try SwiftErrorPlan.make(Failure.self)
+        return try NativeSwiftFunction(
+            symbol: resolve(swiftFunctionDeclaration(named: name, as: signature), in: scope, loading: loading),
+            errorPlan: errorPlan
+        )
     }
 
     /// Resolves a concrete Swift free function in an already retained image.
     ///
     /// - Parameters:
     ///   - name: The qualified demangled declaration.
-    ///   - signature: A synchronous, nonthrowing function-type metatype.
+    ///   - signature: A synchronous function-type metatype, including its native throws type.
     ///   - image: An image whose symbol index is reused.
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
     /// - Throws: A resolution, unsupported representation, or call preparation error.
-    public func swiftFunction<Result, each Argument>(
+    public func swiftFunction<Result, Failure: Error, each Argument>(
         named name: String,
-        as signature: ((repeat each Argument) -> Result).Type,
+        as signature: ((repeat each Argument) throws(Failure) -> Result).Type,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftFunction<Result, repeat each Argument> {
-        try NativeSwiftFunction(symbol: resolve(swiftFunctionDeclaration(named: name, as: signature), in: image, loading: loading))
+        let errorPlan = try SwiftErrorPlan.make(Failure.self)
+        return try NativeSwiftFunction(
+            symbol: resolve(swiftFunctionDeclaration(named: name, as: signature), in: image, loading: loading),
+            errorPlan: errorPlan
+        )
     }
 }

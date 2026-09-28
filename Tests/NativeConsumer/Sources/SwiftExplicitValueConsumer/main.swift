@@ -54,3 +54,24 @@ let boxBody = try NativeSwiftClosure { (value: Box<Int64>) in Box(value: value.v
 let boxResult = try unsafe boxed.unsafeInvoke(boxBody, Box(value: 35))
 precondition(boxResult.value == 42)
 print("Explicit Swift value consumer passed")
+
+
+@frozen public struct Failure: Error, ABIBridgeSwiftValue {
+    public let code: Int64
+    public static var swiftABIType: NativeType { .int64 }
+}
+@inline(never) public func checked(_ fail: Bool) throws(Failure) -> String {
+    if fail { throw Failure(code: 42) }
+    return String(repeating: "success", count: 100)
+}
+let checkedCall = try await runtime.swiftFunction(named: "SwiftExplicitValueConsumer.checked(_:)",
+    as: ((Bool) throws(Failure) -> String).self)
+let success = try unsafe checkedCall.unsafeInvoke(false)
+precondition(success == String(repeating: "success", count: 100))
+do {
+    _ = try unsafe checkedCall.unsafeInvoke(true)
+    fatalError("Expected native failure")
+} catch let error as NativeSwiftError {
+    error.withUnderlyingError { precondition(($0 as? Failure)?.code == 42) }
+}
+print("Throwing Swift consumer passed")

@@ -156,3 +156,9 @@ The `virtual-entries` report includes 1000-lookup means for the primary, seconda
 ## Prepared invocation timing
 
 Run `invocation-timing` in `ArchitectureTestHost` to compare prepared C scalar/pointer calls, C++ receiver calls, Swift mixed/many-argument and owned-string calls, and Objective-C scalar/object dispatch. Handles are prepared before timing; every invocation checks its result. Each report contains the mean of 100,000 calls without hardware-dependent timing assertions. Compare fresh launches of the same build configuration on the same destination; these timings include Swift marshalling and result validation, not just the native call instruction.
+
+## Throwing Swift calls
+
+The `swift-errors` mode exercises untyped NSError, zero-valued typed errors, floating errors, resilient errors, independent large result/error storage, and mutating receiver writeback. Launch with `--probe swift-errors` and read `Documents/architecture-swift-errors.json`. NSError lifetime checks drain their autorelease pool before asserting final release.
+
+A Release arm64e build completed all 12 checks on iPhone Air (iOS 27, build 24A435), with CPU subtype 0x80000002 and pointer authentication compiled in. This records an executed configuration rather than an additional deployment requirement.

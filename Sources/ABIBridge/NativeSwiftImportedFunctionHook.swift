@@ -94,6 +94,9 @@ extension NativeSwiftFunction {
         onFailure: @escaping @Sendable (any Error) -> Void,
         body: @escaping @Sendable (NativeSwiftFunctionInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
     ) async throws -> NativeSwiftImportedFunctionHook {
+        guard errorPlan == nil else {
+            throw ABIResolutionError.unsupportedDeclaration("Managed hooks cannot yet return native Swift errors.")
+        }
         let prepared = try SwiftHookCallbackSignature<Result, repeat each Argument>()
         let signature = try prepared.erased(consumingArguments: consumesArguments, retaining: self)
         let handler = prepareSwiftImportedHandler(declaration: symbol.declaration, prepared: prepared,

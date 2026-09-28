@@ -61,6 +61,7 @@ struct CallFrame {
     uint64_t context = 0;
     uint64_t stack = 0;
     uint64_t stackSize = 0;
+    uint64_t error = 0;
 };
 static_assert(offsetof(CallFrame, integerResults) == 128);
 static_assert(offsetof(CallFrame, floatingResults) == 160);
@@ -68,6 +69,7 @@ static_assert(offsetof(CallFrame, indirectResult) == 192);
 static_assert(offsetof(CallFrame, context) == 200);
 static_assert(offsetof(CallFrame, stack) == 208);
 static_assert(offsetof(CallFrame, stackSize) == 216);
+static_assert(offsetof(CallFrame, error) == 224);
 
 extern "C" void ABIInvokeSwiftAssembly(CallFrame *, ABIUnmanagedFunction, uint64_t);
 
@@ -184,13 +186,17 @@ struct ABISwiftCallInterface {
     std::shared_ptr<TypeStorage> result;
     std::vector<std::shared_ptr<TypeStorage>> parameters;
     Layout resultLayout;
+    std::shared_ptr<TypeStorage> errorResult;
+    Layout errorLayout;
+    bool typedError = false;
+    bool indirectError = false;
     std::vector<ArgumentMove> moves;
     size_t stackSize = 0;
 };
 
-ABISwiftCallInterface *ABICreateSwiftCallInterface(
+static ABISwiftCallInterface *createSwiftCallInterface(
     const ABIValueType *result, const ABIValueType *const *parameters,
-    size_t count, ABIResolutionFailure **error)
+    size_t count, const ABIValueType *errorResult, bool typedError, ABIResolutionFailure **error)
 {
     if (error) *error = nullptr;
 #if !defined(__aarch64__) && !defined(__x86_64__)
@@ -204,19 +210,40 @@ ABISwiftCallInterface *ABICreateSwiftCallInterface(
     auto interface = std::make_unique<ABISwiftCallInterface>();
     interface->result = result->storage;
     interface->resultLayout = lower(*result->storage);
+    if (errorResult) {
+        if (!typedError && errorResult->storage->size() != sizeof(void *)) {
+            fail(error, ABIFailureInvalidRequest, "An untyped Swift error requires one error-reference word.");
+            return nullptr;
+        }
+        interface->errorResult = errorResult->storage;
+        interface->errorLayout = lower(*errorResult->storage);
+        interface->typedError = typedError;
+        // Swift merges direct typed errors into integer result registers.
+        // Floating/indirect errors and indirect ordinary results need a
+        // separate trailing error-output pointer (GenCall.cpp).
+        interface->indirectError = typedError && (interface->resultLayout.indirect ||
+            interface->errorLayout.indirect ||
+            std::any_of(interface->errorLayout.components.begin(), interface->errorLayout.components.end(),
+                [](const Component &component) { return component.floating; }));
+    }
     size_t integers = 0, floating = 0, stack = 0;
 #if defined(__x86_64__)
     constexpr size_t integerLimit = 6;
 #else
     constexpr size_t integerLimit = 8;
 #endif
-    for (size_t index = 0; index < count; ++index) {
-        if (!parameters[index]) {
-            fail(error, ABIFailureInvalidRequest, "Each Swift parameter requires a storage description.");
-            return nullptr;
+    for (size_t index = 0; index < count + size_t(interface->indirectError); ++index) {
+        Layout layout;
+        if (index == count) {
+            layout.components = {{0, sizeof(void *), false}};
+        } else {
+            if (!parameters[index]) {
+                fail(error, ABIFailureInvalidRequest, "Each Swift parameter requires a storage description.");
+                return nullptr;
+            }
+            interface->parameters.push_back(parameters[index]->storage);
+            layout = lower(*parameters[index]->storage);
         }
-        interface->parameters.push_back(parameters[index]->storage);
-        auto layout = lower(*parameters[index]->storage);
         if (layout.indirect) layout.components = {{0, sizeof(void *), false}};
         for (const auto &component : layout.components) {
             ArgumentMove move{index, component, Bank::stack, 0, layout.indirect};
@@ -245,18 +272,40 @@ ABISwiftCallInterface *ABICreateSwiftCallInterface(
 #endif
 }
 
+ABISwiftCallInterface *ABICreateSwiftCallInterface(
+    const ABIValueType *result, const ABIValueType *const *parameters,
+    size_t count, ABIResolutionFailure **error) {
+    return createSwiftCallInterface(result, parameters, count, nullptr, false, error);
+}
+
+ABISwiftCallInterface *ABICreateSwiftThrowingCallInterface(
+    const ABIValueType *result, const ABIValueType *const *parameters, size_t count,
+    const ABIValueType *errorResult, bool typedError, ABIResolutionFailure **error) {
+    if (!errorResult) {
+        fail(error, ABIFailureInvalidRequest, "A throwing Swift call requires an error representation.");
+        return nullptr;
+    }
+    return createSwiftCallInterface(result, parameters, count, errorResult, typedError, error);
+}
+
 void ABIReleaseSwiftCallInterface(ABISwiftCallInterface *interface) { delete interface; }
 bool ABISwiftValueIsIndirect(const ABIValueType *type) { return lower(*type->storage).indirect; }
 
-bool ABIUnsafeInvokeSwiftCallInterface(
+static bool invokeSwiftCallInterface(
     ABISwiftCallInterface *interface, ABIUnmanagedFunction function,
     void *result, void *const *arguments, const void *context,
-    ABIResolutionFailure **error)
+    void *errorResult, bool *didThrow, ABIResolutionFailure **error)
 {
     if (error) *error = nullptr;
+    if (didThrow) *didThrow = false;
     if (!interface || !function || (interface->result->size() && !result) ||
         (!interface->parameters.empty() && !arguments)) {
         fail(error, ABIFailureInvalidRequest, "A Swift call interface, function and value storage are required.");
+        return false;
+    }
+    if (interface->errorResult && (!didThrow ||
+        ((interface->errorResult->size() || interface->indirectError) && !errorResult))) {
+        fail(error, ABIFailureInvalidRequest, "A throwing Swift call requires error storage and a failure indicator.");
         return false;
     }
     for (size_t index = 0; index < interface->parameters.size(); ++index) {
@@ -272,8 +321,13 @@ bool ABIUnsafeInvokeSwiftCallInterface(
     frame.context = reinterpret_cast<uintptr_t>(context);
     if (interface->resultLayout.indirect)
         frame.indirectResult = reinterpret_cast<uintptr_t>(result);
+    uintptr_t errorAddress = reinterpret_cast<uintptr_t>(errorResult);
     for (const auto &move : interface->moves) {
-        const auto source = static_cast<const uint8_t *>(arguments[move.argument]) + move.component.offset;
+        const bool errorArgument = move.argument == interface->parameters.size();
+        const auto base = errorArgument ? reinterpret_cast<const uint8_t *>(&errorAddress)
+            : static_cast<const uint8_t *>(arguments[move.argument]);
+        const auto source = base + move.component.offset;
+        const auto sourceSize = errorArgument ? sizeof(errorAddress) : interface->parameters[move.argument]->size();
         void *destination;
         switch (move.bank) {
             case Bank::integer: destination = &frame.integers[move.destination]; break;
@@ -284,7 +338,7 @@ bool ABIUnsafeInvokeSwiftCallInterface(
             const uintptr_t address = reinterpret_cast<uintptr_t>(source);
             std::memcpy(destination, &address, sizeof(address));
         } else {
-            const auto available = interface->parameters[move.argument]->size() - move.component.offset;
+            const auto available = sourceSize - move.component.offset;
             std::memcpy(destination, source, std::min(move.component.size, available));
         }
     }
@@ -293,17 +347,41 @@ bool ABIUnsafeInvokeSwiftCallInterface(
     discriminator = ptrauth_function_pointer_type_discriminator(void(void));
 #endif
     ABIInvokeSwiftAssembly(&frame, function, discriminator);
-    if (!interface->resultLayout.indirect) {
+    auto copyRegisters = [&](const Layout &layout, TypeStorage &type, void *output) {
         size_t integers = 0, floating = 0;
-        for (const auto &component : interface->resultLayout.components) {
+        for (const auto &component : layout.components) {
             const auto source = component.floating ? &frame.floatingResults[floating++] : &frame.integerResults[integers++];
-            // A coalesced register may include trailing padding beyond the
-            // value's allocation (for example, three bytes passed as i32).
-            const auto available = interface->result->size() - component.offset;
-            std::memcpy(static_cast<uint8_t *>(result) + component.offset, source, std::min(component.size, available));
+            // Coalesced register padding is not part of a live Swift value.
+            const auto available = type.size() - component.offset;
+            std::memcpy(static_cast<uint8_t *>(output) + component.offset, source, std::min(component.size, available));
         }
+    };
+    if (interface->errorResult && frame.error) {
+        *didThrow = true;
+        if (!interface->typedError) {
+            const auto reference = uintptr_t(frame.error);
+            std::memcpy(errorResult, &reference, sizeof(reference));
+        } else if (!interface->indirectError) {
+            copyRegisters(interface->errorLayout, *interface->errorResult, errorResult);
+        }
+        return true;
     }
+    if (!interface->resultLayout.indirect)
+        copyRegisters(interface->resultLayout, *interface->result, result);
     return true;
+}
+
+bool ABIUnsafeInvokeSwiftCallInterface(
+    ABISwiftCallInterface *interface, ABIUnmanagedFunction function,
+    void *result, void *const *arguments, const void *context, ABIResolutionFailure **error) {
+    return invokeSwiftCallInterface(interface, function, result, arguments, context, nullptr, nullptr, error);
+}
+
+bool ABIUnsafeInvokeSwiftThrowingCallInterface(
+    ABISwiftCallInterface *interface, ABIUnmanagedFunction function,
+    void *result, void *const *arguments, const void *context,
+    void *errorResult, bool *didThrow, ABIResolutionFailure **error) {
+    return invokeSwiftCallInterface(interface, function, result, arguments, context, errorResult, didThrow, error);
 }
 
 namespace {
@@ -371,6 +449,10 @@ struct ABISwiftClosureCallback {
 ABISwiftClosureCallback *ABICreateSwiftClosureCallback(ABISwiftCallInterface *interface,
     ABISwiftClosureCallbackFunctions functions, void *context, ABIResolutionFailure **error) {
     if (error) *error = nullptr;
+    if (interface && interface->errorResult) {
+        fail(error, ABIFailureUnsupportedDeclaration, "Throwing Swift callbacks require an error-result handler.");
+        return nullptr;
+    }
     if (!interface || !functions.invoke) {
         fail(error, ABIFailureInvalidRequest, "A concrete Swift call interface and closure callback are required.");
         return nullptr;
@@ -418,6 +500,10 @@ ABISwiftCallback *ABICreateSwiftCallback(ABISwiftCallInterface *interface,
     void *fallbackOwner, void (*releaseFallbackOwner)(void *), ABIResolutionFailure **error)
 {
     if (error) *error = nullptr;
+    if (interface && interface->errorResult) {
+        fail(error, ABIFailureUnsupportedDeclaration, "Throwing Swift callbacks require an error-result handler.");
+        return nullptr;
+    }
     if (!interface || !fallback || !functions.invoke) {
         fail(error, ABIFailureInvalidRequest, "A concrete Swift call interface, fallback and callback are required.");
         return nullptr;

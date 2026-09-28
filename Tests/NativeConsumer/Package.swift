@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.macOS("15.4")],
     dependencies: [.package(name: "ABIBridge", path: "../..")],
     targets: [
+        .executableTarget(name: "SwiftErrorConsumer", dependencies: [.product(name: "ABIBridge", package: "ABIBridge")]),
         .executableTarget(name: "VirtualHookConsumer", dependencies: [.product(name: "ABIBridge", package: "ABIBridge")]),
         .executableTarget(name: "CVirtualHookConsumer", dependencies: [.product(name: "ABIBridge", package: "ABIBridge")]),
         .executableTarget(name: "ObjCXXVirtualHookConsumer", dependencies: [.product(name: "ABIBridge", package: "ABIBridge")], cxxSettings: [.unsafeFlags(["-fobjc-arc"])], linkerSettings: [.linkedFramework("Foundation")]),

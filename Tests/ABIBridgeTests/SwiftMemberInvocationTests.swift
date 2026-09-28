@@ -218,21 +218,21 @@ struct SwiftMemberInvocationTests {
         #expect(try unsafe change.unsafeInvoke(on: large, 10) == 24 && large.a == 1)
     }
 
-    @Test func typedThrowsAndBorrowedInitializerArgumentsRequireAdapters() async throws {
+    @Test func throwingDeclarationsNeedEffectsAndBorrowedInitializersNeedAdapters() async throws {
         let runtime = ABIRuntime()
         let type = try await runtime.swiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
         let member = "typedFailure() throws(ABIBridgeTests.SwiftMemberFailure) -> Swift.Int"
         _ = try await runtime.resolve(.init(name: type.name + "." + member, language: .swift), in: type.image)
         do {
             _ = try await type.method(named: member, as: (() -> Int).self)
-            Issue.record("Typed-throwing members need an error-result adapter")
+            Issue.record("Typed-throwing members need a throwing function metatype")
         } catch ABIResolutionError.unsupportedDeclaration {}
         do {
             _ = try await runtime.swiftFunction(
                 named: "ABIBridgeTests.swiftMemberTypedFailure() throws(ABIBridgeTests.SwiftMemberFailure) -> Swift.Int",
                 as: (() -> Int).self, in: type.image
             )
-            Issue.record("Typed-throwing free functions need an error-result adapter")
+            Issue.record("Typed-throwing free functions need a throwing function metatype")
         } catch ABIResolutionError.unsupportedDeclaration {}
         let initializer = "init(borrowedChild: __shared ABIBridgeTests.SwiftMemberRenderer) -> ABIBridgeTests.SwiftMemberRenderer"
         _ = try await runtime.resolve(.init(name: type.name + ".__allocating_" + initializer, language: .swift), in: type.image)

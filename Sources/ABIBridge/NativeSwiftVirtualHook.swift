@@ -86,6 +86,9 @@ extension NativeSwiftMethod {
         onFailure: @escaping @Sendable (any Error) -> Void,
         body: @escaping @Sendable (NativeSwiftMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
     ) async throws -> NativeSwiftVirtualHook {
+        guard errorPlan == nil else {
+            throw ABIResolutionError.unsupportedDeclaration("Managed hooks cannot yet return native Swift errors.")
+        }
         let receiverView = SwiftHookReceiverView(self)
         let entry = try SwiftClassDispatch(metadata: type.metadata, declaration: symbol.declaration, resolver: type.resolver)
         guard !entry.isSetter || consumesArguments else {

@@ -44,9 +44,9 @@ _ABISwiftCallbackAssembly:
 #if __has_feature(ptrauth_calls)
     pacibsp
 #endif
-    sub sp, sp, #256
-    stp x29, x30, [sp, #224]
-    add x29, sp, #224
+    sub sp, sp, #272
+    stp x29, x30, [sp, #240]
+    add x29, sp, #240
     .cfi_def_cfa w29, 32
     .cfi_offset w29, -32
     .cfi_offset w30, -24
@@ -60,9 +60,10 @@ _ABISwiftCallbackAssembly:
     stp d6, d7, [sp, #112]
     str x8, [sp, #192]
     str x20, [sp, #200]
-    add x9, sp, #256
+    add x9, sp, #272
     str x9, [sp, #208]
     str xzr, [sp, #216]
+    str x21, [sp, #224]
     mov x0, x17
     mov x1, sp
     bl _ABIDispatchSwiftCallback
@@ -70,8 +71,9 @@ _ABISwiftCallbackAssembly:
     ldp x2, x3, [sp, #144]
     ldp d0, d1, [sp, #160]
     ldp d2, d3, [sp, #176]
-    ldp x29, x30, [sp, #224]
-    add sp, sp, #256
+    ldr x21, [sp, #224]
+    ldp x29, x30, [sp, #240]
+    add sp, sp, #272
 #if __has_feature(ptrauth_calls)
     retab
 #else
@@ -83,7 +85,7 @@ _ABISwiftCallbackAssembly:
     .cfi_offset %rbp, -16
     movq %rsp, %rbp
     .cfi_def_cfa_register %rbp
-    subq $224, %rsp
+    subq $240, %rsp
     movq %rdi, 0(%rsp)
     movq %rsi, 8(%rsp)
     movq %rdx, 16(%rsp)
@@ -103,6 +105,7 @@ _ABISwiftCallbackAssembly:
     leaq 16(%rbp), %r10
     movq %r10, 208(%rsp)
     movq $0, 216(%rsp)
+    movq %r12, 224(%rsp)
     movq %r11, %rdi
     movq %rsp, %rsi
     callq _ABIDispatchSwiftCallback
@@ -114,6 +117,7 @@ _ABISwiftCallbackAssembly:
     movq 168(%rsp), %xmm1
     movq 176(%rsp), %xmm2
     movq 184(%rsp), %xmm3
+    movq 224(%rsp), %r12
     leave
     retq
 #endif

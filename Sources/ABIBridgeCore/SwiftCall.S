@@ -60,6 +60,7 @@ Lswift_args_arm:
 #else
     blr x16
 #endif
+    str x21, [x19, #224]
     stp x0, x1, [x19, #128]
     stp x2, x3, [x19, #144]
     stp d0, d1, [x19, #160]
@@ -121,6 +122,7 @@ Lswift_stack_x86:
     movq 32(%rbx), %r8
     movq 40(%rbx), %r9
     callq *%r11
+    movq %r12, 224(%rbx)
     movq %rax, 128(%rbx)
     movq %rdx, 136(%rbx)
     movq %rcx, 144(%rbx)
