@@ -1,4 +1,6 @@
 import ABIBridge
+import ABIBridgeCore
+import ABIBridgeObjCXX
 import CoreGraphics
 import Foundation
 import ObjectiveCFixtures
@@ -93,6 +95,53 @@ struct ObjectiveCAggregateTests {
             selector: "transformPadded:", as: ((CallerPadded) -> CallerPadded).self)
         let actual = try unsafe captured.unsafeInvoke(on: ABIAggregateFixture(), CallerPadded(value: 1, tag: 2))
         #expect(actual.value == 2.5 && actual.tag == 4)
+    }
+
+    @Test func largeArrayDescriptionsDoNotAllocateOneEntryPerElement() throws {
+        var failure: OpaquePointer?
+        let type = try #require("{S=[\(Int.max)c]}".withCString {
+            ABICopyObjCHookValueType($0, &failure)
+        })
+        defer { ABIReleaseValueType(type); if let failure { ABIReleaseResolutionFailure(failure) } }
+        #expect(failure == nil)
+        #expect(ABIValueTypeSize(type) == Int.max)
+    }
+
+    @Test func unrepresentableArrayByteExtentsReturnAnError() {
+        var failure: OpaquePointer?
+        let type = "{S=[\(Int.max)d]}".withCString { ABICopyObjCHookValueType($0, &failure) }
+        defer { if let type { ABIReleaseValueType(type) }; if let failure { ABIReleaseResolutionFailure(failure) } }
+        #expect(type == nil && failure != nil)
+    }
+
+    @Test func longDoubleFieldsFollowThePlatformABI() throws {
+        let runtime = ABIRuntime.shared
+#if arch(x86_64)
+        #expect(throws: ABIResolutionError.self) {
+            try runtime.object(ABIAggregateFixture()).method(selector: "transformLongDouble:",
+                as: ((ABILongDoubleAggregate) -> ABILongDoubleAggregate).self)
+        }
+#else
+        let receiver = ABIAggregateFixture()
+        let input = ABILongDoubleAggregate(value: 2, tag: 3)
+        let call = try runtime.object(receiver).method(selector: "transformLongDouble:",
+            as: ((ABILongDoubleAggregate) -> ABILongDoubleAggregate).self)
+        let result = try unsafe call.unsafeInvoke(input)
+        #expect(result.value == 3.5 && result.tag == 5)
+        let captured = try runtime.objcImplementation(on: ABIAggregateFixture.self, selector: "transformLongDouble:",
+            as: ((ABILongDoubleAggregate) -> ABILongDoubleAggregate).self)
+        let actual = try unsafe captured.unsafeInvoke(on: receiver, input)
+        #expect(actual.value == 3.5 && actual.tag == 5)
+        let hook = try unsafe runtime.hookMethod(on: ABIAggregateFixture.self, selector: "transformLongDouble:",
+            as: ((ABILongDoubleAggregate) -> ABILongDoubleAggregate).self, onFailure: { Issue.record($0) }) { call, value in
+                var output = try call.proceed(value)
+                output.tag += 10
+                return output
+            }
+        defer { hook.invalidate() }
+        let hooked = receiver.transformLongDouble(input)
+        #expect(hooked.value == 3.5 && hooked.tag == 15)
+#endif
     }
 
     @Test func undersizedTypedStorageIsRejectedBeforeDispatch() throws {

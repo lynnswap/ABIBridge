@@ -21,6 +21,14 @@ package func nativeCopyObjCHookValueType(
     }
 }
 
+private func objcAggregateType(_ fields: [OpaquePointer?]) throws -> OpaquePointer {
+    var failure: OpaquePointer?
+    guard let result = fields.withUnsafeBufferPointer({ ABICreateStructType($0.baseAddress, $0.count, &failure) }) else {
+        throw consumeNativeCallFailure(failure)
+    }
+    return result
+}
+
 func objcValueType(_ type: ObjCType) throws -> OpaquePointer {
     let kind: Int
     switch type {
@@ -38,19 +46,39 @@ func objcValueType(_ type: ObjCType) throws -> OpaquePointer {
     case .ulongLong: kind = ABIValueUInt64
     case .float: kind = ABIValueFloat
     case .double: kind = ABIValueDouble
+    case .longDouble:
+#if arch(x86_64)
+        throw ABIResolutionError.unsupportedDeclaration("x87 long double encodings require a native adapter.")
+#else
+        // Apple's ARM ABI gives long double the size and representation of double.
+        kind = ABIValueDouble
+#endif
     case .pointer, .charPtr, .functionPointer, .object, .class, .selector, .block: kind = ABIValuePointer
     case .array(let element, let count):
         guard let count, count > 0 else {
             throw ABIResolutionError.unsupportedDeclaration("An aggregate array field requires a positive element count.")
         }
-        let elementType = try objcValueType(element)
-        defer { ABIReleaseValueType(elementType) }
-        let fields = Array(repeating: Optional(elementType), count: count)
-        var failure: OpaquePointer?
-        guard let result = fields.withUnsafeBufferPointer({ ABICreateStructType($0.baseAddress, $0.count, &failure) }) else {
-            throw consumeNativeCallFailure(failure)
+        var chunk = try objcValueType(element)
+        var owned = [chunk]
+        defer { owned.forEach(ABIReleaseValueType) }
+        let size = ABIValueTypeSize(chunk)
+        guard size > 0, count <= Int.max / size else {
+            throw ABIResolutionError.unsupportedDeclaration("The array field's byte extent is not representable.")
         }
-        return result
+        // Nested groups of identical elements have the same offsets, alignment,
+        // and aggregate ABI as a flat array. Keep descriptors logarithmic in the
+        // element count instead of allocating one pointer for every element.
+        var remaining = count
+        var fields: [OpaquePointer?] = []
+        while remaining > 0 {
+            if remaining & 1 != 0 { fields.append(chunk) }
+            remaining >>= 1
+            if remaining > 0 {
+                chunk = try objcAggregateType([chunk, chunk])
+                owned.append(chunk)
+            }
+        }
+        return try objcAggregateType(fields)
     case .struct(_, let fields):
         guard let fields, !fields.isEmpty, fields.allSatisfy({ $0.bitWidth == nil }) else {
             throw ABIResolutionError.unsupportedDeclaration("Opaque or bitfield structures need an adapter.")
@@ -58,11 +86,7 @@ func objcValueType(_ type: ObjCType) throws -> OpaquePointer {
         var types: [OpaquePointer?] = []
         defer { for case let type? in types { ABIReleaseValueType(type) } }
         for field in fields { types.append(try objcValueType(field.type)) }
-        var failure: OpaquePointer?
-        guard let result = types.withUnsafeBufferPointer({ ABICreateStructType($0.baseAddress, $0.count, &failure) }) else {
-            throw consumeNativeCallFailure(failure)
-        }
-        return result
+        return try objcAggregateType(types)
     default:
         throw ABIResolutionError.unsupportedDeclaration("The Objective-C value needs an explicit ABI adapter.")
     }
