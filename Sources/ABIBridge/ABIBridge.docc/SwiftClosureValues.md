@@ -58,9 +58,39 @@ The native caller receives the body's original error, so it can catch that error
 
 Concrete errors use their actual Swift representation through ``ABIBridgeSwiftValue`` or a supported class/error reference. Direct integer carriers, floating/large indirect errors, and independent indirect success/error buffers share the function-invocation machinery. The same capture and code-image lifetime rules apply to throwing closures, including native escaping storage.
 
+## Async callbacks and returned closures
+
+Use ``NativeSwiftAsyncClosure`` for `nonisolated(nonsending)` closures and ``NativeSwiftConcurrentClosure`` for the `@concurrent` convention. Both take a result, a declared error type, and argument types; use `Never` for nonthrowing closures.
+
+```swift
+let body: (nonisolated(nonsending) @Sendable (Int64) async -> Int64) = { value in
+    await Task.yield()
+    return value + 7
+}
+let callback = try NativeSwiftAsyncClosure<Int64, Never, Int64>(body)
+let result = try unsafe await callback.unsafeInvoke(35)
+```
+
+With Swift 6.3.3, give a closure expression its concrete function type before passing it to the initializer, as above. Passing an async closure expression directly into the parameter-pack initializer can crash that compiler during SIL generation. A pretyped closure or a function reference avoids that compiler limitation.
+
+The caller-isolated wrapper carries the native caller's hidden isolation argument. The concurrent wrapper enters the generic executor before running its body; the body can perform its own actor hops. Both preserve the original Task, including task-local values, cooperative cancellation, and executor preferences. Calling `unsafeInvoke` restores the Swift caller's executor after native completion.
+
+Pass the appropriate wrapper in an async function's metatype just as with synchronous closures:
+
+```swift
+let apply = try await ABIRuntime.shared.swiftFunction(
+    named: "Example.apply(_:_:)",
+    as: (@concurrent (NativeSwiftConcurrentClosure<Int64, Never, Int64>, Int64) async -> Int64).self
+)
+```
+
+For a native factory returning a closure, put the wrapper in the factory's result type. Its descriptor, implementation image, arguments, result storage, and captured context remain alive across suspension. Native escaping copies carry the same code leases, including after repeated handoffs. Native errors use ``NativeSwiftError`` and retain their code dependencies without keeping unrelated callback captures alive.
+
+Async wrappers use a `@Sendable` closure type for label-only lookup. Use the complete native declaration when its source-level attributes differ. The wrapper itself is not Sendable: a returned foreign capture still carries its original actor and ownership requirements. Neither choosing the physical calling convention nor resolving a symbol establishes those requirements.
+
 ## Supported signatures
 
-Synchronous nonthrowing and throwing closures support ordinary guaranteed arguments and owned results:
+The synchronous and async wrappers support ordinary guaranteed arguments and owned results:
 
 | Family | Accepted representations |
 | --- | --- |
@@ -75,7 +105,7 @@ An array's element type can itself be a managed struct, enum, optional, or anoth
 
 `ABIBridgeSwiftValue` conformances use compiler-owned value operations and can therefore pass actual managed Swift values without custom conversion callbacks; see <doc:ExplicitSwiftValues>.
 
-Custom `ABIBridgeValue` conversions describe foreign representations rather than the callback's actual Swift value types, so they remain outside this callback path. Nested closures, value Optionals without an established direct representation, generic declarations, async callbacks, and explicit inout/consuming callback conventions require a compiler adapter.
+Custom `ABIBridgeValue` conversions describe foreign representations rather than the callback's actual Swift value types, so they remain outside this callback path. Nested closures, value Optionals without an established direct representation, generic declarations, and explicit inout/consuming callback conventions require a compiler adapter.
 
 Incoming closure-valued hook arguments are outside this subset: a native nonescaping callback can carry a stack context that cannot be retained as an owned wrapper. Hook preparation rejects that representation before installing an entry.
 

@@ -12,8 +12,9 @@ class SwiftCallbackCode {
     struct Storage;
     std::unique_ptr<Storage> storage;
 public:
-    SwiftCallbackCode(void *context, ABIResolutionFailure **error, bool closure = false);
-    static void *closureContext(ABIUnmanagedFunction function);
+    SwiftCallbackCode(void *context, ABIResolutionFailure **error, bool closure = false, uint32_t asyncContextSize = 0);
+    static void *closureContext(ABIUnmanagedFunction function, bool asynchronous = false);
+    const void *asyncDescriptor() const;
     ~SwiftCallbackCode();
     ABIUnmanagedFunction function() const;
 };

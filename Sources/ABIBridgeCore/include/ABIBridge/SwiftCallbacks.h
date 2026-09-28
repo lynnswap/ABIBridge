@@ -46,6 +46,27 @@ bool ABIIsSwiftClosureCallbackFunction(ABIUnmanagedFunction function);
 /// closure must remain retained during this operation. Release with swift_release.
 void *ABICopySwiftClosureCallbackCodeOwner(ABIUnmanagedFunction function);
 
+typedef struct ABISwiftAsyncClosureCallback ABISwiftAsyncClosureCallback;
+typedef struct ABISwiftAsyncClosureCallbackFunctions {
+    /// Returns an owned compiler-stored () async -> Void body with the
+    /// interface's caller-isolated or concurrent convention. Its generic
+    /// representation has an indirect empty result. The body
+    /// initializes result or errorResult and sets didThrow before completing.
+    /// All borrowed argument storage remains live through that completion.
+    ABISwiftClosureValue (*createBody)(void *context, void *const *arguments,
+                                      void *result, void *errorResult, bool *didThrow);
+    void (*releaseContext)(void *context);
+    void *(*copyCodeOwner)(void *context);
+} ABISwiftAsyncClosureCallbackFunctions;
+/// Success consumes context; failure consumes neither context nor its release
+/// responsibility. Native closure contexts keep the callback alive through all calls.
+ABISwiftAsyncClosureCallback *ABICreateSwiftAsyncClosureCallback(ABISwiftAsyncCallInterface *interface,
+    ABISwiftAsyncClosureCallbackFunctions functions, void *context, ABIResolutionFailure **error);
+const void *ABISwiftAsyncClosureCallbackDescriptor(const ABISwiftAsyncClosureCallback *callback);
+void ABIReleaseSwiftAsyncClosureCallback(ABISwiftAsyncClosureCallback *callback);
+bool ABIIsSwiftAsyncClosureCallbackFunction(ABIUnmanagedFunction function);
+void *ABICopySwiftAsyncClosureCallbackCodeOwner(ABIUnmanagedFunction function);
+
 /// Functions describing one callback and its native value ownership. None may
 /// throw a language exception through this C boundary. The borrowed invocation
 /// is usable only during invoke, on its entering thread.

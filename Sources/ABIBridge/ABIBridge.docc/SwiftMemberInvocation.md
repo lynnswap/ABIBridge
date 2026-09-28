@@ -59,7 +59,7 @@ An object scope also provides getter(named:as:) and setter(named:as:) returning 
 
 Setters transfer ownership of the incoming value. Use a value metatype for a synchronous nonthrowing getter, or a zero-argument function metatype for a throwing or async getter, such as `(() throws -> String).self` or `(@concurrent () async -> String).self`. Getter symbol names do not establish these effects. See <doc:SwiftErrorABI>.
 
-Concrete callback parameters and returned closures use ``NativeSwiftClosure`` in the function-type metatype, as described in <doc:SwiftClosureValues>. Initializers transfer the encoded owned context; ordinary methods borrow it for the call.
+Concrete callback parameters and returned closures use the synchronous or async closure wrapper in the function-type metatype, as described in <doc:SwiftClosureValues>. Initializers transfer the encoded owned context; ordinary methods borrow it for the call.
 
 ## Fixed value receivers and adapters
 

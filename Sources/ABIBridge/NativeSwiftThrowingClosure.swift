@@ -94,6 +94,7 @@ public struct NativeSwiftThrowingClosure<Result, Failure: Error, each Argument> 
 }
 
 extension NativeSwiftThrowingClosure: SwiftClosureValue {
+    func encodeClosure() -> NativeValueStorage { closureStorage.encoded() }
     static var swiftFunctionType: Any.Type { ((repeat each Argument) throws(Failure) -> Result).self }
 
     static func makeClosureCodec() throws -> SwiftClosureCodec {

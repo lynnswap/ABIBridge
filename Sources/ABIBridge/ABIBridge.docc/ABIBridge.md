@@ -177,6 +177,8 @@ print(symbol.image.path)
 - <doc:SwiftClosureValues>
 - ``NativeSwiftClosure``
 - ``NativeSwiftThrowingClosure``
+- ``NativeSwiftAsyncClosure``
+- ``NativeSwiftConcurrentClosure``
 - ``NativeSwiftFunction``
 - ``NativeSwiftAsyncFunction``
 - ``NativeSwiftError``

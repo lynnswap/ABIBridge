@@ -33,4 +33,19 @@ do {
 } catch let error as NativeSwiftError {
     error.withUnderlyingError { precondition(($0 as? Failure)?.code == 42) }
 }
+let callbackBody: (nonisolated(nonsending) @Sendable (Int64) async throws(Failure) -> Int64) = {
+    (value: Int64) async throws(Failure) in
+    await Task.yield()
+    if value < 0 { throw Failure(code: 43) }
+    return value + Context.value
+}
+let callback = try NativeSwiftAsyncClosure<Int64, Failure, Int64>(callbackBody)
+let callbackResult = try await Context.$value.withValue(35) { try unsafe await callback.unsafeInvoke(7) }
+precondition(callbackResult == 42)
+do {
+    _ = try unsafe await callback.unsafeInvoke(-1)
+    fatalError("Expected async closure failure")
+} catch let error as NativeSwiftError {
+    error.withUnderlyingError { precondition(($0 as? Failure)?.code == 43) }
+}
 print("Public async consumer passed: native suspension, task locals, caller executor, and typed errors")

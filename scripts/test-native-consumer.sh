@@ -14,6 +14,7 @@ python3 "$task_root/scripts/check-indirect-swift-value-codegen.py"
 python3 "$task_root/scripts/check-swift-error-codegen.py"
 python3 "$task_root/scripts/check-swift-async-codegen.py"
 python3 "$task_root/scripts/check-swift-throwing-closure-codegen.py"
+python3 "$task_root/scripts/check-swift-async-closure-codegen.py"
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" SwiftExplicitValueConsumer
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
@@ -34,8 +35,10 @@ xcrun clang -std=c11 -dynamiclib -mmacosx-version-min=15.4 -undefined dynamic_lo
     "$task_root/Tests/NativeConsumer/ErrorLeaseFixture.c" -o "$task_fixture/libErrorLease.dylib"
 xcrun clang -std=c11 -dynamiclib -mmacosx-version-min=15.4 \
     "$task_root/Tests/NativeConsumer/ThrowingClosureFactory.c" -o "$task_fixture/libErrorClosureFactory.dylib"
+xcrun clang++ -std=c++20 -dynamiclib -mmacosx-version-min=15.4 -undefined dynamic_lookup \
+    "$task_root/Tests/NativeConsumer/AsyncClosureLeaseFixture.cpp" -o "$task_fixture/libAsyncClosureLease.dylib"
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
-    --scratch-path "$task_root/.build/native-consumer" SwiftErrorConsumer "$task_fixture/libErrorLease.dylib" "$task_fixture/libErrorClosureFactory.dylib"
+    --scratch-path "$task_root/.build/native-consumer" SwiftErrorConsumer "$task_fixture/libErrorLease.dylib" "$task_fixture/libErrorClosureFactory.dylib" "$task_fixture/libAsyncClosureLease.dylib"
 
 xcrun clang -std=c11 -dynamiclib -mmacosx-version-min=15.4 \
     "$task_root/Tests/NativeConsumer/ClosureLeaseFixture.c" \

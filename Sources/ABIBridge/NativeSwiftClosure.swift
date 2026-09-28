@@ -125,6 +125,7 @@ public struct NativeSwiftClosure<Result, each Argument> {
 }
 
 extension NativeSwiftClosure: SwiftClosureValue {
+    func encodeClosure() -> NativeValueStorage { closureStorage.encoded() }
     static var swiftFunctionType: Any.Type { ((repeat each Argument) -> Result).self }
 
     static func makeClosureCodec() throws -> SwiftClosureCodec {

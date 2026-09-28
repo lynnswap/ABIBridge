@@ -9,6 +9,7 @@
 
 extern "C" void ABISwiftCallbackCodePage(void);
 extern "C" void ABISwiftCallbackAssembly(void);
+extern "C" void ABISwiftAsyncCallbackAssembly(void);
 
 namespace {
 // The code and configuration have matching 32-byte strides on every target,
@@ -69,7 +70,7 @@ struct SwiftCallbackCode::Storage {
     }
 };
 
-SwiftCallbackCode::SwiftCallbackCode(void *context, ABIResolutionFailure **error, bool closure) {
+SwiftCallbackCode::SwiftCallbackCode(void *context, ABIResolutionFailure **error, bool closure, uint32_t asyncContextSize) {
     if (error) *error = nullptr;
     auto &registry = pageRegistry();
     std::lock_guard lock(registry.mutex);
@@ -95,14 +96,18 @@ SwiftCallbackCode::SwiftCallbackCode(void *context, ABIResolutionFailure **error
     *configuration = {};
     configuration->context = reinterpret_cast<uintptr_t>(context);
     configuration->closure = closure;
-    ABIUnmanagedFunction entry = ABISwiftCallbackAssembly;
+    if (asyncContextSize) {
+        const uint32_t descriptor[] = {PAGE_MAX_SIZE - uint32_t(offsetof(Configuration, closure)), asyncContextSize};
+        std::memcpy(&configuration->closure, descriptor, sizeof(descriptor));
+    }
+    ABIUnmanagedFunction entry = asyncContextSize ? ABISwiftAsyncCallbackAssembly : ABISwiftCallbackAssembly;
     std::memcpy(&configuration->entry, &entry, sizeof(entry));
 #if __has_feature(ptrauth_calls)
     configuration->discriminator = ptrauth_function_pointer_type_discriminator(void(void));
 #endif
 }
 
-void *SwiftCallbackCode::closureContext(ABIUnmanagedFunction function) {
+void *SwiftCallbackCode::closureContext(ABIUnmanagedFunction function, bool asynchronous) {
     if (!function) return nullptr;
     const void *pointer;
     std::memcpy(&pointer, &function, sizeof(pointer));
@@ -123,9 +128,19 @@ void *SwiftCallbackCode::closureContext(ABIUnmanagedFunction function) {
         const auto index = offset / sizeof(Configuration);
         if (std::find(page->free.begin(), page->free.end(), index) != page->free.end()) return nullptr;
         const auto *configuration = reinterpret_cast<const Configuration *>(page->base) + index;
-        return configuration->closure ? reinterpret_cast<void *>(configuration->context) : nullptr;
+        ABIUnmanagedFunction entry;
+        std::memcpy(&entry, &configuration->entry, sizeof(entry));
+        if (asynchronous ? entry != ABISwiftAsyncCallbackAssembly
+                         : (entry != ABISwiftCallbackAssembly || !configuration->closure)) return nullptr;
+        return reinterpret_cast<void *>(configuration->context);
     }
     return nullptr;
+}
+
+const void *SwiftCallbackCode::asyncDescriptor() const {
+    if (!storage) return nullptr;
+    const auto *configuration = reinterpret_cast<const Configuration *>(storage->page->base) + storage->index;
+    return &configuration->closure;
 }
 
 SwiftCallbackCode::~SwiftCallbackCode() = default;
