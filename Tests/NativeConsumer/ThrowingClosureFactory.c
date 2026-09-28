@@ -16,3 +16,14 @@ struct ClosureValue make(const void *entry) {
 #endif
     return (struct ClosureValue){entry, 0};
 }
+
+__attribute__((swiftcall))
+struct ClosureValue makeAsync(const void *descriptor) __asm__("$s19ErrorClosureFactory9makeAsyncyySVYaYbKcSVF");
+
+__attribute__((swiftcall))
+struct ClosureValue makeAsync(const void *descriptor) {
+#if __has_feature(ptrauth_calls)
+    descriptor = ptrauth_sign_unauthenticated(descriptor, ptrauth_key_process_independent_data, 62266);
+#endif
+    return (struct ClosureValue){descriptor, 0};
+}

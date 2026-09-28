@@ -21,6 +21,16 @@ typedef struct ABISwiftClosureValue {
 /// describe the concrete SIL signature, not its generic reabstraction.
 ABIUnmanagedFunction ABIAuthenticateSwiftClosureFunction(const void *function, uint16_t discriminator);
 const void *ABISignSwiftClosureFunction(ABIUnmanagedFunction function, uint16_t discriminator);
+/// Async closures authenticate a descriptor with the data key. The descriptor
+/// contains a relative entry address and the required task-context size.
+const void *ABIAuthenticateSwiftAsyncClosureDescriptor(const void *descriptor, uint16_t discriminator);
+const void *ABISignSwiftAsyncClosureDescriptor(const void *descriptor, uint16_t discriminator);
+typedef struct ABISwiftAsyncDescriptor ABISwiftAsyncDescriptor;
+ABISwiftAsyncDescriptor *ABICopySwiftAsyncDescriptor(const void *descriptor, ABIResolutionFailure **error);
+ABIUnmanagedFunction ABISwiftAsyncDescriptorFunction(const ABISwiftAsyncDescriptor *descriptor);
+uint32_t ABISwiftAsyncDescriptorContextSize(const ABISwiftAsyncDescriptor *descriptor);
+void ABIReleaseSwiftAsyncDescriptor(ABISwiftAsyncDescriptor *descriptor);
+
 void ABIRetainSwiftClosureContext(void *context);
 void ABIReleaseSwiftClosureContext(void *context);
 

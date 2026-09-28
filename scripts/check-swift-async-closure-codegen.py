@@ -25,6 +25,10 @@ public typealias StoredBody = (nonisolated(nonsending) @Sendable () async -> Voi
 public func storage(_ body: @escaping StoredBody, _ observer: @convention(c) (UnsafeRawPointer) -> Void) {
     withUnsafePointer(to: body) { observer(UnsafeRawPointer($0)) }
 }
+public typealias ConcurrentBody = @Sendable @concurrent () async -> Void
+public func concurrentStorage(_ body: @escaping ConcurrentBody, _ observer: @convention(c) (UnsafeRawPointer) -> Void) {
+    withUnsafePointer(to: body) { observer(UnsafeRawPointer($0)) }
+}
 '''
     reports = []
     for target, sdk_name in [('arm64-apple-macos15.4','macosx'), ('x86_64-apple-macos15.4','macosx'),
@@ -62,6 +66,8 @@ public func storage(_ body: @escaping StoredBody, _ observer: @convention(c) (Un
                 raise RuntimeError('Re-evaluate the formal opaque-isolation parameter discriminator')
             if not re.search(r'TRTATu[^\n]*i32 2, i64 0, i64 51264', ir):
                 raise RuntimeError('Stored caller-isolated Void bodies require their generic indirect-result discriminator')
+            if not re.search(r'TRTATu[^\n]*i32 2, i64 0, i64 29199', ir):
+                raise RuntimeError('Stored concurrent Void bodies require their distinct generic discriminator')
         stored_entries = [line for line in ir.splitlines() if line.startswith('define') and 'TRTA"(' in line]
         if not any('ptr noalias' in line and 'swiftasync' in line and 'swiftself' in line for line in stored_entries):
             raise RuntimeError(f'{target}: stored async body lost its indirect empty result')

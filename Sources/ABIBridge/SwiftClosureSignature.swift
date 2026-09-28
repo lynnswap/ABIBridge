@@ -99,7 +99,7 @@ private func swiftPointerAuthHash(_ string: String) -> UInt16 {
 protocol SwiftClosureValue: SendableMetatype {
     static var swiftFunctionType: Any.Type { get }
     static func makeClosureCodec() throws -> SwiftClosureCodec
-    var closureStorage: SwiftClosureStorage { get }
+    func encodeClosure() -> NativeValueStorage
 }
 
 struct SwiftClosureCodec: Sendable {

@@ -180,3 +180,9 @@ All eight checks passed in a Release arm64e build on iPhone Air (iOS 27, build 2
 The `swift-throwing-closures` mode checks generated typed callbacks, zero-valued errors, independent indirect success/error outputs, returned native captures, forwarding into escaping native storage, and final capture release.
 
 All seven checks passed in a Release arm64e build on iPhone Air (iOS 27, build 24A435), with pointer authentication enabled. The report is `Documents/architecture-swift-throwing-closures.json`. macOS tests also cover untyped and Never errors and preservation of the caller's error register by nonthrowing callbacks.
+
+## Async Swift closure values
+
+The `swift-async-closures` mode exercises caller-isolated and concurrent generated callbacks, typed direct/indirect errors, independent owned result storage, stack arguments, returned descriptors, repeated native handoffs, escaping captures and final release, and original-task cancellation.
+
+All 12 checks passed in a Release arm64e build on iPhone Air (iOS 27, build 24A435), with pointer authentication enabled. The report is `Documents/architecture-swift-async-closures.json`. Compiler controls distinguish the hidden actor's class authentication identity from its two-word physical isolation representation and verify both compiler-stored async body conventions.

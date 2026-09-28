@@ -30,7 +30,7 @@ Arguments and results use the same supported Swift value representations as sync
 
 Untyped and concrete typed native failures are returned as ``NativeSwiftError``, which keeps its error and code owners alive. Bridge lookup and conversion failures retain their original types. The bridge runs on the caller's Swift task, preserves task-local and cancellation state, and returns to the caller's executor. Cancellation remains cooperative: it does not abandon an active native context or release its values before completion.
 
-Generic signatures, inout/consuming explicit parameters, and async closure values remain separate conventions. Calls require a compiler-emitted async descriptor. See <doc:SwiftFunctionInvocation> for value support and <doc:SwiftErrorABI> for error inspection.
+Async closure arguments and results use NativeSwiftAsyncClosure or NativeSwiftConcurrentClosure; see <doc:SwiftClosureValues>. Generic signatures and inout/consuming explicit parameters remain separate conventions. Calls require a valid async descriptor. See <doc:SwiftFunctionInvocation> for value support and <doc:SwiftErrorABI> for error inspection.
 
 ## Entry and completion
 

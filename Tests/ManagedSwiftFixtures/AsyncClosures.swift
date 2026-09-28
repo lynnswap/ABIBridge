@@ -70,6 +70,16 @@ public func applyIndirectAsyncClosure(_ body: IndirectAsyncClosure, _ gate: Asyn
     try await body(gate, fail)
 }
 
+public typealias ManyAsyncClosure = @Sendable @concurrent (
+    Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64,
+    Double, Double, Double, Double, Double, Double, Double, Double, Double, Double
+) async -> Double
+
+@inline(never) @concurrent public func applyManyAsyncClosure(_ body: ManyAsyncClosure) async -> Double {
+    await body(1,2,3,4,5,6,7,8,9,10, 0.5,1,1.5,2,2.5,3,3.5,4,4.5,5)
+}
+@inline(never) public func handoffAsyncClosure(_ body: @escaping ConcurrentAsyncClosure) -> ConcurrentAsyncClosure { body }
+
 public final class StoredAsyncClosure: Sendable {
     public let body: ConcurrentAsyncClosure
     public init(_ body: @escaping ConcurrentAsyncClosure) { self.body = body }
