@@ -62,6 +62,8 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         checks += try await validateSwiftLookup()
     case "objc-values":
         checks += try validateObjectiveCValues()
+    case "swift-async":
+        checks += try await validateSwiftAsyncValues()
     case "swift-errors":
         checks += try await validateSwiftErrors()
     case "swift-closures":

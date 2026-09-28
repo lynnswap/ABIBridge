@@ -428,3 +428,165 @@ extension ABIRuntime {
         return type
     }
 }
+
+extension NativeSwiftType {
+
+    /// Resolves a concrete async instance implementation caller-isolated.
+    ///
+    /// The function type describes native ABI effects; callers satisfy the
+    /// declaration's actor contract. Receiver conventions match synchronous methods.
+    public func method<Result, Failure: Error, each Argument>(
+        named name: String, as signature: (nonisolated(nonsending) (repeat each Argument) async throws(Failure) -> Result).Type,
+        inheritsCallerIsolation: Bool = true,
+        mutating isMutating: Bool = false, consuming isConsuming: Bool = false
+    ) throws -> NativeSwiftAsyncMethod<Result, repeat each Argument> {
+        let errorPlan = try SwiftErrorPlan.make(Failure.self)
+        let symbol = try resolveMember {
+            try NativeSwiftAsyncFunction<Result, repeat each Argument>.declaration(named: $0 + "." + name, failure: Failure.self)
+        }
+        return try NativeSwiftAsyncMethod(symbol: symbol, type: self,
+            receiver: receiverPlan(mutating: isMutating, consuming: isConsuming),
+            errorPlan: errorPlan, inheritsCallerIsolation: inheritsCallerIsolation)
+    }
+
+    /// Resolves a concrete async static or class implementation caller-isolated.
+    public func staticMethod<Result, Failure: Error, each Argument>(
+        named name: String, as signature: (nonisolated(nonsending) (repeat each Argument) async throws(Failure) -> Result).Type,
+        inheritsCallerIsolation: Bool = true
+    ) throws -> NativeSwiftAsyncFunction<Result, repeat each Argument> {
+        let errorPlan = try SwiftErrorPlan.make(Failure.self)
+        let symbol = try resolveMember {
+            try NativeSwiftAsyncFunction<Result, repeat each Argument>.declaration(named: "static " + $0 + "." + name, failure: Failure.self)
+        }
+        return try NativeSwiftAsyncFunction(symbol: symbol, resolver: resolver, errorPlan: errorPlan,
+            inheritsCallerIsolation: inheritsCallerIsolation, metadata: metadata, owner: self)
+    }
+
+    /// Resolves an allocating async initializer caller-isolated.
+    ///
+    /// Ordinary initializer arguments transfer to the callee on success or failure.
+    public func initializer<Result, Failure: Error, each Argument>(
+        named name: String, as signature: (nonisolated(nonsending) (repeat each Argument) async throws(Failure) -> Result).Type,
+        inheritsCallerIsolation: Bool = true
+    ) throws -> NativeSwiftAsyncFunction<Result, repeat each Argument> {
+        let errorPlan = try SwiftErrorPlan.make(Failure.self)
+        guard name.hasPrefix("init(") else {
+            throw ABIResolutionError.unsupportedDeclaration("An initializer name must start with init(.")
+        }
+        let member = metadata is AnyClass ? "__allocating_" + name : name
+        let resultName = Result.self is any NativeOptionalValue.Type ? "Swift.Optional<" + self.name + ">" : self.name
+        let declaration = try NativeSwiftAsyncFunction<Result, repeat each Argument>.declaration(
+            named: self.name + "." + member, failure: Failure.self, resultName: resultName)
+        guard !declaration.name.contains("__shared ") else {
+            throw ABIResolutionError.unsupportedDeclaration("Borrowing initializer arguments require a native adapter.")
+        }
+        return try NativeSwiftAsyncFunction(symbol: resolveDeclaredMember(declaration, in: image),
+            resolver: resolver, errorPlan: errorPlan, inheritsCallerIsolation: inheritsCallerIsolation,
+            metadata: metadata, owner: self, consumesArguments: true)
+    }
+
+    /// Resolves an async getter caller-isolated using a zero-argument function type.
+    public func getter<Value, Failure: Error>(
+        named name: String, as signature: (nonisolated(nonsending) () async throws(Failure) -> Value).Type,
+        inheritsCallerIsolation: Bool = true,
+        mutating isMutating: Bool = false, consuming isConsuming: Bool = false
+    ) throws -> NativeSwiftAsyncMethod<Value> {
+        let errorPlan = try SwiftErrorPlan.make(Failure.self)
+        let symbol = try resolveMember {
+            try accessorDeclaration(named: name, ownerName: $0, valueType: Value.self, setter: false, isStatic: false)
+        }
+        return try NativeSwiftAsyncMethod(symbol: symbol, type: self,
+            receiver: receiverPlan(mutating: isMutating, consuming: isConsuming),
+            errorPlan: errorPlan, inheritsCallerIsolation: inheritsCallerIsolation)
+    }
+
+    /// Resolves an async static getter caller-isolated.
+    public func staticGetter<Value, Failure: Error>(
+        named name: String, as signature: (nonisolated(nonsending) () async throws(Failure) -> Value).Type,
+        inheritsCallerIsolation: Bool = true
+    ) throws -> NativeSwiftAsyncFunction<Value> {
+        let errorPlan = try SwiftErrorPlan.make(Failure.self)
+        let symbol = try resolveMember {
+            try accessorDeclaration(named: name, ownerName: $0, valueType: Value.self, setter: false, isStatic: true)
+        }
+        return try NativeSwiftAsyncFunction(symbol: symbol, resolver: resolver, errorPlan: errorPlan,
+            inheritsCallerIsolation: inheritsCallerIsolation, metadata: metadata, owner: self)
+    }
+
+    /// Resolves a concrete async instance implementation without a caller-isolation prefix.
+    ///
+    /// The function type describes native ABI effects; callers satisfy the
+    /// declaration's actor contract. Receiver conventions match synchronous methods.
+    public func method<Result, Failure: Error, each Argument>(
+        named name: String, as signature: (@concurrent (repeat each Argument) async throws(Failure) -> Result).Type,
+        mutating isMutating: Bool = false, consuming isConsuming: Bool = false
+    ) throws -> NativeSwiftAsyncMethod<Result, repeat each Argument> {
+        let errorPlan = try SwiftErrorPlan.make(Failure.self)
+        let symbol = try resolveMember {
+            try NativeSwiftAsyncFunction<Result, repeat each Argument>.declaration(named: $0 + "." + name, failure: Failure.self)
+        }
+        return try NativeSwiftAsyncMethod(symbol: symbol, type: self,
+            receiver: receiverPlan(mutating: isMutating, consuming: isConsuming),
+            errorPlan: errorPlan, inheritsCallerIsolation: false)
+    }
+
+    /// Resolves a concrete async static or class implementation without a caller-isolation prefix.
+    public func staticMethod<Result, Failure: Error, each Argument>(
+        named name: String, as signature: (@concurrent (repeat each Argument) async throws(Failure) -> Result).Type
+    ) throws -> NativeSwiftAsyncFunction<Result, repeat each Argument> {
+        let errorPlan = try SwiftErrorPlan.make(Failure.self)
+        let symbol = try resolveMember {
+            try NativeSwiftAsyncFunction<Result, repeat each Argument>.declaration(named: "static " + $0 + "." + name, failure: Failure.self)
+        }
+        return try NativeSwiftAsyncFunction(symbol: symbol, resolver: resolver, errorPlan: errorPlan,
+            inheritsCallerIsolation: false, metadata: metadata, owner: self)
+    }
+
+    /// Resolves an allocating async initializer without a caller-isolation prefix.
+    ///
+    /// Ordinary initializer arguments transfer to the callee on success or failure.
+    public func initializer<Result, Failure: Error, each Argument>(
+        named name: String, as signature: (@concurrent (repeat each Argument) async throws(Failure) -> Result).Type
+    ) throws -> NativeSwiftAsyncFunction<Result, repeat each Argument> {
+        let errorPlan = try SwiftErrorPlan.make(Failure.self)
+        guard name.hasPrefix("init(") else {
+            throw ABIResolutionError.unsupportedDeclaration("An initializer name must start with init(.")
+        }
+        let member = metadata is AnyClass ? "__allocating_" + name : name
+        let resultName = Result.self is any NativeOptionalValue.Type ? "Swift.Optional<" + self.name + ">" : self.name
+        let declaration = try NativeSwiftAsyncFunction<Result, repeat each Argument>.declaration(
+            named: self.name + "." + member, failure: Failure.self, resultName: resultName)
+        guard !declaration.name.contains("__shared ") else {
+            throw ABIResolutionError.unsupportedDeclaration("Borrowing initializer arguments require a native adapter.")
+        }
+        return try NativeSwiftAsyncFunction(symbol: resolveDeclaredMember(declaration, in: image),
+            resolver: resolver, errorPlan: errorPlan, inheritsCallerIsolation: false,
+            metadata: metadata, owner: self, consumesArguments: true)
+    }
+
+    /// Resolves an async getter without a caller-isolation prefix using a zero-argument function type.
+    public func getter<Value, Failure: Error>(
+        named name: String, as signature: (@concurrent () async throws(Failure) -> Value).Type,
+        mutating isMutating: Bool = false, consuming isConsuming: Bool = false
+    ) throws -> NativeSwiftAsyncMethod<Value> {
+        let errorPlan = try SwiftErrorPlan.make(Failure.self)
+        let symbol = try resolveMember {
+            try accessorDeclaration(named: name, ownerName: $0, valueType: Value.self, setter: false, isStatic: false)
+        }
+        return try NativeSwiftAsyncMethod(symbol: symbol, type: self,
+            receiver: receiverPlan(mutating: isMutating, consuming: isConsuming),
+            errorPlan: errorPlan, inheritsCallerIsolation: false)
+    }
+
+    /// Resolves an async static getter without a caller-isolation prefix.
+    public func staticGetter<Value, Failure: Error>(
+        named name: String, as signature: (@concurrent () async throws(Failure) -> Value).Type
+    ) throws -> NativeSwiftAsyncFunction<Value> {
+        let errorPlan = try SwiftErrorPlan.make(Failure.self)
+        let symbol = try resolveMember {
+            try accessorDeclaration(named: name, ownerName: $0, valueType: Value.self, setter: false, isStatic: true)
+        }
+        return try NativeSwiftAsyncFunction(symbol: symbol, resolver: resolver, errorPlan: errorPlan,
+            inheritsCallerIsolation: false, metadata: metadata, owner: self)
+    }
+}

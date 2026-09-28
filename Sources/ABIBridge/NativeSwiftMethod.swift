@@ -78,23 +78,8 @@ public struct NativeSwiftMethod<Result, each Argument>: Sendable {
         let outcome = Swift.Result<Result, any Error> {
             try unsafe invoke(storage, didInvoke: { invoked = true }, repeat each values)
         }
-        if invoked && self.receiver.isMutating && self.receiver.mode != .object {
-            do {
-                let value = try self.receiver.codec.decode(storage, (storage.writebackOwner(retaining: [symbol.image, type.image]), implementation))
-                guard let updated = value as? Receiver else {
-                    throw ABIInvocationError.incompatibleValue(
-                        expected: String(reflecting: Receiver.self), actual: String(reflecting: Swift.type(of: value))
-                    )
-                }
-                receiver = updated
-            } catch {
-                if case .failure(let invocationError) = outcome {
-                    throw NativeSwiftWritebackError(invocationError: invocationError, writebackError: error)
-                }
-                throw error
-            }
-        }
-        return try outcome.get()
+        return try self.receiver.finishInvocation(outcome, storage: storage, invoked: invoked, receiver: &receiver,
+            retaining: (storage.writebackOwner(retaining: [symbol.image, type.image]), implementation))
     }
 
     @unsafe private func invoke(
@@ -121,7 +106,7 @@ public struct NativeSwiftMethod<Result, each Argument>: Sendable {
 
 // Releasing a receiver may execute native destruction code. Keep the captured
 // method (and its images) alive until that release finishes.
-private final class SwiftObjectMethodBinding {
+final class SwiftObjectMethodBinding {
     var receiver: AnyObject?
     let owner: Any
     init(receiver: AnyObject, owner: Any) {

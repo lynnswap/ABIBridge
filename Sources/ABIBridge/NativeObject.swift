@@ -321,3 +321,44 @@ struct ObjCMethodSignature<Result, each Argument> {
         }
     }
 }
+
+extension NativeObject {
+
+    /// Resolves an async Swift implementation bound to this retained object.
+    public nonisolated(nonsending) func method<Result, Failure: Error, each Argument>(
+        named name: String, as signature: (nonisolated(nonsending) (repeat each Argument) async throws(Failure) -> Result).Type,
+        inheritsCallerIsolation: Bool = true,
+        consuming isConsuming: Bool = false
+    ) async throws -> NativeBoundSwiftAsyncMethod<Result, repeat each Argument> {
+        let method = try await swiftType().method(named: name, as: signature, inheritsCallerIsolation: inheritsCallerIsolation, consuming: isConsuming)
+        return NativeBoundSwiftAsyncMethod(method: method, receiver: receiver!)
+    }
+
+    /// Resolves an async Swift getter bound to this retained object.
+    public nonisolated(nonsending) func getter<Value, Failure: Error>(
+        named name: String, as signature: (nonisolated(nonsending) () async throws(Failure) -> Value).Type,
+        inheritsCallerIsolation: Bool = true,
+        consuming isConsuming: Bool = false
+    ) async throws -> NativeBoundSwiftAsyncMethod<Value> {
+        let method = try await swiftType().getter(named: name, as: signature, inheritsCallerIsolation: inheritsCallerIsolation, consuming: isConsuming)
+        return NativeBoundSwiftAsyncMethod(method: method, receiver: receiver!)
+    }
+
+    /// Resolves an async Swift implementation bound to this retained object.
+    public nonisolated(nonsending) func method<Result, Failure: Error, each Argument>(
+        named name: String, as signature: (@concurrent (repeat each Argument) async throws(Failure) -> Result).Type,
+        consuming isConsuming: Bool = false
+    ) async throws -> NativeBoundSwiftAsyncMethod<Result, repeat each Argument> {
+        let method = try await swiftType().method(named: name, as: signature, consuming: isConsuming)
+        return NativeBoundSwiftAsyncMethod(method: method, receiver: receiver!)
+    }
+
+    /// Resolves an async Swift getter bound to this retained object.
+    public nonisolated(nonsending) func getter<Value, Failure: Error>(
+        named name: String, as signature: (@concurrent () async throws(Failure) -> Value).Type,
+        consuming isConsuming: Bool = false
+    ) async throws -> NativeBoundSwiftAsyncMethod<Value> {
+        let method = try await swiftType().getter(named: name, as: signature, consuming: isConsuming)
+        return NativeBoundSwiftAsyncMethod(method: method, receiver: receiver!)
+    }
+}

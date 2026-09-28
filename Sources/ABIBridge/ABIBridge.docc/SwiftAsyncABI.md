@@ -1,6 +1,36 @@
-# Preparing native Swift async invocation
+# Calling native Swift async implementations
 
-Compiler-generated fixtures establish the context, executor, completion, and error contracts for direct async invocation. The current function handles remain synchronous; awaiting runtime lookup does not await a native async entry point.
+Resolve an async function with its native function metatype, then await ``NativeSwiftAsyncFunction``:
+
+```swift
+let load = try await ABIRuntime.shared.swiftFunction(
+    named: "Example.load(_:)",
+    as: (@concurrent (String) async throws -> String).self
+)
+let contents = try unsafe await load.unsafeInvoke("settings")
+```
+
+For a `nonisolated(nonsending)` declaration, use its caller-isolated metatype:
+
+```swift
+let process = try await ABIRuntime.shared.swiftFunction(
+    named: "Example.process(_:)",
+    as: (nonisolated(nonsending) (String) async -> String).self
+)
+let result = try unsafe await process.unsafeInvoke("input")
+```
+
+Explicit annotations keep the call convention independent of the caller target's feature flags. Plain async function types follow that target's NonisolatedNonsendingByDefault setting. The caller-isolated overload also accepts `inheritsCallerIsolation: false` when the selected native entry has no hidden isolation payload; this is a calling-convention assertion, not an executor preference.
+
+## Members, values, and errors
+
+``NativeSwiftType`` accepts async metatypes for methods, static methods, allocating initializers, and getters. Bound object lookups use the same signatures. Getter signatures have zero arguments, for example `(@concurrent () async throws -> String).self`. A concurrent metatype describes the physical parameters of an actor-isolated entry too; it does not remove that declaration's actor requirements.
+
+Arguments and results use the same supported Swift value representations as synchronous calls. Receivers, argument storage, descriptors, and implementation images remain alive across suspension. Mutating receivers are written back even on native failure, and initializer/consuming ownership transfers follow the native declaration.
+
+Untyped and concrete typed native failures are returned as ``NativeSwiftError``, which keeps its error and code owners alive. Bridge lookup and conversion failures retain their original types. The bridge runs on the caller's Swift task, preserves task-local and cancellation state, and returns to the caller's executor. Cancellation remains cooperative: it does not abandon an active native context or release its values before completion.
+
+Generic signatures, inout/consuming explicit parameters, and async closure values remain separate conventions. Calls require a compiler-emitted async descriptor. See <doc:SwiftFunctionInvocation> for value support and <doc:SwiftErrorABI> for error inspection.
 
 ## Entry and completion
 
@@ -20,7 +50,7 @@ A `nonisolated(nonsending)` declaration accepts a hidden caller-isolation payloa
 
 Enabling ApproachableConcurrency can change a default nonisolated async declaration to caller-isolated behavior without changing its source symbol name. Therefore, symbol lookup alone cannot identify the complete ABI. Explicit `@concurrent` and `nonisolated(nonsending)` annotations keep the fixtures' contracts independent of the package's feature flags. See [SE-0461](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0461-async-function-isolation.md).
 
-An invocation frontend must preserve the caller's task and its cancellation/task-local state, pass the correct executor convention, and resume its Swift caller on the required executor. Any actor requirement that the selected declaration leaves to its caller remains part of the unsafe invocation contract.
+The frontend preserves the caller's task and cancellation/task-local state, passes the selected caller-isolation convention, and resumes its Swift caller on the original executor. Any actor requirement that the selected declaration leaves to its caller remains part of the unsafe invocation contract.
 
 ## Ownership and cancellation evidence
 
@@ -28,4 +58,4 @@ The independent provider and reference-adapter targets use ordinary Swift async 
 
 Tests cover immediate completion, mixed register/stack arguments, receiver and argument retention, owned errors, indirect success/error outputs, floating errors, caller task-local values, and explicitly isolated functions/members. Cancellation remains cooperative: the fixture holds its arguments while suspended, then its native body decides whether to throw CancellationError or its declared typed error.
 
-Compiler probes inspect arm64, x86_64, arm64e, and arm64_32 entry signatures, descriptors, error completion, and authenticated context operations. These compilation checks are separate from runtime execution and do not establish that a future dynamic transport follows those contracts.
+Compiler probes inspect arm64, x86_64, arm64e, and arm64_32 entry signatures, descriptors, error completion, and authenticated context operations. The dynamic frontend passed macOS arm64 tests in Debug, Release, and Address Sanitizer, x86_64 tests under Rosetta, and eight checks on an arm64e iPhone Air running iOS 27. The arm64_32 result is compilation evidence. These are verified configurations, not additional deployment requirements.
