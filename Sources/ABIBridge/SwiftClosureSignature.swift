@@ -124,7 +124,7 @@ final class SwiftClosureStorage {
             throw error
         }
         self.value = value
-        codeOwner = owner
+        codeOwner = (owner, implementation)
     }
 
     deinit {

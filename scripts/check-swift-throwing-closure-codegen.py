@@ -18,6 +18,7 @@ public func plain(_ body: (Bool) -> String, _ flag: Bool) -> String { body(flag)
 public func untyped(_ body: (Bool) throws -> String, _ flag: Bool) throws -> String { try body(flag) }
 public func typed(_ body: (Bool) throws(ManagedFailure) -> String, _ flag: Bool) throws(ManagedFailure) -> String { try body(flag) }
 public func indirect(_ body: (ErrorLifetimeToken, Bool) throws(LargeFailure) -> ErrorSuccessPayload, _ token: ErrorLifetimeToken, _ flag: Bool) throws(LargeFailure) -> ErrorSuccessPayload { try body(token, flag) }
+public func foreign(_ body: (UnsafeRawPointer) throws -> Void, _ value: UnsafeRawPointer) throws { try body(value) }
 '''
     reports = []
     for target, sdk_name in [('arm64-apple-macos15.4','macosx'), ('x86_64-apple-macos15.4','macosx'),
@@ -34,7 +35,7 @@ public func indirect(_ body: (ErrorLifetimeToken, Bool) throws(LargeFailure) -> 
         run(*common,'-I',str(directory),'-module-name','ClosureErrorProbe',str(probe),'-emit-ir','-o',str(ir_path))
         ir = ir_path.read_text()
         calls = {}
-        for name in ['plain','untyped','typed','indirect']:
+        for name in ['plain','untyped','typed','indirect','foreign']:
             body = re.search(r'^define[^\n]*' + str(len(name)) + name + r'[^\n]*\{.*?^}', ir, re.M|re.S)
             if not body: raise RuntimeError(f'{target}: missing {name}')
             candidates = [l.strip() for l in body[0].splitlines() if re.search(r'call swiftcc.* %[^ ]+\(',l) and 'swiftself' in l]
@@ -48,6 +49,8 @@ public func indirect(_ body: (ErrorLifetimeToken, Bool) throws(LargeFailure) -> 
             discriminators = [re.search(r'"ptrauth"\(i32 0, i64 (\d+)\)', calls[n]) for n in ['plain','untyped','typed']]
             if not all(discriminators) or len({m[1] for m in discriminators}) != 1:
                 raise RuntimeError('Error result must not change the formal closure discriminator')
+            if '"ptrauth"(i32 0, i64 62266)' not in calls['foreign']:
+                raise RuntimeError('Re-evaluate the cross-image throwing closure fixture discriminator')
         reports.append({'target':target,'calls':calls})
     report={'compiler':run('xcrun','swiftc','--version').strip(),'runtimeTested':False,'targets':reports}
     (output/'report.json').write_text(json.dumps(report,indent=2)+'\n')
