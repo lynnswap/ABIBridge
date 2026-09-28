@@ -67,7 +67,7 @@ ABIValueType *ABICreateStructType(
     }
     auto storage = std::make_shared<TypeStorage>();
     for (size_t index = 0; index < count; ++index) {
-        if (!fields[index] || fields[index]->storage->native()->type == FFI_TYPE_VOID) {
+        if (!fields[index] || fields[index]->storage->swiftIndirect || fields[index]->storage->native()->type == FFI_TYPE_VOID) {
             fail(error, ABIFailureInvalidRequest, "A C aggregate field must have a value type.");
             return nullptr;
         }
@@ -98,14 +98,14 @@ ABICallInterface *ABICreateCCallInterface(
     size_t count, ABIResolutionFailure **error)
 {
     if (error) *error = nullptr;
-    if (!result || (count && !parameters) || count > UINT_MAX) {
+    if (!result || result->storage->swiftIndirect || (count && !parameters) || count > UINT_MAX) {
         fail(error, ABIFailureInvalidRequest, "A result and a representable parameter list are required.");
         return nullptr;
     }
     auto interface = std::make_unique<ABICallInterface>();
     interface->result = result->storage;
     for (size_t index = 0; index < count; ++index) {
-        if (!parameters[index] || parameters[index]->storage->native()->type == FFI_TYPE_VOID) {
+        if (!parameters[index] || parameters[index]->storage->swiftIndirect || parameters[index]->storage->native()->type == FFI_TYPE_VOID) {
             fail(error, ABIFailureInvalidRequest, "A parameter must have a non-void value type.");
             return nullptr;
         }

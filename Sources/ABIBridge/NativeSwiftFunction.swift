@@ -71,7 +71,7 @@ final class SwiftCallInterface: @unchecked Sendable {
 /// Array, their supported optional forms, standard C value types, managed fixed
 /// layouts supplied by ABIBridgeSwiftValue, and trivial ABIBridgeValue layouts.
 /// Use NativeSwiftClosure for supported concrete callbacks. Generic declarations,
-/// resilient values, ordinary unwrapped closures, inout and consumed
+/// undescribed resilient values, ordinary unwrapped closures, inout and consumed
 /// arguments, async functions, and throwing functions require separate adapters.
 /// See <doc:SwiftFunctionInvocation>.
 public struct NativeSwiftFunction<Result, each Argument>: Sendable {

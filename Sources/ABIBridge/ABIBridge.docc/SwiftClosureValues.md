@@ -48,7 +48,7 @@ The initial subset supports synchronous, nonthrowing closures with ordinary guar
 | Managed values | String, Array<Element>, and their single-level optional forms; class references and AnyObject, including optional references |
 | Pointer values | UnsafePointer, UnsafeMutablePointer, UnsafeRawPointer, UnsafeMutableRawPointer, OpaquePointer, Selector, and their optional forms |
 | Standard value layouts | CGPoint, CGSize, CGRect, NSRange |
-| Explicit Swift layouts | Nongeneric ABIBridgeSwiftValue conformances with established fixed lowering; large indirectly lowered values |
+| Explicit Swift layouts | ABIBridgeSwiftValue conformances with established fixed or formally indirect lowering, including concrete generic nominal values |
 | Empty values | Zero arguments, explicit empty-tuple arguments, and Void results |
 
 An array's element type can itself be a managed struct, enum, optional, or another array without requiring direct-call support for that element. The compiler manages elements through the buffer's value operations. This does not make a standalone element value a supported callback argument. String and Array optionals preserve nil separately from empty payloads; nested optional containers still require an adapter.

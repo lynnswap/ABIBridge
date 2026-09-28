@@ -31,10 +31,16 @@ void ABIReleaseSwiftClosureContext(void *context);
 ABIValueType *ABICreateSwiftStorageType(
     const ABIValueType *components, size_t size, size_t alignment, ABIResolutionFailure **error);
 
+/// Describes a formally indirect Swift value, independent of its current size.
+/// There is no C representation and no scalar component description.
+ABIValueType *ABICreateSwiftIndirectStorageType(
+    size_t size, size_t alignment, ABIResolutionFailure **error);
+
 /// Prepares a concrete synchronous, nonthrowing Swift call from fixed value
 /// layouts. These are storage descriptions, not a C calling convention.
-/// Parameters must use ordinary guaranteed ownership; consumed/inout values,
-/// resilient layouts and hidden generic arguments require a native adapter.
+/// Parameters must use ordinary guaranteed ownership. Declared formally
+/// indirect values use ABICreateSwiftIndirectStorageType; consumed/inout values
+/// and hidden generic arguments require a native adapter.
 ABISwiftCallInterface *ABICreateSwiftCallInterface(
     const ABIValueType *result, const ABIValueType *const *parameters,
     size_t count, ABIResolutionFailure **error);

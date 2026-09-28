@@ -23,14 +23,18 @@ struct SwiftValueCodec<Value>: Sendable {
         let managed = Value.self as? any ABIBridgeSwiftValue.Type
         objectResult = isObject && (!isAdapter || managed != nil)
         if let managed {
-            let components = try managed.swiftABIType.requireCType()
-            guard (MemoryLayout<Value>.size...MemoryLayout<Value>.stride).contains(components.size) else {
-                throw ABIResolutionError.unsupportedDeclaration(
-                    "Swift ABI components must cover the value without exceeding its stride: \(String(reflecting: Value.self))."
-                )
+            if let components = managed.swiftABIType.cType {
+                guard (MemoryLayout<Value>.size...MemoryLayout<Value>.stride).contains(components.size) else {
+                    throw ABIResolutionError.unsupportedDeclaration(
+                        "Swift ABI components must cover the value without exceeding its stride: \(String(reflecting: Value.self))."
+                    )
+                }
+                type = try CValueType(swiftComponents: components, size: MemoryLayout<Value>.size,
+                                      alignment: MemoryLayout<Value>.alignment)
+            } else {
+                type = try CValueType(indirectSwiftSize: MemoryLayout<Value>.size,
+                                      alignment: MemoryLayout<Value>.alignment)
             }
-            type = try CValueType(swiftComponents: components, size: MemoryLayout<Value>.size,
-                                  alignment: MemoryLayout<Value>.alignment)
             cValue = nil
         } else if isAdapter {
             let codec = try CValueCodec<Value>()

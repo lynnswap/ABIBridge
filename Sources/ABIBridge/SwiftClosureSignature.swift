@@ -13,15 +13,10 @@ func swiftClosureAuthType(_ type: Any.Type) throws -> String {
     }
     if base is AnyClass || base == AnyObject.self { return "-class" }
     if let value = type as? any ABIBridgeSwiftValue.Type {
-        let components = try value.swiftABIType.requireCType()
+        guard let components = value.swiftABIType.cType else { return "-indirect" }
         if withExtendedLifetime(components, { ABISwiftValueIsIndirect(components.handle) }) {
             return "-indirect"
         }
-    }
-    if managed && String(reflecting: type).contains("<") {
-        throw ABIResolutionError.unsupportedDeclaration(
-            "Generic Swift value closure authentication requires a compiler adapter."
-        )
     }
     guard var name = _mangledTypeName(base) else {
         throw ABIResolutionError.metadataUnavailable("No Swift closure type identity for \(String(reflecting: type)).")
@@ -33,8 +28,33 @@ func swiftClosureAuthType(_ type: Any.Type) throws -> String {
         if name.hasPrefix("SPy") { name = "SP" }
         else if name.hasPrefix("Spy") { name = "Sp" }
     }
+    if managed, name.hasSuffix("G") { name = try swiftNominalClosureName(name) }
     let nominal = "$s" + name
     return type is any NativeOptionalValue.Type ? "Optional<" + nominal + ">" : nominal
+}
+
+// A bound nominal mangling contains its declaration before the generic
+// argument list. Let Swift's demangler validate candidate prefixes rather than
+// interpreting identifier lengths, word substitutions, or nested contexts here.
+private func swiftNominalClosureName(_ mangled: String) throws -> String {
+    guard let fullName = DeclarationKey.demangle("$s" + mangled, language: .swift) else {
+        throw ABIResolutionError.metadataUnavailable("No generic Swift value identity.")
+    }
+    var nominalName = "", depth = 0
+    for character in fullName {
+        if character == "<" { depth += 1 }
+        else if character == ">" { depth -= 1 }
+        else if depth == 0 { nominalName.append(character) }
+    }
+    for index in mangled.indices where mangled[index] == "y" {
+        let candidate = String(mangled[..<index])
+        if DeclarationKey.demangle("$s" + candidate, language: .swift) == nominalName {
+            return candidate
+        }
+    }
+    throw ABIResolutionError.unsupportedDeclaration(
+        "Cannot establish the nominal closure identity for " + fullName + "."
+    )
 }
 
 func swiftClosureDiscriminator(parameters: [String], result: String?) -> UInt16 {
