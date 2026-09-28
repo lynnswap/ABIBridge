@@ -11,6 +11,9 @@ struct SwiftValueCodec<Value>: Sendable {
     private let closure: SwiftClosureCodec?
 
     init() throws {
+        guard !(Value.self is any SwiftConventionArgument.Type) else {
+            throw ABIResolutionError.unsupportedDeclaration("Swift argument convention markers require the invocation argument path; results and managed callbacks cannot use them.")
+        }
         if let closureType = Value.self as? any SwiftClosureValue.Type {
             let codec = try closureType.makeClosureCodec()
             closure = codec; type = codec.type; cValue = nil; objectResult = false

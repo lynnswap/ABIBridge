@@ -168,6 +168,10 @@ print(symbol.image.path)
 ### Swift function invocation
 
 - <doc:SwiftFunctionInvocation>
+- <doc:SwiftArgumentConventions>
+- ``NativeSwiftInout``
+- ``NativeSwiftBorrowing``
+- ``NativeSwiftConsuming``
 - <doc:SwiftErrorABI>
 - <doc:SwiftAsyncABI>
 - <doc:ManagedSwiftValues>

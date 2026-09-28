@@ -55,15 +55,15 @@ final class SwiftAsyncCallInterface: @unchecked Sendable {
 
 struct SwiftAsyncCall<Result, each Argument>: Sendable {
     let interface: SwiftAsyncCallInterface
-    private let arguments: (repeat SwiftValueCodec<each Argument>)
+    private let arguments: (repeat SwiftArgumentCodec<each Argument>)
     private let result: SwiftValueCodec<Result>
     let errorPlan: SwiftErrorPlan?
     private let hasTrailingValue: Bool
-    private let consumesArguments: Bool
+    private let consumedArguments: [Int]
 
     init(trailingType: CValueType? = nil, consumesArguments: Bool = false,
          errorPlan: SwiftErrorPlan? = nil, inheritsCallerIsolation: Bool) throws {
-        let arguments = (repeat try SwiftValueCodec<each Argument>())
+        let arguments = (repeat try SwiftArgumentCodec<each Argument>(defaultConsuming: consumesArguments))
         let result = try SwiftValueCodec<Result>()
         var types: [CValueType] = []
         for argument in repeat each arguments { types.append(argument.type) }
@@ -74,7 +74,12 @@ struct SwiftAsyncCall<Result, each Argument>: Sendable {
         self.result = result
         self.errorPlan = errorPlan
         hasTrailingValue = trailingType != nil
-        self.consumesArguments = consumesArguments
+        var consumed: [Int] = [], index = 0
+        for argument in repeat each arguments {
+            if argument.consumes { consumed.append(index) }
+            index += 1
+        }
+        consumedArguments = consumed
     }
 
     @unsafe nonisolated(nonsending) func unsafeInvoke(
@@ -116,7 +121,7 @@ struct SwiftAsyncCall<Result, each Argument>: Sendable {
             }
         }
         await invokeSwiftAsync(invocation)
-        if consumesArguments { for value in storage { value.relinquishValue() } }
+        for index in consumedArguments { storage[index].relinquishValue() }
         didInvoke?()
         if ABISwiftAsyncInvocationDidThrow(invocation), let errorPlan, let nativeError {
             throw NativeSwiftError(try errorPlan.decode(nativeError), retainingCode: codeOwners)

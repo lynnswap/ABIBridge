@@ -13,17 +13,17 @@ func swiftFunctionTypeName(_ type: Any.Type) throws -> String {
 
 func swiftFunctionDeclaration<Result, Failure: Error, each Argument>(
     named name: String, as signature: ((repeat each Argument) throws(Failure) -> Result).Type,
-    resultName: String? = nil
+    resultName: String? = nil, defaultConsuming: Bool = false
 ) throws -> NativeDeclaration {
     var parameters: [Any.Type] = []
     for type in repeat (each Argument).self { parameters.append(type) }
     return try swiftFunctionDeclaration(named: name, parameterTypes: parameters, resultType: Result.self,
-        failureType: Failure.self, isAsync: false, resultName: resultName)
+        failureType: Failure.self, isAsync: false, resultName: resultName, defaultConsuming: defaultConsuming)
 }
 
 func swiftFunctionDeclaration(
     named name: String, parameterTypes: [Any.Type], resultType: Any.Type,
-    failureType: Any.Type, isAsync: Bool, resultName: String? = nil
+    failureType: Any.Type, isAsync: Bool, resultName: String? = nil, defaultConsuming: Bool = false
 ) throws -> NativeDeclaration {
     let throwing = failureType == Never.self ? "" : failureType == (any Error).self
         ? " throws" : " throws(" + (try swiftFunctionTypeName(failureType)) + ")"
@@ -38,7 +38,7 @@ func swiftFunctionDeclaration(
             !$0.isEmpty && $0.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" }
         })
         if labelsOnly {
-            let parameters = try parameterTypes.map { try swiftFunctionTypeName($0) }
+            let parameters = try parameterTypes.map { try swiftArgumentTypeName($0, defaultConsuming: defaultConsuming) }
             guard labels.count == parameters.count else {
                 throw ABIResolutionError.signatureMismatch(
                     expected: "\(parameters.count) argument labels", found: [name]
@@ -55,10 +55,9 @@ func swiftFunctionDeclaration(
         && member.contains { $0.isLetter || $0.isNumber || $0 == "_" }
     let outerSignature = swiftOuterSignature(declaration)
     guard !generic, (isAsync || !outerSignature.contains(" async ")),
-          (failureType != Never.self || !outerSignature.contains(" throws")),
-          !declaration.contains("inout "), !declaration.contains("__owned ") else {
+          (failureType != Never.self || !outerSignature.contains(" throws")) else {
         throw ABIResolutionError.unsupportedDeclaration(
-            "Generic signatures and inout/consuming parameters require a native adapter; async and throwing calls require matching function types."
+            "Generic signatures require a native adapter; async and throwing calls require matching function types."
         )
     }
     return NativeDeclaration(name: declaration, language: .swift)
@@ -111,9 +110,10 @@ final class SwiftCallInterface: @unchecked Sendable {
 /// representations include scalar values, pointers, class references, String,
 /// Array, their supported optional forms, standard C value types, managed fixed
 /// layouts supplied by ABIBridgeSwiftValue, and trivial ABIBridgeValue layouts.
-/// Use NativeSwiftClosure for supported concrete callbacks. Generic declarations,
-/// undescribed resilient values, ordinary unwrapped closures, inout and consumed
-/// arguments require separate adapters. Async metatypes use NativeSwiftAsyncFunction. Throwing signatures
+/// Use NativeSwiftClosure for supported concrete callbacks. Inout and explicit
+/// ownership use NativeSwiftInout, NativeSwiftBorrowing, and NativeSwiftConsuming.
+/// Generic declarations, undescribed resilient values, and ordinary unwrapped
+/// closures require separate adapters. Async metatypes use NativeSwiftAsyncFunction. Throwing signatures
 /// return native failures as NativeSwiftError.
 /// See <doc:SwiftFunctionInvocation>.
 public struct NativeSwiftFunction<Result, each Argument>: Sendable {

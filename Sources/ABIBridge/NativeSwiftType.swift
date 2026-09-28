@@ -115,8 +115,8 @@ public actor NativeSwiftType {
     ///
     /// Ordinary initializer arguments transfer ownership to the callee. The
     /// native metadata is supplied automatically, and the result uses the
-    /// requested Swift class or fixed-layout value adapter. Explicitly borrowed
-    /// initializer parameters require a native adapter.
+    /// requested Swift class or fixed-layout value adapter. NativeSwiftBorrowing
+    /// selects an explicitly borrowed initializer parameter.
     /// - Parameters:
     ///   - name: The relative initializer name, such as init(text:).
     ///   - signature: Explicit arguments and constructed result.
@@ -132,11 +132,8 @@ public actor NativeSwiftType {
         let member = metadata is AnyClass ? "__allocating_" + name : name
         let resultName = Result.self is any NativeOptionalValue.Type ? "Swift.Optional<" + self.name + ">" : self.name
         let declaration = try swiftFunctionDeclaration(
-            named: self.name + "." + member, as: signature, resultName: resultName
+            named: self.name + "." + member, as: signature, resultName: resultName, defaultConsuming: true
         )
-        guard !declaration.name.contains("__shared ") else {
-            throw ABIResolutionError.unsupportedDeclaration("Borrowing initializer arguments require a native adapter.")
-        }
         return try NativeSwiftFunction(
             symbol: resolveDeclaredMember(declaration, in: image), metadata: metadata, owner: self,
             consumesArguments: true, errorPlan: errorPlan
@@ -476,10 +473,7 @@ extension NativeSwiftType {
         let member = metadata is AnyClass ? "__allocating_" + name : name
         let resultName = Result.self is any NativeOptionalValue.Type ? "Swift.Optional<" + self.name + ">" : self.name
         let declaration = try NativeSwiftAsyncFunction<Result, repeat each Argument>.declaration(
-            named: self.name + "." + member, failure: Failure.self, resultName: resultName)
-        guard !declaration.name.contains("__shared ") else {
-            throw ABIResolutionError.unsupportedDeclaration("Borrowing initializer arguments require a native adapter.")
-        }
+            named: self.name + "." + member, failure: Failure.self, resultName: resultName, defaultConsuming: true)
         return try NativeSwiftAsyncFunction(symbol: resolveDeclaredMember(declaration, in: image),
             resolver: resolver, errorPlan: errorPlan, inheritsCallerIsolation: inheritsCallerIsolation,
             metadata: metadata, owner: self, consumesArguments: true)
@@ -555,10 +549,7 @@ extension NativeSwiftType {
         let member = metadata is AnyClass ? "__allocating_" + name : name
         let resultName = Result.self is any NativeOptionalValue.Type ? "Swift.Optional<" + self.name + ">" : self.name
         let declaration = try NativeSwiftAsyncFunction<Result, repeat each Argument>.declaration(
-            named: self.name + "." + member, failure: Failure.self, resultName: resultName)
-        guard !declaration.name.contains("__shared ") else {
-            throw ABIResolutionError.unsupportedDeclaration("Borrowing initializer arguments require a native adapter.")
-        }
+            named: self.name + "." + member, failure: Failure.self, resultName: resultName, defaultConsuming: true)
         return try NativeSwiftAsyncFunction(symbol: resolveDeclaredMember(declaration, in: image),
             resolver: resolver, errorPlan: errorPlan, inheritsCallerIsolation: false,
             metadata: metadata, owner: self, consumesArguments: true)

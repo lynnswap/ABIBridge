@@ -91,6 +91,7 @@ Lasync_args_arm:
     movq (%rsp), %rax
     movq 216(%r10), %rcx
     movq %rcx, %r11
+    andq $-16, %r11
 Lasync_probe_x86:
     cmpq $4096, %r11
     jb Lasync_stack_x86
