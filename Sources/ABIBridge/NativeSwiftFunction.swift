@@ -113,7 +113,8 @@ public struct NativeSwiftFunction<Result, each Argument>: Sendable {
     @unsafe public func unsafeInvoke(_ values: repeat each Argument) throws -> Result {
         try unsafe call.unsafeInvoke(
             symbol: symbol, context: UnsafeRawPointer(bitPattern: context),
-            retaining: (symbol, typeOwner), implementation: implementation, repeat each values
+            retaining: (symbol, typeOwner), retainingCode: typeOwner?.image,
+            implementation: implementation, repeat each values
         )
     }
 }

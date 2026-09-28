@@ -25,6 +25,7 @@ struct SwiftCall<Result, each Argument>: Sendable {
     @unsafe func unsafeInvoke(
         symbol: ResolvedSymbol, context: UnsafeRawPointer? = nil,
         trailingValue: NativeValueStorage? = nil, retaining owner: Any? = nil,
+        retainingCode codeOwner: Any? = nil,
         didInvoke: (() -> Void)? = nil, implementation: SwiftImplementation? = nil,
         _ values: repeat each Argument
     ) throws -> Result {
@@ -32,6 +33,7 @@ struct SwiftCall<Result, each Argument>: Sendable {
             try unsafe unsafeInvoke(
                 function: implementation?.function ?? ABIUnsafeFunctionAtAddress(address),
                 context: context, trailingValue: trailingValue, retaining: (owner ?? symbol, implementation),
+                retainingCode: (symbol.image, implementation, codeOwner),
                 didInvoke: didInvoke, repeat each values
             )
         }
@@ -40,6 +42,7 @@ struct SwiftCall<Result, each Argument>: Sendable {
     @unsafe func unsafeInvoke(
         function: ABIUnmanagedFunction, context: UnsafeRawPointer? = nil,
         trailingValue: NativeValueStorage? = nil, retaining owner: Any?,
+        retainingCode codeOwner: Any? = nil,
         didInvoke: (() -> Void)? = nil, _ values: repeat each Argument
     ) throws -> Result {
         precondition(hasTrailingValue == (trailingValue != nil))
@@ -65,7 +68,7 @@ struct SwiftCall<Result, each Argument>: Sendable {
                 for value in storage { value.relinquishValue() }
             }
             didInvoke?()
-            return try result.decode(output, retaining: owner)
+            return try result.decode(output, retaining: owner, retainingCode: codeOwner)
         }
     }
 }

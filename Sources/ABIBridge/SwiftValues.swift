@@ -77,8 +77,10 @@ struct SwiftValueCodec<Value>: Sendable {
         if cValue == nil { address.assumingMemoryBound(to: Value.self).deinitialize(count: 1) }
     }
 
-    func decode(_ storage: NativeValueStorage, retaining owner: Any?) throws -> Value {
-        if let closure { return try closure.makeValue(storage.address.load(as: ABISwiftClosureValue.self), owner, true) as! Value }
+    func decode(_ storage: NativeValueStorage, retaining owner: Any?, retainingCode codeOwner: Any? = nil) throws -> Value {
+        // Receiver/argument storage can belong to the object receiving this
+        // closure later. Only code dependencies belong in its escaping context.
+        if let closure { return try closure.makeValue(storage.address.load(as: ABISwiftClosureValue.self), codeOwner, true) as! Value }
         if let cValue { return try cValue.decode(storage, retaining: owner) }
         if objectResult, !(Value.self is any NativeOptionalValue.Type),
            storage.address.load(as: UnsafeRawPointer?.self) == nil {

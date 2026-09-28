@@ -34,7 +34,7 @@ let addSeven = try unsafe factory.unsafeInvoke(7)
 let result = try unsafe addSeven.unsafeInvoke(35)
 ```
 
-The returned wrapper adopts the native closure's owned context and retains the resolved call owner and the closure entry's containing image when available. A concrete forwarding context carries those owners into native escaping copies as well. Entries already owned by the closure allocator keep their existing context, so repeated identity handoffs do not add forwarding layers. The original context is released while its code owners are still alive. Additional native resources or code images referenced indirectly by a foreign capture must obey their original lifetime contract.
+The returned wrapper adopts the native closure's owned context and retains the declaring/type images, explicit implementation code owner, and the closure entry's containing image when available. Temporary receiver and argument storage stays with the call; returning a closure does not add a receiver capture. A concrete forwarding context carries those owners into native escaping copies as well. Entries already owned by the closure allocator keep their existing context, so repeated identity handoffs do not add forwarding layers. The original context is released while its code owners are still alive. Additional native resources or code images referenced indirectly by a foreign capture must obey their original lifetime contract.
 
 Calling stays on the caller's executor. The caller must satisfy the returned closure's actor, thread, and argument requirements. The wrapper is not Sendable: an arbitrary returned context may contain isolated or otherwise non-Sendable state.
 

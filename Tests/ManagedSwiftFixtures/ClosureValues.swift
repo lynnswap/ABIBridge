@@ -1,5 +1,11 @@
 import CoreGraphics
 
+public final class ClosurePropertyOwner {
+    public var callback: (Int64) -> Int64 = { $0 + 7 }
+    public init() {}
+    public func readCallback() -> (Int64) -> Int64 { callback }
+}
+
 @inline(never) public func echoClosure(_ callback: @escaping (Int64) -> Int64) -> (Int64) -> Int64 { callback }
 import Dispatch
 import Synchronization

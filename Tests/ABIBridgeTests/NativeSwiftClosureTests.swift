@@ -239,6 +239,33 @@ struct NativeSwiftClosureTests {
         #expect(try unsafe callback.unsafeInvoke(35) == 42)
     }
 
+    @Test func closureResultsDoNotRetainUncapturedReceivers() async throws {
+        let type = try await ABIRuntime.shared.swiftType(
+            named: "ManagedSwiftFixtures.ClosurePropertyOwner", as: ClosurePropertyOwner.self
+        )
+        let getter = try await type.getter(named: "callback", as: NativeSwiftClosure<Int64, Int64>.self)
+        let method = try await type.method(named: "readCallback()", as: (() -> NativeSwiftClosure<Int64, Int64>).self)
+        let setter = try await type.setter(named: "callback", as: NativeSwiftClosure<Int64, Int64>.self)
+        for throughMethod in [false, true] {
+            weak var observed: ClosurePropertyOwner?
+            var returned: NativeSwiftClosure<Int64, Int64>?
+            do {
+                let receiver = ClosurePropertyOwner()
+                observed = receiver
+                returned = try unsafe throughMethod ? method.unsafeInvoke(on: receiver) : getter.unsafeInvoke(on: receiver)
+                let callback = try #require(returned)
+                try unsafe setter.unsafeInvoke(on: receiver, callback)
+                #expect(receiver.callback(35) == 42)
+            }
+            #expect(observed == nil)
+            do {
+                let callback = try #require(returned)
+                #expect(try unsafe callback.unsafeInvoke(35) == 42)
+            }
+            returned = nil
+        }
+    }
+
     @Test func initializersTransferClosuresAndMethodsBorrowThem() async throws {
         let runtime = ABIRuntime.shared
         let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.StoredIntegerClosure",
