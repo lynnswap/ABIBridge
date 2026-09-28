@@ -16,7 +16,9 @@ typedef struct ABINestedAggregate {
     int32_t tag;
 } ABINestedAggregate;
 typedef struct ABIPaddedAggregate { double value; int8_t tag; } ABIPaddedAggregate;
+typedef struct ABILongDoubleAggregate { long double value; int8_t tag; } ABILongDoubleAggregate;
 @interface ABIAggregateFixture : NSObject
+- (ABILongDoubleAggregate)transformLongDouble:(ABILongDoubleAggregate)value;
 - (ABIPaddedAggregate)transformPadded:(ABIPaddedAggregate)value;
 - (ABIInsetsFixture)transformInsets:(ABIInsetsFixture)value;
 - (ABINestedAggregate)transformNested:(ABINestedAggregate)value;

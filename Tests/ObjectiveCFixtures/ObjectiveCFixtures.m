@@ -2,6 +2,10 @@
 #import <objc/runtime.h>
 
 @implementation ABIAggregateFixture
+- (ABILongDoubleAggregate)transformLongDouble:(ABILongDoubleAggregate)value {
+    value.value += 1.5L; value.tag += 2;
+    return value;
+}
 - (ABIPaddedAggregate)transformPadded:(ABIPaddedAggregate)value {
     value.value += 1.5; value.tag += 2;
     return value;

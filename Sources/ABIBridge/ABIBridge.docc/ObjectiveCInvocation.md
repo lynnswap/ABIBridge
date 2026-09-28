@@ -92,7 +92,7 @@ let result = try unsafe adjusted.unsafeInvoke(insets)
 
 The unsafe caller guarantees that the selected Swift type's field offsets, representation, alignment, and ownership are compatible with the native value. It may be an imported SDK type or a caller-defined byte-compatible structure. Type names do not need to match. The native extent must cover the Swift value without exceeding its stride, so native tail padding does not require artificial Swift fields. A size check protects storage bounds; it does not prove ABI compatibility.
 
-C variadic tails, incomplete structure encodings, bitfields, unions, and nontrivial C++ values still need an appropriate native adapter.
+C variadic tails, incomplete structure encodings, bitfields, unions, and nontrivial C++ values still need an appropriate native adapter. Long-double fields use the platform's double representation on Apple ARM; x86_64 x87 long-double fields require a native adapter.
 
 Class arguments are checked before native dispatch, so an instance supplied for a `Class` parameter throws a value-conversion error. Class results remain metatypes during Swift conversion and cannot masquerade as instances. These conversions happen during invocation; lookup does not introspect Swift metatype metadata.
 
