@@ -14,7 +14,7 @@ invocation=(
     ObjectiveCAggregateTests ObjectiveCBlockTests ObjectiveCImplementationTests ObjectiveCInvocationTests
     ObjectiveCIvarTests SwiftCallBoundaryTests SwiftFunctionInvocationTests
     SwiftMemberInvocationTests ManagedSwiftValueTests SwiftClosureABITests NativeSwiftClosureTests
-    SwiftCollectionValueTests SwiftGenericMetadataTests SwiftExplicitValueTests SwiftIndirectValueTests SwiftErrorABITests SwiftThrowingInvocationTests SwiftAsyncABITests
+    SwiftCollectionValueTests SwiftGenericMetadataTests SwiftExplicitValueTests SwiftIndirectValueTests SwiftErrorABITests SwiftThrowingInvocationTests SwiftAsyncABITests SwiftAsyncInvocationTests SwiftAsyncTransportTests
 )
 hooks=(
     CoordinatedObjectiveCHookTests HookInvocationDiagnosticsTests

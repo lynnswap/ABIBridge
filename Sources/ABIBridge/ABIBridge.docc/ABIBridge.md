@@ -177,6 +177,7 @@ print(symbol.image.path)
 - <doc:SwiftClosureValues>
 - ``NativeSwiftClosure``
 - ``NativeSwiftFunction``
+- ``NativeSwiftAsyncFunction``
 - ``NativeSwiftError``
 
 ### Swift types and members
@@ -184,5 +185,7 @@ print(symbol.image.path)
 - <doc:SwiftMemberInvocation>
 - ``NativeSwiftType``
 - ``NativeSwiftMethod``
+- ``NativeSwiftAsyncMethod``
+- ``NativeBoundSwiftAsyncMethod``
 - ``NativeBoundSwiftMethod``
 - ``NativeSwiftWritebackError``

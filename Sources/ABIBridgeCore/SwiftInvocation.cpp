@@ -291,6 +291,57 @@ ABISwiftCallInterface *ABICreateSwiftThrowingCallInterface(
 void ABIReleaseSwiftCallInterface(ABISwiftCallInterface *interface) { delete interface; }
 bool ABISwiftValueIsIndirect(const ABIValueType *type) { return lower(*type->storage).indirect; }
 
+static void marshalSwiftArguments(
+    ABISwiftCallInterface *interface, void *const *arguments, void *errorResult,
+    CallFrame &frame, std::vector<uint8_t> &stack) {
+    uintptr_t errorAddress = reinterpret_cast<uintptr_t>(errorResult);
+    for (const auto &move : interface->moves) {
+        const bool errorArgument = move.argument == interface->parameters.size();
+        const auto base = errorArgument ? reinterpret_cast<const uint8_t *>(&errorAddress)
+            : static_cast<const uint8_t *>(arguments[move.argument]);
+        const auto source = base + move.component.offset;
+        const auto sourceSize = errorArgument ? sizeof(errorAddress) : interface->parameters[move.argument]->size();
+        void *destination;
+        switch (move.bank) {
+            case Bank::integer: destination = &frame.integers[move.destination]; break;
+            case Bank::floating: destination = &frame.floating[move.destination]; break;
+            case Bank::stack: destination = stack.data() + move.destination; break;
+        }
+        if (move.indirect) {
+            const uintptr_t address = reinterpret_cast<uintptr_t>(source);
+            std::memcpy(destination, &address, sizeof(address));
+        } else {
+            const auto available = sourceSize - move.component.offset;
+            std::memcpy(destination, source, std::min(move.component.size, available));
+        }
+    }
+}
+
+static bool copySwiftCompletion(
+    ABISwiftCallInterface *interface, const CallFrame &frame, void *result, void *errorResult) {
+    auto copyRegisters = [&](const Layout &layout, TypeStorage &type, void *output) {
+        size_t integers = 0, floating = 0;
+        for (const auto &component : layout.components) {
+            const auto source = component.floating ? &frame.floatingResults[floating++] : &frame.integerResults[integers++];
+            // Coalesced register padding is not part of a live Swift value.
+            const auto available = type.size() - component.offset;
+            std::memcpy(static_cast<uint8_t *>(output) + component.offset, source, std::min(component.size, available));
+        }
+    };
+    if (interface->errorResult && frame.error) {
+        if (!interface->typedError) {
+            const auto reference = uintptr_t(frame.error);
+            std::memcpy(errorResult, &reference, sizeof(reference));
+        } else if (!interface->indirectError) {
+            copyRegisters(interface->errorLayout, *interface->errorResult, errorResult);
+        }
+        return true;
+    }
+    if (!interface->resultLayout.indirect)
+        copyRegisters(interface->resultLayout, *interface->result, result);
+    return false;
+}
+
 static bool invokeSwiftCallInterface(
     ABISwiftCallInterface *interface, ABIUnmanagedFunction function,
     void *result, void *const *arguments, const void *context,
@@ -321,53 +372,14 @@ static bool invokeSwiftCallInterface(
     frame.context = reinterpret_cast<uintptr_t>(context);
     if (interface->resultLayout.indirect)
         frame.indirectResult = reinterpret_cast<uintptr_t>(result);
-    uintptr_t errorAddress = reinterpret_cast<uintptr_t>(errorResult);
-    for (const auto &move : interface->moves) {
-        const bool errorArgument = move.argument == interface->parameters.size();
-        const auto base = errorArgument ? reinterpret_cast<const uint8_t *>(&errorAddress)
-            : static_cast<const uint8_t *>(arguments[move.argument]);
-        const auto source = base + move.component.offset;
-        const auto sourceSize = errorArgument ? sizeof(errorAddress) : interface->parameters[move.argument]->size();
-        void *destination;
-        switch (move.bank) {
-            case Bank::integer: destination = &frame.integers[move.destination]; break;
-            case Bank::floating: destination = &frame.floating[move.destination]; break;
-            case Bank::stack: destination = stack.data() + move.destination; break;
-        }
-        if (move.indirect) {
-            const uintptr_t address = reinterpret_cast<uintptr_t>(source);
-            std::memcpy(destination, &address, sizeof(address));
-        } else {
-            const auto available = sourceSize - move.component.offset;
-            std::memcpy(destination, source, std::min(move.component.size, available));
-        }
-    }
+    marshalSwiftArguments(interface, arguments, errorResult, frame, stack);
     uint64_t discriminator = 0;
 #if __has_feature(ptrauth_calls)
     discriminator = ptrauth_function_pointer_type_discriminator(void(void));
 #endif
     ABIInvokeSwiftAssembly(&frame, function, discriminator);
-    auto copyRegisters = [&](const Layout &layout, TypeStorage &type, void *output) {
-        size_t integers = 0, floating = 0;
-        for (const auto &component : layout.components) {
-            const auto source = component.floating ? &frame.floatingResults[floating++] : &frame.integerResults[integers++];
-            // Coalesced register padding is not part of a live Swift value.
-            const auto available = type.size() - component.offset;
-            std::memcpy(static_cast<uint8_t *>(output) + component.offset, source, std::min(component.size, available));
-        }
-    };
-    if (interface->errorResult && frame.error) {
-        *didThrow = true;
-        if (!interface->typedError) {
-            const auto reference = uintptr_t(frame.error);
-            std::memcpy(errorResult, &reference, sizeof(reference));
-        } else if (!interface->indirectError) {
-            copyRegisters(interface->errorLayout, *interface->errorResult, errorResult);
-        }
-        return true;
-    }
-    if (!interface->resultLayout.indirect)
-        copyRegisters(interface->resultLayout, *interface->result, result);
+    const bool threw = copySwiftCompletion(interface, frame, result, errorResult);
+    if (didThrow) *didThrow = threw;
     return true;
 }
 
@@ -382,6 +394,181 @@ bool ABIUnsafeInvokeSwiftThrowingCallInterface(
     void *result, void *const *arguments, const void *context,
     void *errorResult, bool *didThrow, ABIResolutionFailure **error) {
     return invokeSwiftCallInterface(interface, function, result, arguments, context, errorResult, didThrow, error);
+}
+
+
+namespace swift { class AsyncContext; }
+using SwiftAsyncResume = __attribute__((swiftasynccall)) void(
+    swift::AsyncContext * __attribute__((swift_async_context)));
+struct SwiftExecutorRef { uintptr_t identity, implementation; };
+extern "C" __attribute__((swiftcall)) void *swift_task_alloc(size_t);
+extern "C" __attribute__((swiftcall)) void swift_task_dealloc(void *);
+extern "C" __attribute__((swiftcall)) SwiftExecutorRef swift_task_getCurrentExecutor();
+
+#if __has_feature(ptrauth_calls)
+#define ABI_ASYNC_PARENT __ptrauth(ptrauth_key_process_independent_data, 1, 0xbda2)
+#define ABI_ASYNC_RESUME __ptrauth(ptrauth_key_function_pointer, 1, 0xd707)
+#else
+#define ABI_ASYNC_PARENT
+#define ABI_ASYNC_RESUME
+#endif
+struct SwiftAsyncHeader {
+    swift::AsyncContext * ABI_ASYNC_PARENT parent;
+    SwiftAsyncResume * ABI_ASYNC_RESUME resume;
+};
+struct alignas(16) SwiftAsyncBridgeContext {
+    SwiftAsyncHeader header;
+    ABISwiftAsyncInvocation *invocation;
+    SwiftAsyncHeader *callee;
+    SwiftExecutorRef executor;
+};
+static_assert(sizeof(SwiftAsyncBridgeContext) == (sizeof(void *) == 8 ? 48 : 32));
+
+struct SwiftAsyncTransfer {
+    CallFrame values;
+    uint64_t function = 0;
+    uint64_t asyncContext = 0;
+    uint64_t discriminator = 0;
+};
+static_assert(offsetof(SwiftAsyncTransfer, function) == 232);
+static_assert(offsetof(SwiftAsyncTransfer, asyncContext) == 240);
+static_assert(offsetof(SwiftAsyncTransfer, discriminator) == 248);
+
+struct ABISwiftAsyncCallInterface {
+    std::shared_ptr<ABISwiftCallInterface> entry, completion;
+    size_t argumentCount;
+    bool inheritsCallerIsolation;
+};
+struct ABISwiftAsyncInvocation {
+    std::shared_ptr<ABISwiftCallInterface> entry, completion;
+    SwiftAsyncTransfer transfer;
+    std::vector<uint8_t> stack;
+    std::vector<void *> arguments;
+    uintptr_t isolation[2]{};
+    uint32_t contextSize;
+    void *result;
+    void *errorResult;
+    bool didThrow = false;
+};
+
+extern "C" __attribute__((swiftasynccall))
+void ABISwiftAsyncResume(swift::AsyncContext * __attribute__((swift_async_context)));
+extern "C" __attribute__((swiftasynccall))
+void ABISwiftAsyncResumeCaller(swift::AsyncContext *context __attribute__((swift_async_context))) {
+    auto *header = reinterpret_cast<SwiftAsyncHeader *>(context);
+    [[clang::musttail]] return header->resume(context);
+}
+
+ABISwiftAsyncCallInterface *ABICreateSwiftAsyncCallInterface(
+    const ABIValueType *result, const ABIValueType *const *parameters, size_t count,
+    const ABIValueType *errorResult, bool typedError, bool inheritsCallerIsolation,
+    ABIResolutionFailure **error) {
+    if (error) *error = nullptr;
+    if (count && !parameters) {
+        fail(error, ABIFailureInvalidRequest, "Async arguments require native layouts.");
+        return nullptr;
+    }
+    auto completion = std::shared_ptr<ABISwiftCallInterface>(
+        createSwiftCallInterface(result, nullptr, 0, errorResult, typedError, error));
+    if (!completion) return nullptr;
+    using Type = std::unique_ptr<ABIValueType, decltype(&ABIReleaseValueType)>;
+    Type pointer(ABICreateScalarType(ABIValuePointer, error), ABIReleaseValueType);
+    Type empty(ABICreateScalarType(ABIValueVoid, error), ABIReleaseValueType);
+    if (!pointer || !empty) return nullptr;
+    std::vector<const ABIValueType *> inputs;
+    if (completion->resultLayout.indirect) inputs.push_back(pointer.get());
+    if (inheritsCallerIsolation) { inputs.push_back(pointer.get()); inputs.push_back(pointer.get()); }
+    for (size_t index = 0; index < count; ++index) inputs.push_back(parameters[index]);
+    if (completion->indirectError) inputs.push_back(pointer.get());
+    auto entry = std::shared_ptr<ABISwiftCallInterface>(
+        createSwiftCallInterface(empty.get(), inputs.data(), inputs.size(), nullptr, false, error));
+    if (!entry) return nullptr;
+    return new ABISwiftAsyncCallInterface{std::move(entry), std::move(completion), count, inheritsCallerIsolation};
+}
+void ABIReleaseSwiftAsyncCallInterface(ABISwiftAsyncCallInterface *interface) { delete interface; }
+
+ABISwiftAsyncInvocation *ABICreateSwiftAsyncInvocation(
+    ABISwiftAsyncCallInterface *interface, ABIUnmanagedFunction function, uint32_t contextSize,
+    void *result, void *const *arguments, const void *context, void *errorResult, ABIResolutionFailure **error) {
+    if (error) *error = nullptr;
+    if (!interface || !function || contextSize < sizeof(SwiftAsyncHeader) ||
+        (interface->completion->result->size() && !result) ||
+        (interface->argumentCount && !arguments) ||
+        (interface->completion->errorResult && !errorResult)) {
+        fail(error, ABIFailureInvalidRequest, "Async invocation requires code, a context header, and live value buffers.");
+        return nullptr;
+    }
+    auto invocation = std::make_unique<ABISwiftAsyncInvocation>();
+    invocation->entry = interface->entry;
+    invocation->completion = interface->completion;
+    invocation->contextSize = contextSize;
+    invocation->result = result;
+    invocation->errorResult = errorResult;
+    invocation->stack.resize(interface->entry->stackSize);
+    auto &frame = invocation->transfer.values;
+    frame.stack = reinterpret_cast<uintptr_t>(invocation->stack.data());
+    frame.stackSize = invocation->stack.size();
+    frame.context = reinterpret_cast<uintptr_t>(context);
+    std::memcpy(&invocation->transfer.function, &function, sizeof(function));
+#if __has_feature(ptrauth_calls)
+    invocation->transfer.discriminator = ptrauth_function_pointer_type_discriminator(void(void));
+#endif
+    auto &inputs = invocation->arguments;
+    if (interface->completion->resultLayout.indirect) inputs.push_back(&invocation->result);
+    if (interface->inheritsCallerIsolation) {
+        inputs.push_back(&invocation->isolation[0]);
+        inputs.push_back(&invocation->isolation[1]);
+    }
+    for (size_t index = 0; index < interface->argumentCount; ++index) {
+        if (!arguments[index]) {
+            fail(error, ABIFailureInvalidRequest, "Each async argument requires live storage.");
+            return nullptr;
+        }
+        inputs.push_back(arguments[index]);
+    }
+    if (interface->completion->indirectError) inputs.push_back(&invocation->errorResult);
+    return invocation.release();
+}
+bool ABISwiftAsyncInvocationDidThrow(const ABISwiftAsyncInvocation *invocation) { return invocation->didThrow; }
+void ABIReleaseSwiftAsyncInvocation(ABISwiftAsyncInvocation *invocation) { delete invocation; }
+
+// These helpers run synchronously on the active Swift task. Assembly owns the
+// tail transfer; no C frame or borrowed stack argument survives suspension.
+extern "C" SwiftAsyncTransfer *ABIPrepareSwiftAsyncEntry(
+    ABISwiftAsyncInvocation *invocation, SwiftAsyncBridgeContext *bridge, uintptr_t actor, uintptr_t witness) {
+    bridge->invocation = invocation;
+    bridge->executor = swift_task_getCurrentExecutor();
+    invocation->isolation[0] = actor;
+    invocation->isolation[1] = witness;
+    marshalSwiftArguments(invocation->entry.get(), invocation->arguments.data(), nullptr,
+                          invocation->transfer.values, invocation->stack);
+    bridge->callee = static_cast<SwiftAsyncHeader *>(swift_task_alloc(invocation->contextSize));
+    bridge->callee->parent = reinterpret_cast<swift::AsyncContext *>(bridge);
+    bridge->callee->resume = ABISwiftAsyncResume;
+    invocation->transfer.asyncContext = reinterpret_cast<uintptr_t>(bridge->callee);
+    return &invocation->transfer;
+}
+
+extern "C" SwiftAsyncTransfer *ABICompleteSwiftAsync(
+    SwiftAsyncHeader *callee, const CallFrame *returned) {
+    auto *bridge = reinterpret_cast<SwiftAsyncBridgeContext *>(callee->parent);
+    auto *invocation = bridge->invocation;
+    invocation->didThrow = copySwiftCompletion(invocation->completion.get(), *returned,
+                                               invocation->result, invocation->errorResult);
+    swift_task_dealloc(callee);
+    auto &transfer = invocation->transfer;
+    transfer.asyncContext = reinterpret_cast<uintptr_t>(bridge);
+    // swift_task_switch takes an ordinary discriminator-zero continuation.
+    auto *resume = ABISwiftAsyncResumeCaller;
+#if __has_feature(ptrauth_calls)
+    resume = ptrauth_sign_unauthenticated(ptrauth_strip(resume, ptrauth_key_function_pointer),
+                                         ptrauth_key_function_pointer, 0);
+#endif
+    transfer.values.integers[0] = 0;
+    std::memcpy(&transfer.values.integers[0], &resume, sizeof(resume));
+    transfer.values.integers[1] = bridge->executor.identity;
+    transfer.values.integers[2] = bridge->executor.implementation;
+    return &transfer;
 }
 
 namespace {

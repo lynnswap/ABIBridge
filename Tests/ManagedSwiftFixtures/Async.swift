@@ -101,6 +101,41 @@ public final class AsyncOwner: Sendable {
     }
 }
 
+public final class AsyncMemberOwner: Sendable {
+    public let token: ErrorLifetimeToken
+    public let gate: AsyncGate
+    public init(_ token: ErrorLifetimeToken, _ gate: AsyncGate) { self.token = token; self.gate = gate }
+
+    @concurrent public init(_ token: ErrorLifetimeToken, _ gate: AsyncGate, _ fail: Bool) async throws(ManagedFailure) {
+        await gate.wait()
+        if fail { throw ManagedFailure(token, 43) }
+        self.token = token
+        self.gate = gate
+    }
+
+    @concurrent public func value(_ fail: Bool) async throws(ManagedFailure) -> String {
+        await gate.wait()
+        if fail { throw ManagedFailure(token, 44) }
+        return "member"
+    }
+    public var delayed: String {
+        get async { await gate.wait(); return "getter" }
+    }
+    @concurrent public static func increment(_ value: Int64) async -> Int64 { value + 1 }
+    public static var answer: Int64 { get async { 42 } }
+}
+
+@frozen public struct AsyncMutableRecord {
+    public var count: Int64
+    public init(_ value: Int64) { count = value }
+    nonisolated(nonsending) public mutating func advance(_ gate: AsyncGate, _ fail: Bool) async throws(ScalarFailure) -> Int64 {
+        await gate.wait()
+        count += 1
+        if fail { throw ScalarFailure(count) }
+        return count
+    }
+}
+
 public actor AsyncCounter {
     private var value: Int64
     public init(_ value: Int64) { self.value = value }

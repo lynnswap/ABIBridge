@@ -63,6 +63,28 @@ struct SwiftReceiverPlan: Sendable {
 
     var trailingType: CValueType? { mode == .value ? codec.type : nil }
 
+    func finishInvocation<Result, Receiver>(
+        _ outcome: Swift.Result<Result, any Error>, storage: NativeValueStorage, invoked: Bool,
+        receiver: inout Receiver, retaining owner: Any?
+    ) throws -> Result {
+        if invoked && isMutating && mode != .object {
+            do {
+                let value = try codec.decode(storage, owner)
+                guard let updated = value as? Receiver else {
+                    throw ABIInvocationError.incompatibleValue(
+                        expected: String(reflecting: Receiver.self), actual: String(reflecting: Swift.type(of: value)))
+                }
+                receiver = updated
+            } catch {
+                if case .failure(let invocationError) = outcome {
+                    throw NativeSwiftWritebackError(invocationError: invocationError, writebackError: error)
+                }
+                throw error
+            }
+        }
+        return try outcome.get()
+    }
+
     @unsafe func context(for storage: NativeValueStorage) throws -> UnsafeRawPointer? {
         switch mode {
         case .value: return nil

@@ -15,8 +15,19 @@ func swiftFunctionDeclaration<Result, Failure: Error, each Argument>(
     named name: String, as signature: ((repeat each Argument) throws(Failure) -> Result).Type,
     resultName: String? = nil
 ) throws -> NativeDeclaration {
-    let effects = Failure.self == Never.self ? "" : Failure.self == (any Error).self
-        ? " throws" : " throws(" + (try swiftFunctionTypeName(Failure.self)) + ")"
+    var parameters: [Any.Type] = []
+    for type in repeat (each Argument).self { parameters.append(type) }
+    return try swiftFunctionDeclaration(named: name, parameterTypes: parameters, resultType: Result.self,
+        failureType: Failure.self, isAsync: false, resultName: resultName)
+}
+
+func swiftFunctionDeclaration(
+    named name: String, parameterTypes: [Any.Type], resultType: Any.Type,
+    failureType: Any.Type, isAsync: Bool, resultName: String? = nil
+) throws -> NativeDeclaration {
+    let throwing = failureType == Never.self ? "" : failureType == (any Error).self
+        ? " throws" : " throws(" + (try swiftFunctionTypeName(failureType)) + ")"
+    let effects = (isAsync ? " async" : "") + throwing
     var declaration = name
     // A full demangled declaration is useful when a foreign wrapper's Swift
     // type name differs from the native type. Label-only names infer types.
@@ -27,26 +38,25 @@ func swiftFunctionDeclaration<Result, Failure: Error, each Argument>(
             !$0.isEmpty && $0.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" }
         })
         if labelsOnly {
-            var parameters: [String] = []
-            for type in repeat (each Argument).self { parameters.append(try swiftFunctionTypeName(type)) }
+            let parameters = try parameterTypes.map { try swiftFunctionTypeName($0) }
             guard labels.count == parameters.count else {
                 throw ABIResolutionError.signatureMismatch(
                     expected: "\(parameters.count) argument labels", found: [name]
                 )
             }
             let fields = zip(labels, parameters).map { label, type in label == "_" ? type : label + ": " + type }
-            declaration = String(name[..<opening]) + "(" + fields.joined(separator: ", ") + ")" + effects + " -> " + (try resultName ?? swiftFunctionTypeName(Result.self))
+            declaration = String(name[..<opening]) + "(" + fields.joined(separator: ", ") + ")" + effects + " -> " + (try resultName ?? swiftFunctionTypeName(resultType))
         }
     }
     let prefix = declaration.prefix { $0 != "(" }
     let member = prefix.split(separator: ".").last ?? prefix
     let generic = prefix.last(where: { !$0.isWhitespace }) == ">"
         && member.contains { $0.isLetter || $0.isNumber || $0 == "_" }
-    guard !generic, !declaration.contains(" async "),
-          (Failure.self != Never.self || (!declaration.contains(" throws ") && !declaration.contains(" throws("))),
+    guard !generic, (isAsync || !declaration.contains(" async ")),
+          (failureType != Never.self || (!declaration.contains(" throws ") && !declaration.contains(" throws("))),
           !declaration.contains("inout "), !declaration.contains("__owned ") else {
         throw ABIResolutionError.unsupportedDeclaration(
-            "Generic signatures, async effects, and inout/consuming parameters require a native adapter; throwing calls require a throwing function type."
+            "Generic signatures and inout/consuming parameters require a native adapter; async and throwing calls require matching function types."
         )
     }
     return NativeDeclaration(name: declaration, language: .swift)

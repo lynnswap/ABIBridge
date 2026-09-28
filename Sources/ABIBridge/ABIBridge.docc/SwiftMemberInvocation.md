@@ -91,4 +91,4 @@ Label-only method names obtain canonical parameter/result names from their metat
 
 Framework, executable-path, install-name, and retained-image overloads acquire explicit targets by default. Pass `loading: .loadedOnly` to retain inspection behavior; see <doc:ImageLoading>. The method or type handle keeps its implementation alive, and custom wrapper results retain their call's owners. Raw pointers remain borrowed.
 
-The unsafe boundary requires the actual declaration's ownership, effects, and actor/thread requirements. Generic metadata synthesis, async methods and getters, nontrivial foreign value layouts, and resilient-layout inference remain adapter cases.
+The unsafe boundary requires the actual declaration's ownership, effects, and actor/thread requirements. Async function metatypes select NativeSwiftAsyncMethod or NativeSwiftAsyncFunction handles; see <doc:SwiftAsyncABI>. Generic metadata synthesis, nontrivial foreign value layouts, and resilient-layout inference remain adapter cases.

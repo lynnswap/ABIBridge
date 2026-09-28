@@ -71,6 +71,23 @@ bool ABIUnsafeInvokeSwiftThrowingCallInterface(
     void *result, void *const *arguments, const void *context,
     void *errorResult, bool *didThrow, ABIResolutionFailure **error);
 
+/// Internal preparation for the Swift frontend's asynchronous bridge.
+typedef struct ABISwiftAsyncCallInterface ABISwiftAsyncCallInterface;
+typedef struct ABISwiftAsyncInvocation ABISwiftAsyncInvocation;
+ABISwiftAsyncCallInterface *ABICreateSwiftAsyncCallInterface(
+    const ABIValueType *result, const ABIValueType *const *parameters, size_t count,
+    const ABIValueType *errorResult, bool typedError, bool inheritsCallerIsolation,
+    ABIResolutionFailure **error);
+void ABIReleaseSwiftAsyncCallInterface(ABISwiftAsyncCallInterface *interface);
+
+/// Buffers and code must remain live until the compiler-driven async bridge completes.
+ABISwiftAsyncInvocation *ABICreateSwiftAsyncInvocation(
+    ABISwiftAsyncCallInterface *interface, ABIUnmanagedFunction function, uint32_t contextSize,
+    void *result, void *const *arguments, const void *context, void *errorResult,
+    ABIResolutionFailure **error);
+bool ABISwiftAsyncInvocationDidThrow(const ABISwiftAsyncInvocation *invocation);
+void ABIReleaseSwiftAsyncInvocation(ABISwiftAsyncInvocation *invocation);
+
 #ifdef __cplusplus
 }
 #endif
