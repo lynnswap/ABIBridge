@@ -38,9 +38,29 @@ The returned wrapper adopts the native closure's owned context and retains the d
 
 Calling stays on the caller's executor. The caller must satisfy the returned closure's actor, thread, and argument requirements. The wrapper is not Sendable: an arbitrary returned context may contain isolated or otherwise non-Sendable state.
 
+## Throwing callbacks and returned closures
+
+Use ``NativeSwiftThrowingClosure`` with a result, a declared error type, and the argument types. Failure can be a concrete Swift error, `any Error`, or `Never`.
+
+```swift
+let callback = try NativeSwiftThrowingClosure<String, any Error, Bool> { fail in
+    if fail { throw ExampleError.unavailable }
+    return "ready"
+}
+let apply = try await ABIRuntime.shared.swiftFunction(
+    named: "Example.apply(_:_:)",
+    as: ((NativeSwiftThrowingClosure<String, any Error, Bool>, Bool) throws -> String).self
+)
+let result = try unsafe apply.unsafeInvoke(callback, false)
+```
+
+The native caller receives the body's original error, so it can catch that error directly. Calling a returned wrapper from Swift uses `unsafeInvoke`; a native failure becomes ``NativeSwiftError``, consistent with ordinary throwing function invocation. Its retained code owners do not retain unrelated callback captures.
+
+Concrete errors use their actual Swift representation through ``ABIBridgeSwiftValue`` or a supported class/error reference. Direct integer carriers, floating/large indirect errors, and independent indirect success/error buffers share the function-invocation machinery. The same capture and code-image lifetime rules apply to throwing closures, including native escaping storage.
+
 ## Supported signatures
 
-The initial subset supports synchronous, nonthrowing closures with ordinary guaranteed arguments and owned results:
+Synchronous nonthrowing and throwing closures support ordinary guaranteed arguments and owned results:
 
 | Family | Accepted representations |
 | --- | --- |
@@ -55,7 +75,7 @@ An array's element type can itself be a managed struct, enum, optional, or anoth
 
 `ABIBridgeSwiftValue` conformances use compiler-owned value operations and can therefore pass actual managed Swift values without custom conversion callbacks; see <doc:ExplicitSwiftValues>.
 
-Custom `ABIBridgeValue` conversions can throw, while a nonthrowing native callback has no error-result channel. They are therefore outside this callback subset. Nested closures, value Optionals without an established direct representation, generic declarations, async/throwing callbacks, and explicit inout/consuming callback conventions require a compiler adapter.
+Custom `ABIBridgeValue` conversions describe foreign representations rather than the callback's actual Swift value types, so they remain outside this callback path. Nested closures, value Optionals without an established direct representation, generic declarations, async callbacks, and explicit inout/consuming callback conventions require a compiler adapter.
 
 Incoming closure-valued hook arguments are outside this subset: a native nonescaping callback can carry a stack context that cannot be retained as an owned wrapper. Hook preparation rejects that representation before installing an entry.
 
@@ -67,7 +87,7 @@ Preparing an unsupported signature or allocating callback entry storage can thro
 
 Each encoded argument owns a context reference through the native call. A later argument-conversion failure releases that reference without entering native code. Ordinary calls borrow their encoded arguments; supported initializers transfer their encoded owned copies according to their existing invocation contract. Decoding an owned returned closure transfers its context into the wrapper, including cleanup if entry preparation fails.
 
-A native caller must use the declared Swift ABI. Invalid function pointers, incompatible argument types, and violated isolation or ownership contracts are unsafe-call errors and can corrupt memory. Native Swift errors and foreign exceptions cannot cross this nonthrowing callback boundary.
+A native caller must use the declared Swift ABI. Invalid function pointers, incompatible argument types, and violated isolation or ownership contracts are unsafe-call errors and can corrupt memory. Only a declared throwing callback can return a native Swift error. Foreign exceptions are outside both callback contracts.
 
 ## ABI and verification
 

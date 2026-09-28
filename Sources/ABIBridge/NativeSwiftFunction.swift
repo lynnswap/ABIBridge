@@ -52,14 +52,33 @@ func swiftFunctionDeclaration(
     let member = prefix.split(separator: ".").last ?? prefix
     let generic = prefix.last(where: { !$0.isWhitespace }) == ">"
         && member.contains { $0.isLetter || $0.isNumber || $0 == "_" }
-    guard !generic, (isAsync || !declaration.contains(" async ")),
-          (failureType != Never.self || (!declaration.contains(" throws ") && !declaration.contains(" throws("))),
+    let outerSignature = swiftOuterSignature(declaration)
+    guard !generic, (isAsync || !outerSignature.contains(" async ")),
+          (failureType != Never.self || !outerSignature.contains(" throws")),
           !declaration.contains("inout "), !declaration.contains("__owned ") else {
         throw ABIResolutionError.unsupportedDeclaration(
             "Generic signatures and inout/consuming parameters require a native adapter; async and throwing calls require matching function types."
         )
     }
     return NativeDeclaration(name: declaration, language: .swift)
+}
+
+// Effect annotations inside parameter/result closure types do not describe the
+// enclosing function. Keep only top-level text before its result arrow.
+private func swiftOuterSignature(_ declaration: String) -> String {
+    var depth = 0
+    var result = ""
+    var index = declaration.startIndex
+    while index < declaration.endIndex {
+        let character = declaration[index]
+        let next = declaration.index(after: index)
+        if depth == 0, character == "-", next < declaration.endIndex, declaration[next] == ">" { break }
+        if character == "(" { depth += 1 }
+        else if character == ")" { depth -= 1 }
+        else if depth == 0 { result.append(character) }
+        index = next
+    }
+    return result
 }
 
 final class SwiftCallInterface: @unchecked Sendable {

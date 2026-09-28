@@ -75,3 +75,23 @@ do {
     error.withUnderlyingError { precondition(($0 as? Failure)?.code == 42) }
 }
 print("Throwing Swift consumer passed")
+
+
+@inline(never) public func invokeThrowing(_ body: (Int64) throws(Failure) -> Int64, _ value: Int64) throws(Failure) -> Int64 {
+    try body(value)
+}
+let throwingCallback = try NativeSwiftThrowingClosure<Int64, Failure, Int64> { (value: Int64) throws(Failure) in
+    if value < 0 { throw Failure(code: 42) }
+    return value + 7
+}
+let invokeThrowingCall = try await runtime.swiftFunction(named: "SwiftExplicitValueConsumer.invokeThrowing(_:_:)",
+    as: ((NativeSwiftThrowingClosure<Int64, Failure, Int64>, Int64) throws(Failure) -> Int64).self)
+let callbackResult = try unsafe invokeThrowingCall.unsafeInvoke(throwingCallback, 35)
+precondition(callbackResult == 42)
+do {
+    _ = try unsafe invokeThrowingCall.unsafeInvoke(throwingCallback, -1)
+    fatalError("Expected callback failure")
+} catch let error as NativeSwiftError {
+    error.withUnderlyingError { precondition(($0 as? Failure)?.code == 42) }
+}
+print("Throwing Swift callback consumer passed")

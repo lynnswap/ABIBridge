@@ -47,7 +47,7 @@ These conventions follow Swift's [combined result/error lowering](https://github
 
 ## Boundaries and verification
 
-Async functions use <doc:SwiftAsyncABI>. Throwing closure/callback generation remains separate work. Managed hooks currently require nonthrowing targets because their callback transport has no native error output. Compiled replacements must satisfy the exact native calling convention, including compatible error effects.
+Async functions use <doc:SwiftAsyncABI>. Synchronous throwing closure values use <doc:SwiftClosureValues>; async closure values remain separate work. Managed hooks currently require nonthrowing targets because their callback transport has no native error output. Compiled replacements must satisfy the exact native calling convention, including compatible error effects.
 
 Swift errors do not include Objective-C or C++ exceptions. There is no exception unwinding or thread blocking in this transport. Incorrect ABI descriptions can corrupt memory and are not recoverable bridge errors.
 

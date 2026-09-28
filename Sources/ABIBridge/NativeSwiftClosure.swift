@@ -1,15 +1,24 @@
 import ABIBridgeCore
 
-private final class SwiftClosureBody {
+final class SwiftClosureCodeOwner {
+    let value: Any
+    init(_ value: Any) { self.value = value }
+}
+
+final class SwiftClosureBody {
+    let codeOwner: SwiftClosureCodeOwner?
     let invoke: (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer) -> Void
-    init(_ invoke: @escaping (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer) -> Void) {
+    init(retainingCode codeOwner: Any? = nil, _ invoke: @escaping (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer) -> Void) {
+        self.codeOwner = codeOwner.map(SwiftClosureCodeOwner.init)
         self.invoke = invoke
     }
 }
 
-private final class SwiftClosureCallbackOwner {
+final class SwiftClosureCallbackOwner {
     let handle: OpaquePointer
     var function: ABIUnmanagedFunction { ABISwiftClosureCallbackFunction(handle)! }
+
+    init(handle: OpaquePointer) { self.handle = handle }
 
     init(interface: SwiftCallInterface, body: SwiftClosureBody) throws {
         var functions = ABISwiftClosureCallbackFunctions()
@@ -17,6 +26,10 @@ private final class SwiftClosureCallbackOwner {
             Unmanaged<SwiftClosureBody>.fromOpaque(context!).takeUnretainedValue().invoke(arguments, result!)
         }
         functions.releaseContext = { Unmanaged<SwiftClosureBody>.fromOpaque($0!).release() }
+        functions.copyCodeOwner = { context in
+            let owner = Unmanaged<SwiftClosureBody>.fromOpaque(context!).takeUnretainedValue().codeOwner
+            return owner.map { Unmanaged.passRetained($0).toOpaque() }
+        }
         let context = Unmanaged.passRetained(body)
         var failure: OpaquePointer?
         guard let handle = ABICreateSwiftClosureCallback(interface.handle, functions, context.toOpaque(), &failure) else {
@@ -126,7 +139,7 @@ extension NativeSwiftClosure: SwiftClosureValue {
             // Native copies retain only the two-word closure's heap context.
             // Keep code owners in that context as well, so an escaping callee
             // does not depend on the lifetime of this Swift wrapper.
-            let callback = try SwiftClosureCallbackOwner(interface: prepared.call.interface, body: SwiftClosureBody { arguments, output in
+            let callback = try SwiftClosureCallbackOwner(interface: prepared.call.interface, body: SwiftClosureBody(retainingCode: original.codeOwner) { arguments, output in
                 let succeeded = ABIUnsafeInvokeSwiftCallInterface(
                     prepared.call.interface.handle, original.implementation.function,
                     output, arguments, original.value.context, nil

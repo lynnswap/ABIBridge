@@ -15,3 +15,5 @@ void fail(const void *reference, void *context __attribute__((swift_context)),
     (void)context;
     *error = swift_errorRetain((void *)reference);
 }
+
+const void *ABIErrorLeaseEntry(void) { return (const void *)&fail; }
