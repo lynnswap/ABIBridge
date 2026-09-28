@@ -6,7 +6,7 @@ import Testing
 private enum ManagedConversionError: Error { case rejected }
 
 private func storageType<Value>(for type: Value.Type) throws -> NativeType {
-    try .opaque(named: String(reflecting: type), size: MemoryLayout<Value>.size,
+    try .opaque(named: String(reflecting: type), size: MemoryLayout<Value>.stride,
                 alignment: MemoryLayout<Value>.alignment)
 }
 

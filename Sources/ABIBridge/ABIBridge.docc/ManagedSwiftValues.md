@@ -48,7 +48,7 @@ let function = try await ABIRuntime.shared.cFunction(
 )
 let layout = try NativeType.opaque(
     named: "Example.Record",
-    size: MemoryLayout<Record>.size,
+    size: MemoryLayout<Record>.stride,
     alignment: MemoryLayout<Record>.alignment
 )
 let input = NativeValue(
@@ -74,7 +74,7 @@ let result: Record = unsafe output.withUnsafeBytes {
 
 Here `record` is the caller's existing `Record`. Typed initialization copies its managed references. Loading the result makes a Swift-owned copy, so the result can outlive the output storage. Each storage destructor deinitializes exactly the value it owns before `NativeValue` frees the allocation. Assignment of a `NativeValue` reference shares its storage; it does not copy the underlying Swift value.
 
-The opaque layout above describes only an allocation's extent. Do not put it into ``NativeSignature`` as a by-value Swift parameter. A `NativeSignature` describes a C-compatible adapter signature, which in this example has two pointer parameters and no result.
+Use the full stride for storage bound to one typed value, including any tail padding. The opaque layout above describes only an allocation's extent. Do not put it into ``NativeSignature`` as a by-value Swift parameter. A `NativeSignature` describes a C-compatible adapter signature, which in this example has two pointer parameters and no result.
 
 ## Keep runtime-only values opaque
 
