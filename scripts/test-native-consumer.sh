@@ -6,6 +6,7 @@ task_fixture=$(mktemp -d "${TMPDIR:-/tmp}/abibridge-native.XXXXXX")
 trap 'find "$task_fixture" -delete' EXIT
 
 python3 "$task_root/scripts/check-managed-swift-codegen.py"
+python3 "$task_root/scripts/check-swift-closure-codegen.py"
 
 xcrun clang++ -std=c++20 -dynamiclib -mmacosx-version-min=15.4 \
     "$task_root/Tests/NativeConsumer/Fixture.cpp" \
