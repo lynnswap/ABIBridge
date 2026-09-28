@@ -32,7 +32,7 @@ The framework/path and retained-image overloads use the same symbol indexes as o
 
 The call interface expands values into Swift integer/floating components, spills excess arguments to the stack, and handles direct or indirect results. There is no fixed argument-count limit. It does not call a Swift implementation through a C ABI interface or cast its address to an ordinary Swift closure.
 
-A custom adapter's layout must match the declaration, including field offsets, padding, and whether its ABI is fixed. C-compatible storage descriptions do not describe every Swift struct or enum. Nontrivial foreign values, resilient layouts, existential containers, closures, and generic metadata or witness arguments require a compiled native adapter. Use a C-compatible bridge with the C frontend for those cases.
+A custom adapter's layout must match the declaration, including field offsets, padding, and whether its ABI is fixed. C-compatible storage descriptions do not describe every Swift struct or enum. Nontrivial foreign values, resilient layouts, existential containers, closures, and generic metadata or witness arguments require a compiled native adapter. Use a C-compatible bridge with the C frontend for those cases. See <doc:ManagedSwiftValues> for a verified compiler-adapter path for managed structs, value Optionals, and imported resilient values.
 
 ## Ownership and isolation
 

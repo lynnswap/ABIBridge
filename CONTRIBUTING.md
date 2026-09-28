@@ -78,6 +78,22 @@ xcodebuild build \
 
 For watchOS, add `WATCHOS_DEPLOYMENT_TARGET=11.4` so dependencies also build within the supported deployment range. CI uses Xcode 26.6 on `macos-26` for macOS tests and iOS, visionOS, watchOS, and tvOS builds. Three package test shards, optimized bridge tests, native consumers, and architecture validation run as six independent macOS jobs. Each owns its build directories; PR and release validation require every job to succeed. Release targets that predate the shard script run the original full package suite in the core job.
 
+## Managed Swift value prototype
+
+`ManagedSwiftValueTests` uses the public C frontend and NativeValue storage with separately compiled Swift adapters. The fixture module enables library evolution; the adapter module imports it, so resilient calls exercise a real cross-module boundary. The fixtures cover managed structs, value Optionals, copied/moved storage, runtime-only handles, and failed conversions. Neither fixture target is part of the ABIBridge product.
+
+Run the runtime checks in both configurations:
+
+```sh
+xcodebuild test -scheme ABIBridge -destination 'platform=macOS,arch=arm64' \
+  -only-testing:ABIBridgeTests/ManagedSwiftValueTests
+xcodebuild test -scheme ABIBridge -destination 'platform=macOS,arch=arm64' \
+  -configuration Release -only-testing:ABIBridgeTests/ManagedSwiftValueTests
+python3 scripts/check-managed-swift-codegen.py
+```
+
+The compiler probe emits LLVM IR and a report under `.build/managed-swift-codegen`. It compares direct frozen/Optional results with resilient indirect results and compiler-generated value operations on arm64, x86_64, arm64e, and arm64_32. The native-consumer CI job runs this probe; the invocation shard runs the runtime tests. A compilation check does not establish runtime support on that target. See the managed Swift values DocC guide for the supported adapter contract.
+
 ## Architecture validation
 
 Run the focused consumer fixtures on macOS:
