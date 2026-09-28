@@ -7,7 +7,63 @@ extension AsyncMutableRecord: ABIBridgeSwiftValue {
     public static var swiftABIType: NativeType { .int64 }
 }
 
+private enum AsyncWritebackRejection: Error { case rejected }
+private struct RejectingAsyncRecord: ABIBridgeValue {
+    static let abiType = NativeType.int64
+    var count: Int64
+    init(_ count: Int64) { self.count = count }
+    init(nativeValue: NativeValue) throws { throw AsyncWritebackRejection.rejected }
+    static func nativeValue(from value: Self) throws -> NativeValue {
+        try NativeValue(copying: value.count, as: abiType)
+    }
+}
+
 struct SwiftAsyncInvocationTests {
+    @Test func escapedNativeErrorRetainsPayloadWithoutRetainingTheReceiver() async throws {
+        let gate = AsyncGate()
+        weak var observed: AsyncMemberOwner?
+        weak var observedToken: ErrorLifetimeToken?
+        var saved: NativeSwiftError?
+        do {
+            let token = ErrorLifetimeToken()
+            let owner = AsyncMemberOwner(token, gate)
+            observed = owner; observedToken = token
+            let type = try await ABIRuntime.shared.swiftType(named: "ManagedSwiftFixtures.AsyncMemberOwner")
+            let call = try await type.method(named: "value(_:)",
+                as: (@concurrent (Bool) async throws(ManagedFailure) -> String).self)
+            let task = Task { try unsafe await call.unsafeInvoke(on: owner, true) }
+            await gate.waitUntilSuspended()
+            #expect(observed != nil && observedToken != nil)
+            await gate.open()
+            do { _ = try await task.value; Issue.record("Expected failure") }
+            catch let error as NativeSwiftError { saved = error }
+        }
+        withExtendedLifetime(saved) { #expect(observed == nil && observedToken != nil) }
+        saved = nil
+        #expect(observedToken == nil)
+    }
+
+    @Test func nativeAndWritebackFailuresRemainAvailableTogether() async throws {
+        let type = try await ABIRuntime.shared.swiftType(named: "ManagedSwiftFixtures.AsyncMutableRecord",
+                                                         as: RejectingAsyncRecord.self)
+        let call = try await type.method(named: "advance(_:_:)",
+            as: (nonisolated(nonsending) (AsyncGate, Bool) async throws(ScalarFailure) -> Int64).self, mutating: true)
+        let gate = AsyncGate()
+        let task = Task {
+            var receiver = RejectingAsyncRecord(41)
+            do {
+                _ = try unsafe await call.unsafeInvoke(on: &receiver, gate, true)
+                Issue.record("Expected both failures")
+            } catch let error as NativeSwiftWritebackError {
+                #expect(error.writebackError is AsyncWritebackRejection)
+                let native = try #require(error.invocationError as? NativeSwiftError)
+                native.withUnderlyingError { #expect(($0 as? ScalarFailure)?.code == 42) }
+            }
+        }
+        await gate.waitUntilSuspended(); await gate.open()
+        try await task.value
+    }
+
     @Test func functionMetatypesSelectTheNativeIsolationConvention() async throws {
         let runtime = ABIRuntime.shared
         let immediate = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.asyncImmediate(_:)",
@@ -23,6 +79,13 @@ struct SwiftAsyncInvocationTests {
         let inImage = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.asyncImmediate(_:)",
             as: (nonisolated(nonsending) (Int64) async -> Int64).self, in: immediate.symbol.image)
         #expect(try unsafe await inImage.unsafeInvoke(9) == 10)
+        let explicitConvention = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.asyncConcurrent(_:_:_:)",
+            as: (nonisolated(nonsending) (AsyncGate, ErrorLifetimeToken, Int64) async -> String).self,
+            inheritsCallerIsolation: false)
+        let overrideGate = AsyncGate()
+        let overrideTask = Task { try unsafe await explicitConvention.unsafeInvoke(overrideGate, token, 8) }
+        await overrideGate.waitUntilSuspended(); await overrideGate.open()
+        #expect(try await overrideTask.value == String(repeating: "value:8", count: 100))
     }
 
     @MainActor @Test func callerTaskAndExecutorArePreservedAcrossNativeSuspension() async throws {

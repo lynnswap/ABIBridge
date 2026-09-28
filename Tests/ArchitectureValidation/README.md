@@ -168,3 +168,9 @@ A Release arm64e build completed all 12 checks on iPhone Air (iOS 27, build 24A4
 The `objc-values` mode checks normal and captured aggregate calls with CGAffineTransform. On UIKit platforms it also checks UIEdgeInsets, NSDirectionalEdgeInsets, and an aggregate managed hook. These structures use the shared runtime type-encoding path with no library-side registration.
 
 All six checks passed in a Release arm64e build on iPhone Air (iOS 27, build 24A435), with pointer authentication enabled. The report is `Documents/architecture-objc-values.json`.
+
+## Native Swift async calls
+
+The `swift-async` mode exercises public async functions and members through the native transport. It verifies owned String results, caller-isolation payloads and task-local state, executor restoration, cooperative cancellation, native errors, independent indirect success/error outputs, and stack arguments.
+
+All eight checks passed in a Release arm64e build on iPhone Air (iOS 27, build 24A435), with pointer authentication enabled. The report is `Documents/architecture-swift-async.json`. macOS tests also execute the transport on arm64 and under Rosetta on x86_64; arm64_32 is separately compiled.

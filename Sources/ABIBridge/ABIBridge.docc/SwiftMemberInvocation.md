@@ -57,7 +57,7 @@ let text = try unsafe getText.unsafeInvoke(on: renderer)
 
 An object scope also provides getter(named:as:) and setter(named:as:) returning bound handles. Static properties use staticGetter(named:as:) and staticSetter(named:as:). Accessors use the same unsafeInvoke spelling as other native calls.
 
-Setters transfer ownership of the incoming value. Getters are synchronous. Use a zero-argument throwing function metatype for a throwing getter, such as `(() throws -> String).self`; getter symbol names do not establish effects. See <doc:SwiftErrorABI>.
+Setters transfer ownership of the incoming value. Use a value metatype for a synchronous nonthrowing getter, or a zero-argument function metatype for a throwing or async getter, such as `(() throws -> String).self` or `(@concurrent () async -> String).self`. Getter symbol names do not establish these effects. See <doc:SwiftErrorABI>.
 
 Concrete callback parameters and returned closures use ``NativeSwiftClosure`` in the function-type metatype, as described in <doc:SwiftClosureValues>. Initializers transfer the encoded owned context; ordinary methods borrow it for the call.
 

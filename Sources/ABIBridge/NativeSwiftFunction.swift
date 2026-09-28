@@ -93,7 +93,7 @@ final class SwiftCallInterface: @unchecked Sendable {
 /// layouts supplied by ABIBridgeSwiftValue, and trivial ABIBridgeValue layouts.
 /// Use NativeSwiftClosure for supported concrete callbacks. Generic declarations,
 /// undescribed resilient values, ordinary unwrapped closures, inout and consumed
-/// arguments and async functions require separate adapters. Throwing signatures
+/// arguments require separate adapters. Async metatypes use NativeSwiftAsyncFunction. Throwing signatures
 /// return native failures as NativeSwiftError.
 /// See <doc:SwiftFunctionInvocation>.
 public struct NativeSwiftFunction<Result, each Argument>: Sendable {
