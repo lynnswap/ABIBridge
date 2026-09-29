@@ -24,6 +24,35 @@ The function type describes only explicit arguments. ABIBridge supplies the rece
 
 Keep a method handle to reuse its decoded signature. Each invocation builds an independent call frame and uses normal Objective-C message dispatch, including forwarding. A replacement implementation must preserve the signature and ownership contract captured during lookup.
 
+## Prepare a message without retaining a receiver
+
+Use `ABIRuntime.objcMethod(on:selector:as:classMethod:options:retaining:)` when a coordinator or other owner needs to cache a signature independently of the objects receiving its messages:
+
+```swift
+let append = try runtime.objcMethod(
+    on: NSMutableString.self,
+    selector: "appendString:",
+    as: ((String) -> Void).self
+)
+let text = NSMutableString(string: "Hello")
+try unsafe append.unsafeInvoke(on: text, " world")
+
+let bound = try append.bind(to: text)
+try unsafe bound.unsafeInvoke("!")
+```
+
+`NativeObjCMethod` retains no receiver instance. It validates the supplied receiver's class/method kind and current ABI representation, then follows normal message dispatch. Compatible subclass overrides and later hook installations are observed. Aggregate names may differ when their native layouts agree. Encoding checks cannot establish ownership attributes that the runtime omits: replacements and overrides must honor the prepared ownership contract.
+
+`bind(to:)` returns a `NativeBoundObjCMethod` retaining that receiver and sharing the prepared signature. Its last copy releases the receiver before the prepared plan's image and optional code owner. Like `object(receiver).method(...)`, a bound handle expects later replacements to preserve its prepared signature and ownership.
+
+| Handle | Receiver lifetime | Dispatch |
+| --- | --- | --- |
+| `NativeObjCMethod` | Supplied for each call | Current Objective-C message dispatch |
+| `NativeBoundObjCMethod` | Retained by the handle | Current Objective-C message dispatch |
+| `NativeObjCImplementation` | Supplied for each call | Captured IMP |
+
+Class-based preparation requires a concrete method signature, including signatures supplied by dynamic method resolution. Receiver-specific forwarding signatures remain available through `object(receiver).method(...)`; one object's forwarding behavior is not assumed to apply to other instances. No receiver is constructed during class-based preparation, and no actor hop is performed. Caller-managed dynamic classes and generated code must stay valid through their final use.
+
 ## Capture an implementation for original calls
 
 Use `objcImplementation(on:selector:as:classMethod:options:retaining:)` when a method replacement needs to call the implementation selected before replacement:
@@ -37,7 +66,7 @@ let original = try ABIRuntime.shared.objcImplementation(
 let measured = try unsafe original.unsafeInvoke(on: view, proposedSize)
 ```
 
-The capture holds a fixed IMP and signature, without retaining an instance. Supply a compatible receiver for each call; subclass instances are accepted, but their overrides are not selected. Ordinary `NativeMethod` handles continue to use current message dispatch. Forwarding-only selectors cannot be captured.
+The capture holds a fixed IMP and signature, without retaining an instance. Supply a compatible receiver for each call; subclass instances are accepted, but their overrides are not selected. Ordinary `NativeBoundObjCMethod` handles continue to use current message dispatch. Forwarding-only selectors cannot be captured.
 
 For a class method, pass the ordinary class with `classMethod: true` and invoke with the class object, such as `SomeClass.self as AnyObject`. A subclass class object is also valid. Wrong receiver kinds and unrelated classes fail before calling native code.
 

@@ -190,7 +190,7 @@ struct ObjectiveCInvocationTests {
     @Test func boundMethodRetainsReceiver() throws {
         var receiver: Renderer? = Renderer()
         weak var weakReceiver = receiver
-        var method: NativeMethod<Int>? = try ABIRuntime.shared.object(receiver!).method(
+        var method: NativeBoundObjCMethod<Int>? = try ABIRuntime.shared.object(receiver!).method(
             selector: "answer", as: (() -> Int).self
         )
         receiver = nil
@@ -242,7 +242,7 @@ struct ObjectiveCInvocationTests {
         for selector in ["initWithReplacement", "initReturningNil"] {
             var receiver: ABIInitializerFixture? = ABIInitializerFixture()
             weak var original = receiver
-            var method: NativeMethod<ABIInitializerFixture?>? = try ABIRuntime.shared.object(receiver!).method(
+            var method: NativeBoundObjCMethod<ABIInitializerFixture?>? = try ABIRuntime.shared.object(receiver!).method(
                 selector: selector, as: (() -> ABIInitializerFixture?).self
             )
             receiver = nil

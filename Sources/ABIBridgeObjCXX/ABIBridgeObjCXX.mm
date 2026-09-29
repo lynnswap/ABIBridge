@@ -204,6 +204,7 @@ struct ABIObjCInvocation {
     Class receiverType = Nil;
     bool classMethod = false;
     IMP implementation = nullptr;
+    ABIObjCInvocation *parent = nullptr;
     using ImageLease = std::unique_ptr<ABIImageLease, decltype(&ABIReleaseImage)>;
     std::vector<ImageLease> images;
 
@@ -212,7 +213,11 @@ struct ABIObjCInvocation {
           selector(selector), ownership(ownership),
           parameterCount(signature.numberOfArguments - 2), resultSize(signature.methodReturnLength),
           objectResult(*unqualified(signature.methodReturnType) == '@' || *unqualified(signature.methodReturnType) == '#') {}
-    ~ABIObjCInvocation() { if (receiver) CFRelease(receiver); CFRelease(signature); }
+    ~ABIObjCInvocation() {
+        if (receiver) CFRelease(receiver);
+        CFRelease(signature);
+        if (parent) ABIReleaseObjCInvocation(parent);
+    }
     NSMethodSignature *methodSignature() const { return (__bridge NSMethodSignature *)signature; }
 };
 
@@ -281,9 +286,9 @@ bool retainImplementationImage(
 }
 }
 
-ABIObjCInvocation *ABICopyObjCImplementation(
+static ABIObjCInvocation *copyClassInvocation(
     Class type, SEL selector, BOOL classMethod, int32_t returnsRetained,
-    int32_t consumesReceiver, NSError **error) {
+    int32_t consumesReceiver, bool capture, NSError **error) {
     if (error) *error = nil;
     if (!type || class_isMetaClass(type) || !selector ||
         returnsRetained < -1 || returnsRetained > 1 || consumesReceiver < -1 || consumesReceiver > 1) {
@@ -294,8 +299,10 @@ ABIObjCInvocation *ABICopyObjCImplementation(
     class_getMethodImplementation(lookup, selector);
     Method method = class_getInstanceMethod(lookup, selector);
     IMP implementation = method ? method_getImplementation(method) : nullptr;
-    if (!method || !implementation || isForwardingImplementation(implementation)) {
-        fail(error, ABIFailureDeclarationNotFound, @"A captured call requires a concrete method implementation.");
+    if (!method || (capture && (!implementation || isForwardingImplementation(implementation)))) {
+        fail(error, ABIFailureDeclarationNotFound, capture
+             ? @"A captured call requires a concrete method implementation."
+             : @"A receiver-independent call requires a method signature declared by the class.");
         return nullptr;
     }
     NSMethodSignature *signature = nil;
@@ -316,14 +323,102 @@ ABIObjCInvocation *ABICopyObjCImplementation(
     auto plan = std::make_unique<ABIObjCInvocation>(nil, signature, selector, *ownership);
     plan->receiverType = type;
     plan->classMethod = classMethod;
-    plan->implementation = implementation;
+    plan->implementation = capture ? implementation : nullptr;
     const void* address = reinterpret_cast<const void*>(implementation);
 #if __has_feature(ptrauth_calls)
     address = ptrauth_strip(address, ptrauth_key_function_pointer);
 #endif
-    if (!retainImplementationImage(*plan, address, nullptr, error) ||
+    if ((capture && !retainImplementationImage(*plan, address, nullptr, error)) ||
         !retainImplementationImage(*plan, nullptr, class_getImageName(type), error)) return nullptr;
     return plan.release();
+}
+
+
+ABIObjCInvocation *ABICopyObjCImplementation(
+    Class type, SEL selector, BOOL classMethod, int32_t returnsRetained,
+    int32_t consumesReceiver, NSError **error) {
+    return copyClassInvocation(type, selector, classMethod, returnsRetained, consumesReceiver, true, error);
+}
+
+ABIObjCInvocation *ABICopyObjCDispatch(
+    Class type, SEL selector, BOOL classMethod, int32_t returnsRetained,
+    int32_t consumesReceiver, NSError **error) {
+    return copyClassInvocation(type, selector, classMethod, returnsRetained, consumesReceiver, false, error);
+}
+
+static bool validateReceiver(const ABIObjCInvocation *plan, id receiver, NSError **error) {
+    if (!receiver) {
+        fail(error, ABIFailureInvalidRequest, @"A live receiver is required.");
+        return false;
+    }
+    Class actual = object_getClass(receiver);
+    const bool receiverIsClass = class_isMetaClass(actual);
+    if (plan->classMethod == receiverIsClass) {
+        if (receiverIsClass) actual = (Class)receiver;
+        for (; actual && actual != plan->receiverType; actual = class_getSuperclass(actual)) {}
+    } else {
+        actual = Nil;
+    }
+    if (!actual) {
+        fail(error, ABIFailureSignatureMismatch,
+             [NSString stringWithFormat:@"Receiver %@ is incompatible with %@ %@.",
+              NSStringFromClass(object_getClass(receiver)), plan->classMethod ? @"class" : @"instances of",
+              NSStringFromClass(plan->receiverType)]);
+        return false;
+    }
+    return true;
+}
+
+static bool compatibleDispatchEncoding(const char *expected, const char *actual) {
+    if (compatible(expected, actual)) return true;
+    // Aggregate names do not determine their calling convention. Compare the
+    // shared native layouts when otherwise-compatible records use different names.
+    if (*unqualified(expected) != '{' || *unqualified(actual) != '{') return false;
+    using Type = std::unique_ptr<ABIValueType, decltype(&ABIReleaseValueType)>;
+    Type first(ABICopyObjCHookValueType(expected, nullptr), ABIReleaseValueType);
+    Type second(ABICopyObjCHookValueType(actual, nullptr), ABIReleaseValueType);
+    return first && second && ABIValueTypesEqual(first.get(), second.get());
+}
+
+static bool validateDispatchReceiver(const ABIObjCInvocation *plan, id receiver, NSError **error) {
+    if (!validateReceiver(plan, receiver, error)) return false;
+    Method method = class_getInstanceMethod(object_getClass(receiver), plan->selector);
+    if (!method) {
+        fail(error, ABIFailureDeclarationNotFound, @"The receiver no longer has the prepared method declaration.");
+        return false;
+    }
+    NSMethodSignature *actual = nil;
+    @try {
+        actual = [NSMethodSignature signatureWithObjCTypes:method_getTypeEncoding(method)];
+    } @catch (NSException *exception) {
+        if (![exception.name isEqualToString:NSInvalidArgumentException]) @throw;
+        fail(error, ABIFailureUnsupportedDeclaration, exception.reason);
+        return false;
+    }
+    NSMethodSignature *expected = plan->methodSignature();
+    if (!actual || actual.numberOfArguments != expected.numberOfArguments
+        || !compatibleDispatchEncoding(expected.methodReturnType, actual.methodReturnType)) {
+        fail(error, ABIFailureSignatureMismatch, @"The receiver's argument count or result encoding differs from the prepared declaration.");
+        return false;
+    }
+    for (NSUInteger index = 2; index < expected.numberOfArguments; ++index) {
+        if (!compatibleDispatchEncoding([expected getArgumentTypeAtIndex:index], [actual getArgumentTypeAtIndex:index])) {
+            fail(error, ABIFailureSignatureMismatch,
+                 [NSString stringWithFormat:@"Receiver argument %lu encoding differs from the prepared declaration.",
+                  (unsigned long)(index - 2)]);
+            return false;
+        }
+    }
+    return true;
+}
+
+ABIObjCInvocation *ABICopyBoundObjCInvocation(ABIObjCInvocation *plan, id receiver, NSError **error) {
+    if (error) *error = nil;
+    if (!validateDispatchReceiver(plan, receiver, error)) return nullptr;
+    auto bound = std::make_unique<ABIObjCInvocation>(receiver, plan->methodSignature(), plan->selector, plan->ownership);
+    ABIRetainObjCInvocation(plan);
+    bound->parent = plan;
+    return bound.release();
 }
 
 void ABIRetainObjCInvocation(ABIObjCInvocation *invocation) { ++invocation->references; }
@@ -350,8 +445,8 @@ size_t ABIObjCInvocationParameterSize(const ABIObjCInvocation *invocation, size_
 size_t ABIObjCInvocationResultSize(const ABIObjCInvocation *invocation) {
     return invocation->resultSize;
 }
-BOOL ABIInvokeObjCInvocation(
-    ABIObjCInvocation *plan, void *result, const void *const *arguments, NSError **error)
+static BOOL invokeMessage(
+    ABIObjCInvocation *plan, id receiver, void *result, const void *const *arguments, NSError **error)
 {
     if (error) *error = nil;
     const size_t count = ABIObjCInvocationParameterCount(plan);
@@ -371,8 +466,8 @@ BOOL ABIInvokeObjCInvocation(
         }
         [invocation setArgument:const_cast<void *>(arguments[index]) atIndex:index + 2];
     }
-    if (plan->ownership.consumed) CFRetain(plan->receiver);
-    [invocation invokeWithTarget:(__bridge id)plan->receiver];
+    if (plan->ownership.consumed) CFRetain((__bridge CFTypeRef)receiver);
+    [invocation invokeWithTarget:receiver];
     if (resultSize) {
         if (plan->objectResult) {
             __unsafe_unretained id object = nil;
@@ -387,6 +482,19 @@ BOOL ABIInvokeObjCInvocation(
     }
     return YES;
 }
+
+BOOL ABIInvokeObjCInvocation(
+    ABIObjCInvocation *plan, void *result, const void *const *arguments, NSError **error) {
+    return invokeMessage(plan, (__bridge id)plan->receiver, result, arguments, error);
+}
+
+BOOL ABIInvokeObjCDispatch(
+    ABIObjCInvocation *plan, id receiver, void *result, const void *const *arguments, NSError **error) {
+    if (error) *error = nil;
+    if (!validateDispatchReceiver(plan, receiver, error)) return NO;
+    return invokeMessage(plan, receiver, result, arguments, error);
+}
+
 BOOL ABIInvokeObjCImplementation(
     ABIObjCInvocation *plan, ABICallInterface *interface, id receiver,
     void *result, const void *const *arguments, NSError **error) {
@@ -395,18 +503,7 @@ BOOL ABIInvokeObjCImplementation(
         fail(error, ABIFailureInvalidRequest, @"A captured implementation and live receiver are required.");
         return NO;
     }
-    Class actual = object_getClass(receiver);
-    const bool receiverIsClass = class_isMetaClass(actual);
-    if (plan->classMethod == receiverIsClass) {
-        if (receiverIsClass) actual = (Class)receiver;
-        for (; actual && actual != plan->receiverType; actual = class_getSuperclass(actual)) {}
-    } else {
-        actual = Nil;
-    }
-    if (!actual) {
-        fail(error, ABIFailureSignatureMismatch, @"The receiver is incompatible with the captured class.");
-        return NO;
-    }
+    if (!validateReceiver(plan, receiver, error)) return NO;
     const size_t count = ABIObjCInvocationParameterCount(plan);
     if ((ABIObjCInvocationResultSize(plan) && !result) || (count && !arguments)) {
         fail(error, ABIFailureInvalidRequest, @"Argument and result storage are required.");

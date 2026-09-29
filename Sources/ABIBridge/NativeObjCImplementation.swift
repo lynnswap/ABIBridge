@@ -44,8 +44,7 @@ public struct NativeObjCImplementation<Result, each Argument> {
                     ABIInvokeObjCImplementation(binding.handle, interface.handle, receiver, output, $0.baseAddress, &error)
                 }
                 guard success else {
-                    if let error { throw error }
-                    throw ABIResolutionError.invalidAddress
+                    throw objcResolutionError(error, declaration: binding.declaration)
                 }
             })
         }

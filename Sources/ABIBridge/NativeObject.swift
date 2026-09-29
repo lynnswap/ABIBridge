@@ -196,7 +196,7 @@ public final class NativeObject {
         selector: String,
         as signature: ((repeat each Argument) -> Result).Type,
         options: NativeMethodOptions = .init()
-    ) throws -> NativeMethod<Result, repeat each Argument> {
+    ) throws -> NativeBoundObjCMethod<Result, repeat each Argument> {
         let receiverType = object_getClass(receiver!)!
         let declaration = objcMethodDeclaration(on: receiverType, selector: selector,
             classMethod: class_isMetaClass(receiverType))
@@ -208,7 +208,7 @@ public final class NativeObject {
         ) else {
             throw objcResolutionError(error, declaration: declaration)
         }
-        return try NativeMethod(binding: ObjCInvocationBinding(handle, declaration: declaration))
+        return try NativeBoundObjCMethod(binding: ObjCInvocationBinding(handle, declaration: declaration))
     }
 }
 
@@ -225,11 +225,13 @@ extension ABIRuntime {
 final class ObjCInvocationBinding {
     let handle: OpaquePointer
     let declaration: NativeDeclaration
-    init(_ handle: OpaquePointer, declaration: NativeDeclaration) {
+    let owner: Any?
+    init(_ handle: OpaquePointer, declaration: NativeDeclaration, retaining owner: Any? = nil) {
         self.handle = handle
         self.declaration = declaration
+        self.owner = owner
     }
-    deinit { ABIReleaseObjCInvocation(handle) }
+    deinit { withExtendedLifetime(owner) { ABIReleaseObjCInvocation(handle) } }
 }
 
 /// A typed Objective-C method bound to a retained receiver.
@@ -237,13 +239,18 @@ final class ObjCInvocationBinding {
 /// The handle can be reused without repeating signature decoding. Invocation
 /// creates an independent argument frame for every call and has no fixed limit on
 /// the number of explicit arguments. See <doc:ObjectiveCInvocation>.
-public struct NativeMethod<Result, each Argument> {
+public struct NativeBoundObjCMethod<Result, each Argument> {
     private let binding: ObjCInvocationBinding
     private let signature: ObjCMethodSignature<Result, repeat each Argument>
 
     init(binding: ObjCInvocationBinding) throws {
         self.binding = binding
         signature = try ObjCMethodSignature(handle: binding.handle, declaration: binding.declaration)
+    }
+
+    init(binding: ObjCInvocationBinding, signature: ObjCMethodSignature<Result, repeat each Argument>) {
+        self.binding = binding
+        self.signature = signature
     }
 
     /// Calls the method using normal Objective-C dispatch.
@@ -263,8 +270,7 @@ public struct NativeMethod<Result, each Argument> {
                 ABIInvokeObjCInvocation(binding.handle, output, $0.baseAddress, &error)
             }
             guard success else {
-                if let error { throw error }
-                throw ABIResolutionError.invalidAddress
+                throw objcResolutionError(error, declaration: binding.declaration)
             }
         })
     }
