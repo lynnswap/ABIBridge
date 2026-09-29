@@ -27,6 +27,18 @@ import SwiftValueFixtures
     let method = try await runtime.object(inherited).method(named: "concrete(_:)", as: ((String) -> String).self)
     try check(unsafe method.unsafeInvoke("") == inherited.concrete(""),
               "Generic Swift superclass implementation")
+    let constrained = try await runtime.object(inherited).method(named: "specialized(_:)", as: ((String) -> String).self)
+    let constrainedGetter = try await runtime.object(inherited).getter(named: "specializedText", as: String.self)
+    try check(unsafe constrained.unsafeInvoke("prefix:") == inherited.specialized("prefix:"),
+              "Swift same-type constrained superclass member")
+    try check(unsafe constrainedGetter.unsafeInvoke() == inherited.specializedText,
+              "Swift same-type constrained getter")
+    do {
+        _ = try await runtime.object(inherited).method(named: "witnessText()", as: (() -> String).self)
+        throw ArchitectureValidationFailure(description: "Extra witness argument was not supplied")
+    } catch ABIResolutionError.declarationNotFound {
+        checks.append("Additional extension witness keeps its adapter boundary")
+    }
     await runtime.removeCachedResults()
     try check(observed != nil, "Generic Swift receiver retained after cache removal")
     try check(unsafe retained!.unsafeInvoke("") == String(repeating: "owned", count: 100),

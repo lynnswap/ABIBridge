@@ -17,7 +17,7 @@ struct ForeignPoint: ABIBridgeValue {
 }
 
 @MainActor
-func prepare(_ path: String, extensionPath: String) async throws -> (NativeBoundSwiftMethod<Int, Int>, NativeBoundSwiftMethod<Int, Int>, NativeBoundSwiftMethod<Int, Int>) {
+func prepare(_ path: String, extensionPath: String) async throws -> [NativeBoundSwiftMethod<Int, Int>] {
     guard let original = dlopen(path, RTLD_NOW | RTLD_LOCAL) else {
         fatalError(String(cString: dlerror()))
     }
@@ -69,15 +69,27 @@ func prepare(_ path: String, extensionPath: String) async throws -> (NativeBound
     let genericGetter = try await runtime.object(genericReceiver).getter(named: "currentScore", as: Int.self)
     let genericValue = try unsafe genericGetter.unsafeInvoke()
     precondition(genericValue == 41)
+    let makeConstrained = try await runtime.swiftFunction(
+        named: "SwiftFunctionFixture.makeConstrainedRenderer(_:)", as: ((Int) -> AnyObject).self, in: scope
+    )
+    let constrainedReceiver = try unsafe makeConstrained.unsafeInvoke(40)
+    let constrained = try await runtime.object(constrainedReceiver).method(
+        named: "constrainedScore(_:)", as: ((Int) -> Int).self
+    )
+    let constrainedGetter = try await runtime.object(constrainedReceiver).getter(named: "constrainedValue", as: Int.self)
+    let constrainedValue = try unsafe constrainedGetter.unsafeInvoke()
+    precondition(constrainedValue == 40)
     await runtime.removeCachedResults()
-    return (bound, privateBound, genericBound)
+    return [bound, privateBound, genericBound, constrained]
 }
 
 let methods = try await prepare(CommandLine.arguments[1], extensionPath: CommandLine.arguments[2])
-let value = try unsafe methods.0.unsafeInvoke(36)
+let value = try unsafe methods[0].unsafeInvoke(36)
 precondition(value == 42)
-let privateValue = try unsafe methods.1.unsafeInvoke(2)
+let privateValue = try unsafe methods[1].unsafeInvoke(2)
 precondition(privateValue == 42)
-let genericValue = try unsafe methods.2.unsafeInvoke(1)
+let genericValue = try unsafe methods[2].unsafeInvoke(1)
 precondition(genericValue == 42)
-print("Swift member consumer passed: public, extension, private, and generic receiver methods")
+let constrainedValue = try unsafe methods[3].unsafeInvoke(2)
+precondition(constrainedValue == 42)
+print("Swift member consumer passed: public, extension, private, generic, and constrained receiver methods")

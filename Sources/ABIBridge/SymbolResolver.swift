@@ -15,6 +15,7 @@ final class SymbolResolver: Sendable {
     private struct LookupKey: Hashable, Sendable {
         let declaration: NativeDeclaration
         let extensionsOnly: Bool
+        let genericContext: SwiftGenericContext?
     }
 
     // Results have their own lock. Retiring the node releases all image leases
@@ -51,15 +52,16 @@ final class SymbolResolver: Sendable {
         return withExtendedLifetime((candidate, retired)) { .automatic(selected) }
     }
 
-    private func resolve(_ declaration: NativeDeclaration, in scope: SearchScope, extensionsOnly: Bool = false) throws -> ResolvedSymbol {
+    private func resolve(_ declaration: NativeDeclaration, in scope: SearchScope, extensionsOnly: Bool = false,
+                         genericContext: SwiftGenericContext? = nil) throws -> ResolvedSymbol {
         guard !scope.images.isEmpty else { throw ABIResolutionError.imageNotLoaded }
         guard case .automatic(let cache) = scope else {
-            return try unique(declaration, images: scope.images, extensionsOnly: extensionsOnly)
+            return try unique(declaration, images: scope.images, extensionsOnly: extensionsOnly, genericContext: genericContext)
         }
-        let key = LookupKey(declaration: declaration, extensionsOnly: extensionsOnly)
+        let key = LookupKey(declaration: declaration, extensionsOnly: extensionsOnly, genericContext: genericContext)
         if let cached = cache.results.withLock({ $0[key] }) { return try cached.get() }
         let result: Result<ResolvedSymbol, ABIResolutionError>
-        do { result = .success(try unique(declaration, images: cache.images, extensionsOnly: extensionsOnly)) }
+        do { result = .success(try unique(declaration, images: cache.images, extensionsOnly: extensionsOnly, genericContext: genericContext)) }
         catch let failure as ABIResolutionError {
             switch failure {
             case .declarationNotFound, .ambiguousDeclaration, .invalidAddress: result = .failure(failure)
@@ -224,8 +226,9 @@ final class SymbolResolver: Sendable {
         }
     }
 
-    func resolveSwiftExtension(_ declaration: NativeDeclaration) throws -> ResolvedSymbol {
-        try resolve(declaration, in: searchScope(.automatic, loading: .loadedOnly), extensionsOnly: true)
+    func resolveSwiftExtension(_ declaration: NativeDeclaration, genericContext: SwiftGenericContext? = nil) throws -> ResolvedSymbol {
+        try resolve(declaration, in: searchScope(.automatic, loading: .loadedOnly), extensionsOnly: true,
+                    genericContext: genericContext)
     }
 
     func removeCachedResults() {
@@ -298,20 +301,21 @@ final class SymbolResolver: Sendable {
         }
     }
 
-    private func unique(_ declaration: NativeDeclaration, images: [NativeImage], extensionsOnly: Bool = false) throws -> ResolvedSymbol {
+    private func unique(_ declaration: NativeDeclaration, images: [NativeImage], extensionsOnly: Bool = false,
+                        genericContext: SwiftGenericContext? = nil) throws -> ResolvedSymbol {
         // Keep these indexes for the whole lookup even if another caller clears
         // the cache while shared-cache metadata is being read.
         let query = SymbolQuery(declaration)
         let candidates = state.withLock { state in images.map { state.index(for: $0) } }
         return try withExtendedLifetime(candidates) {
             let primary = try state.withLock { _ in
-                try candidates.compactMap { try $0.resolve(query, source: .image, extensionsOnly: extensionsOnly) }
+                try candidates.compactMap { try $0.resolve(query, source: .image, extensionsOnly: extensionsOnly, genericContext: genericContext) }
             }
             if !primary.isEmpty { return try select(declaration, from: primary) }
 
             loadSharedCacheSymbols(for: query, into: candidates)
             let fallback = try state.withLock { _ in
-                return try candidates.compactMap { try $0.resolve(query, source: .sharedCache, extensionsOnly: extensionsOnly) }
+                return try candidates.compactMap { try $0.resolve(query, source: .sharedCache, extensionsOnly: extensionsOnly, genericContext: genericContext) }
             }
             return try select(declaration, from: fallback)
         }

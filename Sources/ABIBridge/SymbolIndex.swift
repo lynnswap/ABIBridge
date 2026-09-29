@@ -496,25 +496,26 @@ final class SymbolIndex {
         matches(SymbolQuery(declaration), extensionsOnly: extensionsOnly)
     }
 
-    private func matches(_ query: SymbolQuery, extensionsOnly: Bool) -> [IndexedSymbol] {
+    private func matches(_ query: SymbolQuery, extensionsOnly: Bool, genericContext: SwiftGenericContext? = nil) -> [IndexedSymbol] {
         let declaration = query.declaration
         if let name = query.exactName {
             return exactSymbols(named: name, key: query.key)
         }
         if declaration.language == .swift {
-            return indexedMatches(query, extensionsOnly: extensionsOnly, swiftBucket: .literal)
-                + indexedMatches(query, extensionsOnly: extensionsOnly, swiftBucket: .fallback)
+            return indexedMatches(query, extensionsOnly: extensionsOnly, swiftBucket: .literal, genericContext: genericContext)
+                + indexedMatches(query, extensionsOnly: extensionsOnly, swiftBucket: .fallback, genericContext: genericContext)
         }
-        return indexedMatches(query, extensionsOnly: extensionsOnly, swiftBucket: nil)
+        return indexedMatches(query, extensionsOnly: extensionsOnly, swiftBucket: nil, genericContext: genericContext)
     }
 
-    private func indexedMatches(_ query: SymbolQuery, extensionsOnly: Bool, swiftBucket: SwiftBucket?) -> [IndexedSymbol] {
+    private func indexedMatches(_ query: SymbolQuery, extensionsOnly: Bool, swiftBucket: SwiftBucket?,
+                                genericContext: SwiftGenericContext?) -> [IndexedSymbol] {
         let declaration = query.declaration
         let filter = query.filter
         let scope = swiftBucket == .fallback ? Self.swiftFallbackScope
             : Scope(language: declaration.language, fragments: filter?.fragments ?? query.swiftModule.map { [$0.module] } ?? [], swiftFallback: false)
         if extensionsOnly, let extensions = swiftExtensions[scope] {
-            return Self.matching(extensions[query.fingerprint] ?? [], query: query, extensionsOnly: true)
+            return Self.matching(extensions[query.fingerprint] ?? [], query: query, extensionsOnly: true, genericContext: genericContext)
         }
         if decoded[scope] == nil {
             let candidates = symbols(for: query, swiftBucket: swiftBucket)
@@ -534,6 +535,9 @@ final class SymbolIndex {
                     }
                     if declaration.language == .swift, let unqualified = Self.extensionMemberName(name) {
                         extensions[DeclarationKey.fingerprint(DeclarationKey.make(unqualified)), default: []].append(symbol)
+                        if let constrained = SwiftConstrainedExtension(unqualified) {
+                            extensions[DeclarationKey.fingerprint(DeclarationKey.make(constrained.memberName)), default: []].append(symbol)
+                        }
                     }
                 }
             }
@@ -541,12 +545,13 @@ final class SymbolIndex {
             if declaration.language == .swift { swiftExtensions[scope] = extensions }
         }
         let candidates = extensionsOnly ? swiftExtensions[scope]?[query.fingerprint] ?? [] : decoded[scope]?[query.fingerprint] ?? []
-        return Self.matching(candidates, query: query, extensionsOnly: extensionsOnly)
+        return Self.matching(candidates, query: query, extensionsOnly: extensionsOnly, genericContext: genericContext)
     }
 
     // Fingerprints keep the index compact; the full normalized spelling is
     // always checked before a candidate can affect resolution or ambiguity.
-    static func matching(_ candidates: [IndexedSymbol], query: SymbolQuery, extensionsOnly: Bool) -> [IndexedSymbol] {
+    static func matching(_ candidates: [IndexedSymbol], query: SymbolQuery, extensionsOnly: Bool,
+                         genericContext: SwiftGenericContext? = nil) -> [IndexedSymbol] {
         candidates.filter { symbol in
             guard let name = DeclarationKey.demangle(symbol.name, language: query.declaration.language) else { return false }
             var names = [name]
@@ -554,7 +559,10 @@ final class SymbolIndex {
             return names.contains { name in
                 if extensionsOnly {
                     guard let unqualified = extensionMemberName(name) else { return false }
-                    return DeclarationKey.make(unqualified) == query.key
+                    if DeclarationKey.make(unqualified) == query.key { return true }
+                    guard let genericContext, let constrained = SwiftConstrainedExtension(unqualified),
+                          DeclarationKey.make(constrained.memberName) == query.key else { return false }
+                    return genericContext.satisfies(constrained)
                 }
                 return DeclarationKey.make(name) == query.key
             }
@@ -613,10 +621,11 @@ final class SymbolIndex {
     }
 
     func resolve(
-        _ query: SymbolQuery, source: ResolvedSymbol.Source, extensionsOnly: Bool = false
+        _ query: SymbolQuery, source: ResolvedSymbol.Source, extensionsOnly: Bool = false,
+        genericContext: SwiftGenericContext? = nil
     ) throws -> ResolvedSymbol? {
         let declaration = query.declaration
-        let candidates = matches(query, extensionsOnly: extensionsOnly).filter { $0.source == source }
+        let candidates = matches(query, extensionsOnly: extensionsOnly, genericContext: genericContext).filter { $0.source == source }
         guard !candidates.isEmpty else { return nil }
         var addresses: [UInt64: (IndexedSymbol, SymbolSection)] = [:]
         for candidate in candidates {

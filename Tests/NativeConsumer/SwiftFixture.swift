@@ -23,6 +23,15 @@ private final class GenericRenderer<Value> {
     return renderer
 }
 
+public final class GenericExtensionRenderer<Value> {
+    public let value: Value
+    public init(_ value: Value) { self.value = value }
+}
+
+@inline(never) public func makeConstrainedRenderer(_ value: Int) -> AnyObject {
+    GenericExtensionRenderer(value)
+}
+
 @inline(never) public func makeAdder(_ bias: Int64) -> (Int64) -> Int64 { { $0 + bias } }
 @inline(never) public func applyClosure(_ callback: (Int64) -> Int64, _ value: Int64) -> Int64 {
     callback(value)
