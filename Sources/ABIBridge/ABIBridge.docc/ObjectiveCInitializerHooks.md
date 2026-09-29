@@ -4,7 +4,7 @@ Prepare arguments and process the actual initialized result while the bridge own
 
 ## Observe initialization
 
-Use ``ABIRuntime/hookInitializer(on:selector:as:options:retaining:onFailure:transformingArguments:before:after:)`` for a concrete Objective-C instance initializer. For an imported `Renderer` class exposing `initWithConfiguration:`, its use looks like this:
+Use ``ABIRuntime/hookInitializer(on:selector:as:options:retaining:onFailure:transformingArguments:before:after:)-(_,String,_,_,_,_,_,_,_)`` for a concrete Objective-C instance initializer. For an imported `Renderer` class exposing `initWithConfiguration:`, its use looks like this:
 
 ```swift
 let hook = try unsafe runtime.hookInitializer(
@@ -60,7 +60,7 @@ A `before`, transformation, or argument-conversion failure is reported through `
 
 After initialization, a result-conversion failure or an error thrown by `after` is reported while returning the existing native result. The bridge never reinitializes, fabricates a nil result, or replaces the returned object to recover. Request an optional result when nil is possible. A mismatched nonoptional or object type can fail conversion while the original native caller still receives its actual object or nil.
 
-Callbacks are synchronous on the native caller's thread. For a known MainActor initializer contract, use ``ABIRuntime/hookMainActorInitializer(on:selector:as:options:retaining:onFailure:transformingArguments:before:after:)``. It checks background entry before decoding arguments, reports `wrongThread`, and bypasses the actor callbacks. It does not perform an actor hop; `onFailure` must remain safe on background threads.
+Callbacks are synchronous on the native caller's thread. For a known MainActor initializer contract, use ``ABIRuntime/hookMainActorInitializer(on:selector:as:options:retaining:onFailure:transformingArguments:before:after:)-(_,String,_,_,_,_,_,_,_)``. It checks background entry before decoding arguments, reports `wrongThread`, and bypasses the actor callbacks. It does not perform an actor hop; `onFailure` must remain safe on background threads.
 
 ## Supported declarations
 

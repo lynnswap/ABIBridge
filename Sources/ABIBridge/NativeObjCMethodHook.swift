@@ -157,7 +157,7 @@ extension ABIRuntime {
     /// it does not hop executors. Background entry reports `wrongThread` and passes
     /// through to the next hook before decoding Swift arguments. `onFailure` must
     /// therefore be safe on background threads. Other parameters and unsafe
-    /// requirements match ``hookMethod(on:selector:as:classMethod:options:retaining:onFailure:body:)``.
+    /// requirements match ``hookMethod(on:selector:as:classMethod:options:retaining:onFailure:body:)-(_,String,_,_,_,_,_,_)``.
     @unsafe @MainActor public func hookMainActorMethod<Result, each Argument>(
         on type: AnyClass, selector: String, as signature: ((repeat each Argument) -> Result).Type,
         classMethod: Bool = false, options: NativeMethodOptions = .init(), retaining owner: Any? = nil,
@@ -185,7 +185,7 @@ extension NativeObject {
     /// overrides that bypass the installed class entry are not followed.
     ///
     /// Parameters, failure behavior, and unsafe requirements match
-    /// ``ABIRuntime/hookMethod(on:selector:as:classMethod:options:retaining:onFailure:body:)``.
+    /// ``ABIRuntime/hookMethod(on:selector:as:classMethod:options:retaining:onFailure:body:)-(_,String,_,_,_,_,_,_)``.
     /// The target is an instance method of the receiver's current runtime class.
     @unsafe public func hookMethod<Result, each Argument>(
         selector: String, as signature: ((repeat each Argument) -> Result).Type,
@@ -201,8 +201,8 @@ extension NativeObject {
 
     /// Installs a weak identity-filtered callback for a known MainActor method.
     ///
-    /// Combines ``hookMethod(selector:as:options:retaining:onFailure:body:)`` scope
-    /// with ``ABIRuntime/hookMainActorMethod(on:selector:as:classMethod:options:retaining:onFailure:body:)`` isolation.
+    /// Combines ``hookMethod(selector:as:options:retaining:onFailure:body:)-(String,_,_,_,_,_)`` scope
+    /// with ``ABIRuntime/hookMainActorMethod(on:selector:as:classMethod:options:retaining:onFailure:body:)-(_,String,_,_,_,_,_,_)`` isolation.
     @unsafe @MainActor public func hookMainActorMethod<Result, each Argument>(
         selector: String, as signature: ((repeat each Argument) -> Result).Type,
         options: NativeMethodOptions = .init(), retaining owner: Any? = nil,
