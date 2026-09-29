@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <memory>
@@ -293,8 +294,12 @@ ABIImageLease *ABIRetainLoadedImage(uint64_t generation)
     // Never call dlopen/dlclose while holding the catalog lock: dyld observers
     // acquire that lock while running under the loader's own lock.
     void *handle = image.processLifetime ? nullptr : dlopen(image.path.c_str(), RTLD_LAZY | RTLD_LOCAL | RTLD_NOLOAD);
-    if (!image.processLifetime && !handle)
+    if (!image.processLifetime && !handle) {
+        const char *failure = dlerror();
+        std::fprintf(stderr, "ABI_IMAGE_DIAGNOSTIC: failed retain generation=%llu path=%s error=%s\n",
+                     static_cast<unsigned long long>(generation), image.path.c_str(), failure ? failure : "(none)");
         return nullptr;
+    }
     bool current;
     {
         auto& state = catalog();
