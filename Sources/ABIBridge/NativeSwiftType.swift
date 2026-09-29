@@ -1,10 +1,9 @@
 import Foundation
 import ObjectiveC
 
-struct SwiftTypeCacheKey: Hashable {
-    let name: String
-    let image: NativeImageIdentity
-    let representation: ObjectIdentifier?
+enum SwiftTypeCacheKey: Hashable {
+    case declaration(name: String, image: NativeImageIdentity, representation: ObjectIdentifier?)
+    case metadata(ObjectIdentifier, image: NativeImageIdentity)
 }
 
 struct SwiftMetadataResponse: BitwiseCopyable, ABIBridgeValue {
@@ -77,13 +76,14 @@ public actor NativeSwiftType {
                 guard let current = ownerClass, let parent = class_getSuperclass(current) else {
                     throw ABIResolutionError.declarationNotFound(originalRequest)
                 }
-                let ownerName = try swiftFunctionTypeName(parent)
-                guard !ownerName.contains("<") else {
+                let runtimeName = try swiftFunctionTypeName(parent)
+                guard !runtimeName.contains("<") else {
                     throw ABIResolutionError.unsupportedDeclaration("Generic superclass members require a native adapter.")
                 }
-                request = try declaration(ownerName)
                 ownerClass = parent
-                ownerImage = try swiftClassImage(parent, named: ownerName, resolver: resolver)
+                ownerImage = try swiftClassImage(parent, named: runtimeName, resolver: resolver)
+                let ownerName = try swiftClassDeclarationName(parent, in: ownerImage, suggestedName: runtimeName, resolver: resolver)
+                request = try declaration(ownerName)
             }
         }
     }
@@ -306,15 +306,23 @@ func swiftClassImage(_ type: AnyClass, named name: String, resolver: SymbolResol
     }
 }
 
+func swiftClassDeclarationName(
+    _ type: AnyClass, in image: NativeImage, suggestedName: String, resolver: SymbolResolver
+) throws -> String {
+    guard let descriptor = try SwiftClassDispatch.nominalDescriptor(of: type) else { return suggestedName }
+    return try resolver.swiftNominalTypeName(at: UInt64(descriptor), in: image, suggestedName: suggestedName) ?? suggestedName
+}
+
 extension ABIRuntime {
     func swiftType(for objectType: AnyClass) throws -> NativeSwiftType {
-        let name = try swiftFunctionTypeName(objectType)
-        guard !name.contains("<") else {
+        let runtimeName = try swiftFunctionTypeName(objectType)
+        guard !runtimeName.contains("<") else {
             throw ABIResolutionError.unsupportedDeclaration("Generic Swift class members require a native adapter.")
         }
-        let image = try swiftClassImage(objectType, named: name, resolver: resolver)
-        let key = SwiftTypeCacheKey(name: name, image: image.identity, representation: nil)
+        let image = try swiftClassImage(objectType, named: runtimeName, resolver: resolver)
+        let key = SwiftTypeCacheKey.metadata(ObjectIdentifier(objectType), image: image.identity)
         if let cached = swiftTypes[key] { return cached }
+        let name = try swiftClassDeclarationName(objectType, in: image, suggestedName: runtimeName, resolver: resolver)
         let type = NativeSwiftType(name: name, image: image, metadata: objectType,
                                    representation: nil, resolver: resolver)
         swiftTypes[key] = type
@@ -395,7 +403,7 @@ extension ABIRuntime {
     private func makeSwiftType(
         named name: String, descriptor: ResolvedSymbol, representation: Any.Type?
     ) throws -> NativeSwiftType {
-        let key = SwiftTypeCacheKey(name: name, image: descriptor.image.identity,
+        let key = SwiftTypeCacheKey.declaration(name: name, image: descriptor.image.identity,
                                     representation: representation.map(ObjectIdentifier.init))
         if let cached = swiftTypes[key] { return cached }
         // Bare generic names also have accessors, but those require additional

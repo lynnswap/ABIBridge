@@ -309,24 +309,45 @@ final class SymbolResolver: Sendable {
             }
             if !primary.isEmpty { return try select(declaration, from: primary) }
 
-            let missing = state.withLock { _ in
-                candidates.indices.filter { !candidates[$0].hasSharedCacheSymbols(for: query) }
-                    .map { ($0, !candidates[$0].hasSharedSwiftFallback) }
-            }
-            // MachOKit's host-cache discovery may call the dynamic loader.
-            // Reuse file mappings within this lookup; retained per-image
-            // indexes cache the resulting symbols across future lookups.
-            let cache = SharedCacheSymbols()
-            let additions = missing.map { index, includeFallback in
-                (candidates[index], cache.symbols(in: candidates[index].image, matching: query, includingSwiftFallback: includeFallback))
-            }
+            loadSharedCacheSymbols(for: query, into: candidates)
             let fallback = try state.withLock { _ in
-                for (index, symbols) in additions where !index.hasSharedCacheSymbols(for: query) {
-                    index.appendSharedCacheSymbols(symbols, matching: query)
-                }
                 return try candidates.compactMap { try $0.resolve(query, source: .sharedCache, extensionsOnly: extensionsOnly) }
             }
             return try select(declaration, from: fallback)
+        }
+    }
+
+    func swiftNominalTypeName(at address: UInt64, in image: NativeImage, suggestedName: String) throws -> String? {
+        let query = SymbolQuery(.init(
+            name: "nominal type descriptor for " + suggestedName, language: .swift, kind: .data
+        ))
+        let index = state.withLock { $0.index(for: image) }
+        return try withExtendedLifetime(index) {
+            if let name = try state.withLock({ _ in
+                try index.swiftNominalTypeName(at: address, matching: query, source: .image)
+            }) { return name }
+            loadSharedCacheSymbols(for: query, into: [index])
+            return try state.withLock { _ in
+                try index.swiftNominalTypeName(at: address, matching: query, source: .sharedCache)
+            }
+        }
+    }
+
+    private func loadSharedCacheSymbols(for query: SymbolQuery, into candidates: [SymbolIndex]) {
+        let missing = state.withLock { _ in
+            candidates.indices.filter { !candidates[$0].hasSharedCacheSymbols(for: query) }
+                .map { ($0, !candidates[$0].hasSharedSwiftFallback) }
+        }
+        // Host-cache discovery may call dyld, so perform it outside the lock.
+        let cache = SharedCacheSymbols()
+        let additions = missing.map { index, includeFallback in
+            (candidates[index], cache.symbols(in: candidates[index].image, matching: query,
+                                              includingSwiftFallback: includeFallback))
+        }
+        state.withLock { _ in
+            for (index, symbols) in additions where !index.hasSharedCacheSymbols(for: query) {
+                index.appendSharedCacheSymbols(symbols, matching: query)
+            }
         }
     }
 
