@@ -66,21 +66,22 @@ public actor NativeSwiftType {
     private func resolveMember(
         _ declaration: (String) throws -> NativeDeclaration
     ) throws -> ResolvedSymbol {
-        var ownerName = name
+        let originalRequest = try declaration(name)
+        var request = originalRequest
         var ownerClass: AnyClass? = metadata as? AnyClass
         var ownerImage = image
         while true {
-            let request = try declaration(ownerName)
             do {
                 return try resolveDeclaredMember(request, in: ownerImage)
             } catch ABIResolutionError.declarationNotFound {
                 guard let current = ownerClass, let parent = class_getSuperclass(current) else {
-                    throw ABIResolutionError.declarationNotFound(request)
+                    throw ABIResolutionError.declarationNotFound(originalRequest)
                 }
-                ownerName = try swiftFunctionTypeName(parent)
+                let ownerName = try swiftFunctionTypeName(parent)
                 guard !ownerName.contains("<") else {
                     throw ABIResolutionError.unsupportedDeclaration("Generic superclass members require a native adapter.")
                 }
+                request = try declaration(ownerName)
                 ownerClass = parent
                 ownerImage = try swiftClassImage(parent, named: ownerName, resolver: resolver)
             }
