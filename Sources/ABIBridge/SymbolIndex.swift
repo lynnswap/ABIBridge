@@ -587,6 +587,25 @@ final class SymbolIndex {
         }
     }
 
+    func swiftNominalTypeName(
+        at address: UInt64, matching query: SymbolQuery, source: ResolvedSymbol.Source
+    ) throws -> String? {
+        let candidates = query.swiftModule == nil
+            ? symbols(for: query, swiftBucket: nil)
+            : symbols(for: query, swiftBucket: .literal) + symbols(for: query, swiftBucket: .fallback)
+        let marker = "nominal type descriptor for "
+        var names = Set<String>()
+        for candidate in candidates where candidate.address == address && candidate.source == source {
+            guard let name = DeclarationKey.demangle(candidate.name, language: .swift),
+                  name.hasPrefix(marker) else { continue }
+            names.insert(String(name.dropFirst(marker.count)))
+        }
+        guard names.count <= 1 else {
+            throw ABIResolutionError.ambiguousDeclaration(query.declaration, candidates: names.sorted())
+        }
+        return names.first
+    }
+
     func resolve(
         _ declaration: NativeDeclaration, source: ResolvedSymbol.Source, extensionsOnly: Bool = false
     ) throws -> ResolvedSymbol? {

@@ -23,7 +23,9 @@ struct SwiftClassDispatch {
         var member: String?
         var declaringLayout: Descriptor?
         while let type = current {
-            let name = try swiftFunctionTypeName(type)
+            let runtimeName = try swiftFunctionTypeName(type)
+            let image = try swiftClassImage(type, named: runtimeName, resolver: resolver)
+            let name = try swiftClassDeclarationName(type, in: image, suggestedName: runtimeName, resolver: resolver)
             let isDeclarationOwner = member == nil && declaration.name.hasPrefix(name + ".")
             if isDeclarationOwner {
                 member = String(declaration.name.dropFirst(name.count + 1))
@@ -32,7 +34,6 @@ struct SwiftClassDispatch {
                 let header = try Header(address: UInt(bitPattern: unsafeBitCast(type, to: UnsafeRawPointer.self)))
                 if let classDescriptor = header.descriptor {
                     if isDeclarationOwner { declaringLayout = try Descriptor(address: classDescriptor) }
-                    let image = try swiftClassImage(type, named: name, resolver: resolver)
                     let request = NativeDeclaration(name: "method descriptor for " + name + "." + member,
                         language: .swift, kind: .data)
                     let resolved: ResolvedSymbol?
@@ -76,6 +77,10 @@ struct SwiftClassDispatch {
             current = class_getSuperclass(type)
         }
         throw Self.unsupported("No introducing virtual method descriptor matches this declaration. Direct and final methods have no class slot; stripped or differently lowered descriptors require an adapter.")
+    }
+
+    static func nominalDescriptor(of type: AnyClass) throws -> UInt? {
+        try Header(address: UInt(bitPattern: unsafeBitCast(type, to: UnsafeRawPointer.self))).descriptor
     }
 
     private static let word = MemoryLayout<UInt>.size

@@ -292,6 +292,32 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         try check(unsafe bound!.unsafeInvoke(2) == 42, "Swift context register")
         bound = nil
         try check(observed == nil, "Swift bound receiver release")
+
+        weak var privateObserved: ArchitecturePrivateCounter?
+        var privateMethod: NativeBoundSwiftMethod<Int, Int>?
+        do {
+            let receiver = ArchitecturePrivateCounter()
+            privateObserved = receiver
+            try check(receiver.adding(2) == 42 && receiver.inherited() == 42, "Private Swift compiler call control")
+            receiver.value = 41
+            try check(receiver.value == 41, "Private Swift compiler accessor control")
+            receiver.value = 40
+            let object = runtime.object(receiver)
+            privateMethod = try await object.method(named: "adding(_:)", as: ((Int) -> Int).self)
+            let complete = try await object.method(named: "adding(Swift.Int) -> Swift.Int", as: ((Int) -> Int).self)
+            try check(unsafe complete.unsafeInvoke(2) == 42, "Private Swift complete member declaration")
+            let inherited = try await object.method(named: "inherited()", as: (() -> Int).self)
+            try check(unsafe inherited.unsafeInvoke() == 42, "Private Swift superclass declaration")
+            let getter = try await object.getter(named: "value", as: Int.self)
+            let setter = try await object.setter(named: "value", as: Int.self)
+            try unsafe setter.unsafeInvoke(50)
+            try check(unsafe getter.unsafeInvoke() == 50, "Private Swift getter and setter")
+        }
+        await runtime.removeCachedResults()
+        try check(privateObserved != nil, "Private Swift receiver retention after cache removal")
+        try check(unsafe privateMethod!.unsafeInvoke(2) == 52, "Private Swift context and retained owner")
+        privateMethod = nil
+        try check(privateObserved == nil, "Private Swift receiver release")
     case "ffi":
         let add = try await runtime.cFunction(named: "ABIValidationAdd", as: ((Int32, Int32) -> Int32).self)
         try check(unsafe add.unsafeInvoke(20,22) == ABIValidationAdd(20,22), "libffi signed function call")
@@ -370,4 +396,18 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
     }
     return ArchitectureReport(mode: mode, cpuType: ABIValidationCPUType(), cpuSubtype: ABIValidationCPUSubtype(),
                               pacCompiled: ABIValidationPACCompiled(), checks: checks, allocationTag: tag)
+}
+
+private class ArchitecturePrivateBase {
+    var seed = 42
+    @inline(never) func inherited() -> Int { seed }
+}
+
+private final class ArchitecturePrivateCounter: ArchitecturePrivateBase {
+    private var storage = 40
+    var value: Int {
+        @inline(never) get { storage }
+        @inline(never) set { storage = newValue }
+    }
+    @inline(never) func adding(_ value: Int) -> Int { self.value + value }
 }

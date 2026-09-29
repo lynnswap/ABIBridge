@@ -198,3 +198,9 @@ The `swift-arguments` mode verifies typed inout storage, managed/scalar writebac
 The `swift-async-closures` mode exercises caller-isolated and concurrent generated callbacks, typed direct/indirect errors, independent owned result storage, stack arguments, returned descriptors, repeated native handoffs, escaping captures and final release, and original-task cancellation.
 
 All 12 checks passed in a Release arm64e build on iPhone Air (iOS 27, build 24A435), with pointer authentication enabled. The report is `Documents/architecture-swift-async-closures.json`. Compiler controls distinguish the hidden actor's class authentication identity from its two-word physical isolation representation and verify both compiler-stored async body conventions.
+
+## Private Swift receiver lookup
+
+The `swift` mode includes file-private receiver methods, inherited private owners, complete relative declarations, getter/setter calls, cache removal, and final receiver release. Compiler calls keep the fixture entries live under optimization and provide independent controls; lookup does not reconstruct methods removed by dead-code elimination. All 15 mode checks passed in a Release arm64e build on iPhone Air / iOS 27 with pointer authentication enabled.
+
+The package regression suite additionally distinguishes same-named private classes in different files and verifies short member labels. `SwiftMemberConsumer` obtains a private object from a separately loaded library without importing its module and invokes the retained method after its loader reference and resolver cache have been released.

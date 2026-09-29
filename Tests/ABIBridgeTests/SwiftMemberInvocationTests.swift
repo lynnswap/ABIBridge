@@ -146,6 +146,24 @@ extension NativeValue {
 }
 
 struct SwiftMemberInvocationTests {
+    @MainActor @Test(arguments: [false, true], ["title()", "title() -> Swift.String"])
+    func privateReceiversKeepTheirDeclarationIdentity(_ second: Bool, _ member: String) async throws {
+        let receiver = second ? makeSecondPrivateReceiver() : makeFirstPrivateReceiver()
+        let runtime = ABIRuntime()
+        let object = runtime.object(receiver)
+        let title = try await object.method(named: member, as: (() -> String).self)
+        #expect(try unsafe title.unsafeInvoke() == (second ? "22" : "11"))
+        let echo = try await object.method(named: "echo(_:)", as: ((Int) -> Int).self)
+        #expect(try unsafe echo.unsafeInvoke(1) == (second ? 23 : 12))
+        let inherited = try await object.method(named: "inherited()", as: (() -> Int).self)
+        #expect(try unsafe inherited.unsafeInvoke() == (second ? 22 : 11))
+        let getter = try await object.getter(named: "value", as: Int.self)
+        let setter = try await object.setter(named: "value", as: Int.self)
+        await runtime.removeCachedResults()
+        try unsafe setter.unsafeInvoke(42)
+        #expect(try unsafe getter.unsafeInvoke() == 42)
+    }
+
     @MainActor @Test(arguments: ["method", "getter", "setter", "staticMethod", "staticGetter", "staticSetter"])
     func missingMembersPreserveRequestedOwner(_ operation: String) async throws {
         let runtime = ABIRuntime()
