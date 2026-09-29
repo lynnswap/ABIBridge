@@ -42,6 +42,21 @@ import UIKit
         as: ((CGAffineTransform) -> CGAffineTransform).self)
     try check(try unsafe method.unsafeInvoke(input) == receiver.transform(input),
               "CGAffineTransform uses the Objective-C runtime aggregate layout")
+    let message = try runtime.objcMethod(on: TransformReceiver.self, selector: "transform:",
+        as: ((CGAffineTransform) -> CGAffineTransform).self)
+    try check(try unsafe message.unsafeInvoke(on: receiver, input) == receiver.transform(input),
+              "Receiver-independent transform message follows compiler dispatch")
+    weak var observed: TransformReceiver?
+    var bound: NativeBoundObjCMethod<CGAffineTransform, CGAffineTransform>?
+    do {
+        let temporary = TransformReceiver()
+        observed = temporary
+        bound = try message.bind(to: temporary)
+    }
+    try check(observed != nil, "Explicit binding retains its receiver")
+    try check(try unsafe bound!.unsafeInvoke(input) == receiver.transform(input), "Bound copy shares the prepared signature")
+    bound = nil
+    try check(observed == nil, "Unbound message does not prolong the released receiver")
     let captured = try runtime.objcImplementation(on: TransformReceiver.self, selector: "transform:",
         as: ((CGAffineTransform) -> CGAffineTransform).self)
     try check(try unsafe captured.unsafeInvoke(on: receiver, input) == receiver.transform(input),
@@ -54,6 +69,10 @@ import UIKit
         as: ((UIEdgeInsets) -> UIEdgeInsets).self)
     try check(try unsafe ordinary.unsafeInvoke(insets) == insetsReceiver.insets(insets),
               "UIEdgeInsets arguments and results need no ABIBridge registration")
+    let unboundInsets = try runtime.objcMethod(on: InsetsReceiver.self, selector: "insets:",
+        as: ((UIEdgeInsets) -> UIEdgeInsets).self)
+    try check(try unsafe unboundInsets.unsafeInvoke(on: insetsReceiver, insets) == insetsReceiver.insets(insets),
+              "Unbound UIEdgeInsets message preserves aggregate ABI")
     let implementation = try runtime.objcImplementation(on: InsetsReceiver.self, selector: "insets:",
         as: ((UIEdgeInsets) -> UIEdgeInsets).self)
     try check(try unsafe implementation.unsafeInvoke(on: insetsReceiver, insets) == insetsReceiver.insets(insets),
@@ -72,6 +91,8 @@ import UIKit
             return result
         }
     defer { hook.invalidate() }
+    let current = try unsafe unboundInsets.unsafeInvoke(on: insetsReceiver, insets)
+    try check(current.top == 102 && current.right == 8, "Prepared unbound message observes a later managed hook")
     let hooked = insetsReceiver.insets(insets)
     try check(hooked.top == 102 && hooked.right == 8 && failures.isEmpty, "Managed callback round-trips UIEdgeInsets through the native ABI")
 #endif

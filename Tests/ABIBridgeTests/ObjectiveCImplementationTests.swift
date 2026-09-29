@@ -19,6 +19,113 @@ private final class ImplementationCodeOwner {}
 
 @Suite(.serialized)
 struct ObjectiveCImplementationTests {
+    @Test func unboundMessagesAndExplicitBindingHaveIndependentLifetimes() throws {
+        var owner: ImplementationCodeOwner? = ImplementationCodeOwner()
+        weak var observedOwner = owner
+        var message: NativeObjCMethod<Int, Int>? = try ABIRuntime.shared.objcMethod(
+            on: ImplementationReceiver.self, selector: "add:", as: ((Int) -> Int).self, retaining: owner
+        )
+        owner = nil
+        weak var observedTemporary: ImplementationReceiver?
+        try autoreleasepool {
+            let receiver = ImplementationReceiver(40)
+            observedTemporary = receiver
+            let result = try unsafe message!.unsafeInvoke(on: receiver, 2)
+            #expect(result == 42)
+        }
+        #expect(observedTemporary == nil && observedOwner != nil)
+
+        var receiver: ImplementationReceiver? = ImplementationReceiver(40)
+        weak let observedReceiver = receiver
+        var bound: NativeBoundObjCMethod<Int, Int>? = try message!.bind(to: receiver!)
+        receiver = nil
+        message = nil
+        #expect(observedReceiver != nil && observedOwner != nil)
+        #expect(try unsafe bound!.unsafeInvoke(2) == 42)
+        var last = bound
+        bound = nil
+        #expect(try unsafe last!.unsafeInvoke(2) == 42)
+        last = nil
+        #expect(observedReceiver == nil && observedOwner == nil)
+    }
+
+    @Test func unboundClassMethodsAndReceiverValidation() throws {
+        let method = try ABIRuntime.shared.objcMethod(
+            on: ImplementationReceiver.self, selector: "capturedClassName",
+            as: (() -> String).self, classMethod: true
+        )
+        #expect(try unsafe method.unsafeInvoke(on: ImplementationChild.self as AnyObject) == NSStringFromClass(ImplementationChild.self))
+        #expect(throws: ABIResolutionError.self) { try unsafe method.unsafeInvoke(on: ImplementationReceiver(0)) }
+        #expect(throws: ABIResolutionError.self) { try method.bind(to: NSObject.self as AnyObject) }
+
+        let forwarding = ABIForwardingFixture()
+        #expect(throws: ABIResolutionError.self) {
+            _ = try ABIRuntime.shared.objcMethod(on: ABIForwardingFixture.self, selector: "answer", as: (() -> Int).self)
+        }
+        let bound = try ABIRuntime.shared.object(forwarding).method(selector: "answer", as: (() -> Int).self)
+        #expect(try unsafe bound.unsafeInvoke() == 61)
+    }
+
+    @Test func unboundResultsPreserveOwnershipAndConsumedReceivers() throws {
+        let fixture = ABIOwnershipFixture()
+        for (selector, retained) in [("object", nil), ("copyObject", nil), ("retainedObject", true)] as [(String, Bool?)] {
+            let method = try ABIRuntime.shared.objcMethod(
+                on: ABIOwnershipFixture.self, selector: selector, as: (() -> NSObject).self,
+                options: .init(returnsRetainedObject: retained)
+            )
+            weak var observed: NSObject?
+            try autoreleasepool {
+                let result = try unsafe method.unsafeInvoke(on: fixture)
+                observed = result
+                #expect(fixture.liveResults == 1)
+            }
+            #expect(observed == nil && fixture.liveResults == 0)
+        }
+        for selector in ["initWithReplacement", "initReturningNil"] {
+            let method = try ABIRuntime.shared.objcMethod(
+                on: ABIInitializerFixture.self, selector: selector, as: (() -> ABIInitializerFixture?).self
+            )
+            weak var observed: ABIInitializerFixture?
+            try autoreleasepool {
+                let receiver = ABIInitializerFixture()
+                observed = receiver
+                let result = try unsafe method.unsafeInvoke(on: receiver)
+                #expect(observed != nil)
+                #expect(selector == "initReturningNil" ? result == nil : result !== receiver)
+            }
+            #expect(observed == nil)
+        }
+    }
+
+    @Test func unboundDispatchRejectsChangedABIAndAcceptsEquivalentAggregateNames() throws {
+        let name = "ABIUnbound_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let base = try #require(objc_allocateClassPair(NSObject.self, name, 0))
+        objc_registerClassPair(base)
+        let child = try #require(objc_allocateClassPair(base, name + "Child", 0))
+        objc_registerClassPair(child)
+        // Runtime classes and the capture-free C entry points live for this test process.
+        let number: @convention(c) (AnyObject, Selector, Int) -> Int = { _, _, value in value }
+        let incompatible: @convention(c) (AnyObject, Selector, Double) -> Double = { _, _, value in value }
+        let size: @convention(c) (AnyObject, Selector, CGSize) -> CGSize = { _, _, value in value }
+        let numberSelector = NSSelectorFromString("number:")
+        let sizeSelector = NSSelectorFromString("size:")
+        let integer = MemoryLayout<Int>.size == 8 ? "q" : "i"
+        let scalar = MemoryLayout<CGFloat>.size == 8 ? "d" : "f"
+        #expect(class_addMethod(base, numberSelector, unsafeBitCast(number, to: IMP.self), "\(integer)@:\(integer)"))
+        #expect(class_addMethod(child, numberSelector, unsafeBitCast(incompatible, to: IMP.self), "d@:d"))
+        #expect(class_addMethod(base, sizeSelector, unsafeBitCast(size, to: IMP.self), "{Size=\(scalar)\(scalar)}@:{Size=\(scalar)\(scalar)}"))
+        #expect(class_addMethod(child, sizeSelector, unsafeBitCast(size, to: IMP.self), "{Alias=\(scalar)\(scalar)}@:{Alias=\(scalar)\(scalar)}"))
+        try autoreleasepool {
+            let receiver = try #require(class_createInstance(child, 0)) as AnyObject
+            let numberMethod = try ABIRuntime.shared.objcMethod(on: base, selector: "number:", as: ((Int) -> Int).self)
+            #expect(throws: ABIResolutionError.self) { try unsafe numberMethod.unsafeInvoke(on: receiver, 42) }
+            #expect(throws: ABIResolutionError.self) { try numberMethod.bind(to: receiver) }
+            let sizeMethod = try ABIRuntime.shared.objcMethod(on: base, selector: "size:", as: ((CGSize) -> CGSize).self)
+            let value = CGSize(width: 3, height: 4)
+            #expect(try unsafe sizeMethod.unsafeInvoke(on: receiver, value) == value)
+        }
+    }
+
     @Test func originalImplementationSurvivesReplacementAndAcceptsDifferentReceivers() throws {
         let runtime = ABIRuntime.shared
         let first = ImplementationReceiver(10)
@@ -28,6 +135,7 @@ struct ObjectiveCImplementationTests {
             on: ImplementationReceiver.self, selector: "add:", as: ((Int) -> Int).self
         )
         let dynamic = try runtime.object(first).method(selector: "add:", as: ((Int) -> Int).self)
+        let unbound = try runtime.objcMethod(on: ImplementationReceiver.self, selector: "add:", as: ((Int) -> Int).self)
         let method = try #require(class_getInstanceMethod(ImplementationReceiver.self, selector))
         let replacement: @convention(block) (AnyObject, Int) -> Int = { receiver, value in
             // The fixture's known signature cannot fail conversion.
@@ -42,10 +150,12 @@ struct ObjectiveCImplementationTests {
         #expect(try unsafe original.unsafeInvoke(on: first, 1) == 11)
         #expect(try unsafe original.unsafeInvoke(on: second, 1) == 21)
         #expect(try unsafe dynamic.unsafeInvoke(1) == 22)
+        #expect(try unsafe unbound.unsafeInvoke(on: first, 1) == 22)
         let child = ImplementationChild(30)
         #expect(try unsafe original.unsafeInvoke(on: child, 1) == 31)
         let childMessage = try runtime.object(child).method(selector: "add:", as: ((Int) -> Int).self)
         #expect(try unsafe childMessage.unsafeInvoke(1) == 1001)
+        #expect(try unsafe unbound.unsafeInvoke(on: child, 1) == 1001)
     }
 
     @MainActor @Test func inheritedImplementationsAndStructures() throws {
@@ -54,8 +164,8 @@ struct ObjectiveCImplementationTests {
         )
         let receiver = ImplementationChild(7)
         #expect(try unsafe size.unsafeInvoke(on: receiver, CGSize(width: 3, height: 5)) == CGSize(width: 10, height: 5))
-        #expect(throws: NSError.self) { try unsafe size.unsafeInvoke(on: NSObject(), .zero) }
-        #expect(throws: NSError.self) { try unsafe size.unsafeInvoke(on: ImplementationChild.self as AnyObject, .zero) }
+        #expect(throws: ABIResolutionError.self) { try unsafe size.unsafeInvoke(on: NSObject(), .zero) }
+        #expect(throws: ABIResolutionError.self) { try unsafe size.unsafeInvoke(on: ImplementationChild.self as AnyObject, .zero) }
     }
 
     @Test func classMethodsRequireCompatibleClassObjects() throws {
@@ -65,8 +175,8 @@ struct ObjectiveCImplementationTests {
         )
         #expect(try unsafe method.unsafeInvoke(on: ImplementationReceiver.self as AnyObject) == NSStringFromClass(ImplementationReceiver.self))
         #expect(try unsafe method.unsafeInvoke(on: ImplementationChild.self as AnyObject) == NSStringFromClass(ImplementationChild.self))
-        #expect(throws: NSError.self) { try unsafe method.unsafeInvoke(on: ImplementationReceiver(0)) }
-        #expect(throws: NSError.self) { try unsafe method.unsafeInvoke(on: NSObject.self as AnyObject) }
+        #expect(throws: ABIResolutionError.self) { try unsafe method.unsafeInvoke(on: ImplementationReceiver(0)) }
+        #expect(throws: ABIResolutionError.self) { try unsafe method.unsafeInvoke(on: NSObject.self as AnyObject) }
     }
 
     @Test func noReceiverIsRetainedAndExplicitCodeOwnerIsRetained() throws {

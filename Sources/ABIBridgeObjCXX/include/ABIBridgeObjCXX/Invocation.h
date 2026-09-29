@@ -21,6 +21,15 @@ FOUNDATION_EXPORT ABIObjCInvocation * _Nullable ABICopyObjCInvocation(
 FOUNDATION_EXPORT ABIObjCInvocation * _Nullable ABICopyObjCImplementation(
     Class type, SEL selector, BOOL classMethod, int32_t returnsRetained,
     int32_t consumesReceiver, NSError * _Nullable * _Nullable error);
+/// Prepares a class-declared signature without retaining an instance or IMP.
+/// Each invocation follows ordinary message dispatch on a compatible receiver.
+FOUNDATION_EXPORT ABIObjCInvocation * _Nullable ABICopyObjCDispatch(
+    Class type, SEL selector, BOOL classMethod, int32_t returnsRetained,
+    int32_t consumesReceiver, NSError * _Nullable * _Nullable error);
+/// Retains a receiver after validating its signature against an unbound plan.
+/// The result retains the prepared plan until after releasing its receiver.
+FOUNDATION_EXPORT ABIObjCInvocation * _Nullable ABICopyBoundObjCInvocation(
+    ABIObjCInvocation *plan, id receiver, NSError * _Nullable * _Nullable error);
 FOUNDATION_EXPORT void ABIReleaseObjCInvocation(ABIObjCInvocation *invocation);
 FOUNDATION_EXPORT void ABIRetainObjCInvocation(ABIObjCInvocation *invocation);
 FOUNDATION_EXPORT IMP _Nullable ABIObjCInvocationImplementation(const ABIObjCInvocation *invocation);
@@ -40,6 +49,11 @@ FOUNDATION_EXPORT size_t ABIObjCInvocationResultSize(const ABIObjCInvocation *in
 /// exceptions are not translated. Result may be null only for void.
 FOUNDATION_EXPORT BOOL ABIInvokeObjCInvocation(
     ABIObjCInvocation *invocation, void * _Nullable result,
+    const void * _Nonnull const * _Nullable arguments, NSError * _Nullable * _Nullable error);
+
+/// Validates receiver compatibility and dispatches through a fresh NSInvocation.
+FOUNDATION_EXPORT BOOL ABIInvokeObjCDispatch(
+    ABIObjCInvocation *invocation, id receiver, void * _Nullable result,
     const void * _Nonnull const * _Nullable arguments, NSError * _Nullable * _Nullable error);
 
 /// Calls a captured IMP with a prepared C interface whose first two parameters
