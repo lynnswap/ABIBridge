@@ -184,8 +184,10 @@ void ABIFreeImageList(ABIImageList *list);
 /// Acquires an independent lifetime lease for the given generation without
 /// loading a missing image. Executables and dyld shared-cache images already
 /// have process lifetime; other images acquire a loader reference.
-/// Returns null if the generation disappeared or its required
-/// loader reference could not be acquired. Release success with ABIReleaseImage.
+/// Returns null if the generation disappeared or its required loader reference
+/// could not be acquired, including while another thread runs its initializers.
+/// Catalog registration alone does not establish availability of a lease.
+/// Release success with ABIReleaseImage.
 ABIImageLease *ABIRetainLoadedImage(uint64_t generation);
 /// Releases one lease. Null is accepted. The loader/runtime decides
 /// whether the image can physically unload when the last reference is released.

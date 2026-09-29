@@ -329,6 +329,36 @@ std::string leafName(const std::string& path)
     return path.substr(path.find_last_of('/') + 1);
 }
 
+bool hasRegisteredTarget(const std::string& target)
+{
+    std::string expanded = target;
+    const char *anchor = nullptr;
+    size_t prefixLength = 0;
+    Dl_info caller {};
+    if (target.starts_with("@loader_path/")) {
+        if (dladdr(reinterpret_cast<const void *>(&ABIOpenImage), &caller))
+            anchor = caller.dli_fname;
+        prefixLength = sizeof("@loader_path/") - 1;
+    } else if (target.starts_with("@executable_path/")) {
+        anchor = _dyld_get_image_name(0);
+        prefixLength = sizeof("@executable_path/") - 1;
+    }
+    if (anchor) {
+        const std::string path = anchor;
+        expanded = path.substr(0, path.find_last_of('/') + 1) + target.substr(prefixLength);
+    }
+    const auto canonical = canonicalPath(expanded);
+    for (const auto& image : imageSnapshot()) {
+        // This classifies a failed acquisition, not a successful image identity.
+        // In particular, matching LC_ID_DYLIB never selects a lease.
+        if (target == image.path || (!image.installName.empty() && target == image.installName))
+            return true;
+        if (canonical.starts_with('/') && canonicalPath(image.path) == canonical)
+            return true;
+    }
+    return false;
+}
+
 void loadingFailure(ABIResolutionFailure **error, int32_t code, const std::string& message)
 {
     if (error) *error = ABICreateResolutionFailure(code, message.c_str());
@@ -360,9 +390,11 @@ ABIImageLease *ABIOpenImage(const char *path, bool loadIfNeeded, ABIResolutionFa
     }
     void *handle = dlopen(path, RTLD_LAZY | RTLD_LOCAL | RTLD_FIRST | (loadIfNeeded ? 0 : RTLD_NOLOAD));
     if (!handle) {
-        const char *message = dlerror();
-        loadingFailure(error, loadIfNeeded ? ABIFailureImageLoadFailed : ABIFailureImageNotLoaded,
-                       message ? message : "dlopen failed without a diagnostic.");
+        const char *loaderError = dlerror();
+        const std::string message = loaderError ? loaderError : "dlopen failed without a diagnostic.";
+        const auto code = loadIfNeeded ? ABIFailureImageLoadFailed
+            : hasRegisteredTarget(path) ? ABIFailureImageUnavailable : ABIFailureImageNotLoaded;
+        loadingFailure(error, code, message);
         return nullptr;
     }
     std::unique_ptr<void, decltype(&dlclose)> owner(handle, dlclose);

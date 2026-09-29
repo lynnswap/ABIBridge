@@ -197,7 +197,7 @@ public struct NativeCallPlan: Sendable, Hashable {
 
 /// Failures encountered while locating images, declarations, or ABI information.
 public enum ABIResolutionError: Error, Sendable, Hashable {
-    /// The native image catalog could not be initialized.
+    /// The catalog or a registered image is not currently available for lookup.
     case imageUnavailable
     /// No currently loaded image matches the requested scope.
     case imageNotLoaded
