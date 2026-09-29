@@ -36,6 +36,8 @@ public class SwiftMemberRenderer {
 
 public final class SwiftMemberDerived: SwiftMemberRenderer {}
 
+public final class SwiftMemberLookupReceiver: NSObject {}
+
 prefix operator ~~~
 postfix operator ~~~
 
@@ -144,6 +146,42 @@ extension NativeValue {
 }
 
 struct SwiftMemberInvocationTests {
+    @MainActor @Test(arguments: ["method", "getter", "setter", "staticMethod", "staticGetter", "staticSetter"])
+    func missingMembersPreserveRequestedOwner(_ operation: String) async throws {
+        let runtime = ABIRuntime()
+        let receiver = SwiftMemberLookupReceiver()
+        let owner = "ABIBridgeTests.SwiftMemberLookupReceiver"
+        let type = try await runtime.swiftType(named: owner)
+        let expected: String
+        switch operation {
+        case "method": expected = owner + ".missing() -> Swift.Int"
+        case "getter": expected = owner + ".missing.getter : Swift.Int"
+        case "setter": expected = owner + ".missing.setter : Swift.Int"
+        case "staticMethod": expected = "static " + owner + ".missing() -> Swift.Int"
+        case "staticGetter": expected = "static " + owner + ".missing.getter : Swift.Int"
+        default: expected = "static " + owner + ".missing.setter : Swift.Int"
+        }
+        do {
+            switch operation {
+            case "method":
+                _ = try await runtime.object(receiver).method(named: "missing()", as: (() -> Int).self)
+            case "getter":
+                _ = try await runtime.object(receiver).getter(named: "missing", as: Int.self)
+            case "setter":
+                _ = try await runtime.object(receiver).setter(named: "missing", as: Int.self)
+            case "staticMethod":
+                _ = try await type.staticMethod(named: "missing()", as: (() -> Int).self)
+            case "staticGetter":
+                _ = try await type.staticGetter(named: "missing", as: Int.self)
+            default:
+                _ = try await type.staticSetter(named: "missing", as: Int.self)
+            }
+            Issue.record("A missing member unexpectedly resolved")
+        } catch let ABIResolutionError.declarationNotFound(request) {
+            #expect(request == NativeDeclaration(name: expected, language: .swift))
+        }
+    }
+
     @MainActor @Test func consumingAccessorsPreserveCallerReferencesAndValues() async throws {
         let runtime = ABIRuntime()
         let type = try await runtime.swiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
