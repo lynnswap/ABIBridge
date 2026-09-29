@@ -24,6 +24,18 @@ The function type describes only explicit arguments. ABIBridge supplies the rece
 
 Keep a method handle to reuse its decoded signature. Each invocation builds an independent call frame and uses normal Objective-C message dispatch, including forwarding. A replacement implementation must preserve the signature and ownership contract captured during lookup.
 
+The `selector:` parameter also accepts `Selector` values, including compiler-checked `#selector` expressions. String names remain available for declarations that cannot be imported. Both forms use the same dispatch, ownership, isolation, and error handling, including captured implementations and direct/MainActor/coordinated hooks.
+
+```swift
+let append = try runtime.objcMethod(
+    on: NSMutableString.self,
+    selector: #selector(NSMutableString.append(_:)),
+    as: ((String) -> Void).self
+)
+```
+
+A compiler-checked selector confirms the declaration's spelling; the supplied function type and ownership contract still describe the native call.
+
 ## Prepare a message without retaining a receiver
 
 Use `ABIRuntime.objcMethod(on:selector:as:classMethod:options:retaining:)` when a coordinator or other owner needs to cache a signature independently of the objects receiving its messages:

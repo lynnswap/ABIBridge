@@ -56,7 +56,7 @@ extension ABIRuntime {
     /// executor hop. Background entry reports `wrongThread` and bypasses the hook
     /// before decoding arguments; `onFailure` must be safe on background threads.
     /// Other parameters and unsafe requirements match
-    /// ``hookInitializer(on:selector:as:options:retaining:onFailure:transformingArguments:before:after:)``.
+    /// ``hookInitializer(on:selector:as:options:retaining:onFailure:transformingArguments:before:after:)-(_,String,_,_,_,_,_,_,_)``.
     @unsafe @MainActor public func hookMainActorInitializer<Result, each Argument>(
         on type: AnyClass, selector: String, as signature: ((repeat each Argument) -> Result).Type,
         options: NativeMethodOptions = .init(), retaining owner: Any? = nil,

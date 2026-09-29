@@ -6,7 +6,7 @@ See <doc:HookArguments> for editing object arguments, replacing references, and 
 
 ## Install and retain a hook
 
-Use ``ABIRuntime/hookMethod(on:selector:as:classMethod:options:retaining:onFailure:body:)`` to install an instance-method hook. Keep its ``NativeObjCMethodHook`` token for as long as the callback should run.
+Use ``ABIRuntime/hookMethod(on:selector:as:classMethod:options:retaining:onFailure:body:)-(_,String,_,_,_,_,_,_)`` to install an instance-method hook. Keep its ``NativeObjCMethodHook`` token for as long as the callback should run.
 
 ```swift
 import ABIBridge
@@ -38,7 +38,7 @@ Installation is an unsafe operation because runtime encodings do not describe ev
 
 ## Continue, replace, and recover from failures
 
-``NativeObjCMethodInvocation/receiver`` returns the current instance or class object. ``NativeObjCMethodInvocation/proceed(_:)`` calls the next registration in this invocation's snapshot, followed by the native implementation. It does not send the selector again. Use ordinary selector dispatch when intentional recursive entry is needed; use ``ABIRuntime/objcImplementation(on:selector:as:classMethod:options:retaining:)`` to capture a fixed implementation independently of a callback's continuation.
+``NativeObjCMethodInvocation/receiver`` returns the current instance or class object. ``NativeObjCMethodInvocation/proceed(_:)`` calls the next registration in this invocation's snapshot, followed by the native implementation. It does not send the selector again. Use ordinary selector dispatch when intentional recursive entry is needed; use ``ABIRuntime/objcImplementation(on:selector:as:classMethod:options:retaining:)-(_,String,_,_,_,_)`` to capture a fixed implementation independently of a callback's continuation.
 
 A callback can change arguments and results, omit `proceed`, or explicitly call it more than once for an ordinary nonconsuming method. The invocation is valid only until its callback returns and only on the original thread. Saving it does not keep the native stack frame alive; expired or wrong-thread access throws. It is not Sendable.
 
