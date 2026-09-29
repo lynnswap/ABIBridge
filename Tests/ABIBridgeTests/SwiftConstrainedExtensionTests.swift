@@ -1,4 +1,4 @@
-import ABIBridge
+@testable import ABIBridge
 import Foundation
 import Testing
 
@@ -46,6 +46,13 @@ extension ConstrainedOuter.Inner where First == Int, Second == String {
 }
 
 struct SwiftConstrainedExtensionTests {
+    @Test func importedSuperclassHasNoSwiftNominalDescriptor() throws {
+        let superclass = try #require(class_getSuperclass(ConstrainedBox<Int>.self))
+        #expect(ObjectIdentifier(superclass) == ObjectIdentifier(NSObject.self))
+        #expect(try SwiftClassDispatch.nominalDescriptor(of: superclass) == nil)
+        #expect(try SwiftClassDispatch.nominalDescriptor(of: ConstrainedBox<Int>.self) != nil)
+    }
+
     @MainActor @Test(arguments: [false, true])
     func selectsConstraintUsingLiveReceiverAndSuperclass(_ inherited: Bool) async throws {
         let runtime = ABIRuntime()

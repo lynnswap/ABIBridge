@@ -91,6 +91,10 @@ struct SwiftClassDispatch {
         let size: Int
         let addressPoint: Int
         init(address: UInt) throws {
+            // AnyClass uses ObjCClassWrapper metadata for imported classes.
+            // That two-word record has no Swift class header or descriptor.
+            let kind: UInt = try read(address)
+            guard kind != 0x305 else { descriptor = nil; size = 0; addressPoint = 0; return }
             let data: UInt = try read(address + UInt(4 * word))
             guard data & 2 != 0 else { descriptor = nil; size = 0; addressPoint = 0; return }
             size = Int(try read(address + UInt(5 * word + 16)) as UInt32)
