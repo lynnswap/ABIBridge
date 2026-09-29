@@ -197,16 +197,18 @@ public final class NativeObject {
         as signature: ((repeat each Argument) -> Result).Type,
         options: NativeMethodOptions = .init()
     ) throws -> NativeMethod<Result, repeat each Argument> {
+        let receiverType = object_getClass(receiver!)!
+        let declaration = objcMethodDeclaration(on: receiverType, selector: selector,
+            classMethod: class_isMetaClass(receiverType))
         var error: NSError?
         guard let handle = ABICopyObjCInvocation(
             receiver!, NSSelectorFromString(selector),
             options.returnsRetainedObject.map { $0 ? 1 : 0 } ?? -1,
             options.consumesReceiver.map { $0 ? 1 : 0 } ?? -1, &error
         ) else {
-            if let error { throw error }
-            throw ABIResolutionError.metadataUnavailable(selector)
+            throw objcResolutionError(error, declaration: declaration)
         }
-        return try NativeMethod(binding: ObjCInvocationBinding(handle))
+        return try NativeMethod(binding: ObjCInvocationBinding(handle, declaration: declaration))
     }
 }
 
@@ -222,7 +224,11 @@ extension ABIRuntime {
 
 final class ObjCInvocationBinding {
     let handle: OpaquePointer
-    init(_ handle: OpaquePointer) { self.handle = handle }
+    let declaration: NativeDeclaration
+    init(_ handle: OpaquePointer, declaration: NativeDeclaration) {
+        self.handle = handle
+        self.declaration = declaration
+    }
     deinit { ABIReleaseObjCInvocation(handle) }
 }
 
@@ -237,7 +243,7 @@ public struct NativeMethod<Result, each Argument> {
 
     init(binding: ObjCInvocationBinding) throws {
         self.binding = binding
-        signature = try ObjCMethodSignature(handle: binding.handle)
+        signature = try ObjCMethodSignature(handle: binding.handle, declaration: binding.declaration)
     }
 
     /// Calls the method using normal Objective-C dispatch.
@@ -269,31 +275,41 @@ struct ObjCMethodSignature<Result, each Argument> {
     let result: ObjCValueCodec<Result>
     private let argumentCount: Int
 
-    init(handle: OpaquePointer) throws {
+    init(handle: OpaquePointer, declaration: NativeDeclaration) throws {
         var count = 0
         for _ in repeat (each Argument).self { count += 1 }
         guard count == ABIObjCInvocationParameterCount(handle) else {
-            throw ABIResolutionError.signatureMismatch(
+            throw ABIResolutionError.signatureMismatch(.init(
+                declaration: declaration, position: .argumentCount,
                 expected: "\(count) arguments",
                 found: ["\(ABIObjCInvocationParameterCount(handle)) arguments"]
-            )
+            ))
         }
         argumentCount = count
         var index = 0
         func makeCodec<Value>(_ type: Value.Type) throws -> ObjCValueCodec<Value> {
             defer { index += 1 }
-            return try .init(
-                encoding: String(cString: ABIObjCInvocationParameterType(handle, index)),
-                size: ABIObjCInvocationParameterSize(handle, index)
-            )
+            do {
+                return try .init(
+                    encoding: String(cString: ABIObjCInvocationParameterType(handle, index)),
+                    size: ABIObjCInvocationParameterSize(handle, index)
+                )
+            } catch let ABIResolutionError.signatureMismatch(mismatch) {
+                throw ABIResolutionError.signatureMismatch(mismatch.inContext(declaration, at: .argument(index)))
+            }
         }
         // Swift 6.3 IRGen cannot clean up an incompletely initialized stored
         // parameter pack when the result codec throws. Prepare both locally.
         let arguments = (repeat try makeCodec((each Argument).self))
-        let result = try ObjCValueCodec<Result>(
-            encoding: String(cString: ABIObjCInvocationResultType(handle)),
-            size: ABIObjCInvocationResultSize(handle)
-        )
+        let result: ObjCValueCodec<Result>
+        do {
+            result = try .init(
+                encoding: String(cString: ABIObjCInvocationResultType(handle)),
+                size: ABIObjCInvocationResultSize(handle)
+            )
+        } catch let ABIResolutionError.signatureMismatch(mismatch) {
+            throw ABIResolutionError.signatureMismatch(mismatch.inContext(declaration, at: .result))
+        }
         self.arguments = arguments
         self.result = result
     }

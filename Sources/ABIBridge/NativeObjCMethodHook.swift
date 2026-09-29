@@ -69,7 +69,7 @@ public final class NativeObjCMethodHook: @unchecked Sendable {
         try prepare(on: type, selector: selector, as: ((repeat each Argument) -> Result).self,
             classMethod: classMethod, options: options, object: object, owner: owner, initializer: false) { signature in
                 ObjCReplacement<Result, repeat each Argument>.callback(signature,
-                    declaration: objcHookDeclaration(on: type, selector: selector, classMethod: classMethod), requiresMainThread: requiresMainThread, onFailure: onFailure, body: body)
+                    declaration: objcMethodDeclaration(on: type, selector: selector, classMethod: classMethod), requiresMainThread: requiresMainThread, onFailure: onFailure, body: body)
             }
     }
 
@@ -81,6 +81,7 @@ public final class NativeObjCMethodHook: @unchecked Sendable {
         guard !selector.utf8.contains(0) else {
             throw ABIResolutionError.unsupportedDeclaration("A selector cannot contain a NUL byte.")
         }
+        let declaration = objcMethodDeclaration(on: type, selector: selector, classMethod: classMethod)
         var error: NSError?
         let sel = NSSelectorFromString(selector)
         guard let binding = ABICopyObjCImplementation(type, sel, classMethod,
@@ -89,10 +90,10 @@ public final class NativeObjCMethodHook: @unchecked Sendable {
             if ABIObjCMethodHookIsDisplaced(type, sel, classMethod) {
                 throw NativeObjCMethodHookError.displaced
             }
-            throw error ?? ABIResolutionError.metadataUnavailable(selector) as NSError
+            throw objcResolutionError(error, declaration: declaration)
         }
         defer { ABIReleaseObjCInvocation(binding) }
-        let signature = try ObjCMethodSignature<Result, repeat each Argument>(handle: binding)
+        let signature = try ObjCMethodSignature<Result, repeat each Argument>(handle: binding, declaration: declaration)
         let interface = try signature.callInterface()
         let context = Unmanaged.passRetained(callback(signature))
         guard let handle = ABICreateObjCMethodHook(type, sel, classMethod, initializer, binding, interface.handle,

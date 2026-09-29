@@ -125,7 +125,7 @@ package final class ObjCReplacement<Result, each Argument> {
          onFailure: @escaping @Sendable (any Error) -> Void,
          body: @escaping @Sendable (NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result) throws {
         handle = try Self.prepare(type, selector, classMethod, options, initializer: false, retaining: owner) { signature in
-            Self.callback(signature, declaration: objcHookDeclaration(on: type, selector: selector, classMethod: classMethod), requiresMainThread: requiresMainThread, onFailure: onFailure, body: body)
+            Self.callback(signature, declaration: objcMethodDeclaration(on: type, selector: selector, classMethod: classMethod), requiresMainThread: requiresMainThread, onFailure: onFailure, body: body)
         }
     }
 
@@ -288,11 +288,12 @@ package final class ObjCReplacement<Result, each Argument> {
     private static func prepare(_ type: AnyClass, _ selector: String, _ classMethod: Bool,
         _ options: NativeMethodOptions, initializer: Bool, retaining owner: Any?,
         callback: (ObjCMethodSignature<Result, repeat each Argument>) -> ObjCReplacementCallback) throws -> OpaquePointer {
+        let declaration = objcMethodDeclaration(on: type, selector: selector, classMethod: classMethod)
         var error: NSError?
         guard let binding = ABICopyObjCImplementation(type, NSSelectorFromString(selector), classMethod,
             options.returnsRetainedObject.map { $0 ? 1 : 0 } ?? -1,
             options.consumesReceiver.map { $0 ? 1 : 0 } ?? -1, &error) else {
-            throw error ?? ABIResolutionError.invalidAddress as NSError
+            throw objcResolutionError(error, declaration: declaration)
         }
         defer { ABIReleaseObjCInvocation(binding) }
         if initializer {
@@ -302,7 +303,7 @@ package final class ObjCReplacement<Result, each Argument> {
         } else if ABIObjCInvocationConsumesReceiver(binding) {
             throw ObjCReplacementError.initializerRequiresDedicatedCallback
         }
-        let signature = try ObjCMethodSignature<Result, repeat each Argument>(handle: binding)
+        let signature = try ObjCMethodSignature<Result, repeat each Argument>(handle: binding, declaration: declaration)
         let interface = try signature.callInterface()
         let context = Unmanaged.passRetained(callback(signature))
         guard let entry = ABICreateObjCReplacement(binding, interface.handle, { context, call in
