@@ -29,8 +29,16 @@ final class SymbolResolver: Sendable {
     private enum SearchScope {
         case images([NativeImage])
         case automatic(AutomaticScope)
+        case partial([NativeImage])
         var images: [NativeImage] {
-            switch self { case .images(let images): images; case .automatic(let scope): scope.images }
+            switch self {
+            case .images(let images), .partial(let images): images
+            case .automatic(let scope): scope.images
+            }
+        }
+        var isComplete: Bool {
+            if case .partial = self { return false }
+            return true
         }
     }
 
@@ -38,7 +46,11 @@ final class SymbolResolver: Sendable {
         guard selector == .automatic else { return .images(try acquire(selector, loading: loading)) }
         let snapshot = try ImageSnapshot.catalog()
         if let cached = state.withLock({ $0.automatic }), cached.revision == snapshot.revision { return .automatic(cached) }
-        let candidate = AutomaticScope(revision: snapshot.revision, images: try retain(snapshot.images))
+        let retained = try retain(snapshot.images, skippingUnavailable: true)
+        // Initializer completion has no add/remove notification. A partial
+        // scope must be reacquired even if the catalog revision stays the same.
+        guard retained.isComplete else { return .partial(retained.images) }
+        let candidate = AutomaticScope(revision: snapshot.revision, images: retained.images)
         let (selected, retired) = state.withLock { state -> (AutomaticScope, AutomaticScope?) in
             if let existing = state.automatic {
                 if existing.revision == candidate.revision { return (existing, nil) }
@@ -52,9 +64,15 @@ final class SymbolResolver: Sendable {
     }
 
     private func resolve(_ declaration: NativeDeclaration, in scope: SearchScope, extensionsOnly: Bool = false) throws -> ResolvedSymbol {
-        guard !scope.images.isEmpty else { throw ABIResolutionError.imageNotLoaded }
+        guard !scope.images.isEmpty else {
+            throw scope.isComplete ? ABIResolutionError.imageNotLoaded : ABIResolutionError.imageUnavailable
+        }
         guard case .automatic(let cache) = scope else {
-            return try unique(declaration, images: scope.images, extensionsOnly: extensionsOnly)
+            do {
+                return try unique(declaration, images: scope.images, extensionsOnly: extensionsOnly)
+            } catch ABIResolutionError.declarationNotFound where !scope.isComplete {
+                throw ABIResolutionError.imageUnavailable
+            }
         }
         let key = LookupKey(declaration: declaration, extensionsOnly: extensionsOnly)
         if let cached = cache.results.withLock({ $0[key] }) { return try cached.get() }
@@ -98,27 +116,29 @@ final class SymbolResolver: Sendable {
 
     func images(matching selector: ImageSelector) throws -> [NativeImage] {
         let snapshots = try ImageSnapshot.matching(selector, in: ImageSnapshot.current())
-        return try retain(snapshots)
+        return try retain(snapshots, skippingUnavailable: selector == .automatic).images
     }
 
-    private func retain(_ snapshots: [ImageSnapshot]) throws -> [NativeImage] {
+    private func retain(
+        _ snapshots: [ImageSnapshot], skippingUnavailable: Bool
+    ) throws -> (images: [NativeImage], isComplete: Bool) {
         let retained = state.withLock { state in
             snapshots.map { state.indexes[$0.identity]?.image }
         }
-        return try zip(snapshots, retained).compactMap { snapshot, cached in
-            if let cached { return cached }
+        var images: [NativeImage] = []
+        var isComplete = true
+        for (snapshot, cached) in zip(snapshots, retained) {
+            if let cached { images.append(cached); continue }
             do {
-                return try snapshot.retain()
+                images.append(try snapshot.retain())
             } catch ABIResolutionError.imageChanged {
-                // An unrelated load can disappear before its lease is acquired.
-                // Preserve failures for a generation that is still in the catalog.
-                let current = try ImageSnapshot.current()
-                if current.contains(where: { $0.identity.loadGeneration == snapshot.identity.loadGeneration }) {
-                    throw ABIResolutionError.imageChanged
-                }
-                return nil
+                // This generation disappeared; add/remove already advances the revision.
+                continue
+            } catch ABIResolutionError.imageUnavailable where skippingUnavailable {
+                isComplete = false
             }
         }
+        return (images, isComplete)
     }
 
     func resolve(_ declaration: NativeDeclaration, in selector: ImageSelector, loading: ImageLoadingPolicy = .ifNeeded) throws -> ResolvedSymbol {
@@ -182,10 +202,15 @@ final class SymbolResolver: Sendable {
                 // or constructors. Later requests must see those changes.
                 if loading == .ifNeeded && scope != .automatic { scopes.removeAll() }
                 scopeResult = Result { try searchScope(scope, loading: loading) }
-                scopes[key] = scopeResult
+                if case .success(let search) = scopeResult, search.isComplete {
+                    scopes[key] = scopeResult
+                }
             }
             let search = try scopeResult.get()
-            guard !search.images.isEmpty else { continue }
+            guard !search.images.isEmpty else {
+                if !search.isComplete { throw ABIResolutionError.imageUnavailable }
+                continue
+            }
             var match: ResolvedSymbol?
             for declaration in [primary] + alternatives {
                 do {
@@ -203,9 +228,14 @@ final class SymbolResolver: Sendable {
                     }
                 } catch ABIResolutionError.declarationNotFound {
                     continue
+                } catch ABIResolutionError.imageUnavailable where !search.isComplete {
+                    // Unavailable images do not hide an alias already found in
+                    // this scope, or prevent another available alias matching.
+                    continue
                 }
             }
             if let match { return match }
+            if !search.isComplete { throw ABIResolutionError.imageUnavailable }
             missing = .declarationNotFound(primary)
         }
         throw missing

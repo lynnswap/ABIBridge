@@ -7,7 +7,8 @@ import Synchronization
 /// Resolution may acquire an explicitly selected image according to its loading
 /// policy. Catalog enumeration always remains loaded-only.
 public enum ImageSelector: Hashable, Sendable {
-    /// Search all loaded images and report competing definitions as ambiguous.
+    /// Search loaded images whose lifetime can currently be retained.
+    /// Competing available definitions are reported as ambiguous.
     case automatic
     /// Match a framework by its name without the framework suffix.
     case framework(named: String)
@@ -134,6 +135,11 @@ struct ImageSnapshot: Sendable {
 
     func retain() throws -> NativeImage {
         guard let handle = ABIRetainLoadedImage(identity.loadGeneration) else {
+            // Add-image notification precedes initializers. RTLD_NOLOAD on a
+            // different thread may refuse that still-registered generation.
+            if try Self.current().contains(where: { $0.identity == identity }) {
+                throw ABIResolutionError.imageUnavailable
+            }
             throw ABIResolutionError.imageChanged
         }
         return NativeImage(identity: identity, path: path, lease: ImageLease(handle))

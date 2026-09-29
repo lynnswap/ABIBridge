@@ -13,7 +13,7 @@ let images = try await runtime.images(
 )
 ```
 
-Image enumeration is always loaded-only. An empty image list means no loaded image matches; it does not predict whether a resolution request can load that target. A later query can discover newly acquired images.
+Image enumeration is always loaded-only. Automatic enumeration includes images whose lifetime can currently be retained. dyld can register an image before its initializers finish; another thread's loaded-only acquisition may temporarily exclude that image. Explicitly selecting such an image reports `ABIResolutionError.imageUnavailable`. An empty automatic image list means no matching image is currently available; it does not predict whether a resolution request can acquire that target.
 
 A `NativeImage` retains its loaded image. Reuse that handle to resolve several declarations in the same scope. The runtime caches raw symbol data and decoded declaration indexes; C++ members with a plain qualified owner reuse that owner's index.
 
@@ -54,7 +54,9 @@ Exact declarations use the same storage checks, image scopes, lookup precedence,
 
 The runtime searches loaded symbol tables and exports first. If no definition matches, it searches local symbols from the matching dyld shared cache where that metadata is available. Loaded-image results retain precedence even after a shared-cache index has been populated.
 
-Distinct definitions at the same lookup level produce `ABIResolutionError.ambiguousDeclaration`. A matching name whose address is outside the requested executable or data storage produces `ABIResolutionError.invalidAddress`. The containing section range does not establish the size of a function or value. Thread-local descriptors and storage templates are rejected because they do not provide an ordinary process-wide variable address.
+Automatic lookup searches the images it can currently retain. An unrelated image still running initializers does not prevent a match in an available image. If no match is found while some registered images remain unavailable, lookup reports `ABIResolutionError.imageUnavailable` instead of declaring the symbol absent. That partial scope and its results are not cached, including within a batch, because initializer completion does not itself change the image catalog revision. A later lookup can find the initialized image or report new ambiguity without an explicit cache reset.
+
+Distinct available definitions at the same lookup level produce `ABIResolutionError.ambiguousDeclaration`. A matching name whose address is outside the requested executable or data storage produces `ABIResolutionError.invalidAddress`. The containing section range does not establish the size of a function or value. Thread-local descriptors and storage templates are rejected because they do not provide an ordinary process-wide variable address.
 
 Shared-cache files are optional lookup sources, selected using cache and image identity rather than a particular OS build number. Their presence and readability vary by platform and installation. Missing local symbol metadata can leave a declaration unresolved.
 

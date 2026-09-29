@@ -69,19 +69,25 @@ public actor NativeSwiftType {
         var request = originalRequest
         var ownerClass: AnyClass? = metadata as? AnyClass
         var ownerImage = image
+        var hasUnavailableExtensions = false
         while true {
             do {
                 return try resolveDeclaredMember(request, in: ownerImage)
             } catch ABIResolutionError.declarationNotFound {
-                guard let current = ownerClass, let parent = class_getSuperclass(current) else {
-                    throw ABIResolutionError.declarationNotFound(originalRequest)
-                }
-                let runtimeName = try swiftFunctionTypeName(parent)
-                ownerClass = parent
-                ownerImage = try swiftClassImage(parent, named: runtimeName, resolver: resolver)
-                let ownerName = try swiftClassDeclarationName(parent, in: ownerImage, suggestedName: runtimeName, resolver: resolver)
-                request = try declaration(ownerName)
+            } catch ABIResolutionError.imageUnavailable {
+                // An incomplete extension search must not hide an available
+                // superclass member. Preserve uncertainty if no owner matches.
+                hasUnavailableExtensions = true
             }
+            guard let current = ownerClass, let parent = class_getSuperclass(current) else {
+                if hasUnavailableExtensions { throw ABIResolutionError.imageUnavailable }
+                throw ABIResolutionError.declarationNotFound(originalRequest)
+            }
+            let runtimeName = try swiftFunctionTypeName(parent)
+            ownerClass = parent
+            ownerImage = try swiftClassImage(parent, named: runtimeName, resolver: resolver)
+            let ownerName = try swiftClassDeclarationName(parent, in: ownerImage, suggestedName: runtimeName, resolver: resolver)
+            request = try declaration(ownerName)
         }
     }
 
