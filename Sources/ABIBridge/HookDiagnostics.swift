@@ -13,7 +13,3 @@ func hookDescription(declaration: NativeDeclaration?, signature: Any.Type, unnam
     } else { name = unnamed }
     return name + " [" + String(reflecting: signature) + "]"
 }
-
-func objcHookDeclaration(on type: AnyClass, selector: String, classMethod: Bool) -> NativeDeclaration {
-    .init(name: "\(classMethod ? "+" : "-")[\(NSStringFromClass(type)) \(selector)]", language: .objectiveC)
-}

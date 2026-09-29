@@ -8,6 +8,7 @@ import Testing
 private class Renderer: NSObject {
     var recorded: (NSObject?, Bool)?
     @objc func answer() -> Int { 42 }
+    @objc func increment(_ value: Int64) -> Int64 { value + 1 }
     @objc func refreshAnimated(_ animated: Bool) -> Bool { !animated }
     @objc func setImage(_ image: NSObject?, animated: Bool) { recorded = (image, animated) }
     @objc func echo(_ object: NSObject?) -> NSObject? { object }
@@ -25,6 +26,100 @@ private class Renderer: NSObject {
 }
 
 struct ObjectiveCInvocationTests {
+    @MainActor @Test(
+        arguments: ["bound", "captured"],
+        ["missing", "argument", "result", "count"]
+    )
+    func lookupFailuresShareCategoriesAndContext(_ path: String, _ failure: String) throws {
+        let runtime = ABIRuntime.shared
+        let object = runtime.object(Renderer())
+        let selector = failure == "missing" ? "missing" : "increment:"
+        let declaration = NativeDeclaration(
+            name: "-[\(NSStringFromClass(Renderer.self)) \(selector)]", language: .objectiveC
+        )
+        func prepare<Result, each Argument>(_ signature: ((repeat each Argument) -> Result).Type) throws {
+            if path == "bound" {
+                _ = try object.method(selector: selector, as: signature)
+            } else {
+                _ = try runtime.objcImplementation(on: Renderer.self, selector: selector, as: signature)
+            }
+        }
+        do {
+            switch failure {
+            case "missing": try prepare((() -> Void).self)
+            case "argument": try prepare(((Double) -> Int64).self)
+            case "result": try prepare(((Int64) -> Double).self)
+            default: try prepare((() -> Int64).self)
+            }
+            Issue.record("Invalid lookup unexpectedly succeeded")
+        } catch let ABIResolutionError.declarationNotFound(request) {
+            #expect(failure == "missing")
+            #expect(request == declaration)
+        } catch let ABIResolutionError.signatureMismatch(details) {
+            #expect(details.declaration == declaration)
+            if failure == "count" {
+                #expect(details.position == .argumentCount)
+                #expect(details.expected == "0 arguments")
+                #expect(details.found == ["1 arguments"])
+            } else {
+                #expect(details.position == (failure == "argument" ? .argument(0) : .result))
+                #expect(details.expected == "Swift.Double")
+                #expect(details.found == ["q"])
+            }
+        }
+    }
+
+
+    @MainActor @Test(arguments: [false, true], [false, true])
+    func hookPreparationPreservesLookupCause(_ coordinated: Bool, _ missing: Bool) throws {
+        let runtime = ABIRuntime.shared
+        let selector = missing ? "missing" : "increment:"
+        func prepare() throws {
+            if coordinated {
+                let request = unsafe NativeObjCHookRequest.method(
+                    on: Renderer.self, selector: selector, as: ((Double) -> Int64).self,
+                    onFailure: { Issue.record($0) }, body: { call, value in try call.proceed(value) }
+                )
+                do {
+                    let tokens = try unsafe runtime.installHooks([request])
+                    tokens.forEach { $0.invalidate() }
+                } catch let error as NativeObjCHookInstallationError {
+                    #expect(error.phase == .preparation)
+                    #expect(error.failedIndex == 0 && error.invalidatedHooks.isEmpty)
+                    throw error.underlyingError
+                }
+            } else {
+                let token = try unsafe runtime.hookMethod(
+                    on: Renderer.self, selector: selector, as: ((Double) -> Int64).self,
+                    onFailure: { Issue.record($0) }, body: { call, value in try call.proceed(value) }
+                )
+                token.invalidate()
+            }
+        }
+        let declaration = NativeDeclaration(
+            name: "-[\(NSStringFromClass(Renderer.self)) \(selector)]", language: .objectiveC
+        )
+        do {
+            try prepare()
+            Issue.record("Invalid hook preparation unexpectedly succeeded")
+        } catch let ABIResolutionError.declarationNotFound(request) {
+            #expect(missing && request == declaration)
+        } catch let ABIResolutionError.signatureMismatch(details) {
+            #expect(!missing)
+            #expect(details.declaration == declaration && details.position == .argument(0))
+            #expect(details.expected == "Swift.Double" && details.found == ["q"])
+        }
+    }
+
+    @Test func missingClassMethodKeepsClassRequest() throws {
+        do {
+            _ = try ABIRuntime.shared.object(Renderer.self).method(selector: "missingClassMethod", as: (() -> Void).self)
+            Issue.record("An absent class method unexpectedly resolved")
+        } catch let ABIResolutionError.declarationNotFound(request) {
+            #expect(request.name == "+[\(NSStringFromClass(Renderer.self)) missingClassMethod]")
+        }
+    }
+
     @MainActor @Test func callerIsolationAndOptionalArguments() throws {
         let renderer = Renderer()
         let object = ABIRuntime.shared.object(renderer)
@@ -181,10 +276,10 @@ struct ObjectiveCInvocationTests {
 
     @Test func unsupportedFoundationEncodingsThrowDuringLookup() throws {
         let object = ABIRuntime.shared.object(ABIOwnershipFixture())
-        #expect(throws: NSError.self) {
+        #expect(throws: ABIResolutionError.self) {
             _ = try object.method(selector: "unionValue", as: (() -> ABIUnionFixture).self)
         }
-        #expect(throws: NSError.self) {
+        #expect(throws: ABIResolutionError.self) {
             _ = try object.method(
                 selector: "unionPointer:",
                 as: ((UnsafeMutablePointer<ABIUnionFixture>) -> UnsafeMutablePointer<ABIUnionFixture>).self

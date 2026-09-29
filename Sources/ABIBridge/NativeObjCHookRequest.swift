@@ -19,16 +19,17 @@ extension NativeObjCMethodHook {
         guard !selector.utf8.contains(0) else {
             throw ABIResolutionError.unsupportedDeclaration("A selector cannot contain a NUL byte.")
         }
+        let declaration = objcMethodDeclaration(on: type, selector: selector, classMethod: classMethod)
         let sel = NSSelectorFromString(selector)
         var error: NSError?
         guard let raw = ABICopyObjCImplementation(type, sel, classMethod,
             options.returnsRetainedObject.map { $0 ? 1 : 0 } ?? -1,
             options.consumesReceiver.map { $0 ? 1 : 0 } ?? -1, &error) else {
             if ABIObjCMethodHookIsDisplaced(type, sel, classMethod) { throw NativeObjCMethodHookError.displaced }
-            throw error ?? ABIResolutionError.metadataUnavailable(selector) as NSError
+            throw objcResolutionError(error, declaration: declaration)
         }
-        let binding = ObjCInvocationBinding(raw)
-        let value = try ObjCMethodSignature<Result, repeat each Argument>(handle: raw)
+        let binding = ObjCInvocationBinding(raw, declaration: declaration)
+        let value = try ObjCMethodSignature<Result, repeat each Argument>(handle: raw, declaration: declaration)
         let interface = try value.callInterface()
         guard ABIValidateObjCMethodHook(type, sel, classMethod, initializer, raw, nil, &error) else {
             switch error?.code {
@@ -129,7 +130,7 @@ public struct NativeObjCHookRequest {
         }, install: { _ in
             try NativeObjCMethodHook.prepare(on: type, selector: selector, as: signature,
                 classMethod: classMethod, options: options, object: nil, owner: owner, initializer: false) { signature in
-                    ObjCReplacement<Result, repeat each Argument>.mainActorCallback(signature, declaration: objcHookDeclaration(on: type, selector: selector, classMethod: classMethod), onFailure: onFailure, body: body)
+                    ObjCReplacement<Result, repeat each Argument>.mainActorCallback(signature, declaration: objcMethodDeclaration(on: type, selector: selector, classMethod: classMethod), onFailure: onFailure, body: body)
                 }
         })
     }

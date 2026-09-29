@@ -41,9 +41,9 @@ func swiftFunctionDeclaration(
         if labelsOnly {
             let parameters = try parameterTypes.map { try swiftArgumentTypeName($0, defaultConsuming: defaultConsuming) }
             guard labels.count == parameters.count else {
-                throw ABIResolutionError.signatureMismatch(
+                throw ABIResolutionError.signatureMismatch(.init(
                     expected: "\(parameters.count) argument labels", found: [name]
-                )
+                ))
             }
             let omitLabels = labels.allSatisfy { $0 == "_" }
             let fields = zip(labels, parameters).map { label, type in omitLabels ? type : label + ": " + type }

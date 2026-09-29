@@ -41,6 +41,20 @@ struct SwiftConsumer {
             precondition(data.length == 0)
             let receiver = BlockReceiver()
             let object = ABIRuntime.shared.object(receiver)
+            do {
+                _ = try object.method(selector: "missingHandler", as: (() -> Void).self)
+                preconditionFailure("Missing selectors must fail lookup")
+            } catch let ABIResolutionError.declarationNotFound(request) {
+                precondition(request.language == .objectiveC && request.name.contains("missingHandler"))
+            }
+            do {
+                _ = try object.method(selector: "setHandler:", as: ((Int32) -> Void).self)
+                preconditionFailure("An integer cannot describe a block parameter")
+            } catch let ABIResolutionError.signatureMismatch(details) {
+                precondition(details.position == .argument(0))
+                precondition(details.declaration?.name.contains("setHandler:") == true)
+                precondition(details.expected == "Swift.Int32" && details.found == ["@?"])
+            }
             let setter = try object.method(selector: "setHandler:", as: ((ConsumerBlock?) -> Void).self)
             let getter = try object.method(selector: "handler", as: (() -> ConsumerBlock?).self)
             let captured = NSNumber(value: 31)
