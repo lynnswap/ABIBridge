@@ -89,6 +89,12 @@ The `virtual-public` mode exercises the public Swift and C/C++ shared-entry APIs
 
 The arm64e iPhone Air writable control passed these managed cases, including allocator-backed storage with a logical pointer tag. VM region/protection operations use an untagged address; actual loads and atomic stores keep the caller's pointer tag. Normal signed-host registration reports TPRO refusal and releases its callback without changing dispatch. Published entries retain their storage/code dependencies for process lifetime; explicit keepalives supplied by later registrations can add retained owners, independently of callback capture cleanup.
 
+## Instantiated generic Swift receivers
+
+The `swift` mode compares concrete method and getter calls on existing generic class instances with compiler calls. It covers protocol-witness context from self, complete relative declarations, a generic superclass, distinct instantiated metadata, retained calls after cache removal, and final receiver release. These calls use the existing bound Swift member APIs.
+
+Run `python3 scripts/check-swift-generic-receiver-codegen.py` from the repository root to compare concrete generic members with nongeneric controls for arm64, x86_64, arm64e, and arm64_32. The probe also records dependent argument/result indirection and the extra metadata argument of an independently generic method. Compilation evidence does not establish runtime behavior on an untested architecture.
+
 ## Compiled Swift replacements
 
 `SwiftReplacementTests` runs in the Debug test harness because it inspects internal indexes; it builds optimized provider and caller dylibs from the `SwiftReplacementFixtures` and `SwiftReplacementCaller` sources. It resolves declarations through ABIBridge's source-name indexes, replaces compatible compiler-generated Swift entries through the pointer-slot transport, and restores each original representation before releasing its images. It does not install a C callback at a Swift entry point or reinterpret a capturing Swift closure as code.

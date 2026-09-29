@@ -50,13 +50,20 @@ func swiftFunctionDeclaration(
             declaration = String(name[..<opening]) + "(" + fields.joined(separator: ", ") + ")" + effects + " -> " + (try resultName ?? swiftFunctionTypeName(resultType))
         }
     }
-    let prefix = declaration.prefix { $0 != "(" }
+    let outerSignature = swiftOuterSignature(declaration).text
+    // Effects are trailing words after the parameter list. A module called
+    // async or throws inside a generic requirement is part of the type name.
+    var words = outerSignature.split(whereSeparator: \.isWhitespace)
+    var effectWords: [Substring] = []
+    while let last = words.last, last == "async" || last == "throws" {
+        effectWords.append(words.removeLast())
+    }
+    let prefix = outerSignature[..<(effectWords.last?.startIndex ?? outerSignature.endIndex)]
     let member = prefix.split(separator: ".").last ?? prefix
     let generic = prefix.last(where: { !$0.isWhitespace }) == ">"
         && member.contains { $0.isLetter || $0.isNumber || $0 == "_" }
-    let outerSignature = swiftOuterSignature(declaration).text
-    guard !generic, (isAsync || !outerSignature.contains(" async ")),
-          (failureType != Never.self || !outerSignature.contains(" throws")) else {
+    guard !generic, (isAsync || !effectWords.contains("async")),
+          (failureType != Never.self || !effectWords.contains("throws")) else {
         throw ABIResolutionError.unsupportedDeclaration(
             "Generic signatures require a native adapter; async and throwing calls require matching function types."
         )

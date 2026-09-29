@@ -318,6 +318,7 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         try check(unsafe privateMethod!.unsafeInvoke(2) == 52, "Private Swift context and retained owner")
         privateMethod = nil
         try check(privateObserved == nil, "Private Swift receiver release")
+        checks += try await validateSwiftGenericReceivers()
     case "ffi":
         let add = try await runtime.cFunction(named: "ABIValidationAdd", as: ((Int32, Int32) -> Int32).self)
         try check(unsafe add.unsafeInvoke(20,22) == ABIValidationAdd(20,22), "libffi signed function call")
