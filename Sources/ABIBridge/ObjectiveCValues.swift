@@ -189,7 +189,7 @@ struct ObjCValueCodec<Value> {
     }
 
     private static func mismatch(_ encoding: String) -> ABIResolutionError {
-        .signatureMismatch(expected: String(reflecting: Value.self), found: [encoding])
+        .signatureMismatch(.init(expected: String(reflecting: Value.self), found: [encoding]))
     }
 
     private static func copyBlock(_ object: AnyObject) throws -> AnyObject {

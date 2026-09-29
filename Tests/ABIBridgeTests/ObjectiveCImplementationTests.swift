@@ -135,10 +135,10 @@ struct ObjectiveCImplementationTests {
     }
 
     @Test func missingForwardingAndMismatchedSignaturesFailBeforeCalling() throws {
-        #expect(throws: NSError.self) {
+        #expect(throws: ABIResolutionError.self) {
             _ = try ABIRuntime.shared.objcImplementation(on: ABIForwardingFixture.self, selector: "answer", as: (() -> Int).self)
         }
-        #expect(throws: NSError.self) {
+        #expect(throws: ABIResolutionError.self) {
             _ = try ABIRuntime.shared.objcImplementation(on: ImplementationReceiver.self, selector: "absent", as: (() -> Void).self)
         }
         #expect(throws: ABIResolutionError.self) {

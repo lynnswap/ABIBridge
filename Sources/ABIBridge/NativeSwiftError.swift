@@ -43,9 +43,9 @@ struct SwiftErrorPlan: Sendable {
 
     static func validateReplacement(_ replacement: SwiftErrorPlan?, for original: SwiftErrorPlan?) throws {
         guard replacement == nil || original?.identity == replacement?.identity else {
-            throw ABIResolutionError.signatureMismatch(
+            throw ABIResolutionError.signatureMismatch(.init(
                 expected: "A replacement with the same native error type, or a nonthrowing replacement", found: []
-            )
+            ))
         }
     }
 

@@ -214,7 +214,42 @@ public enum ABIResolutionError: Error, Sendable, Hashable {
     /// Multiple distinct definitions match; candidates identify the competing symbols or images.
     case ambiguousDeclaration(NativeDeclaration, candidates: [String])
     /// Available signature information disagrees with the requested signature.
-    case signatureMismatch(expected: String, found: [String])
+    case signatureMismatch(SignatureMismatch)
+
+    /// Structured details about a requested signature that cannot be prepared.
+    public struct SignatureMismatch: Sendable, Hashable {
+        /// The part of the signature that disagrees with the available metadata.
+        public enum Position: Sendable, Hashable {
+            /// The complete signature, labels, layout, or calling convention.
+            case signature
+            /// A zero-based explicit argument, excluding an implicit receiver.
+            case argument(Int)
+            case result
+            case argumentCount
+        }
+
+        /// The original request, when the failure occurred during declaration lookup.
+        public let declaration: NativeDeclaration?
+        public let position: Position
+        /// The caller's requested type or other signature requirement.
+        public let expected: String
+        /// Available native encodings, signature descriptions, or diagnostics.
+        public let found: [String]
+
+        public init(
+            declaration: NativeDeclaration? = nil, position: Position = .signature,
+            expected: String, found: [String]
+        ) {
+            self.declaration = declaration
+            self.position = position
+            self.expected = expected
+            self.found = found
+        }
+
+        func inContext(_ declaration: NativeDeclaration, at position: Position) -> Self {
+            .init(declaration: declaration, position: position, expected: expected, found: found)
+        }
+    }
     /// The operation cannot interpret this kind of declaration.
     case unsupportedDeclaration(String)
     /// Requested native metadata is unavailable.

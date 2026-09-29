@@ -34,9 +34,10 @@ public struct DynamicNativeFunction: Sendable {
     /// - Throws: A count/layout mismatch or native call-interface error.
     @unsafe public func unsafeInvoke(with values: [NativeValue]) throws -> NativeValue {
         guard values.count == signature.parameters.count else {
-            throw ABIResolutionError.signatureMismatch(
+            throw ABIResolutionError.signatureMismatch(.init(
+                declaration: symbol.declaration, position: .argumentCount,
                 expected: "\(signature.parameters.count) arguments", found: ["\(values.count) arguments"]
-            )
+            ))
         }
         var storage: [NativeValueStorage] = []
         for (value, expected) in zip(values, signature.parameters) {

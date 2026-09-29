@@ -47,6 +47,27 @@ Captures use the same supported values and ownership overrides as ordinary selec
 
 Installation, ordering, and restoration of replacements remain the consumer's responsibility.
 
+## Handle lookup failures
+
+Known Objective-C lookup failures use `ABIResolutionError` across bound methods, captured implementations, and hook preparation. A missing selector throws `declarationNotFound` with the originally requested class and selector; an unsupported encoding throws `unsupportedDeclaration`. Unknown native error domains and codes remain available as their original errors. Exceptions from invoked native code are not translated.
+
+A signature mismatch carries `ABIResolutionError.SignatureMismatch`. Its `declaration` identifies the request, `position` identifies the zero-based explicit argument, result, argument count, or whole signature, and `expected` / `found` preserve the requested type and available native representation. Explicit argument indexes exclude `self` and `_cmd`.
+
+```swift
+do {
+    _ = try object.method(selector: "increment:", as: ((Double) -> Int64).self)
+} catch let ABIResolutionError.declarationNotFound(request) {
+    // Only known absence should select a consumer-defined alternative.
+    print("Unavailable:", request.name)
+} catch let ABIResolutionError.signatureMismatch(details) {
+    print(details.position, details.expected, details.found)
+}
+```
+
+For a native `increment:` taking `Int64`, this example reports `.argument(0)`, `Swift.Double`, and `q`. A mismatch in the return type reports `.result` instead. Coordinated hook installation keeps its `NativeObjCHookInstallationError` envelope; inspect `underlyingError` for the same diagnostic.
+
+The structured payload replaces the previous `signatureMismatch(expected:found:)` case. Match `signatureMismatch(let details)` and access its fields; no compatibility case or initializer is retained. Errors produced before a declaration is known, such as standalone value-layout checks, may have a nil `declaration`.
+
 ## Read an object ivar
 
 Use the literal runtime ivar name, including any underscore; this is not a property getter or a key-value coding lookup:

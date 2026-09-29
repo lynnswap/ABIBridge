@@ -18,7 +18,7 @@ public struct NativeObjCImplementation<Result, each Argument> {
 
     init(binding: ObjCInvocationBinding, retaining owner: Any?) throws {
         self.binding = binding
-        signature = try ObjCMethodSignature(handle: binding.handle)
+        signature = try ObjCMethodSignature(handle: binding.handle, declaration: binding.declaration)
         interface = try signature.callInterface()
         codeOwner = owner
     }
@@ -74,15 +74,15 @@ extension ABIRuntime {
         classMethod: Bool = false, options: NativeMethodOptions = .init(),
         retaining owner: Any? = nil
     ) throws -> NativeObjCImplementation<Result, repeat each Argument> {
+        let declaration = objcMethodDeclaration(on: type, selector: selector, classMethod: classMethod)
         var error: NSError?
         guard let handle = ABICopyObjCImplementation(
             type, NSSelectorFromString(selector), classMethod,
             options.returnsRetainedObject.map { $0 ? 1 : 0 } ?? -1,
             options.consumesReceiver.map { $0 ? 1 : 0 } ?? -1, &error
         ) else {
-            if let error { throw error }
-            throw ABIResolutionError.metadataUnavailable(selector)
+            throw objcResolutionError(error, declaration: declaration)
         }
-        return try NativeObjCImplementation(binding: ObjCInvocationBinding(handle), retaining: owner)
+        return try NativeObjCImplementation(binding: ObjCInvocationBinding(handle, declaration: declaration), retaining: owner)
     }
 }

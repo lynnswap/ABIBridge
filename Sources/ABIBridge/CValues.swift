@@ -124,10 +124,10 @@ struct CValueCodec<Value>: Sendable {
         default:
             guard type.size == MemoryLayout<Value>.size,
                   type.alignment == MemoryLayout<Value>.alignment else {
-                throw ABIResolutionError.signatureMismatch(
+                throw ABIResolutionError.signatureMismatch(.init(
                     expected: "Swift layout of \(String(reflecting: Value.self))",
                     found: ["C size \(type.size), alignment \(type.alignment)"]
-                )
+                ))
             }
         }
     }
