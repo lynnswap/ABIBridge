@@ -22,10 +22,13 @@ public actor ABIRuntime {
     /// Returns retained handles for matching loaded images.
     ///
     /// Images that unload before a loader reference is acquired are omitted.
-    /// - Parameter selector: The search scope; defaults to all loaded images.
-    /// - Returns: Matching images, or an empty array when none are loaded.
-    /// - Throws: A catalog error, or an image-change error if a still-loaded
-    ///   generation cannot be retained.
+    /// Automatic enumeration also omits images whose initializers on another
+    /// thread currently prevent acquiring a reference. Later calls can include
+    /// them without an unload/reload or explicit cache reset.
+    /// - Parameter selector: The search scope; defaults to all available loaded images.
+    /// - Returns: Retained matching images, or an empty array when none are available.
+    /// - Throws: A catalog error, or imageUnavailable if an explicitly selected
+    ///   registered image cannot currently be retained.
     public func images(matching selector: ImageSelector = .automatic) throws -> [NativeImage] {
         try resolver.images(matching: selector)
     }
