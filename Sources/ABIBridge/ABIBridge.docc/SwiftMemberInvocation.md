@@ -32,7 +32,7 @@ let text = try unsafe title.unsafeInvoke()
 
 This does not construct generic metadata or infer a substituted ABI. A member returning `Content` has a dependent formal result, which can remain indirect even when the actual value fits registers. Label-only lookup does not rewrite that declaration to the substituted concrete type. Use a compiled adapter, or the existing complete-declaration and explicit value-adapter APIs with the actual formal convention. A complete spelling such as `projected() -> A` only selects a symbol: it does not verify the supplied representation or turn the generic result into an ordinary direct result.
 
-Methods introducing additional generic parameters still require a compiled adapter because their metadata and witnesses are separate arguments. Generic opaque results and virtual replacement retain their existing adapter requirements. Receiver ownership, effects, actor isolation, and captured implementation dispatch are unchanged.
+Automatic member lookup currently covers nominal declarations and unconstrained extensions. A constrained extension such as `extension Renderer where Content == Int` has a constraint-qualified owner and requires separate applicability lookup; it is not selected by this path. A new protocol constraint can also add a witness argument beyond self. Methods introducing additional generic parameters still require a compiled adapter because their metadata and witnesses are separate arguments. Generic opaque results and virtual replacement retain their existing adapter requirements. Receiver ownership, effects, actor isolation, and captured implementation dispatch are unchanged.
 
 ## Reuse a type
 
