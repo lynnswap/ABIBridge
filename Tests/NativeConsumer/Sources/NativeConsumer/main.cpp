@@ -59,11 +59,17 @@ extern "C" void ABIBridgeTestConstructorEntered(const void *initializer) {
                 assert(error.code() == ABIFailureImageUnavailable);
             }
         }
-        abi_bridge::symbol_request available{abi_bridge::declaration("ABIBridgeReadinessFixture::shared()")};
+        const abi_bridge::declaration absent("ABIBridgeReadinessFixture::absentAlias()");
+        const abi_bridge::declaration pid("getpid", abi_bridge::language::c);
+        abi_bridge::symbol_request available{pid};
+        available.alternatives = {absent};
+        abi_bridge::symbol_request alias{absent};
+        alias.alternatives = {pid};
         abi_bridge::symbol_request unavailable{pending};
-        auto batch = abi_bridge::Runtime::current().resolve(std::vector{available, unavailable});
+        auto batch = abi_bridge::Runtime::current().resolve(std::vector{available, alias, unavailable});
         assert(std::holds_alternative<abi_bridge::resolved_symbol>(batch[0]));
-        assert(std::get<abi_bridge::resolution_error>(batch[1]).code() == ABIFailureImageUnavailable);
+        assert(std::holds_alternative<abi_bridge::resolved_symbol>(batch[1]));
+        assert(std::get<abi_bridge::resolution_error>(batch[2]).code() == ABIFailureImageUnavailable);
     });
     // Hold initialization open until every lookup has finished, without a race
     // against a sleep duration. The watchdog detects any accidental loader wait.

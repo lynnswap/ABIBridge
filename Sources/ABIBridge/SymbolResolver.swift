@@ -228,9 +228,14 @@ final class SymbolResolver: Sendable {
                     }
                 } catch ABIResolutionError.declarationNotFound {
                     continue
+                } catch ABIResolutionError.imageUnavailable where !search.isComplete {
+                    // Unavailable images do not hide an alias already found in
+                    // this scope, or prevent another available alias matching.
+                    continue
                 }
             }
             if let match { return match }
+            if !search.isComplete { throw ABIResolutionError.imageUnavailable }
             missing = .declarationNotFound(primary)
         }
         throw missing
