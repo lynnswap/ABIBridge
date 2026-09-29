@@ -50,11 +50,14 @@ func swiftFunctionDeclaration(
             declaration = String(name[..<opening]) + "(" + fields.joined(separator: ", ") + ")" + effects + " -> " + (try resultName ?? swiftFunctionTypeName(resultType))
         }
     }
-    let prefix = declaration.prefix { $0 != "(" }
+    let outerSignature = swiftOuterSignature(declaration).text
+    // Private declaration contexts contain parentheses before the member.
+    // Removing balanced groups keeps the actual member's generic signature.
+    let beforeAsync = outerSignature.split(separator: " async", maxSplits: 1).first ?? ""
+    let prefix = beforeAsync.split(separator: " throws", maxSplits: 1).first ?? ""
     let member = prefix.split(separator: ".").last ?? prefix
     let generic = prefix.last(where: { !$0.isWhitespace }) == ">"
         && member.contains { $0.isLetter || $0.isNumber || $0 == "_" }
-    let outerSignature = swiftOuterSignature(declaration).text
     guard !generic, (isAsync || !outerSignature.contains(" async ")),
           (failureType != Never.self || !outerSignature.contains(" throws")) else {
         throw ABIResolutionError.unsupportedDeclaration(

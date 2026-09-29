@@ -77,9 +77,6 @@ public actor NativeSwiftType {
                     throw ABIResolutionError.declarationNotFound(originalRequest)
                 }
                 let runtimeName = try swiftFunctionTypeName(parent)
-                guard !runtimeName.contains("<") else {
-                    throw ABIResolutionError.unsupportedDeclaration("Generic superclass members require a native adapter.")
-                }
                 ownerClass = parent
                 ownerImage = try swiftClassImage(parent, named: runtimeName, resolver: resolver)
                 let ownerName = try swiftClassDeclarationName(parent, in: ownerImage, suggestedName: runtimeName, resolver: resolver)
@@ -316,9 +313,6 @@ func swiftClassDeclarationName(
 extension ABIRuntime {
     func swiftType(for objectType: AnyClass) throws -> NativeSwiftType {
         let runtimeName = try swiftFunctionTypeName(objectType)
-        guard !runtimeName.contains("<") else {
-            throw ABIResolutionError.unsupportedDeclaration("Generic Swift class members require a native adapter.")
-        }
         let image = try swiftClassImage(objectType, named: runtimeName, resolver: resolver)
         let key = SwiftTypeCacheKey.metadata(ObjectIdentifier(objectType), image: image.identity)
         if let cached = swiftTypes[key] { return cached }

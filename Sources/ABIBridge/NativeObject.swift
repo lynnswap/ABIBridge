@@ -119,6 +119,9 @@ public final class NativeObject {
     ///
     /// The method retains the receiver and implementation image. Invocation
     /// remains on the caller's executor and calls the captured implementation.
+    /// Existing generic class instances supply their enclosing metadata through
+    /// self. Concrete member signatures use the ordinary typed call convention;
+    /// dependent formal types still require an explicit ABI adapter.
     /// - Parameters:
     ///   - name: A relative Swift member name and argument labels.
     ///   - signature: Explicit arguments and result, excluding self.

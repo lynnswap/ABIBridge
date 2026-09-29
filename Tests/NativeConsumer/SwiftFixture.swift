@@ -9,6 +9,20 @@ private final class PrivateRenderer {
 
 @inline(never) public func makePrivateRenderer(_ value: Int) -> AnyObject { PrivateRenderer(value) }
 
+private final class GenericRenderer<Value> {
+    let value: Value
+    let measure: (Value) -> Int
+    init(_ value: Value, measure: @escaping (Value) -> Int) { self.value = value; self.measure = measure }
+    @inline(never) func score(_ extra: Int) -> Int { measure(value) + extra }
+    var currentScore: Int { @inline(never) get { measure(value) } }
+}
+
+@inline(never) public func makeGenericRenderer(_ value: Int) -> AnyObject {
+    let renderer = GenericRenderer(value, measure: { $0 })
+    precondition(renderer.score(0) == renderer.currentScore)
+    return renderer
+}
+
 @inline(never) public func makeAdder(_ bias: Int64) -> (Int64) -> Int64 { { $0 + bias } }
 @inline(never) public func applyClosure(_ callback: (Int64) -> Int64, _ value: Int64) -> Int64 {
     callback(value)

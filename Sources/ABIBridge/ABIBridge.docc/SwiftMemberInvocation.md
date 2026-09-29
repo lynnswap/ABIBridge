@@ -17,6 +17,23 @@ try unsafe setImage.unsafeInvoke(image, true)
 
 The handle retains its receiver and implementation images. Existing objects supply their runtime class metadata, including imported Objective-C classes with Swift extension methods. Bound handles stay in the caller's isolation domain.
 
+## Use an instantiated generic receiver
+
+An existing object such as `Renderer<Content>` can use the same `object(...).method/getter/setter` APIs for members with concrete parameter and result types. Lookup identifies the unspecialized declaration through the live class's nominal descriptor while retaining the instantiated metadata. The implementation obtains its enclosing generic metadata and protocol witnesses from self. Private declaration owners and inherited members follow the same lookup rules.
+
+For example, given an existing `Renderer<Content>` with `func title() -> String`:
+
+```swift
+let title = try await runtime.object(renderer).method(
+    named: "title()", as: (() -> String).self
+)
+let text = try unsafe title.unsafeInvoke()
+```
+
+This does not construct generic metadata or infer a substituted ABI. A member returning `Content` has a dependent formal result, which can remain indirect even when the actual value fits registers. Label-only lookup does not rewrite that declaration to the substituted concrete type. Use a compiled adapter, or the existing complete-declaration and explicit value-adapter APIs with the actual formal convention. A complete spelling such as `projected() -> A` only selects a symbol: it does not verify the supplied representation or turn the generic result into an ordinary direct result.
+
+Methods introducing additional generic parameters still require a compiled adapter because their metadata and witnesses are separate arguments. Generic opaque results and virtual replacement retain their existing adapter requirements. Receiver ownership, effects, actor isolation, and captured implementation dispatch are unchanged.
+
 ## Reuse a type
 
 ```swift
@@ -29,7 +46,7 @@ try unsafe stop.unsafeInvoke(on: renderer)
 
 Type lookup obtains the nominal descriptor and requests complete metadata. It rejects generic descriptors before calling an accessor that would need additional metadata or witness arguments. Type handles share the runtime's symbol indexes, retain their defining image, and remain valid after removeCachedResults().
 
-Methods capture the selected implementation. Lookup prefers declarations in the type's defining image, then searches extension-qualified implementations in loaded images, and then walks superclass declarations in each superclass's defining image. Calls do not perform virtual redispatch. Generic superclass declarations require a separate adapter.
+Methods capture the selected implementation. Lookup prefers declarations in the type's defining image, then searches extension-qualified implementations in loaded images, and then walks superclass declarations in each superclass's defining image. Calls do not perform virtual redispatch. Existing receiver metadata also supplies the context for concrete members declared by a generic superclass.
 
 ## Initializers and static members
 
