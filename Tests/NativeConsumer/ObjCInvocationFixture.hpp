@@ -66,7 +66,7 @@ inline void checkForwardingImplementation(id receiver, IMP implementation, SEL s
     assert(class_addMethod(object_getClass(receiver), selector, implementation, encoding));
     assert(class_getInstanceMethod(object_getClass(receiver), selector));
     try {
-        abi_bridge::objc_method<ForwardedAggregate()>(receiver, selector);
+        abi_bridge::bound_objc_implementation<ForwardedAggregate()>(receiver, selector);
         assert(false && "Forwarding trampolines must not become captured calls");
     } catch (const abi_bridge::resolution_error& error) {
         assert(error.code() == ABIFailureUnsupportedDeclaration);
@@ -78,21 +78,21 @@ inline void checkPublicObjCInvocation() {
     @autoreleasepool {
         ConcreteProxy *proxy = [[ConcreteProxy alloc] init];
         {
-            auto pointer = abi_bridge::objc_method<void *()>(proxy, "nativeAddress");
-            auto setter = abi_bridge::objc_method<void(NSInteger)>(proxy, @selector(setValue:));
-            auto getter = abi_bridge::objc_method<NSInteger()>(proxy, "value");
-            auto result = abi_bridge::objc_method<id()>(proxy, "copyToken");
-            assert(abi_bridge::objc_method<NSInteger()>([ConcreteProxy class], "classValue").unsafe_invoke() == 17);
+            auto pointer = abi_bridge::bound_objc_implementation<void *()>(proxy, "nativeAddress");
+            auto setter = abi_bridge::bound_objc_implementation<void(NSInteger)>(proxy, @selector(setValue:));
+            auto getter = abi_bridge::bound_objc_implementation<NSInteger()>(proxy, "value");
+            auto result = abi_bridge::bound_objc_implementation<id()>(proxy, "copyToken");
+            assert(abi_bridge::bound_objc_implementation<NSInteger()>([ConcreteProxy class], "classValue").unsafe_invoke() == 17);
             try {
-                abi_bridge::objc_method<void()>(proxy, "missing");
+                abi_bridge::bound_objc_implementation<void()>(proxy, "missing");
                 assert(false);
             } catch (const resolution_error& error) { assert(error.code() == ABIFailureDeclarationNotFound); }
             try {
-                abi_bridge::objc_method<void()>(proxy, std::string_view("value\0ignored", 13));
+                abi_bridge::bound_objc_implementation<void()>(proxy, std::string_view("value\0ignored", 13));
                 assert(false);
             } catch (const resolution_error& error) { assert(error.code() == ABIFailureInvalidRequest); }
             try {
-                abi_bridge::objc_method<double()>(proxy, "value");
+                abi_bridge::bound_objc_implementation<double()>(proxy, "value");
                 assert(false);
             } catch (const resolution_error& error) { assert(error.code() == ABIFailureSignatureMismatch); }
 #if __has_feature(objc_arc)
@@ -114,7 +114,7 @@ inline void checkPublicObjCInvocation() {
         assert(liveProxyReceivers == 0);
         ForwardedReceiver *forwarded = [[ForwardedReceiver alloc] init];
         try {
-            abi_bridge::objc_method<long long()>(forwarded, "forwardedValue");
+            abi_bridge::bound_objc_implementation<long long()>(forwarded, "forwardedValue");
             assert(false);
         } catch (const resolution_error& error) { assert(error.code() == ABIFailureUnsupportedDeclaration); }
         const std::string aggregateEncoding = std::string(@encode(ForwardedAggregate)) + "@:";

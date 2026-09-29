@@ -1,6 +1,6 @@
 # Calling Objective-C from Objective-C++
 
-Bind a concrete selector implementation with a typed signature and a retained receiver.
+Capture a concrete selector implementation with a typed signature and a retained receiver.
 
 ## Import the public interface
 
@@ -9,10 +9,10 @@ Link the `ABIBridge` product and include `<ABIBridge/ObjectiveCInvocation.hpp>` 
 ```objc
 #include <ABIBridge/ObjectiveCInvocation.hpp>
 
-auto setEnabled = abi_bridge::objc_method<void(BOOL)>(renderer, "setEnabled:");
+auto setEnabled = abi_bridge::bound_objc_implementation<void(BOOL)>(renderer, "setEnabled:");
 setEnabled.unsafe_invoke(YES);
 
-auto nativeObject = abi_bridge::objc_method<void *()>(renderer, "nativeObject");
+auto nativeObject = abi_bridge::bound_objc_implementation<void *()>(renderer, "nativeObject");
 void *address = nativeObject.unsafe_invoke();
 ```
 
@@ -22,12 +22,12 @@ Binding checks argument counts and Objective-C type encodings, performs dynamic 
 
 ## Own the receiver and result
 
-Copies of a method handle share a retained receiver and any discoverable implementation image. The last handle releases the receiver before its implementation image. This does not keep an arbitrary raw-pointer result, argument, generated class, or dynamically generated IMP alive; those lifetimes and thread requirements remain the caller's responsibility.
+Copies of a bound implementation share a retained receiver and any discoverable implementation image. The last handle releases the receiver before its implementation image. This does not keep an arbitrary raw-pointer result, argument, generated class, or dynamically generated IMP alive; those lifetimes and thread requirements remain the caller's responsibility.
 
 Object and block results follow ordinary +0 return semantics. ARC callers receive managed values. MRC callers must retain a result or copy a block to keep it beyond its autorelease pool. The binding infers Objective-C method-family conventions; explicit ownership attributes absent from runtime encodings require overrides:
 
 ```objc
-auto create = abi_bridge::objc_method<id()>(
+auto create = abi_bridge::bound_objc_implementation<id()>(
     renderer, "retainedObject", {.returns_retained = true}
 );
 id result = create.unsafe_invoke();
