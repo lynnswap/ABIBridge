@@ -94,3 +94,16 @@ Label-only method names obtain canonical parameter/result names from their metat
 Framework, executable-path, install-name, and retained-image overloads acquire explicit targets by default. Pass `loading: .loadedOnly` to retain inspection behavior; see <doc:ImageLoading>. The method or type handle keeps its implementation alive, and custom wrapper results retain their call's owners. Raw pointers remain borrowed.
 
 The unsafe boundary requires the actual declaration's ownership, effects, and actor/thread requirements. Async function metatypes select NativeSwiftAsyncMethod or NativeSwiftAsyncFunction handles; see <doc:SwiftAsyncABI>. Generic metadata synthesis, nontrivial foreign value layouts, and resilient-layout inference remain adapter cases.
+
+## Resolve members from private receivers
+
+An existing object can supply the identity of a file-private Swift class without exposing its compiler-generated private discriminator. The object member APIs match its live nominal descriptor to symbols in its defining image. Methods, getters, setters, and inherited members use that declaration owner; two same-named private classes in different files remain distinct.
+
+```swift
+let method = try await runtime.object(receiver).method(
+    named: "title()", as: (() -> String).self
+)
+let title = try unsafe method.unsafeInvoke()
+```
+
+The provider module need not be importable. Lookup still requires the relevant method symbols; this does not reconstruct stripped implementations. Short label-only names and complete relative declarations are both accepted. The ordinary receiver/image lifetime and caller-supplied ABI contract remain unchanged.

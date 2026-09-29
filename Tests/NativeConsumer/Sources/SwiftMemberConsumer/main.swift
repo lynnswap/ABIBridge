@@ -17,7 +17,7 @@ struct ForeignPoint: ABIBridgeValue {
 }
 
 @MainActor
-func prepare(_ path: String, extensionPath: String) async throws -> NativeBoundSwiftMethod<Int, Int> {
+func prepare(_ path: String, extensionPath: String) async throws -> (NativeBoundSwiftMethod<Int, Int>, NativeBoundSwiftMethod<Int, Int>) {
     guard let original = dlopen(path, RTLD_NOW | RTLD_LOCAL) else {
         fatalError(String(cString: dlerror()))
     }
@@ -56,11 +56,18 @@ func prepare(_ path: String, extensionPath: String) async throws -> NativeBoundS
     }
     defer { dlclose(extensionImage) }
     let bound = try await runtime.object(object).method(named: "extendedScore(_:)", as: ((Int) -> Int).self)
+    let makePrivate = try await runtime.swiftFunction(
+        named: "SwiftFunctionFixture.makePrivateRenderer(_:)", as: ((Int) -> AnyObject).self, in: scope
+    )
+    let privateReceiver = try unsafe makePrivate.unsafeInvoke(40)
+    let privateBound = try await runtime.object(privateReceiver).method(named: "score(_:)", as: ((Int) -> Int).self)
     await runtime.removeCachedResults()
-    return bound
+    return (bound, privateBound)
 }
 
-let method = try await prepare(CommandLine.arguments[1], extensionPath: CommandLine.arguments[2])
-let value = try unsafe method.unsafeInvoke(36)
+let methods = try await prepare(CommandLine.arguments[1], extensionPath: CommandLine.arguments[2])
+let value = try unsafe methods.0.unsafeInvoke(36)
 precondition(value == 42)
-print("Swift member consumer passed")
+let privateValue = try unsafe methods.1.unsafeInvoke(2)
+precondition(privateValue == 42)
+print("Swift member consumer passed: public, extension, and private receiver methods")

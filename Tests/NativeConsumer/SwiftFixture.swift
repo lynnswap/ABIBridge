@@ -1,6 +1,14 @@
 @inline(never) public func answer() -> Int64 { 42 }
 @inline(never) public func decorate(_ value: String) -> String { value + "!" }
 
+private final class PrivateRenderer {
+    let value: Int
+    init(_ value: Int) { self.value = value }
+    @inline(never) func score(_ extra: Int) -> Int { value + extra }
+}
+
+@inline(never) public func makePrivateRenderer(_ value: Int) -> AnyObject { PrivateRenderer(value) }
+
 @inline(never) public func makeAdder(_ bias: Int64) -> (Int64) -> Int64 { { $0 + bias } }
 @inline(never) public func applyClosure(_ callback: (Int64) -> Int64, _ value: Int64) -> Int64 {
     callback(value)

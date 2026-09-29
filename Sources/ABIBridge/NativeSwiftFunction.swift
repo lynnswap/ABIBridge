@@ -32,7 +32,7 @@ func swiftFunctionDeclaration(
     var declaration = name
     // A full demangled declaration is useful when a foreign wrapper's Swift
     // type name differs from the native type. Label-only names infer types.
-    if !name.contains("->"), name.last == ")", let opening = name.firstIndex(of: "(") {
+    if !name.contains("->"), name.last == ")", let opening = name.lastIndex(of: "(") {
         let text = name[name.index(after: opening)..<name.index(before: name.endIndex)]
         let labels = text.split(separator: ":").map(String.init)
         let labelsOnly = text.isEmpty || (text.last == ":" && labels.allSatisfy {
