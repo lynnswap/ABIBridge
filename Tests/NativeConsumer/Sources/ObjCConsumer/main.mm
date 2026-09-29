@@ -92,13 +92,13 @@ int main() {
     checkPublicObjCInvocation();
     @autoreleasepool {
         Class cls = objc_getClass("FixtureObject");
-        auto initialized = abi_bridge::objc_method<BOOL()>(cls, @selector(initialized));
+        auto initialized = abi_bridge::bound_objc_implementation<BOOL()>(cls, @selector(initialized));
         assert(initialized.unsafe_invoke());
         __weak FixtureObject* weakReceiver;
         {
             FixtureObject* object = [FixtureObject new];
             weakReceiver = object;
-            auto refresh = abi_bridge::objc_method<BOOL(BOOL)>(object, "refreshAnimated:");
+            auto refresh = abi_bridge::bound_objc_implementation<BOOL(BOOL)>(object, "refreshAnimated:");
             object = nil;
             assert(weakReceiver);
             assert(refresh.unsafe_invoke(YES));
@@ -109,52 +109,65 @@ int main() {
         assert(!weakReceiver);
 
         FixtureObject* object = [FixtureObject new];
-        auto mixed = abi_bridge::objc_method<NSInteger(NSInteger, double, NSString*, BOOL, NSInteger, NSInteger, Pair, NSObject*, NSInteger, NSInteger)>(
+        {
+            auto captured = abi_bridge::bound_objc_implementation<BOOL(BOOL)>(object, @selector(refreshAnimated:));
+            Method method = class_getInstanceMethod(FixtureObject.class, @selector(refreshAnimated:));
+            IMP replacement = imp_implementationWithBlock(^BOOL(FixtureObject* receiver, BOOL) {
+                receiver.value = 999;
+                return YES;
+            });
+            IMP previous = method_setImplementation(method, replacement);
+            assert([object refreshAnimated:NO] && object.value == 999);
+            assert(!captured.unsafe_invoke(NO) && object.value == 0);
+            method_setImplementation(method, previous);
+            imp_removeBlock(replacement);
+        }
+        auto mixed = abi_bridge::bound_objc_implementation<NSInteger(NSInteger, double, NSString*, BOOL, NSInteger, NSInteger, Pair, NSObject*, NSInteger, NSInteger)>(
             object, @selector(add:scale:label:flag:value:extra:pair:token:index:other:));
         assert(mixed.unsafe_invoke(1, 2.0, @"native", YES, 2, 3, Pair{4, 5}, object, 6, 7) == 58);
-        auto pair = abi_bridge::objc_method<Pair(Pair)>(object, @selector(scaledPair:));
+        auto pair = abi_bridge::bound_objc_implementation<Pair(Pair)>(object, @selector(scaledPair:));
         assert(pair.unsafe_invoke(Pair{2, 3}).y == 6);
-        auto large = abi_bridge::objc_method<Large()>(object, @selector(largeValue));
+        auto large = abi_bridge::bound_objc_implementation<Large()>(object, @selector(largeValue));
         assert(large.unsafe_invoke().values[5] == 42);
 
         for (SEL selector : {@selector(object), @selector(copyObject), @selector(newspaper)}) {
             @autoreleasepool {
-                auto getter = abi_bridge::objc_method<NSObject*()>(object, selector);
+                auto getter = abi_bridge::bound_objc_implementation<NSObject*()>(object, selector);
                 NSObject* value = getter.unsafe_invoke();
                 assert(value && liveResults == 1);
             }
             assert(liveResults == 0);
         }
         @autoreleasepool {
-            auto getter = abi_bridge::objc_method<NSObject*()>(
+            auto getter = abi_bridge::bound_objc_implementation<NSObject*()>(
                 object, @selector(retainedObject), {.returns_retained = true});
             NSObject* value = getter.unsafe_invoke();
             assert(value && liveResults == 1);
         }
         assert(liveResults == 0);
         @autoreleasepool {
-            auto getter = abi_bridge::objc_method<NSObject*()>(
+            auto getter = abi_bridge::bound_objc_implementation<NSObject*()>(
                 object, @selector(newBorrowedObject), {.returns_retained = false});
             NSObject* value = getter.unsafe_invoke();
             assert(value && liveResults == 1);
         }
         assert(liveResults == 0);
 
-        auto accepts = abi_bridge::objc_method<BOOL(NSObject*)>(object, @selector(acceptsObject:));
+        auto accepts = abi_bridge::bound_objc_implementation<BOOL(NSObject*)>(object, @selector(acceptsObject:));
         assert(accepts.unsafe_invoke(object) && !accepts.unsafe_invoke(nil));
         __block NSInteger blockResult = 0;
-        auto apply = abi_bridge::objc_method<void(void (^)(NSInteger))>(object, @selector(applyBlock:));
+        auto apply = abi_bridge::bound_objc_implementation<void(void (^)(NSInteger))>(object, @selector(applyBlock:));
         apply.unsafe_invoke(^(NSInteger value) { blockResult = value; });
         assert(blockResult == 42);
         @autoreleasepool {
-            auto factory = abi_bridge::objc_method<Transform()>(object, @selector(copyTransform));
+            auto factory = abi_bridge::bound_objc_implementation<Transform()>(object, @selector(copyTransform));
             Transform transform = factory.unsafe_invoke();
             assert(transform(41) == 42 && liveResults == 1);
         }
         assert(liveResults == 0);
 
         @autoreleasepool {
-            auto factory = abi_bridge::objc_method<Transform()>(
+            auto factory = abi_bridge::bound_objc_implementation<Transform()>(
                 object, @selector(retainedTransform), {.returns_retained = true});
             Transform transform = factory.unsafe_invoke();
             assert(transform(41) == 42 && liveResults == 1);
@@ -166,7 +179,7 @@ int main() {
         @autoreleasepool {
             Initializable* allocated = [Initializable alloc];
             original = allocated;
-            auto initialize = abi_bridge::objc_method<Initializable*()>(allocated, @selector(initWithReplacement));
+            auto initialize = abi_bridge::bound_objc_implementation<Initializable*()>(allocated, @selector(initWithReplacement));
             allocated = nil;
             Initializable* result = initialize.unsafe_invoke();
             replacement = result;
@@ -176,47 +189,47 @@ int main() {
         @autoreleasepool {
             Initializable* allocated = [Initializable alloc];
             original = allocated;
-            auto initialize = abi_bridge::objc_method<Initializable*()>(allocated, @selector(initReturningNil));
+            auto initialize = abi_bridge::bound_objc_implementation<Initializable*()>(allocated, @selector(initReturningNil));
             allocated = nil;
             assert(initialize.unsafe_invoke() == nil);
         }
         assert(!original);
 
-        auto dynamic = abi_bridge::objc_method<NSInteger()>([DynamicObject new], sel_registerName("dynamicValue"));
+        auto dynamic = abi_bridge::bound_objc_implementation<NSInteger()>([DynamicObject new], sel_registerName("dynamicValue"));
         assert(dynamic.unsafe_invoke() == 42);
         try {
-            abi_bridge::objc_method<void(double)>(object, @selector(refreshAnimated:));
+            abi_bridge::bound_objc_implementation<void(double)>(object, @selector(refreshAnimated:));
             assert(false && "Mismatched encodings must be rejected");
         } catch (const abi_bridge::resolution_error& error) {
             assert(error.code() == ABIFailureSignatureMismatch);
         }
         try {
-            abi_bridge::objc_method<BOOL()>(object, @selector(refreshAnimated:));
+            abi_bridge::bound_objc_implementation<BOOL()>(object, @selector(refreshAnimated:));
             assert(false && "Mismatched parameter counts must be rejected");
         } catch (const abi_bridge::resolution_error& error) {
             assert(error.code() == ABIFailureSignatureMismatch);
         }
         try {
-            abi_bridge::objc_method<BOOL(double)>(object, @selector(refreshAnimated:));
+            abi_bridge::bound_objc_implementation<BOOL(double)>(object, @selector(refreshAnimated:));
             assert(false && "Mismatched parameter encodings must be rejected");
         } catch (const abi_bridge::resolution_error& error) {
             assert(error.code() == ABIFailureSignatureMismatch);
         }
         try {
-            abi_bridge::objc_method<BOOL(BOOL)>(
+            abi_bridge::bound_objc_implementation<BOOL(BOOL)>(
                 object, @selector(refreshAnimated:), {.returns_retained = true});
             assert(false && "A scalar result cannot transfer object ownership");
         } catch (const abi_bridge::resolution_error& error) {
             assert(error.code() == ABIFailureInvalidRequest);
         }
         try {
-            abi_bridge::objc_method<void()>(object, sel_registerName("missingMethod"));
+            abi_bridge::bound_objc_implementation<void()>(object, sel_registerName("missingMethod"));
             assert(false && "Missing methods must be rejected");
         } catch (const abi_bridge::resolution_error& error) {
             assert(error.code() == ABIFailureDeclarationNotFound);
         }
         try {
-            abi_bridge::objc_method<void()>(nil, @selector(description));
+            abi_bridge::bound_objc_implementation<void()>(nil, @selector(description));
             assert(false && "A bound method requires a receiver");
         } catch (const abi_bridge::resolution_error& error) {
             assert(error.code() == ABIFailureInvalidRequest);
