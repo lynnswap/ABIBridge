@@ -11,7 +11,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 
 invocation=(
     CFunctionInvocationTests CXXObjectInvocationTests CallerDescribedValueTests NativeRuntimeTests
-    ObjectiveCAggregateTests ObjectiveCBlockTests ObjectiveCImplementationTests ObjectiveCInvocationTests
+    ObjectiveCAggregateTests ObjectiveCBlockTests ObjectiveCImplementationTests ObjectiveCInvocationTests ObjectiveCSelectorTests
     ObjectiveCIvarTests SwiftCallBoundaryTests SwiftFunctionInvocationTests
     SwiftMemberInvocationTests SwiftArgumentConventionTests SwiftExistentialValueTests SwiftOpaqueResultTests ManagedSwiftValueTests SwiftClosureABITests NativeSwiftClosureTests
     SwiftCollectionValueTests SwiftGenericMetadataTests SwiftExplicitValueTests SwiftIndirectValueTests SwiftErrorABITests SwiftThrowingInvocationTests SwiftThrowingClosureTests SwiftAsyncABITests SwiftAsyncClosureABITests SwiftAsyncInvocationTests SwiftAsyncTransportTests NativeSwiftAsyncClosureTests

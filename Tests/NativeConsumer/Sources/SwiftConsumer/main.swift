@@ -58,7 +58,7 @@ struct SwiftConsumer {
             let setter = try object.method(selector: "setHandler:", as: ((ConsumerBlock?) -> Void).self)
             let getter = try object.method(selector: "handler", as: (() -> ConsumerBlock?).self)
             let unboundSetter = try ABIRuntime.shared.objcMethod(
-                on: BlockReceiver.self, selector: "setHandler:", as: ((ConsumerBlock?) -> Void).self
+                on: BlockReceiver.self, selector: #selector(setter: BlockReceiver.handler), as: ((ConsumerBlock?) -> Void).self
             )
             let boundSetter: NativeBoundObjCMethod<Void, ConsumerBlock?> = try unboundSetter.bind(to: receiver)
             let captured = NSNumber(value: 31)
@@ -70,7 +70,7 @@ struct SwiftConsumer {
             let cleared = try unsafe getter.unsafeInvoke()
             precondition(cleared == nil)
             let capturedGetter = try ABIRuntime.shared.objcImplementation(
-                on: BlockReceiver.self, selector: "handler", as: (() -> ConsumerBlock?).self
+                on: BlockReceiver.self, selector: #selector(getter: BlockReceiver.handler), as: (() -> ConsumerBlock?).self
             )
             try unsafe setter.unsafeInvoke(block)
             let capturedBlock = try unsafe capturedGetter.unsafeInvoke(on: receiver)
