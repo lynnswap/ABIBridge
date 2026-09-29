@@ -153,4 +153,3 @@ extension NativeObjCHookRequest {
         unsafe mainActorInitializer(on: type, selector: NSStringFromSelector(selector), as: signature, options: options, retaining: owner, onFailure: onFailure, transformingArguments: transformingArguments, before: before, after: after)
     }
 }
-
