@@ -32,6 +32,7 @@ int shared() { return 41; }
 }
 
 static std::string constructorPath;
+static std::vector<std::string> constructorNames;
 static uint64_t constructorGeneration = 0;
 extern "C" void ABIBridgeTestConstructorEntered(const void *initializer) {
     Dl_info info{};
@@ -55,6 +56,14 @@ extern "C" void ABIBridgeTestConstructorEntered(const void *initializer) {
             try {
                 runtime.resolve(pending, scope, abi_bridge::image_loading::loaded_only);
                 assert(false && "An initializing image is not available to this thread");
+            } catch (const abi_bridge::resolution_error& error) {
+                assert(error.code() == ABIFailureImageUnavailable);
+            }
+        }
+        for (const auto& name : constructorNames) {
+            try {
+                runtime.resolve(pending, abi_bridge::image_selector::install_name(name), abi_bridge::image_loading::loaded_only);
+                assert(false && "An initializing install name must preserve unavailability");
             } catch (const abi_bridge::resolution_error& error) {
                 assert(error.code() == ABIFailureImageUnavailable);
             }
@@ -95,6 +104,9 @@ int main(int argc, char** argv) {
         }
     });
     constructorPath = argv[2];
+    const auto aliasPath = constructorPath + ".alias";
+    std::filesystem::create_symlink(std::filesystem::absolute(constructorPath), aliasPath);
+    constructorNames = {constructorPath, aliasPath};
     void* constructorLibrary = dlopen(argv[2], RTLD_NOW | RTLD_LOCAL);
     assert(constructorLibrary);
     // No cache clearing or image reload separates the two phases.
@@ -109,6 +121,15 @@ int main(int argc, char** argv) {
             assert(error.code() == ABIFailureAmbiguousDeclaration);
         }
     }
+    // Some dyld versions can acquire an @rpath handle before initialization;
+    // verify that spelling after the initializer has released the loader lock.
+    constructorNames.push_back("@rpath/ABIBridgeConstructor.dylib");
+    for (const auto& name : constructorNames) {
+        const auto symbol = runtime.resolve(abi_bridge::declaration("ABIBridgeReadinessFixture::pendingOnly()"),
+            abi_bridge::image_selector::install_name(name), abi_bridge::image_loading::loaded_only);
+        assert(symbol.image().load_generation == constructorGeneration);
+    }
+    std::filesystem::remove(aliasPath);
     assert(runtime.c_function<pid_t()>("getpid").unsafe_invoke() == getpid());
     assert(dlclose(constructorLibrary) == 0);
     {

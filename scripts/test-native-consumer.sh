@@ -58,7 +58,7 @@ xcrun clang++ -std=c++20 -dynamiclib -mmacosx-version-min=15.4 \
     "$task_root/Tests/NativeConsumer/Fixture.cpp" \
     -o "$task_fixture/libFixture.dylib"
 xcrun clang++ -std=c++20 -dynamiclib -mmacosx-version-min=15.4 \
-    -undefined dynamic_lookup "$task_root/Tests/NativeConsumer/Constructor.cpp" \
+    -undefined dynamic_lookup -Wl,-install_name,@rpath/ABIBridgeConstructor.dylib "$task_root/Tests/NativeConsumer/Constructor.cpp" \
     -o "$task_fixture/libConstructor.dylib"
 xcrun swiftc -parse-as-library -emit-library -emit-module -enable-library-evolution \
     -module-name SwiftFunctionFixture -emit-module-path "$task_fixture/SwiftFunctionFixture.swiftmodule" \
