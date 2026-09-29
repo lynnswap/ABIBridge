@@ -42,8 +42,8 @@ int main() {
     @autoreleasepool {
         {
             FixtureObject* object = [[FixtureObject alloc] init];
-            auto getter = abi_bridge::objc_method<NSObject*()>(object, @selector(copyObject));
-            auto transform = abi_bridge::objc_method<Transform()>(
+            auto getter = abi_bridge::bound_objc_implementation<NSObject*()>(object, @selector(copyObject));
+            auto transform = abi_bridge::bound_objc_implementation<Transform()>(
                 object, @selector(ownedTransform), {.returns_retained = true});
             [object release];
             assert(liveReceivers == 1);
@@ -65,7 +65,7 @@ int main() {
         assert(liveReceivers == 0);
         {
             FixtureObject* allocated = [FixtureObject alloc];
-            auto initialize = abi_bridge::objc_method<FixtureObject*()>(allocated, @selector(init));
+            auto initialize = abi_bridge::bound_objc_implementation<FixtureObject*()>(allocated, @selector(init));
             [allocated release];
             @autoreleasepool {
                 FixtureObject* result = initialize.unsafe_invoke();

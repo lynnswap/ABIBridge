@@ -23,15 +23,15 @@ template <typename Result, typename... Arguments>
 struct is_objc_result<Result (^)(Arguments...)> : std::true_type {};
 }
 
-template <typename Signature> class objc_method_handle;
+template <typename Signature> class bound_objc_implementation;
 
 /// A typed IMP and retained receiver. Copies share the binding. Binding checks
 /// encodings and ownership options, but cannot infer every native ABI contract.
 /// The caller owns argument lifetimes and target thread requirements.
 template <typename Result, typename... Arguments>
-class objc_method_handle<Result(Arguments...)> final {
+class bound_objc_implementation<Result(Arguments...)> final {
 public:
-    objc_method_handle(id receiver, SEL selector, objc_method_options options = {}) {
+    bound_objc_implementation(id receiver, SEL selector, objc_method_options options = {}) {
         const std::array<const char*, sizeof...(Arguments)> parameters{@encode(Arguments)...};
         NSError* error = nil;
         auto* method = ABICopyObjCMethod(receiver, selector, @encode(Result),
@@ -44,6 +44,10 @@ public:
         }
         method_ = std::shared_ptr<ABIObjCMethod>(method, ABIReleaseObjCMethod);
     }
+
+    /// Accepts a UTF-8 selector spelling when no declaration is importable.
+    bound_objc_implementation(id receiver, std::string_view name, objc_method_options options = {})
+        : bound_objc_implementation(receiver, selector_named(name), options) {}
 
     /// Invokes the IMP chosen at binding time. Rebind to observe replacement.
     /// Object results follow ordinary +0 return semantics; ARC callers receive
@@ -62,6 +66,13 @@ public:
     }
 
 private:
+    static SEL selector_named(std::string_view name) {
+        if (name.find('\0') != std::string_view::npos)
+            throw resolution_error(ABIFailureInvalidRequest, "Selector names must not contain embedded NULs.");
+        const std::string selector(name);
+        return sel_registerName(selector.c_str());
+    }
+
     template <bool Consumed, bool Retained>
     Result invoke(Arguments... arguments) const {
         id receiver = ABIObjCMethodReceiver(method_.get());
@@ -100,25 +111,5 @@ private:
 
     std::shared_ptr<ABIObjCMethod> method_;
 };
-
-/// Resolves a selector on an existing receiver and binds its typed IMP.
-template <typename Signature>
-objc_method_handle<Signature> objc_method(
-    id receiver, SEL selector, objc_method_options options = {})
-{
-    return objc_method_handle<Signature>(receiver, selector, options);
-}
-
-/// Creates the selector from a source-level name without requiring a header
-/// declaration for the target method.
-template <typename Signature>
-objc_method_handle<Signature> objc_method(
-    id receiver, std::string_view name, objc_method_options options = {})
-{
-    if (name.find('\0') != std::string_view::npos)
-        throw resolution_error(ABIFailureInvalidRequest, "Selector names must not contain embedded NULs.");
-    const std::string selector(name);
-    return objc_method<Signature>(receiver, sel_registerName(selector.c_str()), options);
-}
 
 } // namespace abi_bridge
