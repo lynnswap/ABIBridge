@@ -38,9 +38,15 @@ public final class ConcreteControl {
                                         input='\n'.join(symbols), text=True).splitlines()
         def header(owner, member):
             prefix = f'ReceiverProbe.{owner}.{member}'
-            matches = [line for line, name in zip(headers, names)
-                       if name.startswith(prefix + '(') or name.startswith(prefix + '<')
-                       or name.startswith(prefix + '.getter :')]
+            matches = []
+            for line, name in zip(headers, names):
+                if name.startswith('(extension in ReceiverProbe):'):
+                    name = name.split(':', 1)[1]
+                    # These fixture requirements contain only a concrete type or
+                    # one protocol; retain the complete name in the IR report.
+                    name = re.sub(r'<[^>]*>', '', name, count=1)
+                if name.startswith(prefix + '(') or name.startswith(prefix + '<') or name.startswith(prefix + '.getter :'):
+                    matches.append(line)
             if len(matches) != 1:
                 raise RuntimeError(f'{target}: expected one {owner}.{member}: {matches}')
             return matches[0]
@@ -59,6 +65,15 @@ public final class ConcreteControl {
             raise RuntimeError(f'{target}: dependent values no longer have formal indirect storage')
         if 'ptr %Other' not in signatures['independent']:
             raise RuntimeError(f'{target}: independently generic member metadata convention changed')
+        signatures['specialized'] = header('GenericMemberReceiver', 'specialized')
+        signatures['specializedText'] = header('GenericMemberReceiver', 'specializedText')
+        signatures['witnessText'] = header('GenericMemberReceiver', 'witnessText')
+        if parameters(signatures['specialized']) != parameters(signatures['concrete']):
+            raise RuntimeError(f'{target}: same-type extension changed its concrete method convention')
+        if parameters(signatures['specializedText']) != parameters(signatures['valueText']):
+            raise RuntimeError(f'{target}: same-type extension changed its getter convention')
+        if 'ptr %Value.CustomStringConvertible' not in signatures['witnessText']:
+            raise RuntimeError(f'{target}: additional extension conformance convention changed')
         reports.append({'target': target, 'signatures': signatures})
     report = {'compiler': run('xcrun', 'swiftc', '--version').strip(), 'runtimeTested': False, 'targets': reports}
     (output / 'report.json').write_text(json.dumps(report, indent=2) + '\n')

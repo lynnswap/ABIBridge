@@ -55,10 +55,13 @@ public actor NativeSwiftType {
         )
     }
 
-    private func resolveDeclaredMember(_ declaration: NativeDeclaration, in image: NativeImage) throws -> ResolvedSymbol {
+    private func resolveDeclaredMember(
+        _ declaration: NativeDeclaration, in image: NativeImage,
+        genericContext: () throws -> SwiftGenericContext? = { nil }
+    ) throws -> ResolvedSymbol {
         do { return try resolver.resolve(declaration, in: image, loading: .loadedOnly) }
         catch ABIResolutionError.declarationNotFound {
-            return try resolver.resolveSwiftExtension(declaration)
+            return try resolver.resolveSwiftExtension(declaration, genericContext: genericContext())
         }
     }
 
@@ -69,10 +72,13 @@ public actor NativeSwiftType {
         var request = originalRequest
         var ownerClass: AnyClass? = metadata as? AnyClass
         var ownerImage = image
+        var ownerName = name
         var hasUnavailableExtensions = false
         while true {
             do {
-                return try resolveDeclaredMember(request, in: ownerImage)
+                return try resolveDeclaredMember(request, in: ownerImage) {
+                    try ownerClass.flatMap { try SwiftGenericContext($0, owner: ownerName) }
+                }
             } catch ABIResolutionError.declarationNotFound {
             } catch ABIResolutionError.imageUnavailable {
                 // An incomplete extension search must not hide an available
@@ -86,7 +92,7 @@ public actor NativeSwiftType {
             let runtimeName = try swiftFunctionTypeName(parent)
             ownerClass = parent
             ownerImage = try swiftClassImage(parent, named: runtimeName, resolver: resolver)
-            let ownerName = try swiftClassDeclarationName(parent, in: ownerImage, suggestedName: runtimeName, resolver: resolver)
+            ownerName = try swiftClassDeclarationName(parent, in: ownerImage, suggestedName: runtimeName, resolver: resolver)
             request = try declaration(ownerName)
         }
     }
