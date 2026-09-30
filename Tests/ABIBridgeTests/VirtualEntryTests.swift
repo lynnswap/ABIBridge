@@ -7,6 +7,56 @@ import Testing
 
 @Suite(.serialized)
 struct VirtualEntryTests {
+    @Test func nullSlotsPreserveNamedSelectionAmbiguityAndOriginalIdentity() async throws {
+        let library = try FixtureLibrary(cxxSource: """
+            namespace NullVirtual { int target(int value) { return value + 42; } }
+            using Function = int (*)(int);
+            extern "C" {
+                Function sparse[] = {NullVirtual::target, nullptr};
+                Function zeros[2] = {};
+                Function repeated[] = {NullVirtual::target, nullptr, NullVirtual::target};
+                Function unidentified[] = {NullVirtual::target, reinterpret_cast<Function>(0x12345)};
+            }
+            """, linkArguments: ["-O2", "-g", "-Wl,-fixup_chains", "-Wl,-no_data_const"])
+        defer { library.cleanup() }
+        let runtime = ABIRuntime()
+        let name = "NullVirtual::target(int)"
+        let sparse = try await runtime.resolve(.init(name: "sparse", language: .c, kind: .data),
+            in: .path(library.libraryURL), loading: .loadedOnly)
+        for count in [1, 2] {
+            let table = try unsafe sparse.withUnsafeAddress { try unsafe NativeVTable(borrowing: $0, entryCount: count, retaining: sparse) }
+            let entry = try await table.entry(named: name, using: runtime)
+            #expect(entry.index == 0 && entry.authentication == .unsigned)
+        }
+        try unsafe sparse.withUnsafeAddress {
+            let words = $0.assumingMemoryBound(to: UInt.self)
+            let saved = words.pointee
+            let writable = UnsafeMutablePointer(mutating: words)
+            writable[0] = 0
+            writable[1] = saved
+        }
+        let changed = try unsafe sparse.withUnsafeAddress { try unsafe NativeVTable(borrowing: $0, entryCount: 2, retaining: sparse) }
+        #expect(try await changed.entry(named: name, using: ABIRuntime()).index == 0)
+        let repeated = try await runtime.resolve(.init(name: "repeated", language: .c, kind: .data),
+            in: .path(library.libraryURL), loading: .loadedOnly)
+        let duplicate = try unsafe repeated.withUnsafeAddress { try unsafe NativeVTable(borrowing: $0, entryCount: 3, retaining: repeated) }
+        do { _ = try await duplicate.entry(named: name, using: runtime); Issue.record("Null slots hid duplicate original entries") }
+        catch ABIResolutionError.ambiguousDeclaration {}
+        let unknown = try await runtime.resolve(.init(name: "unidentified", language: .c, kind: .data),
+            in: .path(library.libraryURL), loading: .loadedOnly)
+        try unsafe unknown.withUnsafeAddress { UnsafeMutableRawPointer(mutating: $0).storeBytes(of: UInt(0), toByteOffset: 8, as: UInt.self) }
+        let unidentified = try unsafe unknown.withUnsafeAddress { try unsafe NativeVTable(borrowing: $0, entryCount: 2, retaining: unknown) }
+        do { _ = try await unidentified.entry(named: name, using: runtime); Issue.record("A live zero replaced unavailable original identity") }
+        catch ABIResolutionError.metadataUnavailable {}
+        let zeros = try await runtime.resolve(.init(name: "zeros", language: .c, kind: .data),
+            in: .path(library.libraryURL), loading: .loadedOnly)
+        let empty = try unsafe zeros.withUnsafeAddress { try unsafe NativeVTable(borrowing: $0, entryCount: 2, retaining: zeros) }
+        do { _ = try await empty.entry(named: name, using: runtime); Issue.record("Zero-fill slots acquired a named target") }
+        catch ABIResolutionError.declarationNotFound {}
+        try FileManager.default.removeItem(at: library.libraryURL)
+        #expect(try await changed.entry(named: name, using: runtime).index == 0)
+    }
+
     private func fixture() throws -> FixtureLibrary {
         try FixtureLibrary(cxxSource: """
         #include <stdint.h>
