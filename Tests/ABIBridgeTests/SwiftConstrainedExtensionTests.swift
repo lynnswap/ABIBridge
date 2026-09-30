@@ -209,6 +209,7 @@ struct SwiftConstrainedExtensionTests {
         let fixture = try FixtureLibrary(swiftModule: "A", swiftSource: """
             import Foundation
             public struct Type {}
+            public struct MetatypeWrapper<Value> {}
             public final class MetatypePair<First, Second>: NSObject {}
             extension MetatypePair where Second == First.Type {
                 public func metatype() -> String { "unsupported" }
@@ -224,6 +225,9 @@ struct SwiftConstrainedExtensionTests {
             }
             extension MetatypePair where First == Second.Type {
                 public func reversed() -> String { "unsupported" }
+            }
+            extension MetatypePair where Second == MetatypeWrapper<First.Type> {
+                public func wrapped() -> String { "unsupported" }
             }
             public final class MetatypeBox<Content>: NSObject {}
             extension MetatypeBox where Content == (Type, Int) {
@@ -248,6 +252,7 @@ struct SwiftConstrainedExtensionTests {
                 case 5: value = MetatypeBox<(Type, Int)>()
                 case 6: value = MetatypeTriple<Int, (String, Int), Int.Type>()
                 case 7: value = MetatypeTriple<Int, (Type, Int), Int.Type>()
+                case 9: value = MetatypePair<Int, MetatypeWrapper<Int.Type>>()
                 default: value = MetatypeOuter<Int>.Inner<Int.Type>()
                 }
                 return Unmanaged.passRetained(value).toOpaque()
@@ -257,7 +262,7 @@ struct SwiftConstrainedExtensionTests {
         let runtime = ABIRuntime()
         let make = try await runtime.cFunction(named: "ABIMetatypeConstraintInstance", as: ((Int32) -> UnsafeMutableRawPointer).self,
             in: .path(fixture.libraryURL), loading: .loadedOnly)
-        let members = ["metatype()", "tuple()", "optional()", "nested()", "reversed()", "concrete()", "mixed()", "mixed()", "metatype()"]
+        let members = ["metatype()", "tuple()", "optional()", "nested()", "reversed()", "concrete()", "mixed()", "mixed()", "metatype()", "wrapped()"]
         for (kind, member) in members.enumerated() {
             let receiver = Unmanaged<AnyObject>.fromOpaque(try unsafe make.unsafeInvoke(Int32(kind))).takeRetainedValue()
             if kind == 5 {
@@ -287,6 +292,7 @@ struct SwiftConstrainedExtensionTests {
             public struct Value { public struct Leaf {} }
             public struct ValueQz {}
             public struct 🍎 {}
+            public struct Wrapper<Content> {}
             public final class Box<Content>: NSObject {}
             extension Box where Content == (Value, Int) {
                 public func concrete() -> String { "concrete" }
@@ -317,6 +323,12 @@ struct SwiftConstrainedExtensionTests {
                 @_silgen_name("$s1A4PairCAAx5Value_4LeafQXRs_rlE13relativeChainSSyF")
                 public func relativeChain() -> String { "unsupported" }
             }
+            extension Pair where Second == Wrapper<First.Value> {
+                public func wrapped() -> String { "unsupported" }
+            }
+            extension Pair where Second == Wrapper<Wrapper<First.Value?>> {
+                public func wrapped() -> String { "unsupported" }
+            }
             public final class ReversedPair<First, Second: P>: NSObject {}
             extension ReversedPair where First == Second.Value {
                 public func projected() -> String { "unsupported" }
@@ -337,6 +349,9 @@ struct SwiftConstrainedExtensionTests {
                 case 7: value = Triplet<Source, (String, Int), Int>()
                 case 8: value = Triplet<Source, (Value, Int), Int>()
                 case 9: value = Box<(🍎, Int)>()
+                case 10: value = Pair<Source, Wrapper<Value>>()
+                case 11: value = Pair<Source, Wrapper<Point>>()
+                case 12: value = Pair<Source, Wrapper<Wrapper<Value?>>>()
                 default: value = ReversedPair<Value, Source>()
                 }
                 return Unmanaged.passRetained(value).toOpaque()
@@ -346,7 +361,7 @@ struct SwiftConstrainedExtensionTests {
         let runtime = ABIRuntime()
         let make = try await runtime.cFunction(named: "ABIAmbiguousConstraintInstance", as: ((Int32) -> UnsafeMutableRawPointer).self,
             in: .path(fixture.libraryURL), loading: .loadedOnly)
-        for kind: Int32 in 0..<10 {
+        for kind: Int32 in 0..<13 {
             let receiver = Unmanaged<AnyObject>.fromOpaque(try unsafe make.unsafeInvoke(kind)).takeRetainedValue()
             if kind < 3 || kind == 9 {
                 let method = try await runtime.object(receiver).method(named: "concrete()", as: (() -> String).self)
@@ -360,7 +375,8 @@ struct SwiftConstrainedExtensionTests {
                     continue
                 }
                 do {
-                    _ = try await runtime.object(receiver).method(named: kind == 8 ? "mixed()" : "projected()", as: (() -> String).self)
+                    let member = kind == 8 ? "mixed()" : kind >= 10 ? "wrapped()" : "projected()"
+                    _ = try await runtime.object(receiver).method(named: member, as: (() -> String).self)
                     Issue.record("A dependent member was mistaken for a concrete module type")
                 } catch ABIResolutionError.unsupportedDeclaration {}
                 if kind == 3 || kind == 5 {

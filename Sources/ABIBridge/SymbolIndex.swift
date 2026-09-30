@@ -603,62 +603,50 @@ final class SymbolIndex {
         guard let requirementIndex = extensionMember.requirements.firstIndex(of: requirement) else { return true }
         let head = reference.prefix { $0 != "." }
         let newHead = head == "A" ? "B" : "A"
-        let components = reference.split(separator: ".")
-        guard components.count > 1 else { return true }
-        let references = (2...components.count).map { components.prefix($0).joined(separator: ".") }
-        func changesRequirement(_ prefix: String, suffix: Substring) -> Bool {
-            guard let declaration = DeclarationKey.demangle(prefix + suffix + "1fyyF", language: .swift),
+        let old = requirement.components(separatedBy: "==")
+        guard old.count == 2 else { return true }
+        func establishesDependence(_ context: String) -> Bool {
+            guard let declaration = DeclarationKey.demangle(context + "1fyyF", language: .swift),
                   let unqualified = extensionMemberName(declaration),
                   let parsed = SwiftConstrainedExtension(unqualified), parsed.owner == extensionMember.owner,
                   parsed.requirements.count == extensionMember.requirements.count else { return false }
-            let old = requirement.components(separatedBy: "==")
             let changed = parsed.requirements[requirementIndex].components(separatedBy: "==")
-            return old.count == 2 && changed.count == 2 && old[0] == changed[0] && old[1] != changed[1]
-        }
-        // A parameter can appear under a metatype or other type constructor
-        // without a dependent-member operator. Validate the parameter prefix
-        // and establish that changing it changes this requirement's RHS.
-        for match in genericParameter.matches(in: context, range: NSRange(context.startIndex..., in: context)) {
-            guard let range = Range(match.range, in: context),
-                  let before = DeclarationKey.demangle(String(context[..<range.upperBound]) + "D", language: .swift),
-                  before.hasSuffix(head) else { continue }
-            let altered = String(context[..<range.lowerBound]) + (head == "A" ? "q_" : "x")
-            guard let after = DeclarationKey.demangle(altered + "D", language: .swift),
-                  after.hasSuffix(newHead), before.dropLast(head.count) == after.dropLast(newHead.count),
-                  changesRequirement(altered, suffix: context[range.upperBound...]) else { continue }
-            return true
-        }
-        // Swift's mangling ABI uses Q operators for dependent members. Ask the
-        // demangler to validate type prefixes so text inside an identifier cannot
-        // imitate an operator. Changing its parameter must change only this type.
-        for match in dependentMember.matches(in: context, range: NSRange(context.startIndex..., in: context)) {
-            guard let range = Range(match.range, in: context),
-                  let before = DeclarationKey.demangle(String(context[..<range.upperBound]) + "D", language: .swift),
-                  references.contains(where: before.hasSuffix) else { continue }
-            let code = context[range].dropFirst().first!
-            let chain = code == "Y" || code == "Z" || code == "X"
-            let replacement = head == "A" ? (chain ? "QY_" : "Qy_") : (chain ? "QZ" : "Qz")
-            let altered = String(context[..<range.lowerBound]) + replacement
-            guard let after = DeclarationKey.demangle(altered + "D", language: .swift) else { continue }
-            for candidate in references where before.hasSuffix(candidate) {
-                let changed = newHead + candidate.dropFirst(head.count)
-                guard after.hasSuffix(changed) else { continue }
-                let prefix = before.dropLast(candidate.count)
-                let newPrefix = after.dropLast(changed.count)
-                if prefix == newPrefix, changesRequirement(altered, suffix: context[range.upperBound...]) { return true }
-                if code == "x" || code == "X", newPrefix == prefix + head {
-                    let bases = genericParameter.matches(in: context, range: NSRange(context.startIndex..<range.lowerBound, in: context))
-                    for base in bases {
-                        guard let baseRange = Range(base.range, in: context) else { continue }
-                        let value = head == "A" ? "q_" : "x"
-                        let altered = String(context[..<baseRange.lowerBound]) + value + context[baseRange.upperBound..<range.upperBound]
-                        guard let result = DeclarationKey.demangle(altered + "D", language: .swift), result.hasSuffix(changed),
-                              before.dropLast(candidate.count) == result.dropLast(changed.count),
-                              changesRequirement(altered, suffix: context[range.upperBound...]) else { continue }
-                        return true
-                    }
+            guard changed.count == 2, old[0] == changed[0] else { return false }
+            let before = SwiftGenericSyntax.names(in: old[1])
+            let after = SwiftGenericSyntax.names(in: changed[1])
+            guard before.count == after.count else { return false }
+            var observed = false
+            var expected = ""
+            var cursor = old[1].startIndex
+            for (before, after) in zip(before, after) {
+                if before != after {
+                    guard before == head || before.hasPrefix(head + "."),
+                          after == newHead + before.dropFirst(head.count) else { return false }
+                    if before == reference { observed = true }
                 }
+                expected += old[1][cursor..<before.startIndex] + after
+                cursor = before.endIndex
             }
+            expected += old[1][cursor...]
+            return observed && expected == changed[1]
+        }
+        // Validate complete extension contexts: a type prefix inside an open
+        // generic argument list cannot be demangled on its own. A native change
+        // must rename this reference while preserving the rest of the RHS.
+        for match in genericParameter.matches(in: context, range: NSRange(context.startIndex..., in: context)) {
+            guard let range = Range(match.range, in: context) else { continue }
+            let altered = String(context[..<range.lowerBound]) + (head == "A" ? "q_" : "x") + context[range.upperBound...]
+            if establishesDependence(altered) { return true }
+        }
+        for match in dependentMember.matches(in: context, range: NSRange(context.startIndex..., in: context)) {
+            guard let range = Range(match.range, in: context) else { continue }
+            let code = context[range].dropFirst().first!
+            // Relative-base Qx/QX members use the parameter handled above.
+            if code == "x" || code == "X" { continue }
+            let chain = code == "Y" || code == "Z"
+            let replacement = head == "A" ? (chain ? "QY_" : "Qy_") : (chain ? "QZ" : "Qz")
+            let altered = String(context[..<range.lowerBound]) + replacement + context[range.upperBound...]
+            if establishesDependence(altered) { return true }
         }
         return false
     }

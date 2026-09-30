@@ -45,7 +45,7 @@ struct SwiftGenericContext: Hashable, Sendable {
             if let argument = arguments[terms[1]] {
                 expected = argument
             } else {
-                let names = terms[1].split { $0.isWhitespace || "<>()[],:?!@&-=".contains($0) }
+                let names = SwiftGenericSyntax.names(in: terms[1])
                 guard !names.contains(where: { name in
                     guard arguments[String(name.prefix { $0 != "." })] != nil else { return false }
                     guard !SwiftGenericSyntax.isTupleLabel(name, in: terms[1]) else { return false }
@@ -84,7 +84,11 @@ struct SwiftConstrainedExtension {
     }
 }
 
-private enum SwiftGenericSyntax {
+enum SwiftGenericSyntax {
+    static func names(in type: String) -> [Substring] {
+        type.split { $0.isWhitespace || "<>()[],:?!@&-=".contains($0) }
+    }
+
     static func isTupleLabel(_ name: Substring, in type: String) -> Bool {
         guard type[name.endIndex...].drop(while: \.isWhitespace).first == ":" else { return false }
         var groups: [Character] = []
