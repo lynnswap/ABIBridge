@@ -71,24 +71,33 @@ func swiftFunctionDeclaration(
     return NativeDeclaration(name: declaration, language: .swift)
 }
 
-// Effect annotations inside parameter/result closure types do not describe the
-// enclosing function. Keep only top-level text before its result arrow.
+// Scan backward so a `<` operator before the parameter list cannot open a
+// generic group. Closure and requirement arrows do not describe the result.
 func swiftOuterSignature(_ declaration: String) -> (text: String, result: Substring?) {
-    var depth = 0
-    var result = ""
-    var index = declaration.startIndex
-    while index < declaration.endIndex {
+    var parentheses = 0, generics = 0
+    var text = ""
+    var result: Substring?
+    var index = declaration.endIndex
+    while index > declaration.startIndex {
+        index = declaration.index(before: index)
         let character = declaration[index]
-        let next = declaration.index(after: index)
-        if depth == 0, character == "-", next < declaration.endIndex, declaration[next] == ">" {
-            return (result, declaration[declaration.index(after: next)...])
+        let previous = index > declaration.startIndex ? declaration.index(before: index) : nil
+        let arrow = character == ">" && previous.map { declaration[$0] == "-" } == true
+        if parentheses == 0, generics == 0, arrow {
+            result = declaration[declaration.index(after: index)...]
+            text.removeAll(keepingCapacity: true)
+            index = previous!
+            continue
         }
-        if character == "(" { depth += 1 }
-        else if character == ")" { depth -= 1 }
-        else if depth == 0 { result.append(character) }
-        index = next
+        if character == ")" { parentheses += 1 }
+        else if character == "(" { parentheses -= 1 }
+        else if parentheses == 0 {
+            if character == ">", !arrow { generics += 1 }
+            else if character == "<", generics > 0 { generics -= 1 }
+            text.append(character)
+        }
     }
-    return (result, nil)
+    return (String(text.reversed()), result)
 }
 
 final class SwiftCallInterface: @unchecked Sendable {
