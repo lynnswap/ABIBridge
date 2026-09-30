@@ -27,6 +27,7 @@ private final class ConstrainedPair<First, Second> {}
 extension ConstrainedPair where First == Int {
     @inline(never) @_optimize(none) func partial() -> String { "partial" }
     @inline(never) @_optimize(none) func overlap() -> String { "first" }
+    @inline(never) @_optimize(none) func choice() -> String { "supported" }
 }
 extension ConstrainedPair where Second == String {
     @inline(never) @_optimize(none) func overlap() -> String { "second" }
@@ -36,6 +37,26 @@ extension ConstrainedPair where First == Second {
 }
 extension ConstrainedPair where First == (Int) -> String, Second == (Int, String) {
     @inline(never) @_optimize(none) func compound() -> String { "compound" }
+}
+extension ConstrainedPair where Second: CustomStringConvertible {
+    @inline(never) @_optimize(none) func choice() -> String { "requires witness" }
+}
+extension ConstrainedPair where First: Sequence, First.Element == Int {
+    @inline(never) @_optimize(none) func associated() -> String { "associated" }
+}
+extension ConstrainedPair where Second == [First] {
+    @inline(never) @_optimize(none) func substituted() -> String { "substituted" }
+}
+extension ConstrainedPair where First: CustomStringConvertible, Second == Int {
+    @inline(never) @_optimize(none) func mixed() -> String { "mixed" }
+}
+
+private class ConstraintParent: NSObject {
+    @inline(never) @_optimize(none) func inheritedChoice() -> String { "parent" }
+}
+private final class ConstraintChild<Value>: ConstraintParent {}
+extension ConstraintChild where Value: CustomStringConvertible {
+    @inline(never) @_optimize(none) func inheritedChoice() -> String { "requires witness" }
 }
 
 private struct ConstrainedOuter<First> {
@@ -88,12 +109,12 @@ struct SwiftConstrainedExtensionTests {
         }
     }
 
-    @MainActor @Test func rejectsMismatchedAndUnestablishedWitnessConstraints() async throws {
+    @MainActor @Test func mismatchedConstraintsRemainAbsent() async throws {
         let inputs: [(AnyObject, String)] = [
             (ConstrainedBox(1.5), "title(_:)"),
             (ConstrainedPair<Int, String>(), "equal()"),
             (ConstrainedOuter<String>.Inner<Int>(), "nested()"),
-            (ConstrainedBox(42), "needsWitness()"),
+            (ConstrainedPair<String, String>(), "mixed()"),
         ]
         for (receiver, member) in inputs {
             do {
@@ -102,9 +123,75 @@ struct SwiftConstrainedExtensionTests {
                 } else {
                     _ = try await ABIRuntime().object(receiver).method(named: member, as: (() -> String).self)
                 }
-                Issue.record("An inapplicable or unsupported constrained member was selected")
+                Issue.record("An inapplicable constrained member was selected")
             } catch ABIResolutionError.declarationNotFound {}
         }
+    }
+
+    @MainActor @Test func unestablishedConstraintsReportAdapterRequirement() async throws {
+        #expect(ConstrainedBox(42).needsWitness() == "42")
+        #expect(ConstrainedPair<[Int], String>().associated() == "associated")
+        #expect(ConstrainedPair<Int, [Int]>().substituted() == "substituted")
+        let inputs: [(AnyObject, String)] = [
+            (ConstrainedBox(42), "needsWitness()"),
+            (ConstrainedPair<[Int], String>(), "associated()"),
+            (ConstrainedPair<Int, [Int]>(), "substituted()"),
+        ]
+        for (receiver, member) in inputs {
+            do {
+                _ = try await ABIRuntime().object(receiver).method(named: member, as: (() -> String).self)
+                Issue.record("An unsupported constraint was accepted without an adapter")
+            } catch ABIResolutionError.unsupportedDeclaration {}
+        }
+    }
+
+    @MainActor @Test func supportedCandidatesAndSuperclassMembersRemainSelectable() async throws {
+        let runtime = ABIRuntime()
+        let receiver = ConstrainedPair<Int, String>()
+        let choice = try await runtime.object(receiver).method(named: "choice()", as: (() -> String).self)
+        #expect(try unsafe choice.unsafeInvoke() == "supported")
+        let child = ConstraintChild<Int>()
+        let inherited = try await runtime.object(child).method(named: "inheritedChoice()", as: (() -> String).self)
+        #expect(try unsafe inherited.unsafeInvoke() == "parent")
+        await runtime.removeCachedResults()
+        let repeated = try await runtime.object(receiver).method(named: "choice()", as: (() -> String).self)
+        #expect(try unsafe repeated.unsafeInvoke() == "supported")
+    }
+
+    @Test func supportedExtensionInAnotherImageRemainsSelectable() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let module = "ConstraintLookupProvider"
+        let provider = try FixtureLibrary(swiftModule: module, swiftSource: """
+            import Foundation
+            public final class Pair<First, Second>: NSObject {}
+            extension Pair where Second: CustomStringConvertible {
+                public func choice() -> String { "requires witness" }
+            }
+            @_cdecl("ABIConstraintInstance") public func make() -> UnsafeMutableRawPointer {
+                Unmanaged.passRetained(Pair<Int, String>()).toOpaque()
+            }
+            """, linkArguments: ["-emit-module", "-emit-module-path", directory.appendingPathComponent(module + ".swiftmodule").path])
+        defer { provider.cleanup() }
+        let runtime = ABIRuntime()
+        let make = try await runtime.cFunction(named: "ABIConstraintInstance", as: (() -> UnsafeMutableRawPointer).self,
+            in: .path(provider.libraryURL), loading: .loadedOnly)
+        let receiver = Unmanaged<AnyObject>.fromOpaque(try unsafe make.unsafeInvoke()).takeRetainedValue()
+        let object = runtime.object(receiver)
+        do {
+            _ = try await object.method(named: "choice()", as: (() -> String).self)
+            Issue.record("An unsupported declaration was accepted before loading its supported alternative")
+        } catch ABIResolutionError.unsupportedDeclaration {}
+        let alternative = try FixtureLibrary(swiftModule: "ConstraintLookupExtension", swiftSource: """
+            import \(module)
+            extension Pair where First == Int {
+                public func choice() -> String { "supported image" }
+            }
+            """, linkArguments: ["-I", directory.path, provider.libraryURL.path])
+        defer { alternative.cleanup() }
+        let choice = try await object.method(named: "choice()", as: (() -> String).self)
+        #expect(try unsafe choice.unsafeInvoke() == "supported image")
     }
 
     @MainActor @Test func applicableOverlappingExtensionsRemainAmbiguous() async throws {

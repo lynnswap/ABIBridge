@@ -29,23 +29,36 @@ struct SwiftGenericContext: Hashable, Sendable {
         self.arguments = arguments
     }
 
-    func satisfies(_ extensionMember: SwiftConstrainedExtension) -> Bool {
+    func satisfies(_ extensionMember: SwiftConstrainedExtension) throws(ABIResolutionError) -> Bool {
         guard extensionMember.owner == owner else { return false }
-        return extensionMember.requirements.allSatisfy { requirement in
+        var unsupported: String?
+        for requirement in extensionMember.requirements {
             let terms = requirement.components(separatedBy: "==").map {
                 $0.trimmingCharacters(in: .whitespaces)
             }
-            guard terms.count == 2, let actual = arguments[terms[0]] else { return false }
+            guard terms.count == 2, let actual = arguments[terms[0]] else {
+                unsupported = requirement
+                continue
+            }
             let expected: String
             if let argument = arguments[terms[1]] {
                 expected = argument
             } else {
-                // Associated-type projections need a conformance-aware resolver.
-                guard !arguments.keys.contains(where: { terms[1].hasPrefix($0 + ".") }) else { return false }
+                let names = terms[1].split { !$0.isLetter && !$0.isNumber && $0 != "_" && $0 != "." }
+                guard !names.contains(where: { arguments[String($0.prefix { $0 != "." })] != nil }) else {
+                    unsupported = requirement
+                    continue
+                }
                 expected = terms[1]
             }
-            return DeclarationKey.make(actual) == DeclarationKey.make(expected)
+            if DeclarationKey.make(actual) != DeclarationKey.make(expected) { return false }
         }
+        if let unsupported {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "Constrained Swift member requires a native adapter for \(unsupported)."
+            )
+        }
+        return true
     }
 }
 

@@ -46,8 +46,9 @@ struct CXXSymbolFilterTests {
         let sameDeclaration = IndexedSymbol(name: intended.name, address: 2, source: .image)
         let differentType = IndexedSymbol(name: "__ZN7Example1fE11unsignedint", address: 3, source: .image)
         let query = SymbolQuery(.init(name: "Example :: f( unsigned int )", language: .cxx))
+        var unsupported: ABIResolutionError?
         let matches = SymbolIndex.matching(
-            [differentType, intended, sameDeclaration], query: query, extensionsOnly: false
+            [differentType, intended, sameDeclaration], query: query, extensionsOnly: false, unsupported: &unsupported
         )
         #expect(matches.map(\.address) == [1, 2])
     }

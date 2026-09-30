@@ -74,6 +74,8 @@ final class SymbolResolver: Sendable {
                 return try unique(declaration, images: scope.images, extensionsOnly: extensionsOnly, genericContext: genericContext)
             } catch ABIResolutionError.declarationNotFound where !scope.isComplete {
                 throw ABIResolutionError.imageUnavailable
+            } catch ABIResolutionError.unsupportedDeclaration where !scope.isComplete {
+                throw ABIResolutionError.imageUnavailable
             }
         }
         let key = LookupKey(declaration: declaration, extensionsOnly: extensionsOnly, genericContext: genericContext)
@@ -338,15 +340,25 @@ final class SymbolResolver: Sendable {
         let query = SymbolQuery(declaration)
         let candidates = state.withLock { state in images.map { state.index(for: $0) } }
         return try withExtendedLifetime(candidates) {
-            let primary = try state.withLock { _ in
-                try candidates.compactMap { try $0.resolve(query, source: .image, extensionsOnly: extensionsOnly, genericContext: genericContext) }
+            var unsupported: ABIResolutionError?
+            func matches(_ source: ResolvedSymbol.Source) throws -> [ResolvedSymbol] {
+                try state.withLock { _ in
+                    try candidates.compactMap { index in
+                        do { return try index.resolve(query, source: source, extensionsOnly: extensionsOnly, genericContext: genericContext) }
+                        catch let error as ABIResolutionError {
+                            guard case .unsupportedDeclaration = error else { throw error }
+                            unsupported = error
+                            return nil
+                        }
+                    }
+                }
             }
+            let primary = try matches(.image)
             if !primary.isEmpty { return try select(declaration, from: primary) }
 
             loadSharedCacheSymbols(for: query, into: candidates)
-            let fallback = try state.withLock { _ in
-                return try candidates.compactMap { try $0.resolve(query, source: .sharedCache, extensionsOnly: extensionsOnly, genericContext: genericContext) }
-            }
+            let fallback = try matches(.sharedCache)
+            if fallback.isEmpty, let unsupported { throw unsupported }
             return try select(declaration, from: fallback)
         }
     }
