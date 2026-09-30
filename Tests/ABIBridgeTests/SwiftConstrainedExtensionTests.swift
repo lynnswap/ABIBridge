@@ -205,6 +205,78 @@ struct SwiftConstrainedExtensionTests {
         #expect(try unsafe choice.unsafeInvoke() == "supported image")
     }
 
+    @Test func genericParameterMetatypesRequireAdapters() async throws {
+        let fixture = try FixtureLibrary(swiftModule: "A", swiftSource: """
+            import Foundation
+            public struct Type {}
+            public final class MetatypePair<First, Second>: NSObject {}
+            extension MetatypePair where Second == First.Type {
+                public func metatype() -> String { "unsupported" }
+            }
+            extension MetatypePair where Second == (First.Type, Int) {
+                public func tuple() -> String { "unsupported" }
+            }
+            extension MetatypePair where Second == First.Type? {
+                public func optional() -> String { "unsupported" }
+            }
+            extension MetatypePair where Second == First.Type.Type {
+                public func nested() -> String { "unsupported" }
+            }
+            extension MetatypePair where First == Second.Type {
+                public func reversed() -> String { "unsupported" }
+            }
+            public final class MetatypeBox<Content>: NSObject {}
+            extension MetatypeBox where Content == (Type, Int) {
+                public func concrete() -> String { "concrete" }
+            }
+            public final class MetatypeTriple<First, Second, Third>: NSObject {}
+            extension MetatypeTriple where Second == (Type, Int), Third == First.Type {
+                public func mixed() -> String { "unsupported" }
+            }
+            public struct MetatypeOuter<First> { public final class Inner<Second>: NSObject {} }
+            extension MetatypeOuter.Inner where Second == First.Type {
+                public func metatype() -> String { "unsupported" }
+            }
+            @_cdecl("ABIMetatypeConstraintInstance") public func make(_ kind: Int32) -> UnsafeMutableRawPointer {
+                let value: AnyObject
+                switch kind {
+                case 0: value = MetatypePair<Int, Int.Type>()
+                case 1: value = MetatypePair<Int, (Int.Type, Int)>()
+                case 2: value = MetatypePair<Int, Int.Type?>()
+                case 3: value = MetatypePair<Int, Int.Type.Type>()
+                case 4: value = MetatypePair<Int.Type, Int>()
+                case 5: value = MetatypeBox<(Type, Int)>()
+                case 6: value = MetatypeTriple<Int, (String, Int), Int.Type>()
+                case 7: value = MetatypeTriple<Int, (Type, Int), Int.Type>()
+                default: value = MetatypeOuter<Int>.Inner<Int.Type>()
+                }
+                return Unmanaged.passRetained(value).toOpaque()
+            }
+            """)
+        defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        let make = try await runtime.cFunction(named: "ABIMetatypeConstraintInstance", as: ((Int32) -> UnsafeMutableRawPointer).self,
+            in: .path(fixture.libraryURL), loading: .loadedOnly)
+        let members = ["metatype()", "tuple()", "optional()", "nested()", "reversed()", "concrete()", "mixed()", "mixed()", "metatype()"]
+        for (kind, member) in members.enumerated() {
+            let receiver = Unmanaged<AnyObject>.fromOpaque(try unsafe make.unsafeInvoke(Int32(kind))).takeRetainedValue()
+            if kind == 5 {
+                let method = try await runtime.object(receiver).method(named: member, as: (() -> String).self)
+                #expect(try unsafe method.unsafeInvoke() == "concrete")
+            } else if kind == 6 {
+                do {
+                    _ = try await runtime.object(receiver).method(named: member, as: (() -> String).self)
+                    Issue.record("An unrelated metatype constraint hid a proven mismatch")
+                } catch ABIResolutionError.declarationNotFound {}
+            } else {
+                do {
+                    _ = try await runtime.object(receiver).method(named: member, as: (() -> String).self)
+                    Issue.record("A generic-parameter metatype bypassed the adapter requirement")
+                } catch ABIResolutionError.unsupportedDeclaration {}
+            }
+        }
+    }
+
     @Test func moduleNamesAndDependentMembersKeepTheirDistinctMeaning() async throws {
         let fixture = try FixtureLibrary(swiftModule: "A", swiftSource: """
             import Foundation

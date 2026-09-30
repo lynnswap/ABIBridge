@@ -615,6 +615,19 @@ final class SymbolIndex {
             let changed = parsed.requirements[requirementIndex].components(separatedBy: "==")
             return old.count == 2 && changed.count == 2 && old[0] == changed[0] && old[1] != changed[1]
         }
+        // A parameter can appear under a metatype or other type constructor
+        // without a dependent-member operator. Validate the parameter prefix
+        // and establish that changing it changes this requirement's RHS.
+        for match in genericParameter.matches(in: context, range: NSRange(context.startIndex..., in: context)) {
+            guard let range = Range(match.range, in: context),
+                  let before = DeclarationKey.demangle(String(context[..<range.upperBound]) + "D", language: .swift),
+                  before.hasSuffix(head) else { continue }
+            let altered = String(context[..<range.lowerBound]) + (head == "A" ? "q_" : "x")
+            guard let after = DeclarationKey.demangle(altered + "D", language: .swift),
+                  after.hasSuffix(newHead), before.dropLast(head.count) == after.dropLast(newHead.count),
+                  changesRequirement(altered, suffix: context[range.upperBound...]) else { continue }
+            return true
+        }
         // Swift's mangling ABI uses Q operators for dependent members. Ask the
         // demangler to validate type prefixes so text inside an identifier cannot
         // imitate an operator. Changing its parameter must change only this type.
