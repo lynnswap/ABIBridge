@@ -45,7 +45,11 @@ struct SwiftGenericContext: Hashable, Sendable {
                 expected = argument
             } else {
                 let names = terms[1].split { !$0.isLetter && !$0.isNumber && $0 != "_" && $0 != "." }
-                guard !names.contains(where: { arguments[String($0.prefix { $0 != "." })] != nil }) else {
+                guard !names.contains(where: { name in
+                    guard arguments[String(name.prefix { $0 != "." })] != nil else { return false }
+                    // Demangled tuple labels are names, not type references.
+                    return terms[1][name.endIndex...].drop(while: \.isWhitespace).first != ":"
+                }) else {
                     unsupported = requirement
                     continue
                 }

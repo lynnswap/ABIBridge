@@ -47,6 +47,9 @@ extension ConstrainedPair where First: Sequence, First.Element == Int {
 extension ConstrainedPair where Second == [First] {
     @inline(never) @_optimize(none) func substituted() -> String { "substituted" }
 }
+extension ConstrainedPair where First == (A: Int, other: String) {
+    @inline(never) @_optimize(none) func tupleLabels() -> String { "tuple labels" }
+}
 extension ConstrainedPair where First: CustomStringConvertible, Second == Int {
     @inline(never) @_optimize(none) func mixed() -> String { "mixed" }
 }
@@ -97,11 +100,13 @@ struct SwiftConstrainedExtensionTests {
         let equal = ConstrainedPair<String, String>()
         let nested = ConstrainedOuter<Int>.Inner<String>()
         let compound = ConstrainedPair<(Int) -> String, (Int, String)>()
+        let tuple = ConstrainedPair<(A: Int, other: String), Bool>()
         let inputs: [(AnyObject, String, String)] = [
             (pair, "partial()", pair.partial()),
             (equal, "equal()", equal.equal()),
             (nested, "nested()", nested.nested()),
             (compound, "compound()", compound.compound()),
+            (tuple, "tupleLabels()", tuple.tupleLabels()),
         ]
         for (receiver, member, expected) in inputs {
             let method = try await runtime.object(receiver).method(named: member, as: (() -> String).self)
@@ -115,6 +120,7 @@ struct SwiftConstrainedExtensionTests {
             (ConstrainedPair<Int, String>(), "equal()"),
             (ConstrainedOuter<String>.Inner<Int>(), "nested()"),
             (ConstrainedPair<String, String>(), "mixed()"),
+            (ConstrainedPair<(A: Double, other: String), Bool>(), "tupleLabels()"),
         ]
         for (receiver, member) in inputs {
             do {
