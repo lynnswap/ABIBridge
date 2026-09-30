@@ -59,6 +59,8 @@ Argument object/block pointers are borrowed for the callback. Results read from 
 
 `objc_hook_options` supplies `class_method`, `requires_main_thread`, ownership overrides, an optional `object_filter`, and a `fallback_owner`. ARC options containing objects retain them for the options value's own lifetime; the installed object filter is weak. The fallback owner is retained independently when first publishing the dispatcher and is not replaced by later registrations.
 
+For an ordinary `objc_method_family(none)` method with an `init`- or `alloc`-like name, a +0 object result and borrowed self use `returns_retained = false` and `consumes_receiver = false`. The C frontend expresses the same overrides with `ABIObjCOwnershipBorrowed` for both ownership fields. The supplied contract must match the declaration's annotations.
+
 ## Initializer phases
 
 Use `objc_initializer_hook<Signature>` for consumed-self initialization. The before callback receives only explicit arguments. It can return void to observe without replacing native argument storage, return the argument tuple, or return one convertible value for a single argument. The after callback receives the actual initialized object or nil. Pass `nullptr` to omit either phase.

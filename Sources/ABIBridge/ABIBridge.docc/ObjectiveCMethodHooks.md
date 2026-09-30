@@ -36,6 +36,8 @@ The selector must resolve to a concrete implementation. The function type contai
 
 Installation is an unsafe operation because runtime encodings do not describe every ownership annotation, block signature, pointee lifetime, or actor requirement. Supply `NativeMethodOptions` when result ownership differs from the method family. Registrations on one managed entry must agree on ownership and native signature. Initializers use the dedicated operation in <doc:ObjectiveCInitializerHooks>. Explicit consumed arguments, foreign exception unwinding, allocation, retain/release, and lifecycle methods are outside the ordinary-method API.
 
+A method declared with `objc_method_family(none)` can use an `init`- or `alloc`-like selector without those lifecycle semantics. For an ordinary +0 object result and borrowed self, supply `NativeMethodOptions(returnsRetainedObject: false, consumesReceiver: false)` to describe that contract explicitly. Default initializer and allocation ownership still require their dedicated contracts.
+
 ## Continue, replace, and recover from failures
 
 ``NativeObjCMethodInvocation/receiver`` returns the current instance or class object. ``NativeObjCMethodInvocation/proceed(_:)`` calls the next registration in this invocation's snapshot, followed by the native implementation. It does not send the selector again. Use ordinary selector dispatch when intentional recursive entry is needed; use ``ABIRuntime/objcImplementation(on:selector:as:classMethod:options:retaining:)-(_,String,_,_,_,_)`` to capture a fixed implementation independently of a callback's continuation.

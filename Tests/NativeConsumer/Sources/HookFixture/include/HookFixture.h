@@ -15,6 +15,10 @@ typedef struct ABIHookPair { double x, y; } ABIHookPair;
 - (ABINativeHookResult *)copyObject;
 - (ABIHookPair)shift:(ABIHookPair)value;
 - (int32_t (^)(int32_t))block;
+- (NSObject *)ordinaryValue;
+- (NSObject *)initNamedValue __attribute__((objc_method_family(none)));
+- (NSObject *)initRetainedValue __attribute__((objc_method_family(none), ns_returns_retained));
+- (NSObject *)allocNamedValue __attribute__((objc_method_family(none)));
 @end
 #endif
 #ifdef __cplusplus

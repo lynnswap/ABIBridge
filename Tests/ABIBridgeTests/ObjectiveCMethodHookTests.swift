@@ -23,6 +23,35 @@ private final class HookCapture: @unchecked Sendable {
 struct ObjectiveCMethodHookTests {
     let runtime = ABIRuntime()
 
+    @Test(arguments: ["ordinaryValue", "initNamedValue", "initRetainedValue", "allocNamedValue"])
+    func explicitFamilyNoneOwnershipSupportsOrdinaryHooks(_ selector: String) throws {
+        let object = ABIAnnotatedHookFixture()
+        let options = NativeMethodOptions(returnsRetainedObject: selector == "initRetainedValue", consumesReceiver: false)
+        let method = try runtime.object(object).method(selector: selector, as: (() -> NSObject).self, options: options)
+        #expect(try unsafe method.unsafeInvoke() === object.value)
+        let calls = HookBox(0)
+        let hook = try unsafe runtime.hookMethod(on: ABIAnnotatedHookFixture.self, selector: selector,
+            as: (() -> NSObject).self, options: options, onFailure: { Issue.record($0) }) { call in
+                calls.update { $0 += 1 }
+                return try call.proceed()
+            }
+        defer { hook.invalidate() }
+        #expect(try unsafe method.unsafeInvoke() === object.value)
+        #expect(calls.read() == 1)
+    }
+
+    @Test func allocationDefaultsAndLifecycleOverridesRemainUnsupported() throws {
+        #expect(throws: NativeObjCMethodHookError.unsupportedMethod) {
+            try unsafe runtime.hookMethod(on: ABIAnnotatedHookFixture.self, selector: "alloc",
+                as: (() -> NSObject).self, classMethod: true, onFailure: { Issue.record($0) }) { call in try call.proceed() }
+        }
+        #expect(throws: NativeObjCMethodHookError.unsupportedMethod) {
+            try unsafe runtime.hookMethod(on: ABIAnnotatedHookFixture.self, selector: "dealloc",
+                as: (() -> Void).self, options: .init(returnsRetainedObject: false, consumesReceiver: false),
+                onFailure: { Issue.record($0) }) { call in try call.proceed() }
+        }
+    }
+
     @Test func orderingMiddleRemovalAndStableEntry() throws {
         let trace = HookBox<[Int]>([])
         func install(_ number: Int, increment: Int32) throws -> NativeObjCMethodHook {
