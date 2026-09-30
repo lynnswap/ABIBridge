@@ -1,4 +1,11 @@
 #import "ReplacementFixtures.h"
+@implementation ABIAnnotatedHookFixture
+- (instancetype)init { if ((self = [super init])) _value = [NSObject new]; return self; }
+- (NSObject *)ordinaryValue { return _value; }
+- (NSObject *)initNamedValue { return _value; }
+- (NSObject *)initRetainedValue { return _value; }
+- (NSObject *)allocNamedValue { return _value; }
+@end
 #include <stdatomic.h>
 #import <objc/message.h>
 

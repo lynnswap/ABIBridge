@@ -2,12 +2,38 @@
 #include <HookFixture.h>
 #include <cassert>
 #include <cstdio>
+#include <objc/message.h>
 
 int main() {
     int failures = 0;
     auto failed = [&](const abi_bridge::resolution_error&) noexcept { ++failures; };
     @autoreleasepool {
         ABINativeHookFixture *object = [[ABINativeHookFixture alloc] initWithSeed:0];
+        abi_bridge::objc_hook_options ordinary;
+        ordinary.returns_retained = false;
+        ordinary.consumes_receiver = false;
+        for (const char *name : {"ordinaryValue", "initNamedValue", "allocNamedValue"}) {
+            auto invoke = [&] {
+                return reinterpret_cast<NSObject *(*)(id, SEL)>(objc_msgSend)(object, sel_registerName(name));
+            };
+            assert(invoke() == object);
+            int calls = 0;
+            auto hook = abi_bridge::objc_method_hook<NSObject *()>(ABINativeHookFixture.class, name,
+                [&](auto& call) { ++calls; return call.proceed(); }, failed, ordinary);
+            assert(invoke() == object && calls == 1);
+            hook.invalidate();
+        }
+        ordinary.returns_retained = true;
+        auto retained = abi_bridge::objc_method_hook<NSObject *()>(ABINativeHookFixture.class, "initRetainedValue",
+            [](auto& call) { return call.proceed(); }, failed, ordinary);
+        {
+            NSObject *value = [object initRetainedValue];
+            assert(value == object);
+#if !__has_feature(objc_arc)
+            [value release];
+#endif
+        }
+        retained.invalidate();
         auto copies = abi_bridge::objc_method_hook<ABINativeHookResult *()>(ABINativeHookFixture.class, "copyObject",
             [](auto& call) {
                 ABINativeHookResult *first = call.proceed();

@@ -284,9 +284,9 @@ bool methodFamily(const char *name, const char *family) {
     const size_t size = std::strlen(family);
     return std::strncmp(name, family, size) == 0 && !(name[size] >= 'a' && name[size] <= 'z');
 }
-bool ordinaryMethod(SEL selector, bool classMethod) {
+bool ordinaryMethod(SEL selector, bool classMethod, const ABIObjCInvocation *binding) {
     const char *name = sel_getName(selector);
-    if (methodFamily(name, "init") || methodFamily(name, "alloc")) return false;
+    if (methodFamily(name, "alloc") && ABIObjCInvocationReturnsRetained(binding)) return false;
     for (const char *lifetime : {"dealloc", "retain", "release", "autorelease", "retainCount", "_tryRetain", "_isDeallocating"})
         if (std::strcmp(name, lifetime) == 0) return false;
     return !classMethod || (std::strcmp(name, "load") != 0 && std::strcmp(name, "initialize") != 0);
@@ -354,9 +354,9 @@ BOOL ABIValidateObjCMethodHook(Class type, SEL selector, BOOL classMethod, BOOL 
     while (*resultType && std::strchr("rnNoORV", *resultType)) ++resultType;
     const bool validInitializer = !classMethod && !object && *resultType == '@' && resultType[1] != '?'
         && ABIObjCInvocationConsumesReceiver(binding) && ABIObjCInvocationReturnsRetained(binding)
-        && (methodFamily(sel_getName(selector), "init") || ordinaryMethod(selector, false));
+        && (methodFamily(sel_getName(selector), "init") || ordinaryMethod(selector, false, binding));
     if (initializer ? !validInitializer
-        : (!ordinaryMethod(selector, classMethod) || ABIObjCInvocationConsumesReceiver(binding))) {
+        : (!ordinaryMethod(selector, classMethod, binding) || ABIObjCInvocationConsumesReceiver(binding))) {
         hookFail(error, 2, initializer
             ? @"An initializer hook requires consumed self and a retained object result on an instance method."
             : @"Initializers, consuming receivers, allocation, and lifecycle methods require dedicated hook contracts.");

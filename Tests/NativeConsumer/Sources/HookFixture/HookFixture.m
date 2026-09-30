@@ -16,6 +16,10 @@ static atomic_long results;
 - (ABIHookPair)shift:(ABIHookPair)value { return (ABIHookPair){value.x + 1, value.y + 2}; }
 - (ABINativeHookResult *)copyObject { return [ABINativeHookResult new]; }
 - (int32_t (^)(int32_t))block { return ^(int32_t value) { return value + 1; }; }
+- (NSObject *)ordinaryValue { return self; }
+- (NSObject *)initNamedValue { return self; }
+- (NSObject *)initRetainedValue { return self; }
+- (NSObject *)allocNamedValue { return self; }
 @end
 Class ABIHookFixtureClass(void) { return ABINativeHookFixture.class; }
 void *ABIHookFixtureCreate(int32_t seed) { return (void *)CFBridgingRetain([[ABINativeHookFixture alloc] initWithSeed:seed]); }

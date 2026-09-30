@@ -2,6 +2,13 @@
 #import <CoreGraphics/CoreGraphics.h>
 
 NS_ASSUME_NONNULL_BEGIN
+@interface ABIAnnotatedHookFixture : NSObject
+@property(nonatomic, readonly) NSObject *value;
+- (NSObject *)ordinaryValue;
+- (NSObject *)initNamedValue __attribute__((objc_method_family(none)));
+- (NSObject *)initRetainedValue __attribute__((objc_method_family(none), ns_returns_retained));
+- (NSObject *)allocNamedValue __attribute__((objc_method_family(none)));
+@end
 typedef int32_t (^ABIReplacementBlock)(int32_t);
 
 @interface ABIReplacementFixture : NSObject
