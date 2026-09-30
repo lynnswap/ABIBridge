@@ -210,10 +210,11 @@ struct SwiftConstrainedExtensionTests {
             import Foundation
             public protocol LeafSource { associatedtype Leaf }
             public struct Point: LeafSource { public typealias Leaf = Int }
-            public protocol P { associatedtype Value: LeafSource }
-            public struct Source: P { public typealias Value = Point }
+            public protocol P { associatedtype Value: LeafSource; associatedtype 🍎 }
+            public struct Source: P { public typealias Value = Point; public typealias 🍎 = Int }
             public struct Value { public struct Leaf {} }
             public struct ValueQz {}
+            public struct 🍎 {}
             public final class Box<Content>: NSObject {}
             extension Box where Content == (Value, Int) {
                 public func concrete() -> String { "concrete" }
@@ -224,11 +225,17 @@ struct SwiftConstrainedExtensionTests {
             extension Box where Content == (Value.Leaf, Int) {
                 public func concrete() -> String { "concrete" }
             }
+            extension Box where Content == (🍎, Int) {
+                public func concrete() -> String { "concrete" }
+            }
             public final class Pair<First: P, Second>: NSObject {}
             extension Pair where Second == First.Value {
                 public func projected() -> String { "unsupported" }
                 @_silgen_name("$s1A4PairCAAx5ValueQxRs_rlE8relativeSSyF")
                 public func relative() -> String { "unsupported" }
+            }
+            extension Pair where Second == First.🍎 {
+                public func unicodeProjection() -> String { "unsupported" }
             }
             extension Pair where Second == (First.Value, Int) {
                 public func projected() -> String { "unsupported" }
@@ -257,6 +264,7 @@ struct SwiftConstrainedExtensionTests {
                 case 5: value = Pair<Source, Value.Leaf>()
                 case 7: value = Triplet<Source, (String, Int), Int>()
                 case 8: value = Triplet<Source, (Value, Int), Int>()
+                case 9: value = Box<(🍎, Int)>()
                 default: value = ReversedPair<Value, Source>()
                 }
                 return Unmanaged.passRetained(value).toOpaque()
@@ -266,9 +274,9 @@ struct SwiftConstrainedExtensionTests {
         let runtime = ABIRuntime()
         let make = try await runtime.cFunction(named: "ABIAmbiguousConstraintInstance", as: ((Int32) -> UnsafeMutableRawPointer).self,
             in: .path(fixture.libraryURL), loading: .loadedOnly)
-        for kind: Int32 in 0..<9 {
+        for kind: Int32 in 0..<10 {
             let receiver = Unmanaged<AnyObject>.fromOpaque(try unsafe make.unsafeInvoke(kind)).takeRetainedValue()
-            if kind < 3 {
+            if kind < 3 || kind == 9 {
                 let method = try await runtime.object(receiver).method(named: "concrete()", as: (() -> String).self)
                 #expect(try unsafe method.unsafeInvoke() == "concrete")
             } else {
@@ -288,6 +296,12 @@ struct SwiftConstrainedExtensionTests {
                         _ = try await runtime.object(receiver).method(named: kind == 3 ? "relative()" : "relativeChain()",
                             as: (() -> String).self)
                         Issue.record("An equivalent relative-base mangling bypassed the adapter requirement")
+                    } catch ABIResolutionError.unsupportedDeclaration {}
+                }
+                if kind == 3 {
+                    do {
+                        _ = try await runtime.object(receiver).method(named: "unicodeProjection()", as: (() -> String).self)
+                        Issue.record("A Unicode associated-type name bypassed the adapter requirement")
                     } catch ABIResolutionError.unsupportedDeclaration {}
                 }
             }

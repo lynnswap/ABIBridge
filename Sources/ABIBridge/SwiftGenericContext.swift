@@ -45,7 +45,7 @@ struct SwiftGenericContext: Hashable, Sendable {
             if let argument = arguments[terms[1]] {
                 expected = argument
             } else {
-                let names = terms[1].split { !$0.isLetter && !$0.isNumber && $0 != "_" && $0 != "." }
+                let names = terms[1].split { $0.isWhitespace || "<>()[],:?!@&-=".contains($0) }
                 guard !names.contains(where: { name in
                     guard arguments[String(name.prefix { $0 != "." })] != nil else { return false }
                     guard !SwiftGenericSyntax.isTupleLabel(name, in: terms[1]) else { return false }

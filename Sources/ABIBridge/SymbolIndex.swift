@@ -604,6 +604,7 @@ final class SymbolIndex {
         let head = reference.prefix { $0 != "." }
         let newHead = head == "A" ? "B" : "A"
         let components = reference.split(separator: ".")
+        guard components.count > 1 else { return true }
         let references = (2...components.count).map { components.prefix($0).joined(separator: ".") }
         func changesRequirement(_ prefix: String, suffix: Substring) -> Bool {
             guard let declaration = DeclarationKey.demangle(prefix + suffix + "1fyyF", language: .swift),
