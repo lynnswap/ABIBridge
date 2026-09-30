@@ -34,6 +34,8 @@ This does not construct generic metadata or infer a substituted ABI. A member re
 
 Member lookup also considers same-type constrained extensions such as `extension Renderer where Content == Int`. Requirements can equate a whole type parameter to a concrete type or another enclosing type parameter. Lookup checks those requirements against the current receiver or superclass specialization; a cached result for one specialization does not apply to another. Multiple applicable extension declarations remain ambiguous rather than being ordered by Swift overload specificity. Associated-type projections and generic type expressions requiring substitution remain adapter cases. A new protocol constraint can add a witness argument beyond self and is not inferred by this lookup. Methods introducing additional generic parameters still require a compiled adapter because their metadata and witnesses are separate arguments. Generic opaque results and virtual replacement retain their existing adapter requirements. Receiver ownership, effects, actor isolation, and captured implementation dispatch are unchanged.
 
+When no supported candidate can be selected, an unestablished extension requirement or one needing a compiled adapter reports `ABIResolutionError.unsupportedDeclaration`. A proven specialization mismatch or an absent declaration reports `ABIResolutionError.declarationNotFound`. Unsupported candidates do not hide supported extensions or inherited members; a proven mismatch remains inapplicable even when another requirement cannot be evaluated.
+
 ## Reuse a type
 
 ```swift

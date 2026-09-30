@@ -29,23 +29,41 @@ struct SwiftGenericContext: Hashable, Sendable {
         self.arguments = arguments
     }
 
-    func satisfies(_ extensionMember: SwiftConstrainedExtension) -> Bool {
+    func satisfies(_ extensionMember: SwiftConstrainedExtension,
+                   isDependentType: (String, String) -> Bool) throws(ABIResolutionError) -> Bool {
         guard extensionMember.owner == owner else { return false }
-        return extensionMember.requirements.allSatisfy { requirement in
+        var unsupported: String?
+        for requirement in extensionMember.requirements {
             let terms = requirement.components(separatedBy: "==").map {
                 $0.trimmingCharacters(in: .whitespaces)
             }
-            guard terms.count == 2, let actual = arguments[terms[0]] else { return false }
+            guard terms.count == 2, let actual = arguments[terms[0]] else {
+                unsupported = requirement
+                continue
+            }
             let expected: String
             if let argument = arguments[terms[1]] {
                 expected = argument
             } else {
-                // Associated-type projections need a conformance-aware resolver.
-                guard !arguments.keys.contains(where: { terms[1].hasPrefix($0 + ".") }) else { return false }
+                let names = SwiftGenericSyntax.names(in: terms[1])
+                guard !names.contains(where: { name in
+                    guard arguments[String(name.prefix { $0 != "." })] != nil else { return false }
+                    guard !SwiftGenericSyntax.isTupleLabel(name, in: terms[1]) else { return false }
+                    return !name.contains(".") || isDependentType(String(name), requirement)
+                }) else {
+                    unsupported = requirement
+                    continue
+                }
                 expected = terms[1]
             }
-            return DeclarationKey.make(actual) == DeclarationKey.make(expected)
+            if DeclarationKey.make(actual) != DeclarationKey.make(expected) { return false }
         }
+        if let unsupported {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "Constrained Swift member requires a native adapter for \(unsupported)."
+            )
+        }
+        return true
     }
 }
 
@@ -66,7 +84,25 @@ struct SwiftConstrainedExtension {
     }
 }
 
-private enum SwiftGenericSyntax {
+enum SwiftGenericSyntax {
+    static func names(in type: String) -> [Substring] {
+        type.split { $0.isWhitespace || "<>()[],:?!@&-=".contains($0) }
+    }
+
+    static func isTupleLabel(_ name: Substring, in type: String) -> Bool {
+        guard type[name.endIndex...].drop(while: \.isWhitespace).first == ":" else { return false }
+        var groups: [Character] = []
+        var previous: Character?
+        for character in type[..<name.startIndex] {
+            if character == "(" || character == "[" || character == "<" { groups.append(character) }
+            else if character == ")", groups.last == "(" { groups.removeLast() }
+            else if character == "]", groups.last == "[" { groups.removeLast() }
+            else if character == ">", previous != "-", groups.last == "<" { groups.removeLast() }
+            previous = character
+        }
+        return groups.last == "("
+    }
+
     struct Group {
         let range: Range<String.Index>
         let contents: Substring

@@ -74,12 +74,15 @@ public actor NativeSwiftType {
         var ownerImage = image
         var ownerName = name
         var hasUnavailableExtensions = false
+        var unsupported: ABIResolutionError?
         while true {
             do {
                 return try resolveDeclaredMember(request, in: ownerImage) {
                     try ownerClass.flatMap { try SwiftGenericContext($0, owner: ownerName) }
                 }
             } catch ABIResolutionError.declarationNotFound {
+            } catch ABIResolutionError.unsupportedDeclaration(let reason) {
+                unsupported = .unsupportedDeclaration(reason)
             } catch ABIResolutionError.imageUnavailable {
                 // An incomplete extension search must not hide an available
                 // superclass member. Preserve uncertainty if no owner matches.
@@ -87,6 +90,7 @@ public actor NativeSwiftType {
             }
             guard let current = ownerClass, let parent = class_getSuperclass(current) else {
                 if hasUnavailableExtensions { throw ABIResolutionError.imageUnavailable }
+                if let unsupported { throw unsupported }
                 throw ABIResolutionError.declarationNotFound(originalRequest)
             }
             let runtimeName = try swiftFunctionTypeName(parent)
