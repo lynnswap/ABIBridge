@@ -18,6 +18,15 @@ final class VirtualEntryIndex: Sendable {
     }
     let image: NativeImage
     private let targets: [UInt64: Result<Target, ABIResolutionError>]
+    private struct OriginalSegment: Sendable {
+        let address: UInt64
+        let size: UInt64
+        let file: UInt64
+        let fileSize: UInt64
+    }
+    private let segments: [OriginalSegment]
+    private let headerOffset: Int
+    private let source: Mutex<Result<FileHandle, ABIResolutionError>>
     private struct DecodedTarget: Sendable {
         let declarations: Set<[UInt8]>
         let uniqueSymbol: String?
@@ -43,6 +52,15 @@ final class VirtualEntryIndex: Sendable {
         self.image = image
         let original = try OriginalImageMetadata(image: image)
         let file = original.file
+        headerOffset = file.headerStartOffset
+        segments = file.segments.compactMap { segment in
+            guard let address = UInt64(exactly: segment.virtualMemoryAddress),
+                  let size = UInt64(exactly: segment.virtualMemorySize),
+                  let offset = UInt64(exactly: segment.fileOffset), let fileSize = UInt64(exactly: segment.fileSize) else { return nil }
+            return OriginalSegment(address: address, size: size, file: offset, fileSize: fileSize)
+        }
+        do { source = Mutex(.success(try original.openReadHandle())) }
+        catch { source = Mutex(.failure(.metadataUnavailable("Original pointer bytes in \(image.path) are unavailable: \(error)"))) }
         guard file.is64Bit, let preferred = file.preferredLoadAddress else {
             throw ABIResolutionError.metadataUnavailable("Named virtual entries require a 64-bit absolute table")
         }
@@ -68,7 +86,11 @@ final class VirtualEntryIndex: Sendable {
         }
         let imports = file.dyldChainedFixups?.imports ?? []
         var targets: [UInt64: Result<Target, ABIResolutionError>] = [:]
-        for entry in try original.chainedPointers() where entry.width == 8 {
+        for entry in try original.chainedPointers() {
+            guard entry.width == 8 else {
+                targets[entry.address] = .failure(.metadataUnavailable("Original virtual entry uses a non-64-bit fixup; supply explicit adapter metadata"))
+                continue
+            }
             do {
                 let names: [String]
                 let authentication: NativePointerAuthentication
@@ -98,6 +120,28 @@ final class VirtualEntryIndex: Sendable {
         self.targets = targets
     }
 
+    private func originalNull(at address: UInt64) throws -> Bool {
+        let value = Int64(bitPattern: address).subtractingReportingOverflow(image.identity.slide)
+        guard !value.overflow else { throw ABIResolutionError.metadataUnavailable("Original virtual entry address overflow") }
+        let unslid = UInt64(bitPattern: value.partialValue)
+        guard let segment = segments.first(where: { unslid >= $0.address && unslid - $0.address < $0.size }) else {
+            throw ABIResolutionError.metadataUnavailable("Original virtual entry lies outside its image")
+        }
+        let offset = unslid - segment.address
+        guard segment.size - offset >= 8 else { throw ABIResolutionError.metadataUnavailable("Original virtual entry exceeds its segment") }
+        if offset >= segment.fileSize { return true }
+        guard segment.fileSize - offset >= 8 else { throw ABIResolutionError.metadataUnavailable("Original virtual entry crosses its file-backed range") }
+        let position = segment.file.addingReportingOverflow(offset)
+        guard !position.overflow, let position = Int(exactly: position.partialValue) else {
+            throw ABIResolutionError.metadataUnavailable("Original virtual entry file offset overflow")
+        }
+        let final = position.addingReportingOverflow(headerOffset)
+        guard !final.overflow else { throw ABIResolutionError.metadataUnavailable("Original virtual entry header offset overflow") }
+        return try source.withLock { result in
+            try OriginalImageMetadata.read(UInt64.self, from: result.get(), at: final.partialValue) == 0
+        }
+    }
+
     func match(named name: String, addressPoint: UInt, entryCount: Int) throws -> VirtualEntryResolution {
         guard !name.isEmpty, !name.utf8.contains(0) else {
             throw ABIResolutionError.unsupportedDeclaration("Use a qualified C++ method declaration")
@@ -108,6 +152,7 @@ final class VirtualEntryIndex: Sendable {
         for index in 0..<entryCount {
             let address = UInt64(addressPoint) + UInt64(index) * 8
             guard let target = targets[address] else {
+                if try originalNull(at: address) { continue }
                 throw ABIResolutionError.metadataUnavailable("No original absolute fixup identifies virtual entry \(index); supply explicit adapter metadata")
             }
             let info = try target.get()

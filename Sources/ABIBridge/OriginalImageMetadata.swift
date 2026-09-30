@@ -1,6 +1,7 @@
 import Foundation
 import MachO
 import MachOKit
+import Darwin
 
 /// Reads pre-binding metadata only from the same UUID and architecture as a
 /// retained live image. Live pointers no longer contain dyld's chain links.
@@ -30,6 +31,31 @@ struct OriginalImageMetadata {
         let pointer: DyldChainedFixupPointer
         let address: UInt64
         let width: Int
+    }
+
+    func openReadHandle() throws -> FileHandle {
+        let handle = try FileHandle(forReadingFrom: file.url)
+        let header = try Self.read(mach_header.self, from: handle, at: file.headerStartOffset)
+        guard header.cputype == file.header.layout.cputype, header.cpusubtype == file.header.layout.cpusubtype,
+              let uuid = file.loadCommands.compactMap({ command -> UUIDCommand? in
+                  if case .uuid(let value) = command { return value }
+                  return nil
+              }).first else { throw unavailable("original pointer bytes have no matching architecture or UUID") }
+        let command = try Self.read(uuid_command.self, from: handle, at: file.cmdsStartOffset + uuid.offset)
+        guard command.cmd == LC_UUID, UUID(uuid: command.uuid) == image.identity.uuid else {
+            throw unavailable("original pointer bytes do not match the loaded image")
+        }
+        return handle
+    }
+
+    static func read<Value: BitwiseCopyable>(_ type: Value.Type, from handle: FileHandle, at offset: Int) throws -> Value {
+        var data = Data(count: MemoryLayout<Value>.size)
+        let count = data.withUnsafeMutableBytes { pread(handle.fileDescriptor, $0.baseAddress, $0.count, off_t(offset)) }
+        guard count == data.count else {
+            let reason = count < 0 ? NSError(domain: NSPOSIXErrorDomain, code: Int(errno)).localizedDescription : "truncated original pointer bytes"
+            throw ABIResolutionError.metadataUnavailable(reason)
+        }
+        return data.withUnsafeBytes { $0.loadUnaligned(as: Value.self) }
     }
 
     func chainedPointers() throws -> [Pointer] {

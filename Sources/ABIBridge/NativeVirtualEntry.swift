@@ -27,6 +27,8 @@ extension NativeVTable {
     /// unsupported layouts require ``entry(at:authentication:)`` adapter metadata.
     /// The table bounds and subobject were established when constructing this view;
     /// neither class layouts nor method signatures are inferred from the name.
+    /// Known null slots in the original image do not prevent named selection.
+    /// A live zero does not establish a missing original entry's identity.
     public nonisolated(nonsending) func entry(
         named name: String, using runtime: ABIRuntime = .shared
     ) async throws -> Entry {
