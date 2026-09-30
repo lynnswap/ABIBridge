@@ -36,7 +36,7 @@ import SwiftValueFixtures
     do {
         _ = try await runtime.object(inherited).method(named: "witnessText()", as: (() -> String).self)
         throw ArchitectureValidationFailure(description: "Extra witness argument was not supplied")
-    } catch ABIResolutionError.declarationNotFound {
+    } catch ABIResolutionError.unsupportedDeclaration {
         checks.append("Additional extension witness keeps its adapter boundary")
     }
     await runtime.removeCachedResults()

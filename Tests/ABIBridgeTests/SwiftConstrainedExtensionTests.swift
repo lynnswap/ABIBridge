@@ -47,6 +47,9 @@ extension ConstrainedPair where First: Sequence, First.Element == Int {
 extension ConstrainedPair where Second == [First] {
     @inline(never) @_optimize(none) func substituted() -> String { "substituted" }
 }
+extension ConstrainedPair where First: Hashable, Second == [First: Int] {
+    @inline(never) @_optimize(none) func dictionary() -> String { "dictionary" }
+}
 extension ConstrainedPair where First == (A: Int, other: String) {
     @inline(never) @_optimize(none) func tupleLabels() -> String { "tuple labels" }
 }
@@ -138,10 +141,12 @@ struct SwiftConstrainedExtensionTests {
         #expect(ConstrainedBox(42).needsWitness() == "42")
         #expect(ConstrainedPair<[Int], String>().associated() == "associated")
         #expect(ConstrainedPair<Int, [Int]>().substituted() == "substituted")
+        #expect(ConstrainedPair<String, [String: Int]>().dictionary() == "dictionary")
         let inputs: [(AnyObject, String)] = [
             (ConstrainedBox(42), "needsWitness()"),
             (ConstrainedPair<[Int], String>(), "associated()"),
             (ConstrainedPair<Int, [Int]>(), "substituted()"),
+            (ConstrainedPair<String, [String: Int]>(), "dictionary()"),
         ]
         for (receiver, member) in inputs {
             do {

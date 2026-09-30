@@ -48,8 +48,7 @@ struct SwiftGenericContext: Hashable, Sendable {
                 let names = terms[1].split { !$0.isLetter && !$0.isNumber && $0 != "_" && $0 != "." }
                 guard !names.contains(where: { name in
                     guard arguments[String(name.prefix { $0 != "." })] != nil else { return false }
-                    // Demangled tuple labels are names, not type references.
-                    guard terms[1][name.endIndex...].drop(while: \.isWhitespace).first != ":" else { return false }
+                    guard !SwiftGenericSyntax.isTupleLabel(name, in: terms[1]) else { return false }
                     return !name.contains(".") || isDependentType(String(name), requirement)
                 }) else {
                     unsupported = requirement
@@ -86,6 +85,20 @@ struct SwiftConstrainedExtension {
 }
 
 private enum SwiftGenericSyntax {
+    static func isTupleLabel(_ name: Substring, in type: String) -> Bool {
+        guard type[name.endIndex...].drop(while: \.isWhitespace).first == ":" else { return false }
+        var groups: [Character] = []
+        var previous: Character?
+        for character in type[..<name.startIndex] {
+            if character == "(" || character == "[" || character == "<" { groups.append(character) }
+            else if character == ")", groups.last == "(" { groups.removeLast() }
+            else if character == "]", groups.last == "[" { groups.removeLast() }
+            else if character == ">", previous != "-", groups.last == "<" { groups.removeLast() }
+            previous = character
+        }
+        return groups.last == "("
+    }
+
     struct Group {
         let range: Range<String.Index>
         let contents: Substring
