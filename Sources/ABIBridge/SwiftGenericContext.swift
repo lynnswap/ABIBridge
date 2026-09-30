@@ -29,7 +29,8 @@ struct SwiftGenericContext: Hashable, Sendable {
         self.arguments = arguments
     }
 
-    func satisfies(_ extensionMember: SwiftConstrainedExtension) throws(ABIResolutionError) -> Bool {
+    func satisfies(_ extensionMember: SwiftConstrainedExtension,
+                   isDependentType: (String) -> Bool) throws(ABIResolutionError) -> Bool {
         guard extensionMember.owner == owner else { return false }
         var unsupported: String?
         for requirement in extensionMember.requirements {
@@ -48,7 +49,8 @@ struct SwiftGenericContext: Hashable, Sendable {
                 guard !names.contains(where: { name in
                     guard arguments[String(name.prefix { $0 != "." })] != nil else { return false }
                     // Demangled tuple labels are names, not type references.
-                    return terms[1][name.endIndex...].drop(while: \.isWhitespace).first != ":"
+                    guard terms[1][name.endIndex...].drop(while: \.isWhitespace).first != ":" else { return false }
+                    return !name.contains(".") || isDependentType(String(name))
                 }) else {
                     unsupported = requirement
                     continue

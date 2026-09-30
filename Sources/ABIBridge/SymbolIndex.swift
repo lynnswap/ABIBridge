@@ -568,12 +568,60 @@ final class SymbolIndex {
                         unsupported = .unsupportedDeclaration("No generic receiver context establishes \(unqualified).")
                         return false
                     }
-                    do throws(ABIResolutionError) { return try genericContext.satisfies(constrained) }
+                    do throws(ABIResolutionError) {
+                        return try genericContext.satisfies(constrained) {
+                            dependentType($0, in: symbol.name, extensionMember: constrained)
+                        }
+                    }
                     catch { unsupported = error; return false }
                 }
                 return DeclarationKey.make(name) == query.key
             }
         }
+    }
+
+    private static let dependentMember = try! NSRegularExpression(
+        pattern: "Q(?:[zZxX]|[yY](?:[zs]|d[0-9]*_[0-9]*_|[0-9]*_))"
+    )
+
+    private static func dependentType(_ reference: String, in mangled: String,
+                                      extensionMember: SwiftConstrainedExtension) -> Bool {
+        var context: String?
+        for index in mangled.indices where mangled[index] == "E" {
+            let prefix = String(mangled[...index])
+            guard let declaration = DeclarationKey.demangle(prefix + "1fyyF", language: .swift),
+                  let unqualified = extensionMemberName(declaration),
+                  let parsed = SwiftConstrainedExtension(unqualified),
+                  parsed.owner == extensionMember.owner, parsed.requirements == extensionMember.requirements else { continue }
+            context = prefix
+            break
+        }
+        guard let context else { return true }
+        let head = reference.prefix { $0 != "." }
+        let newHead = head == "A" ? "B" : "A"
+        let components = reference.split(separator: ".")
+        let references = (2...components.count).map { components.prefix($0).joined(separator: ".") }
+        // Swift's mangling ABI uses Q operators for dependent members. Ask the
+        // demangler to validate type prefixes so text inside an identifier cannot
+        // imitate an operator. Changing its parameter must change only this type.
+        for match in dependentMember.matches(in: context, range: NSRange(context.startIndex..., in: context)) {
+            guard let range = Range(match.range, in: context),
+                  let before = DeclarationKey.demangle(String(context[..<range.upperBound]) + "D", language: .swift),
+                  references.contains(where: before.hasSuffix) else { continue }
+            let code = context[range].dropFirst().first!
+            let chain = code == "Y" || code == "Z" || code == "X"
+            let replacement = head == "A" ? (chain ? "QY_" : "Qy_") : (chain ? "QZ" : "Qz")
+            guard let after = DeclarationKey.demangle(String(context[..<range.lowerBound]) + replacement + "D", language: .swift) else { continue }
+            for candidate in references where before.hasSuffix(candidate) {
+                let changed = newHead + candidate.dropFirst(head.count)
+                guard after.hasSuffix(changed) else { continue }
+                let prefix = before.dropLast(candidate.count)
+                let newPrefix = after.dropLast(changed.count)
+                if prefix == newPrefix { return true }
+                if code == "x" || code == "X", newPrefix == prefix + head { return true }
+            }
+        }
+        return false
     }
 
     static func operatorAlias(_ name: String) -> String? {
