@@ -5,4 +5,15 @@ NS_ASSUME_NONNULL_BEGIN
 @interface ABICoordinationOwner : NSObject
 @property(nonatomic, copy, nullable) void (^onRetain)(void);
 @end
+@interface ABIDestructorHookResult : NSObject
+@property(nonatomic, readonly) NSInteger identifier;
+@end
+@interface ABIDestructorHookFixture : NSObject
+@property(nonatomic, readonly) NSInteger created;
+@property(nonatomic, readonly) NSInteger destroyed;
+@property(nonatomic, readonly) NSInteger releasesDuringDestruction;
+@property(nonatomic, copy, nullable) void (^onFirstDestruction)(void);
+- (ABIDestructorHookResult *)newResult;
+- (ABIDestructorHookResult *)newUnhookedResult;
+@end
 NS_ASSUME_NONNULL_END

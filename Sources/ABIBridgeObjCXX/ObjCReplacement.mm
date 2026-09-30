@@ -73,8 +73,17 @@ struct ABIObjCReplacementCall {
         return value;
     }
     void clear() {
-        if (completed && entry.retainable && object()) CFRelease(object());
+        CFTypeRef previous = completed && entry.retainable ? object() : nullptr;
         completed = false;
+        if (previous) CFRelease(previous);
+    }
+    void replace(const void *value, bool initialized = true) {
+        CFTypeRef previous = completed && entry.retainable ? object() : nullptr;
+        std::memcpy(result.data(), value, entry.resultSize);
+        completed = initialized;
+        // Destruction can proceed again on this frame. Publish ownership before
+        // releasing the detached result so a nested result remains authoritative.
+        if (previous) CFRelease(previous);
     }
     ~ABIObjCReplacementCall() { clear(); }
 };
@@ -164,10 +173,9 @@ BOOL ABIObjCReplacementProceed(ABIObjCReplacementCall *call, const void *const *
     if (call->next) {
         ABIObjCReplacementCall child(call->entry, values.data());
         call->next(call->nextContext, &child);
-        call->clear();
-        call->result.swap(child.result);
-        call->completed = child.completed;
+        const bool completed = child.completed;
         child.completed = false;
+        call->replace(child.result.data(), completed);
         return YES;
     }
     std::vector<std::max_align_t> result(call->result.size());
@@ -191,9 +199,7 @@ BOOL ABIObjCReplacementProceed(ABIObjCReplacementCall *call, const void *const *
         std::memcpy(&value, result.data(), sizeof(value));
         if (value) CFRetain(value);
     }
-    call->clear();
-    call->result.swap(result);
-    call->completed = true;
+    call->replace(result.data());
     return YES;
 }
 
@@ -212,9 +218,7 @@ BOOL ABISetObjCReplacementResult(ABIObjCReplacementCall *call, const void *resul
         std::memcpy(&value, result, sizeof(value));
         if (value) CFRetain(value);
     }
-    call->clear();
-    std::memcpy(call->result.data(), result, call->entry.resultSize);
-    call->completed = true;
+    call->replace(result);
     return YES;
 }
 
