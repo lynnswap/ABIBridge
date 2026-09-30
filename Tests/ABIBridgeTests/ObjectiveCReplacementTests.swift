@@ -3,6 +3,7 @@ import Foundation
 import CoreGraphics
 import ObjectiveC
 import ObjectiveCFixtures
+import HookCoordinationFixtures
 import Testing
 
 private final class ReplacementBox<Value>: @unchecked Sendable {
@@ -45,6 +46,39 @@ private func withReplacement<Result, each Argument, Output>(
 
 @Suite(.serialized)
 struct ObjectiveCReplacementTests {
+    @Test(arguments: [false, true], [false, true])
+    func resultReplacementPublishesOwnershipBeforeDestructorReentry(_ managed: Bool, _ explicitResult: Bool) throws {
+        let fixture = ABIDestructorHookFixture()
+        let body: @Sendable (NativeObjCMethodInvocation<ABIDestructorHookResult>) throws -> ABIDestructorHookResult = { call in
+            let receiver = try #require(try call.receiver as? ABIDestructorHookFixture)
+            receiver.onFirstDestruction = {
+                do { _ = try call.proceed() }
+                catch { Issue.record(error) }
+            }
+            _ = try call.proceed()
+            return explicitResult ? receiver.newUnhookedResult() : try call.proceed()
+        }
+        func invoke() {
+            autoreleasepool {
+                let result = fixture.newResult()
+                #expect(result.identifier == 3)
+            }
+        }
+        if managed {
+            let hook = try unsafe ABIRuntime().hookMethod(on: ABIDestructorHookFixture.self, selector: "newResult",
+                as: (() -> ABIDestructorHookResult).self, onFailure: { Issue.record($0) }, body: body)
+            defer { hook.invalidate() }
+            invoke()
+        } else {
+            let entry = try ObjCReplacement(on: ABIDestructorHookFixture.self, selector: "newResult",
+                as: (() -> ABIDestructorHookResult).self, onFailure: { Issue.record($0) }, body: body)
+            try withReplacement(entry, on: ABIDestructorHookFixture.self, selector: "newResult", body: invoke)
+        }
+        #expect(fixture.created == 3)
+        #expect(fixture.destroyed == 3)
+        #expect(fixture.releasesDuringDestruction == 0)
+    }
+
     @Test func scalarReceiverAndModifiedArguments() throws {
         let errors = ReplacementBox<[String]>([])
         let entry = try ObjCReplacement(on: ABIReplacementFixture.self, selector: "add:to:",
