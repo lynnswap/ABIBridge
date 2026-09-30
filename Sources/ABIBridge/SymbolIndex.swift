@@ -570,7 +570,7 @@ final class SymbolIndex {
                     }
                     do throws(ABIResolutionError) {
                         return try genericContext.satisfies(constrained) {
-                            dependentType($0, in: symbol.name, extensionMember: constrained)
+                            dependentType($0, requirement: $1, in: symbol.name, extensionMember: constrained)
                         }
                     }
                     catch { unsupported = error; return false }
@@ -583,8 +583,11 @@ final class SymbolIndex {
     private static let dependentMember = try! NSRegularExpression(
         pattern: "Q(?:[zZxX]|[yY](?:[zs]|d[0-9]*_[0-9]*_|[0-9]*_))"
     )
+    private static let genericParameter = try! NSRegularExpression(
+        pattern: "x|q(?:[zs]|d[0-9]*_[0-9]*_|[0-9]*_)"
+    )
 
-    private static func dependentType(_ reference: String, in mangled: String,
+    private static func dependentType(_ reference: String, requirement: String, in mangled: String,
                                       extensionMember: SwiftConstrainedExtension) -> Bool {
         var context: String?
         for index in mangled.indices where mangled[index] == "E" {
@@ -597,10 +600,20 @@ final class SymbolIndex {
             break
         }
         guard let context else { return true }
+        guard let requirementIndex = extensionMember.requirements.firstIndex(of: requirement) else { return true }
         let head = reference.prefix { $0 != "." }
         let newHead = head == "A" ? "B" : "A"
         let components = reference.split(separator: ".")
         let references = (2...components.count).map { components.prefix($0).joined(separator: ".") }
+        func changesRequirement(_ prefix: String, suffix: Substring) -> Bool {
+            guard let declaration = DeclarationKey.demangle(prefix + suffix + "1fyyF", language: .swift),
+                  let unqualified = extensionMemberName(declaration),
+                  let parsed = SwiftConstrainedExtension(unqualified), parsed.owner == extensionMember.owner,
+                  parsed.requirements.count == extensionMember.requirements.count else { return false }
+            let old = requirement.components(separatedBy: "==")
+            let changed = parsed.requirements[requirementIndex].components(separatedBy: "==")
+            return old.count == 2 && changed.count == 2 && old[0] == changed[0] && old[1] != changed[1]
+        }
         // Swift's mangling ABI uses Q operators for dependent members. Ask the
         // demangler to validate type prefixes so text inside an identifier cannot
         // imitate an operator. Changing its parameter must change only this type.
@@ -611,14 +624,26 @@ final class SymbolIndex {
             let code = context[range].dropFirst().first!
             let chain = code == "Y" || code == "Z" || code == "X"
             let replacement = head == "A" ? (chain ? "QY_" : "Qy_") : (chain ? "QZ" : "Qz")
-            guard let after = DeclarationKey.demangle(String(context[..<range.lowerBound]) + replacement + "D", language: .swift) else { continue }
+            let altered = String(context[..<range.lowerBound]) + replacement
+            guard let after = DeclarationKey.demangle(altered + "D", language: .swift) else { continue }
             for candidate in references where before.hasSuffix(candidate) {
                 let changed = newHead + candidate.dropFirst(head.count)
                 guard after.hasSuffix(changed) else { continue }
                 let prefix = before.dropLast(candidate.count)
                 let newPrefix = after.dropLast(changed.count)
-                if prefix == newPrefix { return true }
-                if code == "x" || code == "X", newPrefix == prefix + head { return true }
+                if prefix == newPrefix, changesRequirement(altered, suffix: context[range.upperBound...]) { return true }
+                if code == "x" || code == "X", newPrefix == prefix + head {
+                    let bases = genericParameter.matches(in: context, range: NSRange(context.startIndex..<range.lowerBound, in: context))
+                    for base in bases {
+                        guard let baseRange = Range(base.range, in: context) else { continue }
+                        let value = head == "A" ? "q_" : "x"
+                        let altered = String(context[..<baseRange.lowerBound]) + value + context[baseRange.upperBound..<range.upperBound]
+                        guard let result = DeclarationKey.demangle(altered + "D", language: .swift), result.hasSuffix(changed),
+                              before.dropLast(candidate.count) == result.dropLast(changed.count),
+                              changesRequirement(altered, suffix: context[range.upperBound...]) else { continue }
+                        return true
+                    }
+                }
             }
         }
         return false

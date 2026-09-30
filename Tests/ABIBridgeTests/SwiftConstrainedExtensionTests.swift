@@ -237,6 +237,10 @@ struct SwiftConstrainedExtensionTests {
             extension ReversedPair where First == Second.Value {
                 public func projected() -> String { "unsupported" }
             }
+            public final class Triplet<First: P, Second, Third>: NSObject {}
+            extension Triplet where Second == (Value, Int), Third == First.Value {
+                public func mixed() -> String { "unsupported" }
+            }
             @_cdecl("ABIAmbiguousConstraintInstance") public func make(_ kind: Int32) -> UnsafeMutableRawPointer {
                 let value: NSObject
                 switch kind {
@@ -246,6 +250,8 @@ struct SwiftConstrainedExtensionTests {
                 case 3: value = Pair<Source, Value>()
                 case 4: value = Pair<Source, (Value, Int)>()
                 case 5: value = Pair<Source, Value.Leaf>()
+                case 7: value = Triplet<Source, (String, Int), Int>()
+                case 8: value = Triplet<Source, (Value, Int), Int>()
                 default: value = ReversedPair<Value, Source>()
                 }
                 return Unmanaged.passRetained(value).toOpaque()
@@ -255,14 +261,21 @@ struct SwiftConstrainedExtensionTests {
         let runtime = ABIRuntime()
         let make = try await runtime.cFunction(named: "ABIAmbiguousConstraintInstance", as: ((Int32) -> UnsafeMutableRawPointer).self,
             in: .path(fixture.libraryURL), loading: .loadedOnly)
-        for kind: Int32 in 0..<7 {
+        for kind: Int32 in 0..<9 {
             let receiver = Unmanaged<AnyObject>.fromOpaque(try unsafe make.unsafeInvoke(kind)).takeRetainedValue()
             if kind < 3 {
                 let method = try await runtime.object(receiver).method(named: "concrete()", as: (() -> String).self)
                 #expect(try unsafe method.unsafeInvoke() == "concrete")
             } else {
+                if kind == 7 {
+                    do {
+                        _ = try await runtime.object(receiver).method(named: "mixed()", as: (() -> String).self)
+                        Issue.record("A proven mismatch was hidden by another requirement's dependent type")
+                    } catch ABIResolutionError.declarationNotFound {}
+                    continue
+                }
                 do {
-                    _ = try await runtime.object(receiver).method(named: "projected()", as: (() -> String).self)
+                    _ = try await runtime.object(receiver).method(named: kind == 8 ? "mixed()" : "projected()", as: (() -> String).self)
                     Issue.record("A dependent member was mistaken for a concrete module type")
                 } catch ABIResolutionError.unsupportedDeclaration {}
                 if kind == 3 || kind == 5 {

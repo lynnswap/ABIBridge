@@ -30,7 +30,7 @@ struct SwiftGenericContext: Hashable, Sendable {
     }
 
     func satisfies(_ extensionMember: SwiftConstrainedExtension,
-                   isDependentType: (String) -> Bool) throws(ABIResolutionError) -> Bool {
+                   isDependentType: (String, String) -> Bool) throws(ABIResolutionError) -> Bool {
         guard extensionMember.owner == owner else { return false }
         var unsupported: String?
         for requirement in extensionMember.requirements {
@@ -50,7 +50,7 @@ struct SwiftGenericContext: Hashable, Sendable {
                     guard arguments[String(name.prefix { $0 != "." })] != nil else { return false }
                     // Demangled tuple labels are names, not type references.
                     guard terms[1][name.endIndex...].drop(while: \.isWhitespace).first != ":" else { return false }
-                    return !name.contains(".") || isDependentType(String(name))
+                    return !name.contains(".") || isDependentType(String(name), requirement)
                 }) else {
                     unsupported = requirement
                     continue
