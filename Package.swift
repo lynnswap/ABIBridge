@@ -21,7 +21,7 @@ let package = Package(
         .library(name: "ABIBridgeSwiftUI", targets: ["ABIBridgeSwiftUI"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/p-x9/MachOKit.git", exact: "0.53.0"),
+        .package(url: "https://github.com/p-x9/MachOKit.git", exact: "0.54.1"),
         .package(url: "https://github.com/p-x9/swift-objc-dump.git", exact: "0.9.0"),
         .package(url: "https://github.com/lynnswap/ZDLibffi.git", exact: "0.380.1"),
     ],
