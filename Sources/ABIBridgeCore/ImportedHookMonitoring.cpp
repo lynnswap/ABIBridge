@@ -1,5 +1,6 @@
 #include <ABIBridge/ImportedHookMonitoring.h>
 #include <ABIBridge/ImageObservation.h>
+#include <dispatch/dispatch.h>
 #include "NativeValueType.hpp"
 #include <atomic>
 #include <map>
@@ -40,16 +41,20 @@ struct Monitor {
     Query query{nullptr, ABIReleaseImportedQuery};
     ABIValueType result;
     std::vector<ABIValueType> parameters;
-    // Accessed only by the observation's serial worker; removed loads are pruned.
+    dispatch_queue_t queue = dispatch_queue_create("ABIBridge.import-monitor", DISPATCH_QUEUE_SERIAL);
+    bool retryScheduled = false;
+    ~Monitor() { dispatch_release(queue); }
+    // Accessed only by the monitor's serial worker; removed loads are pruned.
     std::set<uint64_t> processed;
 };
 void deliver(const std::shared_ptr<Behavior>& behavior, const ImageResult& result) {
     if (behavior->enabled.load()) behavior->update(behavior->context, result.view());
 }
-void process(const std::shared_ptr<Monitor>& monitor, const ABIImageList *snapshot) {
+bool process(const std::shared_ptr<Monitor>& monitor, const ABIImageList *snapshot) {
     std::shared_ptr<Behavior> behavior;
     { std::lock_guard lock(monitor->mutex); behavior = monitor->behavior; }
-    if (!behavior || !behavior->enabled.load()) return;
+    if (!behavior || !behavior->enabled.load()) return false;
+    bool waiting = false;
     std::set<uint64_t> current;
     for (size_t i = 0; i < ABIImageListCount(snapshot); ++i) current.insert(ABIImageListGet(snapshot, i).generation);
     std::erase_if(monitor->processed, [&](uint64_t generation) { return !current.contains(generation); });
@@ -71,6 +76,12 @@ void process(const std::shared_ptr<Monitor>& monitor, const ABIImageList *snapsh
         ABIResolutionFailure *error = nullptr;
         std::unique_ptr<ABIImportSelection, decltype(&ABIReleaseImportSelection)> selection(
             ABICopyImportedSelectionForImage(monitor->query.get(), image, &error), ABIReleaseImportSelection);
+        if (!selection && error && ABIResolutionFailureCode(error) == ABIFailureImageUnavailable) {
+            ABIReleaseResolutionFailure(error);
+            monitor->processed.erase(image.generation);
+            waiting = true;
+            continue;
+        }
         auto result = std::make_shared<ImageResult>();
         result->image = image; result->path = image.path;
         result->failure = Failure(error, ABIReleaseResolutionFailure);
@@ -112,6 +123,28 @@ void process(const std::shared_ptr<Monitor>& monitor, const ABIImageList *snapsh
         }
         deliver(behavior, *result);
     }
+    return waiting;
+}
+void refresh(const std::shared_ptr<Monitor>& monitor);
+void retry(void *context) {
+    std::unique_ptr<std::weak_ptr<Monitor>> weak(static_cast<std::weak_ptr<Monitor> *>(context));
+    if (auto monitor = weak->lock()) {
+        monitor->retryScheduled = false;
+        refresh(monitor);
+    }
+}
+void refresh(const std::shared_ptr<Monitor>& monitor) {
+    std::unique_ptr<ABIImageList, decltype(&ABIFreeImageList)> snapshot(ABICopyLoadedImages(), ABIFreeImageList);
+    if (!snapshot || !process(monitor, snapshot.get()) || monitor->retryScheduled) return;
+    // Initializer completion has no catalog notification. Retry only loads that
+    // could not yet be acquired, without retaining images or the monitor itself.
+    monitor->retryScheduled = true;
+    auto weak = std::make_unique<std::weak_ptr<Monitor>>(monitor);
+    dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 25 * NSEC_PER_MSEC), monitor->queue, weak.release(), retry);
+}
+void refreshOnQueue(void *context) {
+    std::unique_ptr<std::weak_ptr<Monitor>> weak(static_cast<std::weak_ptr<Monitor> *>(context));
+    if (auto monitor = weak->lock()) refresh(monitor);
 }
 }
 
@@ -145,8 +178,11 @@ ABIImportedHookMonitor *ABICreateImportedHookMonitor(ABIImportedQuery *query, co
     // The observation keeps only a weak monitor reference; the worker retains a
     // live monitor for its own invocation, without creating an ownership cycle.
     auto weak = std::make_unique<std::weak_ptr<Monitor>>(monitor);
-    owner->observation = ABIObserveLoadedImages(weak.release(), [](void *context, const ABIImageList *snapshot) {
-        if (auto monitor = static_cast<std::weak_ptr<Monitor> *>(context)->lock()) process(monitor, snapshot);
+    owner->observation = ABIObserveLoadedImages(weak.release(), [](void *context, const ABIImageList *) {
+        if (auto monitor = static_cast<std::weak_ptr<Monitor> *>(context)->lock()) {
+            auto pending = std::make_unique<std::weak_ptr<Monitor>>(monitor);
+            dispatch_async_f(monitor->queue, pending.release(), refreshOnQueue);
+        }
     }, [](void *context) { delete static_cast<std::weak_ptr<Monitor> *>(context); }, error);
     return owner->observation ? owner.release() : nullptr;
 }

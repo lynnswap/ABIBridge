@@ -24,6 +24,7 @@ typedef void (*ABIImportedImageHandler)(void *context, ABIImportedImageUpdate up
 /// removal; onFailure reports invocation errors. Both handlers are required.
 /// Constructor calls and short-lived loads that disappear before observation
 /// are not guaranteed to be intercepted. Neither scope loads missing images.
+/// Images that cannot yet be acquired wait for readiness before installation.
 ///
 /// Context ownership follows ABIInstallImportedFunctionHook. Returns null with
 /// an owned failure on preparation failure. Updates may start before return.

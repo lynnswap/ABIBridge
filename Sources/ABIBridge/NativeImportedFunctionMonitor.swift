@@ -45,7 +45,8 @@ public struct NativeImportedImageUpdate: Sendable {
 
 /// Owns asynchronous registration on current and subsequently loaded images.
 /// Drop the last owner or call `invalidate()` to stop applying its callback.
-/// Each selected load is attempted once; per-image failures remain observable.
+/// Each acquirable selected load is attempted once; per-image failures remain
+/// observable. Images still initializing are acquired asynchronously when ready.
 public final class NativeImportedFunctionMonitor: @unchecked Sendable {
     let handle: OpaquePointer
     init(_ handle: OpaquePointer) { self.handle = handle }

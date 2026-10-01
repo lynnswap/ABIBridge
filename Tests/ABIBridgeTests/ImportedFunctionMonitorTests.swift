@@ -17,7 +17,7 @@ private final class ImportMonitorFixture {
         framework = "Monitored_" + suffix
         provider = try FixtureLibrary(cxxSource: "extern \"C\" int \(name)(int value) { return value; }")
     }
-    func makeConsumer(addend: Bool = false) throws -> URL {
+    func makeConsumer(addend: Bool = false, initialization: String = "") throws -> URL {
         let declaration = "extern \"C\" int \(name)(int);"
         let source = addend ? """
         \(declaration)
@@ -27,7 +27,7 @@ private final class ImportMonitorFixture {
         static int (*volatile slot)(int) = \(name);
         extern "C" int ABIMonitoredCall(int value) { return slot(value); }
         """
-        let consumer = try FixtureLibrary(load: false, cxxSource: source, linkArguments: [provider.libraryURL.path])
+        let consumer = try FixtureLibrary(load: false, cxxSource: source + "\n" + initialization, linkArguments: [provider.libraryURL.path])
         consumers.append(consumer)
         let directory = consumer.directory.appendingPathComponent("\(framework).framework")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -56,6 +56,30 @@ private final class MonitorCapture: Sendable {
 @Suite(.serialized, .timeLimit(.minutes(1)))
 struct ImportedFunctionMonitorTests {
     private enum CallbackFailure: Error { case expected }
+    @Test func initializationReadinessDoesNotBecomeAPermanentInstallationFailure() async throws {
+        let fixture = try ImportMonitorFixture(); defer { fixture.cleanup() }
+        let url = try fixture.makeConsumer(initialization: """
+        #include <unistd.h>
+        __attribute__((constructor)) static void holdInitialization() { usleep(500000); }
+        """)
+        let installed = Mutex(false), failed = Mutex(false)
+        let monitor = try await unsafe ABIRuntime().monitorImportedFunction(fixture.declaration, as: ((Int32) -> Int32).self,
+            in: fixture.scope, onFailure: { Issue.record($0) }, onImageUpdate: { update in
+                switch update.state {
+                case .installed: installed.withLock { $0 = true }
+                case .failed: failed.withLock { $0 = true }
+                default: break
+                }
+            }) { next, value in try next.proceed(value) + 1 }
+        defer { monitor.invalidate() }
+        try fixture.load(url)
+        try await waitForMonitoring { installed.withLock { $0 } || failed.withLock { $0 } }
+        #expect(!failed.withLock { $0 })
+        #expect(installed.withLock { $0 })
+        let call = try await ABIRuntime().cFunction(named: "ABIMonitoredCall", as: ((Int32) -> Int32).self, in: .path(url))
+        #expect(try unsafe call.unsafeInvoke(41) == 42)
+    }
+
     @Test func hooksCurrentAndSubsequentlyLoadedImages() async throws {
         let fixture = try ImportMonitorFixture(); defer { fixture.cleanup() }
         let current = try fixture.makeConsumer(), future = try fixture.makeConsumer()
