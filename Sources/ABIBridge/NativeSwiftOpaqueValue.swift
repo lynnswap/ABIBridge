@@ -159,8 +159,15 @@ struct SwiftResultCodec<Value>: Sendable {
     let type: CValueType
     private let ordinary: SwiftValueCodec<Value>?
     private let opaque: SwiftOpaqueResultPlan?
+    private let genericValue: Bool
 
-    init(opaque: SwiftOpaqueResultPlan? = nil) throws {
+    init(opaque: SwiftOpaqueResultPlan? = nil, genericValue: Bool = false) throws {
+        self.genericValue = genericValue
+        if genericValue {
+            type = try CValueType(indirectSwiftSize: MemoryLayout<Value>.size, alignment: MemoryLayout<Value>.alignment)
+            ordinary = nil; self.opaque = nil
+            return
+        }
         if let closure = Value.self as? any SwiftClosureValue.Type, !closure.supportsResult {
             throw ABIResolutionError.unsupportedDeclaration("Runtime-typed callbacks are supported as inputs, not returned closures.")
         }
@@ -180,11 +187,13 @@ struct SwiftResultCodec<Value>: Sendable {
     }
 
     func makeStorage() -> NativeValueStorage {
+        if genericValue { return NativeValueStorage(size: MemoryLayout<Value>.stride, alignment: MemoryLayout<Value>.alignment) }
         if let opaque { return opaque.makeStorage() }
         return ordinary!.makeStorage()
     }
 
     func decode(_ storage: NativeValueStorage, retaining owner: Any?, retainingCode codeOwner: Any?) throws -> Value {
+        if genericValue { return storage.take(as: Value.self) }
         if let opaque { return try opaque.decode(storage) as! Value }
         return try ordinary!.decode(storage, retaining: owner, retainingCode: codeOwner)
     }

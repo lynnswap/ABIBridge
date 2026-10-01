@@ -12,6 +12,15 @@ private struct RejectGenericArgument: ABIBridgeValue {
     static func nativeValue(from value: Self) throws -> NativeValue { throw GenericConversionFailure.rejected }
 }
 
+private struct GenericPointerWrapper: ABIBridgeValue, Equatable {
+    let pointer: UnsafeRawPointer
+    let marker: Int64
+    static var abiType: NativeType { .pointer }
+    init(pointer: UnsafeRawPointer, marker: Int64) { self.pointer = pointer; self.marker = marker }
+    init(nativeValue: NativeValue) throws { throw GenericConversionFailure.rejected }
+    static func nativeValue(from value: Self) throws -> NativeValue { throw GenericConversionFailure.rejected }
+}
+
 private final class GenericCapture: Sendable {
     let state: GenericCaptureState
     init(_ state: GenericCaptureState) { self.state = state }
@@ -25,6 +34,28 @@ private final class GenericCaptureState: Sendable {
 
 @Suite(.serialized)
 struct SwiftGenericCallTests {
+    @Test func genericStorageUsesTheActualTypeInsteadOfItsForeignConversion() async throws {
+        let runtime = ABIRuntime.shared
+        let echo = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.echoGeneric<A>(A) -> A",
+            as: ((GenericPointerWrapper?) -> GenericPointerWrapper?).self, substituting: GenericPointerWrapper?.self)
+        let value = GenericPointerWrapper(pointer: try #require(UnsafeRawPointer(bitPattern: 0x1000)), marker: 42)
+        #expect(MemoryLayout<GenericPointerWrapper?>.size > MemoryLayout<UnsafeRawPointer>.size)
+        #expect(try unsafe echo.unsafeInvoke(value) == echoGeneric(Optional(value)))
+        #expect(try unsafe echo.unsafeInvoke(nil) == nil)
+
+        let marked = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.echoGeneric<A>(A) -> A",
+            as: ((NativeSwiftBorrowing<String>) -> NativeSwiftBorrowing<String>).self,
+            substituting: NativeSwiftBorrowing<String>.self)
+        let input = NativeSwiftBorrowing(String(repeating: "owned", count: 100))
+        #expect(try unsafe marked.unsafeInvoke(input).value == echoGeneric(input).value)
+
+        let closure = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.echoGeneric<A>(A) -> A",
+            as: ((NativeSwiftClosure<Int64>) -> NativeSwiftClosure<Int64>).self,
+            substituting: NativeSwiftClosure<Int64>.self)
+        let returned = try unsafe closure.unsafeInvoke(NativeSwiftClosure { Int64(42) })
+        #expect(try unsafe returned.unsafeInvoke() == 42)
+    }
+
     @Test func capturingCallbacksMatchCompilerGeneratedCalls() async throws {
         let runtime = ABIRuntime.shared
         let boolean = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.runGeneric<A>(() -> A) -> A",

@@ -44,9 +44,6 @@ struct SwiftGenericCallPlan: Sendable {
             guard actual == substitution else {
                 throw ABIResolutionError.signatureMismatch(.init(expected: String(reflecting: substitution), found: [String(reflecting: actual)]))
             }
-            if actual is any ABIBridgeValue.Type, !(actual is any ABIBridgeSwiftValue.Type) {
-                throw ABIResolutionError.unsupportedDeclaration("A generic substitution uses its actual Swift storage, not a foreign value conversion.")
-            }
         }
         arguments = try zip(fields, parameters).map { field, actual in
             var formal = field.trimmingCharacters(in: .whitespaces)

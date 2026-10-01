@@ -19,16 +19,13 @@ struct SwiftCall<Result, each Argument>: Sendable {
             return try SwiftArgumentCodec(defaultConsuming: consumesArguments, generic: generic?.arguments[parameterIndex] ?? .concrete)
         }
         let arguments = (repeat try argument((each Argument).self))
-        let result = try SwiftResultCodec<Result>(opaque: opaqueResult)
+        let result = try SwiftResultCodec<Result>(opaque: opaqueResult, genericValue: generic?.indirectResult == true)
         var parameters: [CValueType] = []
         for argument in repeat each arguments { parameters.append(argument.type) }
         argumentCount = parameters.count
         if let trailingType { parameters.append(trailingType) }
         if generic != nil { parameters.append(try CValueType(scalar: ABIValuePointer)) }
-        let resultType = try generic?.indirectResult == true
-            ? CValueType(indirectSwiftSize: MemoryLayout<Result>.size, alignment: MemoryLayout<Result>.alignment)
-            : result.type
-        interface = try SwiftCallInterface(result: resultType, parameters: parameters, errorPlan: errorPlan)
+        interface = try SwiftCallInterface(result: result.type, parameters: parameters, errorPlan: errorPlan)
         self.arguments = arguments
         self.result = result
         hasTrailingValue = trailingType != nil

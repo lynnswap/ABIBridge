@@ -161,7 +161,8 @@ public struct NativeSwiftFunction<Result, each Argument>: Sendable {
         context = metadata.map { unsafeBitCast($0, to: UInt.self) } ?? 0
         typeOwner = owner
         call = try SwiftCall(consumesArguments: consumesArguments, errorPlan: errorPlan,
-            opaqueResult: SwiftOpaqueResultPlan.make(for: Result.self, symbol: symbol, resolver: resolver ?? owner?.resolver), generic: generic)
+            opaqueResult: generic?.indirectResult == true ? nil
+                : SwiftOpaqueResultPlan.make(for: Result.self, symbol: symbol, resolver: resolver ?? owner?.resolver), generic: generic)
     }
 
     func capturing(_ implementation: SwiftImplementation) -> Self {
