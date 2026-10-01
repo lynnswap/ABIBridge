@@ -172,7 +172,12 @@ struct SwiftMemberInvocationTests {
         #expect(try unsafe bound!.unsafeInvoke(37) == 42)
         bound = nil
         withExtendedLifetime((render, getter, setter)) { #expect(observedReceiver == nil) }
-        #expect(throws: ABIInvocationError.self) { try render.bind(to: NSObject()) }
+        let incompatible = try render.bind(to: NSObject())
+        #expect(throws: ABIInvocationError.self) { try unsafe incompatible.unsafeInvoke(0) }
+        let adaptedType = try await runtime.swiftType(named: "ABIBridgeTests.SwiftMemberRenderer", as: AnyObject.self)
+        let adapted = try await adaptedType.method(named: "render(_:)", as: ((Int) -> Int).self)
+        let adaptedBinding = try adapted.bind(to: NSObject())
+        #expect(throws: ABIInvocationError.self) { try unsafe adaptedBinding.unsafeInvoke(0) }
     }
 
     @MainActor @Test(arguments: [false, true], ["title()", "title() -> Swift.String"])

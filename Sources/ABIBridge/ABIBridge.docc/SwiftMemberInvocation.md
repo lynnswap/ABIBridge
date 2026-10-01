@@ -31,7 +31,7 @@ let secondBound = try start.bind(to: secondRenderer)
 try unsafe secondBound.unsafeInvoke()
 ```
 
-The prepared handle retains the native type context and implementation images without repeating discovery. Calls and new bindings preserve the implementation chosen during lookup; they do not select an override from the new receiver. The receiver must match that context, including an instantiated generic specialization or extension constraint. Binding validates its object representation without calling the member. Receiver ABI compatibility is also enforced by ordinary invocation.
+The prepared handle retains the native type context and implementation images without repeating discovery. Calls and new bindings preserve the implementation chosen during lookup; they do not select an override from the new receiver. The receiver must match that context, including an instantiated generic specialization or extension constraint. Binding only retains the supplied class object; ordinary invocation validates its representation and receiver type with the existing receiver plan before calling the member. An incompatible receiver therefore reports an invocation error, including when an AnyObject adapter accepts its representation.
 
 `bind(to:)` retains a class object until the last bound copy is released. It does not change the original bound handle or the native ownership, effects, or actor/thread requirements. Async handles keep their existing caller-isolation or concurrent behavior. Value receivers continue to use explicit invocation, including `inout` for mutating members.
 

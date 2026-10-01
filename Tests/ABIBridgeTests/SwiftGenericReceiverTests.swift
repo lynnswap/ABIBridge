@@ -66,9 +66,8 @@ struct SwiftGenericReceiverTests {
         #expect(try unsafe await bound!.unsafeInvoke("bound:") == "bound:42")
         bound = nil
         withExtendedLifetime((consuming, asynchronous)) { #expect(observedSecond == nil) }
-        #expect(throws: ABIInvocationError.self) {
-            try asynchronous.bind(to: GenericReceiver(ReceiverText(text: "different")))
-        }
+        let incompatible = try asynchronous.bind(to: GenericReceiver(ReceiverText(text: "different")))
+        await #expect(throws: ABIInvocationError.self) { try unsafe await incompatible.unsafeInvoke("") }
     }
 
     @MainActor @Test(arguments: [false, true])

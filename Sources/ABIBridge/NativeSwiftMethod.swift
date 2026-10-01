@@ -43,14 +43,14 @@ public struct NativeSwiftMethod<Result, each Argument>: Sendable {
 
     /// Retains an object for repeated calls to this captured implementation.
     ///
-    /// Binding reuses the prepared call and validates the object representation
-    /// without calling the member. Invocation honors the original receiver,
-    /// ownership, and isolation contract. Value receivers use explicit invocation.
+    /// Binding reuses the prepared call without calling the member. Invocation
+    /// validates the object representation and receiver type using the original
+    /// plan, and honors its ownership and isolation contract. Value receivers
+    /// use explicit invocation.
     public func bind(to receiver: AnyObject) throws -> NativeBoundSwiftMethod<Result, repeat each Argument> {
         guard self.receiver.mode == .object else {
             throw ABIResolutionError.unsupportedDeclaration("Only Swift class members can bind a retained object.")
         }
-        _ = try self.receiver.codec.encode(receiver)
         return NativeBoundSwiftMethod(method: self, receiver: receiver)
     }
 

@@ -24,14 +24,14 @@ public struct NativeSwiftAsyncMethod<Result, each Argument>: Sendable {
 
     /// Retains an object for repeated calls to this captured async implementation.
     ///
-    /// Binding reuses the prepared call and validates the object representation
-    /// without calling the member. The native effects and isolation contract
-    /// remain unchanged. Value receivers use explicit invocation.
+    /// Binding reuses the prepared call without calling the member. Invocation
+    /// validates the object representation and receiver type using the original
+    /// plan. Native effects and isolation remain unchanged. Value receivers
+    /// use explicit invocation.
     public func bind(to receiver: AnyObject) throws -> NativeBoundSwiftAsyncMethod<Result, repeat each Argument> {
         guard self.receiver.mode == .object else {
             throw ABIResolutionError.unsupportedDeclaration("Only Swift class members can bind a retained object.")
         }
-        _ = try self.receiver.codec.encode(receiver)
         return NativeBoundSwiftAsyncMethod(method: self, receiver: receiver)
     }
 
