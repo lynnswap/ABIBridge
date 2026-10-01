@@ -76,7 +76,7 @@ public struct NativeSwiftBorrowingClosure<Result> {
         let result = try SwiftValueCodec<Result>()
         let resultName = Result.self == Void.self ? nil : try swiftClosureAuthType(Result.self)
         let discriminator = swiftClosureDiscriminator(parameters: ["-indirect"], result: resultName)
-        let interface = try SwiftCallInterface(result: result.type, parameters: [argument])
+        let interface = try SwiftCallInterface.cached(result: result.type, parameters: [argument])
         let callback = try SwiftClosureCallbackOwner(interface: interface, body: SwiftClosureBody(retainingCode: type) { arguments, output in
             let borrow = SwiftValueBorrow(UnsafeRawPointer(arguments![0]!))
             defer { borrow.expire() }

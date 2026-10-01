@@ -90,6 +90,14 @@ For a native factory returning a closure, put the wrapper in the factory's resul
 
 Async wrappers use a `@Sendable` closure type for label-only lookup. Use the complete native declaration when its source-level attributes differ. The wrapper itself is not Sendable: a returned foreign capture still carries its original actor and ownership requirements. Neither choosing the physical calling convention nor resolving a symbol establishes those requirements.
 
+## Repeated callback preparation
+
+Released callback entries can reuse one idle code/configuration page pair. Additional pages are released when they become empty. This applies to synchronous and async callbacks; the idle storage retains no callback bodies or captures.
+
+Synchronous call preparation shares up to 64 immutable native ABI interfaces, compared by storage layout, formal indirection and error convention. Authentication hashing retains up to 128 signature descriptions. These caches contain no Swift metatypes or provider-image owners, and custom layouts are evaluated for each new preparation. Eviction does not invalidate live handles.
+
+A prepared generic function also retains its callback's indirect-result interface. Each invocation still creates an independent forwarding context so escaping native copies retain their own captures and code owners. Reuse a callback when its capture lifetime permits it; page and interface reuse do not extend that lifetime.
+
 ## Supported signatures
 
 The synchronous and async wrappers support ordinary guaranteed arguments and owned results:

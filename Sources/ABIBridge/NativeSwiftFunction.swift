@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import Synchronization
 
 func swiftFunctionTypeName(_ type: Any.Type) throws -> String {
     if type == NativeSwiftOpaqueValue.self { return "some" }
@@ -126,6 +127,51 @@ final class SwiftCallInterface: @unchecked Sendable {
         self.handle = handle
     }
     deinit { ABIReleaseSwiftCallInterface(handle) }
+}
+
+extension SwiftCallInterface {
+    private struct Entry: Sendable {
+        let result: CValueType
+        let parameters: [CValueType]
+        let error: CValueType?
+        let typedError: Bool
+        let interface: SwiftCallInterface
+
+        func matches(result: CValueType, parameters: [CValueType], errorPlan: SwiftErrorPlan?) -> Bool {
+            guard Self.equal(self.result, result), self.parameters.count == parameters.count,
+                  typedError == (errorPlan?.isTyped ?? false) else { return false }
+            switch (error, errorPlan?.type) {
+            case (.none, .none): break
+            case (.some(let first), .some(let second)):
+                guard Self.equal(first, second) else { return false }
+            default: return false
+            }
+            return zip(self.parameters, parameters).allSatisfy(Self.equal)
+        }
+
+        private static func equal(_ first: CValueType, _ second: CValueType) -> Bool {
+            // Storage equality alone does not include Swift's formal indirection.
+            first === second || (ABIValueTypesEqual(first.handle, second.handle)
+                && ABISwiftValueIsIndirect(first.handle) == ABISwiftValueIsIndirect(second.handle))
+        }
+    }
+
+    // Only native layouts are cached: no Swift metatypes, codecs, images or
+    // callback bodies. Active handles retain interfaces independently of eviction.
+    private static let cache = Mutex<[Entry]>([])
+
+    static func cached(result: CValueType, parameters: [CValueType], errorPlan: SwiftErrorPlan? = nil) throws -> SwiftCallInterface {
+        try cache.withLock { entries in
+            if let entry = entries.last(where: { $0.matches(result: result, parameters: parameters, errorPlan: errorPlan) }) {
+                return entry.interface
+            }
+            let interface = try SwiftCallInterface(result: result, parameters: parameters, errorPlan: errorPlan)
+            if entries.count == 64 { entries.removeFirst() }
+            entries.append(Entry(result: result, parameters: parameters, error: errorPlan?.type,
+                                 typedError: errorPlan?.isTyped ?? false, interface: interface))
+            return interface
+        }
+    }
 }
 
 /// A prepared synchronous Swift function with a retained image.
