@@ -153,7 +153,6 @@ static bool validateReceiver(const Plan *plan, id receiver, NSError **error) {
     return true;
 }
 
-
 ABIObjCMethod *ABICopyObjCMethod(
     id receiver, SEL selector, const char *resultType,
     const char *const *parameterTypes, size_t parameterCount,
@@ -235,7 +234,7 @@ ABIObjCMethod *ABICopyObjCMethod(
 }
 
 void ABIReleaseObjCMethod(ABIObjCMethod *method) { delete method; }
-id ABIObjCMethodReceiver(const ABIObjCMethod *method) { return (__bridge id)method->receiver; }
+const void *ABIObjCMethodReceiverAddress(const ABIObjCMethod *method) { return method->receiver; }
 SEL ABIObjCMethodSelector(const ABIObjCMethod *method) { return method->plan->selector; }
 IMP ABIObjCMethodImplementation(const ABIObjCMethod *method) { return method->plan->implementation; }
 BOOL ABIObjCMethodReturnsRetained(const ABIObjCMethod *method) { return method->plan->returnsRetained; }
@@ -356,8 +355,6 @@ ABIObjCInvocation *ABICopyObjCInvocationPlan(ABIObjCInvocation *invocation) {
     return plan;
 }
 
-
-
 static ABIObjCInvocation *copyClassInvocation(
     Class type, SEL selector, BOOL classMethod, int32_t returnsRetained,
     int32_t consumesReceiver, bool capture, NSError **error) {
@@ -417,7 +414,6 @@ ABIObjCInvocation *ABICopyObjCDispatch(
     int32_t consumesReceiver, NSError **error) {
     return copyClassInvocation(type, selector, classMethod, returnsRetained, consumesReceiver, false, error);
 }
-
 
 static bool compatibleDispatchEncoding(const char *expected, const char *actual) {
     if (compatible(expected, actual)) return true;

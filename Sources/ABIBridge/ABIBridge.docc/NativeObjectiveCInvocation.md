@@ -18,7 +18,7 @@ void *address = nativeObject.unsafe_invoke();
 
 The example requires an existing receiver implementing those selectors. Signatures exclude `self` and `_cmd`. Passing a class object binds a class method. A selector can be supplied as `SEL` or a UTF-8 name; embedded NULs are rejected.
 
-Binding checks argument counts and Objective-C type encodings, performs dynamic method resolution, and captures a concrete IMP. It works with concrete methods on NSProxy subclasses without asking the receiver to implement NSObject reflection. The captured method does not follow later method replacement; bind again to observe a new implementation. Forwarded-only methods cannot be captured by this interface.
+Capturing checks argument counts and Objective-C type encodings, performs dynamic method resolution, and captures a concrete IMP. It works with concrete methods on NSProxy subclasses without asking the receiver to implement NSObject reflection. The captured method does not follow later method replacement; capture again to observe a new implementation. Forwarded-only methods cannot be captured by this interface.
 
 ## Reuse the captured implementation
 
@@ -57,7 +57,7 @@ id result = create.unsafe_invoke();
 
 The C++ interface throws `abi_bridge::resolution_error`, with an owned message and an `ABIFailure` category. Missing concrete declarations report `ABIFailureDeclarationNotFound`; a forwarded-only signature or forwarding IMP reports `ABIFailureUnsupportedDeclaration`; incompatible signatures report `ABIFailureSignatureMismatch`. A fast-forwarded selector without a method signature is treated as an absent concrete declaration. Objective-C exceptions raised by application code during lookup or invocation are not converted into C++ exceptions.
 
-The lower-level interface returns an owned `ABIObjCMethod *` or an NSError in `ABIObjCInvocationErrorDomain`. Release a successful binding with `ABIReleaseObjCMethod`. Its receiver, selector, and IMP getters are borrowed for the binding's lifetime. Directly calling that IMP still requires the same signature and ownership contract as the typed interface.
+The lower-level interface returns an owned `ABIObjCMethod *` or an NSError in `ABIObjCInvocationErrorDomain`. Release a successful binding with `ABIReleaseObjCMethod`. Its selector and IMP getters are borrowed for the binding's lifetime. `ABIObjCMethodReceiverAddress` returns the borrowed receiver address without Objective-C return ownership; bridge it to `id` while the binding is alive. This replaces the former `id`-returning `ABIObjCMethodReceiver` getter. Directly calling that IMP still requires the same signature and ownership contract as the typed interface.
 
 ## Use receiver-independent C ownership
 

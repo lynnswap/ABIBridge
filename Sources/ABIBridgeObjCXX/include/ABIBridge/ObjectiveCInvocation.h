@@ -29,8 +29,9 @@ FOUNDATION_EXPORT ABIObjCMethod * _Nullable ABICopyObjCMethod(
 
 /// Releases the receiver before releasing its implementation image.
 FOUNDATION_EXPORT void ABIReleaseObjCMethod(ABIObjCMethod *method);
-/// Returns a borrowed receiver; keep the method handle alive during use.
-FOUNDATION_EXPORT id ABIObjCMethodReceiver(const ABIObjCMethod *method);
+/// Returns the receiver's borrowed object address without Objective-C return ownership.
+/// Keep the binding alive through use; bridge to id for a typed native call.
+FOUNDATION_EXPORT const void *ABIObjCMethodReceiverAddress(const ABIObjCMethod *method);
 /// Returns the selector captured at binding time.
 FOUNDATION_EXPORT SEL ABIObjCMethodSelector(const ABIObjCMethod *method);
 /// Returns the resolved IMP. Capture again to select a subsequent replacement.

@@ -3,10 +3,51 @@
 #include <cassert>
 #include <cstdlib>
 #include <objc/message.h>
+#include <functional>
 
 static int liveProxyReceivers = 0;
 static int liveProxyResults = 0;
 static int nativeStorage = 42;
+static std::function<void()> assignmentReentry;
+
+@interface AssignmentFirst : NSObject
+- (NSInteger)value;
+@end
+@implementation AssignmentFirst
+- (NSInteger)value { return 11; }
+- (void)dealloc {
+    if (assignmentReentry) assignmentReentry();
+#if !__has_feature(objc_arc)
+    [super dealloc];
+#endif
+}
+@end
+@interface AssignmentSecond : NSObject
+- (NSInteger)value;
+@end
+@implementation AssignmentSecond
+- (NSInteger)value { return 22; }
+@end
+
+inline void checkAssignmentReentry(bool moving) {
+    using Handle = abi_bridge::bound_objc_implementation<NSInteger()>;
+    std::optional<Handle> current;
+    AssignmentFirst *first = [[AssignmentFirst alloc] init];
+    AssignmentSecond *second = [[AssignmentSecond alloc] init];
+    current.emplace(first, @selector(value));
+    Handle next(second, @selector(value));
+#if __has_feature(objc_arc)
+    first = nil; second = nil;
+#else
+    [first release]; [second release];
+#endif
+    NSInteger during = 0;
+    assignmentReentry = [&] { during = current->unsafe_invoke(); };
+    if (moving) *current = std::move(next);
+    else *current = next;
+    assignmentReentry = nullptr;
+    assert(during == 22 && current->unsafe_invoke() == 22);
+}
 
 @interface ProxyResult : NSObject
 @end
@@ -108,7 +149,7 @@ inline void checkReusableCapturedImplementation() {
         native.reset();
         using Getter = NSInteger (*)(id, SEL);
         assert(reinterpret_cast<Getter>(ABIObjCMethodImplementation(nativeBound))(
-            ABIObjCMethodReceiver(nativeBound), ABIObjCMethodSelector(nativeBound)) == 42);
+            (__bridge id)ABIObjCMethodReceiverAddress(nativeBound), ABIObjCMethodSelector(nativeBound)) == 42);
         ABIReleaseObjCMethod(nativeBound);
         auto rebound = captured->bind(second);
         Method method = class_getInstanceMethod([ConcreteProxy class], @selector(value));
@@ -141,6 +182,8 @@ inline void checkReusableCapturedImplementation() {
 }
 
 inline void checkPublicObjCInvocation() {
+    checkAssignmentReentry(false);
+    checkAssignmentReentry(true);
     checkReusableCapturedImplementation();
     using namespace abi_bridge;
     @autoreleasepool {
