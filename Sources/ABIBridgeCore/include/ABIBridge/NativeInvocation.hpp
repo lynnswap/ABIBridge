@@ -128,12 +128,15 @@ public:
 
     const resolved_symbol& symbol() const noexcept { return method_.symbol(); }
 
+    /// Copies the prepared entry point without retaining this receiver binding.
+    auto method() const noexcept -> abi_bridge::method<Signature> { return method_; }
+
 private:
-    friend class method<Signature>;
-    bound_method(method<Signature> method, std::shared_ptr<receiver> receiver)
+    friend class abi_bridge::method<Signature>;
+    bound_method(abi_bridge::method<Signature> method, std::shared_ptr<receiver> receiver)
         : method_(std::move(method)), receiver_(std::move(receiver)) {}
     // Release the receiver before its code image, including during assignment.
-    method<Signature> method_;
+    abi_bridge::method<Signature> method_;
     std::shared_ptr<receiver> receiver_;
 };
 

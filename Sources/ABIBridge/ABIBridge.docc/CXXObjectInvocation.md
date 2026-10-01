@@ -28,6 +28,24 @@ Supply member declarations relative to the class, including parameter types and 
 
 A direct method handle calls the resolved implementation. For a virtual override, use a table-selected method. The supplied storage must represent a live object of the declared type or its correctly adjusted base subobject. Static members use `cxxFunction` without a receiver.
 
+## Reuse a prepared implementation with another receiver
+
+Object lookup returns `NativeBoundCXXMethod`, which retains its receiver storage. Its `method` property returns `NativeCXXMethod`, sharing the prepared target, adapter, and call signature without retaining that binding.
+
+```swift
+let bound = try await counter.method(
+    named: "add(int)", as: ((Int32) -> Int32).self
+)
+let add = bound.method
+let result = try unsafe add.unsafeInvoke(on: anotherStorage, 2)
+let anotherBound = add.bind(to: anotherStorage)
+try unsafe anotherBound.unsafeInvoke(3)
+```
+
+The supplied storage must be the live object or adjusted subobject expected by the captured implementation. Binding does not infer class layout or compare descriptive type names. A table-selected method keeps the selected function, adjustment thunk, and authentication; rebinding does not select an override from another object's table. Explicit calls keep the supplied storage alive for the call, and custom result wrappers retain that storage when needed for borrowed native results. Raw pointer results remain borrowed.
+
+`NativeCXXMethod` was the retained-receiver type before this separation. Code explicitly naming that bound type now uses `NativeBoundCXXMethod`; inferred object-lookup usage keeps the same call spelling.
+
 ## Describe a subobject
 
 For multiple inheritance, use offsets and extents established by a target-specific adapter:
@@ -128,6 +146,8 @@ Keep the incoming target as a function pointer; stripping or treating it as an u
 
 ## Preserve resource lifetime
 
-A method retains its receiver, selected implementation, adapter image, and supplied table owner. When a wrapper keeps the `NativeValue` returned during conversion, that result also keeps the binding alive, which supports borrowed native results. Raw pointer results have no such owner and remain borrowed.
+A bound method retains its receiver, selected implementation, adapter image, and explicit code owners. A reusable method retains the implementation and adapter independently of receiver binding. When a wrapper keeps the `NativeValue` returned during conversion, that result also keeps the call's actual receiver and prepared method alive. Raw pointer results have no such owner and remain borrowed.
+
+A `NativeVTable(readingFrom:...)` view retains its source receiver while inspecting the table. Captured targets retain their implementation images, without retaining that source receiver through table storage. Supply `retainingCode:` when generated code needs an independent owner; that owner remains alive for captured method handles. `NativeVTable(borrowing:...retaining:)` continues to retain its explicitly supplied owner for both table storage and captured code dependencies.
 
 Perform lookup, calls, mutation, and final destruction on threads allowed by the native object. Handles do not make C++ instances Sendable. Independently owned receiver values must retain any dependencies required by their own destruction callbacks, as described in <doc:NativeValueAdapters>.

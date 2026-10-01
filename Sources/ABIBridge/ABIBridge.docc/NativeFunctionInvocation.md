@@ -39,4 +39,14 @@ The receiver must point to the exact class subobject expected by that nonstatic 
 
 To retain a receiver, use `method.bind(sharedPointer)`. An aliasing `std::shared_ptr` can keep an enclosing allocation alive while pointing to the required subobject. The resulting `bound_method` owns both receiver and implementation image, releasing the receiver first. Raw receiver calls borrow the receiver only for that call. Neither form retains other pointer or reference arguments or makes target state thread-safe.
 
+Use `bound.method()` to copy the prepared entry point without retaining the bound receiver:
+
+```cpp
+auto add = bound.method();
+int result = add.unsafe_invoke(other.get(), 2);
+auto otherBound = add.bind(other);
+```
+
+The copied method retains its code image and preserves the original signature and direct dispatch. Releasing the original binding can release its receiver while the copied method stays alive.
+
 Framework-specific layout shims, callback interfaces, and value ownership adapters remain in the consuming code. These headers do not publish the internal `InvocationRuntime` or every backend invocation facility.

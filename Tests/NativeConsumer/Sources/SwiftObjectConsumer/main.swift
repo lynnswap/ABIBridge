@@ -6,8 +6,9 @@ import Foundation
 @main
 struct SwiftObjectConsumer {
     enum Failure: Error { case missingPath, loadFailed, allocationFailed }
+    final class ReceiverProbe { weak var storage: NativeValue? }
 
-    static func prepare(_ url: URL) async throws -> NativeCXXMethod<Int32> {
+    static func prepare(_ url: URL, observing probe: ReceiverProbe) async throws -> NativeBoundCXXMethod<Int32> {
         guard let loader = dlopen(url.path, RTLD_NOW | RTLD_LOCAL) else { throw Failure.loadFailed }
         defer { dlclose(loader) }
         let runtime = ABIRuntime()
@@ -23,17 +24,18 @@ struct SwiftObjectConsumer {
         let slotDiscriminator = try await runtime.cFunction(
             named: "ABIBridgeFixtureSlotDiscriminator", as: (() -> UInt).self, in: .path(url)
         )
-        guard let address = try unsafe make.unsafeInvoke(42) else { throw Failure.allocationFailed }
+        guard let address = try unsafe make.unsafeInvoke(13) else { throw Failure.allocationFailed }
         let layout = try unsafe NativeType.opaque(
             named: "VirtualCounter", size: size.unsafeInvoke(), alignment: alignment.unsafeInvoke()
         )
         // The fixture is placement-constructed in malloc storage and has a
         // trivial destructor, so release requires no library code.
         let storage = unsafe NativeValue(adopting: address, as: layout, release: { free($0) })
+        probe.storage = storage
         let object = runtime.cxxObject(storage, typeNamed: "ABIBridgeFixture::VirtualCounter", in: .path(url))
         let direct = try await object.method(named: "current() const", as: (() -> Int32).self)
         let directValue = try unsafe direct.unsafeInvoke()
-        precondition(directValue == 42)
+        precondition(directValue == 13)
         let table = try unsafe NativeVTable(
             readingFrom: storage, entryCount: 1,
             authentication: .cxxVTablePointer(discriminator: tableDiscriminator.unsafeInvoke())
@@ -44,7 +46,9 @@ struct SwiftObjectConsumer {
             as: (() -> Int32).self
         )
         await runtime.removeCachedResults()
-        return method
+        guard let anotherAddress = try unsafe make.unsafeInvoke(42) else { throw Failure.allocationFailed }
+        let another = unsafe NativeValue(adopting: anotherAddress, as: layout, release: { free($0) })
+        return method.method.bind(to: another)
     }
 
     @MainActor static func snapshots(_ url: URL) async throws -> (UInt64, [NativeLazyLibrary], OpaquePointer) {
@@ -95,7 +99,9 @@ struct SwiftObjectConsumer {
         guard CommandLine.arguments.count == 2 else { throw Failure.missingPath }
         let url = URL(fileURLWithPath: CommandLine.arguments[1])
         try await checkSnapshotAndHandoffLifetime(url)
-        var method: NativeCXXMethod<Int32>? = try await prepare(url)
+        let probe = ReceiverProbe()
+        var method: NativeBoundCXXMethod<Int32>? = try await prepare(url, observing: probe)
+        precondition(probe.storage == nil)
         let value = try unsafe method!.unsafeInvoke()
         precondition(value == 42)
         guard let retained = dlopen(url.path, RTLD_NOLOAD | RTLD_NOW) else { throw Failure.loadFailed }
