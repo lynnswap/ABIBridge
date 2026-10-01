@@ -19,6 +19,17 @@ private struct RejectingAsyncRecord: ABIBridgeValue {
 }
 
 struct SwiftAsyncInvocationTests {
+    @Test func objectAdapterBindingsValidateTheReceiverBeforeAsyncInvocation() async throws {
+        let type = try await ABIRuntime.shared.swiftType(
+            named: "ManagedSwiftFixtures.AsyncOwner", as: AnyObject.self
+        )
+        let method = try await type.method(
+            named: "value(_:)", as: (@concurrent (AsyncGate) async -> String).self
+        )
+        let bound = try method.bind(to: ErrorLifetimeToken())
+        await #expect(throws: ABIInvocationError.self) { try unsafe await bound.unsafeInvoke(AsyncGate()) }
+    }
+
     @Test func escapedNativeErrorRetainsPayloadWithoutRetainingTheReceiver() async throws {
         let gate = AsyncGate()
         weak var observed: AsyncMemberOwner?
