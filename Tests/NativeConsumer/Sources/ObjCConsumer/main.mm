@@ -133,7 +133,7 @@ int main() {
         for (SEL selector : {@selector(object), @selector(copyObject), @selector(newspaper)}) {
             @autoreleasepool {
                 auto getter = abi_bridge::bound_objc_implementation<NSObject*()>(object, selector);
-                NSObject* value = getter.unsafe_invoke();
+                NSObject* value = getter.implementation().unsafe_invoke(object);
                 assert(value && liveResults == 1);
             }
             assert(liveResults == 0);
@@ -141,14 +141,14 @@ int main() {
         @autoreleasepool {
             auto getter = abi_bridge::bound_objc_implementation<NSObject*()>(
                 object, @selector(retainedObject), {.returns_retained = true});
-            NSObject* value = getter.unsafe_invoke();
+            NSObject* value = getter.implementation().unsafe_invoke(object);
             assert(value && liveResults == 1);
         }
         assert(liveResults == 0);
         @autoreleasepool {
             auto getter = abi_bridge::bound_objc_implementation<NSObject*()>(
                 object, @selector(newBorrowedObject), {.returns_retained = false});
-            NSObject* value = getter.unsafe_invoke();
+            NSObject* value = getter.implementation().unsafe_invoke(object);
             assert(value && liveResults == 1);
         }
         assert(liveResults == 0);

@@ -8,6 +8,7 @@
 NS_ASSUME_NONNULL_BEGIN
 
 typedef struct ABIObjCMethod ABIObjCMethod;
+typedef struct ABIObjCImplementation ABIObjCImplementation;
 
 /// Errors use the ABIFailure categories declared by ABIBridgeCore.
 FOUNDATION_EXPORT NSErrorDomain const ABIObjCInvocationErrorDomain;
@@ -32,11 +33,31 @@ FOUNDATION_EXPORT void ABIReleaseObjCMethod(ABIObjCMethod *method);
 FOUNDATION_EXPORT id ABIObjCMethodReceiver(const ABIObjCMethod *method);
 /// Returns the selector captured at binding time.
 FOUNDATION_EXPORT SEL ABIObjCMethodSelector(const ABIObjCMethod *method);
-/// Returns the resolved IMP. Subsequent method replacement requires rebinding.
+/// Returns the resolved IMP. Capture again to select a subsequent replacement.
 FOUNDATION_EXPORT IMP ABIObjCMethodImplementation(const ABIObjCMethod *method);
 /// Whether the target returns an Objective-C object at +1.
 FOUNDATION_EXPORT BOOL ABIObjCMethodReturnsRetained(const ABIObjCMethod *method);
 /// Whether the target consumes an ownership reference to self.
 FOUNDATION_EXPORT BOOL ABIObjCMethodConsumesReceiver(const ABIObjCMethod *method);
+
+/// Copies ownership of the captured implementation without retaining the bound receiver.
+/// The handle retains its class and discoverable implementation images.
+FOUNDATION_EXPORT ABIObjCImplementation *ABICopyObjCMethodImplementation(const ABIObjCMethod *method);
+/// Adds an ownership reference to a live captured implementation.
+FOUNDATION_EXPORT void ABIRetainObjCImplementation(ABIObjCImplementation *implementation);
+/// Releases an ownership reference; null is permitted.
+FOUNDATION_EXPORT void ABIReleaseObjCImplementation(ABIObjCImplementation * _Nullable implementation);
+/// Checks class/instance receiver compatibility without looking up another IMP.
+FOUNDATION_EXPORT BOOL ABIValidateObjCImplementationReceiver(
+    const ABIObjCImplementation *implementation, id receiver, NSError * _Nullable * _Nullable error);
+/// Retains a compatible receiver while preserving the captured IMP and ownership.
+/// Failure returns null and an NSError in ABIObjCInvocationErrorDomain.
+FOUNDATION_EXPORT ABIObjCMethod * _Nullable ABICopyBoundObjCMethod(
+    ABIObjCImplementation *implementation, id receiver, NSError * _Nullable * _Nullable error);
+/// Borrowed selector and signed IMP for the captured handle's lifetime.
+FOUNDATION_EXPORT SEL ABIObjCImplementationSelector(const ABIObjCImplementation *implementation);
+FOUNDATION_EXPORT IMP ABIObjCImplementationIMP(const ABIObjCImplementation *implementation);
+FOUNDATION_EXPORT BOOL ABIObjCImplementationReturnsRetained(const ABIObjCImplementation *implementation);
+FOUNDATION_EXPORT BOOL ABIObjCImplementationConsumesReceiver(const ABIObjCImplementation *implementation);
 
 NS_ASSUME_NONNULL_END

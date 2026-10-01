@@ -49,7 +49,7 @@ int main() {
             assert(liveReceivers == 1);
             NSObject* kept = nil;
             @autoreleasepool {
-                NSObject* result = getter.unsafe_invoke();
+                NSObject* result = getter.implementation().unsafe_invoke(object);
                 assert(liveResults == 1);
                 kept = [result retain];
             }
@@ -57,7 +57,7 @@ int main() {
             [kept release];
             assert(liveResults == 0);
             @autoreleasepool {
-                Transform block = transform.unsafe_invoke();
+                Transform block = transform.implementation().unsafe_invoke(object);
                 assert(block(41) == 42 && liveResults == 1);
             }
             assert(liveResults == 0);
