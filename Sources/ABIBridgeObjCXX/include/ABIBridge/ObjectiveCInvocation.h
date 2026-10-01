@@ -50,11 +50,11 @@ FOUNDATION_EXPORT void ABIRetainObjCImplementation(ABIObjCImplementation *implem
 FOUNDATION_EXPORT void ABIReleaseObjCImplementation(ABIObjCImplementation * _Nullable implementation);
 /// Checks class/instance receiver compatibility without looking up another IMP.
 FOUNDATION_EXPORT BOOL ABIValidateObjCImplementationReceiver(
-    const ABIObjCImplementation *implementation, id receiver, NSError * _Nullable * _Nullable error);
+    const ABIObjCImplementation *implementation, __unsafe_unretained id receiver, NSError * _Nullable * _Nullable error);
 /// Retains a compatible receiver while preserving the captured IMP and ownership.
 /// Failure returns null and an NSError in ABIObjCInvocationErrorDomain.
 FOUNDATION_EXPORT ABIObjCMethod * _Nullable ABICopyBoundObjCMethod(
-    ABIObjCImplementation *implementation, id receiver, NSError * _Nullable * _Nullable error);
+    ABIObjCImplementation *implementation, __unsafe_unretained id receiver, NSError * _Nullable * _Nullable error);
 /// Borrowed selector and signed IMP for the captured handle's lifetime.
 FOUNDATION_EXPORT SEL ABIObjCImplementationSelector(const ABIObjCImplementation *implementation);
 FOUNDATION_EXPORT IMP ABIObjCImplementationIMP(const ABIObjCImplementation *implementation);

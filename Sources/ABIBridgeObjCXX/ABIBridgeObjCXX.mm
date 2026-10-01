@@ -130,7 +130,7 @@ std::optional<Ownership> ownershipFor(
 }
 
 template <typename Plan>
-static bool validateReceiver(const Plan *plan, id receiver, NSError **error) {
+static bool validateReceiver(const Plan *plan, __unsafe_unretained id receiver, NSError **error) {
     if (!receiver) {
         fail(error, ABIFailureInvalidRequest, @"A live receiver is required.");
         return false;
@@ -248,14 +248,18 @@ void ABIRetainObjCImplementation(ABIObjCImplementation *implementation) { ++impl
 void ABIReleaseObjCImplementation(ABIObjCImplementation *implementation) {
     if (implementation && --implementation->references == 0) delete implementation;
 }
-BOOL ABIValidateObjCImplementationReceiver(const ABIObjCImplementation *implementation, id receiver, NSError **error) {
+BOOL ABIValidateObjCImplementationReceiver(const ABIObjCImplementation *implementation, __unsafe_unretained id receiver, NSError **error) {
     if (error) *error = nil;
     return validateReceiver(implementation, receiver, error);
 }
-ABIObjCMethod *ABICopyBoundObjCMethod(ABIObjCImplementation *implementation, id receiver, NSError **error) {
-    if (!ABIValidateObjCImplementationReceiver(implementation, receiver, error)) return nullptr;
-    auto binding = std::make_unique<ABIObjCMethod>(receiver, implementation);
+ABIObjCMethod *ABICopyBoundObjCMethod(ABIObjCImplementation *implementation, __unsafe_unretained id receiver, NSError **error) {
+    // A custom receiver retain can reenter and release the source implementation.
     ABIRetainObjCImplementation(implementation);
+    std::unique_ptr<ABIObjCImplementation, decltype(&ABIReleaseObjCImplementation)> owned(
+        implementation, ABIReleaseObjCImplementation);
+    if (!ABIValidateObjCImplementationReceiver(implementation, receiver, error)) return nullptr;
+    auto binding = std::make_unique<ABIObjCMethod>(receiver, owned.get());
+    owned.release();
     return binding.release();
 }
 SEL ABIObjCImplementationSelector(const ABIObjCImplementation *implementation) { return implementation->selector; }

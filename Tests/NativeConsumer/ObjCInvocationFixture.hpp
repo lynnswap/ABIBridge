@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <objc/message.h>
 #include <functional>
+#include <utility>
 
 static int liveProxyReceivers = 0;
 static int liveProxyResults = 0;
@@ -48,6 +49,50 @@ inline void checkAssignmentReentry(bool moving) {
     assignmentReentry = nullptr;
     assert(during == 22 && current->unsafe_invoke() == 22);
 }
+
+#if !__has_feature(objc_arc)
+static std::function<void()> receiverRetainReentry;
+@interface RetainReentrantReceiver : NSObject
+- (NSInteger)value;
+@end
+@implementation RetainReentrantReceiver
+- (NSInteger)value { return 42; }
+- (id)retain {
+    auto callback = std::exchange(receiverRetainReentry, {});
+    if (callback) callback();
+    return [super retain];
+}
+@end
+
+inline void checkReceiverRetainReentry() {
+    using namespace abi_bridge;
+    RetainReentrantReceiver *prototype = [[RetainReentrantReceiver alloc] init];
+    RetainReentrantReceiver *receiver = [[RetainReentrantReceiver alloc] init];
+    {
+        std::optional<objc_implementation<NSInteger()>> source;
+        source.emplace(prototype, "value");
+        receiverRetainReentry = [&] { source.reset(); };
+        auto rebound = source->bind(receiver);
+        assert(!source && rebound.unsafe_invoke() == 42);
+    }
+    {
+        NSError *error = nil;
+        auto *binding = ABICopyObjCMethod(prototype, @selector(value), @encode(NSInteger), nullptr, 0, -1, -1, &error);
+        assert(binding && !error);
+        auto *source = ABICopyObjCMethodImplementation(binding);
+        ABIReleaseObjCMethod(binding);
+        receiverRetainReentry = [&] { ABIReleaseObjCImplementation(source); source = nullptr; };
+        auto *rebound = ABICopyBoundObjCMethod(source, receiver, &error);
+        assert(!source && rebound && !error);
+        using Getter = NSInteger (*)(id, SEL);
+        assert(reinterpret_cast<Getter>(ABIObjCMethodImplementation(rebound))(
+            (__bridge id)ABIObjCMethodReceiverAddress(rebound), ABIObjCMethodSelector(rebound)) == 42);
+        ABIReleaseObjCMethod(rebound);
+    }
+    [prototype release];
+    [receiver release];
+}
+#endif
 
 @interface ProxyResult : NSObject
 @end
@@ -184,6 +229,9 @@ inline void checkReusableCapturedImplementation() {
 inline void checkPublicObjCInvocation() {
     checkAssignmentReentry(false);
     checkAssignmentReentry(true);
+#if !__has_feature(objc_arc)
+    checkReceiverRetainReentry();
+#endif
     checkReusableCapturedImplementation();
     using namespace abi_bridge;
     @autoreleasepool {

@@ -46,7 +46,7 @@ public:
     /// Calls the captured IMP with a compatible live receiver.
     /// Target isolation, argument lifetimes, and the actual ABI remain caller contracts.
     /// Object and block results follow ordinary +0 return semantics under ARC/MRC.
-    Result unsafe_invoke(id receiver, Arguments... arguments) const {
+    Result unsafe_invoke(__unsafe_unretained id receiver, Arguments... arguments) const {
         const auto implementation = implementation_;
         NSError* error = nil;
         if (!ABIValidateObjCImplementationReceiver(implementation.get(), receiver, &error)) {
@@ -59,7 +59,7 @@ public:
     }
 
     /// Retains another receiver without repeating lookup or changing the IMP.
-    bound_objc_implementation<signature> bind(id receiver) const {
+    bound_objc_implementation<signature> bind(__unsafe_unretained id receiver) const {
         return bound_objc_implementation<signature>(*this, receiver);
     }
 
@@ -165,9 +165,9 @@ public:
 
 private:
     friend class objc_implementation<signature>;
-    bound_objc_implementation(const implementation_type& implementation, id receiver)
+    bound_objc_implementation(const implementation_type& implementation, __unsafe_unretained id receiver)
         : method_(copy_binding(implementation, receiver), ABIReleaseObjCMethod) {}
-    static ABIObjCMethod* copy_binding(const implementation_type& implementation, id receiver) {
+    static ABIObjCMethod* copy_binding(const implementation_type& implementation, __unsafe_unretained id receiver) {
         NSError* error = nil;
         auto* method = ABICopyBoundObjCMethod(implementation.implementation_.get(), receiver, &error);
         if (!method) {
