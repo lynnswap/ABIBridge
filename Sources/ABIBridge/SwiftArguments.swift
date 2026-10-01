@@ -30,23 +30,50 @@ func swiftArgumentTypeName(_ type: Any.Type, defaultConsuming: Bool) throws -> S
 struct SwiftArgumentCodec<Value>: Sendable {
     let type: CValueType
     let consumes: Bool
-    private let ordinary: SwiftValueCodec<Value>?
-    private let explicit: SwiftConventionCodec?
+    private enum Encoding: Sendable {
+        case ordinary(SwiftValueCodec<Value>)
+        case explicit(SwiftConventionCodec)
+        case genericValue
+        case genericClosure
+    }
+    private let encoding: Encoding
 
-    init(defaultConsuming: Bool) throws {
-        if let argument = Value.self as? any SwiftConventionArgument.Type {
-            let codec = try argument.makeArgumentCodec()
-            type = codec.type; consumes = codec.consumes
-            explicit = codec; ordinary = nil
-        } else {
-            let codec = try SwiftValueCodec<Value>()
-            type = codec.type; consumes = defaultConsuming
-            ordinary = codec; explicit = nil
+    init(defaultConsuming: Bool, generic: SwiftGenericArgument = .concrete) throws {
+        switch generic {
+        case .parameter:
+            type = try CValueType(indirectSwiftSize: MemoryLayout<Value>.size, alignment: MemoryLayout<Value>.alignment)
+            consumes = false
+            encoding = .genericValue
+        case .closureResult:
+            type = try SwiftValueCodec<Value>().type
+            consumes = false
+            encoding = .genericClosure
+        case .concrete:
+            if let argument = Value.self as? any SwiftConventionArgument.Type {
+                let codec = try argument.makeArgumentCodec()
+                type = codec.type; consumes = codec.consumes
+                encoding = .explicit(codec)
+            } else {
+                let codec = try SwiftValueCodec<Value>()
+                type = codec.type; consumes = defaultConsuming
+                encoding = .ordinary(codec)
+            }
         }
     }
-    func encode(_ value: Value) throws -> NativeValueStorage {
-        if let ordinary { return try ordinary.encode(value) }
-        return try explicit!.encode(value)
+
+    func encode(_ value: Value, retainingCode owner: Any? = nil) throws -> NativeValueStorage {
+        switch encoding {
+        case .ordinary(let codec): return try codec.encode(value)
+        case .explicit(let codec): return try codec.encode(value)
+        case .genericClosure:
+            return try (value as! any SwiftGenericResultClosure).encodeGenericResultClosure(retainingCode: owner)
+        case .genericValue:
+            // The callee receives Value's metadata and operates on Value itself,
+            // even when Value also provides a different foreign representation.
+            let storage = NativeValueStorage(size: MemoryLayout<Value>.stride, alignment: MemoryLayout<Value>.alignment)
+            storage.initialize(value)
+            return storage
+        }
     }
 }
 

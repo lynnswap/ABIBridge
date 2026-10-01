@@ -104,8 +104,15 @@ private func swiftPointerAuthHash(_ string: String) -> UInt16 {
 
 protocol SwiftClosureValue: SendableMetatype {
     static var swiftFunctionType: Any.Type { get }
+    static var requiresExplicitDeclaration: Bool { get }
+    static var supportsResult: Bool { get }
     static func makeClosureCodec() throws -> SwiftClosureCodec
     func encodeClosure() -> NativeValueStorage
+}
+
+extension SwiftClosureValue {
+    static var requiresExplicitDeclaration: Bool { false }
+    static var supportsResult: Bool { true }
 }
 
 struct SwiftClosureCodec: Sendable {

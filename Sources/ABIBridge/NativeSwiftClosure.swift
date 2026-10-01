@@ -69,6 +69,24 @@ public struct NativeSwiftClosure<Result, each Argument> {
     /// - Parameter body: A synchronous Sendable callback.
     /// - Throws: An unsupported representation or callback allocation error.
     public init(_ body: @escaping @Sendable (repeat each Argument) -> Result) throws {
+        try self.init(scopedBody: body)
+    }
+
+    /// Borrows a caller-isolated body for a native nonescaping closure parameter.
+    ///
+    /// Neither the native callee nor `use` may retain or return the callback.
+    /// Calls must remain synchronous on this executor. This permits captures
+    /// that do not satisfy Sendable without changing the body's isolation.
+    @unsafe public static func withUnsafeNonescaping<Output>(
+        _ body: (repeat each Argument) -> Result,
+        _ use: (Self) throws -> Output
+    ) throws -> Output {
+        try withoutActuallyEscaping(body) { escaped in
+            try use(Self(scopedBody: escaped))
+        }
+    }
+
+    private init(scopedBody body: @escaping (repeat each Argument) -> Result) throws {
         let prepared = try Self.prepare()
         let callback = try SwiftClosureCallbackOwner(interface: prepared.call.interface, body: SwiftClosureBody { arguments, output in
             var index = 0
@@ -156,5 +174,35 @@ extension NativeSwiftClosure: SwiftClosureValue {
             let storage = try SwiftClosureStorage(adopting: forwarded, discriminator: prepared.discriminator, retaining: nil)
             return Self(storage: storage, call: prepared.call)
         }
+    }
+}
+
+
+extension NativeSwiftClosure: SwiftGenericResultClosure {
+    static var resultType: Any.Type { Result.self }
+    static var parameterTypes: [Any.Type] {
+        var result: [Any.Type] = []
+        for type in repeat (each Argument).self { result.append(type) }
+        return result
+    }
+
+    func encodeGenericResultClosure(retainingCode owner: Any?) throws -> NativeValueStorage {
+        // The declaration-level result stays indirect even for scalar substitutions.
+        // Forwarding through the concrete interface performs the reabstraction.
+        let result = try CValueType(indirectSwiftSize: MemoryLayout<Result>.size, alignment: MemoryLayout<Result>.alignment)
+        let interface = try SwiftCallInterface(result: result, parameters: [])
+        let original = closureStorage
+        let concrete = call.interface
+        let callback = try SwiftClosureCallbackOwner(interface: interface, body: SwiftClosureBody(retainingCode: (original.codeOwner, owner)) { arguments, output in
+            let success = ABIUnsafeInvokeSwiftCallInterface(concrete.handle, original.implementation.function,
+                output, arguments, original.value.context, nil)
+            // Preparation established the interface and all required buffers.
+            precondition(success, "A prepared closure reabstraction must have a valid call frame.")
+        })
+        let discriminator = swiftClosureDiscriminator(parameters: [], result: "-indirect")
+        let value = ABISwiftClosureValue(function: ABISignSwiftClosureFunction(callback.function, discriminator),
+            context: Unmanaged.passRetained(callback).toOpaque())
+        let adapted = try SwiftClosureStorage(adopting: value, discriminator: discriminator, retaining: original)
+        return adapted.encoded()
     }
 }

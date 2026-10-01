@@ -757,10 +757,15 @@ bool checkIncoming(ABISwiftIncomingCall *call, ABIResolutionFailure **error) {
 }
 
 void unpackArguments(const ABISwiftCallInterface &interface, CallFrame &frame,
-                     std::vector<AlignedValue> &storage, std::vector<void *> &arguments, void **errorResult = nullptr) {
+                     std::vector<AlignedValue> &storage, std::vector<void *> &arguments, void **errorResult = nullptr,
+                     bool borrowIndirect = false) {
     storage.reserve(interface.parameters.size());
     arguments.reserve(interface.parameters.size());
     for (const auto &type : interface.parameters) {
+        if (borrowIndirect && lower(*type).indirect) {
+            arguments.push_back(nullptr);
+            continue;
+        }
         storage.emplace_back(type->size(), type->native()->alignment);
         arguments.push_back(storage.back().data());
     }
@@ -780,7 +785,8 @@ void unpackArguments(const ABISwiftCallInterface &interface, CallFrame &frame,
         if (move.indirect) {
             uintptr_t pointer = 0;
             std::memcpy(&pointer, source, sizeof(pointer));
-            std::memcpy(destination, reinterpret_cast<const void *>(pointer), interface.parameters[move.argument]->size());
+            if (borrowIndirect) arguments[move.argument] = reinterpret_cast<void *>(pointer);
+            else std::memcpy(destination, reinterpret_cast<const void *>(pointer), interface.parameters[move.argument]->size());
         } else {
             const auto available = interface.parameters[move.argument]->size() - move.component.offset;
             std::memcpy(destination + move.component.offset, source, std::min(move.component.size, available));
@@ -1019,7 +1025,9 @@ extern "C" __attribute__((visibility("hidden"))) void ABIDispatchSwiftCallback(A
         std::vector<void *> arguments;
         auto &interface = callback->interface;
         void *indirectError = nullptr;
-        unpackArguments(interface, *frame, storage, arguments, &indirectError);
+        // Synchronous closure arguments are guaranteed for this entire callback.
+        // Preserve their original address, including address-sensitive resilient values.
+        unpackArguments(interface, *frame, storage, arguments, &indirectError, true);
         AlignedValue result(interface.result->size(), interface.result->native()->alignment);
         if (interface.errorResult) frame->error = 0;
         if (callback->closure->invokeThrowing) {

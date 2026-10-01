@@ -1,6 +1,46 @@
-# Specializing Swift generics through compiler adapters
+# Calling Swift generics
 
-Use an importing compiler adapter to construct a known generic nominal type from metatype substitutions and invoke operations requiring an existing protocol conformance.
+Call synchronous free functions with one unconstrained type parameter using an explicit substitution. Use an importing compiler adapter for constrained declarations and generic nominal metadata construction.
+
+## Call one unconstrained generic function
+
+For a provider declaring `func run<T>(_ apply: () -> T) -> T`, supply its complete source-level declaration and a concrete signature:
+
+```swift
+let run = try await ABIRuntime.shared.swiftFunction(
+    named: "Example.run<A>(() -> A) -> A",
+    as: ((NativeSwiftClosure<String>) -> String).self,
+    substituting: String.self
+)
+let suffix = "!"
+let apply = try NativeSwiftClosure { "Hello" + suffix }
+let result = try unsafe run.unsafeInvoke(apply)
+```
+
+`A` is the Swift demangler's source-level name for the first type parameter; no mangled symbol is needed. The supplied metatype must match every occurrence of `A` in the concrete signature. The `substituting:` overload also accepts a retained ``NativeSwiftType`` and retains its image through invocation and adapted callback contexts. Supplying a metatype directly assumes the type's implementation remains available, as for ordinary linked Swift types.
+
+The declaration controls physical lowering. `Bool` and `String` both use indirect generic arguments/results, even though their concrete calling conventions differ. The bridge appends the hidden type metadata and adapts a zero-argument callback to initialize its formal indirect result. Native escaping copies retain the adapted closure's context and required code owners. A failure converting a later argument releases earlier storage and adapted contexts without entering native code.
+
+The initial direct subset supports synchronous, nonthrowing free functions with one unconstrained `<A>`. `A` can occur directly in arguments/results or as the result of `() -> A`; other positions use the existing concrete representations. Direct `A` arguments/results use the substituted type's actual Swift storage and compiler-generated value operations. `ABIBridgeValue` conversions and argument convention markers are not applied at those positions: explicitly substituting a wrapper type means `A` is the wrapper itself. A `() -> A` callback additionally requires `NativeSwiftClosure`'s supported concrete result representation for reabstraction. Constraints, dependent composites such as `Array<A>`, multiple parameters, generic members, packs, async/throwing effects, and imported hooks/replacements need additional contracts. Nongeneric nominal types containing concrete substitutions remain covered by <doc:ExplicitSwiftValues>.
+
+For a native nonescaping `apply`, use ``NativeSwiftClosure/withUnsafeNonescaping(_:_:)`` to keep a caller-isolated body within its synchronous call. Neither the callee nor the use body may retain that callback:
+
+```swift
+let run = try await ABIRuntime.shared.swiftFunction(
+    named: "Example.run<A>(() -> A) -> A",
+    as: ((NativeSwiftClosure<Bool>) -> Bool).self,
+    substituting: Bool.self
+)
+var calls = 0
+let result = try unsafe NativeSwiftClosure<Bool>.withUnsafeNonescaping({
+    calls += 1
+    return true
+}) { callback in
+    try unsafe run.unsafeInvoke(callback)
+}
+```
+
+`SwiftGenericCallTests` compares scalar and managed substitutions with separately compiled compiler-generated calls, including capturing callbacks, indirect reference ownership, empty results, escaping copies and conversion failures. `SwiftRuntimeValueConsumer` combines this entry with a runtime-only borrowed callback without importing its concrete provider type. Runtime validation covers macOS arm64 in Debug and Release, and the `swift-generic-borrows` device probe passed on iPhone Air with iOS 27.0.1 (24A446), Xcode 27.0 / Swift 6.4, Release arm64e with pointer authentication enabled. `check-swift-generic-call-codegen.py` checks hidden metadata, formal result/self conventions, and arm64e callback discriminators on arm64, x86_64, arm64e and arm64_32. The compiler probes alone do not establish runtime coverage on x86_64 or arm64_32.
 
 ## Choose the specialization boundary
 
@@ -18,7 +58,7 @@ func specializedType(for argument: Any.Type) -> Any.Type? {
 
 The caller supplies a metatype, not a mangled generic argument list. The compiler supplies the metadata and protocol witness arguments and requests complete specialization metadata. Repeated requests for the same nominal declaration and substitutions return the runtime's canonical metadata. Different substitutions have different identities. This compiler runtime cache does not replace ABIBridge's image-aware symbol cache or authorize persisting an unowned metadata address.
 
-The prototype demonstrates a route available through the existing C frontend; it does not add general direct generic lookup to ``NativeSwiftType`` or ``NativeSwiftFunction``. A metatype still does not provide all declaration-level lowering and ownership information.
+The constrained metadata prototype uses the C frontend. It does not extend the direct free-function subset above to arbitrary generic nominal lookup or protocol constraints. A metatype still does not provide all declaration-level lowering and ownership information.
 
 ## Pass values and retain their owners
 

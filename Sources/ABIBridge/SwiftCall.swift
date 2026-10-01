@@ -8,15 +8,23 @@ struct SwiftCall<Result, each Argument>: Sendable {
     private let hasTrailingValue: Bool
     private let consumedArguments: [Int]
     private let argumentCount: Int
+    private let genericMetadata: UInt?
 
-    init(trailingType: CValueType? = nil, consumesArguments: Bool = false, errorPlan: SwiftErrorPlan? = nil, opaqueResult: SwiftOpaqueResultPlan? = nil) throws {
+    init(trailingType: CValueType? = nil, consumesArguments: Bool = false, errorPlan: SwiftErrorPlan? = nil, opaqueResult: SwiftOpaqueResultPlan? = nil, generic: SwiftGenericCallPlan? = nil) throws {
         self.errorPlan = errorPlan
-        let arguments = (repeat try SwiftArgumentCodec<each Argument>(defaultConsuming: consumesArguments))
-        let result = try SwiftResultCodec<Result>(opaque: opaqueResult)
+        genericMetadata = generic?.metadata
+        var parameterIndex = 0
+        func argument<Value>(_ type: Value.Type) throws -> SwiftArgumentCodec<Value> {
+            defer { parameterIndex += 1 }
+            return try SwiftArgumentCodec(defaultConsuming: consumesArguments, generic: generic?.arguments[parameterIndex] ?? .concrete)
+        }
+        let arguments = (repeat try argument((each Argument).self))
+        let result = try SwiftResultCodec<Result>(opaque: opaqueResult, genericValue: generic?.indirectResult == true)
         var parameters: [CValueType] = []
         for argument in repeat each arguments { parameters.append(argument.type) }
         argumentCount = parameters.count
         if let trailingType { parameters.append(trailingType) }
+        if generic != nil { parameters.append(try CValueType(scalar: ABIValuePointer)) }
         interface = try SwiftCallInterface(result: result.type, parameters: parameters, errorPlan: errorPlan)
         self.arguments = arguments
         self.result = result
@@ -56,10 +64,16 @@ struct SwiftCall<Result, each Argument>: Sendable {
         var storage: [NativeValueStorage] = []
         storage.reserveCapacity(argumentCount)
         for (codec, value) in repeat (each arguments, each values) {
-            storage.append(try codec.encode(value))
+            storage.append(try codec.encode(value, retainingCode: codeOwner))
         }
         var addresses: [UnsafeMutableRawPointer?] = storage.map(\.address)
         if let trailingValue { addresses.append(trailingValue.address) }
+        if let genericMetadata {
+            let metadata = NativeValueStorage(size: MemoryLayout<UInt>.size, alignment: MemoryLayout<UInt>.alignment)
+            metadata.store(genericMetadata)
+            storage.append(metadata)
+            addresses.append(metadata.address)
+        }
         let output = result.makeStorage()
         let nativeError = errorPlan?.makeStorage()
         var didThrow = false

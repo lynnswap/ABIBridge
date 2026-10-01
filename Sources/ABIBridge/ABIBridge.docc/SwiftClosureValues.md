@@ -107,7 +107,7 @@ An array's element type can itself be a managed struct, enum, optional, or anoth
 
 `ABIBridgeSwiftValue` conformances use compiler-owned value operations and can therefore pass actual managed Swift values without custom conversion callbacks; see <doc:ExplicitSwiftValues>.
 
-Custom `ABIBridgeValue` conversions describe foreign representations rather than the callback's actual Swift value types, so they remain outside this callback path. Nested closures, value Optionals without an established direct representation, generic declarations, and explicit inout/consuming callback conventions require a compiler adapter.
+Custom `ABIBridgeValue` conversions describe foreign representations rather than the callback's actual Swift value types, so they remain outside this callback path. Nested closures, value Optionals without an established direct representation, generic shapes outside <doc:GenericSwiftValues>, and explicit inout/consuming callback conventions require a compiler adapter. <doc:BorrowedSwiftValues> provides a separate scoped callback for a runtime-only resilient argument.
 
 Incoming closure-valued hook arguments are outside this subset: a native nonescaping callback can carry a stack context that cannot be retained as an owned wrapper. Hook preparation rejects that representation before installing an entry.
 
@@ -130,3 +130,5 @@ Those two words are not interchangeable across every Swift representation. A con
 Compiler fixtures compare both reabstraction directions and the native result representation. Runtime checks cover capturing and noncapturing callbacks, escaping storage, owned returned contexts, zero/stack arguments, managed results, and failure cleanup. The `swift-closures` architecture mode exercises the public API against a separately compiled provider, including authenticated arm64e calls on an iPhone Air. Compilation-only coverage for other targets remains distinct from runtime execution.
 
 See <doc:SwiftFunctionInvocation>, <doc:SwiftMemberInvocation>, and <doc:ManagedSwiftValues> for the surrounding call and storage contracts.
+
+For a caller-isolated body passed to a native nonescaping parameter, use ``NativeSwiftClosure/withUnsafeNonescaping(_:_:)``. The body and native invocation stay synchronous on the current executor, and neither the native callee nor the use body may save the callback.

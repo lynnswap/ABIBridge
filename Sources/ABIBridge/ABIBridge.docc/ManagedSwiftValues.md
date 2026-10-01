@@ -13,7 +13,7 @@ A concrete metatype lets Swift code allocate and operate on a value through the 
 | A struct or enum containing a reference | An explicit ABIBridgeSwiftValue conformance supports an established fixed ABI | The compiler adapts additional calling conventions |
 | A value Optional, such as Int64? | No general by-value support | The compiler handles both the payload and the nil representation |
 | A non-frozen struct from a library-evolution module | An explicit opaque ABIBridgeSwiftValue descriptor selects its declared indirect convention | Available for additional signature adaptation |
-| A type unavailable to the adapter's compiler | No inferred by-value ABI | Requires an existing compatible adapter supplied by the owning module |
+| A type unavailable to the consumer compiler | Scoped formally indirect callback borrows and compatible members; see <doc:BorrowedSwiftValues> | Owned handles need an existing compatible adapter supplied by the owning module |
 
 Compiled adapters handle signatures beyond the explicit fixed-layout support in <doc:ExplicitSwiftValues>. Metadata and storage size alone do not infer layouts for tuples or enums, or establish generic, existential, opaque-result, noncopyable, async, or throwing Swift invocation.
 
@@ -77,6 +77,8 @@ Here `record` is the caller's existing `Record`. Typed initialization copies its
 Use the full stride for storage bound to one typed value, including any tail padding. The opaque layout above describes only an allocation's extent. Do not put it into ``NativeSignature`` as a by-value Swift parameter. A `NativeSignature` describes a C-compatible adapter signature, which in this example has two pointer parameters and no result.
 
 ## Keep runtime-only values opaque
+
+Use <doc:BorrowedSwiftValues> when a callback provides initialized resilient storage and only synchronous nonmutating member access is needed. That path does not create an owned copy. For ownership operations beyond the borrow, use the adapter boundary below.
 
 A caller without an importable type can use an adapter's explicitly documented create, copy, inspect, and destroy operations. Adopt each owned result with ``NativeValue/init(adopting:as:retaining:release:)`` and pass its address using ``NativeValue/reference(to:)``. A zero-byte opaque extent is sufficient when the caller only forwards a handle and the adapter owns all memory accesses.
 

@@ -79,6 +79,10 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         checks += try await validateSwiftErrors()
     case "swift-throwing-closures":
         checks += try await validateSwiftThrowingClosures()
+    case "method-extraction":
+        checks += try await validateMethodExtraction()
+    case "swift-generic-borrows":
+        checks += try await validateSwiftGenericBorrows()
     case "swift-closures":
         checks += try await validateSwiftClosureValues()
     case "swift-callback":

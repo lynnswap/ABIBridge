@@ -97,6 +97,9 @@ extension NativeSwiftFunction {
         guard errorPlan == nil else {
             throw ABIResolutionError.unsupportedDeclaration("Managed hooks cannot yet return native Swift errors.")
         }
+        guard !isGeneric else {
+            throw ABIResolutionError.unsupportedDeclaration("Generic imported hooks require polymorphic incoming arguments and metadata; use direct invocation.")
+        }
         let prepared = try SwiftHookCallbackSignature<Result, repeat each Argument>()
         let signature = try prepared.erased(consumingArguments: consumesArguments, retaining: self)
         let handler = prepareSwiftImportedHandler(declaration: symbol.declaration, prepared: prepared,

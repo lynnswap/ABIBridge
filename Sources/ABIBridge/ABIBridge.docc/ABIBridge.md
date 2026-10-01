@@ -184,6 +184,11 @@ print(symbol.image.path)
 - <doc:ExplicitSwiftValues>
 - ``ABIBridgeSwiftValue``
 - <doc:GenericSwiftValues>
+- <doc:BorrowedSwiftValues>
+- ``NativeSwiftBorrowedValue``
+- ``NativeSwiftBorrowingClosure``
+- ``NativeSwiftBorrowedMethod``
+- ``NativeSwiftBorrowError``
 - <doc:SwiftClosureValues>
 - ``NativeSwiftClosure``
 - ``NativeSwiftThrowingClosure``

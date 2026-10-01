@@ -2,6 +2,19 @@
 
 This package compares compiler-generated calls with ABIBridge's invocation machinery. Run its tests with Xcode using the commands in [CONTRIBUTING](../../CONTRIBUTING.md). The `replacement` mode additionally checks the internal Objective-C callback boundary on a signed device host. It is not a public hook-installation API.
 
+## Full iPhone Air validation
+
+The complete device host suite passed on iPhone Air with iOS 27.0.1 (24A446), built using Xcode.app 27.0 (27A266a) / Swift 6.4 in Release for arm64e. All 38 normal modes completed with 396 reported checks, CPU subtype `0x80000002` and `pacCompiled: true`. Each mode ran in a separate launch and its newly written completed report was verified. The separate `tamper` control produced `EXC_ARM_PAC_FAIL` in `ABICopyFunctionSlotTarget`, called from `invokeAuthenticatedTarget`, after the same build passed the unmodified-pointer control.
+
+The added modes cover:
+
+- `swift-generic-borrows` (15 checks): direct generic Bool/String calls, scoped caller-isolated callbacks, actual optional-wrapper storage, runtime-only resilient borrows, getters/methods, retained callback contexts, owned results and expired borrows.
+- `method-extraction` (15 checks): v0.6.0's synchronous/async Swift, Objective-C message, C++ direct/vtable, and C/Objective-C++ captured method extraction and rebinding. Checks distinguish current Objective-C dispatch from captured implementations and verify release of original receivers and preserved native errors. The Objective-C++ probe reuses the external consumer's ownership and assignment-reentry fixtures with assertions enabled in Release.
+- `image-readiness` (9 checks): a monitor registered before loading a signed caller control whose constructor delays completion. It must install after initialization without a permanent failure, preserve calls through a loaded-only suffix symlink alias, avoid repeated initialization and restore ordinary dispatch on invalidation.
+- `loading` (12 checks): the existing image-acquisition probe now runs in the device host with an embedded, initially unlinked native fixture.
+
+The native mode also covers C++ `bound_method::method()` extraction and rebinding after the original owner is released. Device reports are observations of this configuration, not minimum OS/toolchain requirements. arm64e.x1 and other unexecuted configurations still need their own runtime evidence.
+
 ## Concrete Swift closure values
 
 The `swift-closures` mode calls the public `NativeSwiftClosure` API against the separately compiled `SwiftReplacementFixtures` provider. It checks generated callbacks, native escaping storage after wrapper release, final capture destruction, returned String closures, CGRect's floating registers, typed/optional pointers, and zero-argument Void callbacks.

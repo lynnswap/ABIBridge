@@ -2,7 +2,12 @@ import ABIBridgeCore
 
 func swiftFunctionTypeName(_ type: Any.Type) throws -> String {
     if type == NativeSwiftOpaqueValue.self { return "some" }
-    if let closure = type as? any SwiftClosureValue.Type { return try swiftFunctionTypeName(closure.swiftFunctionType) }
+    if let closure = type as? any SwiftClosureValue.Type {
+        guard !closure.requiresExplicitDeclaration else {
+            throw ABIResolutionError.unsupportedDeclaration("Runtime-typed callbacks require a complete source-level declaration.")
+        }
+        return try swiftFunctionTypeName(closure.swiftFunctionType)
+    }
     // Objective-C metatypes can print an unqualified runtime name (NSString),
     // while Swift declarations use their imported identity (__C.NSString).
     guard let mangled = _mangledTypeName(type),
@@ -123,7 +128,7 @@ final class SwiftCallInterface: @unchecked Sendable {
     deinit { ABIReleaseSwiftCallInterface(handle) }
 }
 
-/// A concrete synchronous Swift function with a retained image.
+/// A prepared synchronous Swift function with a retained image.
 ///
 /// The prepared call uses the platform Swift calling convention. Supported
 /// representations include scalar values, pointers, class references, String,
@@ -131,7 +136,8 @@ final class SwiftCallInterface: @unchecked Sendable {
 /// layouts supplied by ABIBridgeSwiftValue, and trivial ABIBridgeValue layouts.
 /// Use NativeSwiftClosure for supported concrete callbacks. Inout and explicit
 /// ownership use NativeSwiftInout, NativeSwiftBorrowing, and NativeSwiftConsuming.
-/// Generic declarations, undescribed resilient values, and ordinary unwrapped
+/// The explicit substitution overload supports one unconstrained generic parameter.
+/// Other generic declarations, undescribed resilient values, and ordinary unwrapped
 /// closures require separate adapters. Async metatypes use NativeSwiftAsyncFunction. Throwing signatures
 /// return native failures as NativeSwiftError.
 /// See <doc:SwiftFunctionInvocation>.
@@ -144,16 +150,19 @@ public struct NativeSwiftFunction<Result, each Argument>: Sendable {
     private let context: UInt
     private let typeOwner: NativeSwiftType?
     let consumesArguments: Bool
+    let isGeneric: Bool
     var errorPlan: SwiftErrorPlan? { call.errorPlan }
 
     init(symbol: ResolvedSymbol, metadata: Any.Type? = nil, owner: NativeSwiftType? = nil,
-         consumesArguments: Bool = false, errorPlan: SwiftErrorPlan? = nil, resolver: SymbolResolver? = nil) throws {
+         consumesArguments: Bool = false, errorPlan: SwiftErrorPlan? = nil, resolver: SymbolResolver? = nil, generic: SwiftGenericCallPlan? = nil) throws {
         self.symbol = symbol
         self.consumesArguments = consumesArguments
+        isGeneric = generic != nil
         context = metadata.map { unsafeBitCast($0, to: UInt.self) } ?? 0
         typeOwner = owner
         call = try SwiftCall(consumesArguments: consumesArguments, errorPlan: errorPlan,
-            opaqueResult: SwiftOpaqueResultPlan.make(for: Result.self, symbol: symbol, resolver: resolver ?? owner?.resolver))
+            opaqueResult: generic?.indirectResult == true ? nil
+                : SwiftOpaqueResultPlan.make(for: Result.self, symbol: symbol, resolver: resolver ?? owner?.resolver), generic: generic)
     }
 
     func capturing(_ implementation: SwiftImplementation) -> Self {
@@ -162,7 +171,7 @@ public struct NativeSwiftFunction<Result, each Argument>: Sendable {
         return result
     }
 
-    /// Calls the concrete Swift entry point using the prepared signature.
+    /// Calls the Swift entry point using its prepared declaration-level signature.
     ///
     /// The signature must match the declaration's Swift ABI and ordinary
     /// ownership selected by lookup. Initializers transfer ordinary arguments

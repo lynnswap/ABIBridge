@@ -7,6 +7,7 @@
 #include <ptrauth.h>
 #include <cstring>
 #include <cstdlib>
+#include <optional>
 
 namespace ABIArchitecture {
 struct Large { long words[8]; };
@@ -89,12 +90,17 @@ const char *ABIValidateNativeCalls() {
         auto owner = std::make_shared<ABIArchitecture::Counter>();
         std::weak_ptr<ABIArchitecture::Counter> weak = owner;
         method<int(int)> direct(runtime.resolve({"ABIArchitecture::Counter::add(int)"}));
+        std::optional<method<int(int)>> extracted;
         {
             auto bound = direct.bind(owner);
+            extracted = bound.method();
             owner.reset();
             if (weak.expired() || bound.unsafe_invoke(2) != 42) return "Bound receiver lifetime mismatch";
         }
         if (!weak.expired()) return "Bound receiver leak";
+        auto other = std::make_shared<ABIArchitecture::Counter>();
+        if (extracted->unsafe_invoke(other.get(), 2) != 42) return "Extracted native method receiver mismatch";
+        if (extracted->bind(other).unsafe_invoke(3) != 45) return "Native method rebinding failed";
 
         ABIArchitecture::Counter receiver;
         auto* table = static_cast<const void *const *>(ABIUnsafeReadAuthenticatedPointer(
