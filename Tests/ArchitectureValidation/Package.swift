@@ -10,7 +10,7 @@ let package = Package(
     ],
     dependencies: [
         .package(name: "ABIBridge", path: "../.."),
-        .package(url: "https://github.com/p-x9/MachOKit.git", exact: "0.53.0"),
+        .package(url: "https://github.com/p-x9/MachOKit.git", exact: "0.54.1"),
     ],
     targets: [
         .target(
