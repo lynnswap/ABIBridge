@@ -41,6 +41,19 @@ public struct NativeSwiftMethod<Result, each Argument>: Sendable {
         return result
     }
 
+    /// Retains an object for repeated calls to this captured implementation.
+    ///
+    /// Binding reuses the prepared call without calling the member. Invocation
+    /// validates the object representation and receiver type using the original
+    /// plan, and honors its ownership and isolation contract. Value receivers
+    /// use explicit invocation.
+    public func bind(to receiver: AnyObject) throws -> NativeBoundSwiftMethod<Result, repeat each Argument> {
+        guard self.receiver.mode == .object else {
+            throw ABIResolutionError.unsupportedDeclaration("Only Swift class members can bind a retained object.")
+        }
+        return NativeBoundSwiftMethod(method: self, receiver: receiver)
+    }
+
     /// Calls a class member or nonmutating value member.
     ///
     /// Consuming members transfer an independent receiver copy. The consuming
@@ -122,7 +135,11 @@ final class SwiftObjectMethodBinding {
 /// The handle remains in the caller's isolation domain and retains the receiver
 /// and implementation images until its last copy is released.
 public struct NativeBoundSwiftMethod<Result, each Argument> {
-    private let method: NativeSwiftMethod<Result, repeat each Argument>
+    /// The prepared implementation, independent of this retained receiver.
+    ///
+    /// Copies retain the type and implementation images, but not this binding.
+    /// Calls on another compatible receiver preserve the captured implementation.
+    public let method: NativeSwiftMethod<Result, repeat each Argument>
     private let binding: SwiftObjectMethodBinding
 
     init(method: NativeSwiftMethod<Result, repeat each Argument>, receiver: AnyObject) {

@@ -61,6 +61,18 @@ func prepare(_ path: String, extensionPath: String) async throws -> [NativeBound
     )
     let privateReceiver = try unsafe makePrivate.unsafeInvoke(40)
     let privateBound = try await runtime.object(privateReceiver).method(named: "score(_:)", as: ((Int) -> Int).self)
+    weak var releasedPrivate: AnyObject?
+    let reusable: NativeSwiftMethod<Int, Int>
+    do {
+        let temporary = try unsafe makePrivate.unsafeInvoke(1)
+        releasedPrivate = temporary
+        reusable = try await runtime.object(temporary).method(named: "score(_:)", as: ((Int) -> Int).self).method
+    }
+    precondition(releasedPrivate == nil)
+    let rebound = try reusable.bind(to: privateReceiver)
+    let reusedValue = try unsafe reusable.unsafeInvoke(on: privateReceiver, 2)
+    let reboundValue = try unsafe rebound.unsafeInvoke(2)
+    precondition(reusedValue == 42 && reboundValue == 42)
     let makeGeneric = try await runtime.swiftFunction(
         named: "SwiftFunctionFixture.makeGenericRenderer(_:)", as: ((Int) -> AnyObject).self, in: scope
     )

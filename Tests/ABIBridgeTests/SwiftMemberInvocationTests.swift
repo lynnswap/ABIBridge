@@ -146,6 +146,40 @@ extension NativeValue {
 }
 
 struct SwiftMemberInvocationTests {
+    @MainActor @Test func extractedMethodsAndBindingsHaveIndependentReceiverLifetimes() async throws {
+        let runtime = ABIRuntime()
+        weak var observedOriginal: SwiftMemberRenderer?
+        let render: NativeSwiftMethod<Int, Int>
+        let getter: NativeSwiftMethod<String>
+        let setter: NativeSwiftMethod<Void, String>
+        do {
+            let original = SwiftMemberRenderer(text: "original")
+            observedOriginal = original
+            render = try await runtime.object(original).method(named: "render(_:)", as: ((Int) -> Int).self).method
+            getter = try await runtime.object(original).getter(named: "consumedText", as: String.self, consuming: true).method
+            setter = try await runtime.object(original).setter(named: "consumedText", as: String.self, consuming: true).method
+        }
+        await runtime.removeCachedResults()
+        #expect(observedOriginal == nil)
+        var receiver: SwiftMemberRenderer? = SwiftMemberDerived(text: "second")
+        weak let observedReceiver = receiver
+        var bound: NativeBoundSwiftMethod<Int, Int>? = try render.bind(to: receiver!)
+        try unsafe setter.unsafeInvoke(on: receiver!, "ready")
+        #expect(try unsafe getter.unsafeInvoke(on: receiver!) == "ready")
+        #expect(try unsafe render.unsafeInvoke(on: receiver!, 37) == 42)
+        receiver = nil
+        #expect(observedReceiver != nil)
+        #expect(try unsafe bound!.unsafeInvoke(37) == 42)
+        bound = nil
+        withExtendedLifetime((render, getter, setter)) { #expect(observedReceiver == nil) }
+        let incompatible = try render.bind(to: NSObject())
+        #expect(throws: ABIInvocationError.self) { try unsafe incompatible.unsafeInvoke(0) }
+        let adaptedType = try await runtime.swiftType(named: "ABIBridgeTests.SwiftMemberRenderer", as: AnyObject.self)
+        let adapted = try await adaptedType.method(named: "render(_:)", as: ((Int) -> Int).self)
+        let adaptedBinding = try adapted.bind(to: NSObject())
+        #expect(throws: ABIInvocationError.self) { try unsafe adaptedBinding.unsafeInvoke(0) }
+    }
+
     @MainActor @Test(arguments: [false, true], ["title()", "title() -> Swift.String"])
     func privateReceiversKeepTheirDeclarationIdentity(_ second: Bool, _ member: String) async throws {
         let receiver = second ? makeSecondPrivateReceiver() : makeFirstPrivateReceiver()

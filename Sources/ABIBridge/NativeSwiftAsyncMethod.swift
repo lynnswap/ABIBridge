@@ -22,6 +22,19 @@ public struct NativeSwiftAsyncMethod<Result, each Argument>: Sendable {
                                    opaqueResult: SwiftOpaqueResultPlan.make(for: Result.self, symbol: symbol, resolver: type.resolver))
     }
 
+    /// Retains an object for repeated calls to this captured async implementation.
+    ///
+    /// Binding reuses the prepared call without calling the member. Invocation
+    /// validates the object representation and receiver type using the original
+    /// plan. Native effects and isolation remain unchanged. Value receivers
+    /// use explicit invocation.
+    public func bind(to receiver: AnyObject) throws -> NativeBoundSwiftAsyncMethod<Result, repeat each Argument> {
+        guard self.receiver.mode == .object else {
+            throw ABIResolutionError.unsupportedDeclaration("Only Swift class members can bind a retained object.")
+        }
+        return NativeBoundSwiftAsyncMethod(method: self, receiver: receiver)
+    }
+
     /// Awaits a class member or nonmutating value member.
     ///
     /// The supplied receiver and native signature must match. The caller
@@ -76,7 +89,11 @@ public struct NativeSwiftAsyncMethod<Result, each Argument>: Sendable {
 /// The receiver remains alive across suspension and until the final handle copy
 /// is released. Its actor requirements are those of the native declaration.
 public struct NativeBoundSwiftAsyncMethod<Result, each Argument> {
-    private let method: NativeSwiftAsyncMethod<Result, repeat each Argument>
+    /// The prepared async implementation, independent of this retained receiver.
+    ///
+    /// Copies retain metadata, the async descriptor, and implementation images.
+    /// They preserve the native effects without retaining this receiver binding.
+    public let method: NativeSwiftAsyncMethod<Result, repeat each Argument>
     private let binding: SwiftObjectMethodBinding
     init(method: NativeSwiftAsyncMethod<Result, repeat each Argument>, receiver: AnyObject) {
         self.method = method
