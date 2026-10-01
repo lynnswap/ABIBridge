@@ -47,6 +47,8 @@ typedef union ABIUnionFixture { NSInteger integer; double real; } ABIUnionFixtur
 
 /// A forwarding-only receiver with no concrete implementation of answer.
 @interface ABIForwardingFixture : NSObject
+@property(nonatomic, copy, nullable) NSString *answerEncoding;
+@property(nonatomic, readonly) NSInteger forwardedCalls;
 @end
 /// Keeps forwarded invocations to inspect their arguments after later calls.
 @interface ABIEscapingForwardingFixture : NSObject

@@ -83,14 +83,20 @@
 @end
 
 @implementation ABIForwardingFixture
+- (instancetype)init {
+    if ((self = [super init])) { _answerEncoding = @"q@:"; }
+    return self;
+}
 - (NSMethodSignature *)methodSignatureForSelector:(SEL)selector {
     if (sel_isEqual(selector, NSSelectorFromString(@"answer"))) {
-        return [NSMethodSignature signatureWithObjCTypes:"q@:"];
+        return self.answerEncoding
+            ? [NSMethodSignature signatureWithObjCTypes:self.answerEncoding.UTF8String] : nil;
     }
     return [super methodSignatureForSelector:selector];
 }
 - (void)forwardInvocation:(NSInvocation *)invocation {
     if (sel_isEqual(invocation.selector, NSSelectorFromString(@"answer"))) {
+        _forwardedCalls += 1;
         NSInteger result = 61;
         [invocation setReturnValue:&result];
     } else {

@@ -65,6 +65,24 @@ try unsafe bound.unsafeInvoke("!")
 
 Class-based preparation requires a concrete method signature, including signatures supplied by dynamic method resolution. Receiver-specific forwarding signatures remain available through `object(receiver).method(...)`; one object's forwarding behavior is not assumed to apply to other instances. No receiver is constructed during class-based preparation, and no actor hop is performed. Caller-managed dynamic classes and generated code must stay valid through their final use.
 
+## Reuse a message discovered on an existing object
+
+The `method` property of a `NativeBoundObjCMethod` returns a receiver-independent message sharing its prepared signature and code owner. Extraction does not perform lookup or decode the signature again, and keeping that message does not retain the original receiver binding.
+
+```swift
+let bound = try runtime.object(firstRenderer).method(
+    selector: "setImage:animated:", as: ((UIImage?, Bool) -> Void).self
+)
+let setImage = bound.method
+try unsafe setImage.unsafeInvoke(on: secondRenderer, image, true)
+let secondBound = try setImage.bind(to: secondRenderer)
+try unsafe secondBound.unsafeInvoke(nil, false)
+```
+
+The new receiver must be an instance of the original lookup class or a subclass, or a compatible class object for a class message. Calls use current message dispatch, including later replacements and subclass overrides. Extracted forwarding signatures remain usable only when the new receiver supplies an ABI-compatible signature; explicit-receiver invocation and binding check that actual signature. Missing or incompatible signatures throw before forwarding is invoked. Existing bound calls retain their original signature/ownership contract.
+
+The prepared message retains its class image and any explicitly supplied code owner. Dynamic classes and generated code still require caller-managed lifetimes. Receiver isolation and ownership overrides remain unchanged.
+
 ## Capture an implementation for original calls
 
 Use `objcImplementation(on:selector:as:classMethod:options:retaining:)` when a method replacement needs to call the implementation selected before replacement:

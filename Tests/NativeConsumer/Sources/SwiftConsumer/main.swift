@@ -65,6 +65,19 @@ struct SwiftConsumer {
             let block: ConsumerBlock = { captured.int32Value + $0 }
             try unsafe unboundSetter.unsafeInvoke(on: receiver, block)
             let returned = try unsafe getter.unsafeInvoke()
+            weak var observedOriginal: BlockReceiver?
+            let extracted: NativeObjCMethod<ConsumerBlock?> = try autoreleasepool {
+                let temporary = BlockReceiver()
+                observedOriginal = temporary
+                return try ABIRuntime.shared.object(temporary).method(
+                    selector: #selector(getter: BlockReceiver.handler), as: (() -> ConsumerBlock?).self
+                ).method
+            }
+            precondition(observedOriginal == nil)
+            let extractedResult = try unsafe extracted.unsafeInvoke(on: receiver)
+            let extractedBinding = try extracted.bind(to: receiver)
+            let reboundResult = try unsafe extractedBinding.unsafeInvoke()
+            precondition(extractedResult?(11) == 42 && reboundResult?(11) == 42)
             try unsafe boundSetter.unsafeInvoke(nil)
             precondition(returned?(11) == 42)
             let cleared = try unsafe getter.unsafeInvoke()
