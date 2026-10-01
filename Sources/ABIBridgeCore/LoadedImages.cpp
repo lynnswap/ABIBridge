@@ -389,6 +389,11 @@ ABIImageLease *ABIOpenImage(const char *path, bool loadIfNeeded, ABIResolutionFa
             return new ABIImageLease { nullptr, image };
     }
     void *handle = dlopen(path, RTLD_LAZY | RTLD_LOCAL | RTLD_FIRST | (loadIfNeeded ? 0 : RTLD_NOLOAD));
+    if (!handle && !loadIfNeeded && path[0] != '@' && std::strchr(path, '/') && canonical != path) {
+        // dyld can skip realpath for suffix aliases of a canonical path.
+        // Keep its original selection first, and preserve initialization readiness.
+        handle = dlopen(canonical.c_str(), RTLD_LAZY | RTLD_LOCAL | RTLD_FIRST | RTLD_NOLOAD);
+    }
     if (!handle) {
         const char *loaderError = dlerror();
         const std::string message = loaderError ? loaderError : "dlopen failed without a diagnostic.";
