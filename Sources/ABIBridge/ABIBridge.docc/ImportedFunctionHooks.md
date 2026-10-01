@@ -97,7 +97,7 @@ let outcomes = monitor.images
 monitor.invalidate()
 ```
 
-An unloaded explicit importer is valid. Both initial application and later changes run asynchronously on a serial queue outside dyld notification callbacks. `onImageUpdate` reports installed, no matching imports, failed and removed outcomes. Updates can start before registration returns. A failure affects that image; other selected images continue to be inspected. `images` copies the current outcomes, including partial installation diagnostics when a failure is a ``NativeImportedHookInstallationError``.
+An unloaded explicit importer is valid. Both initial application and later changes run asynchronously on a serial queue outside dyld notification callbacks. Images observed before their initializers finish wait for acquisition before their installation attempt. `onImageUpdate` reports installed, no matching imports, failed and removed outcomes. Updates can start before registration returns. A failure affects that image; other selected images continue to be inspected. `images` copies the current outcomes, including partial installation diagnostics when a failure is a ``NativeImportedHookInstallationError``.
 
 Each observed generation is attempted once. If an unresolved lazy reference fails, call it normally and create a new monitor to retry. Invalidation prevents new callback entry and removes owned registrations without waiting for loader work or in-flight callbacks. Preparation that already started can finish with an inert pass-through entry before cleanup. Incoming calls and previously captured update callbacks may finish after invalidation.
 
