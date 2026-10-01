@@ -42,12 +42,15 @@ struct SwiftAsyncInvocationTests {
             let type = try await ABIRuntime.shared.swiftType(named: "ManagedSwiftFixtures.AsyncMemberOwner")
             let call = try await type.method(named: "value(_:)",
                 as: (@concurrent (Bool) async throws(ManagedFailure) -> String).self)
-            let task = Task { try unsafe await call.unsafeInvoke(on: owner, true) }
-            await gate.waitUntilSuspended()
-            #expect(observed != nil && observedToken != nil)
-            await gate.open()
-            do { _ = try await task.value; Issue.record("Expected failure") }
+            let resume = Task {
+                await gate.waitUntilSuspended()
+                await gate.open()
+            }
+            // A completed throwing Task can retain its error after value resumes its waiter.
+            // Keep the error in this task so saved is its only owner after this scope.
+            do { _ = try unsafe await call.unsafeInvoke(on: owner, true); Issue.record("Expected failure") }
             catch let error as NativeSwiftError { saved = error }
+            await resume.value
         }
         withExtendedLifetime(saved) { #expect(observed == nil && observedToken != nil) }
         saved = nil
