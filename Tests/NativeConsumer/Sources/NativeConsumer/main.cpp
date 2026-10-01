@@ -103,11 +103,12 @@ int main(int argc, char** argv) {
             std::_Exit(1);
         }
     });
-    constructorPath = argv[2];
+    // A noncanonical temporary-directory prefix can mask suffix-alias lookup failure.
+    constructorPath = std::filesystem::canonical(argv[2]).string();
     const auto aliasPath = constructorPath + ".alias";
     std::filesystem::create_symlink(std::filesystem::absolute(constructorPath), aliasPath);
     constructorNames = {constructorPath, aliasPath};
-    void* constructorLibrary = dlopen(argv[2], RTLD_NOW | RTLD_LOCAL);
+    void* constructorLibrary = dlopen(constructorPath.c_str(), RTLD_NOW | RTLD_LOCAL);
     assert(constructorLibrary);
     // No cache clearing or image reload separates the two phases.
     {

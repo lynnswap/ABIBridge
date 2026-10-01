@@ -57,6 +57,31 @@ struct ImageLoadingTests {
         await runtime.removeCachedResults()
     }
 
+    @Test func loadedOnlySuffixAliasResolvesAfterLoadingTheRealPath() async throws {
+        let fixture = try FixtureLibrary(load: false)
+        defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        // Foundation normalization can hide /private and mask a suffix-alias failure.
+        let resolved = try #require(realpath(fixture.libraryURL.path, nil))
+        defer { free(resolved) }
+        let path = String(cString: resolved)
+        let alias = path + ".alias"
+        try FileManager.default.createSymbolicLink(atPath: alias, withDestinationPath: path)
+        let declaration = NativeDeclaration(name: fixture.namespace + "::add(int, int)", language: .cxx)
+        await #expect(throws: ABIResolutionError.imageNotLoaded) {
+            _ = try await runtime.resolve(declaration, in: .installName(alias), loading: .loadedOnly)
+        }
+        #expect(try await runtime.images(matching: .installName(path)).isEmpty)
+        let identity = try await runtime.resolve(declaration, in: .installName(path)).image.identity
+        let retained = try await runtime.cxxFunction(named: declaration.name, as: ((Int32, Int32) -> Int32).self,
+                                                   in: .installName(alias), loading: .loadedOnly)
+        #expect(retained.symbol.image.identity == identity)
+        #expect(try unsafe retained.unsafeInvoke(20, 22) == 42)
+        #expect(try await runtime.images(matching: .installName(alias)).map(\.identity) == [identity])
+        await runtime.removeCachedResults()
+        #expect(try unsafe retained.unsafeInvoke(20, 22) == 42)
+    }
+
     @Test func aBatchRefreshesAutomaticScopeAfterAnExplicitLoad() async throws {
         let fixture = try FixtureLibrary(load: false)
         defer { fixture.cleanup() }
