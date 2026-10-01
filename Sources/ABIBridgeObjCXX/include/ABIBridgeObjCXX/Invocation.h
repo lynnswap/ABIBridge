@@ -30,6 +30,9 @@ FOUNDATION_EXPORT ABIObjCInvocation * _Nullable ABICopyObjCDispatch(
 /// The result retains the prepared plan until after releasing its receiver.
 FOUNDATION_EXPORT ABIObjCInvocation * _Nullable ABICopyBoundObjCInvocation(
     ABIObjCInvocation *plan, id receiver, NSError * _Nullable * _Nullable error);
+/// Returns an owned reference to the prepared plan without retaining a binding.
+/// Bound handles created by this backend always have a receiver-independent parent.
+FOUNDATION_EXPORT ABIObjCInvocation *ABICopyObjCInvocationPlan(ABIObjCInvocation *invocation);
 FOUNDATION_EXPORT void ABIReleaseObjCInvocation(ABIObjCInvocation *invocation);
 FOUNDATION_EXPORT void ABIRetainObjCInvocation(ABIObjCInvocation *invocation);
 FOUNDATION_EXPORT IMP _Nullable ABIObjCInvocationImplementation(const ABIObjCInvocation *invocation);

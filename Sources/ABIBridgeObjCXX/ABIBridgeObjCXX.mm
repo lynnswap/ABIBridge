@@ -221,15 +221,11 @@ struct ABIObjCInvocation {
     NSMethodSignature *methodSignature() const { return (__bridge NSMethodSignature *)signature; }
 };
 
-ABIObjCInvocation *ABICopyObjCInvocation(
-    id receiver, SEL selector, int32_t returnsRetained, int32_t consumesReceiver, NSError **error)
-{
-    if (error) *error = nil;
-    if (!receiver || !selector || returnsRetained < -1 || returnsRetained > 1
-        || consumesReceiver < -1 || consumesReceiver > 1) {
-        fail(error, ABIFailureInvalidRequest, @"A receiver, selector, and valid ownership options are required.");
-        return nullptr;
-    }
+namespace {
+bool retainImplementationImage(
+    ABIObjCInvocation& plan, const void* address, const char* path, NSError** error);
+
+NSMethodSignature *receiverSignature(id receiver, SEL selector, NSError **error) {
     Class cls = object_getClass(receiver);
     class_getMethodImplementation(cls, selector);
     Method method = class_getInstanceMethod(cls, selector);
@@ -256,10 +252,39 @@ ABIObjCInvocation *ABICopyObjCInvocation(
               NSStringFromSelector(selector), NSStringFromClass(cls)]);
         return nullptr;
     }
+    return signature;
+}
+
+}
+
+ABIObjCInvocation *ABICopyObjCInvocation(
+    id receiver, SEL selector, int32_t returnsRetained, int32_t consumesReceiver, NSError **error)
+{
+    if (error) *error = nil;
+    if (!receiver || !selector || returnsRetained < -1 || returnsRetained > 1
+        || consumesReceiver < -1 || consumesReceiver > 1) {
+        fail(error, ABIFailureInvalidRequest, @"A receiver, selector, and valid ownership options are required.");
+        return nullptr;
+    }
+    NSMethodSignature *signature = receiverSignature(receiver, selector, error);
+    if (!signature) return nullptr;
+    Class cls = object_getClass(receiver);
     const auto ownership = ownershipFor(signature.methodReturnType, cls, selector,
                                         returnsRetained, consumesReceiver, error);
     if (!ownership) return nullptr;
-    return new ABIObjCInvocation(receiver, signature, selector, *ownership);
+    auto plan = std::make_unique<ABIObjCInvocation>(nil, signature, selector, *ownership);
+    plan->classMethod = class_isMetaClass(cls);
+    plan->receiverType = plan->classMethod ? (Class)receiver : cls;
+    if (!retainImplementationImage(*plan, nullptr, class_getImageName(plan->receiverType), error)) return nullptr;
+    auto bound = std::make_unique<ABIObjCInvocation>(receiver, signature, selector, *ownership);
+    bound->parent = plan.release();
+    return bound.release();
+}
+
+ABIObjCInvocation *ABICopyObjCInvocationPlan(ABIObjCInvocation *invocation) {
+    auto *plan = invocation->parent ? invocation->parent : invocation;
+    ABIRetainObjCInvocation(plan);
+    return plan;
 }
 
 namespace {
@@ -382,19 +407,8 @@ static bool compatibleDispatchEncoding(const char *expected, const char *actual)
 
 static bool validateDispatchReceiver(const ABIObjCInvocation *plan, id receiver, NSError **error) {
     if (!validateReceiver(plan, receiver, error)) return false;
-    Method method = class_getInstanceMethod(object_getClass(receiver), plan->selector);
-    if (!method) {
-        fail(error, ABIFailureDeclarationNotFound, @"The receiver no longer has the prepared method declaration.");
-        return false;
-    }
-    NSMethodSignature *actual = nil;
-    @try {
-        actual = [NSMethodSignature signatureWithObjCTypes:method_getTypeEncoding(method)];
-    } @catch (NSException *exception) {
-        if (![exception.name isEqualToString:NSInvalidArgumentException]) @throw;
-        fail(error, ABIFailureUnsupportedDeclaration, exception.reason);
-        return false;
-    }
+    NSMethodSignature *actual = receiverSignature(receiver, plan->selector, error);
+    if (!actual) return false;
     NSMethodSignature *expected = plan->methodSignature();
     if (!actual || actual.numberOfArguments != expected.numberOfArguments
         || !compatibleDispatchEncoding(expected.methodReturnType, actual.methodReturnType)) {

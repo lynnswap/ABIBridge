@@ -246,6 +246,21 @@ public struct NativeBoundObjCMethod<Result, each Argument> {
     private let binding: ObjCInvocationBinding
     private let signature: ObjCMethodSignature<Result, repeat each Argument>
 
+    /// The prepared message, independent of this retained receiver binding.
+    ///
+    /// The returned handle shares the signature and code owner without repeating
+    /// lookup or decoding. Calls on another compatible receiver use current
+    /// message dispatch and validate that receiver's actual signature.
+    public var method: NativeObjCMethod<Result, repeat each Argument> {
+        NativeObjCMethod(
+            binding: ObjCInvocationBinding(
+                ABICopyObjCInvocationPlan(binding.handle),
+                declaration: binding.declaration, retaining: binding.owner
+            ),
+            signature: signature
+        )
+    }
+
     init(binding: ObjCInvocationBinding) throws {
         self.binding = binding
         signature = try ObjCMethodSignature(handle: binding.handle, declaration: binding.declaration)

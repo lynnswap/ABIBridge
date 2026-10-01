@@ -19,6 +19,69 @@ private final class ImplementationCodeOwner {}
 
 @Suite(.serialized)
 struct ObjectiveCImplementationTests {
+    @Test func extractedMessagesReleaseTheirOriginalReceiverAndKeepCurrentDispatch() throws {
+        let runtime = ABIRuntime.shared
+        weak var observedOriginal: ImplementationReceiver?
+        let message: NativeObjCMethod<Int, Int> = try autoreleasepool {
+            let original = ImplementationReceiver(1)
+            observedOriginal = original
+            return try runtime.object(original).method(selector: "add:", as: ((Int) -> Int).self).method
+        }
+        #expect(observedOriginal == nil)
+        var second: ImplementationReceiver? = ImplementationChild(40)
+        weak let observedSecond = second
+        var bound: NativeBoundObjCMethod<Int, Int>? = try message.bind(to: second!)
+        #expect(try unsafe message.unsafeInvoke(on: second!, 2) == 1002)
+        let extractedAgain = bound!.method
+        second = nil
+        #expect(try unsafe bound!.unsafeInvoke(2) == 1002)
+        bound = nil
+        withExtendedLifetime((message, extractedAgain)) { #expect(observedSecond == nil) }
+        #expect(throws: ABIResolutionError.self) { try unsafe message.unsafeInvoke(on: NSObject(), 2) }
+    }
+
+    @Test func extractedForwardingSignaturesAreValidatedOnEachNewReceiver() throws {
+        weak var observed: ABIForwardingFixture?
+        let message: NativeObjCMethod<Int> = try autoreleasepool {
+            let original = ABIForwardingFixture()
+            observed = original
+            return try ABIRuntime.shared.object(original).method(selector: "answer", as: (() -> Int).self).method
+        }
+        #expect(observed == nil)
+        let second = ABIForwardingFixture()
+        #expect(try unsafe message.unsafeInvoke(on: second) == 61)
+        let bound = try message.bind(to: second)
+        #expect(try unsafe bound.unsafeInvoke() == 61)
+        #expect(second.forwardedCalls == 2)
+        second.answerEncoding = "d@:"
+        #expect(throws: ABIResolutionError.self) { try unsafe message.unsafeInvoke(on: second) }
+        #expect(throws: ABIResolutionError.self) { try message.bind(to: second) }
+        #expect(second.forwardedCalls == 2)
+        second.answerEncoding = nil
+        #expect(throws: ABIResolutionError.self) { try unsafe message.unsafeInvoke(on: second) }
+        #expect(second.forwardedCalls == 2)
+    }
+
+    @Test func extractedClassMessagesKeepTheirReceiverKindAndOwnershipOverrides() throws {
+        let classMessage = try ABIRuntime.shared.object(ImplementationReceiver.self as AnyObject).method(
+            selector: "capturedClassName", as: (() -> String).self
+        ).method
+        #expect(try unsafe classMessage.unsafeInvoke(on: ImplementationChild.self as AnyObject) == NSStringFromClass(ImplementationChild.self))
+        #expect(throws: ABIResolutionError.self) { try unsafe classMessage.unsafeInvoke(on: ImplementationReceiver(0)) }
+        let owned = try ABIRuntime.shared.object(ABIOwnershipFixture()).method(
+            selector: "retainedObject", as: (() -> NSObject).self,
+            options: .init(returnsRetainedObject: true)
+        ).method
+        let fixture = ABIOwnershipFixture()
+        weak var observedResult: NSObject?
+        try autoreleasepool {
+            let result = try unsafe owned.unsafeInvoke(on: fixture)
+            observedResult = result
+            #expect(fixture.liveResults == 1)
+        }
+        #expect(observedResult == nil && fixture.liveResults == 0)
+    }
+
     @Test func unboundMessagesAndExplicitBindingHaveIndependentLifetimes() throws {
         var owner: ImplementationCodeOwner? = ImplementationCodeOwner()
         weak var observedOwner = owner
@@ -135,6 +198,7 @@ struct ObjectiveCImplementationTests {
             on: ImplementationReceiver.self, selector: "add:", as: ((Int) -> Int).self
         )
         let dynamic = try runtime.object(first).method(selector: "add:", as: ((Int) -> Int).self)
+        let extracted = dynamic.method
         let unbound = try runtime.objcMethod(on: ImplementationReceiver.self, selector: "add:", as: ((Int) -> Int).self)
         let method = try #require(class_getInstanceMethod(ImplementationReceiver.self, selector))
         let replacement: @convention(block) (AnyObject, Int) -> Int = { receiver, value in
@@ -150,6 +214,7 @@ struct ObjectiveCImplementationTests {
         #expect(try unsafe original.unsafeInvoke(on: first, 1) == 11)
         #expect(try unsafe original.unsafeInvoke(on: second, 1) == 21)
         #expect(try unsafe dynamic.unsafeInvoke(1) == 22)
+        #expect(try unsafe extracted.unsafeInvoke(on: second, 1) == 42)
         #expect(try unsafe unbound.unsafeInvoke(on: first, 1) == 22)
         let child = ImplementationChild(30)
         #expect(try unsafe original.unsafeInvoke(on: child, 1) == 31)

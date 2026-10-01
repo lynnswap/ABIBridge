@@ -16,6 +16,11 @@ public struct NativeObjCMethod<Result, each Argument> {
         signature = try ObjCMethodSignature(handle: binding.handle, declaration: binding.declaration)
     }
 
+    init(binding: ObjCInvocationBinding, signature: ObjCMethodSignature<Result, repeat each Argument>) {
+        self.binding = binding
+        self.signature = signature
+    }
+
     /// Sends the prepared message to a compatible instance or class object.
     ///
     /// The receiver stays alive throughout the call. Its current method encoding
