@@ -24,14 +24,51 @@ struct is_objc_result<Result (^)(Arguments...)> : std::true_type {};
 }
 
 template <typename Signature> class bound_objc_implementation;
+template <typename Signature> class objc_implementation;
 
-/// A typed IMP and retained receiver. Copies share the binding. Binding checks
-/// encodings and ownership options, but cannot infer every native ABI contract.
-/// The caller owns argument lifetimes and target thread requirements.
+/// A captured typed IMP whose receiver is supplied for each call.
+/// Copies retain its class and implementation images without retaining a receiver.
+/// Calls preserve the original ownership contract and do not redispatch overrides.
 template <typename Result, typename... Arguments>
-class bound_objc_implementation<Result(Arguments...)> final {
+class objc_implementation<Result(Arguments...)> final {
+    using signature = Result(Arguments...);
 public:
-    bound_objc_implementation(id receiver, SEL selector, objc_method_options options = {}) {
+    /// Uses an existing object to discover and validate a concrete implementation.
+    objc_implementation(id prototype, SEL selector, objc_method_options options = {}) {
+        auto method = std::unique_ptr<ABIObjCMethod, decltype(&ABIReleaseObjCMethod)>(
+            copy_method(prototype, selector, options), ABIReleaseObjCMethod);
+        implementation_ = std::shared_ptr<ABIObjCImplementation>(
+            ABICopyObjCMethodImplementation(method.get()), ABIReleaseObjCImplementation);
+    }
+    objc_implementation(id prototype, std::string_view name, objc_method_options options = {})
+        : objc_implementation(prototype, selector_named(name), options) {}
+
+    /// Calls the captured IMP with a compatible live receiver.
+    /// Target isolation, argument lifetimes, and the actual ABI remain caller contracts.
+    /// Object and block results follow ordinary +0 return semantics under ARC/MRC.
+    Result unsafe_invoke(__unsafe_unretained id receiver, Arguments... arguments) const {
+        const auto implementation = implementation_;
+        NSError* error = nil;
+        if (!ABIValidateObjCImplementationReceiver(implementation.get(), receiver, &error)) {
+            throw resolution_error(static_cast<std::int32_t>(error.code), error.localizedDescription.UTF8String);
+        }
+        return invoke_owned(receiver, ABIObjCImplementationSelector(implementation.get()),
+            ABIObjCImplementationIMP(implementation.get()),
+            ABIObjCImplementationConsumesReceiver(implementation.get()),
+            ABIObjCImplementationReturnsRetained(implementation.get()), std::forward<Arguments>(arguments)...);
+    }
+
+    /// Retains another receiver without repeating lookup or changing the IMP.
+    bound_objc_implementation<signature> bind(__unsafe_unretained id receiver) const {
+        return bound_objc_implementation<signature>(*this, receiver);
+    }
+
+private:
+    friend class bound_objc_implementation<signature>;
+    explicit objc_implementation(ABIObjCImplementation* owned)
+        : implementation_(owned, ABIReleaseObjCImplementation) {}
+
+    static ABIObjCMethod* copy_method(id receiver, SEL selector, objc_method_options options) {
         const std::array<const char*, sizeof...(Arguments)> parameters{@encode(Arguments)...};
         NSError* error = nil;
         auto* method = ABICopyObjCMethod(receiver, selector, @encode(Result),
@@ -39,33 +76,11 @@ public:
             options.returns_retained ? (*options.returns_retained ? 1 : 0) : -1,
             options.consumes_receiver ? (*options.consumes_receiver ? 1 : 0) : -1, &error);
         if (!method) {
-            throw resolution_error(static_cast<std::int32_t>(error.code),
-                                   error.localizedDescription.UTF8String);
+            throw resolution_error(static_cast<std::int32_t>(error.code), error.localizedDescription.UTF8String);
         }
-        method_ = std::shared_ptr<ABIObjCMethod>(method, ABIReleaseObjCMethod);
+        return method;
     }
 
-    /// Accepts a UTF-8 selector spelling when no declaration is importable.
-    bound_objc_implementation(id receiver, std::string_view name, objc_method_options options = {})
-        : bound_objc_implementation(receiver, selector_named(name), options) {}
-
-    /// Invokes the IMP chosen at binding time. Rebind to observe replacement.
-    /// Object results follow ordinary +0 return semantics; ARC callers receive
-    /// managed values. With manual reference counting, retain results to keep
-    /// them beyond the current autorelease pool.
-    Result unsafe_invoke(Arguments... arguments) const {
-        const bool consumed = ABIObjCMethodConsumesReceiver(method_.get());
-        if constexpr (detail::is_objc_result<Result>::value) {
-            if (ABIObjCMethodReturnsRetained(method_.get())) {
-                return consumed ? invoke<true, true>(std::forward<Arguments>(arguments)...)
-                                : invoke<false, true>(std::forward<Arguments>(arguments)...);
-            }
-        }
-        return consumed ? invoke<true, false>(std::forward<Arguments>(arguments)...)
-                        : invoke<false, false>(std::forward<Arguments>(arguments)...);
-    }
-
-private:
     static SEL selector_named(std::string_view name) {
         if (name.find('\0') != std::string_view::npos)
             throw resolution_error(ABIFailureInvalidRequest, "Selector names must not contain embedded NULs.");
@@ -73,11 +88,20 @@ private:
         return sel_registerName(selector.c_str());
     }
 
+    static Result invoke_owned(id receiver, SEL selector, IMP implementation, bool consumed, bool retained,
+                               Arguments... arguments) {
+        if constexpr (detail::is_objc_result<Result>::value) {
+            if (retained) {
+                return consumed ? invoke<true, true>(receiver, selector, implementation, std::forward<Arguments>(arguments)...)
+                                : invoke<false, true>(receiver, selector, implementation, std::forward<Arguments>(arguments)...);
+            }
+        }
+        return consumed ? invoke<true, false>(receiver, selector, implementation, std::forward<Arguments>(arguments)...)
+                        : invoke<false, false>(receiver, selector, implementation, std::forward<Arguments>(arguments)...);
+    }
+
     template <bool Consumed, bool Retained>
-    Result invoke(Arguments... arguments) const {
-        id receiver = ABIObjCMethodReceiver(method_.get());
-        const auto selector = ABIObjCMethodSelector(method_.get());
-        const auto implementation = ABIObjCMethodImplementation(method_.get());
+    static Result invoke(id receiver, SEL selector, IMP implementation, Arguments... arguments) {
 #if !__has_feature(objc_arc)
         if constexpr (Consumed) [receiver retain];
 #endif
@@ -109,6 +133,48 @@ private:
         }
     }
 
+    std::shared_ptr<ABIObjCImplementation> implementation_;
+};
+
+/// A typed captured IMP bound to a retained receiver.
+/// Copies share the binding, and receiver destruction precedes image release.
+template <typename Result, typename... Arguments>
+class bound_objc_implementation<Result(Arguments...)> final {
+    using signature = Result(Arguments...);
+    using implementation_type = objc_implementation<signature>;
+public:
+    bound_objc_implementation(id receiver, SEL selector, objc_method_options options = {})
+        : method_(implementation_type::copy_method(receiver, selector, options), ABIReleaseObjCMethod) {}
+    bound_objc_implementation(id receiver, std::string_view name, objc_method_options options = {})
+        : bound_objc_implementation(receiver, implementation_type::selector_named(name), options) {}
+
+    /// Calls the implementation captured at construction with the retained receiver.
+    Result unsafe_invoke(Arguments... arguments) const {
+        const auto method = method_;
+        __unsafe_unretained id receiver = (__bridge id)ABIObjCMethodReceiverAddress(method.get());
+        return implementation_type::invoke_owned(receiver,
+            ABIObjCMethodSelector(method.get()), ABIObjCMethodImplementation(method.get()),
+            ABIObjCMethodConsumesReceiver(method.get()), ABIObjCMethodReturnsRetained(method.get()),
+            std::forward<Arguments>(arguments)...);
+    }
+
+    /// Copies the captured implementation without retaining this receiver binding.
+    implementation_type implementation() const {
+        return implementation_type(ABICopyObjCMethodImplementation(method_.get()));
+    }
+
+private:
+    friend class objc_implementation<signature>;
+    bound_objc_implementation(const implementation_type& implementation, __unsafe_unretained id receiver)
+        : method_(copy_binding(implementation, receiver), ABIReleaseObjCMethod) {}
+    static ABIObjCMethod* copy_binding(const implementation_type& implementation, __unsafe_unretained id receiver) {
+        NSError* error = nil;
+        auto* method = ABICopyBoundObjCMethod(implementation.implementation_.get(), receiver, &error);
+        if (!method) {
+            throw resolution_error(static_cast<std::int32_t>(error.code), error.localizedDescription.UTF8String);
+        }
+        return method;
+    }
     std::shared_ptr<ABIObjCMethod> method_;
 };
 

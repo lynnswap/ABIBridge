@@ -15,21 +15,56 @@
 
 NSErrorDomain const ABIObjCInvocationErrorDomain = @"ABIBridge.ObjCInvocation";
 
+struct ABIObjCImplementation {
+    std::atomic<size_t> references{1};
+    Class receiverType = Nil;
+    bool classMethod = false;
+    SEL selector = nullptr;
+    IMP implementation = nullptr;
+    bool returnsRetained = false;
+    bool consumesReceiver = false;
+    using ImageLease = std::unique_ptr<ABIImageLease, decltype(&ABIReleaseImage)>;
+    std::vector<ImageLease> images;
+};
+
 struct ABIObjCMethod {
     CFTypeRef receiver;
-    SEL selector;
-    IMP implementation;
-    bool returnsRetained;
-    bool consumesReceiver;
-    std::unique_ptr<ABIImageLease, decltype(&ABIReleaseImage)> image{nullptr, ABIReleaseImage};
+    ABIObjCImplementation *plan;
 
-    ABIObjCMethod(id object, SEL selector, IMP implementation, bool retained, bool consumed)
-        : receiver(CFBridgingRetain(object)), selector(selector), implementation(implementation),
-          returnsRetained(retained), consumesReceiver(consumed) {}
-    ~ABIObjCMethod() { CFRelease(receiver); }
+    ABIObjCMethod(id object, ABIObjCImplementation *plan)
+        : receiver(CFBridgingRetain(object)), plan(plan) {}
+    ~ABIObjCMethod() {
+        CFRelease(receiver);
+        ABIReleaseObjCImplementation(plan);
+    }
 };
 
 namespace {
+void fail(NSError **error, int code, NSString *message);
+
+template <typename Plan>
+bool retainImplementationImage(
+    Plan& plan, const void* address, const char* path, NSError** error) {
+    Dl_info info{};
+    const bool hasAddress = address && dladdr(address, &info) && info.dli_fbase;
+    if (!hasAddress && !path) return true;
+    std::unique_ptr<ABIImageList, decltype(&ABIFreeImageList)> images(ABICopyLoadedImages(), ABIFreeImageList);
+    if (!images) { fail(error, ABIFailureImageUnavailable, @"The loaded image catalog is unavailable."); return false; }
+    for (size_t index = 0; index < ABIImageListCount(images.get()); ++index) {
+        const auto image = ABIImageListGet(images.get(), index);
+        const bool matches = hasAddress ? image.header == reinterpret_cast<uintptr_t>(info.dli_fbase)
+                                        : std::strcmp(image.path, path) == 0;
+        if (!matches) continue;
+        if (auto* lease = ABIRetainLoadedImage(image.generation)) {
+            plan.images.emplace_back(lease, ABIReleaseImage);
+            return true;
+        }
+        break;
+    }
+    fail(error, ABIFailureImageChanged, @"The implementation or class image could not be retained.");
+    return false;
+}
+
 bool isForwardingImplementation(IMP implementation) {
     if (implementation == reinterpret_cast<IMP>(_objc_msgForward)) return true;
 #if defined(__x86_64__)
@@ -94,6 +129,30 @@ std::optional<Ownership> ownershipFor(
 }
 }
 
+template <typename Plan>
+static bool validateReceiver(const Plan *plan, __unsafe_unretained id receiver, NSError **error) {
+    if (!receiver) {
+        fail(error, ABIFailureInvalidRequest, @"A live receiver is required.");
+        return false;
+    }
+    Class actual = object_getClass(receiver);
+    const bool receiverIsClass = class_isMetaClass(actual);
+    if (plan->classMethod == receiverIsClass) {
+        if (receiverIsClass) actual = (Class)receiver;
+        for (; actual && actual != plan->receiverType; actual = class_getSuperclass(actual)) {}
+    } else {
+        actual = Nil;
+    }
+    if (!actual) {
+        fail(error, ABIFailureSignatureMismatch,
+             [NSString stringWithFormat:@"Receiver %@ is incompatible with %@ %@.",
+              NSStringFromClass(object_getClass(receiver)), plan->classMethod ? @"class" : @"instances of",
+              NSStringFromClass(plan->receiverType)]);
+        return false;
+    }
+    return true;
+}
+
 ABIObjCMethod *ABICopyObjCMethod(
     id receiver, SEL selector, const char *resultType,
     const char *const *parameterTypes, size_t parameterCount,
@@ -156,41 +215,57 @@ ABIObjCMethod *ABICopyObjCMethod(
 
     const auto ownership = ownershipFor(resultType, cls, selector, returnsRetained, consumesReceiver, error);
     if (!ownership) return nullptr;
-    auto binding = std::make_unique<ABIObjCMethod>(
-        receiver, selector, implementation,
-        ownership->retained, ownership->consumed);
-
-    void* address = reinterpret_cast<void*>(implementation);
+    auto plan = std::make_unique<ABIObjCImplementation>();
+    plan->classMethod = class_isMetaClass(cls);
+    plan->receiverType = plan->classMethod ? (Class)receiver : cls;
+    plan->selector = selector;
+    plan->implementation = implementation;
+    plan->returnsRetained = ownership->retained;
+    plan->consumesReceiver = ownership->consumed;
+    const void *address = reinterpret_cast<const void *>(implementation);
 #if __has_feature(ptrauth_calls)
     address = ptrauth_strip(address, ptrauth_key_function_pointer);
 #endif
-    Dl_info info{};
-    if (dladdr(address, &info) && info.dli_fbase) {
-        std::unique_ptr<ABIImageList, decltype(&ABIFreeImageList)> images(ABICopyLoadedImages(), ABIFreeImageList);
-        if (!images) {
-            fail(error, ABIFailureImageUnavailable, @"The loaded image catalog is unavailable.");
-            return nullptr;
-        }
-        for (size_t index = 0; index < ABIImageListCount(images.get()); ++index) {
-            auto image = ABIImageListGet(images.get(), index);
-            if (image.header != reinterpret_cast<uintptr_t>(info.dli_fbase)) continue;
-            binding->image.reset(ABIRetainLoadedImage(image.generation));
-            break;
-        }
-        if (!binding->image) {
-            fail(error, ABIFailureImageChanged, @"The method's implementation image could not be retained.");
-            return nullptr;
-        }
-    }
+    if (!retainImplementationImage(*plan, address, nullptr, error) ||
+        !retainImplementationImage(*plan, nullptr, class_getImageName(plan->receiverType), error)) return nullptr;
+    auto binding = std::make_unique<ABIObjCMethod>(receiver, plan.get());
+    plan.release();
     return binding.release();
 }
 
 void ABIReleaseObjCMethod(ABIObjCMethod *method) { delete method; }
-id ABIObjCMethodReceiver(const ABIObjCMethod *method) { return (__bridge id)method->receiver; }
-SEL ABIObjCMethodSelector(const ABIObjCMethod *method) { return method->selector; }
-IMP ABIObjCMethodImplementation(const ABIObjCMethod *method) { return method->implementation; }
-BOOL ABIObjCMethodReturnsRetained(const ABIObjCMethod *method) { return method->returnsRetained; }
-BOOL ABIObjCMethodConsumesReceiver(const ABIObjCMethod *method) { return method->consumesReceiver; }
+const void *ABIObjCMethodReceiverAddress(const ABIObjCMethod *method) { return method->receiver; }
+SEL ABIObjCMethodSelector(const ABIObjCMethod *method) { return method->plan->selector; }
+IMP ABIObjCMethodImplementation(const ABIObjCMethod *method) { return method->plan->implementation; }
+BOOL ABIObjCMethodReturnsRetained(const ABIObjCMethod *method) { return method->plan->returnsRetained; }
+BOOL ABIObjCMethodConsumesReceiver(const ABIObjCMethod *method) { return method->plan->consumesReceiver; }
+
+ABIObjCImplementation *ABICopyObjCMethodImplementation(const ABIObjCMethod *method) {
+    ABIRetainObjCImplementation(method->plan);
+    return method->plan;
+}
+void ABIRetainObjCImplementation(ABIObjCImplementation *implementation) { ++implementation->references; }
+void ABIReleaseObjCImplementation(ABIObjCImplementation *implementation) {
+    if (implementation && --implementation->references == 0) delete implementation;
+}
+BOOL ABIValidateObjCImplementationReceiver(const ABIObjCImplementation *implementation, __unsafe_unretained id receiver, NSError **error) {
+    if (error) *error = nil;
+    return validateReceiver(implementation, receiver, error);
+}
+ABIObjCMethod *ABICopyBoundObjCMethod(ABIObjCImplementation *implementation, __unsafe_unretained id receiver, NSError **error) {
+    // A custom receiver retain can reenter and release the source implementation.
+    ABIRetainObjCImplementation(implementation);
+    std::unique_ptr<ABIObjCImplementation, decltype(&ABIReleaseObjCImplementation)> owned(
+        implementation, ABIReleaseObjCImplementation);
+    if (!ABIValidateObjCImplementationReceiver(implementation, receiver, error)) return nullptr;
+    auto binding = std::make_unique<ABIObjCMethod>(receiver, owned.get());
+    owned.release();
+    return binding.release();
+}
+SEL ABIObjCImplementationSelector(const ABIObjCImplementation *implementation) { return implementation->selector; }
+IMP ABIObjCImplementationIMP(const ABIObjCImplementation *implementation) { return implementation->implementation; }
+BOOL ABIObjCImplementationReturnsRetained(const ABIObjCImplementation *implementation) { return implementation->returnsRetained; }
+BOOL ABIObjCImplementationConsumesReceiver(const ABIObjCImplementation *implementation) { return implementation->consumesReceiver; }
 
 struct ABIObjCInvocation {
     std::atomic<size_t> references{1};
@@ -222,9 +297,6 @@ struct ABIObjCInvocation {
 };
 
 namespace {
-bool retainImplementationImage(
-    ABIObjCInvocation& plan, const void* address, const char* path, NSError** error);
-
 NSMethodSignature *receiverSignature(id receiver, SEL selector, NSError **error) {
     Class cls = object_getClass(receiver);
     class_getMethodImplementation(cls, selector);
@@ -287,30 +359,6 @@ ABIObjCInvocation *ABICopyObjCInvocationPlan(ABIObjCInvocation *invocation) {
     return plan;
 }
 
-namespace {
-bool retainImplementationImage(
-    ABIObjCInvocation& plan, const void* address, const char* path, NSError** error) {
-    Dl_info info{};
-    const bool hasAddress = address && dladdr(address, &info) && info.dli_fbase;
-    if (!hasAddress && !path) return true;
-    std::unique_ptr<ABIImageList, decltype(&ABIFreeImageList)> images(ABICopyLoadedImages(), ABIFreeImageList);
-    if (!images) { fail(error, ABIFailureImageUnavailable, @"The loaded image catalog is unavailable."); return false; }
-    for (size_t index = 0; index < ABIImageListCount(images.get()); ++index) {
-        const auto image = ABIImageListGet(images.get(), index);
-        const bool matches = hasAddress ? image.header == reinterpret_cast<uintptr_t>(info.dli_fbase)
-                                        : std::strcmp(image.path, path) == 0;
-        if (!matches) continue;
-        if (auto* lease = ABIRetainLoadedImage(image.generation)) {
-            plan.images.emplace_back(lease, ABIReleaseImage);
-            return true;
-        }
-        break;
-    }
-    fail(error, ABIFailureImageChanged, @"The implementation or class image could not be retained.");
-    return false;
-}
-}
-
 static ABIObjCInvocation *copyClassInvocation(
     Class type, SEL selector, BOOL classMethod, int32_t returnsRetained,
     int32_t consumesReceiver, bool capture, NSError **error) {
@@ -369,29 +417,6 @@ ABIObjCInvocation *ABICopyObjCDispatch(
     Class type, SEL selector, BOOL classMethod, int32_t returnsRetained,
     int32_t consumesReceiver, NSError **error) {
     return copyClassInvocation(type, selector, classMethod, returnsRetained, consumesReceiver, false, error);
-}
-
-static bool validateReceiver(const ABIObjCInvocation *plan, id receiver, NSError **error) {
-    if (!receiver) {
-        fail(error, ABIFailureInvalidRequest, @"A live receiver is required.");
-        return false;
-    }
-    Class actual = object_getClass(receiver);
-    const bool receiverIsClass = class_isMetaClass(actual);
-    if (plan->classMethod == receiverIsClass) {
-        if (receiverIsClass) actual = (Class)receiver;
-        for (; actual && actual != plan->receiverType; actual = class_getSuperclass(actual)) {}
-    } else {
-        actual = Nil;
-    }
-    if (!actual) {
-        fail(error, ABIFailureSignatureMismatch,
-             [NSString stringWithFormat:@"Receiver %@ is incompatible with %@ %@.",
-              NSStringFromClass(object_getClass(receiver)), plan->classMethod ? @"class" : @"instances of",
-              NSStringFromClass(plan->receiverType)]);
-        return false;
-    }
-    return true;
 }
 
 static bool compatibleDispatchEncoding(const char *expected, const char *actual) {
