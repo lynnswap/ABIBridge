@@ -18,7 +18,7 @@ if [[ "$CODE_SIGNING_ALLOWED" != NO && -n "${EXPANDED_CODE_SIGN_IDENTITY:-}" ]];
 fi
 python3 "$root/scripts/build-swift-import-fixtures.py" \
     "${arguments[@]}"
-for name in SwiftImportProvider SwiftImportCaller SwiftImportCallerControl; do
+for name in SwiftImportProvider SwiftImportCaller SwiftImportCallerControl ABIBridgeLoadingFixture; do
     destination="${TARGET_BUILD_DIR:?}/${FRAMEWORKS_FOLDER_PATH:?}/$name.framework"
     # Keep an old framework signature from surviving a later unsigned build.
     rm -rf "$destination"

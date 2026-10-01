@@ -29,6 +29,7 @@ uintptr_t ABIValidationSlotDiscriminator(void);
 int32_t ABIValidationCounterOracle(const void *counter);
 int32_t ABIValidationCounterAdapter(void (*target)(void), void *counter, int32_t delta);
 /// Null on success; otherwise an owned-by-fixture diagnostic string.
+const char *ABIValidateExtractedObjCImplementations(void);
 const char *ABIValidateNativeCalls(void);
 /// Internal Objective-C replacement entry, including cached authenticated IMPs.
 const char *ABIValidateObjCReplacement(void);

@@ -40,7 +40,7 @@ let result = try unsafe NativeSwiftClosure<Bool>.withUnsafeNonescaping({
 }
 ```
 
-`SwiftGenericCallTests` compares scalar and managed substitutions with separately compiled compiler-generated calls, including capturing callbacks, indirect reference ownership, empty results, escaping copies and conversion failures. `SwiftRuntimeValueConsumer` combines this entry with a runtime-only borrowed callback without importing its concrete provider type. Runtime validation is on macOS arm64 in Debug and Release. `check-swift-generic-call-codegen.py` checks hidden metadata, formal result/self conventions, and arm64e callback discriminators on arm64, x86_64, arm64e and arm64_32. Compilation does not establish runtime coverage on those other targets.
+`SwiftGenericCallTests` compares scalar and managed substitutions with separately compiled compiler-generated calls, including capturing callbacks, indirect reference ownership, empty results, escaping copies and conversion failures. `SwiftRuntimeValueConsumer` combines this entry with a runtime-only borrowed callback without importing its concrete provider type. Runtime validation covers macOS arm64 in Debug and Release, and the `swift-generic-borrows` device probe passed on iPhone Air with iOS 27.0.1 (24A446), Xcode 27.0 / Swift 6.4, Release arm64e with pointer authentication enabled. `check-swift-generic-call-codegen.py` checks hidden metadata, formal result/self conventions, and arm64e callback discriminators on arm64, x86_64, arm64e and arm64_32. The compiler probes alone do not establish runtime coverage on x86_64 or arm64_32.
 
 ## Choose the specialization boundary
 

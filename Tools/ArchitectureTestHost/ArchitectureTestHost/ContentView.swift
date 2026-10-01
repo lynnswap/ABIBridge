@@ -17,12 +17,12 @@ struct ContentView: View {
         "initializers", "native-hooks", "coordinated-hooks",
         "import-replacement", "import-hooks", "virtual-replacement",
         "virtual-hooks", "virtual-entries", "virtual-public",
-        "swift-replacement", "swift-callback", "swift-closures", "swift-throwing-closures", "swift-errors", "swift-async", "swift-async-closures", "swift-arguments", "swift-existentials", "swift-opaque", "swiftui", "objc-values", "swift-lookup", "native-lookup", "invocation-timing"
+        "swift-replacement", "swift-callback", "swift-closures", "swift-generic-borrows", "method-extraction", "swift-throwing-closures", "swift-errors", "swift-async", "swift-async-closures", "swift-arguments", "swift-existentials", "swift-opaque", "swiftui", "objc-values", "swift-lookup", "native-lookup", "invocation-timing"
         ]
         #if targetEnvironment(simulator)
         return standard
         #else
-        return standard + ["swift-function-hooks", "swift-import-replacement", "swift-method-hooks", "swift-value-hooks"]
+        return standard + ["loading", "image-readiness", "swift-function-hooks", "swift-import-replacement", "swift-method-hooks", "swift-value-hooks"]
         #endif
     }
 
@@ -111,6 +111,10 @@ struct ContentView: View {
             do {
                 let report: ArchitectureReport
                 switch selectedMode {
+                case "loading":
+                    report = try await runImageLoadingValidation()
+                case "image-readiness":
+                    report = try await runImageReadinessValidation()
                 case "swift-function-hooks":
                     report = try await runSwiftFunctionHookValidation()
                 case "swift-import-replacement":
