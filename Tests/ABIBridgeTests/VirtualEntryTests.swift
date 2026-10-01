@@ -164,7 +164,7 @@ struct VirtualEntryTests {
         defer { bits.pointee = saved }
         let receiver = try pointer(library, "ABINamedReceiver", 0)
         let object = runtime.cxxObject(unsafe NativeValue(borrowing: receiver, as: try .opaque(named: "receiver")), typeNamed: "NamedVirtual::Derived")
-        var method: NativeCXXMethod<Int32, Int32>? = try unsafe object.virtualMethod(entry!, as: ((Int32) -> Int32).self)
+        var method: NativeBoundCXXMethod<Int32, Int32>? = try unsafe object.virtualMethod(entry!, as: ((Int32) -> Int32).self)
         entry = nil
         await runtime.removeCachedResults()
         #expect(originalLease != nil)

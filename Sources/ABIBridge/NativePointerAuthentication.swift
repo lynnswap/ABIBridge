@@ -98,28 +98,38 @@ public enum NativeDispatchError: Error, Sendable, Equatable {
 ///
 /// The address points to the first function slot, excluding ABI headers such as
 /// RTTI and offset-to-top fields. Relative table formats require a native adapter.
-/// A method lookup captures its selected entry and retains the table owner;
-/// later table changes do not alter the captured method. See <doc:CXXObjectInvocation>.
+/// A method lookup captures its selected entry and code owner; later table
+/// changes do not alter it. Receiver-backed views retain the receiver only
+/// while inspecting the table. See <doc:CXXObjectInvocation>.
 public final class NativeVTable {
     /// The number of function-pointer slots accessible from the address point.
     public let entryCount: Int
     let storage: NativeValue
+    private let codeOwner: Any?
 
     /// Borrows a readable absolute function-pointer table.
     ///
     /// - Parameters:
     ///   - address: The address point of the first function slot.
     ///   - entryCount: The accessible number of pointer-sized entries.
-    ///   - owner: An owner keeping table storage and dependencies alive.
+    ///   - owner: An owner keeping table storage and captured code dependencies alive.
     /// - Throws: An invalid-entry-count error.
     ///
     /// The caller must establish readability and the actual table format.
-    @unsafe public init(
+    @unsafe public convenience init(
         borrowing address: UnsafeRawPointer, entryCount: Int, retaining owner: Any? = nil
+    ) throws {
+        try unsafe self.init(borrowing: address, entryCount: entryCount, retaining: owner, retainingCode: owner)
+    }
+
+    @unsafe private init(
+        borrowing address: UnsafeRawPointer, entryCount: Int,
+        retaining owner: Any?, retainingCode codeOwner: Any?
     ) throws {
         let (size, overflow) = entryCount.multipliedReportingOverflow(by: MemoryLayout<UnsafeRawPointer>.size)
         guard entryCount >= 0, !overflow else { throw NativeDispatchError.invalidEntryCount(entryCount) }
         self.entryCount = entryCount
+        self.codeOwner = codeOwner
         storage = unsafe NativeValue(
             borrowing: UnsafeMutableRawPointer(mutating: address),
             as: try .opaque(named: "vtable", size: size, alignment: MemoryLayout<UnsafeRawPointer>.alignment),
@@ -134,15 +144,18 @@ public final class NativeVTable {
     ///   - offset: The caller-specified byte offset of that field.
     ///   - entryCount: The accessible number of absolute function-pointer entries.
     ///   - authentication: The schema for the vtable pointer, not its function entries.
+    ///   - codeOwner: An optional owner for generated code retained by captured targets and shared hooks.
     /// - Throws: A bounds, null-vtable, or invalid-entry-count error.
     @unsafe public convenience init(
         readingFrom receiver: NativeValue, at offset: Int = 0, entryCount: Int,
-        authentication: NativePointerAuthentication
+        authentication: NativePointerAuthentication, retainingCode codeOwner: Any? = nil
     ) throws {
         guard let address = try unsafe authentication.readPointer(from: receiver, at: offset) else {
             throw NativeDispatchError.missingVTable
         }
-        try unsafe self.init(borrowing: address, entryCount: entryCount, retaining: receiver)
+        try unsafe self.init(
+            borrowing: address, entryCount: entryCount, retaining: receiver, retainingCode: codeOwner
+        )
     }
 
     func target(at index: Int, authentication: NativePointerAuthentication, retaining image: NativeImage? = nil) throws -> VirtualCallTarget {
@@ -156,18 +169,18 @@ public final class NativeVTable {
                 authentication.keyCode, authentication.discriminator, authentication.addressDiversity,
                 &failure
             ) else { throw consumeNativeCallFailure(failure) }
-            return VirtualCallTarget(handle: handle, retaining: storage, image: image)
+            return VirtualCallTarget(handle: handle, retaining: codeOwner, image: image)
         }
     }
 }
 
-// The table owner can also retain generated code or a receiver. Release it
-// while the native implementation image is still leased.
+// An explicit code owner may execute native destruction on final release.
+// Keep the implementation images leased until that release finishes.
 final class VirtualCallTarget {
     let handle: OpaquePointer
-    private var owner: NativeValue?
+    private var owner: Any?
     private let image: NativeImage?
-    init(handle: OpaquePointer, retaining owner: NativeValue, image: NativeImage?) {
+    init(handle: OpaquePointer, retaining owner: Any?, image: NativeImage?) {
         self.handle = handle
         self.owner = owner
         self.image = image

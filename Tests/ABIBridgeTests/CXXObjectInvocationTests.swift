@@ -43,6 +43,76 @@ struct CXXObjectInvocationTests {
         )
     }
 
+    @MainActor @Test func extractedDirectMethodsAndBorrowedResultsOwnOnlyTheirCurrentReceiver() async throws {
+        let runtime = ABIRuntime()
+        weak var observedOriginal: NativeValue?
+        let add: NativeCXXMethod<Int32, Int32>
+        let address: NativeCXXMethod<BorrowedCounterValue>
+        do {
+            let original = try counter(1)
+            observedOriginal = original
+            let object = runtime.cxxObject(original, typeNamed: "ABICXXFixture::Counter")
+            add = try await object.method(named: "add(int)", as: ((Int32) -> Int32).self).method
+            address = try await object.method(named: "address()", as: (() -> BorrowedCounterValue).self).method
+        }
+        await runtime.removeCachedResults()
+        #expect(observedOriginal == nil)
+        var second: NativeValue? = try counter(40)
+        weak let observedSecond = second
+        var bound: NativeBoundCXXMethod<Int32, Int32>? = add.bind(to: second!)
+        #expect(try unsafe add.unsafeInvoke(on: second!, 1) == 41)
+        #expect(try unsafe bound!.unsafeInvoke(1) == 42)
+        var result: BorrowedCounterValue? = try unsafe address.unsafeInvoke(on: second!)
+        second = nil
+        bound = nil
+        #expect(observedSecond != nil)
+        #expect(try result!.read() == 42)
+        result = nil
+        withExtendedLifetime((add, address)) { #expect(observedSecond == nil) }
+        #expect(ABICXXCounterLiveCount() == 0)
+    }
+
+    @Test func extractedSecondaryVirtualTargetsReleaseSourceStorageAndRetainCodeOwners() throws {
+        weak var observedOriginal: NativeValue?
+        var codeOwner: NSObject? = NSObject()
+        weak let observedCodeOwner = codeOwner
+        var method: NativeCXXMethod<Int32>?
+        do {
+            let pointer = try #require(ABICXXCreateDerived())
+            let original = unsafe NativeValue(
+                adopting: pointer,
+                as: try .opaque(named: "Derived", size: ABICXXDerivedSize(), alignment: ABICXXDerivedAlignment()),
+                release: { ABICXXDeleteDerived($0) }
+            )
+            observedOriginal = original
+            let view = try original.view(at: ABICXXSecondaryOffset(pointer),
+                as: .opaque(named: "Secondary", size: ABICXXSecondarySize(), alignment: ABICXXSecondaryAlignment()))
+            let table = try unsafe NativeVTable(
+                readingFrom: view, entryCount: 1,
+                authentication: .cxxVTablePointer(discriminator: ABICXXSecondaryVTableDiscriminator()),
+                retainingCode: codeOwner
+            )
+            method = try unsafe ABIRuntime.shared.cxxObject(view, typeNamed: "ABICXXFixture::Secondary").virtualMethod(
+                at: 0, in: table,
+                authentication: .cxxVirtualFunction(discriminator: ABICXXSecondarySlotDiscriminator()),
+                as: (() -> Int32).self
+            ).method
+        }
+        codeOwner = nil
+        #expect(observedOriginal == nil && observedCodeOwner != nil)
+        let pointer = try #require(ABICXXCreateDerived())
+        let second = unsafe NativeValue(
+            adopting: pointer,
+            as: try .opaque(named: "Derived", size: ABICXXDerivedSize(), alignment: ABICXXDerivedAlignment()),
+            release: { ABICXXDeleteDerived($0) }
+        )
+        let view = try second.view(at: ABICXXSecondaryOffset(pointer),
+            as: .opaque(named: "Secondary", size: ABICXXSecondarySize(), alignment: ABICXXSecondaryAlignment()))
+        #expect(try unsafe method!.unsafeInvoke(on: view) == ABICXXSecondaryOracle(pointer))
+        method = nil
+        #expect(observedCodeOwner == nil)
+    }
+
     @MainActor @Test func directMethodsSupplyReceiverAndKeepCallerIsolation() async throws {
         let storage = try counter(10)
         let object = ABIRuntime.shared.cxxObject(storage, typeNamed: "ABICXXFixture::Counter")
@@ -61,7 +131,7 @@ struct CXXObjectInvocationTests {
     @Test func borrowedWrapperResultRetainsReceiverBinding() async throws {
         var storage: NativeValue? = try counter(42)
         weak let weakStorage = storage
-        var method: NativeCXXMethod<BorrowedCounterValue>? = try await ABIRuntime.shared.cxxObject(
+        var method: NativeBoundCXXMethod<BorrowedCounterValue>? = try await ABIRuntime.shared.cxxObject(
             storage!, typeNamed: "ABICXXFixture::Counter"
         ).method(named: "address()", as: (() -> BorrowedCounterValue).self)
         var result: BorrowedCounterValue? = try unsafe method!.unsafeInvoke()
@@ -87,6 +157,9 @@ struct CXXObjectInvocationTests {
         #expect(input!.value == 7)
         #expect(result!.value == 17)
         #expect(ABICXXTokenLiveCount() == 2)
+        result = nil
+        result = try unsafe method.method.unsafeInvoke(on: storage, input!)
+        #expect(result!.value == 17 && ABICXXTokenLiveCount() == 2)
         input = nil
         result = nil
         #expect(ABICXXTokenLiveCount() == 0)
@@ -153,7 +226,7 @@ struct CXXObjectInvocationTests {
         var owner: NSObject? = NSObject()
         weak let weakOwner = owner
         var table: NativeVTable? = try unsafe NativeVTable(borrowing: address, entryCount: 1, retaining: owner)
-        var method: NativeCXXMethod<Int32>? = try unsafe object.virtualMethod(
+        var method: NativeBoundCXXMethod<Int32>? = try unsafe object.virtualMethod(
             at: 0, in: table!,
             authentication: .cxxVirtualFunction(discriminator: ABICXXBaseSlotDiscriminator()),
             as: (() -> Int32).self

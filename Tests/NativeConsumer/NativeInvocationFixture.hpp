@@ -3,6 +3,7 @@
 #include "FixtureTypes.hpp"
 #include <cassert>
 #include <dlfcn.h>
+#include <optional>
 
 inline void checkPublicNativeInvocation(const char *path) {
     using namespace abi_bridge;
@@ -63,6 +64,7 @@ inline void checkPublicNativeInvocation(const char *path) {
         assert(addValue.unsafe_invoke(&receiver, 2) == 42);
         assert(describe.unsafe_invoke(&receiver, "value: ") == "value: 42");
         std::weak_ptr<ABIBridgeFixture::Combined> weak;
+        std::optional<method<int(int)>> extracted;
         {
             auto owner = std::make_shared<ABIBridgeFixture::Combined>();
             owner->value = 40;
@@ -70,8 +72,14 @@ inline void checkPublicNativeInvocation(const char *path) {
             auto bound = addValue.bind(std::shared_ptr<ABIBridgeFixture::Counter>(owner, static_cast<ABIBridgeFixture::Counter*>(owner.get())));
             owner.reset();
             assert(!weak.expired() && bound.unsafe_invoke(2) == 42);
+            extracted = bound.method();
         }
         assert(weak.expired());
+        auto other = std::make_shared<ABIBridgeFixture::Counter>(ABIBridgeFixture::Counter{40});
+        assert(extracted->unsafe_invoke(other.get(), 2) == 42);
+        auto rebound = extracted->bind(other);
+        other.reset();
+        assert(rebound.unsafe_invoke(1) == 43);
         // Construct outside a resolver's lifetime as well as after clearing it.
         auto independent = [&] {
             Runtime temporary;

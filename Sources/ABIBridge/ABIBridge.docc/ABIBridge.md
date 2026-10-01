@@ -101,6 +101,7 @@ print(symbol.image.path)
 - <doc:CXXObjectInvocation>
 - ``NativeCXXObject``
 - ``NativeCXXMethod``
+- ``NativeBoundCXXMethod``
 - ``NativeVTable``
 - ``NativeVTable/Entry``
 - ``NativePointerAuthentication``

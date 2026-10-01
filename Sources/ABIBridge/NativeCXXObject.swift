@@ -23,21 +23,16 @@ private enum CXXCallTarget {
 
 private final class CXXMethodBinding {
     var receiver: NativeValue?
-    let target: CXXCallTarget
-    let adapter: ResolvedSymbol?
+    let method: Any
 
-    init(receiver: NativeValue, target: CXXCallTarget, adapter: ResolvedSymbol?) throws {
-        if let adapter, adapter.declaration.kind != .function {
-            throw ABIResolutionError.unsupportedDeclaration("A method adapter must be an executable function.")
-        }
+    init(receiver: NativeValue, method: Any) {
         self.receiver = receiver
-        self.target = target
-        self.adapter = adapter
+        self.method = method
     }
 
     deinit {
         // A receiver's final release may execute native destruction code.
-        withExtendedLifetime((target, adapter)) { receiver = nil }
+        withExtendedLifetime(method) { receiver = nil }
     }
 }
 
@@ -81,16 +76,14 @@ public final class NativeCXXObject {
         named name: String,
         as signature: ((repeat each Argument) -> Result).Type,
         using adapter: ResolvedSymbol? = nil
-    ) async throws -> NativeCXXMethod<Result, repeat each Argument> {
+    ) async throws -> NativeBoundCXXMethod<Result, repeat each Argument> {
         let declaration = NativeDeclaration(name: typeName + "::" + name, language: .cxx)
         let symbol: ResolvedSymbol
         switch scope {
         case .selector(let selector): symbol = try await runtime.resolve(declaration, in: selector, loading: loading)
         case .image(let image): symbol = try await runtime.resolve(declaration, in: image, loading: loading)
         }
-        return try NativeCXXMethod(
-            binding: CXXMethodBinding(receiver: storage, target: .symbol(symbol), adapter: adapter)
-        )
+        return try NativeCXXMethod<Result, repeat each Argument>(target: .symbol(symbol), adapter: adapter).bind(to: storage)
     }
 
     /// Captures a selected virtual entry and binds this receiver/subobject.
@@ -100,12 +93,11 @@ public final class NativeCXXObject {
         _ entry: NativeVTable.Entry,
         as signature: ((repeat each Argument) -> Result).Type,
         using adapter: ResolvedSymbol? = nil
-    ) throws -> NativeCXXMethod<Result, repeat each Argument> {
-        try NativeCXXMethod(binding: CXXMethodBinding(
-            receiver: storage,
+    ) throws -> NativeBoundCXXMethod<Result, repeat each Argument> {
+        try NativeCXXMethod<Result, repeat each Argument>(
             target: .virtual(entry.table.target(at: entry.index, authentication: entry.authentication, retaining: entry.image)),
             adapter: adapter
-        ))
+        ).bind(to: storage)
     }
 
     /// Captures an absolute virtual-function entry and binds this receiver.
@@ -120,52 +112,65 @@ public final class NativeCXXObject {
     ///   - authentication: The slot's authentication schema.
     ///   - signature: Explicit arguments and result, excluding this.
     ///   - adapter: A C-compatible bridge receiving target, receiver, and arguments.
-    /// - Returns: A method retaining the selected entry's image, table owner, and receiver.
+    /// - Returns: A method retaining the selected entry's image, code owner, and receiver.
     /// - Throws: A slot-bounds, null-entry, image-lifetime, or signature error.
     @unsafe public func virtualMethod<Result, each Argument>(
         at index: Int, in table: NativeVTable,
         authentication: NativePointerAuthentication,
         as signature: ((repeat each Argument) -> Result).Type,
         using adapter: ResolvedSymbol? = nil
-    ) throws -> NativeCXXMethod<Result, repeat each Argument> {
-        try NativeCXXMethod(binding: CXXMethodBinding(
-            receiver: storage, target: .virtual(table.target(at: index, authentication: authentication)),
-            adapter: adapter
-        ))
+    ) throws -> NativeBoundCXXMethod<Result, repeat each Argument> {
+        try NativeCXXMethod<Result, repeat each Argument>(
+            target: .virtual(table.target(at: index, authentication: authentication)), adapter: adapter
+        ).bind(to: storage)
     }
 }
 
-/// A direct or vtable-selected C++ method bound to retained receiver storage.
+/// A prepared direct or table-selected C++ implementation with an explicit receiver.
 ///
-/// Each call supplies this automatically. Custom ABIBridgeValue results keep
-/// the binding alive when their wrapper retains the returned NativeValue.
-/// Raw pointer results remain borrowed; keep the method or another owner alive.
-/// See <doc:CXXObjectInvocation>.
+/// Copies retain the selected implementation and adapter images, but no receiver
+/// binding. A selected virtual target keeps its original adjustment thunk and
+/// authentication; calls do not redispatch through the supplied receiver's table.
 public struct NativeCXXMethod<Result, each Argument> {
-    private let binding: CXXMethodBinding
+    private let target: CXXCallTarget
+    private let adapter: ResolvedSymbol?
     private let call: CFunctionCall<Result, repeat each Argument>
 
-    fileprivate init(binding: CXXMethodBinding) throws {
-        self.binding = binding
-        call = try CFunctionCall(hiddenPointerCount: binding.adapter == nil ? 1 : 2)
+    fileprivate init(target: CXXCallTarget, adapter: ResolvedSymbol?) throws {
+        if let adapter, adapter.declaration.kind != .function {
+            throw ABIResolutionError.unsupportedDeclaration("A method adapter must be an executable function.")
+        }
+        self.target = target
+        self.adapter = adapter
+        call = try CFunctionCall(hiddenPointerCount: adapter == nil ? 1 : 2)
     }
 
-    /// Invokes the captured implementation with the bound receiver.
+    /// Retains receiver storage for repeated calls without preparing the method again.
     ///
-    /// Honor the native object's thread requirements, signature, and lifetime.
-    /// Direct calls need C-compatible values. Use a compiled native adapter for
-    /// nontrivial copy/destruction, consumed arguments, and special result ABIs.
-    /// Foreign exceptions must be handled inside the adapter.
+    /// The storage must describe the live object or adjusted subobject expected
+    /// by this captured entry point. Binding does not inspect C++ object layout.
+    public func bind(to receiver: NativeValue) -> NativeBoundCXXMethod<Result, repeat each Argument> {
+        NativeBoundCXXMethod(method: self, receiver: receiver)
+    }
+
+    /// Calls the captured implementation on a live receiver or adjusted subobject.
     ///
-    /// - Parameter values: Explicit arguments in declaration order.
-    /// - Returns: The converted result.
-    /// - Throws: A conversion or call-interface error.
-    @unsafe public func unsafeInvoke(_ values: repeat each Argument) throws -> Result {
-        let receiver = binding.receiver!
-        return try unsafe receiver.withUnsafeMutableBytes { bytes in
+    /// Direct calls require C-compatible values. A compiled native adapter handles
+    /// nontrivial ownership and special result ABIs. Foreign exceptions must not
+    /// cross this boundary. Custom result wrappers retain the method and receiver;
+    /// raw pointer results remain borrowed. Honor the object's thread requirements.
+    @unsafe public func unsafeInvoke(on receiver: NativeValue, _ values: repeat each Argument) throws -> Result {
+        let binding = CXXMethodBinding(receiver: receiver, method: self)
+        return try unsafe invoke(on: receiver, retaining: binding, repeat each values)
+    }
+
+    @unsafe fileprivate func invoke(
+        on receiver: NativeValue, retaining owner: Any, _ values: repeat each Argument
+    ) throws -> Result {
+        try unsafe receiver.withUnsafeMutableBytes { bytes in
             let receiverAddress = UnsafeRawPointer(bytes.baseAddress!)
-            return try unsafe binding.target.withFunction { target in
-                if let adapter = binding.adapter {
+            return try unsafe target.withFunction { target in
+                if let adapter {
                     guard let targetBits = ABIFunctionPointerBits(target) else {
                         throw ABIResolutionError.invalidAddress
                     }
@@ -173,16 +178,39 @@ public struct NativeCXXMethod<Result, each Argument> {
                         try unsafe call.unsafeInvoke(
                             ABIUnsafeFunctionAtAddress($0),
                             hiddenPointers: [targetBits, receiverAddress],
-                            retainingResultOwner: binding, repeat each values
+                            retainingResultOwner: owner, repeat each values
                         )
                     }
                 }
                 return try unsafe call.unsafeInvoke(
                     target, hiddenPointers: [receiverAddress],
-                    retainingResultOwner: binding, repeat each values
+                    retainingResultOwner: owner, repeat each values
                 )
             }
         }
+    }
+}
+
+/// A prepared C++ implementation bound to retained receiver storage.
+///
+/// Custom ABIBridgeValue results retain this binding when their wrapper keeps the
+/// returned NativeValue. Raw pointer results remain borrowed. See <doc:CXXObjectInvocation>.
+public struct NativeBoundCXXMethod<Result, each Argument> {
+    /// The prepared implementation, independent of this receiver binding.
+    public let method: NativeCXXMethod<Result, repeat each Argument>
+    private let binding: CXXMethodBinding
+
+    fileprivate init(method: NativeCXXMethod<Result, repeat each Argument>, receiver: NativeValue) {
+        self.method = method
+        binding = CXXMethodBinding(receiver: receiver, method: method)
+    }
+
+    /// Calls the captured implementation using the retained receiver storage.
+    ///
+    /// The signature, subobject, ownership, and thread requirements remain those
+    /// of the prepared method. Retention does not make the object thread-safe.
+    @unsafe public func unsafeInvoke(_ values: repeat each Argument) throws -> Result {
+        try unsafe method.invoke(on: binding.receiver!, retaining: binding, repeat each values)
     }
 }
 

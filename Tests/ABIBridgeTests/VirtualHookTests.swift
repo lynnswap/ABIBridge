@@ -96,6 +96,35 @@ struct VirtualHookTests {
         #expect(try unsafe captured.unsafeInvoke(2) == 42)
     }
 
+    @Test func sharedHooksRetainSeparateCodeOwnersAfterTableViewsAreReleased() async throws {
+        let fixture = try Fixture(); defer { fixture.library.cleanup() }
+        var owner: NSObject? = NSObject()
+        weak let observedOwner = owner
+        var hook: NativeVirtualHook?
+        do {
+            let receiver = unsafe NativeValue(
+                borrowing: fixture.receiver(0),
+                as: try .opaque(named: fixture.name, size: MemoryLayout<UnsafeRawPointer>.size),
+                retaining: fixture.library
+            )
+            let table = try unsafe NativeVTable(
+                readingFrom: receiver, entryCount: 2, authentication: .unsigned, retainingCode: owner
+            )
+            let entry = try await table.entry(named: "\(fixture.name)::Derived::value(int) const", using: fixture.runtime)
+            hook = try unsafe entry.hookSharedCalls(
+                as: ((Int32) -> Int32).self, onFailure: { Issue.record(Comment(rawValue: "\($0)")) }
+            ) { call, value in try call.proceed(value) + 1 }
+        }
+        owner = nil
+        #expect(observedOwner != nil)
+        #expect(fixture.oracle(0, 2) == 43)
+        hook!.invalidate()
+        hook = nil
+        #expect(fixture.oracle(0, 2) == 42)
+        // Published pass-through entries keep their table and code dependencies.
+        #expect(observedOwner != nil)
+    }
+
     @Test func preservesSecondaryReceiverAndCovariantResult() async throws {
         let fixture = try Fixture(); defer { fixture.library.cleanup() }
         let receiverBits = UInt(bitPattern: fixture.receiver(1))
