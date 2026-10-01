@@ -144,7 +144,7 @@ public final class NativeVTable {
     ///   - offset: The caller-specified byte offset of that field.
     ///   - entryCount: The accessible number of absolute function-pointer entries.
     ///   - authentication: The schema for the vtable pointer, not its function entries.
-    ///   - codeOwner: An optional owner for generated code retained by captured targets.
+    ///   - codeOwner: An optional owner for generated code retained by captured targets and shared hooks.
     /// - Throws: A bounds, null-vtable, or invalid-entry-count error.
     @unsafe public convenience init(
         readingFrom receiver: NativeValue, at offset: Int = 0, entryCount: Int,

@@ -155,12 +155,12 @@ extension NativeVTable.Entry {
         }, failure: onFailure)
         let parameters: [OpaquePointer?] = types.map(\.handle)
         let context = Unmanaged.passRetained(box).toOpaque()
-        let owner = Unmanaged.passRetained(table.storage).toOpaque()
+        let owner = Unmanaged.passRetained(table).toOpaque()
         let hook = withExtendedLifetime(image) { unsafe table.storage.withUnsafeBytes { bytes in
             let info = ABIVirtualEntryInfo(addressPoint: bytes.baseAddress, entryCount: table.entryCount, index: index,
                 key: authentication.keyCode, discriminator: authentication.discriminator, addressDiversity: authentication.addressDiversity)
             return parameters.withUnsafeBufferPointer { parameters in
-                ABIInstallSharedVirtualHook(info, owner, { Unmanaged<NativeValue>.fromOpaque($0!).release() },
+                ABIInstallSharedVirtualHook(info, owner, { Unmanaged<NativeVTable>.fromOpaque($0!).release() },
                     box.result.handle, parameters.baseAddress, parameters.count, context,
                     { context, call, _ in invokeFunctionCallback(Unmanaged<FunctionCallbackBox>.fromOpaque(context!).takeUnretainedValue(), call!) },
                     { context, error in
