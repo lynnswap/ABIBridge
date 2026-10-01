@@ -190,6 +190,8 @@ SwiftUI clients can select the separate `ABIBridgeSwiftUI` product. Its `NativeS
 
 Describe public Swift API contracts in DocC comments. Put guides in the DocC catalog and keep the README at installation and quick-start level. Write prose without manual line wrapping.
 
+Keep the module landing pages brief. In the ABIBridge catalog, curate guides and top-level symbols in the feature collections linked from `ABIBridge.md`; place Swift value and callback topics in the `SwiftValues` collection under `SwiftCalls`. Use `Topics` links for the primary navigation hierarchy and inline or `See Also` links for related features. Preserve existing article filenames when reorganizing navigation so published URLs remain stable.
+
 Build the same static site that is published by CI:
 
 ```sh
