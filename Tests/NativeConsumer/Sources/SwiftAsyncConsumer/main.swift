@@ -13,7 +13,44 @@ nonisolated(nonsending) public func inherited(_ value: Int64) async -> Int64 { a
     return 7
 }
 
+public final class AsyncReceiver {
+    public let value: Int64
+    public init(_ value: Int64) { self.value = value }
+    @inline(never) nonisolated(nonsending)
+    public func score(_ extra: Int64) async throws(Failure) -> Int64 {
+        await Task.yield()
+        if extra < 0 { throw Failure(code: 45) }
+        return value + extra + Context.value
+    }
+}
+
+@MainActor
+func extractedAsyncMethod() async throws -> NativeSwiftAsyncMethod<Int64, Int64> {
+    weak var observed: AsyncReceiver?
+    let method: NativeSwiftAsyncMethod<Int64, Int64>
+    do {
+        let original = AsyncReceiver(1)
+        observed = original
+        method = try await ABIRuntime.shared.object(original).method(
+            named: "score(_:)", as: (nonisolated(nonsending) (Int64) async throws(Failure) -> Int64).self
+        ).method
+    }
+    precondition(observed == nil)
+    return method
+}
+
 let runtime = ABIRuntime()
+let reusable = try await extractedAsyncMethod()
+let asyncReceiver = AsyncReceiver(35)
+let rebound = try reusable.bind(to: asyncReceiver)
+let reboundValue = try await Context.$value.withValue(5) { try unsafe await rebound.unsafeInvoke(2) }
+precondition(reboundValue == 42)
+do {
+    _ = try unsafe await reusable.unsafeInvoke(on: asyncReceiver, -1)
+    fatalError("Expected reused method failure")
+} catch let error as NativeSwiftError {
+    error.withUnderlyingError { precondition(($0 as? Failure)?.code == 45) }
+}
 let decorate = try await runtime.swiftFunction(named: "SwiftAsyncConsumer.decorate(_:)",
     as: ((String) async -> String).self)
 let result = try unsafe await decorate.unsafeInvoke("public")

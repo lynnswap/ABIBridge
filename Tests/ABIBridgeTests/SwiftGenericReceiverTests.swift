@@ -40,6 +40,37 @@ private final class InheritedGenericReceiver: GenericReceiver<ReceiverNumber> {}
 private enum ReceiverFailure: Error { case rejected }
 
 struct SwiftGenericReceiverTests {
+    @MainActor @Test func extractedGenericMethodsKeepContextWithoutRetainingTheOriginalObject() async throws {
+        let runtime = ABIRuntime()
+        weak var observed: GenericReceiver<ReceiverNumber>?
+        let consuming: NativeSwiftMethod<String>
+        let asynchronous: NativeSwiftAsyncMethod<String, String>
+        do {
+            let original = GenericReceiver(ReceiverNumber(number: 1))
+            observed = original
+            consuming = try await runtime.object(original).method(
+                named: "consumeTitle()", as: (() -> String).self, consuming: true
+            ).method
+            asynchronous = try await runtime.object(original).method(
+                named: "asyncTitle(_:)", as: ((String) async -> String).self
+            ).method
+        }
+        await runtime.removeCachedResults()
+        #expect(observed == nil)
+        var second: GenericReceiver<ReceiverNumber>? = GenericReceiver(.init(number: 42))
+        weak let observedSecond = second
+        var bound: NativeBoundSwiftAsyncMethod<String, String>? = try asynchronous.bind(to: second!)
+        #expect(try unsafe consuming.unsafeInvoke(on: second!) == "42")
+        #expect(try unsafe await asynchronous.unsafeInvoke(on: second!, "value:") == "value:42")
+        second = nil
+        #expect(try unsafe await bound!.unsafeInvoke("bound:") == "bound:42")
+        bound = nil
+        withExtendedLifetime((consuming, asynchronous)) { #expect(observedSecond == nil) }
+        #expect(throws: ABIInvocationError.self) {
+            try asynchronous.bind(to: GenericReceiver(ReceiverText(text: "different")))
+        }
+    }
+
     @MainActor @Test(arguments: [false, true])
     func concreteMembersUseLiveGenericContext(_ inherited: Bool) async throws {
         let receiver: GenericReceiver<ReceiverNumber> = inherited
