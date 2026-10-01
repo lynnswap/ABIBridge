@@ -102,6 +102,9 @@ extension NativeSwiftFunction {
         with replacement: NativeSwiftFunction<Result, repeat each Argument>, in importer: ImageSelector,
         from provider: ImageSelector? = nil, using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil
     ) async throws -> NativeSwiftImportedReplacement<NativeSwiftFunctionImplementation<Result, repeat each Argument>> {
+        guard !isGeneric, !replacement.isGeneric else {
+            throw ABIResolutionError.unsupportedDeclaration("Generic imported replacement requires a polymorphic replacement contract; use direct invocation.")
+        }
         try SwiftErrorPlan.validateReplacement(replacement.errorPlan, for: errorPlan)
         let storage = try await runtime.prepareSwiftImportReplacement(target: symbol, replacement: replacement.symbol,
             importer: importer, provider: provider, owner: owner)

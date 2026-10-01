@@ -161,6 +161,9 @@ struct SwiftResultCodec<Value>: Sendable {
     private let opaque: SwiftOpaqueResultPlan?
 
     init(opaque: SwiftOpaqueResultPlan? = nil) throws {
+        if let closure = Value.self as? any SwiftClosureValue.Type, !closure.supportsResult {
+            throw ABIResolutionError.unsupportedDeclaration("Runtime-typed callbacks are supported as inputs, not returned closures.")
+        }
         if Value.self == NativeSwiftOpaqueValue.self {
             guard let opaque else {
                 throw ABIResolutionError.unsupportedDeclaration("Opaque result handles require an opaque-return declaration.")

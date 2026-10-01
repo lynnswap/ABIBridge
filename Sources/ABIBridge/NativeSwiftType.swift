@@ -125,6 +125,29 @@ public actor NativeSwiftType {
             receiver: receiverPlan(mutating: isMutating, consuming: isConsuming), errorPlan: errorPlan
         )
     }
+    /// Resolves a nonmutating member with formally indirect borrowed self.
+    ///
+    /// Use for a runtime-only resilient value received through
+    /// NativeSwiftBorrowingClosure. The caller establishes this self convention;
+    /// metadata size alone does not imply it. The signature excludes self.
+    public func borrowedMethod<Result, each Argument>(
+        named name: String, as signature: ((repeat each Argument) -> Result).Type
+    ) throws -> NativeSwiftBorrowedMethod<Result, repeat each Argument> {
+        let symbol = try resolveMember { try swiftFunctionDeclaration(named: $0 + "." + name, as: signature) }
+        return try NativeSwiftBorrowedMethod(symbol: symbol, type: self)
+    }
+
+    /// Resolves a nonmutating getter with formally indirect borrowed self.
+    ///
+    /// The getter must be synchronous, nonthrowing and nonconsuming. Its value
+    /// uses the supported concrete Swift result representations.
+    public func borrowedGetter<Value>(named name: String, as value: Value.Type) throws -> NativeSwiftBorrowedMethod<Value> {
+        let symbol = try resolveMember {
+            try accessorDeclaration(named: name, ownerName: $0, valueType: value, setter: false, isStatic: false)
+        }
+        return try NativeSwiftBorrowedMethod(symbol: symbol, type: self)
+    }
+
     /// Resolves a concrete allocating initializer.
     ///
     /// Ordinary initializer arguments transfer ownership to the callee. The

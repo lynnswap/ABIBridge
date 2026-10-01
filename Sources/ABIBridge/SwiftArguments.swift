@@ -32,19 +32,25 @@ struct SwiftArgumentCodec<Value>: Sendable {
     let consumes: Bool
     private let ordinary: SwiftValueCodec<Value>?
     private let explicit: SwiftConventionCodec?
+    private let genericClosure: Bool
 
-    init(defaultConsuming: Bool) throws {
+    init(defaultConsuming: Bool, generic: SwiftGenericArgument = .concrete) throws {
+        genericClosure = generic == .closureResult
         if let argument = Value.self as? any SwiftConventionArgument.Type {
             let codec = try argument.makeArgumentCodec()
             type = codec.type; consumes = codec.consumes
             explicit = codec; ordinary = nil
         } else {
             let codec = try SwiftValueCodec<Value>()
-            type = codec.type; consumes = defaultConsuming
+            type = try generic == .parameter
+                ? CValueType(indirectSwiftSize: MemoryLayout<Value>.size, alignment: MemoryLayout<Value>.alignment)
+                : codec.type
+            consumes = defaultConsuming
             ordinary = codec; explicit = nil
         }
     }
-    func encode(_ value: Value) throws -> NativeValueStorage {
+    func encode(_ value: Value, retainingCode owner: Any? = nil) throws -> NativeValueStorage {
+        if genericClosure { return try (value as! any SwiftGenericResultClosure).encodeGenericResultClosure(retainingCode: owner) }
         if let ordinary { return try ordinary.encode(value) }
         return try explicit!.encode(value)
     }
