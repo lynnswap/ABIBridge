@@ -9,6 +9,31 @@ public struct NativeSwiftGenericArgument: Sendable {
     }
     let storage: Storage
 
+    indirect enum Identity: Hashable {
+        case type(ObjectIdentifier)
+        case pack([Identity])
+    }
+
+    var identity: Identity {
+        switch storage {
+        case .type(let type, _): .type(ObjectIdentifier(type))
+        case .pack(let elements): .pack(elements.map(\.identity))
+        }
+    }
+
+    // A cache entry made with bare metatypes must not discard owners supplied
+    // by a later lookup of the same specialization.
+    func retainsOwners(of other: Self) -> Bool {
+        switch (storage, other.storage) {
+        case (.type(_, let retained), .type(_, let incoming)):
+            incoming == nil || retained != nil
+        case (.pack(let retained), .pack(let incoming)):
+            zip(retained, incoming).allSatisfy { $0.retainsOwners(of: $1) }
+        default:
+            false
+        }
+    }
+
     /// Binds an ordinary linked Swift type. Its implementation must remain loaded.
     public static func type(_ type: Any.Type) -> Self {
         Self(storage: .type(type, owner: nil))

@@ -162,7 +162,7 @@ struct SwiftGenericBinding: Sendable {
                     }
                     witnesses.append(UInt(bitPattern: witness))
                     if let address = ABISwiftConformanceDescriptor(witness),
-                       let image = try Self.image(containing: address) { images.append(image) }
+                       let image = try swiftImplementationImage(containing: address) { images.append(image) }
                 }
                 if isPack(conformance.subject) { metadataArguments.append(appendPack(witnesses)) }
                 else { metadataArguments.append(contentsOf: witnesses) }
@@ -183,12 +183,6 @@ struct SwiftGenericBinding: Sendable {
         packs.append(buffer)
         // An untagged pack is borrowed storage; the plan owns it for every call.
         return buffer.address
-    }
-
-    private static func image(containing address: UnsafeRawPointer) throws -> NativeImage? {
-        var info = Dl_info()
-        guard dladdr(address, &info) != 0, let path = info.dli_fname else { return nil }
-        return try NativeImage.opening(path: String(cString: path), loading: .loadedOnly)
     }
 
     func isPack(_ type: SwiftFormalType) -> Bool {

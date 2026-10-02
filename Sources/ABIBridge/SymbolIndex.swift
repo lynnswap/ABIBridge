@@ -578,7 +578,10 @@ final class SymbolIndex {
                 // in unrelated images. Reject those before alias/key creation.
                 if extensionsOnly && Self.extensionMemberName(name) == nil { continue }
                 var names = [name]
-                if declaration.language == .swift, let alias = Self.operatorAlias(name) { names.append(alias) }
+                if declaration.language == .swift {
+                    if let alias = Self.operatorAlias(name) { names.append(alias) }
+                    if let alias = Self.nominalDescriptorAlias(name) { names.append(alias) }
+                }
                 for name in names {
                     if !extensionsOnly {
                         index[DeclarationKey.fingerprint(DeclarationKey.make(name, language: declaration.language)), default: []].append(symbol)
@@ -605,7 +608,10 @@ final class SymbolIndex {
         candidates.filter { symbol in
             guard let name = DeclarationKey.demangle(symbol.name, language: query.declaration.language) else { return false }
             var names = [name]
-            if query.declaration.language == .swift, let alias = operatorAlias(name) { names.append(alias) }
+            if query.declaration.language == .swift {
+                if let alias = operatorAlias(name) { names.append(alias) }
+                if let alias = nominalDescriptorAlias(name) { names.append(alias) }
+            }
             return names.contains { name in
                 if extensionsOnly {
                     guard let unqualified = extensionMemberName(name) else { return false }
@@ -697,6 +703,18 @@ final class SymbolIndex {
             if establishesDependence(altered) { return true }
         }
         return false
+    }
+
+    static func nominalDescriptorAlias(_ name: String) -> String? {
+        let marker = "nominal type descriptor for "
+        guard name.hasPrefix(marker),
+              var nominal = extensionMemberName(String(name.dropFirst(marker.count))) else { return nil }
+        // A nominal declaration is selected before its arguments are bound.
+        // Its descriptor retains the extension constraints for runtime validation.
+        for group in SwiftGenericSyntax.groups(in: nominal).reversed() {
+            nominal.removeSubrange(group.range)
+        }
+        return marker + nominal
     }
 
     static func operatorAlias(_ name: String) -> String? {

@@ -19,6 +19,19 @@ const void *ABISwiftConformance(const void *metadata, const void *protocol);
 const void *ABISwiftConformanceDescriptor(const void *witnessTable);
 const void *ABISwiftAssociatedType(const void *metadata, const void *protocol, const char *name);
 const void *ABISwiftGenericTypeMetadata(const void *descriptor, const void *const *arguments);
+/// Interns a metadata pack in the Swift runtime. The returned tagged pointer
+/// remains owned by the runtime and may be used in type construction.
+const void *ABISwiftMetadataPack(const void *const *elements, size_t count);
+typedef struct ABISwiftTypeMetadata ABISwiftTypeMetadata;
+/// Binds source-written type arguments through the runtime's generic type
+/// resolver, which validates constraints and obtains existing conformances.
+ABISwiftTypeMetadata *ABICreateSwiftTypeMetadata(const void *descriptor,
+    const void *const *arguments, size_t count, ABIResolutionFailure **error);
+const void *ABISwiftTypeMetadataValue(const ABISwiftTypeMetadata *result);
+size_t ABISwiftTypeMetadataConformanceCount(const ABISwiftTypeMetadata *result);
+/// index must be less than ABISwiftTypeMetadataConformanceCount(result).
+const void *ABISwiftTypeMetadataConformance(const ABISwiftTypeMetadata *result, size_t index);
+void ABIReleaseSwiftTypeMetadata(ABISwiftTypeMetadata *result);
 const void *ABISwiftTypeForMangledName(const char *name, size_t length,
                                     const void *context, const void *const *arguments);
 

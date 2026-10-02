@@ -5,6 +5,94 @@ import ManagedSwiftFixtures
 import Testing
 
 struct SwiftGenericBindingTests {
+    @Test func nominalMetadataUsesRuntimeConstraintsAndCanonicalIdentity() async throws {
+        let runtime = ABIRuntime()
+        func packMetadata<each Value>(_ types: repeat (each Value).Type) -> Any.Type where repeat each Value: Equatable {
+            GenericTypePack<repeat each Value>.self
+        }
+        let cases: [(String, [NativeSwiftGenericArgument], Any.Type)] = [
+            ("Swift.Array", [.type(String.self)], [String].self),
+            ("Swift.Dictionary", [.type(String.self), .type([Int].self)], [String: [Int]].self),
+            ("ManagedSwiftFixtures.GenericRecord", [.type(ConditionalMetric<ManagedRecord>.self)],
+             GenericRecord<ConditionalMetric<ManagedRecord>>.self),
+            ("ManagedSwiftFixtures.GenericTypeClass", [.type([String].self)], GenericTypeClass<[String]>.self),
+            ("ManagedSwiftFixtures.GenericTypeDerived", [.type(String.self)], GenericTypeDerived<String>.self),
+            ("ManagedSwiftFixtures.GenericTypeEnum", [.type(String.self)], GenericTypeEnum<String>.self),
+            ("ManagedSwiftFixtures.GenericTypeCollection", [.type([String].self)], GenericTypeCollection<[String]>.self),
+            ("ManagedSwiftFixtures.GenericTypeRelated", [.type([String].self), .type(String.self)],
+             GenericTypeRelated<[String], String>.self),
+            ("ManagedSwiftFixtures.GenericTypeOuter.Inner", [.type(Bool.self), .type(Double.self)],
+             GenericTypeOuter<Bool>.Inner<Double>.self),
+            ("ManagedSwiftFixtures.GenericTypeOuter.FixedInner", [.type(Bool.self)],
+             GenericTypeOuter<Bool>.FixedInner.self),
+            ("ManagedSwiftFixtures.GenericTypeOuter.InExtension", [.type(Bool.self), .type(Double.self)],
+             GenericTypeOuter<Bool>.InExtension<Double>.self),
+            ("ManagedSwiftFixtures.GenericTypeOuter.Inner.Constrained",
+             [.type([String].self), .type(String.self), .type(Bool.self)],
+             GenericTypeOuter<[String]>.Inner<String>.Constrained<Bool>.self),
+            ("ManagedSwiftFixtures.GenericTypeNamespace.Member", [.type(String.self)],
+             GenericTypeNamespace.Member<String>.self),
+            ("ManagedSwiftFixtures.GenericTypePack", [.pack([.type(String.self), .type(Int.self)])],
+             GenericTypePack<String, Int>.self),
+            ("ManagedSwiftFixtures.GenericTypePack", [.pack([])], packMetadata()),
+            ("ManagedSwiftFixtures.GenericTypeMixedPack", [.type(Bool.self), .pack([.type(String.self), .type(Int.self)])],
+             GenericTypeMixedPack<Bool, String, Int>.self)
+        ]
+        for (name, arguments, expected) in cases {
+            let type = try await runtime.swiftType(named: name, genericArguments: arguments)
+            let metadata = await type.metadata
+            #expect(ObjectIdentifier(metadata) == ObjectIdentifier(expected), "\(name)")
+            let again = try await runtime.swiftType(named: name, in: type.image, genericArguments: arguments)
+            #expect(type === again)
+        }
+        let first = try await runtime.swiftType(named: "Swift.Array", genericArguments: [.type(String.self)])
+        let second = try await runtime.swiftType(named: "Swift.Array", genericArguments: [.type(Int.self)])
+        let firstMetadata = await first.metadata
+        let secondMetadata = await second.metadata
+        #expect(first !== second && firstMetadata != secondMetadata)
+    }
+
+    @Test func invalidNominalArgumentsFailWithoutEnteringAnInvalidAccessor() async throws {
+        let runtime = ABIRuntime()
+        let cases: [(String, [NativeSwiftGenericArgument])] = [
+            ("Swift.Array", []),
+            ("Swift.Array", [.pack([.type(String.self)])]),
+            ("Swift.Array", [.type(Int.self), .type(String.self)]),
+            ("Swift.Int", [.type(Int.self)]),
+            ("ManagedSwiftFixtures.GenericTypeCollection", [.type(Int.self)]),
+            ("ManagedSwiftFixtures.GenericRecord", [.type(String.self)]),
+            ("ManagedSwiftFixtures.GenericTypeRelated", [.type([String].self), .type(Int.self)]),
+            ("ManagedSwiftFixtures.GenericTypePack", [.type(Int.self)]),
+            ("ManagedSwiftFixtures.GenericTypePack", [.pack([.type(LifetimeToken.self)])]),
+            ("ManagedSwiftFixtures.GenericTypePack", [.pack([.pack([])])])
+        ]
+        for (name, arguments) in cases {
+            await #expect(throws: ABIResolutionError.self) {
+                _ = try await runtime.swiftType(named: name, genericArguments: arguments)
+            }
+        }
+    }
+
+    @Test func cachedNominalMetadataRetainsIncomingRuntimeTypeOwners() async throws {
+        let runtime = ABIRuntime()
+        let name = "ManagedSwiftFixtures.GenericTypeEnum"
+        let bare = try await runtime.swiftType(named: name, genericArguments: [.type(ManagedRecord.self)])
+        var result: NativeSwiftType?
+        weak var argumentOwner: NativeSwiftType?
+        do {
+            let argument = try await runtime.swiftType(named: "ManagedSwiftFixtures.ManagedRecord")
+            argumentOwner = argument
+            result = try await runtime.swiftType(named: name, genericArguments: [.type(argument)])
+            let metadata = await result!.metadata
+            let bareMetadata = await bare.metadata
+            #expect(ObjectIdentifier(metadata) == ObjectIdentifier(bareMetadata))
+            await runtime.removeCachedResults()
+        }
+        #expect(argumentOwner != nil)
+        result = nil
+        #expect(argumentOwner == nil)
+    }
+
     @Test func tupleClosureAuthenticationMatchesCompilerLowering() throws {
         let signature = try SwiftFunctionSignature((((String, Int8)) -> (String, Int8, Int8)).self)
         #expect(try signature.closureDiscriminator() == 3335)

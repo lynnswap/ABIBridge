@@ -2,7 +2,7 @@ import Foundation
 import ObjectiveC
 
 enum SwiftTypeCacheKey: Hashable {
-    case declaration(name: String, image: NativeImageIdentity, representation: ObjectIdentifier?)
+    case declaration(name: String, image: NativeImageIdentity, representation: ObjectIdentifier?, arguments: [NativeSwiftGenericArgument.Identity])
     case metadata(ObjectIdentifier, image: NativeImageIdentity)
 }
 
@@ -23,8 +23,8 @@ struct SwiftMetadataResponse: BitwiseCopyable, ABIBridgeValue {
 /// A cached concrete Swift type and its retained implementation image.
 ///
 /// Type lookup requests complete metadata without constructing an instance.
-/// Generic metadata construction and resilient value layout synthesis require
-/// separate adapters. Member lookups reuse the image's existing symbol index.
+/// Generic arguments are validated by the Swift runtime. Member lookups reuse
+/// the image's existing symbol index.
 public actor NativeSwiftType {
     /// The qualified source-level name of the nominal type.
     public nonisolated let name: String
@@ -34,15 +34,19 @@ public actor NativeSwiftType {
     let metadata: Any.Type
     let representation: Any.Type?
     let resolver: SymbolResolver
+    let genericMetadata: SwiftGenericTypeMetadata?
+    var genericArguments: [NativeSwiftGenericArgument] { genericMetadata?.arguments ?? [] }
     private var cachedReceiver: SwiftReceiverCodec?
 
     init(name: String, image: NativeImage, metadata: Any.Type,
-         representation: Any.Type?, resolver: SymbolResolver) {
+         representation: Any.Type?, resolver: SymbolResolver,
+         genericMetadata: SwiftGenericTypeMetadata? = nil) {
         self.name = name
         self.image = image
         self.metadata = metadata
         self.representation = representation
         self.resolver = resolver
+        self.genericMetadata = genericMetadata
     }
 
     func receiverPlan(mutating isMutating: Bool, consuming isConsuming: Bool = false) throws -> SwiftReceiverPlan {
@@ -293,15 +297,17 @@ extension ABIRuntime {
     ///   - name: A module-qualified nominal type name.
     ///   - scope: Images to search; automatic scope stays loaded-only.
     ///   - loading: Whether an explicit target may be acquired and initialized.
+    ///   - genericArguments: Type arguments in outer-to-inner declaration order.
     /// - Returns: A reusable type handle retaining its defining image.
     /// - Throws: A lookup error or unavailable/unsupported metadata.
     public func swiftType(
         named name: String, in scope: ImageSelector = .automatic,
-        loading: ImageLoadingPolicy = .ifNeeded
+        loading: ImageLoadingPolicy = .ifNeeded,
+        genericArguments: [NativeSwiftGenericArgument] = []
     ) throws -> NativeSwiftType {
         try makeSwiftType(named: name, descriptor: resolver.resolve(
             .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data), in: scope, loading: loading
-        ), representation: nil)
+        ), representation: nil, genericArguments: genericArguments)
     }
 
     /// Resolves a concrete Swift type within an already retained image.
@@ -310,12 +316,16 @@ extension ABIRuntime {
     ///   - name: A module-qualified nominal type name.
     ///   - image: The image whose symbol index is reused.
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
+    ///   - genericArguments: Type arguments in outer-to-inner declaration order.
     /// - Returns: A reusable type handle retaining the image.
     /// - Throws: A lookup error or unavailable/unsupported metadata.
-    public func swiftType(named name: String, in image: NativeImage, loading: ImageLoadingPolicy = .ifNeeded) throws -> NativeSwiftType {
+    public func swiftType(
+        named name: String, in image: NativeImage, loading: ImageLoadingPolicy = .ifNeeded,
+        genericArguments: [NativeSwiftGenericArgument] = []
+    ) throws -> NativeSwiftType {
         try makeSwiftType(named: name, descriptor: resolver.resolve(
             .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data), in: image, loading: loading
-        ), representation: nil)
+        ), representation: nil, genericArguments: genericArguments)
     }
 
     /// Resolves a Swift type with an explicit receiver representation.
@@ -333,11 +343,12 @@ extension ABIRuntime {
     public func swiftType<Representation>(
         named name: String, as representation: Representation.Type,
         in scope: ImageSelector = .automatic,
-        loading: ImageLoadingPolicy = .ifNeeded
+        loading: ImageLoadingPolicy = .ifNeeded,
+        genericArguments: [NativeSwiftGenericArgument] = []
     ) throws -> NativeSwiftType {
         try makeSwiftType(named: name, descriptor: resolver.resolve(
             .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data), in: scope, loading: loading
-        ), representation: representation)
+        ), representation: representation, genericArguments: genericArguments)
     }
 
     /// Resolves a Swift type and receiver adapter within a retained image.
@@ -351,43 +362,34 @@ extension ABIRuntime {
     /// - Throws: A lookup error or unavailable/unsupported metadata.
     public func swiftType<Representation>(
         named name: String, as representation: Representation.Type, in image: NativeImage,
-        loading: ImageLoadingPolicy = .ifNeeded
+        loading: ImageLoadingPolicy = .ifNeeded,
+        genericArguments: [NativeSwiftGenericArgument] = []
     ) throws -> NativeSwiftType {
         try makeSwiftType(named: name, descriptor: resolver.resolve(
             .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data), in: image, loading: loading
-        ), representation: representation)
+        ), representation: representation, genericArguments: genericArguments)
     }
 
     private func makeSwiftType(
-        named name: String, descriptor: ResolvedSymbol, representation: Any.Type?
+        named name: String, descriptor: ResolvedSymbol, representation: Any.Type?,
+        genericArguments: [NativeSwiftGenericArgument]
     ) throws -> NativeSwiftType {
-        let key = SwiftTypeCacheKey.declaration(name: name, image: descriptor.image.identity,
-                                    representation: representation.map(ObjectIdentifier.init))
-        if let cached = swiftTypes[key] { return cached }
-        // Bare generic names also have accessors, but those require additional
-        // metadata/witness arguments. Inspect the descriptor before calling one.
+        let key = SwiftTypeCacheKey.declaration(
+            name: name, image: descriptor.image.identity,
+            representation: representation.map(ObjectIdentifier.init),
+            arguments: genericArguments.map(\.identity))
+        if let cached = swiftTypes[key],
+           zip(cached.genericMetadata?.arguments ?? [], genericArguments)
+            .allSatisfy({ $0.retainsOwners(of: $1) }) {
+            return cached
+        }
         guard descriptor.sectionRange.upperBound - descriptor.address >= 4 else {
             throw ABIResolutionError.metadataUnavailable("Incomplete Swift type descriptor for " + name)
         }
-        let flags = unsafe descriptor.withUnsafeAddress { $0.loadUnaligned(as: UInt32.self) }
-        guard flags & 0x80 == 0 else {
-            throw ABIResolutionError.unsupportedDeclaration("Generic Swift type metadata requires a native adapter.")
-        }
-        guard (16...18).contains(flags & 0x1f) else {
-            throw ABIResolutionError.metadataUnavailable("Expected a Swift nominal type descriptor for " + name)
-        }
-        let accessor = try resolver.resolve(
-            .init(name: "type metadata accessor for " + name, language: .swift), in: descriptor.image, loading: .loadedOnly
-        )
-        let function = try NativeSwiftFunction<(UInt) -> SwiftMetadataResponse>(symbol: accessor)
-        // MetadataRequest.Complete is zero and requests blocking completion.
-        let response = try unsafe function.unsafeInvoke(0)
-        guard response.address != 0, response.state == 0 else {
-            throw ABIResolutionError.metadataUnavailable("Complete Swift metadata is unavailable for " + name)
-        }
-        let metadata = unsafeBitCast(response.address, to: Any.Type.self)
-        let type = NativeSwiftType(name: name, image: descriptor.image, metadata: metadata,
-                                   representation: representation, resolver: resolver)
+        let metadata = try SwiftGenericTypeMetadata(descriptor: descriptor, arguments: genericArguments)
+        let type = NativeSwiftType(
+            name: name, image: descriptor.image, metadata: metadata.value,
+            representation: representation, resolver: resolver, genericMetadata: metadata)
         swiftTypes[key] = type
         return type
     }

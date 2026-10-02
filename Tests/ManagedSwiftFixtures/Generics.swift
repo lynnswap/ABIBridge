@@ -1,3 +1,35 @@
+import Foundation
+
+public class GenericTypeClass<Value: Equatable>: NSObject {}
+public final class GenericTypeDerived<Value: Equatable>: GenericTypeClass<[Value]> {}
+public enum GenericTypeEnum<Value> { case value(Value) }
+public struct GenericTypeCollection<Value: Collection> where Value.Element: Equatable {
+    public let value: Value
+}
+public struct GenericTypeRelated<Values: Collection, Element> where Values.Element == Element {
+    public let values: Values
+}
+public struct GenericTypeOuter<Value> {
+    public struct Inner<Element> {}
+    public struct FixedInner {}
+}
+extension GenericTypeOuter where Value: Equatable {
+    public struct InExtension<Element> {}
+}
+extension GenericTypeOuter.Inner where Value: Collection, Value.Element == Element, Element: Equatable {
+    public struct Constrained<Third> {}
+}
+public enum GenericTypeNamespace {
+    public struct Member<Value> {}
+}
+public struct GenericTypePack<each Value: Equatable> {
+    public let values: (repeat each Value)
+}
+public struct GenericTypeMixedPack<First, each Element> {
+    public let first: First
+    public let elements: (repeat each Element)
+}
+
 @_cdecl("ABIGenericResilientArgument")
 public func genericResilientArgument() -> UnsafeRawPointer {
     unsafeBitCast(ResilientRecord.self, to: UnsafeRawPointer.self)
