@@ -4,6 +4,14 @@ import Synchronization
 import SwiftValueFixtures
 import SwiftOpaqueExtensions
 
+private struct BindingBoolAdapter: ABIBridgeValue {
+    let value: Bool
+    init(_ value: Bool) { self.value = value }
+    static let abiType: NativeType = .bool
+    init(nativeValue: NativeValue) throws { value = try unsafe nativeValue.read(as: Bool.self) }
+    static func nativeValue(from value: Self) throws -> NativeValue { try NativeValue(copying: value.value, as: .bool) }
+}
+
 @MainActor func validateSwiftGenericReceivers() async throws -> [String] {
     let runtime = ABIRuntime()
     var checks: [String] = []
@@ -74,6 +82,24 @@ import SwiftOpaqueExtensions
                 "Declared generic witnesses preserve typed-error output: \(importsConformance)")
         }
     }
+    let adapterType = try await runtime.swiftType(named: "SwiftValueFixtures.BindingGetter",
+        genericArguments: [.type(String.self), .type(SmallError.self)])
+    let adapterInit = try await adapterType.initializer(
+        named: "init(A, B, Swift.Bool) -> SwiftValueFixtures.BindingGetter<A, B>",
+        as: ((String, SmallError, BindingBoolAdapter) -> BindingGetter<String, SmallError>).self)
+    let adapterReceiver = try unsafe adapterInit.unsafeInvoke("adapter", SmallError(1), BindingBoolAdapter(false))
+    let adapterObject = runtime.object(adapterReceiver)
+    let adapterGet = try await adapterObject.getter(named: "shouldThrow.getter : Swift.Bool", as: (() -> BindingBoolAdapter).self)
+    try check(unsafe !adapterGet.unsafeInvoke().value && adapterReceiver.value == "adapter",
+        "Complete generic initializer and getter declarations preserve concrete adapters")
+    let adapterMethod = try await adapterObject.method(named: "compareFlag(Swift.Bool) -> Swift.Bool",
+        as: ((BindingBoolAdapter) -> BindingBoolAdapter).self)
+    try check(unsafe adapterMethod.unsafeInvoke(BindingBoolAdapter(false)).value,
+        "Complete generic member declarations preserve concrete argument and result adapters")
+    let adapterSet = try await adapterObject.setter(named: "shouldThrow.setter : Swift.Bool", as: BindingBoolAdapter.self)
+    try unsafe adapterSet.unsafeInvoke(BindingBoolAdapter(true))
+    try check(unsafe adapterGet.unsafeInvoke().value && adapterReceiver.shouldThrow,
+        "Complete generic setter declarations preserve concrete adapters")
     let concreteMember = try await runtime.object(GenericMemberReceiver(GenericReceiverNumber(42))).method(
         named: "concrete(_:)", as: ((NativeSwiftBorrowing<String>) -> String).self)
     try check(unsafe concreteMember.unsafeInvoke(.init("borrowed:")) == "borrowed:42",

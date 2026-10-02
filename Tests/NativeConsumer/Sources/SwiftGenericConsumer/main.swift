@@ -4,6 +4,14 @@ import Foundation
 
 private enum GenericConsumerFailure: Error { case load(String), initialize(Int32) }
 
+private struct GenericConsumerBool: ABIBridgeValue {
+    let value: Bool
+    init(_ value: Bool) { self.value = value }
+    static let abiType: NativeType = .bool
+    init(nativeValue: NativeValue) throws { value = try unsafe nativeValue.read(as: Bool.self) }
+    static func nativeValue(from value: Self) throws -> NativeValue { try NativeValue(copying: value.value, as: .bool) }
+}
+
 @MainActor
 func exerciseGenericBindings(_ adapterPath: String) async throws {
     guard let original = dlopen(adapterPath, RTLD_NOW | RTLD_LOCAL) else {
@@ -67,9 +75,10 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
 
     let getterType = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericEffectfulGetter",
         genericArguments: [.type(String.self), .type(GenericConsumerFailure.self)])
-    let makeGetter = try await getterType.initializer(named: "init(_:_:_:)",
-        as: ((String, GenericConsumerFailure, Bool) -> AnyObject).self)
-    let getterObject = try unsafe makeGetter.unsafeInvoke("checked", .initialize(44), false)
+    let makeGetter = try await getterType.initializer(
+        named: "init(A, B, Swift.Bool) -> ManagedSwiftFixtures.GenericEffectfulGetter<A, B>",
+        as: ((String, GenericConsumerFailure, GenericConsumerBool) -> AnyObject).self)
+    let getterObject = try unsafe makeGetter.unsafeInvoke("checked", .initialize(44), GenericConsumerBool(false))
     let checked = try await getterType.getter(named: "checked",
         as: (() throws(GenericConsumerFailure) -> String).self, declaredAs: "() throws(B) -> A")
     let checkedValue = try unsafe checked.unsafeInvoke(on: getterObject)
@@ -78,8 +87,13 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
         as: (nonisolated(nonsending) () async throws(GenericConsumerFailure) -> String).self, declaredAs: "() async throws(B) -> A")
     let delayedValue = try unsafe await delayed.unsafeInvoke()
     precondition(delayedValue == "checked")
-    let shouldThrow = try await getterType.setter(named: "shouldThrow", as: Bool.self)
-    try unsafe shouldThrow.unsafeInvoke(on: getterObject, true)
+    let flag = try await runtime.object(getterObject).getter(named: "shouldThrow.getter : Swift.Bool", as: (() -> GenericConsumerBool).self)
+    let initialFlag = try unsafe flag.unsafeInvoke()
+    precondition(!initialFlag.value)
+    let shouldThrow = try await getterType.setter(named: "shouldThrow.setter : Swift.Bool", as: GenericConsumerBool.self)
+    try unsafe shouldThrow.unsafeInvoke(on: getterObject, GenericConsumerBool(true))
+    let updatedFlag = try unsafe flag.unsafeInvoke()
+    precondition(updatedFlag.value)
     do {
         _ = try unsafe checked.unsafeInvoke(on: getterObject)
         preconditionFailure("Expected the provider's typed error.")

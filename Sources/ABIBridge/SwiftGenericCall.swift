@@ -71,7 +71,7 @@ struct SwiftGenericCallPlan: Sendable {
             else if signature.failure != Never.self {
                 throw ABIResolutionError.signatureMismatch(.init(expected: "A nonthrowing declaredAs: signature", found: [String(reflecting: signature.failure)]))
             }
-            _ = try binding.resultType(signature.result, for: result)
+            if binding.dependsOnParameters(result) { _ = try binding.resultType(signature.result, for: result) }
         }
         guard declaration.isAsync == signature.isAsync,
               declaration.failure != nil || signature.failure == Never.self else {
@@ -140,8 +140,10 @@ struct SwiftGenericCallPlan: Sendable {
             for (formal, group) in zip(binding.declaration.arguments, parameters.groups) {
                 switch group {
                 case .value(let index):
-                    if try binding.conventionArgument(signature.parameters[index], for: formal,
-                        defaultConsuming: binding.declaration.consumesArguments) == nil {
+                    if let argument = try binding.conventionArgument(signature.parameters[index], for: formal,
+                        defaultConsuming: binding.declaration.consumesArguments) {
+                        try binding.validate(argument.wrapper.wrappedType, for: argument.value)
+                    } else {
                         try binding.validate(signature.parameters[index], for: formal)
                     }
                 case .pack(let range, _):
@@ -366,8 +368,12 @@ extension SwiftGenericBinding {
     func conventionArgument(_ actual: Any.Type, for formal: SwiftFormalType, defaultConsuming: Bool) throws
         -> (wrapper: any SwiftConventionArgument.Type, value: SwiftFormalType)? {
         if let convention = formal.argumentConvention {
-            try validate(actual, for: formal)
-            return (actual as! any SwiftConventionArgument.Type, convention.value)
+            guard let wrapper = actual as? any SwiftConventionArgument.Type, wrapper.convention == convention.convention else {
+                throw ABIResolutionError.signatureMismatch(.init(expected: formal.spelling + " with its Swift argument wrapper",
+                    found: [String(reflecting: actual)]))
+            }
+            if dependsOnParameters(convention.value) { try validate(wrapper.wrappedType, for: convention.value) }
+            return (wrapper, convention.value)
         }
         guard let wrapper = actual as? any SwiftConventionArgument.Type else { return nil }
         // A wrapper can itself be the explicitly bound T. In that case its
@@ -377,7 +383,7 @@ extension SwiftGenericBinding {
         guard wrapper.convention == (defaultConsuming ? .consuming : .borrowing) else {
             throw ABIResolutionError.signatureMismatch(.init(expected: "The declaration's default argument ownership", found: [String(reflecting: actual)]))
         }
-        try validate(wrapper.wrappedType, for: formal)
+        if dependsOnParameters(formal) { try validate(wrapper.wrappedType, for: formal) }
         return (wrapper, formal)
     }
 

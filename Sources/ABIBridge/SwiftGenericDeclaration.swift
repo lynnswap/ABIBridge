@@ -240,6 +240,23 @@ enum SwiftMemberLookup {
 
     static func isQualified(_ declaration: String) -> Bool { owner(of: declaration) != nil }
 
+    static func hasSignature(_ declaration: String) -> Bool {
+        SwiftFormalSyntax.topLevelArrow(in: declaration) != nil
+            || declaration.contains(".getter : ") || declaration.contains(".setter : ")
+    }
+
+    /// Compare an explicitly supplied function/property signature independently
+    /// of the context requirements, which the generic binding validates.
+    static func signatureKey(_ declaration: String) -> [UInt8]? {
+        let text = SymbolIndex.extensionMemberName(declaration) ?? declaration
+        let opening = [".getter : ", ".setter : "].compactMap { text.range(of: $0)?.lowerBound }.first
+            ?? SwiftFormalSyntax.parameterOpening(in: text)
+        guard let opening else { return nil }
+        var head = String(text[..<opening])
+        for group in SwiftGenericSyntax.groups(in: head).reversed() { head.removeSubrange(group.range) }
+        return DeclarationKey.make(head + text[opening...], language: .swift)
+    }
+
     static func belongs(_ declaration: String, to owner: String) -> Bool {
         var nominal = owner
         for group in SwiftGenericSyntax.groups(in: nominal).reversed() { nominal.removeSubrange(group.range) }

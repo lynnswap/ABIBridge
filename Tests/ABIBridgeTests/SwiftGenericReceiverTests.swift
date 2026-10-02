@@ -19,6 +19,14 @@ private struct ReceiverText: ReceiverMetric, ABIBridgeSwiftValue {
     static var swiftABIType: NativeType { try! .opaque(named: "ReceiverText") }
 }
 
+private struct ReceiverBoolAdapter: ABIBridgeValue {
+    let value: Bool
+    init(_ value: Bool) { self.value = value }
+    static let abiType: NativeType = .bool
+    init(nativeValue: NativeValue) throws { value = try unsafe nativeValue.read(as: Bool.self) }
+    static func nativeValue(from value: Self) throws -> NativeValue { try NativeValue(copying: value.value, as: .bool) }
+}
+
 // Keep the private generic entry points in optimized tests. Without this,
 // specialization removes their unspecialized symbols or changes ownership.
 private class GenericReceiver<Value: ReceiverMetric>: NSObject {
@@ -45,6 +53,54 @@ private final class InheritedGenericReceiver: GenericReceiver<ReceiverNumber> {}
 private enum ReceiverFailure: Error { case rejected }
 
 struct SwiftGenericReceiverTests {
+    @MainActor @Test func completeMemberDeclarationsPreserveConcreteAdapters() async throws {
+        let runtime = ABIRuntime()
+        let receiver = GenericReceiver(ReceiverNumber(number: 42))
+        let object = runtime.object(receiver)
+        let name = "throwingTitle(Swift.Bool) throws -> Swift.String"
+        let method = try await object.method(named: name, as: ((ReceiverBoolAdapter) throws -> String).self)
+        #expect(try unsafe method.unsafeInvoke(ReceiverBoolAdapter(false)) == "42")
+        do {
+            _ = try unsafe method.unsafeInvoke(ReceiverBoolAdapter(true))
+            Issue.record("Expected the concrete native error")
+        } catch let error as NativeSwiftError {
+            #expect(error.withUnderlyingError { $0 is ReceiverFailure })
+        }
+        let qualified = try await object.method(named: method.method.symbol.declaration.name,
+            as: ((ReceiverBoolAdapter) throws -> String).self)
+        #expect(try unsafe qualified.unsafeInvoke(ReceiverBoolAdapter(false)) == "42")
+        let borrowed = try await object.method(named: name,
+            as: ((NativeSwiftBorrowing<ReceiverBoolAdapter>) throws -> String).self)
+        #expect(try unsafe borrowed.unsafeInvoke(.init(ReceiverBoolAdapter(false))) == "42")
+        for invalidName in ["throwingTitle(_:)", "throwingTitle(Swift.String) throws -> Swift.String"] {
+            do {
+                _ = try await object.method(named: invalidName, as: ((ReceiverBoolAdapter) throws -> String).self)
+                Issue.record("An adapter must use the selected native declaration's concrete type")
+            } catch ABIResolutionError.declarationNotFound {}
+        }
+        do {
+            _ = try await object.method(named: "echo(A) -> A", as: ((ReceiverBoolAdapter) -> ReceiverBoolAdapter).self)
+            Issue.record("A dependent argument must still use its bound Swift type")
+        } catch ABIResolutionError.declarationNotFound {}
+    }
+
+    @Test func completeInitializersAndAccessorsPreserveConcreteAdapters() async throws {
+        let runtime = ABIRuntime()
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericEffectfulGetter",
+            genericArguments: [.type(String.self), .type(GenericGetterFailure.self)])
+        let initialize = try await type.initializer(
+            named: "init(A, B, Swift.Bool) -> ManagedSwiftFixtures.GenericEffectfulGetter<A, B>",
+            as: ((String, GenericGetterFailure, ReceiverBoolAdapter) -> GenericEffectfulGetter<String, GenericGetterFailure>).self)
+        let receiver = try unsafe initialize.unsafeInvoke("adapter", GenericGetterFailure(1), ReceiverBoolAdapter(false))
+        let object = runtime.object(receiver)
+        let getter = try await object.getter(named: "shouldThrow.getter : Swift.Bool", as: (() -> ReceiverBoolAdapter).self)
+        let setter = try await object.setter(named: "shouldThrow.setter : Swift.Bool", as: ReceiverBoolAdapter.self)
+        #expect(try unsafe getter.unsafeInvoke().value == false)
+        try unsafe setter.unsafeInvoke(ReceiverBoolAdapter(true))
+        let updated = try unsafe getter.unsafeInvoke()
+        #expect(receiver.shouldThrow && updated.value)
+    }
+
     @MainActor @Test func concreteMemberArgumentsKeepTheirBorrowingMarkers() async throws {
         let receiver = GenericReceiver(ReceiverNumber(number: 42))
         let method = try await ABIRuntime().object(receiver).method(named: "title(_:)",

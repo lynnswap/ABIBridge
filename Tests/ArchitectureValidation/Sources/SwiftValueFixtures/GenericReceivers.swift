@@ -79,6 +79,7 @@ public final class BindingGetter<Value, Failure: Error> {
     public var value: Value
     public var failure: Failure
     public var shouldThrow: Bool
+    @inline(never) public func compareFlag(_ flag: Bool) -> Bool { flag == shouldThrow }
     public init(_ value: Value, _ failure: Failure, _ shouldThrow: Bool) {
         self.value = value; self.failure = failure; self.shouldThrow = shouldThrow
     }
