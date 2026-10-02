@@ -27,6 +27,14 @@ typedef struct ABISwiftTypeMetadata ABISwiftTypeMetadata;
 /// resolver, which validates constraints and obtains existing conformances.
 ABISwiftTypeMetadata *ABICreateSwiftTypeMetadata(const void *descriptor,
     const void *const *arguments, size_t count, ABIResolutionFailure **error);
+/// Returns an authenticated raw nominal descriptor, or null for a non-nominal type.
+const void *ABISwiftTypeDescriptor(const void *metadata);
+/// Recovers the source-written arguments of existing complete metadata.
+ABISwiftTypeMetadata *ABICopySwiftTypeMetadata(const void *metadata, ABIResolutionFailure **error);
+size_t ABISwiftTypeMetadataArgumentCount(const ABISwiftTypeMetadata *result);
+bool ABISwiftTypeMetadataArgumentIsPack(const ABISwiftTypeMetadata *result, size_t index);
+size_t ABISwiftTypeMetadataArgumentElementCount(const ABISwiftTypeMetadata *result, size_t index);
+const void *ABISwiftTypeMetadataArgumentElement(const ABISwiftTypeMetadata *result, size_t index, size_t element);
 const void *ABISwiftTypeMetadataValue(const ABISwiftTypeMetadata *result);
 size_t ABISwiftTypeMetadataConformanceCount(const ABISwiftTypeMetadata *result);
 /// index must be less than ABISwiftTypeMetadataConformanceCount(result).

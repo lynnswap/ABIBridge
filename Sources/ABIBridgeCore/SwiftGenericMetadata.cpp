@@ -25,7 +25,14 @@ extern "C" const void *__attribute__((swiftcall))
 swift_getTypeByMangledNameInEnvironment(const char *, size_t, const void *, const void *const *);
 extern "C" const void *__attribute__((swiftcall))
 swift_allocateMetadataPack(const void *const *, size_t);
-extern "C" const void *swift_getTypeContextDescriptor(const void *);
+#if __has_feature(ptrauth_calls) && __has_attribute(ptrauth_struct)
+struct __attribute__((ptrauth_struct(ptrauth_key_process_dependent_data,
+                                    ptrauth_string_discriminator("TypeContextDescriptor"))))
+    RuntimeTypeContextDescriptor;
+#else
+struct RuntimeTypeContextDescriptor;
+#endif
+extern "C" const RuntimeTypeContextDescriptor *swift_getTypeContextDescriptor(const void *);
 
 namespace {
 template<class T> T read(const void *address) {
@@ -121,10 +128,17 @@ const void *ABISwiftMetadataPack(const void *const *elements, size_t count) {
 
 struct ABISwiftTypeMetadata {
     const void *value;
+    std::vector<const void *> arguments;
     std::vector<const void *> conformances;
 };
 
 namespace {
+const char *typeContextDescriptor(const void *metadata) {
+    // The runtime's C++ return type uses ptrauth_struct, distinct from a
+    // descriptor pointer stored in Swift metadata or a symbolic reference.
+    return static_cast<const char *>(static_cast<const void *>(swift_getTypeContextDescriptor(metadata)));
+}
+
 const char *contextPointer(const void *slot) {
     const void *pointer = read<const void *>(slot);
 #if __has_feature(ptrauth_calls)
@@ -177,7 +191,7 @@ bool genericTypeLevels(const char *descriptor, const void *environment,
         } else {
             const void *metadata = swift_getTypeByMangledNameInEnvironment(
                 extended, symbolicNameLength(extended), environment, arguments);
-            if (metadata) nominal = static_cast<const char *>(swift_getTypeContextDescriptor(metadata));
+            if (metadata) nominal = typeContextDescriptor(metadata);
         }
         return nominal && genericTypeLevels(nominal, environment, arguments, counts);
     }
@@ -190,30 +204,111 @@ bool genericTypeLevels(const char *descriptor, const void *environment,
     return true;
 }
 
+const void *const *genericArguments(const void *metadata, const char *descriptor) {
+    ptrdiff_t offset = 2 * sizeof(void *);
+    auto flags = read<uint32_t>(descriptor);
+    if ((flags & 0x1f) == 16) {
+        if (flags & 0x20000000) offset = read<ptrdiff_t>(relative(descriptor + 24));
+        else if (flags & 0x10000000) offset = -ptrdiff_t(read<uint32_t>(descriptor + 24)) * sizeof(void *);
+        else offset = ptrdiff_t(read<uint32_t>(descriptor + 28) - read<uint32_t>(descriptor + 32)) * sizeof(void *);
+    }
+    return reinterpret_cast<const void *const *>(static_cast<const char *>(metadata) + offset);
+}
+
+const char *genericRequirements(const char *header) {
+    auto afterParameters = reinterpret_cast<uintptr_t>(header + 8 + read<uint16_t>(header));
+    return reinterpret_cast<const char *>((afterParameters + 3) & ~uintptr_t(3));
+}
+
+size_t shapeCount(const char *header) {
+    if (!(read<uint16_t>(header + 6) & 1)) return 0;
+    return read<uint16_t>(genericRequirements(header) + read<uint16_t>(header + 2) * 12 + 2);
+}
+
+std::vector<uintptr_t> genericEnvironment(const std::vector<uint16_t> &counts) {
+    const size_t parameters = counts.empty() ? 0 : counts.back();
+    std::vector<uintptr_t> result((4 + 2 * counts.size() + parameters + sizeof(uintptr_t) - 1) / sizeof(uintptr_t));
+    const uint32_t levels = static_cast<uint32_t>(counts.size());
+    std::memcpy(result.data(), &levels, 4);
+    auto bytes = reinterpret_cast<char *>(result.data());
+    if (!counts.empty()) std::memcpy(bytes + 4, counts.data(), 2 * counts.size());
+    std::memset(bytes + 4 + 2 * counts.size(), 0x80, parameters);
+    return result;
+}
+
+std::string parameterReference(size_t depth, size_t index) {
+    auto encoded = [](size_t value) { return value == 0 ? std::string("_") : std::to_string(value - 1) + "_"; };
+    if (depth) return "qd" + encoded(depth - 1) + encoded(index);
+    if (!index) return "x";
+    return "q" + encoded(index - 1);
+}
+
+bool collectWrittenArguments(ABISwiftTypeMetadata &result, const char *descriptor) {
+    const char *header = nominalGenericHeader(descriptor);
+    if (!header) return true;
+    const size_t count = read<uint16_t>(header);
+    const auto stored = genericArguments(result.value, descriptor);
+    size_t index = shapeCount(header);
+    for (size_t parameter = 0; parameter < count; ++parameter)
+        result.arguments.push_back((header[8 + parameter] & 0x80) ? stored[index++] : nullptr);
+    if (std::all_of(result.arguments.begin(), result.arguments.end(), [](auto value) { return value != nullptr; }))
+        return true;
+
+    // Non-key parameters were removed by same-type requirements. Reconstruct
+    // their source-written positions using the descriptor's own type references.
+    auto flat = genericEnvironment({static_cast<uint16_t>(count)});
+    std::vector<uint16_t> levels;
+    if (!genericTypeLevels(descriptor, flat.data(), result.arguments.data(), levels)) return false;
+    std::vector<uint16_t> counts;
+    for (auto level : levels)
+        if (level && (counts.empty() || level > counts.back())) counts.push_back(level);
+    auto environment = genericEnvironment(counts);
+    std::vector<std::string> references;
+    size_t start = 0;
+    for (size_t depth = 0; depth < counts.size(); ++depth) {
+        for (size_t parameter = start; parameter < counts[depth]; ++parameter)
+            references.push_back(parameterReference(depth, parameter - start));
+        start = counts[depth];
+    }
+    auto ordinal = [&](const char *name) -> size_t {
+        auto found = std::find(references.begin(), references.end(), std::string(name, symbolicNameLength(name)));
+        return static_cast<size_t>(found - references.begin());
+    };
+    const auto requirements = genericRequirements(header);
+    bool changed;
+    do {
+        changed = false;
+        for (size_t requirement = 0; requirement < read<uint16_t>(header + 2); ++requirement) {
+            const char *entry = requirements + requirement * 12;
+            if ((read<uint32_t>(entry) & 0x1f) != 1) continue; // SameType.
+            const char *left = relative(entry + 4), *right = relative(entry + 8);
+            if (!left || !right) continue;
+            const size_t lhs = ordinal(left), rhs = ordinal(right);
+            if (lhs < count && !result.arguments[lhs]) {
+                const void *value = rhs < count ? result.arguments[rhs]
+                    : swift_getTypeByMangledNameInEnvironment(
+                        right, symbolicNameLength(right), environment.data(), result.arguments.data());
+                if (value) { result.arguments[lhs] = value; changed = true; }
+            }
+            if (rhs < count && !result.arguments[rhs] && lhs < count && result.arguments[lhs]) {
+                result.arguments[rhs] = result.arguments[lhs]; changed = true;
+            }
+        }
+    } while (changed);
+    return std::all_of(result.arguments.begin(), result.arguments.end(), [](auto value) { return value != nullptr; });
+}
+
 void collectConformances(ABISwiftTypeMetadata &result, const char *descriptor) {
     const char *header = nominalGenericHeader(descriptor);
     if (!header) return;
     const size_t parameters = read<uint16_t>(header);
-    const size_t requirements = read<uint16_t>(header + 2);
     const size_t keys = read<uint16_t>(header + 4);
-    const auto flags = read<uint16_t>(header + 6);
     const char *parameterFlags = header + 8;
     size_t firstWitness = 0;
     for (size_t index = 0; index < parameters; ++index)
         firstWitness += bool(parameterFlags[index] & 0x80);
-    if (flags & 1) {
-        auto alignedParameters = (reinterpret_cast<uintptr_t>(parameterFlags + parameters) + 3) & ~uintptr_t(3);
-        const char *shape = reinterpret_cast<const char *>(alignedParameters) + requirements * 12;
-        firstWitness += read<uint16_t>(shape + 2);
-    }
-    ptrdiff_t offset = 2 * sizeof(void *);
-    auto descriptorFlags = read<uint32_t>(descriptor);
-    if ((descriptorFlags & 0x1f) == 16) {
-        if (descriptorFlags & 0x20000000) offset = read<ptrdiff_t>(relative(descriptor + 24));
-        else if (descriptorFlags & 0x10000000) offset = -ptrdiff_t(read<uint32_t>(descriptor + 24)) * sizeof(void *);
-        else offset = ptrdiff_t(read<uint32_t>(descriptor + 28) - read<uint32_t>(descriptor + 32)) * sizeof(void *);
-    }
-    auto arguments = reinterpret_cast<const void *const *>(static_cast<const char *>(result.value) + offset);
+    firstWitness += shapeCount(header);
+    auto arguments = genericArguments(result.value, descriptor);
     for (size_t index = firstWitness; index < keys; ++index) {
         auto argument = reinterpret_cast<uintptr_t>(arguments[index]);
         if (argument & 1) {
@@ -257,12 +352,7 @@ ABISwiftTypeMetadata *ABICreateSwiftTypeMetadata(const void *rawDescriptor,
     // A flat, unconstrained environment supplies already existing metadata.
     // The target descriptor, not this environment, owns the real constraints;
     // the runtime's bound-type resolver checks those and constructs witnesses.
-    std::vector<uintptr_t> environment((6 + count + sizeof(uintptr_t) - 1) / sizeof(uintptr_t));
-    const uint32_t levels = 1;
-    const uint16_t parameters = static_cast<uint16_t>(count);
-    std::memcpy(environment.data(), &levels, 4);
-    std::memcpy(reinterpret_cast<char *>(environment.data()) + 4, &parameters, 2);
-    std::memset(reinterpret_cast<char *>(environment.data()) + 6, 0x80, count);
+    auto environment = genericEnvironment({static_cast<uint16_t>(count)});
     std::vector<uint16_t> counts;
     if (!genericTypeLevels(descriptor, environment.data(), arguments, counts))
         return fail(ABIFailureUnsupportedDeclaration, "The nominal type's enclosing generic contexts could not be resolved.");
@@ -296,8 +386,42 @@ ABISwiftTypeMetadata *ABICreateSwiftTypeMetadata(const void *rawDescriptor,
             "Swift could not instantiate this type with the supplied arguments; check generic constraints and available metadata/conformances.");
     auto result = std::make_unique<ABISwiftTypeMetadata>();
     result->value = metadata;
+    if (count) result->arguments.assign(arguments, arguments + count);
     collectConformances(*result, descriptor);
     return result.release();
+}
+
+ABISwiftTypeMetadata *ABICopySwiftTypeMetadata(const void *metadata, ABIResolutionFailure **error) {
+    if (error) *error = nullptr;
+    auto result = std::make_unique<ABISwiftTypeMetadata>();
+    result->value = metadata;
+    auto descriptor = typeContextDescriptor(metadata);
+    if (descriptor) {
+        if (!collectWrittenArguments(*result, descriptor)) {
+            if (error) *error = ABICreateResolutionFailure(ABIFailureMetadataUnavailable,
+                "The generic arguments could not be recovered from the complete Swift metadata.");
+            return nullptr;
+        }
+        collectConformances(*result, descriptor);
+    }
+    return result.release();
+}
+
+const void *ABISwiftTypeDescriptor(const void *metadata) { return typeContextDescriptor(metadata); }
+
+size_t ABISwiftTypeMetadataArgumentCount(const ABISwiftTypeMetadata *result) { return result->arguments.size(); }
+bool ABISwiftTypeMetadataArgumentIsPack(const ABISwiftTypeMetadata *result, size_t index) {
+    return reinterpret_cast<uintptr_t>(result->arguments[index]) & 1;
+}
+size_t ABISwiftTypeMetadataArgumentElementCount(const ABISwiftTypeMetadata *result, size_t index) {
+    if (!ABISwiftTypeMetadataArgumentIsPack(result, index)) return 1;
+    auto pack = reinterpret_cast<const void *const *>(reinterpret_cast<uintptr_t>(result->arguments[index]) & ~uintptr_t(1));
+    return read<size_t>(pack - 1);
+}
+const void *ABISwiftTypeMetadataArgumentElement(const ABISwiftTypeMetadata *result, size_t index, size_t element) {
+    if (!ABISwiftTypeMetadataArgumentIsPack(result, index)) return result->arguments[index];
+    auto pack = reinterpret_cast<const void *const *>(reinterpret_cast<uintptr_t>(result->arguments[index]) & ~uintptr_t(1));
+    return pack[element];
 }
 
 const void *ABISwiftTypeMetadataValue(const ABISwiftTypeMetadata *result) { return result->value; }

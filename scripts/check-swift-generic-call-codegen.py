@@ -82,6 +82,15 @@ def main():
             require('"ptrauth"(i32 0, i64 3335)' in concrete_tuple, "Concrete tuple callback authentication changed")
             require('"ptrauth"(i32 0, i64 29199)' in callback, "Generic result callback authentication changed")
             require('"ptrauth"(i32 0, i64 18589)' in borrowed, "Borrowed value callback authentication changed")
+        metadata_ir_path = directory / "metadata.ll"
+        run("xcrun", "clang++", "-std=c++20", "-O2", "-target", target, "-isysroot", sdk,
+            "-I", str(root / "Sources/ABIBridgeCore/include"), "-S", "-emit-llvm",
+            str(root / "Sources/ABIBridgeCore/SwiftGenericMetadata.cpp"), "-o", str(metadata_ir_path))
+        metadata_ir = metadata_ir_path.read_text()
+        if target.startswith("arm64e"):
+            require(re.search(r"@llvm\.ptrauth\.auth\([^\n]*i32 3, i64 62533\)",
+                              body(metadata_ir, "ABICopySwiftTypeMetadata")),
+                    "The runtime TypeContextDescriptor return must use its C++ struct authentication")
         targets.append({"target": target, "genericCall": generic, "genericCallback": callback,
                         "borrowedCallback": borrowed, "tupleCallback": tuple_callback, "concreteTupleCallback": concrete_tuple,
                         "packCallback": pack_callback, "largeFixedCallback": large_callback})

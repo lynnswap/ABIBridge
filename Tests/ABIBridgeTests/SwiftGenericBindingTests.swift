@@ -44,6 +44,29 @@ struct SwiftGenericBindingTests {
             #expect(ObjectIdentifier(metadata) == ObjectIdentifier(expected), "\(name)")
             let again = try await runtime.swiftType(named: name, in: type.image, genericArguments: arguments)
             #expect(type === again)
+            var failure: OpaquePointer?
+            let copy = ABICopySwiftTypeMetadata(unsafeBitCast(expected, to: UnsafeRawPointer.self), &failure)
+            defer { if let failure { ABIReleaseResolutionFailure(failure) } }
+            let recovered = try #require(copy, "\(name)")
+            defer { ABIReleaseSwiftTypeMetadata(recovered) }
+            #expect(ABISwiftTypeMetadataArgumentCount(recovered) == arguments.count)
+            for (index, argument) in arguments.enumerated() {
+                let elements: [NativeSwiftGenericArgument]
+                switch argument.storage {
+                case .type:
+                    #expect(!ABISwiftTypeMetadataArgumentIsPack(recovered, index))
+                    elements = [argument]
+                case .pack(let pack):
+                    #expect(ABISwiftTypeMetadataArgumentIsPack(recovered, index))
+                    elements = pack
+                }
+                #expect(ABISwiftTypeMetadataArgumentElementCount(recovered, index) == elements.count)
+                for (element, expected) in elements.enumerated() {
+                    guard case .type(let type, _) = expected.storage else { continue }
+                    #expect(ABISwiftTypeMetadataArgumentElement(recovered, index, element)
+                        == unsafeBitCast(type, to: UnsafeRawPointer.self))
+                }
+            }
         }
         let first = try await runtime.swiftType(named: "Swift.Array", genericArguments: [.type(String.self)])
         let second = try await runtime.swiftType(named: "Swift.Array", genericArguments: [.type(Int.self)])

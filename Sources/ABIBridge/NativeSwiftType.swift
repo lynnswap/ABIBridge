@@ -285,8 +285,9 @@ extension ABIRuntime {
         let key = SwiftTypeCacheKey.metadata(ObjectIdentifier(objectType), image: image.identity)
         if let cached = swiftTypes[key] { return cached }
         let name = try swiftClassDeclarationName(objectType, in: image, suggestedName: runtimeName, resolver: resolver)
-        let type = NativeSwiftType(name: name, image: image, metadata: objectType,
-                                   representation: nil, resolver: resolver)
+        let type = NativeSwiftType(
+            name: name, image: image, metadata: objectType, representation: nil, resolver: resolver,
+            genericMetadata: try SwiftGenericTypeMetadata(metadata: objectType))
         swiftTypes[key] = type
         return type
     }
