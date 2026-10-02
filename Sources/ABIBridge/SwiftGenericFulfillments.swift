@@ -14,11 +14,10 @@ extension SwiftGenericBinding {
     func argumentFulfillments() throws -> Fulfillments {
         var result = Fulfillments()
         func archetype(_ type: SwiftFormalType) -> Bool {
-            guard case .named(let name, let parameters) = type, parameters.isEmpty else { return false }
-            return arguments[String(name.prefix { $0 != "." })] != nil
+            isArchetype(type)
         }
-        func superclass(_ type: SwiftFormalType) -> SwiftFormalType? {
-            for candidate in equivalentTypes(of: type) {
+        func superclass(_ type: SwiftFormalType) throws -> SwiftFormalType? {
+            for candidate in try equivalentTypes(of: type) {
                 for requirement in declaration.requirements {
                     if case .superclass(let subject, let constraint) = requirement, candidate == subject { return constraint }
                 }
@@ -31,11 +30,11 @@ extension SwiftGenericBinding {
             return (pattern, shape ?? pattern)
         }
         func searchType(_ type: SwiftFormalType, exact: Bool) throws {
-            let type = canonicalType(of: type)
+            let type = try canonicalType(of: type)
             if exact && archetype(type) {
                 if !result.types.contains(type) { result.types.append(type) }
             }
-            if let base = superclass(type) { try searchNominal(base) }
+            if let base = try superclass(type) { try searchNominal(base) }
             else { try searchNominal(type) }
         }
         func searchNominal(_ type: SwiftFormalType) throws {
@@ -68,7 +67,7 @@ extension SwiftGenericBinding {
             }
         }
         func consider(_ type: SwiftFormalType) throws {
-            let type = canonicalType(of: type)
+            let type = try canonicalType(of: type)
             switch type {
             case .inoutValue, .pack: return
             case .borrowing(let value), .consuming(let value): try consider(value)
@@ -76,14 +75,14 @@ extension SwiftGenericBinding {
             case .metatype(let instance):
                 // A nominal value metatype is thin even when it contains
                 // archetypes. A class metatype can supply nominal metadata.
-                if let base = superclass(instance) { try searchNominal(base) }
+                if let base = try superclass(instance) { try searchNominal(base) }
                 else if !archetype(instance), try types(instance).first is AnyClass {
                     try searchType(instance, exact: false)
                 }
             case .nominal, .nested, .reference:
                 if try types(type).first is AnyClass { try searchType(type, exact: false) }
-            case .named:
-                if let base = superclass(type) { try searchNominal(base) }
+            case .named, .associated:
+                if let base = try superclass(type) { try searchNominal(base) }
             default: return
             }
         }
@@ -99,7 +98,9 @@ extension SwiftFormalType {
             if arguments.isEmpty {
                 if let value = substitutions[name] { return value }
                 if let dot = name.firstIndex(of: "."), let value = substitutions[String(name[..<dot])] {
-                    return .named(value.spelling + name[dot...], [])
+                    return name[name.index(after: dot)...].split(separator: ".").reduce(value) {
+                        .associated($0, String($1))
+                    }
                 }
             }
             return .named(name, arguments.map { $0.substituting(substitutions) })
@@ -107,6 +108,8 @@ extension SwiftFormalType {
         case .reference(let descriptor, let arguments): return .reference(descriptor, arguments.map { $0.substituting(substitutions) })
         case .nested(let parent, let name, let arguments):
             return .nested(parent.substituting(substitutions), name, arguments.map { $0.substituting(substitutions) })
+        case .associated(let base, let name, let protocolName):
+            return .associated(base.substituting(substitutions), name, protocolName: protocolName)
         case .tuple(let elements): return .tuple(elements.map { $0.substituting(substitutions) })
         case .pack(let value, let shape): return .pack(value.substituting(substitutions), shape: shape?.substituting(substitutions))
         case .packValue(let elements): return .packValue(elements.map { $0.substituting(substitutions) })

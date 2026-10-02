@@ -178,7 +178,7 @@ struct SwiftGenericBinding: Sendable {
         for (index, parameter) in declaration.parameters.enumerated() {
             if let context, context.parameters.contains(where: { $0.name == parameter.name }),
                !context.keyParameters.contains(parameter.name) { continue }
-            let equivalents = equivalentTypes(of: .named(parameter.name, []))
+            let equivalents = try equivalentTypes(of: .named(parameter.name, []))
             if equivalents.contains(where: { !isArchetype($0) }) { continue }
             if declaration.parameters[..<index].contains(where: { equivalents.contains(.named($0.name, [])) }) { continue }
             let argument = bound[parameter.name]!
@@ -221,19 +221,19 @@ struct SwiftGenericBinding: Sendable {
             }
         }
         let fulfilled = try argumentFulfillments()
-        func isFulfilled(_ source: MetadataSource) -> Bool {
+        func isFulfilled(_ source: MetadataSource) throws -> Bool {
             switch source {
             case .parameter(let name):
-                return equivalentTypes(of: .named(name, [])).contains { fulfilled.types.contains($0) }
+                return try equivalentTypes(of: .named(name, [])).contains { fulfilled.types.contains($0) }
             case .shape(let names): return !names.isDisjoint(with: fulfilled.shapes)
             case .conformance(let index):
                 let conformance = conformances[index]
-                return equivalentTypes(of: conformance.subject).contains { subject in
+                return try equivalentTypes(of: conformance.subject).contains { subject in
                     fulfilled.conformances.contains { $0.0 == subject && $0.1.contains(conformance.name) }
                 }
             }
         }
-        metadataWords = metadataWords.filter { !isFulfilled($0.source) }
+        metadataWords = try metadataWords.filter { try !isFulfilled($0.source) }
     }
 
     func metadataArguments(fulfilledBy context: SwiftGenericTypeContext) -> [UInt] {
@@ -266,17 +266,35 @@ struct SwiftGenericBinding: Sendable {
         switch type {
         case .pack, .packValue: true
         case .named(let name, _): arguments[String(name.prefix { $0 != "." })]?.isPack == true
+        case .associated(let base, _, _): isPack(base)
         default: false
         }
     }
 
-    func equivalentTypes(of type: SwiftFormalType) -> [SwiftFormalType] {
+    private func sameFormalType(_ left: SwiftFormalType, _ right: SwiftFormalType) throws -> Bool {
+        if left == right { return true }
+        guard case .associated(let leftBase, let leftMember, let leftProtocol) = left,
+              case .associated(let rightBase, let rightMember, let rightProtocol) = right,
+              leftMember == rightMember, try sameFormalType(leftBase, rightBase) else { return false }
+        if leftProtocol == rightProtocol { return true }
+        guard let qualifier = leftProtocol ?? rightProtocol,
+              leftProtocol == nil || rightProtocol == nil else { return false }
+        var origins: Set<String> = []
+        for conformance in try conformances(for: leftBase) {
+            for descriptor in try conformance.descriptor!.protocolsDeclaring(leftMember) {
+                origins.insert(try descriptor.name())
+            }
+        }
+        return origins == [qualifier]
+    }
+
+    func equivalentTypes(of type: SwiftFormalType) throws -> [SwiftFormalType] {
         var types = [type], index = 0
         while index < types.count {
             let current = types[index]
             for requirement in declaration.requirements {
                 guard case .sameType(let left, let right) = requirement else { continue }
-                let other = left == current ? right : right == current ? left : nil
+                let other = try sameFormalType(left, current) ? right : sameFormalType(right, current) ? left : nil
                 if let other, !types.contains(other) { types.append(other) }
             }
             index += 1
@@ -284,25 +302,52 @@ struct SwiftGenericBinding: Sendable {
         return types
     }
 
-    private func isArchetype(_ type: SwiftFormalType) -> Bool {
+    func isArchetype(_ type: SwiftFormalType) -> Bool {
+        if case .associated(let base, _, _) = type { return isArchetype(base) }
         guard case .named(let name, let arguments) = type, arguments.isEmpty else { return false }
         return self.arguments[String(name.prefix { $0 != "." })] != nil
     }
 
-    func canonicalType(of type: SwiftFormalType) -> SwiftFormalType {
-        equivalentTypes(of: type).first { !isArchetype($0) } ?? type
+    func canonicalType(of type: SwiftFormalType) throws -> SwiftFormalType {
+        let type = try equivalentTypes(of: type).first { !isArchetype($0) } ?? type
+        guard case .associated(let base, let member, let protocolName) = type else { return type }
+        let canonicalBase = try canonicalType(of: base)
+        if isArchetype(canonicalBase) { return .associated(canonicalBase, member, protocolName: protocolName) }
+        let metadata = try types(canonicalBase)[0]
+        let context = try SwiftGenericTypeContext(metadata: metadata)
+        let parameters: [SwiftFormalType]
+        switch canonicalBase {
+        case .reference(_, let arguments), .named(_, let arguments): parameters = arguments
+        default: parameters = canonicalBase.nominalDeclaration?.arguments ?? []
+        }
+        guard context.parameters.count == parameters.count else {
+            throw ABIResolutionError.metadataUnavailable("Cannot recover the formal arguments of " + canonicalBase.spelling + ".")
+        }
+        let substitutions = Dictionary(uniqueKeysWithValues: zip(context.parameters.map(\.name), parameters))
+        var matches: [SwiftFormalType] = []
+        for candidate in try conformances(for: canonicalBase, qualifiedBy: protocolName) {
+            let handle = unsafe candidate.descriptor!.withUnsafeAddress { address in
+                member.withCString { ABICopySwiftAssociatedTypeSyntax(unsafeBitCast(metadata, to: UnsafeRawPointer.self), address, $0) }
+            }
+            if let handle {
+                let witness = try SwiftFormalType(SwiftSyntax(adopting: handle).root).substituting(substitutions)
+                if !matches.contains(witness) { matches.append(witness) }
+            }
+        }
+        guard matches.count == 1 else {
+            throw ABIResolutionError.metadataUnavailable("Cannot recover the formal associated type " + type.spelling + ".")
+        }
+        return try canonicalType(of: matches[0])
     }
 
     func isClassBound(_ type: SwiftFormalType) throws -> Bool {
-        for type in equivalentTypes(of: type) {
+        for type in try equivalentTypes(of: type) {
             if declaration.requirements.contains(where: {
                 if case .superclass(let subject, _) = $0 { return subject == type }
                 return false
             }) { return true }
-            if let separator = type.spelling.lastIndex(of: ".") {
-                let parent = String(type.spelling[..<separator])
-                let member = String(type.spelling[type.spelling.index(after: separator)...])
-                for conformance in try conformances(for: parent) {
+            if case .associated(let base, let member, let protocolName) = type {
+                for conformance in try conformances(for: base, qualifiedBy: protocolName) {
                     for requirement in try conformance.descriptor!.associatedRequirements(of: member) {
                         if case .superclass = requirement.value { return true }
                         if case .conformance(_, let name) = requirement.value,
@@ -310,7 +355,7 @@ struct SwiftGenericBinding: Sendable {
                     }
                 }
             }
-            let candidates = try conformances(for: type.spelling)
+            let candidates = try conformances(for: type)
                 + conformances.filter { $0.subject == type && $0.descriptor == nil }
             for conformance in candidates {
                 if conformance.name.hasSuffix("AnyObject") || conformance.objectiveC != nil { return true }
@@ -321,15 +366,22 @@ struct SwiftGenericBinding: Sendable {
         return false
     }
 
-    private func conformances(for subject: String) throws -> [Conformance] {
-        var result = conformances.filter { $0.subject.spelling == subject && $0.descriptor != nil }
-        if let separator = subject.lastIndex(of: ".") {
-            let parent = String(subject[..<separator])
-            let member = String(subject[subject.index(after: separator)...])
-            for conformance in try conformances(for: parent) {
+    private func conformances(for subject: SwiftFormalType, qualifiedBy protocolName: String? = nil) throws -> [Conformance] {
+        var result = try conformances.filter { try $0.descriptor != nil && sameFormalType($0.subject, subject) }
+        if case .associated(let parent, let member, let qualifier) = subject {
+            for conformance in try conformances(for: parent, qualifiedBy: qualifier) {
                 for descriptor in try conformance.descriptor!.associatedConformances(of: member) {
-                    result.append(try Conformance(subject: .named(subject, []), name: descriptor.name(), descriptor: descriptor))
+                    result.append(try Conformance(subject: subject, name: descriptor.name(), descriptor: descriptor))
                 }
+            }
+        }
+        if let protocolName {
+            result = try result.filter { try $0.descriptor!.qualifiedNames().contains(protocolName) }
+            if result.isEmpty && !isArchetype(subject) {
+                let descriptor = SwiftProtocolDescriptor(try resolver.resolve(
+                    .init(name: "protocol descriptor for " + protocolName, language: .swift, kind: .data),
+                    in: .automatic, loading: .loadedOnly))
+                result = [.init(subject: subject, name: protocolName, descriptor: descriptor)]
             }
         }
         return result
@@ -354,41 +406,27 @@ struct SwiftGenericBinding: Sendable {
         if case .named(let name, let parameters) = type, parameters.isEmpty {
             if let direct = arguments[name] { return try elements(of: direct) }
             let components = name.split(separator: ".").map(String.init)
-            if let root = components.first, let argument = arguments[root], components.count > 1 {
-                return try elements(of: argument).map { base in
-                    var metadata = base
-                    var path = root
-                    var remaining = Array(components.dropFirst())
-                    while !remaining.isEmpty {
-                        var candidates = try conformances(for: path)
-                        if remaining.count > 2 {
-                            let qualified = remaining.dropLast().joined(separator: ".")
-                            let qualifiedCandidates = try candidates.filter { try $0.descriptor!.qualifiedNames().contains(qualified) }
-                            if !qualifiedCandidates.isEmpty {
-                                candidates = qualifiedCandidates
-                                remaining = [remaining.last!]
-                            }
-                        }
-                        let member = remaining.removeFirst()
-                        var matches: [Any.Type] = []
-                        for candidate in candidates {
-                            let descriptor = candidate.descriptor!
-                            let found = unsafe descriptor.withUnsafeAddress { protocolAddress in
-                                member.withCString { ABISwiftAssociatedType(unsafeBitCast(metadata, to: UnsafeRawPointer.self), protocolAddress, $0) }
-                            }
-                            if let found {
-                                let type = unsafeBitCast(found, to: Any.Type.self)
-                                if !matches.contains(where: { $0 == type }) { matches.append(type) }
-                            }
-                        }
-                        guard matches.count == 1 else {
-                            throw ABIResolutionError.metadataUnavailable("Cannot resolve associated type " + path + "." + member + ".")
-                        }
-                        metadata = matches[0]
-                        path += "." + member
+            if let root = components.first, arguments[root] != nil, components.count > 1 {
+                return try types(components.dropFirst().reduce(.named(root, [])) { .associated($0, $1) }, packIndex: packIndex)
+            }
+        }
+        if case .associated(let base, let member, let protocolName) = type {
+            let candidates = try conformances(for: base, qualifiedBy: protocolName)
+            return try types(base, packIndex: packIndex).map { metadata in
+                var matches: [Any.Type] = []
+                for candidate in candidates {
+                    let found = unsafe candidate.descriptor!.withUnsafeAddress { protocolAddress in
+                        member.withCString { ABISwiftAssociatedType(unsafeBitCast(metadata, to: UnsafeRawPointer.self), protocolAddress, $0) }
                     }
-                    return metadata
+                    if let found {
+                        let type = unsafeBitCast(found, to: Any.Type.self)
+                        if !matches.contains(where: { $0 == type }) { matches.append(type) }
+                    }
                 }
+                guard matches.count == 1 else {
+                    throw ABIResolutionError.metadataUnavailable("Cannot resolve associated type " + type.spelling + ".")
+                }
+                return matches[0]
             }
         }
         if case .reference = type {} else {
@@ -453,6 +491,7 @@ struct SwiftGenericBinding: Sendable {
                 parameters.forEach(visit)
             case .nominal(_, let parameters), .reference(_, let parameters): parameters.forEach(visit)
             case .nested(let parent, _, let parameters): visit(parent); parameters.forEach(visit)
+            case .associated(let base, _, _): visit(base)
             case .tuple(let fields), .packValue(let fields): fields.forEach(visit)
             case .function(let parameters, let result, let failure, _):
                 parameters.forEach(visit); visit(result); if let failure { visit(failure) }
@@ -478,6 +517,8 @@ struct SwiftGenericBinding: Sendable {
         case .nominal(let name, let parameters):
             return name + (parameters.isEmpty ? "" : "<" + (try parameters.map { try spelling($0, packIndex: packIndex) }).joined(separator: ", ") + ">")
         case .reference:
+            return try types(type, packIndex: packIndex).map(swiftNativeTypeName).joined(separator: ", ")
+        case .associated:
             return try types(type, packIndex: packIndex).map(swiftNativeTypeName).joined(separator: ", ")
         case .nested(let parent, let name, let parameters):
             return try spelling(parent, packIndex: packIndex) + "." + name

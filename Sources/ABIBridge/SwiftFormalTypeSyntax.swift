@@ -120,8 +120,10 @@ extension SwiftFormalType {
         case "DependentMemberType":
             let base = try Self(children[0])
             let member = try children[1].requiredChild(kind: "Identifier").requiredText()
-            let qualifier = try children[1].children().first { $0.kind == "Protocol" }.map { try Self($0).spelling + "." } ?? ""
-            self = .named(base.spelling + "." + qualifier + member, [])
+            let qualifier = try children[1].children().first {
+                $0.kind == "Protocol" || $0.kind == "ProtocolSymbolicReference"
+            }.map { try Self($0).spelling }
+            self = .associated(base, member, protocolName: qualifier)
         case "Structure", "Enum", "Class", "Protocol", "TypeAlias":
             let nameNode = children[1]
             let name = try nameNode.kind == "Identifier" ? nameNode.requiredText() : nameNode.name()

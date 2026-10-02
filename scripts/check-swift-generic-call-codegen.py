@@ -95,8 +95,25 @@ def main():
                 f"{target}: missing formal generic/resilient SIL conventions")
         value_ir_path = directory / "values.ll"
         run(*common, "-enable-library-evolution", "-whole-module-optimization", "-module-name", "ManagedSwiftFixtures",
-            "-emit-ir", str(provider / "Generics.swift"), str(provider / "Values.swift"), "-o", str(value_ir_path))
+            "-emit-ir", str(provider / "Generics.swift"), str(provider / "Values.swift"),
+            str(provider / "GenericCalls.swift"), str(provider / "RuntimeValues.swift"),
+            str(provider / "ExplicitValues.swift"), "-o", str(value_ir_path))
         value_ir = value_ir_path.read_text()
+        associated_storage = {name: body(value_ir, name).splitlines()[0] for name in [
+            "arrayElementGeneric", "sliceElementGeneric", "nestedElementGeneric", "fixedElementGeneric",
+            "constrainedElementGeneric"]}
+        for name in ["arrayElementGeneric", "sliceElementGeneric"]:
+            require("sret(" in associated_storage[name] and "ptr %Value" in associated_storage[name],
+                    f"{target}: an associated witness with unbound storage remains indirect")
+        require("swiftcc ptr" in associated_storage["nestedElementGeneric"]
+                and "sret(" not in associated_storage["nestedElementGeneric"],
+                f"{target}: an associated Array witness has direct pointer storage")
+        require("swiftcc i64" in associated_storage["fixedElementGeneric"]
+                and "sret(" not in associated_storage["fixedElementGeneric"],
+                f"{target}: a fixed associated witness has direct scalar storage")
+        require("swiftcc i64" in associated_storage["constrainedElementGeneric"]
+                and "sret(" not in associated_storage["constrainedElementGeneric"],
+                f"{target}: a same-type associated requirement has direct scalar storage")
         receiver = body(value_ir, "GenericValueBoxV7project").splitlines()[0]
         concrete = body(value_ir, "GenericValueBoxVAASiRszlE8concrete").splitlines()[0]
         reference = body(value_ir, "GenericValueBoxVAARlzClE9reference").splitlines()[0]
@@ -181,7 +198,8 @@ def main():
                         "associatedClass": associated_object, "classSource": class_source,
                         "tupleSource": tuple_source, "metatypeSource": metatype_source,
                         "nestedSource": nested_source, "superclassSource": superclass_source,
-                        "metatypeCallbacks": metatypes, "packSources": pack_sources})
+                        "metatypeCallbacks": metatypes, "packSources": pack_sources,
+                        "associatedStorage": associated_storage})
     report = {"compiler": run("xcrun", "swiftc", "--version").strip(), "runtimeTested": False,
               "demanglerRevision": upstream["revision"], "targets": targets}
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")

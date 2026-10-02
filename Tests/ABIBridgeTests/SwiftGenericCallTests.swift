@@ -4,6 +4,14 @@ import ManagedSwiftFixtures
 import Synchronization
 import Testing
 
+extension GenericElementStorage: ABIBridgeSwiftValue {
+    public static var swiftABIType: NativeType {
+        if Values.Element.self == Int64.self { return .int64 }
+        if Values.Element.self == [String].self { return .pointer }
+        return try! .opaque(named: "GenericElementStorage")
+    }
+}
+
 private enum GenericConversionFailure: Error { case rejected }
 private struct RejectGenericArgument: ABIBridgeValue {
     static var abiType: NativeType { .int64 }
@@ -34,6 +42,35 @@ private final class GenericCaptureState: Sendable {
 
 @Suite(.serialized)
 struct SwiftGenericCallTests {
+    @Test func associatedElementStorageUsesItsFormalWitness() async throws {
+        let runtime = ABIRuntime()
+        let array = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.arrayElementGeneric<A>(ManagedSwiftFixtures.GenericElementStorage<[A]>) -> ManagedSwiftFixtures.GenericElementStorage<[A]>",
+            as: ((GenericElementStorage<[Int64]>) -> GenericElementStorage<[Int64]>).self,
+            genericArguments: [.type(Int64.self)])
+        #expect(try unsafe array.unsafeInvoke(.init(42)).element == 42)
+        let slice = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.sliceElementGeneric<A>(ManagedSwiftFixtures.GenericElementStorage<Swift.ArraySlice<A>>) -> ManagedSwiftFixtures.GenericElementStorage<Swift.ArraySlice<A>>",
+            as: ((GenericElementStorage<ArraySlice<String>>) -> GenericElementStorage<ArraySlice<String>>).self,
+            genericArguments: [.type(String.self)])
+        let text = String(repeating: "associated", count: 100)
+        #expect(try unsafe slice.unsafeInvoke(.init(text)).element == text)
+        let nested = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.nestedElementGeneric<A>(ManagedSwiftFixtures.GenericElementStorage<[[A]]>) -> ManagedSwiftFixtures.GenericElementStorage<[[A]]>",
+            as: ((GenericElementStorage<[[String]]>) -> GenericElementStorage<[[String]]>).self,
+            genericArguments: [.type(String.self)])
+        #expect(try unsafe nested.unsafeInvoke(.init([text, "value"])).element == [text, "value"])
+        let fixed = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.fixedElementGeneric<A>(ManagedSwiftFixtures.GenericElementStorage<ManagedSwiftFixtures.GenericFixedCollection<A>>) -> ManagedSwiftFixtures.GenericElementStorage<ManagedSwiftFixtures.GenericFixedCollection<A>>",
+            as: ((GenericElementStorage<GenericFixedCollection<String>>) -> GenericElementStorage<GenericFixedCollection<String>>).self,
+            genericArguments: [.type(String.self)])
+        #expect(try unsafe fixed.unsafeInvoke(.init(42)).element == 43)
+        let constrained = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.constrainedElementGeneric<A where A: Swift.Collection, A.Element == Swift.Int64>(ManagedSwiftFixtures.GenericElementStorage<A>) -> ManagedSwiftFixtures.GenericElementStorage<A>",
+            as: ((GenericElementStorage<[Int64]>) -> GenericElementStorage<[Int64]>).self,
+            genericArguments: [.type([Int64].self)])
+        #expect(try unsafe constrained.unsafeInvoke(.init(42)).element == 44)
+    }
     @Test func genericConsumedCopiesReleaseOnSuccessErrorAndEncodingFailure() async throws {
         let runtime = ABIRuntime()
         let consume = try await runtime.swiftFunction(

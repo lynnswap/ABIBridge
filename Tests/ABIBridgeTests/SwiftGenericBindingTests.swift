@@ -5,6 +5,21 @@ import ManagedSwiftFixtures
 import Testing
 
 struct SwiftGenericBindingTests {
+    @Test func associatedWitnessesPreserveFormalSubstitutions() throws {
+        let binding = try SwiftGenericBinding(declaration: SwiftGenericDeclaration(linkageName:
+            "$s20ManagedSwiftFixtures10runGenericyxyxXElF"),
+            arguments: [.type(Int64.self)], signature: SwiftFunctionSignature((() -> Void).self), resolver: .shared)
+        let parameter = SwiftFormalType.named("A", [])
+        let array = SwiftFormalType.nominal("Swift.Array", [parameter])
+        let element = SwiftFormalType.associated(array, "Element", protocolName: "Swift.Sequence")
+        #expect(try binding.canonicalType(of: element) == parameter)
+        let nested = SwiftFormalType.associated(.nominal("Swift.Array", [array]), "Element", protocolName: "Swift.Sequence")
+        #expect(try binding.canonicalType(of: nested) == array)
+        #expect(try SwiftGenericValueLayout.isIndirect(GenericElementStorage<[Int64]>.self,
+            arguments: [array], binding: binding))
+        #expect(try !SwiftGenericValueLayout.isIndirect(GenericElementStorage<[[Int64]]>.self,
+            arguments: [.nominal("Swift.Array", [array])], binding: binding))
+    }
     @Test func nominalPackFulfillmentsKeepTransformedAndPrefixedArguments() throws {
         let cases: [(String, Any.Type, Int)] = [
             ("$s20ManagedSwiftFixtures22packClassSourceGenericys5Int64VAA0gF4PackCyxxQp_QPG_xxQptRvzSQRzlF",
@@ -164,7 +179,7 @@ struct SwiftGenericBindingTests {
         #expect(related.keyParameters == ["A", "B"])
         let recursive = try SwiftGenericTypeContext(metadata: GenericRecursive<GenericLeaf>.self)
         #expect(recursive.conformances.map { $0.subject.spelling + ": " + $0.name }.sorted()
-            == ["A.Child.Child: Swift.Equatable", "A: ManagedSwiftFixtures.GenericTree"])
+            == ["A.ManagedSwiftFixtures.GenericTree.Child.ManagedSwiftFixtures.GenericTree.Child: Swift.Equatable", "A: ManagedSwiftFixtures.GenericTree"])
         let pack = try SwiftGenericTypeContext(metadata: GenericTypePack<String, Int>.self)
         #expect(pack.parameters.count == 1 && pack.parameters[0].isPack)
         #expect(pack.conformances.first?.name == "Swift.Equatable")

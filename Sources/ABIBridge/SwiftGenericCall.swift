@@ -231,12 +231,14 @@ struct SwiftGenericCallPlan: Sendable {
 
     private static func layout(_ formal: SwiftFormalType, actual: Any.Type,
                                binding: SwiftGenericBinding) throws -> CValueType {
-        let canonical = binding.canonicalType(of: formal)
+        let canonical = try binding.canonicalType(of: formal)
         if canonical != formal { return try layout(canonical, actual: actual, binding: binding) }
         func prepare<Value>(_ type: Value.Type) throws -> CValueType {
             if !binding.dependsOnParameters(formal) { return try SwiftValueCodec<Value>().type }
             if try binding.isClassBound(formal) { return try CValueType(scalar: ABIValuePointer) }
             switch formal {
+            case .associated:
+                return try SwiftGenericParameters.storageType(actual)
             case .named(let name, let arguments), .nominal(let name, let arguments):
                 if !arguments.isEmpty && actual is AnyClass { return try CValueType(scalar: ABIValuePointer) }
                 if ["Swift.Array", "Swift.Dictionary", "Swift.Set"].contains(name) {
@@ -316,10 +318,9 @@ struct SwiftGenericCallPlan: Sendable {
     }
 
     private static func singletonMetatype(_ type: SwiftFormalType, binding: SwiftGenericBinding) throws -> Bool {
-        let type = binding.canonicalType(of: type)
+        let type = try binding.canonicalType(of: type)
         if case .metatype(let instance) = type { return try singletonMetatype(instance, binding: binding) }
-        if case .named(let name, let arguments) = type, arguments.isEmpty,
-           binding.arguments[String(name.prefix { $0 != "." })] != nil { return false }
+        if binding.isArchetype(type) { return false }
         return try !(binding.types(type)[0] is AnyClass)
     }
 }
@@ -360,6 +361,7 @@ extension SwiftGenericBinding {
             (parameters.isEmpty && arguments[String(name.prefix { $0 != "." })] != nil) || parameters.contains(where: dependsOnParameters)
         case .nominal(_, let parameters), .reference(_, let parameters): parameters.contains(where: dependsOnParameters)
         case .nested(let parent, _, let parameters): dependsOnParameters(parent) || parameters.contains(where: dependsOnParameters)
+        case .associated(let base, _, _): dependsOnParameters(base)
         case .tuple(let fields), .packValue(let fields): fields.contains(where: dependsOnParameters)
         case .function(let parameters, let result, let failure, _):
             parameters.contains(where: dependsOnParameters) || dependsOnParameters(result) || (failure.map(dependsOnParameters) ?? false)

@@ -28,6 +28,7 @@ indirect enum SwiftFormalType: Sendable, Equatable {
     case nominal(String, [SwiftFormalType])
     case nested(SwiftFormalType, String, [SwiftFormalType])
     case reference(SwiftNominalDescriptor, [SwiftFormalType])
+    case associated(SwiftFormalType, String, protocolName: String? = nil)
     case tuple([SwiftFormalType])
     case function([SwiftFormalType], SwiftFormalType, failure: SwiftFormalType?, isAsync: Bool)
     case pack(SwiftFormalType, shape: SwiftFormalType? = nil)
@@ -128,6 +129,8 @@ indirect enum SwiftFormalType: Sendable, Equatable {
             descriptor.name + (arguments.isEmpty ? "" : "<" + arguments.map(\.spelling).joined(separator: ", ") + ">")
         case .nested(let parent, let name, let arguments):
             parent.spelling + "." + name + (arguments.isEmpty ? "" : "<" + arguments.map(\.spelling).joined(separator: ", ") + ">")
+        case .associated(let base, let name, let protocolName):
+            base.spelling + "." + (protocolName.map { $0 + "." } ?? "") + name
         case .tuple(let values): "(" + values.map(\.spelling).joined(separator: ", ") + ")"
         case .function(let arguments, let result, let failure, let isAsync):
             "(" + arguments.map(\.spelling).joined(separator: ", ") + ")"

@@ -30,6 +30,29 @@ struct SwiftProtocolDescriptor: Sendable {
         try associatedRequirements(of: member).compactMap(\.descriptor)
     }
 
+    func protocolsDeclaring(_ member: String) throws -> [SwiftProtocolDescriptor] {
+        var visited: Set<UInt> = [], result: [SwiftProtocolDescriptor] = []
+        func visit(_ descriptor: SwiftProtocolDescriptor) throws {
+            guard visited.insert(descriptor.address).inserted else { return }
+            try unsafe descriptor.withUnsafeAddress { address in
+                let field = address.advanced(by: 20)
+                let offset = Int(field.loadUnaligned(as: Int32.self))
+                if offset != 0,
+                   String(cString: field.advanced(by: offset).assumingMemoryBound(to: CChar.self))
+                    .split(separator: " ").contains(Substring(member)) { result.append(descriptor) }
+                let count = Int(address.loadUnaligned(fromByteOffset: 12, as: UInt32.self))
+                for index in 0..<count {
+                    let requirement = try SwiftMetadataRequirement(address.advanced(by: 24 + index * 12))
+                    if requirement.subject == .named("A", []), let inherited = requirement.descriptor {
+                        try visit(inherited)
+                    }
+                }
+            }
+        }
+        try visit(self)
+        return result
+    }
+
     func associatedRequirements(of member: String) throws -> [SwiftMetadataRequirement] {
         var visited: Set<UInt> = []
         var matches: [SwiftMetadataRequirement] = []
@@ -41,7 +64,7 @@ struct SwiftProtocolDescriptor: Sendable {
                     let requirement = try SwiftMetadataRequirement(address.advanced(by: 24 + index * 12))
                     if requirement.subject == .named("A", []), let inherited = requirement.descriptor {
                         try visit(inherited)
-                    } else if requirement.subject == .named("A." + member, []) {
+                    } else if case .associated(.named("A", []), member, _) = requirement.subject {
                         matches.append(requirement)
                     }
                 }

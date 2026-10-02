@@ -2,6 +2,8 @@
 #include <cstdint>
 #include <cstring>
 #include <ptrauth.h>
+#include <dlfcn.h>
+#include <mach-o/getsect.h>
 #include <string_view>
 #include <unordered_set>
 #include <vector>
@@ -492,6 +494,79 @@ const char *inlineFieldReference(const void *metadata, size_t index) {
 ABISwiftSyntax *ABICopySwiftTypeFieldSyntax(const void *metadata, size_t index) {
     const char *reference = inlineFieldReference(metadata, index);
     return reference ? ABICopySwiftTypeSyntax(reference, symbolicNameLength(reference)) : nullptr;
+}
+
+namespace {
+bool sameTypeSyntax(const ABISwiftSyntaxNode *lhs, const ABISwiftSyntaxNode *rhs) {
+    if (std::strcmp(ABISwiftSyntaxNodeKind(lhs), ABISwiftSyntaxNodeKind(rhs))) return false;
+    if (ABISwiftSyntaxNodeHasIndex(lhs) != ABISwiftSyntaxNodeHasIndex(rhs)) return false;
+    if (ABISwiftSyntaxNodeHasIndex(lhs) && ABISwiftSyntaxNodeIndex(lhs) != ABISwiftSyntaxNodeIndex(rhs)) return false;
+    size_t leftLength = 0, rightLength = 0;
+    const char *left = ABISwiftSyntaxNodeText(lhs, &leftLength), *right = ABISwiftSyntaxNodeText(rhs, &rightLength);
+    if (leftLength != rightLength || (leftLength && std::memcmp(left, right, leftLength))) return false;
+    const size_t count = ABISwiftSyntaxNodeChildCount(lhs);
+    if (count != ABISwiftSyntaxNodeChildCount(rhs)) return false;
+    for (size_t index = 0; index < count; ++index)
+        if (!sameTypeSyntax(ABISwiftSyntaxNodeChild(lhs, index), ABISwiftSyntaxNodeChild(rhs, index))) return false;
+    return true;
+}
+
+bool matchesNominalReference(const char *reference, const char *descriptor) {
+    using Syntax = std::unique_ptr<ABISwiftSyntax, decltype(&ABIReleaseSwiftSyntax)>;
+    Syntax candidate(ABICopySwiftTypeSyntax(reference, symbolicNameLength(reference)), ABIReleaseSwiftSyntax);
+    if (!candidate) return false;
+    auto node = ABISwiftSyntaxRoot(candidate.get());
+    while (!std::strcmp(ABISwiftSyntaxNodeKind(node), "Type")) node = ABISwiftSyntaxNodeChild(node, 0);
+    if (!std::strcmp(ABISwiftSyntaxNodeKind(node), "TypeSymbolicReference"))
+        return ABISwiftSyntaxNodeIndex(node) == reinterpret_cast<uintptr_t>(descriptor);
+    const char *fields = relative(descriptor + 16);
+    const char *nominal = fields ? relative(fields) : nullptr;
+    if (!nominal) return false;
+    Syntax expected(ABICopySwiftTypeSyntax(nominal, symbolicNameLength(nominal)), ABIReleaseSwiftSyntax);
+    return expected && sameTypeSyntax(ABISwiftSyntaxRoot(candidate.get()), ABISwiftSyntaxRoot(expected.get()));
+}
+}
+
+ABISwiftSyntax *ABICopySwiftAssociatedTypeSyntax(const void *metadata, const void *protocol, const char *name) {
+    const void *witness = swift_conformsToProtocol(metadata, protocol);
+    const char *descriptor = typeContextDescriptor(metadata);
+    if (!witness || !descriptor) return nullptr;
+    Dl_info image{};
+    if (!dladdr(ABISwiftConformanceDescriptor(witness), &image)) return nullptr;
+    unsigned long size = 0;
+#if __LP64__
+    auto header = static_cast<const mach_header_64 *>(image.dli_fbase);
+#else
+    auto header = static_cast<const mach_header *>(image.dli_fbase);
+#endif
+    auto section = reinterpret_cast<const char *>(getsectiondata(header, "__TEXT", "__swift5_assocty", &size));
+    if (!section) return nullptr;
+    const void *protocolType = ABISwiftProtocolTypeMetadata(protocol);
+    // Reflection records preserve the formal witness even after a live witness
+    // table caches concrete metadata. RemoteInspection/Records.h defines these
+    // relative references and their versioned record stride.
+    for (size_t offset = 0; offset + 16 <= size;) {
+        const char *record = section + offset;
+        const size_t count = read<uint32_t>(record + 8), stride = read<uint32_t>(record + 12);
+        if (stride < 8 || count > (size - offset - 16) / stride) return nullptr;
+        const char *protocolName = relative(record + 4);
+        if (protocolName && protocolName[0] == '$' && protocolName[1] == 's') protocolName += 2;
+        if (protocolName && swift_getTypeByMangledNameInContext(protocolName,
+                symbolicNameLength(protocolName), nullptr, nullptr) == protocolType) {
+            const char *conforming = relative(record);
+            if (conforming && matchesNominalReference(conforming, descriptor)) {
+                for (size_t index = 0; index < count; ++index) {
+                    const char *entry = record + 16 + index * stride;
+                    const char *member = relative(entry);
+                    if (!member || std::strcmp(member, name)) continue;
+                    const char *type = relative(entry + 4);
+                    return type ? ABICopySwiftTypeSyntax(type, symbolicNameLength(type)) : nullptr;
+                }
+            }
+        }
+        offset += 16 + count * stride;
+    }
+    return nullptr;
 }
 
 size_t ABISwiftTypeMetadataArgumentCount(const ABISwiftTypeMetadata *result) { return result->arguments.size(); }

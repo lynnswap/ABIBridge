@@ -1,5 +1,34 @@
 @inline(never) public func runGeneric<Value>(_ apply: () -> Value) -> Value { apply() }
 
+@frozen public struct GenericElementStorage<Values: Collection> {
+    public var element: Values.Element
+    public init(_ element: Values.Element) { self.element = element }
+}
+@inline(never) public func arrayElementGeneric<Value>(
+    _ value: GenericElementStorage<[Value]>
+) -> GenericElementStorage<[Value]> { value }
+@inline(never) public func nestedElementGeneric<Value>(
+    _ value: GenericElementStorage<[[Value]]>
+) -> GenericElementStorage<[[Value]]> { value }
+@inline(never) public func sliceElementGeneric<Value>(
+    _ value: GenericElementStorage<ArraySlice<Value>>
+) -> GenericElementStorage<ArraySlice<Value>> { value }
+
+@frozen public struct GenericFixedCollection<Marker>: RandomAccessCollection {
+    public var values: [Int64]
+    public init(_ values: [Int64]) { self.values = values }
+    public var startIndex: Int { values.startIndex }
+    public var endIndex: Int { values.endIndex }
+    public subscript(index: Int) -> Int64 { values[index] }
+}
+@inline(never) public func fixedElementGeneric<Value>(
+    _ value: GenericElementStorage<GenericFixedCollection<Value>>
+) -> GenericElementStorage<GenericFixedCollection<Value>> { .init(value.element + 1) }
+
+@inline(never) public func constrainedElementGeneric<Values: Collection>(
+    _ value: GenericElementStorage<Values>
+) -> GenericElementStorage<Values> where Values.Element == Int64 { .init(value.element + 2) }
+
 @inline(never) public func borrowingGeneric<Value>(_ value: borrowing Value) -> Value { copy value }
 @inline(never) public func consumingGeneric<Value>(_ value: consuming Value) -> Value { value }
 @inline(never) public func consumeGenericFailure<Value, Failure: Error>(
