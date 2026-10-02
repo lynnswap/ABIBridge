@@ -4,8 +4,7 @@ import Foundation
 enum SwiftGenericArgument: Sendable { case concrete, parameter, closureResult }
 
 protocol SwiftGenericResultClosure: SwiftClosureValue {
-    static var resultType: Any.Type { get }
-    static var parameterTypes: [Any.Type] { get }
+    static func genericResultSignature() throws -> SwiftFunctionSignature
     static func genericResultInterface() throws -> SwiftCallInterface
     func encodeGenericResultClosure(interface: SwiftCallInterface, retainingCode owner: Any?) throws -> NativeValueStorage
 }
@@ -55,9 +54,10 @@ struct SwiftGenericCallPlan: Sendable {
             if formal == "A" { try requireSubstitution(actual); return .parameter }
             if mentionsParameter(formal) {
                 guard formal.filter({ !$0.isWhitespace }) == "()->A",
-                      let closure = actual as? any SwiftGenericResultClosure.Type,
-                      closure.parameterTypes.isEmpty else { throw unsupported() }
-                try requireSubstitution(closure.resultType)
+                      let closure = actual as? any SwiftGenericResultClosure.Type else { throw unsupported() }
+                let signature = try closure.genericResultSignature()
+                guard signature.parameters.isEmpty, !signature.isAsync, signature.failure == Never.self else { throw unsupported() }
+                try requireSubstitution(signature.result)
                 return .closureResult
             }
             return .concrete
@@ -88,7 +88,7 @@ extension ABIRuntime {
         named name: String, as signature: ((repeat each Argument) -> Result).Type,
         substituting substitution: Any.Type,
         in scope: ImageSelector = .automatic, loading: ImageLoadingPolicy = .ifNeeded
-    ) throws -> NativeSwiftFunction<Result, repeat each Argument> {
+    ) throws -> NativeSwiftFunction<(repeat each Argument) -> Result> {
         try genericSwiftFunction(named: name, as: signature, substitution: substitution, owner: nil, in: scope, loading: loading)
     }
 
@@ -100,14 +100,14 @@ extension ABIRuntime {
         named name: String, as signature: ((repeat each Argument) -> Result).Type,
         substituting substitution: NativeSwiftType,
         in scope: ImageSelector = .automatic, loading: ImageLoadingPolicy = .ifNeeded
-    ) throws -> NativeSwiftFunction<Result, repeat each Argument> {
+    ) throws -> NativeSwiftFunction<(repeat each Argument) -> Result> {
         try genericSwiftFunction(named: name, as: signature, substitution: substitution.metadata, owner: substitution, in: scope, loading: loading)
     }
 
     private func genericSwiftFunction<Result, each Argument>(
         named name: String, as signature: ((repeat each Argument) -> Result).Type,
         substitution: Any.Type, owner: NativeSwiftType?, in scope: ImageSelector, loading: ImageLoadingPolicy
-    ) throws -> NativeSwiftFunction<Result, repeat each Argument> {
+    ) throws -> NativeSwiftFunction<(repeat each Argument) -> Result> {
         var parameters: [Any.Type] = []
         for type in repeat (each Argument).self { parameters.append(type) }
         let plan = try SwiftGenericCallPlan(name: name, substitution: substitution, parameters: parameters, result: Result.self)

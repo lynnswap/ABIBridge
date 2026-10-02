@@ -82,9 +82,9 @@ struct SwiftExplicitValueTests {
         #expect(result.a == 1 && result.b == 2 && result.c == 3 && result.d == 4)
         let apply = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.applyLargeManagedValue(_:_:)",
-            as: ((NativeSwiftClosure<LargeManagedValue, LargeManagedValue>, LargeManagedValue) -> LargeManagedValue).self
+            as: ((NativeSwiftClosure<(LargeManagedValue) -> LargeManagedValue>, LargeManagedValue) -> LargeManagedValue).self
         )
-        let callback = try NativeSwiftClosure<LargeManagedValue, LargeManagedValue> { $0 }
+        let callback = try NativeSwiftClosure<(LargeManagedValue) -> LargeManagedValue> { $0 }
         let returned = try unsafe apply.unsafeInvoke(callback, input)
         #expect(returned.token === token && returned.d == 4)
     }
@@ -92,7 +92,7 @@ struct SwiftExplicitValueTests {
     @Test func managedCallbacksUseTypedCopyingAndResultTransfer() async throws {
         let apply = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.applyManagedVector(_:_:)",
-            as: ((NativeSwiftClosure<ManagedVector, ManagedVector>, ManagedVector) -> ManagedVector).self
+            as: ((NativeSwiftClosure<(ManagedVector) -> ManagedVector>, ManagedVector) -> ManagedVector).self
         )
         let callback = try NativeSwiftClosure { (value: ManagedVector) in
             ManagedVector(token: value.token, x: value.x + 10, y: value.y + 20)
@@ -103,7 +103,7 @@ struct SwiftExplicitValueTests {
         #expect(result.token === token && result.x == 11 && result.y == 22)
         let make = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.makeManagedVectorClosure(_:)",
-            as: ((Double) -> NativeSwiftClosure<ManagedVector, ManagedVector>).self
+            as: ((Double) -> NativeSwiftClosure<(ManagedVector) -> ManagedVector>).self
         )
         let returned = try unsafe make.unsafeInvoke(5)
         let nativeResult = try unsafe returned.unsafeInvoke(input)
@@ -113,12 +113,12 @@ struct SwiftExplicitValueTests {
     @Test func enumCallbacksAndReturnedClosuresPreserveCases() async throws {
         let apply = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.applyManagedChoice(_:_:)",
-            as: ((NativeSwiftClosure<ManagedChoice, ManagedChoice>, ManagedChoice) -> ManagedChoice).self
+            as: ((NativeSwiftClosure<(ManagedChoice) -> ManagedChoice>, ManagedChoice) -> ManagedChoice).self
         )
-        let callback = try NativeSwiftClosure<ManagedChoice, ManagedChoice> { $0 }
+        let callback = try NativeSwiftClosure<(ManagedChoice) -> ManagedChoice> { $0 }
         let make = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.makeManagedChoiceClosure()",
-            as: (() -> NativeSwiftClosure<ManagedChoice, ManagedChoice>).self
+            as: (() -> NativeSwiftClosure<(ManagedChoice) -> ManagedChoice>).self
         )
         let returned = try unsafe make.unsafeInvoke()
         weak var observed: LifetimeToken?
@@ -142,7 +142,7 @@ struct SwiftExplicitValueTests {
         let type = try await ABIRuntime.shared.swiftType(named: "ManagedSwiftFixtures.ExplicitValueStore",
                                                          as: ExplicitValueStore.self)
         let create = try await type.initializer(named: "init(_:)", as: ((ManagedChoice) -> ExplicitValueStore).self)
-        let get = try await type.getter(named: "value", as: ManagedChoice.self)
+        let get = try await type.getter(named: "value", as: (() -> ManagedChoice).self)
         let set = try await type.setter(named: "value", as: ManagedChoice.self)
         var receiver: ExplicitValueStore?
         weak var observed: LifetimeToken?
@@ -161,7 +161,7 @@ struct SwiftExplicitValueTests {
 
     @Test func invalidStorageExtentFailsBeforePublishingACallback() {
         #expect(throws: ABIResolutionError.self) {
-            _ = try NativeSwiftClosure<UndersizedSwiftValue, UndersizedSwiftValue> { $0 }
+            _ = try NativeSwiftClosure<(UndersizedSwiftValue) -> UndersizedSwiftValue> { $0 }
         }
     }
 }

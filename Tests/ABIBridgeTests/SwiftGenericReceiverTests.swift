@@ -43,8 +43,8 @@ struct SwiftGenericReceiverTests {
     @MainActor @Test func extractedGenericMethodsKeepContextWithoutRetainingTheOriginalObject() async throws {
         let runtime = ABIRuntime()
         weak var observed: GenericReceiver<ReceiverNumber>?
-        let consuming: NativeSwiftMethod<String>
-        let asynchronous: NativeSwiftAsyncMethod<String, String>
+        let consuming: NativeSwiftMethod<() -> String>
+        let asynchronous: NativeSwiftMethod<nonisolated(nonsending) (String) async -> String>
         do {
             let original = GenericReceiver(ReceiverNumber(number: 1))
             observed = original
@@ -59,7 +59,7 @@ struct SwiftGenericReceiverTests {
         #expect(observed == nil)
         var second: GenericReceiver<ReceiverNumber>? = GenericReceiver(.init(number: 42))
         weak let observedSecond = second
-        var bound: NativeBoundSwiftAsyncMethod<String, String>? = try asynchronous.bind(to: second!)
+        var bound: NativeBoundSwiftMethod<nonisolated(nonsending) (String) async -> String>? = try asynchronous.bind(to: second!)
         #expect(try unsafe consuming.unsafeInvoke(on: second!) == "42")
         #expect(try unsafe await asynchronous.unsafeInvoke(on: second!, "value:") == "value:42")
         second = nil
@@ -78,8 +78,8 @@ struct SwiftGenericReceiverTests {
         let object = runtime.object(receiver)
         let method = try await object.method(named: "title(_:)", as: ((String) -> String).self)
         let complete = try await object.method(named: "title(Swift.String) -> Swift.String", as: ((String) -> String).self)
-        let get = try await object.getter(named: "text", as: String.self)
-        let fullGet = try await object.getter(named: "text.getter : Swift.String", as: String.self)
+        let get = try await object.getter(named: "text", as: (() -> String).self)
+        let fullGet = try await object.getter(named: "text.getter : Swift.String", as: (() -> String).self)
         let set = try await object.setter(named: "text", as: String.self)
         receiver.text = "!"
         #expect(receiver.text == "42!")
@@ -98,7 +98,7 @@ struct SwiftGenericReceiverTests {
         let runtime = ABIRuntime()
         weak var first: GenericReceiver<ReceiverNumber>?
         weak var second: GenericReceiver<ReceiverText>?
-        var handles: [NativeBoundSwiftMethod<String>] = []
+        var handles: [NativeBoundSwiftMethod<() -> String>] = []
         do {
             let a = GenericReceiver(ReceiverNumber(number: 42))
             let b = GenericReceiver(ReceiverText(text: String(repeating: "text", count: 100)))
@@ -137,7 +137,7 @@ struct SwiftGenericReceiverTests {
         let object = ABIRuntime().object(receiver)
         let projected = try await object.method(named: "projected() -> A", as: (() -> ReceiverText).self)
         let echo = try await object.method(named: "echo(A) -> A", as: ((ReceiverText) -> ReceiverText).self)
-        let getter = try await object.getter(named: "payload.getter : A", as: ReceiverText.self)
+        let getter = try await object.getter(named: "payload.getter : A", as: (() -> ReceiverText).self)
         #expect(try unsafe projected.unsafeInvoke().text == receiver.projected().text)
         #expect(try unsafe echo.unsafeInvoke(value).text == receiver.echo(value).text)
         #expect(try unsafe getter.unsafeInvoke().text == receiver.payload.text)

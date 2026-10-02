@@ -32,9 +32,9 @@ private final class Capture: Sendable {
 let library = URL(fileURLWithPath: CommandLine.arguments[1])
 let runtime = ABIRuntime()
 let make = try await runtime.swiftFunction(named: "SwiftUIPlugin.makeView(_:_:)",
-    as: ((String, NativeSwiftClosure<Int64, Int64>) -> NativeSwiftOpaqueValue).self, in: .path(library))
+    as: ((String, NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftOpaqueValue).self, in: .path(library))
 let host = try await runtime.swiftFunction(named: "SwiftUIPlugin.makeHost(_:_:)",
-    as: ((String, NativeSwiftClosure<Int64, Int64>) -> NSView).self, in: .path(library))
+    as: ((String, NativeSwiftClosure<(Int64) -> Int64>) -> NSView).self, in: .path(library))
 let title = "Unimportable SwiftUI provider"
 let expected = pixels(VStack { Text(verbatim: title); Text("Value: 42") }.padding().background(Color.yellow))
 private let destroyed = ReleaseFlag()
@@ -43,7 +43,7 @@ var opaque: NativeSwiftOpaqueValue?
 do {
     let capture = Capture(destroyed)
     observed = capture
-    let callback = try NativeSwiftClosure<Int64, Int64> { capture.next($0) }
+    let callback = try NativeSwiftClosure<(Int64) -> Int64> { capture.next($0) }
     opaque = try unsafe make.unsafeInvoke(title, callback)
 }
 var retainedView: NativeSwiftView? = try NativeSwiftView(opaque!)

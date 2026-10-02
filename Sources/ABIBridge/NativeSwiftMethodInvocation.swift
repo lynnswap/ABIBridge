@@ -7,7 +7,7 @@ struct SwiftHookReceiverView: Sendable {
     let expectedClass: AnyClass?
     let owner: any Sendable
 
-    init<Result, each Argument>(_ method: NativeSwiftMethod<Result, repeat each Argument>) {
+    init<Signature>(_ method: NativeSwiftMethod<Signature>) {
         codec = method.receiver.codec; expectedClass = method.type.metadata as? AnyClass; owner = method
     }
 
@@ -76,8 +76,8 @@ public struct NativeSwiftMethodInvocation<Result, each Argument>: CustomStringCo
     }
 }
 
-func prepareSwiftMethodHandler<Result, each Argument>(
-    method: NativeSwiftMethod<Result, repeat each Argument>,
+func prepareSwiftMethodHandler<Signature, Result, each Argument>(
+    method: NativeSwiftMethod<Signature>,
     prepared: SwiftHookCallbackSignature<Result, repeat each Argument>,
     receiver: SwiftHookReceiverView, requiresMainActor: Bool,
     onFailure: @escaping @Sendable (any Error) -> Void,
@@ -91,5 +91,22 @@ func prepareSwiftMethodHandler<Result, each Argument>(
         let call = NativeSwiftMethodInvocation(frame: frame, prepared: prepared, receiverView: receiver,
             declaration: declaration, description: description)
         return try prepared.result.encode(body(call, repeat each values))
+    }
+}
+
+extension NativeSwiftMethod {
+    func prepareHook<Result, each Argument>(
+        requiresMainActor: Bool, onFailure: @escaping @Sendable (any Error) -> Void,
+        body: @escaping @Sendable (NativeSwiftMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+    ) throws -> (signature: SwiftHookSignature, handler: SwiftHookHandler) {
+        guard errorPlan == nil else {
+            throw ABIResolutionError.unsupportedDeclaration("Managed hooks cannot yet return native Swift errors.")
+        }
+        let receiverView = SwiftHookReceiverView(self)
+        let prepared = try SwiftHookCallbackSignature<Result, repeat each Argument>()
+        let signature = try prepared.erased(consumingArguments: consumesArguments, receiver: receiver, retaining: self)
+        let handler = prepareSwiftMethodHandler(method: self, prepared: prepared, receiver: receiverView,
+            requiresMainActor: requiresMainActor, onFailure: onFailure, body: body)
+        return (signature, handler)
     }
 }

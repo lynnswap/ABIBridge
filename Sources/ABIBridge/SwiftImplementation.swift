@@ -49,36 +49,48 @@ private enum PublishedSwiftCode {
 /// A captured previous function with the source request's supplied Swift ABI.
 /// It calls the captured entry directly, bypassing the replaced import slot.
 /// The entry may itself be compiler-instrumented or interposed.
-public struct NativeSwiftFunctionImplementation<Result, each Argument>: Sendable {
-    private let function: NativeSwiftFunction<Result, repeat each Argument>
+public struct NativeSwiftFunctionImplementation<Signature>: Sendable {
+    private let function: NativeSwiftFunction<Signature>
     /// The declaration whose importing reference was captured, not the name of
     /// an implementation installed earlier by another writer.
     public var declaration: NativeDeclaration { function.symbol.declaration }
-    init(_ prototype: NativeSwiftFunction<Result, repeat each Argument>, _ entry: SwiftImplementation) {
+    init(_ prototype: NativeSwiftFunction<Signature>, _ entry: SwiftImplementation) {
         function = prototype.capturing(entry)
     }
     /// Invokes the captured code with the original function's supplied contract.
     /// The caller satisfies the function's ABI, ownership and isolation rules.
-    @unsafe public func unsafeInvoke(_ values: repeat each Argument) throws -> Result {
+    @unsafe public func unsafeInvoke<Result, Failure: Error, each Argument>(_ values: repeat each Argument) throws -> Result where Signature == (repeat each Argument) throws(Failure) -> Result {
+        try unsafe function.unsafeInvoke(repeat each values)
+    }
+
+    @unsafe public func unsafeInvoke<Result, Failure: Error, each Argument>(_ values: repeat each Argument) throws -> Result where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
         try unsafe function.unsafeInvoke(repeat each values)
     }
 }
 
 /// A previous member implementation with the original receiver contract.
 /// This does not redispatch the member or discover a different receiver layout.
-public struct NativeSwiftMethodImplementation<Result, each Argument>: Sendable {
-    private let method: NativeSwiftMethod<Result, repeat each Argument>
+public struct NativeSwiftMethodImplementation<Signature>: Sendable {
+    private let method: NativeSwiftMethod<Signature>
     /// The declaration whose reference was captured; not an inferred code identity.
     public var declaration: NativeDeclaration { method.symbol.declaration }
-    init(_ prototype: NativeSwiftMethod<Result, repeat each Argument>, _ entry: SwiftImplementation) {
+    init(_ prototype: NativeSwiftMethod<Signature>, _ entry: SwiftImplementation) {
         method = prototype.capturing(entry)
     }
     /// Invokes a captured class or nonmutating value method on the supplied receiver.
-    @unsafe public func unsafeInvoke<Receiver>(on receiver: Receiver, _ values: repeat each Argument) throws -> Result {
+    @unsafe public func unsafeInvoke<Receiver, Result, Failure: Error, each Argument>(on receiver: Receiver, _ values: repeat each Argument) throws -> Result where Signature == (repeat each Argument) throws(Failure) -> Result {
+        try unsafe method.unsafeInvoke(on: receiver, repeat each values)
+    }
+
+    @unsafe public func unsafeInvoke<Receiver, Result, Failure: Error, each Argument>(on receiver: Receiver, _ values: repeat each Argument) throws -> Result where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
         try unsafe method.unsafeInvoke(on: receiver, repeat each values)
     }
     /// Invokes the captured member and performs its declared receiver writeback.
-    @unsafe public func unsafeInvoke<Receiver>(on receiver: inout Receiver, _ values: repeat each Argument) throws -> Result {
+    @unsafe public func unsafeInvoke<Receiver, Result, Failure: Error, each Argument>(on receiver: inout Receiver, _ values: repeat each Argument) throws -> Result where Signature == (repeat each Argument) throws(Failure) -> Result {
+        try unsafe method.unsafeInvoke(on: &receiver, repeat each values)
+    }
+
+    @unsafe public func unsafeInvoke<Receiver, Result, Failure: Error, each Argument>(on receiver: inout Receiver, _ values: repeat each Argument) throws -> Result where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
         try unsafe method.unsafeInvoke(on: &receiver, repeat each values)
     }
 }

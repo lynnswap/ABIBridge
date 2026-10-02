@@ -14,8 +14,8 @@ private struct Prepared {
     let type: NativeSwiftType
     let text: NativeSwiftBorrowedMethod<String>
     let cancel: NativeSwiftBorrowedMethod<Void>
-    let run: NativeSwiftFunction<Bool, NativeSwiftClosure<Bool>, AnyObject, String, UnsafeMutablePointer<Int32>, NativeSwiftBorrowingClosure<Void>>
-    let reference: NativeSwiftFunction<String, AnyObject, String, UnsafeMutablePointer<Int32>>
+    let run: NativeSwiftFunction<(NativeSwiftClosure<() -> Bool>, AnyObject, String, UnsafeMutablePointer<Int32>, NativeSwiftBorrowingClosure<Void>) -> Bool>
+    let reference: NativeSwiftFunction<(AnyObject, String, UnsafeMutablePointer<Int32>) -> String>
 }
 
 @MainActor private func prepare(_ path: String) async throws -> Prepared {
@@ -29,7 +29,7 @@ private struct Prepared {
         cancel: type.borrowedMethod(named: "cancel()", as: (() -> Void).self),
         run: runtime.swiftFunction(
             named: "ManagedSwiftFixtures.runAndVisitGeneric<A>(() -> A, Swift.AnyObject, Swift.String, Swift.UnsafeMutablePointer<Swift.Int32>, (ManagedSwiftFixtures.RuntimeRecord) -> ()) -> A",
-            as: ((NativeSwiftClosure<Bool>, AnyObject, String, UnsafeMutablePointer<Int32>, NativeSwiftBorrowingClosure<Void>) -> Bool).self,
+            as: ((NativeSwiftClosure<() -> Bool>, AnyObject, String, UnsafeMutablePointer<Int32>, NativeSwiftBorrowingClosure<Void>) -> Bool).self,
             substituting: Bool.self, in: scope),
         reference: runtime.swiftFunction(named: "ManagedSwiftFixtures.referenceRuntimeRecord(_:_:_:)",
             as: ((AnyObject, String, UnsafeMutablePointer<Int32>) -> String).self, in: scope))
@@ -52,7 +52,7 @@ defer { count.deinitialize(count: 1); count.deallocate() }
 let object = NSObject()
 let input = String(repeating: "managed", count: 100)
 var applications = 0
-let result = try unsafe NativeSwiftClosure<Bool>.withUnsafeNonescaping({ applications += 1; return true }) {
+let result = try unsafe NativeSwiftClosure<() -> Bool>.withUnsafeNonescaping({ applications += 1; return true }) {
     try unsafe prepared.run.unsafeInvoke($0, object, input, count, callback)
 }
 if let error = state.error { throw ConsumerError.callback(String(describing: error)) }

@@ -39,8 +39,8 @@ private final class ExtractedCounterOwner {
         checks.append(message)
     }
     weak var originalSwift: MethodExtractionReceiver?
-    let sync: NativeSwiftMethod<Int64, Int64>
-    let async: NativeSwiftAsyncMethod<Int64, Int64>
+    let sync: NativeSwiftMethod<(Int64) -> Int64>
+    let async: NativeSwiftMethod<nonisolated(nonsending) (Int64) async throws -> Int64>
     do {
         let receiver = MethodExtractionReceiver(1)
         originalSwift = receiver

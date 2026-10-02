@@ -44,6 +44,20 @@ private final class ReentrantClosureCapture: Sendable {
 }
 
 struct NativeSwiftClosureTests {
+    @Test func nonescapingConstructionInfersTheOrdinarySignature() throws {
+        let result = try unsafe NativeSwiftClosure.withUnsafeNonescaping({ (value: Int64) in value + 7 }) {
+            try unsafe $0.unsafeInvoke(35)
+        }
+        #expect(result == 42)
+    }
+
+    @Test func sendableNonescapingSignaturePreservesItsTypedBody() throws {
+        let result = try unsafe NativeSwiftClosure<@Sendable (Int64) -> Int64>.withUnsafeNonescaping({ $0 + 7 }) {
+            try unsafe $0.unsafeInvoke(35)
+        }
+        #expect(result == 42)
+    }
+
     @Test func callbackPageReuseReleasesCapturesAndPermitsDestructionReentry() throws {
         let destroyed = ClosureCounter()
         for expected in 1...128 {
@@ -60,7 +74,7 @@ struct NativeSwiftClosureTests {
 
     @Test func callbacksAcrossMultiplePagesKeepIndependentContexts() throws {
         let destroyed = ClosureCounter()
-        var callbacks: [NativeSwiftClosure<Int64, Int64>] = []
+        var callbacks: [NativeSwiftClosure<(Int64) -> Int64>] = []
         for index in 0..<1100 {
             let capture = ClosureCapture(destroyed, bias: Int64(index))
             callbacks.append(try NativeSwiftClosure { (value: Int64) in value + capture.bias })
@@ -100,20 +114,19 @@ struct NativeSwiftClosureTests {
     }
 
     @Test func sendableNativeCallersCanInvokeOneContextConcurrently() async throws {
-        let callbackType = String(reflecting: (@Sendable (Int64) -> Int64).self)
         let apply = try await ABIRuntime.shared.swiftFunction(
-            named: "ManagedSwiftFixtures.applyConcurrentClosure(\(callbackType)) -> Swift.Int64",
-            as: ((NativeSwiftClosure<Int64, Int64>) -> Int64).self
+            named: "ManagedSwiftFixtures.applyConcurrentClosure(_:)",
+            as: ((NativeSwiftClosure<@Sendable (Int64) -> Int64>) -> Int64).self
         )
         let calls = ClosureCounter()
-        let callback = try NativeSwiftClosure { (value: Int64) in calls.increment(); return value + 7 }
+        let callback = try NativeSwiftClosure<@Sendable (Int64) -> Int64> { value in calls.increment(); return value + 7 }
         #expect(try unsafe apply.unsafeInvoke(callback) == 2464)
         #expect(calls.count == 64)
     }
 
     @Test func builtInRepresentationsRoundTripThroughGeneratedEntries() throws {
         func check<Value: Equatable>(_ value: Value) throws {
-            let callback = try NativeSwiftClosure<Value, Value> { $0 }
+            let callback = try NativeSwiftClosure<(Value) -> Value> { $0 }
             #expect(try unsafe callback.unsafeInvoke(value) == value)
         }
         try check(true); try check(false)
@@ -215,7 +228,7 @@ struct NativeSwiftClosureTests {
         let runtime = ABIRuntime.shared
         let apply = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.applyStringClosure(_:_:)",
-            as: ((NativeSwiftClosure<String, String>, String) -> String).self
+            as: ((NativeSwiftClosure<(String) -> String>, String) -> String).self
         )
         let suffix = String(repeating: "!", count: 100)
         let callback = try NativeSwiftClosure { (value: String) in value + suffix }
@@ -223,14 +236,14 @@ struct NativeSwiftClosureTests {
         #expect(try unsafe apply.unsafeInvoke(callback, input) == input + suffix)
         let make = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeStringClosure(_:)",
-            as: ((String) -> NativeSwiftClosure<String, String>).self
+            as: ((String) -> NativeSwiftClosure<(String) -> String>).self
         )
         let returned = try unsafe make.unsafeInvoke(input)
         #expect(try unsafe returned.unsafeInvoke(suffix) == input + suffix)
 
         let applyObject = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.applyOptionalObjectClosure(_:_:)",
-            as: ((NativeSwiftClosure<LifetimeToken?, LifetimeToken?>, LifetimeToken?) -> LifetimeToken?).self
+            as: ((NativeSwiftClosure<(LifetimeToken?) -> LifetimeToken?>, LifetimeToken?) -> LifetimeToken?).self
         )
         let identity = try NativeSwiftClosure { (value: LifetimeToken?) in value }
         let token = LifetimeToken()
@@ -239,7 +252,7 @@ struct NativeSwiftClosureTests {
 
         let applyRect = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.applyRectClosure(_:_:)",
-            as: ((NativeSwiftClosure<CGRect, CGRect>, CGRect) -> CGRect).self
+            as: ((NativeSwiftClosure<(CGRect) -> CGRect>, CGRect) -> CGRect).self
         )
         let translate = try NativeSwiftClosure { (value: CGRect) in value.offsetBy(dx: 3, dy: 4) }
         let rectangle = CGRect(x: 1, y: 2, width: 5, height: 6)
@@ -250,11 +263,11 @@ struct NativeSwiftClosureTests {
         let runtime = ABIRuntime.shared
         let prototype = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.applyIntegerClosure(_:_:)",
-            as: ((NativeSwiftClosure<Int64, Int64>, Int64) -> Int64).self
+            as: ((NativeSwiftClosure<(Int64) -> Int64>, Int64) -> Int64).self
         )
         let apply = try await runtime.swiftFunction(
             named: prototype.symbol.declaration.name,
-            as: ((NativeSwiftClosure<Int64, Int64>, RejectingClosureArgument) -> Int64).self
+            as: ((NativeSwiftClosure<(Int64) -> Int64>, RejectingClosureArgument) -> Int64).self
         )
         let destroyed = ClosureCounter(), calls = ClosureCounter()
         weak var observed: ClosureCapture?
@@ -274,9 +287,9 @@ struct NativeSwiftClosureTests {
     @Test func explicitEmptyTupleMatchesTheCompiledCallback() async throws {
         let apply = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.applyEmptyTupleClosure(_:)",
-            as: ((NativeSwiftClosure<Int64, Void>) -> Int64).self
+            as: ((NativeSwiftClosure<(Void) -> Int64>) -> Int64).self
         )
-        let callback = try NativeSwiftClosure<Int64, Void> { _ in 42 }
+        let callback = try NativeSwiftClosure<(Void) -> Int64> { _ in 42 }
         #expect(try unsafe apply.unsafeInvoke(callback) == 42)
         #expect(try unsafe callback.unsafeInvoke(()) == 42)
     }
@@ -284,7 +297,7 @@ struct NativeSwiftClosureTests {
     @Test func incomingNonescapingHooksRequireAScopedClosureRepresentation() async throws {
         let function = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.applyIntegerClosure(_:_:)",
-            as: ((NativeSwiftClosure<Int64, Int64>, Int64) -> Int64).self
+            as: ((NativeSwiftClosure<(Int64) -> Int64>, Int64) -> Int64).self
         )
         await #expect(throws: ABIResolutionError.unsupportedDeclaration(
             "Incoming Swift closure hook arguments require a scoped nonescaping representation."
@@ -302,7 +315,7 @@ struct NativeSwiftClosureTests {
     @Test func passesConcreteCallbackToNonescapingNativeParameter() async throws {
         let apply = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.applyIntegerClosure(_:_:)",
-            as: ((NativeSwiftClosure<Int64, Int64>, Int64) -> Int64).self
+            as: ((NativeSwiftClosure<(Int64) -> Int64>, Int64) -> Int64).self
         )
         let callback = try NativeSwiftClosure { (value: Int64) in value + 7 }
         #expect(try unsafe apply.unsafeInvoke(callback, 35) == 42)
@@ -313,12 +326,12 @@ struct NativeSwiftClosureTests {
         let type = try await ABIRuntime.shared.swiftType(
             named: "ManagedSwiftFixtures.ClosurePropertyOwner", as: ClosurePropertyOwner.self
         )
-        let getter = try await type.getter(named: "callback", as: NativeSwiftClosure<Int64, Int64>.self)
-        let method = try await type.method(named: "readCallback()", as: (() -> NativeSwiftClosure<Int64, Int64>).self)
-        let setter = try await type.setter(named: "callback", as: NativeSwiftClosure<Int64, Int64>.self)
+        let getter = try await type.getter(named: "callback", as: (() -> NativeSwiftClosure<(Int64) -> Int64>).self)
+        let method = try await type.method(named: "readCallback()", as: (() -> NativeSwiftClosure<(Int64) -> Int64>).self)
+        let setter = try await type.setter(named: "callback", as: NativeSwiftClosure<(Int64) -> Int64>.self)
         for throughMethod in [false, true] {
             weak var observed: ClosurePropertyOwner?
-            var returned: NativeSwiftClosure<Int64, Int64>?
+            var returned: NativeSwiftClosure<(Int64) -> Int64>?
             do {
                 let receiver = ClosurePropertyOwner()
                 observed = receiver
@@ -341,10 +354,10 @@ struct NativeSwiftClosureTests {
         let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.StoredIntegerClosure",
                                                as: StoredIntegerClosure.self)
         let create = try await type.initializer(
-            named: "init(_:)", as: ((NativeSwiftClosure<Int64, Int64>) -> StoredIntegerClosure).self
+            named: "init(_:)", as: ((NativeSwiftClosure<(Int64) -> Int64>) -> StoredIntegerClosure).self
         )
         let apply = try await type.method(
-            named: "apply(_:_:)", as: ((NativeSwiftClosure<Int64, Int64>, Int64) -> Int64).self
+            named: "apply(_:_:)", as: ((NativeSwiftClosure<(Int64) -> Int64>, Int64) -> Int64).self
         )
         let destroyed = ClosureCounter()
         weak var observed: ClosureCapture?
@@ -369,7 +382,7 @@ struct NativeSwiftClosureTests {
     @Test func escapingNativeCallbackOwnsCapturesAndEntryCode() async throws {
         let retain = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.retainIntegerClosure(_:)",
-            as: ((NativeSwiftClosure<Int64, Int64>) -> StoredIntegerClosure).self
+            as: ((NativeSwiftClosure<(Int64) -> Int64>) -> StoredIntegerClosure).self
         )
         let destroyed = ClosureCounter()
         weak var observed: ClosureCapture?
@@ -393,7 +406,7 @@ struct NativeSwiftClosureTests {
     @Test func repeatedNativeHandoffsPreserveOneOwningEntry() async throws {
         let echo = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.echoClosure(_:)",
-            as: ((NativeSwiftClosure<Int64, Int64>) -> NativeSwiftClosure<Int64, Int64>).self
+            as: ((NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftClosure<(Int64) -> Int64>).self
         )
         let destroyed = ClosureCounter()
         weak var observed: ClosureCapture?
@@ -411,7 +424,7 @@ struct NativeSwiftClosureTests {
     @Test func noncapturingNativeResultAllowsANilContext() async throws {
         let make = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.makeNoncapturingClosure()",
-            as: (() -> NativeSwiftClosure<Int64, Int64>).self
+            as: (() -> NativeSwiftClosure<(Int64) -> Int64>).self
         )
         let callback = try unsafe make.unsafeInvoke()
         #expect(try unsafe callback.unsafeInvoke(21) == 42)
@@ -420,11 +433,11 @@ struct NativeSwiftClosureTests {
     @Test func returnedNativeClosureOwnsItsCaptureContext() async throws {
         let make = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.makeIntegerClosure(_:_:)",
-            as: ((LifetimeToken, Int64) -> NativeSwiftClosure<Int64, Int64>).self
+            as: ((LifetimeToken, Int64) -> NativeSwiftClosure<(Int64) -> Int64>).self
         )
         weak var observed: LifetimeToken?
         var destroyed = 0
-        var callback: NativeSwiftClosure<Int64, Int64>?
+        var callback: NativeSwiftClosure<(Int64) -> Int64>?
         do {
             let token = LifetimeToken { destroyed += 1 }
             observed = token
@@ -442,7 +455,7 @@ struct NativeSwiftClosureTests {
 
     @Test func handlesZeroArgumentsVoidAndStackArguments() throws {
         let calls = ClosureCounter()
-        let empty = try NativeSwiftClosure<Void> { calls.increment() }
+        let empty = try NativeSwiftClosure<() -> Void> { calls.increment() }
         try unsafe empty.unsafeInvoke()
         #expect(calls.count == 1)
         let many = try NativeSwiftClosure {
@@ -484,7 +497,7 @@ struct NativeSwiftClosureTests {
     }
 
     @Test func failedReturnedClosurePreparationReleasesOwnedContext() throws {
-        let codec = try NativeSwiftClosure<Int64, Int64>.makeClosureCodec()
+        let codec = try NativeSwiftClosure<(Int64) -> Int64>.makeClosureCodec()
         let destroyed = ClosureCounter()
         let context = Unmanaged.passRetained(ClosureCapture(destroyed)).toOpaque()
         #expect(throws: ABIInvocationError.self) {

@@ -10,14 +10,14 @@ For a loaded module declaring `func apply(_ callback: (Int64) -> Int64, value: I
 let callback = try NativeSwiftClosure { (value: Int64) in value + 7 }
 let apply = try await ABIRuntime.shared.swiftFunction(
     named: "Example.apply(_:value:)",
-    as: ((NativeSwiftClosure<Int64, Int64>, Int64) -> Int64).self
+    as: ((NativeSwiftClosure<(Int64) -> Int64>, Int64) -> Int64).self
 )
 let result = try unsafe apply.unsafeInvoke(callback, 35)
 ```
 
-The first generic parameter is the result; the remaining parameters are the callback arguments, matching ``NativeSwiftFunction``. Function and member signatures accept this wrapper in place of the native Swift closure type. There is no fixed argument-count limit.
+The generic parameter is the complete native function type, including its arguments, result, declared errors, and async isolation convention. Function and member signatures accept this wrapper in place of the native Swift closure type. There is no fixed argument-count limit.
 
-The initializer accepts a nonisolated, synchronous, nonthrowing `@Sendable` body. Its captures must be safe for the native caller's thread and concurrent calls. The generated entry translates the concrete native arguments into the compiler's generic Swift representation before calling the body. The callback may be passed to a nonescaping parameter or retained by an escaping native callee.
+The synchronous initializer accepts a nonisolated `@Sendable` body matching the signature's arguments, result, and declared error type. Its captures must be safe for the native caller's thread and concurrent calls. The generated entry translates the concrete native arguments into the compiler's generic Swift representation before calling the body. The callback may be passed to a nonescaping parameter or retained by an escaping native callee.
 
 A retained native callback owns the Swift context that keeps its generated entry and body alive. Releasing the original wrapper does not invalidate a copy held by the callee. The last native context release releases the body and its captures; there is no separate invalidate or close operation.
 
@@ -30,7 +30,7 @@ For a loaded module declaring `func makeAdder(_ bias: Int64) -> (Int64) -> Int64
 ```swift
 let factory = try await ABIRuntime.shared.swiftFunction(
     named: "Example.makeAdder(_:)",
-    as: ((Int64) -> NativeSwiftClosure<Int64, Int64>).self
+    as: ((Int64) -> NativeSwiftClosure<(Int64) -> Int64>).self
 )
 let addSeven = try unsafe factory.unsafeInvoke(7)
 let result = try unsafe addSeven.unsafeInvoke(35)
@@ -42,16 +42,16 @@ Calling stays on the caller's executor. The caller must satisfy the returned clo
 
 ## Throwing callbacks and returned closures
 
-Use ``NativeSwiftThrowingClosure`` with a result, a declared error type, and the argument types. Failure can be a concrete Swift error, `any Error`, or `Never`.
+Include `throws` or `throws(Failure)` in the ``NativeSwiftClosure`` signature. `Failure` can be a concrete Swift error, `any Error`, or `Never`; `throws(Never)` is equivalent to a nonthrowing signature.
 
 ```swift
-let callback = try NativeSwiftThrowingClosure<String, any Error, Bool> { fail in
+let callback = try NativeSwiftClosure<(Bool) throws -> String> { fail in
     if fail { throw ExampleError.unavailable }
     return "ready"
 }
 let apply = try await ABIRuntime.shared.swiftFunction(
     named: "Example.apply(_:_:)",
-    as: ((NativeSwiftThrowingClosure<String, any Error, Bool>, Bool) throws -> String).self
+    as: ((NativeSwiftClosure<(Bool) throws -> String>, Bool) throws -> String).self
 )
 let result = try unsafe apply.unsafeInvoke(callback, false)
 ```
@@ -62,33 +62,33 @@ Concrete errors use their actual Swift representation through ``ABIBridgeSwiftVa
 
 ## Async callbacks and returned closures
 
-Use ``NativeSwiftAsyncClosure`` for `nonisolated(nonsending)` closures and ``NativeSwiftConcurrentClosure`` for the `@concurrent` convention. Both take a result, a declared error type, and argument types; use `Never` for nonthrowing closures.
+Use an async function type as the ``NativeSwiftClosure`` signature. Include `nonisolated(nonsending)` for a hidden caller-isolation argument or `@concurrent` for the concurrent convention. Include `@Sendable` when it belongs to the native declaration's closure type, and include `throws` or `throws(Failure)` for native errors.
 
 ```swift
 let body: (nonisolated(nonsending) @Sendable (Int64) async -> Int64) = { value in
     await Task.yield()
     return value + 7
 }
-let callback = try NativeSwiftAsyncClosure<Int64, Never, Int64>(body)
+let callback = try NativeSwiftClosure<nonisolated(nonsending) @Sendable (Int64) async -> Int64>(body)
 let result = try unsafe await callback.unsafeInvoke(35)
 ```
 
 With Swift 6.3.3, give a closure expression its concrete function type before passing it to the initializer, as above. Passing an async closure expression directly into the parameter-pack initializer can crash that compiler during SIL generation. A pretyped closure or a function reference avoids that compiler limitation.
 
-The caller-isolated wrapper carries the native caller's hidden isolation argument. The concurrent wrapper enters the generic executor before running its body; the body can perform its own actor hops. Both preserve the original Task, including task-local values, cooperative cancellation, and executor preferences. Calling `unsafeInvoke` restores the Swift caller's executor after native completion.
+A caller-isolated signature carries the native caller's hidden isolation argument. A concurrent signature enters the generic executor before running its body; the body can perform its own actor hops. Both preserve the original Task, including task-local values, cooperative cancellation, and executor preferences. Calling `unsafeInvoke` restores the Swift caller's executor after native completion.
 
 Pass the appropriate wrapper in an async function's metatype just as with synchronous closures:
 
 ```swift
 let apply = try await ABIRuntime.shared.swiftFunction(
     named: "Example.apply(_:_:)",
-    as: (@concurrent (NativeSwiftConcurrentClosure<Int64, Never, Int64>, Int64) async -> Int64).self
+    as: (@concurrent (NativeSwiftClosure<@Sendable @concurrent (Int64) async -> Int64>, Int64) async -> Int64).self
 )
 ```
 
 For a native factory returning a closure, put the wrapper in the factory's result type. Its descriptor, implementation image, arguments, result storage, and captured context remain alive across suspension. Native escaping copies carry the same code leases, including after repeated handoffs. Native errors use ``NativeSwiftError`` and retain their code dependencies without keeping unrelated callback captures alive.
 
-Async wrappers use a `@Sendable` closure type for label-only lookup. Use the complete native declaration when its source-level attributes differ. The wrapper itself is not Sendable: a returned foreign capture still carries its original actor and ownership requirements. Neither choosing the physical calling convention nor resolving a symbol establishes those requirements.
+Label-only lookup preserves the signature's `@Sendable` and async attributes. The callback initializer always requires a Sendable body, even when the native parameter accepts an ordinary closure. The wrapper itself is not Sendable: a returned foreign capture still carries its original actor and ownership requirements. Neither choosing the physical calling convention nor resolving a symbol establishes those requirements.
 
 ## Repeated callback preparation
 
@@ -119,7 +119,7 @@ Custom `ABIBridgeValue` conversions describe foreign representations rather than
 
 Incoming closure-valued hook arguments are outside this subset: a native nonescaping callback can carry a stack context that cannot be retained as an owned wrapper. Hook preparation rejects that representation before installing an entry.
 
-Label-only lookup uses an ordinary Swift function type for this wrapper. If the native declaration spells additional callback-type attributes, use its full source-level declaration and establish the corresponding isolation and Sendable contract separately. Neither a source name nor a function pointer establishes that contract.
+Label-only lookup uses the wrapper's complete function type. Use the source declaration's callback attributes and establish its isolation and Sendable contract separately. Neither a source name nor a function pointer establishes that contract.
 
 ## Ownership and failures
 
@@ -139,4 +139,4 @@ Compiler fixtures compare both reabstraction directions and the native result re
 
 See <doc:SwiftFunctionInvocation>, <doc:SwiftMemberInvocation>, and <doc:ManagedSwiftValues> for the surrounding call and storage contracts.
 
-For a caller-isolated body passed to a native nonescaping parameter, use ``NativeSwiftClosure/withUnsafeNonescaping(_:_:)``. The body and native invocation stay synchronous on the current executor, and neither the native callee nor the use body may save the callback.
+For a caller-isolated body passed to a native nonescaping parameter, use ``NativeSwiftClosure/withUnsafeNonescaping(_:_:)-4ragm``. The body and native invocation stay synchronous on the current executor, and neither the native callee nor the use body may save the callback.

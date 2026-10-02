@@ -77,7 +77,7 @@ let initialize = try await type.initializer(
 )
 let renderer = try unsafe initialize.unsafeInvoke("Hello")
 
-let standard = try await type.staticGetter(named: "standard", as: String.self)
+let standard = try await type.staticGetter(named: "standard", as: (() -> String).self)
 let value = try unsafe standard.unsafeInvoke()
 ```
 
@@ -88,7 +88,7 @@ Opaque some results use NativeSwiftOpaqueValue for functions, methods, and gette
 ## Property accessors
 
 ```swift
-let getText = try await type.getter(named: "text", as: String.self)
+let getText = try await type.getter(named: "text", as: (() -> String).self)
 let setText = try await type.setter(named: "text", as: String.self)
 try unsafe setText.unsafeInvoke(on: renderer, "Updated")
 let text = try unsafe getText.unsafeInvoke(on: renderer)
@@ -130,7 +130,7 @@ Label-only method names obtain canonical parameter/result names from their metat
 
 Framework, executable-path, install-name, and retained-image overloads acquire explicit targets by default. Pass `loading: .loadedOnly` to retain inspection behavior; see <doc:ImageLoading>. The method or type handle keeps its implementation alive, and custom wrapper results retain their call's owners. Raw pointers remain borrowed.
 
-The unsafe boundary requires the actual declaration's ownership, effects, and actor/thread requirements. Async function metatypes select NativeSwiftAsyncMethod or NativeSwiftAsyncFunction handles; see <doc:SwiftAsyncABI>. Generic metadata synthesis, nontrivial foreign value layouts, and resilient-layout inference remain adapter cases.
+The unsafe boundary requires the actual declaration's ownership, effects, and actor/thread requirements. Async function metatypes select NativeSwiftMethod or NativeSwiftFunction handles with an async Signature; see <doc:SwiftAsyncABI>. Generic metadata synthesis, nontrivial foreign value layouts, and resilient-layout inference remain adapter cases.
 
 ## Resolve members from private receivers
 

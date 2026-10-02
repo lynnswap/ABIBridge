@@ -37,16 +37,16 @@ extension Container: ABIBridgeSwiftValue {
     public static func make(route: String) async throws -> SwiftUIValidationSession {
         let runtime = ABIRuntime()
         let model = PanelModel(), events = RenderEvents()
-        let increment = try NativeSwiftClosure<Int64, Int64> { $0 + 1 }
+        let increment = try NativeSwiftClosure<(Int64) -> Int64> { $0 + 1 }
         let host: AnyObject
         if route == "host" {
             let make = try await runtime.swiftFunction(named: "SwiftUIFixtures.makeHost(_:_:_:)",
-                as: ((PanelModel, RenderEvents, NativeSwiftClosure<Int64, Int64>) -> AnyObject).self)
+                as: ((PanelModel, RenderEvents, NativeSwiftClosure<(Int64) -> Int64>) -> AnyObject).self)
             host = try unsafe make.unsafeInvoke(model, events, increment)
         } else {
             let name = route == "opaque" ? "makePanel" : "makeComposedPanel"
             let make = try await runtime.swiftFunction(named: "SwiftUIFixtures." + name + "(_:_:_:)",
-                as: ((PanelModel, RenderEvents, NativeSwiftClosure<Int64, Int64>) -> NativeSwiftOpaqueValue).self)
+                as: ((PanelModel, RenderEvents, NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftOpaqueValue).self)
             let result = try unsafe make.unsafeInvoke(model, events, increment)
             let view = try NativeSwiftView(result)
             #if canImport(UIKit)
@@ -125,7 +125,7 @@ private struct SwiftUIRender {
     try check(try swiftUIImage(unsafe wrap.unsafeInvoke(input)).matches(swiftUIImage(SwiftUIFixtures.wrap(input))), "Compiled specialization supplies generic View metadata and witnesses")
 
     let opaque = try await runtime.swiftFunction(named: "SwiftUIFixtures.makeComposedPanel(_:_:_:)",
-        as: ((PanelModel, RenderEvents, NativeSwiftClosure<Int64, Int64>) -> NativeSwiftOpaqueValue).self)
+        as: ((PanelModel, RenderEvents, NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftOpaqueValue).self)
     let model = PanelModel(), events = RenderEvents()
     let result = try unsafe opaque.unsafeInvoke(model, events, .init { $0 + 1 })
     let view = try NativeSwiftView(result)

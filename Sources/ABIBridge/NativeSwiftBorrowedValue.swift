@@ -113,7 +113,7 @@ public struct NativeSwiftBorrowedMethod<Result, each Argument>: Sendable {
     /// The selected declaration and retained implementation image.
     public let symbol: ResolvedSymbol
     private let type: NativeSwiftType
-    private let call: SwiftCall<Result, repeat each Argument>
+    private let call: SwiftCall
 
     init(symbol: ResolvedSymbol, type: NativeSwiftType) throws {
         guard !(type.metadata is AnyClass) else {
@@ -121,7 +121,7 @@ public struct NativeSwiftBorrowedMethod<Result, each Argument>: Sendable {
         }
         self.symbol = symbol
         self.type = type
-        call = try SwiftCall()
+        call = try SwiftCall(signature: ((repeat each Argument) -> Result).self)
     }
 
     /// Calls a compatible member while the receiver's borrow is active.

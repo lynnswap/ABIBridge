@@ -105,7 +105,7 @@ struct CallerDescribedValueTests {
         let result = try unsafe function.unsafeInvoke(input)
         #expect(result.value == 3.5 && result.tag == 5)
         let apply = try await runtime.swiftFunction(named: "ABIBridgeTests.callerApply(_:_:)",
-            as: ((NativeSwiftClosure<CallerRecord, CallerRecord>, CallerRecord) -> CallerRecord).self)
+            as: ((NativeSwiftClosure<(CallerRecord) -> CallerRecord>, CallerRecord) -> CallerRecord).self)
         let body = try NativeSwiftClosure { (value: CallerRecord) in callerRecord(value) }
         let callbackResult = try unsafe apply.unsafeInvoke(body, input)
         #expect(callbackResult.value == result.value && callbackResult.tag == result.tag)

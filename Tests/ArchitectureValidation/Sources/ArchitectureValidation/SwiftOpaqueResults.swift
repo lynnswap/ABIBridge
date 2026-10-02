@@ -55,7 +55,7 @@ import Foundation
 
     let type = try await runtime.swiftType(named: "SwiftValueFixtures.OpaqueOwner")
     let owner = OpaqueOwner(ErrorToken())
-    let getter = try await type.getter(named: "summary", as: NativeSwiftOpaqueValue.self)
+    let getter = try await type.getter(named: "summary", as: (() -> NativeSwiftOpaqueValue).self)
     try unsafe getter.unsafeInvoke(on: owner).withValue {
         try check(($0 as? any ExistentialValue)?.number == 42, "Opaque getter resolves the property's descriptor")
     }
@@ -89,7 +89,7 @@ import Foundation
         as: ((ErrorToken) -> NativeSwiftOpaqueValue).self)
     try unsafe objc.unsafeInvoke(ErrorToken()).withValue { try check($0 is NSObject, "ObjC protocol constraint uses a direct object result") }
     let extensionMethod = try await type.method(named: "extensionOpaque(_:)", as: ((Int64) -> NativeSwiftOpaqueValue).self)
-    let extensionGetter = try await type.getter(named: "extensionSummary", as: NativeSwiftOpaqueValue.self)
+    let extensionGetter = try await type.getter(named: "extensionSummary", as: (() -> NativeSwiftOpaqueValue).self)
     let extensionObject = try await type.method(named: "extensionClassOpaque()", as: (() -> NativeSwiftOpaqueValue).self)
     try unsafe extensionMethod.unsafeInvoke(on: owner, 47).withValue {
         try check(($0 as? any ExistentialValue)?.number == 47, "Extension method locates its matched opaque descriptor")

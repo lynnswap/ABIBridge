@@ -1,6 +1,6 @@
 import ABIBridgeCore
 
-private final class SwiftAsyncClosureStorage {
+final class SwiftAsyncClosureStorage {
     let value: ABISwiftClosureValue
     let entry: SwiftAsyncEntry
     let codeOwner: Any
@@ -93,136 +93,129 @@ private final class SwiftAsyncClosureCallbackOwner {
     deinit { ABIReleaseSwiftAsyncClosureCallback(handle) }
 }
 
-private struct SwiftAsyncClosureCore<Result, Failure: Error, each Argument> {
-    let storage: SwiftAsyncClosureStorage
-    let call: SwiftAsyncCall<Result, repeat each Argument>
-
-    init(_ body: @escaping @Sendable (repeat each Argument) async throws(Failure) -> Result,
-         inheritsCallerIsolation: Bool) throws {
-        let prepared = try Self.prepare(inheritsCallerIsolation: inheritsCallerIsolation)
-        let callback = try SwiftAsyncClosureCallbackOwner(interface: prepared.call.interface, body: SwiftAsyncClosureBody(inheritsCallerIsolation: inheritsCallerIsolation) { arguments, result, errorOutput in
-            var index = 0
-            func decode<Value>(_ type: Value.Type) -> Value {
-                defer { index += 1 }
-                return arguments![index]!.load(as: type)
-            }
-            let values = (repeat decode((each Argument).self))
-            do throws(Failure) {
-                let value = try await body(repeat each values)
-                result.initializeMemory(as: Result.self, repeating: value, count: 1)
-                return false
-            } catch {
-                errorOutput!.initializeMemory(as: Failure.self, repeating: error, count: 1)
-                return true
-            }
-        })
-        storage = try Self.storage(callback, discriminator: prepared.discriminator)
-        call = prepared.call
+extension NativeSwiftClosure {
+    /// Creates an async callback that preserves the native caller's task and isolation.
+    /// The Sendable body may escape and be called concurrently. Native code receives its declared errors.
+    public init<Result, Failure: Error, each Argument>(
+        _ body: @escaping @Sendable (repeat each Argument) async throws(Failure) -> Result
+    ) throws where Signature == (repeat each Argument) async throws(Failure) -> Result {
+        try self.init(asyncBody: body)
     }
 
-    private init(storage: SwiftAsyncClosureStorage, call: SwiftAsyncCall<Result, repeat each Argument>) {
-        self.storage = storage; self.call = call
+    @_disfavoredOverload
+    public init<Result, Failure: Error, each Argument>(
+        _ body: @escaping @Sendable (repeat each Argument) async throws(Failure) -> Result
+    ) throws where Signature == @Sendable (repeat each Argument) async throws(Failure) -> Result {
+        try self.init(asyncBody: body)
     }
 
-    private static func prepare(inheritsCallerIsolation: Bool) throws -> (call: SwiftAsyncCall<Result, repeat each Argument>, discriminator: UInt16) {
-        // SIL hashes the implicit actor as a class parameter; IRGen expands it
-        // into the two-word opaque isolation prefix used by the call interface.
-        var parameters = inheritsCallerIsolation ? ["-class"] : []
-        for type in repeat (each Argument).self {
-            if type != Void.self { parameters.append(try swiftClosureAuthType(type)) }
-        }
-        let result = Result.self == Void.self ? nil : try swiftClosureAuthType(Result.self)
-        return (try SwiftAsyncCall(errorPlan: SwiftErrorPlan.make(Failure.self), inheritsCallerIsolation: inheritsCallerIsolation),
-                swiftClosureDiscriminator(parameters: parameters, result: result))
+    /// Creates an async callback using the concurrent convention, without a caller-isolation prefix.
+    @_disfavoredOverload
+    public init<Result, Failure: Error, each Argument>(
+        _ body: @escaping @Sendable (repeat each Argument) async throws(Failure) -> Result
+    ) throws where Signature == @concurrent (repeat each Argument) async throws(Failure) -> Result {
+        try self.init(asyncBody: body)
     }
 
-    private static func storage(_ callback: SwiftAsyncClosureCallbackOwner, discriminator: UInt16) throws -> SwiftAsyncClosureStorage {
+    @_disfavoredOverload
+    public init<Result, Failure: Error, each Argument>(
+        _ body: @escaping @Sendable (repeat each Argument) async throws(Failure) -> Result
+    ) throws where Signature == @Sendable @concurrent (repeat each Argument) async throws(Failure) -> Result {
+        try self.init(asyncBody: body)
+    }
+
+    private init<Result, Failure: Error, each Argument>(
+        asyncBody body: @escaping @Sendable (repeat each Argument) async throws(Failure) -> Result
+    ) throws {
+        let signature = try SwiftFunctionSignature(Signature.self)
+        let discriminator = try signature.closureDiscriminator()
+        let prepared = try SwiftAsyncCall(signature: Signature.self, errorPlan: signature.makeErrorPlan(),
+            inheritsCallerIsolation: signature.inheritsCallerIsolation)
+        let callback = try SwiftAsyncClosureCallbackOwner(interface: prepared.interface,
+            body: SwiftAsyncClosureBody(inheritsCallerIsolation: signature.inheritsCallerIsolation) { arguments, result, errorOutput in
+                var index = 0
+                func decode<Value>(_ type: Value.Type) -> Value {
+                    defer { index += 1 }
+                    return arguments![index]!.load(as: type)
+                }
+                let values = (repeat decode((each Argument).self))
+                do throws(Failure) {
+                    let value = try await body(repeat each values)
+                    result.initializeMemory(as: Result.self, repeating: value, count: 1)
+                    return false
+                } catch {
+                    errorOutput!.initializeMemory(as: Failure.self, repeating: error, count: 1)
+                    return true
+                }
+            })
+        call = .asynchronous(try Self.asyncStorage(callback, discriminator: discriminator), prepared)
+    }
+
+    private static func asyncStorage(_ callback: SwiftAsyncClosureCallbackOwner, discriminator: UInt16) throws -> SwiftAsyncClosureStorage {
         try SwiftAsyncClosureStorage(adopting: ABISwiftClosureValue(
             function: ABISignSwiftAsyncClosureDescriptor(ABISwiftAsyncClosureCallbackDescriptor(callback.handle), discriminator),
             context: Unmanaged.passRetained(callback).toOpaque()), discriminator: discriminator, retaining: nil)
     }
 
-    static func codec<Value>(inheritsCallerIsolation: Bool, wrap: @escaping @Sendable (Self) -> Value) throws -> SwiftClosureCodec {
-        let prepared = try prepare(inheritsCallerIsolation: inheritsCallerIsolation)
+    static func makeAsyncClosureCodec(signature: SwiftFunctionSignature) throws -> SwiftClosureCodec {
+        let discriminator = try signature.closureDiscriminator()
+        let prepared = try SwiftAsyncCall(signature: Signature.self, errorPlan: signature.makeErrorPlan(),
+            inheritsCallerIsolation: signature.inheritsCallerIsolation)
         let pointer = try CValueType(scalar: ABIValuePointer)
         return SwiftClosureCodec(type: try CValueType(fields: [pointer, pointer])) { value, owner, taking in
             if !taking { ABIRetainSwiftClosureContext(value.context) }
-            let original = try SwiftAsyncClosureStorage(adopting: value, discriminator: prepared.discriminator, retaining: owner)
+            let original = try SwiftAsyncClosureStorage(adopting: value, discriminator: discriminator, retaining: owner)
             if ABIIsSwiftAsyncClosureCallbackFunction(original.entry.function) {
-                return wrap(Self(storage: original, call: prepared.call))
+                return Self(call: .asynchronous(original, prepared))
             }
-            let callback = try SwiftAsyncClosureCallbackOwner(interface: prepared.call.interface,
-                body: SwiftAsyncClosureBody(inheritsCallerIsolation: inheritsCallerIsolation, retainingCode: original.codeOwner) { arguments, result, error in
-                    let invocation = ABICreateSwiftAsyncInvocation(prepared.call.interface.handle, original.entry.function,
+            let callback = try SwiftAsyncClosureCallbackOwner(interface: prepared.interface,
+                body: SwiftAsyncClosureBody(inheritsCallerIsolation: signature.inheritsCallerIsolation, retainingCode: original.codeOwner) { arguments, result, error in
+                    let invocation = ABICreateSwiftAsyncInvocation(prepared.interface.handle, original.entry.function,
                         original.entry.contextSize, result, arguments, original.value.context, error, nil)
                     precondition(invocation != nil, "The prepared async closure forwarding call must be valid.")
-                    defer {
-                        withExtendedLifetime(original) { ABIReleaseSwiftAsyncInvocation(invocation!) }
-                    }
+                    defer { withExtendedLifetime(original) { ABIReleaseSwiftAsyncInvocation(invocation!) } }
                     await invokeSwiftAsync(invocation!)
                     return ABISwiftAsyncInvocationDidThrow(invocation!)
                 })
-            return wrap(Self(storage: try storage(callback, discriminator: prepared.discriminator), call: prepared.call))
+            return Self(call: .asynchronous(try asyncStorage(callback, discriminator: discriminator), prepared))
         }
     }
 
-    @unsafe nonisolated(nonsending) func unsafeInvoke(_ values: repeat each Argument) async throws -> Result {
-        try unsafe await call.unsafeInvoke(entry: storage.entry,
+    // Swift 6.3 mismanages async task allocations when a same-type requirement
+    // decomposes Signature into a parameter pack. Transparent entry thunks keep
+    // that requirement out of the implementation frame, including in Debug builds.
+
+    /// Awaits the native closure on the original task. Native failures use NativeSwiftError.
+    /// The caller satisfies the native signature's ABI, ownership, and actor/thread requirements.
+    @_transparent
+    @unsafe public nonisolated(nonsending) func unsafeInvoke<Result, Failure: Error, each Argument>(_ values: repeat each Argument) async throws -> Result
+    where Signature == (repeat each Argument) async throws(Failure) -> Result {
+        try unsafe await invokeAsync(repeat each values)
+    }
+
+    @_transparent
+    @unsafe public nonisolated(nonsending) func unsafeInvoke<Result, Failure: Error, each Argument>(_ values: repeat each Argument) async throws -> Result
+    where Signature == @Sendable (repeat each Argument) async throws(Failure) -> Result {
+        try unsafe await invokeAsync(repeat each values)
+    }
+
+    /// Awaits a native closure using the concurrent convention and resumes on the caller's executor.
+    @_transparent
+    @unsafe public nonisolated(nonsending) func unsafeInvoke<Result, Failure: Error, each Argument>(_ values: repeat each Argument) async throws -> Result
+    where Signature == @concurrent (repeat each Argument) async throws(Failure) -> Result {
+        try unsafe await invokeAsync(repeat each values)
+    }
+
+    @_transparent
+    @unsafe public nonisolated(nonsending) func unsafeInvoke<Result, Failure: Error, each Argument>(_ values: repeat each Argument) async throws -> Result
+    where Signature == @Sendable @concurrent (repeat each Argument) async throws(Failure) -> Result {
+        try unsafe await invokeAsync(repeat each values)
+    }
+
+    @unsafe @usableFromInline nonisolated(nonsending) func invokeAsync<Result, each Argument>(_ values: repeat each Argument) async throws -> Result {
+        guard case .asynchronous(let storage, let prepared) = call else { preconditionFailure("An async closure has an async call plan.") }
+        return try unsafe await prepared.unsafeInvoke(entry: storage.entry,
             context: storage.value.context.map { UnsafeRawPointer($0) }, retaining: storage,
             retainingCode: storage.codeOwner, repeat each values)
-    }
-}
-
-/// An owned caller-isolated native Swift async closure.
-/// Failure is a concrete error type, any Error, or Never. Invocation preserves
-/// the caller's task and executor; the caller satisfies the native ABI and isolation.
-public struct NativeSwiftAsyncClosure<Result, Failure: Error, each Argument> {
-    private let core: SwiftAsyncClosureCore<Result, Failure, repeat each Argument>
-
-    /// Creates a callback whose Sendable body runs with the native caller's isolation.
-    public init(_ body: @escaping @Sendable (repeat each Argument) async throws(Failure) -> Result) throws {
-        core = try SwiftAsyncClosureCore(body, inheritsCallerIsolation: true)
-    }
-    private init(_ core: SwiftAsyncClosureCore<Result, Failure, repeat each Argument>) { self.core = core }
-
-    /// Awaits the native closure on the original task. Native errors use NativeSwiftError.
-    @unsafe public nonisolated(nonsending) func unsafeInvoke(_ values: repeat each Argument) async throws -> Result {
-        try unsafe await core.unsafeInvoke(repeat each values)
-    }
-}
-extension NativeSwiftAsyncClosure: SwiftClosureValue {
-    static var swiftFunctionType: Any.Type {
-        (nonisolated(nonsending) @Sendable (repeat each Argument) async throws(Failure) -> Result).self
-    }
-    func encodeClosure() -> NativeValueStorage { core.storage.encoded() }
-    static func makeClosureCodec() throws -> SwiftClosureCodec {
-        try SwiftAsyncClosureCore<Result, Failure, repeat each Argument>.codec(inheritsCallerIsolation: true, wrap: Self.init)
-    }
-}
-
-/// An owned native Swift async closure using the concurrent calling convention.
-/// Native entry runs without a hidden caller-isolation argument. Returned values
-/// retain their native actor requirements and are not assumed Sendable.
-public struct NativeSwiftConcurrentClosure<Result, Failure: Error, each Argument> {
-    private let core: SwiftAsyncClosureCore<Result, Failure, repeat each Argument>
-
-    /// Creates a callback whose Sendable body executes on the generic executor.
-    public init(_ body: @escaping @Sendable (repeat each Argument) async throws(Failure) -> Result) throws {
-        core = try SwiftAsyncClosureCore(body, inheritsCallerIsolation: false)
-    }
-    private init(_ core: SwiftAsyncClosureCore<Result, Failure, repeat each Argument>) { self.core = core }
-
-    /// Awaits the native closure and resumes on the caller's executor, preserving its task.
-    @unsafe public nonisolated(nonsending) func unsafeInvoke(_ values: repeat each Argument) async throws -> Result {
-        try unsafe await core.unsafeInvoke(repeat each values)
-    }
-}
-extension NativeSwiftConcurrentClosure: SwiftClosureValue {
-    static var swiftFunctionType: Any.Type {
-        (@Sendable @concurrent (repeat each Argument) async throws(Failure) -> Result).self
-    }
-    func encodeClosure() -> NativeValueStorage { core.storage.encoded() }
-    static func makeClosureCodec() throws -> SwiftClosureCodec {
-        try SwiftAsyncClosureCore<Result, Failure, repeat each Argument>.codec(inheritsCallerIsolation: false, wrap: Self.init)
     }
 }

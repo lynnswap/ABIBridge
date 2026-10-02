@@ -9,8 +9,8 @@ import SwiftValueFixtures
         checks.append(message)
     }
     let apply = try await runtime.swiftFunction(named: "SwiftValueFixtures.applySmallThrowing(_:_:)",
-        as: ((NativeSwiftThrowingClosure<Int64, SmallError, Int64>, Int64) throws(SmallError) -> Int64).self)
-    let callback = try NativeSwiftThrowingClosure<Int64, SmallError, Int64> { (value: Int64) throws(SmallError) in
+        as: ((NativeSwiftClosure<(Int64) throws(SmallError) -> Int64>, Int64) throws(SmallError) -> Int64).self)
+    let callback = try NativeSwiftClosure<(Int64) throws(SmallError) -> Int64> { (value: Int64) throws(SmallError) in
         if value < 0 { throw SmallError(0) }
         return value + 7
     }
@@ -22,8 +22,8 @@ import SwiftValueFixtures
         try error.withUnderlyingError { try check(($0 as? SmallError)?.code == 0, "Zero-valued callback error uses the native error indicator") }
     }
     let large = try await runtime.swiftFunction(named: "SwiftValueFixtures.applyLargeThrowing(_:_:_:)",
-        as: ((NativeSwiftThrowingClosure<LargeError, LargeError, ErrorToken, Bool>, ErrorToken, Bool) throws(LargeError) -> LargeError).self)
-    let largeBody = try NativeSwiftThrowingClosure<LargeError, LargeError, ErrorToken, Bool> {
+        as: ((NativeSwiftClosure<(ErrorToken, Bool) throws(LargeError) -> LargeError>, ErrorToken, Bool) throws(LargeError) -> LargeError).self)
+    let largeBody = try NativeSwiftClosure<(ErrorToken, Bool) throws(LargeError) -> LargeError> {
         (token: ErrorToken, fail: Bool) throws(LargeError) in
         if fail { throw LargeError(token) }
         return LargeError(token)
@@ -38,9 +38,9 @@ import SwiftValueFixtures
         try error.withUnderlyingError { try check(($0 as? LargeError)?.token === token, "Throwing closure transfers an independent indirect error") }
     }
     let make = try await runtime.swiftFunction(named: "SwiftValueFixtures.returnSmallThrowing(_:)",
-        as: ((ErrorToken) -> NativeSwiftThrowingClosure<Int64, SmallError, Int64>).self)
+        as: ((ErrorToken) -> NativeSwiftClosure<(Int64) throws(SmallError) -> Int64>).self)
     weak var observed: ErrorToken?
-    var returned: NativeSwiftThrowingClosure<Int64, SmallError, Int64>?
+    var returned: NativeSwiftClosure<(Int64) throws(SmallError) -> Int64>?
     do {
         let capture = ErrorToken()
         observed = capture
@@ -48,7 +48,7 @@ import SwiftValueFixtures
     }
     try check(observed != nil && (try unsafe returned?.unsafeInvoke(35)) == 42, "Returned throwing closure retains its native capture")
     let retain = try await runtime.swiftFunction(named: "SwiftValueFixtures.retainSmallThrowing(_:)",
-        as: ((NativeSwiftThrowingClosure<Int64, SmallError, Int64>) -> ThrowingValueHolder).self)
+        as: ((NativeSwiftClosure<(Int64) throws(SmallError) -> Int64>) -> ThrowingValueHolder).self)
     var stored = try unsafe retain.unsafeInvoke(returned!)
     returned = nil
     try check(try stored.value(35) == 42 && observed != nil, "Native escaping storage owns the forwarded throwing closure")

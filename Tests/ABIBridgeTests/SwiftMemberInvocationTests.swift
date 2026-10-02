@@ -149,21 +149,21 @@ struct SwiftMemberInvocationTests {
     @MainActor @Test func extractedMethodsAndBindingsHaveIndependentReceiverLifetimes() async throws {
         let runtime = ABIRuntime()
         weak var observedOriginal: SwiftMemberRenderer?
-        let render: NativeSwiftMethod<Int, Int>
-        let getter: NativeSwiftMethod<String>
-        let setter: NativeSwiftMethod<Void, String>
+        let render: NativeSwiftMethod<(Int) -> Int>
+        let getter: NativeSwiftMethod<() -> String>
+        let setter: NativeSwiftMethod<(String) -> Void>
         do {
             let original = SwiftMemberRenderer(text: "original")
             observedOriginal = original
             render = try await runtime.object(original).method(named: "render(_:)", as: ((Int) -> Int).self).method
-            getter = try await runtime.object(original).getter(named: "consumedText", as: String.self, consuming: true).method
+            getter = try await runtime.object(original).getter(named: "consumedText", as: (() -> String).self, consuming: true).method
             setter = try await runtime.object(original).setter(named: "consumedText", as: String.self, consuming: true).method
         }
         await runtime.removeCachedResults()
         #expect(observedOriginal == nil)
         var receiver: SwiftMemberRenderer? = SwiftMemberDerived(text: "second")
         weak let observedReceiver = receiver
-        var bound: NativeBoundSwiftMethod<Int, Int>? = try render.bind(to: receiver!)
+        var bound: NativeBoundSwiftMethod<(Int) -> Int>? = try render.bind(to: receiver!)
         try unsafe setter.unsafeInvoke(on: receiver!, "ready")
         #expect(try unsafe getter.unsafeInvoke(on: receiver!) == "ready")
         #expect(try unsafe render.unsafeInvoke(on: receiver!, 37) == 42)
@@ -191,7 +191,7 @@ struct SwiftMemberInvocationTests {
         #expect(try unsafe echo.unsafeInvoke(1) == (second ? 23 : 12))
         let inherited = try await object.method(named: "inherited()", as: (() -> Int).self)
         #expect(try unsafe inherited.unsafeInvoke() == (second ? 22 : 11))
-        let getter = try await object.getter(named: "value", as: Int.self)
+        let getter = try await object.getter(named: "value", as: (() -> Int).self)
         let setter = try await object.setter(named: "value", as: Int.self)
         await runtime.removeCachedResults()
         try unsafe setter.unsafeInvoke(42)
@@ -218,13 +218,13 @@ struct SwiftMemberInvocationTests {
             case "method":
                 _ = try await runtime.object(receiver).method(named: "missing()", as: (() -> Int).self)
             case "getter":
-                _ = try await runtime.object(receiver).getter(named: "missing", as: Int.self)
+                _ = try await runtime.object(receiver).getter(named: "missing", as: (() -> Int).self)
             case "setter":
                 _ = try await runtime.object(receiver).setter(named: "missing", as: Int.self)
             case "staticMethod":
                 _ = try await type.staticMethod(named: "missing()", as: (() -> Int).self)
             case "staticGetter":
-                _ = try await type.staticGetter(named: "missing", as: Int.self)
+                _ = try await type.staticGetter(named: "missing", as: (() -> Int).self)
             default:
                 _ = try await type.staticSetter(named: "missing", as: Int.self)
             }
@@ -237,17 +237,17 @@ struct SwiftMemberInvocationTests {
     @MainActor @Test func consumingAccessorsPreserveCallerReferencesAndValues() async throws {
         let runtime = ABIRuntime()
         let type = try await runtime.swiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
-        let get = try await type.getter(named: "consumedText", as: String.self, consuming: true)
+        let get = try await type.getter(named: "consumedText", as: (() -> String).self, consuming: true)
         let set = try await type.setter(named: "consumedText", as: String.self, consuming: true)
         var value: SwiftMemberRenderer? = .init(text: String(repeating: "a", count: 100))
         weak let observed = value
         #expect(try unsafe get.unsafeInvoke(on: value!) == value?.text)
         try unsafe set.unsafeInvoke(on: value!, String(repeating: "b", count: 100))
         #expect(value?.text == String(repeating: "b", count: 100))
-        var boundGet: NativeBoundSwiftMethod<String>? = try await runtime.object(value!).getter(
-            named: "consumedText", as: String.self, consuming: true
+        var boundGet: NativeBoundSwiftMethod<() -> String>? = try await runtime.object(value!).getter(
+            named: "consumedText", as: (() -> String).self, consuming: true
         )
-        var boundSet: NativeBoundSwiftMethod<Void, String>? = try await runtime.object(value!).setter(
+        var boundSet: NativeBoundSwiftMethod<(String) -> Void>? = try await runtime.object(value!).setter(
             named: "consumedText", as: String.self, consuming: true
         )
         value = nil
@@ -259,7 +259,7 @@ struct SwiftMemberInvocationTests {
         #expect(observed == nil)
 
         let pointType = try await runtime.swiftType(named: "ABIBridgeTests.SwiftMemberPoint")
-        let getValue = try await pointType.getter(named: "consumedValue", as: Int64.self, consuming: true)
+        let getValue = try await pointType.getter(named: "consumedValue", as: (() -> Int64).self, consuming: true)
         let setValue = try await pointType.setter(named: "consumedValue", as: Int64.self, consuming: true)
         var point = SwiftMemberPoint(value: 12)
         #expect(try unsafe getValue.unsafeInvoke(on: point) == 12)
@@ -287,7 +287,7 @@ struct SwiftMemberInvocationTests {
         let rawConsume = try await rawType.method(named: "consumeText()", as: (() -> Int).self, consuming: true)
         let pointer = UnsafeRawPointer(Unmanaged.passUnretained(value!).toOpaque())
         #expect(try unsafe rawConsume.unsafeInvoke(on: pointer) == 100)
-        var bound: NativeBoundSwiftMethod<Int>? = try await runtime.object(value!).method(
+        var bound: NativeBoundSwiftMethod<() -> Int>? = try await runtime.object(value!).method(
             named: "consumeText()", as: (() -> Int).self, consuming: true
         )
         value = nil
@@ -356,7 +356,7 @@ struct SwiftMemberInvocationTests {
         let object = ABIRuntime.shared.object(value)
         let method = try await object.method(named: "bridgeExtensionCount(_:)", as: ((Int) -> Int).self)
         #expect(try unsafe method.unsafeInvoke(2) == value.bridgeExtensionCount(2))
-        let getter = try await object.getter(named: "bridgeExtensionSize", as: Int.self)
+        let getter = try await object.getter(named: "bridgeExtensionSize", as: (() -> Int).self)
         #expect(try unsafe getter.unsafeInvoke() == value.type.size)
         let type = try await ABIRuntime.shared.swiftType(named: "ABIBridge.NativeValue")
         let staticMethod = try await type.staticMethod(named: "bridgeExtensionStatic(_:)", as: ((Int) -> Int).self)
@@ -444,17 +444,17 @@ struct SwiftMemberInvocationTests {
         )
         #expect(try unsafe method.unsafeInvoke(5) == object.render(5))
         let type = try await ABIRuntime.shared.swiftType(named: "ABIBridgeTests.SwiftMemberDerived")
-        let getter = try await type.getter(named: "text", as: String.self)
+        let getter = try await type.getter(named: "text", as: (() -> String).self)
         #expect(try unsafe getter.unsafeInvoke(on: object) == object.text)
     }
 
     @MainActor @Test func propertyAccessorsPreserveIncomingObjectOwnership() async throws {
         let type = try await ABIRuntime.shared.swiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
-        let text = try await type.getter(named: "text", as: String.self)
+        let text = try await type.getter(named: "text", as: (() -> String).self)
         let setText = try await type.setter(named: "text", as: String.self)
         let object = SwiftMemberRenderer(text: "old")
         let bound = ABIRuntime.shared.object(object)
-        let boundGet = try await bound.getter(named: "text", as: String.self)
+        let boundGet = try await bound.getter(named: "text", as: (() -> String).self)
         let boundSet = try await bound.setter(named: "text", as: String.self)
         try unsafe boundSet.unsafeInvoke("bound")
         #expect(try unsafe boundGet.unsafeInvoke() == "bound")
@@ -468,15 +468,15 @@ struct SwiftMemberInvocationTests {
         #expect(observed != nil && object.object?.text == "child")
         try unsafe setObject.unsafeInvoke(on: object, nil)
         #expect(observed == nil)
-        let standard = try await type.staticGetter(named: "standard", as: String.self)
+        let standard = try await type.staticGetter(named: "standard", as: (() -> String).self)
         #expect(try unsafe standard.unsafeInvoke() == SwiftMemberRenderer.standard)
-        let count = try await type.staticGetter(named: "count", as: Int.self)
+        let count = try await type.staticGetter(named: "count", as: (() -> Int).self)
         let setCount = try await type.staticSetter(named: "count", as: Int.self)
         try unsafe setCount.unsafeInvoke(42)
         #expect(try unsafe count.unsafeInvoke() == SwiftMemberRenderer.count)
         SwiftMemberRenderer.count = 0
         let pointType = try await ABIRuntime.shared.swiftType(named: "ABIBridgeTests.SwiftMemberPoint")
-        let value = try await pointType.getter(named: "value", as: Int64.self)
+        let value = try await pointType.getter(named: "value", as: (() -> Int64).self)
         let setValue = try await pointType.setter(named: "value", as: Int64.self)
         var point = SwiftMemberPoint(value: 1)
         try unsafe setValue.unsafeInvoke(on: &point, 7)
@@ -522,7 +522,7 @@ struct SwiftMemberInvocationTests {
     @MainActor @Test func boundSwiftMethodsRetainTheirReceiver() async throws {
         var object: SwiftMemberRenderer? = .init(text: "abc")
         weak let observed = object
-        var method: NativeBoundSwiftMethod<Int, Int>? = try await ABIRuntime.shared.object(object!).method(
+        var method: NativeBoundSwiftMethod<(Int) -> Int>? = try await ABIRuntime.shared.object(object!).method(
             named: "render(_:)", as: ((Int) -> Int).self
         )
         object = nil

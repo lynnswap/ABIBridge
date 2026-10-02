@@ -38,7 +38,7 @@ import SwiftValueFixtures
     try check(try unsafe direct.unsafeInvoke(object) === object, "Class-constrained existential passes object and witness pointers")
     try check(try unsafe large.unsafeInvoke(object) === object, "Large class composition uses physical indirect storage")
 
-    typealias OpaqueCallback = NativeSwiftClosure<any ExistentialValue, any ExistentialValue>
+    typealias OpaqueCallback = NativeSwiftClosure<(any ExistentialValue) -> any ExistentialValue>
     let apply = try await runtime.swiftFunction(named: "SwiftValueFixtures.applyExistentialClosure(_:_:)",
         as: ((OpaqueCallback, any ExistentialValue) -> any ExistentialValue).self)
     let generated = try OpaqueCallback { InlineExistentialValue($0.number + 1) }
@@ -48,24 +48,24 @@ import SwiftValueFixtures
     let returned = try unsafe factory.unsafeInvoke(BoxedExistentialValue(ErrorToken(), 42))
     try check(try unsafe returned.unsafeInvoke(InlineExistentialValue(0)).number == 42, "Returned existential closure keeps its capture and authenticates its entry")
 
-    typealias ClassCallback = NativeSwiftClosure<ManyObjectProtocols, ManyObjectProtocols>
+    typealias ClassCallback = NativeSwiftClosure<(ManyObjectProtocols) -> ManyObjectProtocols>
     let classApply = try await runtime.swiftFunction(named: "SwiftValueFixtures.applyManyClassExistentialClosure(_:_:)",
         as: ((ClassCallback, ManyObjectProtocols) -> ManyObjectProtocols).self)
     try check(try unsafe classApply.unsafeInvoke(.init { $0 }, object) === object, "Class composition authentication stays class-based despite physical indirection")
 
-    typealias OptionalClass = NativeSwiftClosure<(any ExistentialObjectValue)?, (any ExistentialObjectValue)?>
+    typealias OptionalClass = NativeSwiftClosure<((any ExistentialObjectValue)?) -> (any ExistentialObjectValue)?>
     let optional = try await runtime.swiftFunction(named: "SwiftValueFixtures.applyOptionalClassClosure(_:_:)",
         as: ((OptionalClass, (any ExistentialObjectValue)?) -> (any ExistentialObjectValue)?).self)
     try check(try unsafe optional.unsafeInvoke(.init { $0 }, object) === object, "Optional class existential callback uses its optional authentication identity")
     try check(try unsafe optional.unsafeInvoke(.init { $0 }, nil) == nil, "Optional class existential preserves nil")
 
-    typealias ErrorCallback = NativeSwiftClosure<(any Error)?, (any Error)?>
+    typealias ErrorCallback = NativeSwiftClosure<((any Error)?) -> (any Error)?>
     let failure = try await runtime.swiftFunction(named: "SwiftValueFixtures.applyOptionalErrorClosure(_:_:)",
         as: ((ErrorCallback, (any Error)?) -> (any Error)?).self)
     let error = try unsafe failure.unsafeInvoke(.init { $0 }, SmallError(42))
     try check((error as? SmallError)?.code == 42, "Optional error existential preserves its boxed representation and authentication")
 
-    typealias AsyncCallback = NativeSwiftConcurrentClosure<any ExistentialValue, Never, any ExistentialValue>
+    typealias AsyncCallback = NativeSwiftClosure<@Sendable @concurrent (any ExistentialValue) async -> any ExistentialValue>
     let asyncApply = try await runtime.swiftFunction(named: "SwiftValueFixtures.applyAsyncExistentialClosure(_:_:)",
         as: (@concurrent (AsyncCallback, any ExistentialValue) async -> any ExistentialValue).self)
     let body: @Sendable (any ExistentialValue) async -> any ExistentialValue = { value in

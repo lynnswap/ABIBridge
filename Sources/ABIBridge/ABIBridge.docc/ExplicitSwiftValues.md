@@ -63,7 +63,7 @@ The caller must establish the declaration's indirect convention. Selecting opaqu
 The same conformance works with ``NativeSwiftClosure``:
 
 ```swift
-let callback = try NativeSwiftClosure<Sample.Record, Sample.Record> { value in
+let callback = try NativeSwiftClosure<(Sample.Record) -> Sample.Record> { value in
     value
 }
 ```

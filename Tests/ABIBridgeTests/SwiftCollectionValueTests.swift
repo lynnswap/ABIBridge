@@ -71,12 +71,12 @@ struct SwiftCollectionValueTests {
     @Test func nativeClosuresReceiveAndReturnCollections() async throws {
         let apply = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.applyArrayClosure(_:_:)",
-            as: ((NativeSwiftClosure<[String], [String]>, [String]) -> [String]).self
+            as: ((NativeSwiftClosure<([String]) -> [String]>, [String]) -> [String]).self
         )
         let transform = try NativeSwiftClosure { (value: [String]) in value + ["callback"] }
         #expect(try unsafe apply.unsafeInvoke(transform, ["input"]) == ["input", "callback"])
         let make = try await ABIRuntime.shared.swiftFunction(
-            named: "ManagedSwiftFixtures.makeArrayClosure(_:)", as: ((String) -> NativeSwiftClosure<[String], [String]>).self
+            named: "ManagedSwiftFixtures.makeArrayClosure(_:)", as: ((String) -> NativeSwiftClosure<([String]) -> [String]>).self
         )
         let suffix = String(repeating: "suffix", count: 100)
         let returned = try unsafe make.unsafeInvoke(suffix)
@@ -87,7 +87,7 @@ struct SwiftCollectionValueTests {
     @Test func optionalClosuresPreservePayloadsAndNil() async throws {
         let strings = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.applyOptionalArrayClosure(_:_:)",
-            as: ((NativeSwiftClosure<[String]?, [String]?>, [String]?) -> [String]?).self
+            as: ((NativeSwiftClosure<([String]?) -> [String]?>, [String]?) -> [String]?).self
         )
         let optionalArray = try NativeSwiftClosure { (value: [String]?) in value.map { $0 + ["callback"] } }
         for value: [String]? in [nil, [], ["first"]] {
@@ -95,13 +95,13 @@ struct SwiftCollectionValueTests {
         }
         let apply = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.applyOptionalStringClosure(_:_:)",
-            as: ((NativeSwiftClosure<String?, String?>, String?) -> String?).self
+            as: ((NativeSwiftClosure<(String?) -> String?>, String?) -> String?).self
         )
         let suffix = String(repeating: "!", count: 100)
         let callback = try NativeSwiftClosure { (value: String?) in value.map { $0 + suffix } }
         let make = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.makeOptionalStringClosure(_:)",
-            as: ((String) -> NativeSwiftClosure<String?, String?>).self
+            as: ((String) -> NativeSwiftClosure<(String?) -> String?>).self
         )
         let returned = try unsafe make.unsafeInvoke(suffix)
         for value: String? in [nil, "", "input", String(repeating: "input", count: 100)] {
@@ -115,7 +115,7 @@ struct SwiftCollectionValueTests {
         let type = try await ABIRuntime.shared.swiftType(named: "ManagedSwiftFixtures.CollectionStore",
                                                          as: CollectionStore.self)
         let create = try await type.initializer(named: "init(_:_:)", as: (([String], String?) -> CollectionStore).self)
-        let get = try await type.getter(named: "values", as: [String].self)
+        let get = try await type.getter(named: "values", as: (() -> [String]).self)
         let set = try await type.setter(named: "values", as: [String].self)
         let title = try await type.setter(named: "title", as: String?.self)
         let append = try await type.method(named: "append(_:)", as: ((String) -> [String]).self)
@@ -137,7 +137,7 @@ struct SwiftCollectionValueTests {
         let type = try await ABIRuntime.shared.swiftType(named: "ManagedSwiftFixtures.CollectionStore",
                                                          as: CollectionStore.self)
         let retain = try await type.method(named: "retainCallback(_:)",
-                                           as: ((NativeSwiftClosure<[String], [String]>) -> Void).self)
+                                           as: ((NativeSwiftClosure<([String]) -> [String]>) -> Void).self)
         let receiver = CollectionStore([], nil)
         weak var observed: CollectionCapture?
         let value = String(repeating: "captured", count: 100)
@@ -178,10 +178,10 @@ struct SwiftCollectionValueTests {
     }
 
     @Test func collectionElementsNeedNoDirectCallRepresentation() throws {
-        let nested = try NativeSwiftClosure<[[String?]], [[String?]]> { $0 }
+        let nested = try NativeSwiftClosure<([[String?]]) -> [[String?]]> { $0 }
         let input: [[String?]] = [[nil, "value"], []]
         #expect(try unsafe nested.unsafeInvoke(input) == input)
-        let records = try NativeSwiftClosure<[ManagedRecord], [ManagedRecord]> { $0 }
+        let records = try NativeSwiftClosure<([ManagedRecord]) -> [ManagedRecord]> { $0 }
         let token = LifetimeToken()
         let result = try unsafe records.unsafeInvoke([ManagedRecord(token: token, number: 7)])
         #expect(result.first?.token === token)

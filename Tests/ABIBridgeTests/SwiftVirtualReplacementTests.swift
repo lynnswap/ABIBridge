@@ -5,6 +5,36 @@ import Testing
 
 @Suite(.serialized)
 struct SwiftVirtualReplacementTests {
+    @Test func sendableVirtualSignaturesPreserveCapturedImplementations() async throws {
+        let fixture = try CompiledSwiftReplacementFixture(writable: false); defer { fixture.cleanup() }
+        let name = fixture.module + ".ReplacementRenderer"
+        let type = try await fixture.runtime.swiftType(named: name, in: fixture.providerScope)
+        let make = try await fixture.runtime.swiftFunction(named: fixture.module + ".makeRenderer() -> " + name, as: (() -> AnyObject).self, in: fixture.providerScope)
+        let object = try unsafe make.unsafeInvoke()
+        let target = try await type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
+        let sendableTarget = try await type.method(named: "scalar(_:)", as: (@Sendable (Int64) -> Int64).self)
+        let replacement = try await type.method(named: "replacementScalar(_:)", as: ((Int64) -> Int64).self)
+        let sendableReplacement = try await type.method(named: "replacementScalar(_:)", as: (@Sendable (Int64) -> Int64).self)
+        let oracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".classScalar(\(name), Swift.Int64) -> Swift.Int64", as: ((AnyObject, Int64) -> Int64).self, in: fixture.callerScope)
+        let ordinary = [try unsafe target.prepareVirtualReplacement(with: replacement),
+                        try unsafe target.prepareVirtualReplacement(with: sendableReplacement)]
+        for plan in ordinary {
+            try unsafe plan.install(); defer { try? plan.restore() }
+            #expect(try unsafe oracle.unsafeInvoke(object, 40) == 240)
+            #expect(try unsafe plan.original.unsafeInvoke(on: object, 40) == 42)
+            try plan.restore()
+        }
+        let sendable = [try unsafe sendableTarget.prepareVirtualReplacement(with: replacement),
+                        try unsafe sendableTarget.prepareVirtualReplacement(with: sendableReplacement)]
+        for plan in sendable {
+            try unsafe plan.install(); defer { try? plan.restore() }
+            #expect(try unsafe oracle.unsafeInvoke(object, 40) == 240)
+            #expect(try unsafe plan.original.unsafeInvoke(on: object, 40) == 42)
+            try plan.restore()
+        }
+        #expect(try unsafe oracle.unsafeInvoke(object, 40) == 42)
+    }
+
     @Test func sourceSelectedSlotsPreserveInheritanceOverridesAndCapturedEntries() async throws {
         let fixture = try CompiledSwiftReplacementFixture(writable: false)
         defer { fixture.cleanup() }

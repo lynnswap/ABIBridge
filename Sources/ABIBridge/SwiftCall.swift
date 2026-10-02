@@ -1,43 +1,28 @@
 import ABIBridgeCore
 
-struct SwiftCall<Result, each Argument>: Sendable {
+struct SwiftCall: Sendable {
     let interface: SwiftCallInterface
     let errorPlan: SwiftErrorPlan?
-    private let arguments: (repeat SwiftArgumentCodec<each Argument>)
-    private let result: SwiftResultCodec<Result>
+    private let values: SwiftCallValues
     private let hasTrailingValue: Bool
-    private let consumedArguments: [Int]
     private let argumentCount: Int
     private let genericMetadata: UInt?
 
-    init(trailingType: CValueType? = nil, consumesArguments: Bool = false, errorPlan: SwiftErrorPlan? = nil, opaqueResult: SwiftOpaqueResultPlan? = nil, generic: SwiftGenericCallPlan? = nil) throws {
+    init(signature: Any.Type, trailingType: CValueType? = nil, consumesArguments: Bool = false, errorPlan: SwiftErrorPlan? = nil, opaqueResult: SwiftOpaqueResultPlan? = nil, generic: SwiftGenericCallPlan? = nil) throws {
         self.errorPlan = errorPlan
         genericMetadata = generic?.metadata
-        var parameterIndex = 0
-        func argument<Value>(_ type: Value.Type) throws -> SwiftArgumentCodec<Value> {
-            defer { parameterIndex += 1 }
-            return try SwiftArgumentCodec(defaultConsuming: consumesArguments, generic: generic?.arguments[parameterIndex] ?? .concrete)
-        }
-        let arguments = (repeat try argument((each Argument).self))
-        let result = try SwiftResultCodec<Result>(opaque: opaqueResult, genericValue: generic?.indirectResult == true)
-        var parameters: [CValueType] = []
-        for argument in repeat each arguments { parameters.append(argument.type) }
+        values = try SwiftCallValues(signature: SwiftFunctionSignature(signature), consumesArguments: consumesArguments,
+            opaqueResult: opaqueResult, generic: generic)
+        var parameters = values.arguments.map(\.type)
         argumentCount = parameters.count
         if let trailingType { parameters.append(trailingType) }
         if generic != nil { parameters.append(try CValueType(scalar: ABIValuePointer)) }
-        interface = try SwiftCallInterface.cached(result: result.type, parameters: parameters, errorPlan: errorPlan)
-        self.arguments = arguments
-        self.result = result
+        interface = try SwiftCallInterface.cached(result: values.result.type, parameters: parameters, errorPlan: errorPlan)
         hasTrailingValue = trailingType != nil
-        var consumed: [Int] = [], index = 0
-        for argument in repeat each arguments {
-            if argument.consumes { consumed.append(index) }
-            index += 1
-        }
-        consumedArguments = consumed
+
     }
 
-    @unsafe func unsafeInvoke(
+    @unsafe func unsafeInvoke<Result, each Argument>(
         symbol: ResolvedSymbol, context: UnsafeRawPointer? = nil,
         trailingValue: NativeValueStorage? = nil, retaining owner: Any? = nil,
         retainingCode codeOwner: Any? = nil,
@@ -54,18 +39,14 @@ struct SwiftCall<Result, each Argument>: Sendable {
         }
     }
 
-    @unsafe func unsafeInvoke(
+    @unsafe func unsafeInvoke<Result, each Argument>(
         function: ABIUnmanagedFunction, context: UnsafeRawPointer? = nil,
         trailingValue: NativeValueStorage? = nil, retaining owner: Any?,
         retainingCode codeOwner: Any? = nil,
         didInvoke: (() -> Void)? = nil, _ values: repeat each Argument
     ) throws -> Result {
         precondition(hasTrailingValue == (trailingValue != nil))
-        var storage: [NativeValueStorage] = []
-        storage.reserveCapacity(argumentCount)
-        for (codec, value) in repeat (each arguments, each values) {
-            storage.append(try codec.encode(value, retainingCode: codeOwner))
-        }
+        var storage = try self.values.encode(repeat each values, retainingCode: codeOwner)
         var addresses: [UnsafeMutableRawPointer?] = storage.map(\.address)
         if let trailingValue { addresses.append(trailingValue.address) }
         if let genericMetadata {
@@ -74,7 +55,7 @@ struct SwiftCall<Result, each Argument>: Sendable {
             storage.append(metadata)
             addresses.append(metadata.address)
         }
-        let output = result.makeStorage()
+        let output = self.values.result.makeStorage()
         let nativeError = errorPlan?.makeStorage()
         var didThrow = false
         return try withExtendedLifetime((storage, trailingValue, owner)) {
@@ -93,12 +74,12 @@ struct SwiftCall<Result, each Argument>: Sendable {
             guard success else {
                 throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftInvocation")
             }
-            for index in consumedArguments { storage[index].relinquishValue() }
+            self.values.relinquishConsumed(storage)
             didInvoke?()
             if didThrow, let errorPlan, let nativeError {
                 throw NativeSwiftError(try errorPlan.decode(nativeError), retainingCode: codeOwner)
             }
-            return try result.decode(output, retaining: owner, retainingCode: codeOwner)
+            return try self.values.decode(output, retaining: owner, retainingCode: codeOwner)
         }
     }
 }

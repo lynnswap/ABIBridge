@@ -1,6 +1,6 @@
 # Calling native Swift async implementations
 
-Resolve an async function with its native function metatype, then await ``NativeSwiftAsyncFunction``:
+Resolve an async function with its native function metatype, then await ``NativeSwiftFunction``:
 
 ```swift
 let load = try await ABIRuntime.shared.swiftFunction(
@@ -20,7 +20,7 @@ let process = try await ABIRuntime.shared.swiftFunction(
 let result = try unsafe await process.unsafeInvoke("input")
 ```
 
-Explicit annotations keep the call convention independent of the caller target's feature flags. Plain async function types follow that target's NonisolatedNonsendingByDefault setting. The caller-isolated overload also accepts `inheritsCallerIsolation: false` when the selected native entry has no hidden isolation payload; this is a calling-convention assertion, not an executor preference.
+Explicit annotations keep the call convention independent of the caller target's feature flags. Plain async function types follow that target's NonisolatedNonsendingByDefault setting. Use `@concurrent` when the selected native entry has no hidden isolation payload. The complete signature selects this convention; there is no separate `inheritsCallerIsolation:` override.
 
 ## Members, values, and errors
 
@@ -30,7 +30,7 @@ Arguments and results use the same supported Swift value representations as sync
 
 Untyped and concrete typed native failures are returned as ``NativeSwiftError``, which keeps its error and code owners alive. Bridge lookup and conversion failures retain their original types. The bridge runs on the caller's Swift task, preserves task-local and cancellation state, and returns to the caller's executor. Cancellation remains cooperative: it does not abandon an active native context or release its values before completion.
 
-Async closure arguments and results use NativeSwiftAsyncClosure or NativeSwiftConcurrentClosure; see <doc:SwiftClosureValues>. Inout and per-argument ownership use the same typed wrappers as synchronous calls; see <doc:SwiftArgumentConventions>. Generic signatures with hidden metadata or witness arguments require a compiled adapter. Calls require a valid async descriptor. See <doc:SwiftFunctionInvocation> for value support and <doc:SwiftErrorABI> for error inspection.
+Async closure arguments and results use NativeSwiftClosure with an async function signature; see <doc:SwiftClosureValues>. Inout and per-argument ownership use the same typed wrappers as synchronous calls; see <doc:SwiftArgumentConventions>. Generic signatures with hidden metadata or witness arguments require a compiled adapter. Calls require a valid async descriptor. See <doc:SwiftFunctionInvocation> for value support and <doc:SwiftErrorABI> for error inspection.
 
 Opaque some results can use NativeSwiftOpaqueValue in the async signature. Their dynamic storage is adopted only on success; see <doc:SwiftOpaqueResults>.
 

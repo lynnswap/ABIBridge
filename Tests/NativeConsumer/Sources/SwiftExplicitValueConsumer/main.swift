@@ -31,9 +31,9 @@ let runtime = ABIRuntime()
 let transform = try await runtime.swiftFunction(named: "SwiftExplicitValueConsumer.change(_:)", as: ((Record) -> Record).self)
 let apply = try await runtime.swiftFunction(
     named: "SwiftExplicitValueConsumer.apply(_:_:)",
-    as: ((NativeSwiftClosure<Choice, Choice>, Choice) -> Choice).self
+    as: ((NativeSwiftClosure<(Choice) -> Choice>, Choice) -> Choice).self
 )
-let identity = try NativeSwiftClosure<Choice, Choice> { $0 }
+let identity = try NativeSwiftClosure<(Choice) -> Choice> { $0 }
 weak var observed: Payload?
 var result: Choice?
 do {
@@ -48,7 +48,7 @@ result = nil
 precondition(observed == nil)
 let boxed = try await runtime.swiftFunction(
     named: "SwiftExplicitValueConsumer.applyBox(_:_:)",
-    as: ((NativeSwiftClosure<Box<Int64>, Box<Int64>>, Box<Int64>) -> Box<Int64>).self
+    as: ((NativeSwiftClosure<(Box<Int64>) -> Box<Int64>>, Box<Int64>) -> Box<Int64>).self
 )
 let boxBody = try NativeSwiftClosure { (value: Box<Int64>) in Box(value: value.value + 7) }
 let boxResult = try unsafe boxed.unsafeInvoke(boxBody, Box(value: 35))
@@ -80,12 +80,12 @@ print("Throwing Swift consumer passed")
 @inline(never) public func invokeThrowing(_ body: (Int64) throws(Failure) -> Int64, _ value: Int64) throws(Failure) -> Int64 {
     try body(value)
 }
-let throwingCallback = try NativeSwiftThrowingClosure<Int64, Failure, Int64> { (value: Int64) throws(Failure) in
+let throwingCallback = try NativeSwiftClosure<(Int64) throws(Failure) -> Int64> { (value: Int64) throws(Failure) in
     if value < 0 { throw Failure(code: 42) }
     return value + 7
 }
 let invokeThrowingCall = try await runtime.swiftFunction(named: "SwiftExplicitValueConsumer.invokeThrowing(_:_:)",
-    as: ((NativeSwiftThrowingClosure<Int64, Failure, Int64>, Int64) throws(Failure) -> Int64).self)
+    as: ((NativeSwiftClosure<(Int64) throws(Failure) -> Int64>, Int64) throws(Failure) -> Int64).self)
 let callbackResult = try unsafe invokeThrowingCall.unsafeInvoke(throwingCallback, 35)
 precondition(callbackResult == 42)
 do {
