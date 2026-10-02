@@ -12,12 +12,25 @@ private protocol GenericOrderingZ {}
 private struct GenericOrderingValue: GenericOrderingA, GenericOrderingZ {}
 private struct GenericOrderingOwner<Value: GenericOrderingZ> {}
 
+private final class RuntimeBorrowCopy: @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: Result<NativeSwiftValue, any Error>?
+    func accept(_ value: NativeSwiftBorrowedValue) {
+        lock.lock(); defer { lock.unlock() }
+        result = Result { try value.copy() }
+    }
+    func take() throws -> NativeSwiftValue {
+        lock.lock(); defer { result = nil; lock.unlock() }
+        return try #require(result).get()
+    }
+}
+
 struct SwiftGenericBindingTests {
     enum RuntimeDependencyOperation: CaseIterable {
         case copiedResult, asyncMovedResult, receiverResult, asyncReceiverResult
         case addressReceiverResult, asyncAddressReceiverResult
         case replacedInout, throwingInout, copiedAlias, nativeCopiedAlias
-        case calleeMutation, throwingCalleeMutation
+        case calleeMutation, throwingCalleeMutation, borrowedCallback
     }
 
     @Test(.serialized, arguments: RuntimeDependencyOperation.allCases)
@@ -56,6 +69,7 @@ struct SwiftGenericBindingTests {
                 @inline(never) private func number() -> Int64 { \(value) }
                 public func make() -> some AnyObject { Box { number() } }
                 public func makeRecord() -> some Reader { Record { number() } }
+                public func visit(_ callback: (Record) -> Void) { callback(Record { number() }) }
                 public func update<T>(_ value: T) {
                     (value as AnyObject as! Box).update(from: Box { number() })
                 }
@@ -72,7 +86,7 @@ struct SwiftGenericBindingTests {
         let runtime = ABIRuntime()
         var preparedCopy: NativeSwiftFunction<(NativeSwiftValue) -> NativeSwiftValue>?
         func produce() async throws -> NativeSwiftValue {
-            let factoryName = operation == .addressReceiverResult || operation == .asyncAddressReceiverResult ? "makeRecord()" : "make()"
+            let factoryName = operation == .addressReceiverResult || operation == .asyncAddressReceiverResult || operation == .borrowedCallback ? "makeRecord()" : "make()"
             let makeFirst = try await runtime.swiftFunction(named: module + "First." + factoryName, as: (() -> NativeSwiftValue).self,
                 in: .path(first.libraryURL))
             let makeSecond = try await runtime.swiftFunction(named: module + "Second." + factoryName, as: (() -> NativeSwiftValue).self,
@@ -111,6 +125,14 @@ struct SwiftGenericBindingTests {
                     try unsafe replace.unsafeInvoke(buffer, NativeSwiftConsuming(argument))
                 }
                 return binding
+            case .borrowedCallback:
+                let copied = RuntimeBorrowCopy()
+                let callback = try NativeSwiftBorrowingClosure<Void>(borrowing: binding.type) { copied.accept($0) }
+                let visit = try await runtime.swiftFunction(named: module + "Second.visit((" + module + ".Record) -> ()) -> ()",
+                    as: ((NativeSwiftBorrowingClosure<Void>) -> Void).self, in: .path(second.libraryURL))
+                argumentLease = visit.symbol.image.lease
+                try unsafe visit.unsafeInvoke(callback)
+                return try copied.take()
             case .calleeMutation, .throwingCalleeMutation:
                 if operation == .throwingCalleeMutation {
                     let update = try await runtime.swiftFunction(named: module + "Second.updateAndThrow<A>(A) throws -> ()",
@@ -161,7 +183,7 @@ struct SwiftGenericBindingTests {
             return
         }
         func inspect() async throws {
-            let receiverABI: NativeType? = operation == .addressReceiverResult || operation == .asyncAddressReceiverResult
+            let receiverABI: NativeType? = operation == .addressReceiverResult || operation == .asyncAddressReceiverResult || operation == .borrowedCallback
                 ? try .opaque(named: result!.type.name) : nil
             let read = try await result!.type.method(named: "read()", as: (() -> Int64).self, receiverABI: receiverABI)
             #expect(try unsafe read.unsafeInvoke(on: result!) == 42)

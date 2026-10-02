@@ -170,13 +170,16 @@ final class SwiftClosureStorage {
         withExtendedLifetime((implementation, codeOwner)) { ABIReleaseSwiftClosureContext(value.context) }
     }
 
-    func encoded() -> NativeValueStorage { Self.copy(value, retaining: self) }
+    func encoded(codeLifetime: SwiftValueCodeLifetime? = nil) -> NativeValueStorage {
+        Self.copy(value, retaining: self, codeLifetime: codeLifetime)
+    }
 
-    static func copy(_ value: ABISwiftClosureValue, retaining owner: AnyObject) -> NativeValueStorage {
+    static func copy(_ value: ABISwiftClosureValue, retaining owner: AnyObject,
+                     codeLifetime: SwiftValueCodeLifetime? = nil) -> NativeValueStorage {
         let storage = NativeValueStorage(
             size: MemoryLayout<ABISwiftClosureValue>.stride,
             alignment: MemoryLayout<ABISwiftClosureValue>.alignment,
-            owner: owner, destroyingWith: destroy
+            owner: owner, codeLifetime: codeLifetime, destroyingWith: destroy
         )
         ABIRetainSwiftClosureContext(value.context)
         storage.store(value)

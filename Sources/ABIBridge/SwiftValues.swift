@@ -112,7 +112,8 @@ struct SwiftValueCodec<Value>: Sendable {
 
     func copyNativeStorage(_ storage: NativeValueStorage) throws -> NativeValueStorage {
         if closure != nil {
-            return SwiftClosureStorage.copy(storage.address.load(as: ABISwiftClosureValue.self), retaining: storage)
+            return SwiftClosureStorage.copy(storage.address.load(as: ABISwiftClosureValue.self), retaining: storage,
+                                            codeLifetime: storage.codeLifetime)
         }
         if cValue != nil {
             let copy = NativeValueStorage(size: type.size, alignment: type.alignment)

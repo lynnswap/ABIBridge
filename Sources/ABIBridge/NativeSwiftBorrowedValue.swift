@@ -94,6 +94,7 @@ public struct NativeSwiftBorrowedValue {
 /// fresh borrow. Returned runtime-typed closures are outside this subset.
 public struct NativeSwiftBorrowingClosure<Result> {
     private let storage: SwiftClosureStorage
+    private let codeLifetime: SwiftValueCodeLifetime
 
     /// Creates a callback whose argument remains owned by its native caller.
     ///
@@ -103,6 +104,8 @@ public struct NativeSwiftBorrowingClosure<Result> {
     /// same supported concrete Swift representations as NativeSwiftClosure.
     public init(borrowing type: NativeSwiftType,
                 _ body: @escaping @Sendable (NativeSwiftBorrowedValue) -> Result) throws {
+        let type = type.retainingCode(SwiftValueCodeLifetime(type.codeImages))
+        codeLifetime = type.codeLifetime
         guard !(type.metadata is AnyClass) else {
             throw ABIResolutionError.unsupportedDeclaration("A resilient value callback requires a Swift value type.")
         }
@@ -131,7 +134,7 @@ extension NativeSwiftBorrowingClosure: SwiftClosureValue {
     static var swiftFunctionType: Any.Type { ((NativeSwiftBorrowedValue) -> Result).self }
     static var requiresExplicitDeclaration: Bool { true }
     static var supportsResult: Bool { false }
-    func encodeClosure() -> NativeValueStorage { storage.encoded() }
+    func encodeClosure() -> NativeValueStorage { storage.encoded(codeLifetime: codeLifetime) }
 
     static func makeClosureCodec() throws -> SwiftClosureCodec {
         let pointer = try CValueType(scalar: ABIValuePointer)
