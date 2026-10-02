@@ -16,12 +16,13 @@ bool ABISwiftProtocolRequirementIsClassBound(const void *reference);
 /// Runtime metadata operations over valid compiler-emitted Swift descriptors.
 /// Type construction requires an already validated metadata/witness argument list.
 const void *ABISwiftProtocolRequirementDescriptor(const void *reference);
+const void *ABISwiftProtocolRequirementObjectiveCProtocol(const void *reference);
 const void *ABISwiftConformance(const void *metadata, const void *protocol);
 /// Canonical existential metadata for one valid Swift protocol descriptor.
 const void *ABISwiftProtocolTypeMetadata(const void *protocol);
-/// Copies a demangleable subject from a valid generic requirement descriptor.
-/// Release with ABIFreeString. Returns null for an unsupported symbolic reference.
-char *ABICopySwiftGenericRequirementSubject(const void *requirement);
+/// Parses the subject or type constraint of a compiler-emitted requirement.
+/// A protocol or layout requirement has no type constraint in its second field.
+ABISwiftSyntax *ABICopySwiftGenericRequirementTypeSyntax(const void *requirement, bool constraint);
 const void *ABISwiftConformanceDescriptor(const void *witnessTable);
 const void *ABISwiftAssociatedType(const void *metadata, const void *protocol, const char *name);
 const void *ABISwiftGenericTypeMetadata(const void *descriptor, const void *const *arguments);
@@ -35,11 +36,9 @@ ABISwiftTypeMetadata *ABICreateSwiftTypeMetadata(const void *descriptor,
     const void *const *arguments, size_t count, ABIResolutionFailure **error);
 /// Returns an authenticated raw nominal descriptor, or null for a non-nominal type.
 const void *ABISwiftTypeDescriptor(const void *metadata);
-/// Reflection fields whose storage is inline in a struct or enum. Field type
-/// references preserve generic parameters; unsupported symbolic nominal types
-/// return null and do not establish a formal calling convention.
+/// Reflection fields whose storage is inline in a struct or enum. Syntax trees
+/// preserve generic parameters and symbolic descriptor identities.
 size_t ABISwiftTypeFieldCount(const void *metadata);
-char *ABICopySwiftTypeFieldReference(const void *metadata, size_t index);
 ABISwiftSyntax *ABICopySwiftTypeFieldSyntax(const void *metadata, size_t index);
 /// Recovers the source-written arguments of existing complete metadata.
 ABISwiftTypeMetadata *ABICopySwiftTypeMetadata(const void *metadata, ABIResolutionFailure **error);
@@ -52,12 +51,11 @@ const void *ABISwiftTypeMetadataArgumentElement(const ABISwiftTypeMetadata *resu
 bool ABIPrepareSwiftTypeMetadataContext(ABISwiftTypeMetadata *result, ABIResolutionFailure **error);
 /// Type references preserve source generic depth/index for member binding.
 /// Call ABIPrepareSwiftTypeMetadataContext first; returned strings borrow result.
-/// Subjects replace symbolic protocol qualifiers with a demangleable placeholder.
 const char *ABISwiftTypeMetadataParameterReference(const ABISwiftTypeMetadata *result, size_t index);
 bool ABISwiftTypeMetadataArgumentIsKey(const ABISwiftTypeMetadata *result, size_t index);
 size_t ABISwiftTypeMetadataRequirementCount(const ABISwiftTypeMetadata *result);
-const char *ABISwiftTypeMetadataRequirementSubject(const ABISwiftTypeMetadata *result, size_t index);
-const void *ABISwiftTypeMetadataRequirementProtocol(const ABISwiftTypeMetadata *result, size_t index);
+/// Borrows a compiler-emitted generic requirement descriptor.
+const void *ABISwiftTypeMetadataRequirement(const ABISwiftTypeMetadata *result, size_t index);
 const void *ABISwiftTypeMetadataValue(const ABISwiftTypeMetadata *result);
 size_t ABISwiftTypeMetadataConformanceCount(const ABISwiftTypeMetadata *result);
 /// index must be less than ABISwiftTypeMetadataConformanceCount(result).

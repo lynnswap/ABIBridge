@@ -97,6 +97,21 @@ def main():
                 f"{target}: a class-bound field has direct self but retains its generic metadata")
         require("swiftself" not in phantom and "ptr %Value" in phantom,
                 f"{target}: a phantom generic parameter does not make the receiver indirect")
+        object_receiver = body(value_ir, "GenericObjectValueV7project").splitlines()[0]
+        superclass_receiver = body(value_ir, "GenericSuperclassValueV7project").splitlines()[0]
+        nested_receiver = body(value_ir, "GenericNestedValueV7project").splitlines()[0]
+        array_receiver = body(value_ir, "GenericValueBoxV5first").splitlines()[0]
+        associated_object = body(value_ir, "associatedObjectGeneric").splitlines()[0]
+        for entry in [object_receiver, superclass_receiver]:
+            require("swiftcc ptr" in entry and "swiftself" not in entry and "ptr %Value" in entry,
+                    f"{target}: nominal class constraints preserve direct self and metadata")
+        require("swiftself" in nested_receiver and 'ptr %"GenericNestedValue<Value>"' in nested_receiver,
+                f"{target}: an inline nested generic field preserves indirect self")
+        require("sret(" in array_receiver and "swiftself" not in array_receiver
+                and "ptr %Element" in array_receiver and "ptr %Value" not in array_receiver,
+                f"{target}: a same-type Array expression keeps only its element metadata")
+        require("swiftcc ptr" in associated_object and "sret(" not in associated_object,
+                f"{target}: an associated class requirement makes the result direct")
         if target.startswith("arm64e"):
             require('"ptrauth"(i32 0, i64 55683)' in large_callback, "Large fixed callback authentication changed")
             require('"ptrauth"(i32 0, i64 47754)' in pack_callback, "Generic pack callback authentication changed")
@@ -121,7 +136,10 @@ def main():
                         "borrowedCallback": borrowed, "tupleCallback": tuple_callback, "concreteTupleCallback": concrete_tuple,
                         "packCallback": pack_callback, "largeFixedCallback": large_callback,
                         "indirectReceiver": receiver, "concreteReceiver": concrete,
-                        "referenceReceiver": reference, "phantomReceiver": phantom})
+                        "referenceReceiver": reference, "phantomReceiver": phantom,
+                        "objectReceiver": object_receiver, "superclassReceiver": superclass_receiver,
+                        "nestedReceiver": nested_receiver, "arrayReceiver": array_receiver,
+                        "associatedClass": associated_object})
     report = {"compiler": run("xcrun", "swiftc", "--version").strip(), "runtimeTested": False,
               "demanglerRevision": upstream["revision"], "targets": targets}
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")

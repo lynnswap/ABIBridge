@@ -14,6 +14,10 @@ struct SwiftGenericTypeMetadata: Sendable {
     let images: [NativeImage]
 
     init(descriptor: ResolvedSymbol, arguments: [NativeSwiftGenericArgument]) throws {
+        try self.init(descriptor: SwiftNominalDescriptor(descriptor), arguments: arguments)
+    }
+
+    init(descriptor: SwiftNominalDescriptor, arguments: [NativeSwiftGenericArgument]) throws {
         func scalar(_ argument: NativeSwiftGenericArgument) throws -> UnsafeRawPointer {
             guard case .type(let type, _) = argument.storage else {
                 throw ABIResolutionError.signatureMismatch(.init(
@@ -42,7 +46,7 @@ struct SwiftGenericTypeMetadata: Sendable {
             let error = consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftMetadata")
             throw ABIResolutionError.metadataUnavailable(error.localizedDescription)
         }
-        try self.init(adopting: result, arguments: arguments)
+        try self.init(adopting: result, arguments: arguments, images: descriptor.image.map { [$0] } ?? [])
     }
 
     init(metadata: Any.Type) throws {
@@ -60,11 +64,11 @@ struct SwiftGenericTypeMetadata: Sendable {
         try self.init(adopting: result, arguments: arguments)
     }
 
-    private init(adopting result: OpaquePointer, arguments: [NativeSwiftGenericArgument]) throws {
+    private init(adopting result: OpaquePointer, arguments: [NativeSwiftGenericArgument], images owners: [NativeImage] = []) throws {
         defer { ABIReleaseSwiftTypeMetadata(result) }
         value = unsafeBitCast(ABISwiftTypeMetadataValue(result)!, to: Any.Type.self)
         self.arguments = arguments
-        var images: [NativeImage] = []
+        var images = owners
         func retainImage(at address: UnsafeRawPointer?) throws {
             if let address, let image = try swiftImplementationImage(containing: address),
                !images.contains(where: { $0.identity == image.identity }) {

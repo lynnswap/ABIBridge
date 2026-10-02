@@ -1,16 +1,6 @@
 import ABIBridgeCore
 import Foundation
-
-func swiftGenericRequirementSubject(_ subject: String, qualifiers: Set<String>) -> String {
-    // A symbolic protocol reference was replaced with __C.<identifier>.
-    // Objective-C protocols cannot declare associated types, so this synthetic
-    // qualification is unambiguous in a dependent member path.
-    var name = subject.replacingOccurrences(of: #"\.__C\.[^.]+\."#, with: ".", options: .regularExpression)
-    for qualifier in qualifiers.sorted(by: { $0.count > $1.count }) {
-        name = name.replacingOccurrences(of: "." + qualifier + ".", with: ".")
-    }
-    return name
-}
+import ObjectiveC
 
 /// A descriptor can come from a symbol or from an instantiated type's context.
 struct SwiftProtocolDescriptor: Sendable {
@@ -37,24 +27,22 @@ struct SwiftProtocolDescriptor: Sendable {
     }
 
     func associatedConformances(of member: String) throws -> [SwiftProtocolDescriptor] {
+        try associatedRequirements(of: member).compactMap(\.descriptor)
+    }
+
+    func associatedRequirements(of member: String) throws -> [SwiftMetadataRequirement] {
         var visited: Set<UInt> = []
-        var matches: [SwiftProtocolDescriptor] = []
+        var matches: [SwiftMetadataRequirement] = []
         func visit(_ descriptor: SwiftProtocolDescriptor) throws {
             guard visited.insert(descriptor.address).inserted else { return }
-            let qualifiers = try descriptor.qualifiedNames()
             try unsafe descriptor.withUnsafeAddress { address in
                 let count = Int(address.loadUnaligned(fromByteOffset: 12, as: UInt32.self))
                 for index in 0..<count {
-                    let requirement = address.advanced(by: 24 + index * 12)
-                    guard requirement.loadUnaligned(as: UInt32.self) & 0x1f == 0,
-                          let protocolAddress = ABISwiftProtocolRequirementDescriptor(requirement.advanced(by: 8)),
-                          let reference = ABICopySwiftGenericRequirementSubject(requirement) else { continue }
-                    defer { ABIFreeString(reference) }
-                    guard let subject = DeclarationKey.demangle(String(cString: reference), language: .swift) else { continue }
-                    let inherited = try SwiftProtocolDescriptor(address: protocolAddress)
-                    if subject == "A" { try visit(inherited) }
-                    else if swiftGenericRequirementSubject(subject, qualifiers: qualifiers) == "A." + member {
-                        matches.append(inherited)
+                    let requirement = try SwiftMetadataRequirement(address.advanced(by: 24 + index * 12))
+                    if requirement.subject == .named("A", []), let inherited = requirement.descriptor {
+                        try visit(inherited)
+                    } else if requirement.subject == .named("A." + member, []) {
+                        matches.append(requirement)
                     }
                 }
             }
@@ -95,6 +83,7 @@ struct SwiftGenericTypeContext: Sendable {
     let parameters: [SwiftGenericDeclaration.Parameter]
     let keyParameters: Set<String>
     let conformances: [SwiftGenericBinding.Conformance]
+    let requirements: [SwiftGenericDeclaration.Requirement]
 
     init(metadata: Any.Type) throws {
         var failure: OpaquePointer?
@@ -117,23 +106,73 @@ struct SwiftGenericTypeContext: Sendable {
         }
         self.parameters = parameters
         self.keyParameters = keyParameters
-        var requirements: [(String, SwiftProtocolDescriptor?)] = []
-        var qualifiers: Set<String> = []
-        for index in 0..<ABISwiftTypeMetadataRequirementCount(result) {
-            let reference = String(cString: ABISwiftTypeMetadataRequirementSubject(result, index)!)
-            guard let subject = DeclarationKey.demangle(reference, language: .swift) else {
-                throw ABIResolutionError.metadataUnavailable("Cannot decode the generic requirement " + reference + ".")
-            }
-            let descriptor = try ABISwiftTypeMetadataRequirementProtocol(result, index).map {
-                try SwiftProtocolDescriptor(address: $0)
-            }
-            if let descriptor { qualifiers.formUnion(try descriptor.qualifiedNames()) }
-            requirements.append((subject, descriptor))
+        let decoded = try (0..<ABISwiftTypeMetadataRequirementCount(result)).map { index in
+            try SwiftMetadataRequirement(ABISwiftTypeMetadataRequirement(result, index)!)
         }
-        conformances = try requirements.map { subject, descriptor in
-            let name = swiftGenericRequirementSubject(subject, qualifiers: qualifiers)
-            return try .init(subject: SwiftFormalType(name),
-                             name: descriptor?.name() ?? "Swift.AnyObject", descriptor: descriptor)
+        requirements = decoded.map(\.value)
+        conformances = decoded.compactMap { requirement in
+            guard case .conformance(let subject, let name) = requirement.value else { return nil }
+            return .init(subject: subject, name: name, descriptor: requirement.descriptor,
+                         objectiveC: requirement.objectiveC)
+        }
+    }
+}
+
+struct SwiftObjectiveCProtocol: Sendable {
+    private let address: UInt
+    let name: String
+    let image: NativeImage?
+
+    init(_ value: Protocol) throws {
+        let address = unsafeBitCast(value, to: UnsafeRawPointer.self)
+        self.address = UInt(bitPattern: address)
+        name = String(cString: protocol_getName(value))
+        image = try swiftImplementationImage(containing: address)
+    }
+
+    func accepts(_ type: Any.Type) -> Bool {
+        guard let type = type as? AnyClass else { return false }
+        return class_conformsToProtocol(type, unsafeBitCast(address, to: Protocol.self))
+    }
+}
+
+struct SwiftMetadataRequirement {
+    let subject: SwiftFormalType
+    let value: SwiftGenericDeclaration.Requirement
+    var descriptor: SwiftProtocolDescriptor? = nil
+    var objectiveC: SwiftObjectiveCProtocol? = nil
+
+    init(_ address: UnsafeRawPointer) throws {
+        func type(constraint: Bool) throws -> SwiftFormalType {
+            guard let handle = ABICopySwiftGenericRequirementTypeSyntax(address, constraint) else {
+                throw ABIResolutionError.metadataUnavailable("Cannot decode the Swift generic requirement type.")
+            }
+            return try SwiftFormalType(SwiftSyntax(adopting: handle).root)
+        }
+        subject = try type(constraint: false)
+        switch address.loadUnaligned(as: UInt32.self) & 0x1f {
+        case 0:
+            if let protocolAddress = ABISwiftProtocolRequirementDescriptor(address.advanced(by: 8)) {
+                let descriptor = try SwiftProtocolDescriptor(address: protocolAddress)
+                self.descriptor = descriptor
+                value = .conformance(subject, try descriptor.name())
+            } else if let protocolAddress = ABISwiftProtocolRequirementObjectiveCProtocol(address.advanced(by: 8)) {
+                let protocolValue = try SwiftObjectiveCProtocol(unsafeBitCast(protocolAddress, to: Protocol.self))
+                objectiveC = protocolValue
+                value = .conformance(subject, protocolValue.name)
+            } else {
+                throw ABIResolutionError.metadataUnavailable("The Swift generic protocol requirement is unavailable.")
+            }
+        case 1: value = .sameType(subject, try type(constraint: true))
+        case 2: value = .superclass(subject, try type(constraint: true))
+        case 4: value = .sameShape(subject, try type(constraint: true))
+        case 31:
+            guard address.loadUnaligned(fromByteOffset: 8, as: UInt32.self) == 0 else {
+                throw ABIResolutionError.unsupportedDeclaration("The Swift metadata layout requirement is not a class constraint.")
+            }
+            value = .conformance(subject, "Swift.AnyObject")
+        default:
+            throw ABIResolutionError.unsupportedDeclaration("Cannot decode this Swift metadata generic requirement.")
         }
     }
 }

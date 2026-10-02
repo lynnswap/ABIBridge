@@ -30,3 +30,12 @@ bool ABISwiftProtocolRequirementIsClassBound(const void *reference) {
     // ProtocolClassConstraint::Class is zero; the set bit means unrestricted.
     return (flags & 0x10000) == 0;
 }
+
+const void *ABISwiftProtocolRequirementObjectiveCProtocol(const void *reference) {
+    int32_t offset;
+    std::memcpy(&offset, reference, sizeof(offset));
+    if (!(offset & 2)) return nullptr;
+    const void *protocol = reinterpret_cast<const void *>(reinterpret_cast<uintptr_t>(reference) + intptr_t(offset & ~3));
+    if (offset & 1) std::memcpy(&protocol, protocol, sizeof(protocol));
+    return protocol;
+}

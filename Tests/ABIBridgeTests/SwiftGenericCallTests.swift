@@ -34,6 +34,27 @@ private final class GenericCaptureState: Sendable {
 
 @Suite(.serialized)
 struct SwiftGenericCallTests {
+    @Test func associatedClassObjectiveCAndSuperclassConstraintsUseClassConventions() async throws {
+        let runtime = ABIRuntime()
+        let associated = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.associatedObjectGeneric<A where A: ManagedSwiftFixtures.GenericObjectContainer>(A.Type, A.Item) -> A.Item",
+            as: ((GenericObjectCarrier.Type, NSObject) -> NSObject).self,
+            genericArguments: [.type(GenericObjectCarrier.self)])
+        let object = NSObject()
+        #expect(try unsafe associated.unsafeInvoke(GenericObjectCarrier.self, object) === object)
+        let value = GenericObjCValue()
+        for name in ["objcConstraintGeneric<A where A: ManagedSwiftFixtures.GenericObjCConstraint>",
+                     "superclassConstraintGeneric<A where A: ManagedSwiftFixtures.GenericObjCValue>"] {
+            let function = try await runtime.swiftFunction(named: "ManagedSwiftFixtures." + name + "(A) -> A",
+                as: ((GenericObjCValue) -> GenericObjCValue).self, genericArguments: [.type(GenericObjCValue.self)])
+            #expect(try unsafe function.unsafeInvoke(value) === value)
+            await #expect(throws: ABIResolutionError.self) {
+                try await runtime.swiftFunction(named: "ManagedSwiftFixtures." + name + "(A) -> A",
+                    as: ((NSObject) -> NSObject).self, genericArguments: [.type(NSObject.self)])
+            }
+        }
+    }
+
     @Test func returnedGenericClosuresPreserveCapturedValuesAndTypedErrors() async throws {
         let runtime = ABIRuntime.shared
         let factory = try await runtime.swiftFunction(

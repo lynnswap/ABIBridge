@@ -5,6 +5,43 @@ import ManagedSwiftFixtures
 import Testing
 
 struct SwiftGenericBindingTests {
+    @Test func declarationSyntaxSeparatesNominalNamesAndGenericParameters() throws {
+        // Swift 6.3: module A, collide<T>(_: T, _: Marker) -> (T, Marker).
+        let collision = try SwiftGenericDeclaration(linkageName: "$s1A7collideyx_AA6MarkerVtx_ADtlF")
+        #expect(collision.parameters.map(\.name) == ["A"])
+        #expect(collision.arguments == [.named("A", []), .nominal("A.Marker", [])])
+        #expect(collision.result == .tuple(collision.arguments))
+
+        let context = try SwiftGenericTypeContext(metadata: GenericValueBox<String>.self)
+        let member = try SwiftGenericDeclaration(
+            linkageName: "$s20ManagedSwiftFixtures15GenericValueBoxV7checked_4failxqd___Sbtqd__YKs5ErrorRd__lF",
+            enclosing: context)
+        #expect(member.parameters.map(\.name) == ["A", "A1"])
+        #expect(member.arguments == [.named("A1", []), .nominal("Swift.Bool", [])])
+        #expect(member.failure == .named("A1", []))
+        let getter = try SwiftGenericDeclaration(
+            linkageName: "$s20ManagedSwiftFixtures15GenericValueBoxV5valuexvg", enclosing: context)
+        #expect(getter.arguments.isEmpty && getter.result == .named("A", []))
+        let setter = try SwiftGenericDeclaration(
+            linkageName: "$s20ManagedSwiftFixtures15GenericValueBoxV5valuexvs", enclosing: context)
+        #expect(setter.arguments == [.named("A", [])] && setter.result == .tuple([]))
+    }
+
+    @Test func declarationSyntaxPreservesNestedNominalArgumentsAndPackMarkers() throws {
+        let nested = try SwiftGenericDeclaration(
+            linkageName: "$s20ManagedSwiftFixtures16GenericTypeOuterV5InnerVAEyx_qd__GycfC",
+            enclosing: SwiftGenericTypeContext(metadata: GenericTypeOuter<String>.Inner<Bool>.self))
+        #expect(nested.result == .nested(.nominal("ManagedSwiftFixtures.GenericTypeOuter", [.named("A", [])]),
+            "Inner", [.named("A1", [])]))
+        #expect(nested.result.nominalDeclaration?.name == "ManagedSwiftFixtures.GenericTypeOuter.Inner")
+        #expect(nested.result.nominalDeclaration?.arguments == [.named("A", []), .named("A1", [])])
+        let packs = try SwiftGenericDeclaration(
+            linkageName: "$s20ManagedSwiftFixtures17pairedPackGenericyq__xtxQp_tx_q_txQpRvzRv_q_Rhzr0_lF")
+        #expect(packs.parameters.count == 2 && packs.parameters.allSatisfy(\.isPack))
+        #expect(packs.arguments == [.pack(.tuple([.named("A", []), .named("B", [])]))])
+        #expect(packs.requirements == [.sameShape(.named("A", []), .named("B", []))])
+    }
+
     @Test func syntaxPreservesGenericDepthWithoutPrintedParameterNames() throws {
         let node: SwiftSyntax.Node
         do {
@@ -199,20 +236,20 @@ struct SwiftGenericBindingTests {
     }
 
     @Test func multipleParametersAndConditionalConformancesBindWithoutAdapters() throws {
-        let declaration = try SwiftGenericDeclaration(
-            "Example.select<A, B where A: Swift.Equatable, B: Swift.Collection, B.Element == A>(A, B) -> A")
+        let declaration = try SwiftGenericDeclaration(linkageName:
+            "$s20ManagedSwiftFixtures13selectGenericyxx_q_t7ElementQy_RszSlR_r0_lF")
         let signature = try SwiftFunctionSignature(((String, [String]) -> String).self)
         let binding = try SwiftGenericBinding(declaration: declaration,
             arguments: [.type(String.self), .type([String].self)],
             signature: signature, resolver: .shared)
-        #expect(binding.metadataArguments.count == 4)
+        #expect(binding.metadataArguments.count == 3)
         #expect(try binding.types(.named("B.Element", []))[0] == String.self)
         try binding.validate([String].self, for: .named("Swift.Array", [.named("A", [])]))
 
         let conditional = try SwiftGenericBinding(
-            declaration: SwiftGenericDeclaration("Example.echo<A where A: Swift.Equatable>(A) -> A"),
+            declaration: SwiftGenericDeclaration(linkageName: "$s20ManagedSwiftFixtures12equalGenericySbx_xtSQRzlF"),
             arguments: [.type([String].self)],
-            signature: SwiftFunctionSignature((([String]) -> [String]).self), resolver: .shared)
+            signature: SwiftFunctionSignature((([String], [String]) -> Bool).self), resolver: .shared)
         #expect(conditional.metadataArguments.count == 2)
 
         #expect(throws: ABIResolutionError.self) {
@@ -223,34 +260,37 @@ struct SwiftGenericBindingTests {
     }
 
     @Test func canonicalDeclarationsPreserveDependentTypesEffectsAndPacks() throws {
-        let transform = try SwiftGenericDeclaration(
-            "GenericEvidence.transform<A, B>([A], (A) -> B) -> [B]")
+        let transform = try SwiftGenericDeclaration(linkageName:
+            "$s20ManagedSwiftFixtures16transformGenericySayq_GSayxG_q_xKXEtKr0_lF")
         #expect(transform.parameters.map(\.name) == ["A", "B"])
-        #expect(transform.arguments[0] == .named("Swift.Array", [.named("A", [])]))
-        #expect(transform.arguments[1] == .function([.named("A", [])], .named("B", []), failure: nil, isAsync: false))
-        #expect(transform.result == .named("Swift.Array", [.named("B", [])]))
-
-        let member = try SwiftGenericDeclaration(
-            "GenericEvidence.Container<A>.method<A1>(A1) async throws(A1) -> (A, A1)")
-        #expect(member.parameters.map(\.name) == ["A", "A1"])
-        #expect(member.result == .tuple([.named("A", []), .named("A1", [])]))
-        #expect(member.failure == .named("A1", []))
-        #expect(member.isAsync)
-
-        let pack = try SwiftGenericDeclaration(
-            "GenericEvidence.constrainedPack<each A where A: Swift.Equatable>(repeat A) -> (repeat A)")
+        #expect(transform.arguments[0] == .nominal("Swift.Array", [.named("A", [])]))
+        #expect(transform.arguments[1] == .function([.named("A", [])], .named("B", []),
+            failure: .nominal("Swift.Error", []), isAsync: false))
+        #expect(transform.result == .nominal("Swift.Array", [.named("B", [])]))
+        #expect(transform.failure == .nominal("Swift.Error", []))
+        let suspended = try SwiftGenericDeclaration(linkageName:
+            "$s20ManagedSwiftFixtures23suspendedGenericFailureyxx_q_SbtYaq_YKs5ErrorR_r0_lF")
+        #expect(suspended.parameters.map(\.name) == ["A", "B"])
+        #expect(suspended.result == .named("A", []))
+        #expect(suspended.failure == .named("B", []))
+        #expect(suspended.isAsync)
+        let pack = try SwiftGenericDeclaration(linkageName:
+            "$s20ManagedSwiftFixtures22constrainedPackGenericyxxQp_txxQpRvzSQRzlF")
         #expect(pack.parameters.count == 1 && pack.parameters[0].isPack)
         #expect(pack.arguments == [.pack(.named("A", []))])
         #expect(pack.result == .tuple([.pack(.named("A", []))]))
-        #expect(pack.requirements.count == 1)
+        #expect(pack.requirements == [.conformance(.named("A", []), "Swift.Equatable")])
+    }
 
-        let dependent = try SwiftGenericDeclaration(
-            "GenericEvidence.dependentTwo<A, B where A: Swift.Collection, B == A.Element>(A, B) -> B")
-        #expect(dependent.requirements.count == 2)
-        let labeled = try SwiftGenericDeclaration(
-            "GenericEvidence.apply<A, B>(input: Swift.Dictionary<A, B>, transform: (A, B) throws -> B) rethrows -> Swift.Dictionary<A, B>")
-        #expect(labeled.arguments.count == 2)
-        #expect(labeled.failure == .named("Swift.Error", []))
+    @Test func bindingConstructsNestedNominalsAbsentFromTheConcreteSignature() throws {
+        let binding = try SwiftGenericBinding(declaration: SwiftGenericDeclaration(linkageName:
+            "$s20ManagedSwiftFixtures13selectGenericyxx_q_t7ElementQy_RszSlR_r0_lF"),
+            arguments: [.type(String.self), .type([String].self)],
+            signature: SwiftFunctionSignature(((String, [String]) -> String).self), resolver: .shared)
+        let type = SwiftFormalType.nested(.nominal("ManagedSwiftFixtures.GenericTypeOuter", [.named("A", [])]),
+            "Inner", [.nominal("Swift.Bool", [])])
+        #expect(try binding.types(type)[0] == GenericTypeOuter<String>.Inner<Bool>.self)
+        #expect(try binding.spelling(type) == "ManagedSwiftFixtures.GenericTypeOuter<Swift.String>.Inner<Swift.Bool>")
     }
 
     @Test func runtimeMetadataAndWitnessOperationsMatchCompilerTypes() async throws {

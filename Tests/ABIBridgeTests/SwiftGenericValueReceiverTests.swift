@@ -3,6 +3,13 @@ import Foundation
 import ManagedSwiftFixtures
 import Testing
 
+extension GenericObjectValue: ABIBridgeSwiftValue {
+    public static var swiftABIType: NativeType { .pointer }
+}
+extension GenericSuperclassValue: ABIBridgeSwiftValue {
+    public static var swiftABIType: NativeType { .pointer }
+}
+
 extension GenericPhantom: ABIBridgeSwiftValue {
     public static var swiftABIType: NativeType { .int64 }
 }
@@ -10,13 +17,44 @@ extension GenericPhantom: ABIBridgeSwiftValue {
 extension GenericValueBox: ABIBridgeSwiftValue {
     public static var swiftABIType: NativeType {
         if Value.self == Int.self { return .int }
-        if Value.self is AnyClass { return .pointer }
+        if Value.self is AnyClass || Value.self == [String].self { return .pointer }
         return try! .opaque(named: "GenericValueBox")
     }
 }
 
 @Suite(.serialized)
 struct SwiftGenericValueReceiverTests {
+    @MainActor @Test func nominalConstraintsAndNestedFieldsPreserveReceiverLayouts() async throws {
+        let runtime = ABIRuntime()
+        let object = NSObject()
+        let objectType = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericObjectValue",
+            genericArguments: [.type(NSObject.self)])
+        let objectProject = try await objectType.method(named: "project()", as: (() -> NSObject).self)
+        #expect(try unsafe objectProject.unsafeInvoke(on: GenericObjectValue(object)) === object)
+        let superclassType = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericSuperclassValue",
+            genericArguments: [.type(NSObject.self)])
+        let superclassProject = try await superclassType.method(named: "project()", as: (() -> NSObject).self)
+        #expect(try unsafe superclassProject.unsafeInvoke(on: GenericSuperclassValue(object)) === object)
+        let text = String(repeating: "nested field", count: 100)
+        let nested = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericNestedValue",
+            genericArguments: [.type(String.self)])
+        let project = try await nested.method(named: "project()", as: (() -> String).self)
+        #expect(try unsafe project.unsafeInvoke(on: GenericNestedValue(text)) == text)
+        let sameType = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericSameTypeValue",
+            genericArguments: [.type([ManagedRecord].self)])
+        let number = try await sameType.method(named: "number()", as: (() -> Int64).self)
+        #expect(try unsafe number.unsafeInvoke(on: GenericSameTypeValue([ManagedRecord(token: LifetimeToken(), number: 79)])) == 79)
+    }
+
+    @MainActor @Test func sameTypeNominalExpressionsDetermineMetadataAndReceiverConvention() async throws {
+        let type = try await ABIRuntime().swiftType(named: "ManagedSwiftFixtures.GenericValueBox",
+            genericArguments: [.type([String].self)])
+        let first = try await type.method(named: "first()", as: (() -> String).self,
+            genericArguments: [.type(String.self)])
+        let text = String(repeating: "array constraint", count: 100)
+        #expect(try unsafe first.unsafeInvoke(on: GenericValueBox([text])) == text)
+    }
+
     @MainActor @Test func valuesAndEnumsUseUnboundFieldStorageWithoutAdapters() async throws {
         let runtime = ABIRuntime()
         let record = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericRecord",

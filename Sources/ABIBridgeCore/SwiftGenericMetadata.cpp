@@ -136,16 +136,12 @@ const void *ABISwiftMetadataPack(const void *const *elements, size_t count) {
 }
 
 struct ABISwiftTypeMetadata {
-    struct Requirement {
-        std::string subject;
-        const void *protocol;
-    };
     const void *value;
     std::vector<const void *> arguments;
     std::vector<const void *> conformances;
     std::vector<std::string> parameters;
     std::vector<bool> keyParameters;
-    std::vector<Requirement> requirements;
+    std::vector<const char *> requirements;
 };
 
 namespace {
@@ -316,30 +312,6 @@ bool collectWrittenArguments(ABISwiftTypeMetadata &result, const char *descripto
     return std::all_of(result.arguments.begin(), result.arguments.end(), [](auto value) { return value != nullptr; });
 }
 
-std::string requirementSubject(const char *subject) {
-    std::string result = "$s";
-    const size_t length = symbolicNameLength(subject);
-    for (size_t index = 0; index < length; ++index) {
-        const uint8_t byte = subject[index];
-        if (byte == 1 || byte == 2) {
-            const char *target = subject + index + 1 + read<int32_t>(subject + index + 1);
-            auto protocol = byte == 2 ? contextPointer(target) : target;
-            if ((read<uint32_t>(protocol) & 0x1f) != 3) return {};
-            // A dependent member's first identifier is already substitution 0.
-            // This synthetic protocol adds exactly one substitution, as does
-            // the original symbolic protocol reference (Demangler.cpp). Keeping
-            // that count preserves later substitutions in recursive paths.
-            result += "SoAAP";
-            index += 4;
-        } else if (byte >= 1 && byte <= 0x1f) {
-            return {};
-        } else {
-            result += subject[index];
-        }
-    }
-    return result;
-}
-
 bool collectContext(ABISwiftTypeMetadata &result) {
     result.parameters.clear();
     result.keyParameters.clear();
@@ -363,10 +335,7 @@ bool collectContext(ABISwiftTypeMetadata &result) {
     auto requirements = genericRequirements(header);
     for (size_t index = 0; index < read<uint16_t>(header + 2); ++index) {
         auto entry = requirements + index * 12;
-        if ((read<uint32_t>(entry) & 0x1f) != 0) continue;
-        auto subject = requirementSubject(relative(entry + 4));
-        if (subject.empty()) return false;
-        result.requirements.push_back({std::move(subject), ABISwiftProtocolRequirementDescriptor(entry + 8)});
+        result.requirements.push_back(entry);
     }
     return true;
 }
@@ -506,13 +475,6 @@ const char *inlineFieldReference(const void *metadata, size_t index) {
 }
 }
 
-char *ABICopySwiftTypeFieldReference(const void *metadata, size_t index) {
-    const char *reference = inlineFieldReference(metadata, index);
-    if (!reference) return nullptr;
-    auto subject = requirementSubject(reference);
-    return subject.empty() ? nullptr : strdup(subject.c_str());
-}
-
 ABISwiftSyntax *ABICopySwiftTypeFieldSyntax(const void *metadata, size_t index) {
     const char *reference = inlineFieldReference(metadata, index);
     return reference ? ABICopySwiftTypeSyntax(reference, symbolicNameLength(reference)) : nullptr;
@@ -533,9 +495,9 @@ const void *ABISwiftTypeMetadataArgumentElement(const ABISwiftTypeMetadata *resu
     return pack[element];
 }
 
-char *ABICopySwiftGenericRequirementSubject(const void *requirement) {
-    auto name = requirementSubject(relative(static_cast<const char *>(requirement) + 4));
-    return name.empty() ? nullptr : strdup(name.c_str());
+ABISwiftSyntax *ABICopySwiftGenericRequirementTypeSyntax(const void *requirement, bool constraint) {
+    const char *reference = relative(static_cast<const char *>(requirement) + (constraint ? 8 : 4));
+    return reference ? ABICopySwiftTypeSyntax(reference, symbolicNameLength(reference)) : nullptr;
 }
 
 bool ABIPrepareSwiftTypeMetadataContext(ABISwiftTypeMetadata *result, ABIResolutionFailure **error) {
@@ -552,11 +514,8 @@ bool ABISwiftTypeMetadataArgumentIsKey(const ABISwiftTypeMetadata *result, size_
     return result->keyParameters[index];
 }
 size_t ABISwiftTypeMetadataRequirementCount(const ABISwiftTypeMetadata *result) { return result->requirements.size(); }
-const char *ABISwiftTypeMetadataRequirementSubject(const ABISwiftTypeMetadata *result, size_t index) {
-    return result->requirements[index].subject.c_str();
-}
-const void *ABISwiftTypeMetadataRequirementProtocol(const ABISwiftTypeMetadata *result, size_t index) {
-    return result->requirements[index].protocol;
+const void *ABISwiftTypeMetadataRequirement(const ABISwiftTypeMetadata *result, size_t index) {
+    return result->requirements[index];
 }
 const void *ABISwiftTypeMetadataValue(const ABISwiftTypeMetadata *result) { return result->value; }
 size_t ABISwiftTypeMetadataConformanceCount(const ABISwiftTypeMetadata *result) { return result->conformances.size(); }

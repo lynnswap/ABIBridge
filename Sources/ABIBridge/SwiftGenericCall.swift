@@ -50,15 +50,7 @@ struct SwiftGenericCallPlan: Sendable {
          signature: SwiftFunctionSignature, resolver: SymbolResolver,
          enclosing: SwiftGenericTypeMetadata? = nil, receiver: SwiftReceiverMode? = nil) throws {
         let context = try enclosing.flatMap { $0.arguments.isEmpty ? nil : try SwiftGenericTypeContext(metadata: $0.value) }
-        var source = SymbolIndex.extensionMemberName(declaration) ?? declaration
-        for (accessor, setter) in [(".getter : ", false), (".setter : ", true)] {
-            if let range = source.range(of: accessor) {
-                let value = String(source[range.upperBound...])
-                source = String(source[..<range.lowerBound]) + (setter ? ".setter(" + value + ") -> ()" : ".getter() -> " + value)
-                break
-            }
-        }
-        let declaration = try SwiftGenericDeclaration(source, linkageName: linkageName, enclosing: context)
+        let declaration = try SwiftGenericDeclaration(linkageName: linkageName, enclosing: context)
         let binding = try SwiftGenericBinding(declaration: declaration,
             arguments: (enclosing?.arguments ?? []) + genericArguments,
             signature: signature, resolver: resolver, enclosing: context)
@@ -226,8 +218,10 @@ struct SwiftGenericCallPlan: Sendable {
 
     private static func layout(_ formal: SwiftFormalType, actual: Any.Type,
                                binding: SwiftGenericBinding) throws -> CValueType {
+        let canonical = binding.canonicalType(of: formal)
+        if canonical != formal { return try layout(canonical, actual: actual, binding: binding) }
         func prepare<Value>(_ type: Value.Type) throws -> CValueType {
-            if binding.concreteEquivalent(of: formal) != nil { return try SwiftValueCodec<Value>().type }
+            if !binding.dependsOnParameters(formal) { return try SwiftValueCodec<Value>().type }
             if try binding.isClassBound(formal) { return try CValueType(scalar: ABIValuePointer) }
             switch formal {
             case .named(let name, let arguments), .nominal(let name, let arguments):
@@ -249,6 +243,18 @@ struct SwiftGenericCallPlan: Sendable {
                     isArchetype = arguments.isEmpty && binding.arguments[String(name.prefix { $0 != "." })] != nil
                 } else { isArchetype = false }
                 if try isArchetype || SwiftGenericValueLayout.isIndirect(actual, arguments: arguments, binding: binding) {
+                    return try SwiftGenericParameters.storageType(actual)
+                }
+                return try SwiftValueCodec<Value>().type
+            case .reference(_, let arguments):
+                if actual is AnyClass { return try CValueType(scalar: ABIValuePointer) }
+                if try SwiftGenericValueLayout.isIndirect(actual, arguments: arguments, binding: binding) {
+                    return try SwiftGenericParameters.storageType(actual)
+                }
+                return try SwiftValueCodec<Value>().type
+            case .nested:
+                if actual is AnyClass { return try CValueType(scalar: ABIValuePointer) }
+                if try SwiftGenericValueLayout.isIndirect(actual, arguments: formal.nominalDeclaration!.arguments, binding: binding) {
                     return try SwiftGenericParameters.storageType(actual)
                 }
                 return try SwiftValueCodec<Value>().type
@@ -295,7 +301,8 @@ extension SwiftGenericBinding {
         return switch type {
         case .named(let name, let parameters):
             (parameters.isEmpty && arguments[String(name.prefix { $0 != "." })] != nil) || parameters.contains(where: dependsOnParameters)
-        case .nominal(_, let parameters): parameters.contains(where: dependsOnParameters)
+        case .nominal(_, let parameters), .reference(_, let parameters): parameters.contains(where: dependsOnParameters)
+        case .nested(let parent, _, let parameters): dependsOnParameters(parent) || parameters.contains(where: dependsOnParameters)
         case .tuple(let fields): fields.contains(where: dependsOnParameters)
         case .function(let parameters, let result, let failure, _):
             parameters.contains(where: dependsOnParameters) || dependsOnParameters(result) || (failure.map(dependsOnParameters) ?? false)

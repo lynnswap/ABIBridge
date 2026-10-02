@@ -1,5 +1,47 @@
 import Foundation
 
+@frozen public struct GenericObjectValue<Value: AnyObject> {
+    public var value: Value
+    public init(_ value: Value) { self.value = value }
+    @inline(never) public func project() -> Value { value }
+}
+
+@frozen public struct GenericSuperclassValue<Value: NSObject> {
+    public var value: Value
+    public init(_ value: Value) { self.value = value }
+    @inline(never) public func project() -> Value { value }
+}
+
+@frozen public struct GenericNestedValue<Value> {
+    public var box: GenericValueBox<Value>
+    public init(_ value: Value) { box = GenericValueBox(value) }
+    @inline(never) public func project() -> Value { box.value }
+}
+
+public struct GenericSameTypeValue<Values: Collection> where Values.Element == ManagedRecord {
+    public var values: Values
+    public init(_ values: Values) { self.values = values }
+    @inline(never) public func number() -> Int64 { values.first?.number ?? -1 }
+}
+
+public protocol GenericObjectContainer { associatedtype Item: AnyObject }
+public struct GenericObjectCarrier: GenericObjectContainer { public typealias Item = NSObject }
+
+@inline(never) public func associatedObjectGeneric<Value: GenericObjectContainer>(
+    _ type: Value.Type, _ value: Value.Item
+) -> Value.Item { value }
+
+@objc public protocol GenericObjCConstraint { var genericNumber: Int { get } }
+public class GenericObjCValue: NSObject, GenericObjCConstraint {
+    public var genericNumber: Int { 42 }
+}
+@inline(never) public func objcConstraintGeneric<Value: GenericObjCConstraint>(_ value: Value) -> Value { value }
+@inline(never) public func superclassConstraintGeneric<Value: GenericObjCValue>(_ value: Value) -> Value { value }
+
+extension GenericValueBox {
+    @inline(never) public func first<Element>() -> Element where Value == [Element] { value[0] }
+}
+
 public protocol GenericTree { associatedtype Child: GenericTree }
 public struct GenericLeaf: GenericTree, Equatable { public typealias Child = GenericLeaf }
 public struct GenericRecursive<Value: GenericTree> where Value.Child.Child: Equatable {}
