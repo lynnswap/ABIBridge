@@ -22,9 +22,19 @@ final class SwiftOpaqueResultPlan: Sendable {
                 ABISwiftDestroyValue(unsafeBitCast(metadata, to: UnsafeRawPointer.self), $0)
             }
         }
-        valueType = NativeSwiftType(name: try swiftNativeTypeName(metadata), image: owners[0].image,
+        let name = try swiftNativeTypeName(metadata)
+        let image: NativeImage
+        if let descriptor = ABISwiftTypeDescriptor(unsafeBitCast(metadata, to: UnsafeRawPointer.self)),
+           let definingImage = try swiftImplementationImage(containing: descriptor) {
+            image = definingImage
+        } else if let objectType = metadata as? AnyClass {
+            image = try swiftClassImage(objectType, named: name, resolver: resolver)
+        } else {
+            image = owners[0].image
+        }
+        valueType = NativeSwiftType(name: name, image: image,
             metadata: metadata, representation: nil, resolver: resolver,
-            genericMetadata: try SwiftGenericTypeMetadata(metadata: metadata))
+            genericMetadata: try SwiftGenericTypeMetadata(metadata: metadata, retaining: owners.map(\.image)))
     }
 
     static func make(for result: Any.Type, symbol: ResolvedSymbol,
