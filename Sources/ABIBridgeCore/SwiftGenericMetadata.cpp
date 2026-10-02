@@ -15,6 +15,7 @@ namespace {
 struct MetadataResponse { const void *value; uintptr_t state; };
 }
 extern "C" const void *swift_conformsToProtocol(const void *, const void *);
+extern "C" const void *swift_getExistentialTypeMetadata(bool, const void *, size_t, const uintptr_t *);
 extern "C" MetadataResponse __attribute__((swiftcall))
 swift_getAssociatedTypeWitness(uintptr_t, const void *, const void *, const void *, const void *);
 extern "C" MetadataResponse __attribute__((swiftcall))
@@ -95,6 +96,14 @@ const void *ABISwiftConformance(const void *metadata, const void *protocol) {
     return swift_conformsToProtocol(metadata, protocol);
 }
 
+const void *ABISwiftProtocolTypeMetadata(const void *protocol) {
+    // ProtocolDescriptorRef stores an unsigned integer, not a signed descriptor
+    // pointer. The runtime authenticates pointers in the resulting metadata.
+    uintptr_t reference = reinterpret_cast<uintptr_t>(protocol);
+    return swift_getExistentialTypeMetadata(bool(read<uint32_t>(protocol) & 0x10000),
+                                           nullptr, 1, &reference);
+}
+
 const void *ABISwiftConformanceDescriptor(const void *witnessTable) {
     const void *descriptor = read<const void *>(witnessTable);
 #if __has_feature(ptrauth_calls)
@@ -127,9 +136,16 @@ const void *ABISwiftMetadataPack(const void *const *elements, size_t count) {
 }
 
 struct ABISwiftTypeMetadata {
+    struct Requirement {
+        std::string subject;
+        const void *protocol;
+    };
     const void *value;
     std::vector<const void *> arguments;
     std::vector<const void *> conformances;
+    std::vector<std::string> parameters;
+    std::vector<bool> keyParameters;
+    std::vector<Requirement> requirements;
 };
 
 namespace {
@@ -195,7 +211,9 @@ bool genericTypeLevels(const char *descriptor, const void *environment,
         }
         return nominal && genericTypeLevels(nominal, environment, arguments, counts);
     }
-    if (kind == 2 && !(read<uint32_t>(descriptor) & 0x80))
+    // A private declaration's anonymous context repeats its generic signature;
+    // it does not introduce an additional nominal type argument group.
+    if (kind == 2)
         return genericTypeLevels(parentContext(descriptor), environment, arguments, counts);
     if (kind < 16 || kind > 18) return false;
     if (!genericTypeLevels(parentContext(descriptor), environment, arguments, counts)) return false;
@@ -296,6 +314,61 @@ bool collectWrittenArguments(ABISwiftTypeMetadata &result, const char *descripto
         }
     } while (changed);
     return std::all_of(result.arguments.begin(), result.arguments.end(), [](auto value) { return value != nullptr; });
+}
+
+std::string requirementSubject(const char *subject) {
+    std::string result = "$s";
+    const size_t length = symbolicNameLength(subject);
+    for (size_t index = 0; index < length; ++index) {
+        const uint8_t byte = subject[index];
+        if (byte == 1 || byte == 2) {
+            const char *target = subject + index + 1 + read<int32_t>(subject + index + 1);
+            auto protocol = byte == 2 ? contextPointer(target) : target;
+            if ((read<uint32_t>(protocol) & 0x1f) != 3) return {};
+            // A dependent member's first identifier is already substitution 0.
+            // This synthetic protocol adds exactly one substitution, as does
+            // the original symbolic protocol reference (Demangler.cpp). Keeping
+            // that count preserves later substitutions in recursive paths.
+            result += "SoAAP";
+            index += 4;
+        } else if (byte >= 1 && byte <= 0x1f) {
+            return {};
+        } else {
+            result += subject[index];
+        }
+    }
+    return result;
+}
+
+bool collectContext(ABISwiftTypeMetadata &result) {
+    result.parameters.clear();
+    result.keyParameters.clear();
+    result.requirements.clear();
+    const char *descriptor = typeContextDescriptor(result.value);
+    const char *header = descriptor ? nominalGenericHeader(descriptor) : nullptr;
+    if (!header) return true;
+    auto flat = genericEnvironment({static_cast<uint16_t>(result.arguments.size())});
+    std::vector<uint16_t> levels;
+    if (!genericTypeLevels(descriptor, flat.data(), result.arguments.data(), levels)) return false;
+    size_t start = 0, depth = 0;
+    for (auto count : levels) {
+        if (count <= start) continue;
+        for (size_t index = start; index < count; ++index) {
+            result.parameters.push_back("$s" + parameterReference(depth, index - start));
+            result.keyParameters.push_back(header[8 + index] & 0x80);
+        }
+        start = count;
+        ++depth;
+    }
+    auto requirements = genericRequirements(header);
+    for (size_t index = 0; index < read<uint16_t>(header + 2); ++index) {
+        auto entry = requirements + index * 12;
+        if ((read<uint32_t>(entry) & 0x1f) != 0) continue;
+        auto subject = requirementSubject(relative(entry + 4));
+        if (subject.empty()) return false;
+        result.requirements.push_back({std::move(subject), ABISwiftProtocolRequirementDescriptor(entry + 8)});
+    }
+    return true;
 }
 
 void collectConformances(ABISwiftTypeMetadata &result, const char *descriptor) {
@@ -424,6 +497,31 @@ const void *ABISwiftTypeMetadataArgumentElement(const ABISwiftTypeMetadata *resu
     return pack[element];
 }
 
+char *ABICopySwiftGenericRequirementSubject(const void *requirement) {
+    auto name = requirementSubject(relative(static_cast<const char *>(requirement) + 4));
+    return name.empty() ? nullptr : strdup(name.c_str());
+}
+
+bool ABIPrepareSwiftTypeMetadataContext(ABISwiftTypeMetadata *result, ABIResolutionFailure **error) {
+    if (error) *error = nullptr;
+    if (collectContext(*result)) return true;
+    if (error) *error = ABICreateResolutionFailure(ABIFailureMetadataUnavailable,
+        "The nominal declaration's generic requirements could not be decoded.");
+    return false;
+}
+const char *ABISwiftTypeMetadataParameterReference(const ABISwiftTypeMetadata *result, size_t index) {
+    return result->parameters[index].c_str();
+}
+bool ABISwiftTypeMetadataArgumentIsKey(const ABISwiftTypeMetadata *result, size_t index) {
+    return result->keyParameters[index];
+}
+size_t ABISwiftTypeMetadataRequirementCount(const ABISwiftTypeMetadata *result) { return result->requirements.size(); }
+const char *ABISwiftTypeMetadataRequirementSubject(const ABISwiftTypeMetadata *result, size_t index) {
+    return result->requirements[index].subject.c_str();
+}
+const void *ABISwiftTypeMetadataRequirementProtocol(const ABISwiftTypeMetadata *result, size_t index) {
+    return result->requirements[index].protocol;
+}
 const void *ABISwiftTypeMetadataValue(const ABISwiftTypeMetadata *result) { return result->value; }
 size_t ABISwiftTypeMetadataConformanceCount(const ABISwiftTypeMetadata *result) { return result->conformances.size(); }
 const void *ABISwiftTypeMetadataConformance(const ABISwiftTypeMetadata *result, size_t index) { return result->conformances[index]; }

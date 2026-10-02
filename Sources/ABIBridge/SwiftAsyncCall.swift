@@ -68,7 +68,7 @@ struct SwiftAsyncCall: Sendable {
         var types = generic?.parameters.types(from: logical) ?? logical
         if let trailingType { types.append(trailingType) }
         if let generic {
-            types += Array(repeating: try CValueType(scalar: ABIValuePointer), count: generic.binding.metadataArguments.count)
+            types += Array(repeating: try CValueType(scalar: ABIValuePointer), count: generic.metadata.count)
         }
         self.generic = generic
         interface = try SwiftAsyncCallInterface(result: values.result.type, parameters: types,

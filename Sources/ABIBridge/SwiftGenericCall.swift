@@ -45,17 +45,33 @@ struct SwiftGenericCallPlan: Sendable {
     let errorType: CValueType?
 
     init(declaration: String, linkageName: String, genericArguments: [NativeSwiftGenericArgument],
-         signature: SwiftFunctionSignature, resolver: SymbolResolver) throws {
-        let declaration = try SwiftGenericDeclaration(declaration, linkageName: linkageName)
-        let binding = try SwiftGenericBinding(declaration: declaration, arguments: genericArguments,
-                                              signature: signature, resolver: resolver)
+         signature: SwiftFunctionSignature, resolver: SymbolResolver,
+         enclosing: SwiftGenericTypeMetadata? = nil, receiver: SwiftReceiverMode? = nil) throws {
+        let context = try enclosing.flatMap { $0.arguments.isEmpty ? nil : try SwiftGenericTypeContext(metadata: $0.value) }
+        var source = SymbolIndex.extensionMemberName(declaration) ?? declaration
+        for (accessor, setter) in [(".getter : ", false), (".setter : ", true)] {
+            if let range = source.range(of: accessor) {
+                let value = String(source[range.upperBound...])
+                source = String(source[..<range.lowerBound]) + (setter ? ".setter(" + value + ") -> ()" : ".getter() -> " + value)
+                break
+            }
+        }
+        let declaration = try SwiftGenericDeclaration(source, linkageName: linkageName, enclosing: context)
+        let binding = try SwiftGenericBinding(declaration: declaration,
+            arguments: (enclosing?.arguments ?? []) + genericArguments,
+            signature: signature, resolver: resolver, enclosing: context)
         guard declaration.isAsync == signature.isAsync,
               (declaration.failure == nil) == (signature.failure == Never.self) else {
             throw ABIResolutionError.signatureMismatch(.init(
                 expected: "The declaration's async and error effects", found: []))
         }
         self.binding = binding
-        metadata = SwiftGenericArgumentBuffer(binding.metadataArguments)
+        if let context, let receiver {
+            let prefix: [UInt] = receiver == .address ? [unsafeBitCast(enclosing!.value, to: UInt.self)] : []
+            metadata = SwiftGenericArgumentBuffer(prefix + binding.metadataArguments(fulfilledBy: context))
+        } else {
+            metadata = SwiftGenericArgumentBuffer(binding.metadataArguments)
+        }
         parameters = try SwiftGenericParameters(formal: declaration.arguments, actual: signature.parameters, binding: binding)
         if binding.dependsOnParameters(declaration.result) {
             try binding.validate(signature.result, for: declaration.result)
@@ -79,6 +95,23 @@ struct SwiftGenericCallPlan: Sendable {
         } else {
             errorType = nil
         }
+    }
+
+    func matches(_ signature: SwiftFunctionSignature) throws -> Bool {
+        do {
+            for (formal, group) in zip(binding.declaration.arguments, parameters.groups) {
+                switch group {
+                case .value(let index): try binding.validate(signature.parameters[index], for: formal)
+                case .pack(let range, _):
+                    guard case .pack(let pattern) = formal else { preconditionFailure("A pack group has a pack formal type.") }
+                    for (packIndex, index) in range.enumerated() {
+                        try binding.validate(signature.parameters[index], for: pattern, packIndex: packIndex)
+                    }
+                }
+            }
+            try binding.validate(signature.result, for: binding.declaration.result)
+            return true
+        } catch ABIResolutionError.signatureMismatch { return false }
     }
 
     static func argument(_ formal: SwiftFormalType, actual: Any.Type,
@@ -177,7 +210,8 @@ struct SwiftGenericCallPlan: Sendable {
             if !binding.dependsOnParameters(formal) { return try SwiftValueCodec<Value>().type }
             if binding.isClassBound(formal) { return try CValueType(scalar: ABIValuePointer) }
             switch formal {
-            case .named(let name, let arguments):
+            case .named(let name, let arguments), .nominal(let name, let arguments):
+                if !arguments.isEmpty && actual is AnyClass { return try CValueType(scalar: ABIValuePointer) }
                 if ["Swift.Array", "Swift.Dictionary", "Swift.Set"].contains(name) {
                     return try CValueType(scalar: ABIValuePointer)
                 }
@@ -227,9 +261,10 @@ struct SwiftGenericCallPlan: Sendable {
 
 extension SwiftGenericBinding {
     func dependsOnParameters(_ type: SwiftFormalType) -> Bool {
-        switch type {
+        return switch type {
         case .named(let name, let parameters):
-            arguments[String(name.prefix { $0 != "." })] != nil || parameters.contains(where: dependsOnParameters)
+            (parameters.isEmpty && arguments[String(name.prefix { $0 != "." })] != nil) || parameters.contains(where: dependsOnParameters)
+        case .nominal(_, let parameters): parameters.contains(where: dependsOnParameters)
         case .tuple(let fields): fields.contains(where: dependsOnParameters)
         case .function(let parameters, let result, let failure, _):
             parameters.contains(where: dependsOnParameters) || dependsOnParameters(result) || (failure.map(dependsOnParameters) ?? false)

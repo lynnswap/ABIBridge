@@ -16,7 +16,7 @@ struct SwiftCall: Sendable {
         var parameters = generic?.parameters.types(from: logical) ?? logical
         if let trailingType { parameters.append(trailingType) }
         if let generic {
-            parameters += Array(repeating: try CValueType(scalar: ABIValuePointer), count: generic.binding.metadataArguments.count)
+            parameters += Array(repeating: try CValueType(scalar: ABIValuePointer), count: generic.metadata.count)
         }
         interface = try SwiftCallInterface.cached(result: values.result.type, parameters: parameters, errorPlan: errorPlan)
         hasTrailingValue = trailingType != nil

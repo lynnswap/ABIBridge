@@ -16,6 +16,11 @@ bool ABISwiftProtocolRequirementIsClassBound(const void *reference);
 /// Type construction requires an already validated metadata/witness argument list.
 const void *ABISwiftProtocolRequirementDescriptor(const void *reference);
 const void *ABISwiftConformance(const void *metadata, const void *protocol);
+/// Canonical existential metadata for one valid Swift protocol descriptor.
+const void *ABISwiftProtocolTypeMetadata(const void *protocol);
+/// Copies a demangleable subject from a valid generic requirement descriptor.
+/// Release with ABIFreeString. Returns null for an unsupported symbolic reference.
+char *ABICopySwiftGenericRequirementSubject(const void *requirement);
 const void *ABISwiftConformanceDescriptor(const void *witnessTable);
 const void *ABISwiftAssociatedType(const void *metadata, const void *protocol, const char *name);
 const void *ABISwiftGenericTypeMetadata(const void *descriptor, const void *const *arguments);
@@ -35,6 +40,17 @@ size_t ABISwiftTypeMetadataArgumentCount(const ABISwiftTypeMetadata *result);
 bool ABISwiftTypeMetadataArgumentIsPack(const ABISwiftTypeMetadata *result, size_t index);
 size_t ABISwiftTypeMetadataArgumentElementCount(const ABISwiftTypeMetadata *result, size_t index);
 const void *ABISwiftTypeMetadataArgumentElement(const ABISwiftTypeMetadata *result, size_t index, size_t element);
+/// Reads the nominal declaration context for member binding. This additional
+/// information is not required to construct or inspect nominal metadata.
+bool ABIPrepareSwiftTypeMetadataContext(ABISwiftTypeMetadata *result, ABIResolutionFailure **error);
+/// Type references preserve source generic depth/index for member binding.
+/// Call ABIPrepareSwiftTypeMetadataContext first; returned strings borrow result.
+/// Subjects replace symbolic protocol qualifiers with a demangleable placeholder.
+const char *ABISwiftTypeMetadataParameterReference(const ABISwiftTypeMetadata *result, size_t index);
+bool ABISwiftTypeMetadataArgumentIsKey(const ABISwiftTypeMetadata *result, size_t index);
+size_t ABISwiftTypeMetadataRequirementCount(const ABISwiftTypeMetadata *result);
+const char *ABISwiftTypeMetadataRequirementSubject(const ABISwiftTypeMetadata *result, size_t index);
+const void *ABISwiftTypeMetadataRequirementProtocol(const ABISwiftTypeMetadata *result, size_t index);
 const void *ABISwiftTypeMetadataValue(const ABISwiftTypeMetadata *result);
 size_t ABISwiftTypeMetadataConformanceCount(const ABISwiftTypeMetadata *result);
 /// index must be less than ABISwiftTypeMetadataConformanceCount(result).

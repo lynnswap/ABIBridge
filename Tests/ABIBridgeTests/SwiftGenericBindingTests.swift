@@ -5,6 +5,48 @@ import ManagedSwiftFixtures
 import Testing
 
 struct SwiftGenericBindingTests {
+    @Test func genericClassInitializersPropertiesAndMethodsShareBinding() async throws {
+        let runtime = ABIRuntime()
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericTypeClass",
+            genericArguments: [.type(String.self)])
+        let initialize = try await type.initializer(
+            named: "init(_:)",
+            as: ((String) -> GenericTypeClass<String>).self)
+        let receiver = try unsafe initialize.unsafeInvoke(String(repeating: "initial", count: 20))
+        let get = try await type.getter(named: "value", as: (() -> String).self)
+        let set = try await type.setter(named: "value", as: String.self)
+        let identity = try await type.staticMethod(named: "identity(_:)", as: ((String) -> String).self)
+        let compare = try await type.method(named: "compare(_:)",
+            as: ((Int) -> (String, Int, Bool)).self, genericArguments: [.type(Int.self)])
+        #expect(try unsafe get.unsafeInvoke(on: receiver) == receiver.value)
+        try unsafe set.unsafeInvoke(on: receiver, String(repeating: "updated", count: 20))
+        #expect(receiver.value == String(repeating: "updated", count: 20))
+        #expect(try unsafe identity.unsafeInvoke("static") == "static")
+        let result = try unsafe compare.unsafeInvoke(on: receiver, 42)
+        #expect(result.0 == receiver.value && result.1 == 42 && result.2)
+    }
+
+    @Test func nominalContextsPreserveParameterDepthAndAssociatedConstraints() throws {
+        let collection = try SwiftGenericTypeContext(metadata: GenericTypeCollection<[String]>.self)
+        #expect(collection.parameters.map(\.name) == ["A"])
+        #expect(collection.keyParameters == ["A"])
+        #expect(collection.conformances.map { $0.subject.spelling + ": " + $0.name }.sorted()
+            == ["A.Element: Swift.Equatable", "A: Swift.Collection"])
+        let nested = try SwiftGenericTypeContext(
+            metadata: GenericTypeOuter<[String]>.Inner<String>.Constrained<Bool>.self)
+        #expect(nested.parameters.map(\.name) == ["A", "A1", "A2"])
+        #expect(nested.keyParameters == ["A", "A1", "A2"])
+        #expect(nested.conformances.contains { $0.subject.spelling == "A1" && $0.name == "Swift.Equatable" })
+        let related = try SwiftGenericTypeContext(metadata: GenericTypeRelated<[String], String>.self)
+        #expect(related.parameters.map(\.name) == ["A", "B"])
+        #expect(related.keyParameters == ["A", "B"])
+        let recursive = try SwiftGenericTypeContext(metadata: GenericRecursive<GenericLeaf>.self)
+        #expect(recursive.conformances.map { $0.subject.spelling + ": " + $0.name }.sorted()
+            == ["A.Child.Child: Swift.Equatable", "A: ManagedSwiftFixtures.GenericTree"])
+        let pack = try SwiftGenericTypeContext(metadata: GenericTypePack<String, Int>.self)
+        #expect(pack.parameters.count == 1 && pack.parameters[0].isPack)
+        #expect(pack.conformances.first?.name == "Swift.Equatable")
+    }
     @Test func nominalMetadataUsesRuntimeConstraintsAndCanonicalIdentity() async throws {
         let runtime = ABIRuntime()
         func packMetadata<each Value>(_ types: repeat (each Value).Type) -> Any.Type where repeat each Value: Equatable {

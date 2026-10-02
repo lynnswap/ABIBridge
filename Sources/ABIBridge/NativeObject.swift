@@ -119,22 +119,23 @@ public final class NativeObject {
     ///
     /// The method retains the receiver and implementation image. Invocation
     /// remains on the caller's executor and calls the captured implementation.
-    /// Existing generic class instances supply their enclosing metadata through
-    /// self. Concrete member signatures use the ordinary typed call convention;
-    /// dependent formal types still require an explicit ABI adapter.
+    /// Existing generic class instances supply their enclosing type arguments.
+    /// genericArguments supplies any parameters introduced by the member itself.
     /// - Parameters:
     ///   - name: A relative Swift member name and argument labels.
     ///   - signature: Explicit arguments and result, excluding self.
+    ///   - genericArguments: Type arguments introduced by the member.
     ///   - isConsuming: Whether the Swift member consumes its receiver copy.
     /// - Returns: A reusable method bound to this receiver.
     /// - Throws: A lookup or unsupported-representation error.
     public nonisolated(nonsending) func method<Signature>(
         named name: String, as signature: Signature.Type,
+        genericArguments: [NativeSwiftGenericArgument] = [],
         consuming isConsuming: Bool = false
     ) async throws -> NativeBoundSwiftMethod<Signature> {
         let object = receiver!
         let type = try await swiftType()
-        let method = try await type.method(named: name, as: signature, consuming: isConsuming)
+        let method = try await type.method(named: name, as: signature, genericArguments: genericArguments, consuming: isConsuming)
         return NativeBoundSwiftMethod(method: method, receiver: object)
     }
 

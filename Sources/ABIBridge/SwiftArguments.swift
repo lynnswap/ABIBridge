@@ -42,7 +42,7 @@ struct SwiftArgumentCodec<Value>: Sendable {
         switch generic {
         case .value(let nativeType, let consuming):
             type = nativeType
-            consumes = consuming
+            consumes = consuming || defaultConsuming
             encoding = .genericValue
         case .closure(let plan):
             type = try SwiftValueCodec<Value>().type

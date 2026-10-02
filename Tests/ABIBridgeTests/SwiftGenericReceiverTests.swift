@@ -40,6 +40,22 @@ private final class InheritedGenericReceiver: GenericReceiver<ReceiverNumber> {}
 private enum ReceiverFailure: Error { case rejected }
 
 struct SwiftGenericReceiverTests {
+    @MainActor @Test(arguments: [false, true])
+    func dependentMembersAndIndependentParametersUseRawSwiftValues(_ inherited: Bool) async throws {
+        let receiver: GenericReceiver<ReceiverNumber> = inherited
+            ? InheritedGenericReceiver(.init(number: 42)) : GenericReceiver(.init(number: 42))
+        let object = ABIRuntime().object(receiver)
+        let projected = try await object.method(named: "projected()", as: (() -> ReceiverNumber).self)
+        let echo = try await object.method(named: "echo(_:)", as: ((ReceiverNumber) -> ReceiverNumber).self)
+        let getter = try await object.getter(named: "payload", as: (() -> ReceiverNumber).self)
+        let independent = try await object.method(named: "independent(_:)",
+            as: ((String) -> String).self, genericArguments: [.type(String.self)])
+        #expect(try unsafe projected.unsafeInvoke().number == 42)
+        #expect(try unsafe echo.unsafeInvoke(ReceiverNumber(number: 7)).number == 7)
+        #expect(try unsafe getter.unsafeInvoke().number == 42)
+        #expect(try unsafe independent.unsafeInvoke("member") == "member")
+    }
+
     @MainActor @Test func extractedGenericMethodsKeepContextWithoutRetainingTheOriginalObject() async throws {
         let runtime = ABIRuntime()
         weak var observed: GenericReceiver<ReceiverNumber>?

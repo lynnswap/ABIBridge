@@ -323,6 +323,7 @@ final class SymbolIndex {
     private var decoded: [Scope: [Int: [IndexedSymbol]]] = [:]
     private var linkerNames: [[UInt8]: [IndexedSymbol]] = [:]
     private var swiftExtensions: [Scope: [Int: [IndexedSymbol]]] = [:]
+    private var swiftMembers: [Scope: [Int: [IndexedSymbol]]] = [:]
 
     init(image: NativeImage) {
         self.image = image
@@ -385,16 +386,18 @@ final class SymbolIndex {
         default: break
         }
         guard !additions.isEmpty else { return }
-        let fallback = (sourceSymbols[.swiftFallback], decoded[Self.swiftFallbackScope], swiftExtensions[Self.swiftFallbackScope])
+        let fallback = (sourceSymbols[.swiftFallback], decoded[Self.swiftFallbackScope], swiftExtensions[Self.swiftFallbackScope], swiftMembers[Self.swiftFallbackScope])
         localSymbols += additions
         sourceSymbols.removeAll()
         decoded.removeAll()
         swiftExtensions.removeAll()
+        swiftMembers.removeAll()
         linkerNames.removeAll()
         if !changesFallback {
             sourceSymbols[.swiftFallback] = fallback.0
             decoded[Self.swiftFallbackScope] = fallback.1
             swiftExtensions[Self.swiftFallbackScope] = fallback.2
+            swiftMembers[Self.swiftFallbackScope] = fallback.3
         }
     }
 
@@ -601,6 +604,37 @@ final class SymbolIndex {
         return Self.matching(candidates, query: query, extensionsOnly: extensionsOnly, genericContext: genericContext, unsupported: &unsupported)
     }
 
+    func swiftMemberCandidates(_ query: SymbolQuery, source: ResolvedSymbol.Source,
+                               extensionsOnly: Bool) -> [ResolvedSymbol] {
+        guard let key = SwiftMemberLookup.key(query.declaration.name) else { return [] }
+        var symbols: [IndexedSymbol] = []
+        for bucket in [SwiftBucket.literal, .fallback] {
+            let scope = bucket == .fallback ? Self.swiftFallbackScope
+                : Scope(language: .swift, fragments: query.swiftModule.map { [$0.module] } ?? [], swiftFallback: false)
+            if swiftMembers[scope] == nil {
+                var members: [Int: [IndexedSymbol]] = [:]
+                for symbol in self.symbols(for: query, swiftBucket: bucket) {
+                    guard let name = DeclarationKey.demangle(symbol.name, language: .swift),
+                          let key = SwiftMemberLookup.key(name) else { continue }
+                    members[DeclarationKey.fingerprint(key), default: []].append(symbol)
+                }
+                swiftMembers[scope] = members
+            }
+            symbols += swiftMembers[scope]?[DeclarationKey.fingerprint(key)] ?? []
+        }
+        var addresses: Set<UInt64> = []
+        return symbols.compactMap { symbol in
+            guard symbol.source == source,
+                  let name = DeclarationKey.demangle(symbol.name, language: .swift),
+                  extensionsOnly == (Self.extensionMemberName(name) != nil),
+                  SwiftMemberLookup.key(name) == key,
+                  let section = sections.first(where: { $0.range.contains(symbol.address) }),
+                  section.accepts(query.declaration.kind), addresses.insert(symbol.address).inserted else { return nil }
+            return ResolvedSymbol(declaration: .init(name: name, language: .swift), image: image,
+                sectionRange: section.range, source: source, address: symbol.address, linkageName: symbol.name)
+        }
+    }
+
     // Fingerprints keep the index compact; the full normalized spelling is
     // always checked before a candidate can affect resolution or ambiguity.
     static func matching(_ candidates: [IndexedSymbol], query: SymbolQuery, extensionsOnly: Bool,
@@ -641,8 +675,8 @@ final class SymbolIndex {
         pattern: "x|q(?:[zs]|d[0-9]*_[0-9]*_|[0-9]*_)"
     )
 
-    private static func dependentType(_ reference: String, requirement: String, in mangled: String,
-                                      extensionMember: SwiftConstrainedExtension) -> Bool {
+    static func dependentType(_ reference: String, requirement: String, in mangled: String,
+                                      extensionMember: SwiftConstrainedExtension, occurrence: Int? = nil) -> Bool {
         var context: String?
         for index in mangled.indices where mangled[index] == "E" {
             let prefix = String(mangled[...index])
@@ -672,11 +706,12 @@ final class SymbolIndex {
             var observed = false
             var expected = ""
             var cursor = old[1].startIndex
-            for (before, after) in zip(before, after) {
+            for (index, pair) in zip(before, after).enumerated() {
+                let (before, after) = pair
                 if before != after {
                     guard before == head || before.hasPrefix(head + "."),
                           after == newHead + before.dropFirst(head.count) else { return false }
-                    if before == reference { observed = true }
+                    if before == reference && (occurrence == nil || occurrence == index) { observed = true }
                 }
                 expected += old[1][cursor..<before.startIndex] + after
                 cursor = before.endIndex
@@ -726,7 +761,7 @@ final class SymbolIndex {
         return nil
     }
 
-    private static func extensionMemberName(_ name: String) -> String? {
+    static func extensionMemberName(_ name: String) -> String? {
         let isStatic = name.hasPrefix("static ")
         let declaration = isStatic ? String(name.dropFirst(7)) : name
         guard declaration.hasPrefix("(extension in "),

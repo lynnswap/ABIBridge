@@ -20,19 +20,75 @@ struct SwiftGenericDeclaration: Sendable {
     let isAsync: Bool
     let head: String
 
-    init(_ declaration: String, linkageName: String) throws {
-        let parsed = try Self(declaration)
-        let packs = try parsed.packParameters(in: linkageName)
-        parameters = parsed.parameters.map { Parameter(name: $0.name, isPack: packs.contains($0.name)) }
-        requirements = parsed.requirements
+    init(_ declaration: String, linkageName: String, enclosing context: SwiftGenericTypeContext? = nil) throws {
+        var parsed = try Self(declaration)
+        if let context { parsed = Self(parsed, enclosing: context) }
+        let packs = try parsed.packParameters(in: linkageName, enclosing: context)
+        parameters = parsed.parameters.map { parameter in
+            Parameter(name: parameter.name, isPack: context?.parameters.first {
+                $0.name == parameter.name
+            }?.isPack ?? packs.contains(parameter.name))
+        }
+        var requirements = parsed.requirements
         arguments = parsed.arguments
         result = parsed.result
         failure = parsed.failure
         isAsync = parsed.isAsync
         head = parsed.head
+        if let member = SwiftConstrainedExtension(SymbolIndex.extensionMemberName(declaration) ?? declaration) {
+            let names = Set(parsed.parameters.map(\.name))
+            for requirement in member.requirements {
+                guard let equality = requirement.range(of: "==") else { continue }
+                let lhs = try SwiftFormalType(String(requirement[..<equality.lowerBound]))
+                let rhs = String(requirement[equality.upperBound...])
+                let type = try SwiftFormalType(rhs)
+                guard let index = requirements.firstIndex(of: .sameType(lhs, type)) else { continue }
+                var references: [String: [Bool]] = [:]
+                for (occurrence, reference) in SwiftGenericSyntax.names(in: rhs).enumerated() where reference.contains(".") {
+                    guard let root = reference.split(separator: ".").first, names.contains(String(root)),
+                          !SwiftGenericSyntax.isTupleLabel(reference, in: rhs) else { continue }
+                    references[String(reference), default: []].append(SymbolIndex.dependentType(String(reference),
+                        requirement: requirement, in: linkageName, extensionMember: member, occurrence: occurrence))
+                }
+                requirements[index] = .sameType(lhs, type.classifyingReferences(&references))
+            }
+        }
+        self.requirements = requirements
     }
 
-    private func packParameters(in linkageName: String) throws -> Set<String> {
+    init(_ declaration: Self, enclosing context: SwiftGenericTypeContext) {
+        // NodePrinter prints a method's local generic parameters starting at
+        // depth zero even inside a generic nominal context. Its actual formal
+        // types and requirements retain the enclosing depth.
+        let nextDepth = (context.parameters.map {
+            Int($0.name.drop(while: { $0.isLetter })) ?? 0
+        }.max() ?? -1) + 1
+        var own: [Parameter] = []
+        var depth = nextDepth
+        for group in SwiftGenericSyntax.groups(in: declaration.head) {
+            if declaration.head[group.range.upperBound...].first == "." { continue }
+            let fields = SwiftGenericSyntax.split(Substring(group.contents.components(separatedBy: " where ")[0]))
+            for (index, field) in fields.enumerated() where !field.trimmingCharacters(in: .whitespaces).isEmpty {
+                var position = index, name = ""
+                repeat {
+                    name.append(Character(UnicodeScalar(65 + position % 26)!))
+                    position /= 26
+                } while position != 0
+                if depth != 0 { name += String(depth) }
+                own.append(.init(name: name, isPack: field.trimmingCharacters(in: .whitespaces).hasPrefix("each ")))
+            }
+            depth += 1
+        }
+        parameters = context.parameters + own
+        requirements = declaration.requirements
+        arguments = declaration.arguments
+        result = declaration.result
+        failure = declaration.failure
+        isAsync = declaration.isAsync
+        head = declaration.head
+    }
+
+    private func packParameters(in linkageName: String, enclosing nominal: SwiftGenericTypeContext? = nil) throws -> Set<String> {
         // Swift 6.3's NodePrinter swaps depth/index when printing `each`, so the
         // displayed signature can omit or misplace it. Read the ABI marker's
         // depth/index, then vary only that index to distinguish the operator
@@ -50,8 +106,9 @@ struct SwiftGenericDeclaration: Sendable {
             guard let range = Range(match.range, in: linkageName) else { continue }
             let marker = linkageName[range].dropFirst(2)
             let probe = linkageName.replacingCharacters(in: range, with: marker == "d__" ? "Rvz" : "Rvd__")
-            guard let name = DeclarationKey.demangle(probe, language: .swift), let candidate = try? Self(name),
-                  context(candidate.head) == context(head), candidate.parameters.map(\.name) == parameters.map(\.name),
+            guard let name = DeclarationKey.demangle(probe, language: .swift), var candidate = try? Self(name) else { continue }
+            if let nominal { candidate = Self(candidate, enclosing: nominal) }
+            guard context(candidate.head) == context(head), candidate.parameters.map(\.name) == parameters.map(\.name),
                   candidate.arguments == arguments, candidate.result == result,
                   candidate.failure == failure, candidate.isAsync == isAsync,
                   candidate.requirements == requirements else { continue }
@@ -150,6 +207,7 @@ struct SwiftGenericDeclaration: Sendable {
 
 indirect enum SwiftFormalType: Sendable, Equatable {
     case named(String, [SwiftFormalType])
+    case nominal(String, [SwiftFormalType])
     case tuple([SwiftFormalType])
     case function([SwiftFormalType], SwiftFormalType, failure: SwiftFormalType?, isAsync: Bool)
     case pack(SwiftFormalType)
@@ -237,9 +295,37 @@ indirect enum SwiftFormalType: Sendable, Equatable {
         self = .named(text == "Void" || text == "Swift.Void" ? "()" : text, [])
     }
 
+    /// Classification belongs to this occurrence, not to an identifier-wide map:
+    /// a module and a generic parameter can have the same demangled spelling.
+    fileprivate func classifyingReferences(_ references: inout [String: [Bool]]) -> Self {
+        func next(_ name: String) -> Bool? {
+            guard let values = references[name], !values.isEmpty else { return nil }
+            references[name] = Array(values.dropFirst())
+            return values[0]
+        }
+        switch self {
+        case .named(let name, let arguments), .nominal(let name, let arguments):
+            let dependent = next(name)
+            let arguments = arguments.map { $0.classifyingReferences(&references) }
+            return dependent == false ? .nominal(name, arguments) : .named(name, arguments)
+        case .metatype(let value):
+            if let dependent = next(spelling) { return dependent ? self : .nominal(spelling, []) }
+            return .metatype(value.classifyingReferences(&references))
+        case .tuple(let fields): return .tuple(fields.map { $0.classifyingReferences(&references) })
+        case .function(let arguments, let result, let failure, let isAsync):
+            let arguments = arguments.map { $0.classifyingReferences(&references) }
+            let failure = failure?.classifyingReferences(&references)
+            return .function(arguments, result.classifyingReferences(&references), failure: failure, isAsync: isAsync)
+        case .pack(let type): return .pack(type.classifyingReferences(&references))
+        case .inoutValue(let type): return .inoutValue(type.classifyingReferences(&references))
+        case .borrowing(let type): return .borrowing(type.classifyingReferences(&references))
+        case .consuming(let type): return .consuming(type.classifyingReferences(&references))
+        }
+    }
+
     var spelling: String {
         switch self {
-        case .named(let name, let arguments):
+        case .named(let name, let arguments), .nominal(let name, let arguments):
             name + (arguments.isEmpty ? "" : "<" + arguments.map(\.spelling).joined(separator: ", ") + ">")
         case .tuple(let values): "(" + values.map(\.spelling).joined(separator: ", ") + ")"
         case .function(let arguments, let result, let failure, let isAsync):
@@ -256,6 +342,42 @@ indirect enum SwiftFormalType: Sendable, Equatable {
     }
 }
 
+/// A lookup key preserves the member and labels while its bound signature is
+/// checked separately. This lets ordinary member names select generic entries.
+enum SwiftMemberLookup {
+    static func key(_ declaration: String) -> [UInt8]? {
+        let text = SymbolIndex.extensionMemberName(declaration) ?? declaration
+        func head(_ source: String) -> String {
+            var result = source
+            for group in SwiftGenericSyntax.groups(in: source).reversed() { result.removeSubrange(group.range) }
+            return result
+        }
+        for accessor in [".getter : ", ".setter : "] {
+            if let range = text.range(of: accessor) {
+                return DeclarationKey.make(head(String(text[..<range.lowerBound])) + accessor.components(separatedBy: " : ")[0])
+            }
+        }
+        let input = SwiftFormalSyntax.topLevelArrow(in: text).map { String(text[..<$0.lowerBound]) } ?? text
+        guard let opening = SwiftFormalSyntax.parameterOpening(in: input),
+              let closing = SwiftFormalSyntax.matchingClose(in: input, opening: opening) else { return nil }
+        let fields = input[input.index(after: opening)..<closing]
+        let labels: [String]
+        let possibleLabels = fields.split(separator: ":")
+        if fields.last == ":", possibleLabels.allSatisfy({ field in
+            !field.isEmpty && field.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" }
+        }) {
+            labels = possibleLabels.map(String.init)
+        } else {
+            labels = SwiftFormalSyntax.fields(fields).map { field in
+                SwiftFormalSyntax.topLevelColon(in: field).map {
+                    field[..<$0].trimmingCharacters(in: .whitespaces)
+                } ?? "_"
+            }
+        }
+        return DeclarationKey.make(head(String(input[..<opening])) + "(" + labels.map { $0 + ":" }.joined() + ")")
+    }
+}
+
 enum SwiftFormalSyntax {
     static func fields(_ text: Substring) -> [String] {
         text.trimmingCharacters(in: .whitespaces).isEmpty ? [] : SwiftGenericSyntax.split(text)
@@ -268,7 +390,11 @@ enum SwiftFormalSyntax {
             let character = text[index]
             if character == "<" { generics += 1 }
             else if character == ">", previous != "-", generics > 0 { generics -= 1 }
-            else if character == "(", generics == 0 { return index }
+            else if character == "(", generics == 0 {
+                if let closing = matchingClose(in: text, opening: index),
+                   text[text.index(after: closing)...].first.map({ $0 == "." || $0 == "<" }) == true { continue }
+                return index
+            }
             previous = character
         }
         return nil

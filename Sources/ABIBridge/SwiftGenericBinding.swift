@@ -4,7 +4,7 @@ import Darwin
 /// Immutable metadata/witness words. Native calls only borrow this buffer.
 final class SwiftGenericArgumentBuffer: @unchecked Sendable {
     private let storage: NativeValueStorage
-    private let count: Int
+    let count: Int
     var address: UInt { UInt(bitPattern: storage.address) }
     var addresses: [UnsafeMutableRawPointer?] {
         (0..<count).map { storage.address.advanced(by: $0 * MemoryLayout<UInt>.stride) }
@@ -27,7 +27,7 @@ struct SwiftGenericBinding: Sendable {
     struct Conformance: Sendable {
         let subject: SwiftFormalType
         let name: String
-        let descriptor: ResolvedSymbol?
+        let descriptor: SwiftProtocolDescriptor?
     }
 
     let declaration: SwiftGenericDeclaration
@@ -36,12 +36,19 @@ struct SwiftGenericBinding: Sendable {
     let typeOwners: [NativeSwiftType]
     private let knownTypes: [[UInt8]: Any.Type]
     private let resolver: SymbolResolver
-    private(set) var metadataArguments: [UInt] = []
+    enum MetadataSource: Sendable {
+        case shape(Set<String>)
+        case parameter(String)
+        case conformance(Int)
+    }
+    private var metadataWords: [(source: MetadataSource, value: UInt)] = []
+    var metadataArguments: [UInt] { metadataWords.map(\.value) }
     private(set) var images: [NativeImage] = []
     private(set) var packs: [SwiftGenericArgumentBuffer] = []
 
     init(declaration: SwiftGenericDeclaration, arguments: [NativeSwiftGenericArgument],
-         signature: SwiftFunctionSignature, resolver: SymbolResolver) throws {
+         signature: SwiftFunctionSignature, resolver: SymbolResolver,
+         enclosing context: SwiftGenericTypeContext? = nil) throws {
         guard arguments.count == declaration.parameters.count else {
             throw ABIResolutionError.signatureMismatch(.init(
                 expected: "\(declaration.parameters.count) generic arguments", found: ["\(arguments.count) generic arguments"]))
@@ -93,17 +100,21 @@ struct SwiftGenericBinding: Sendable {
         self.arguments = bound
         typeOwners = owners
         knownTypes = known
-        conformances = try declaration.requirements.compactMap { requirement in
-            guard case .conformance(let subject, let name) = requirement else { return nil }
+        var conformances = context?.conformances ?? []
+        for requirement in declaration.requirements {
+            guard case .conformance(let subject, let name) = requirement else { continue }
+            if conformances.contains(where: { $0.subject == subject && $0.name == name }) { continue }
             // Marker protocols have no runtime witness table. Their source-level
             // concurrency/ownership requirements remain the unsafe caller's contract.
             if ["AnyObject", "Swift.AnyObject", "Swift.Sendable", "Swift.Copyable", "Swift.Escapable"].contains(name) {
-                return Conformance(subject: subject, name: name, descriptor: nil)
+                conformances.append(Conformance(subject: subject, name: name, descriptor: nil))
+                continue
             }
-            return Conformance(subject: subject, name: name, descriptor: try resolver.resolve(
+            conformances.append(Conformance(subject: subject, name: name, descriptor: try SwiftProtocolDescriptor(resolver.resolve(
                 .init(name: "protocol descriptor for " + name, language: .swift, kind: .data),
-                in: .automatic, loading: .loadedOnly))
+                in: .automatic, loading: .loadedOnly))))
         }
+        self.conformances = conformances
         for requirement in declaration.requirements {
             switch requirement {
             case .sameType(let left, let right):
@@ -136,21 +147,21 @@ struct SwiftGenericBinding: Sendable {
         }
         for shape in shapeClasses {
             let parameter = declaration.parameters.first { shape.contains($0.name) }!
-            metadataArguments.append(UInt(bound[parameter.name]!.types.count))
+            metadataWords.append((.shape(shape), UInt(bound[parameter.name]!.types.count)))
         }
         for parameter in declaration.parameters {
             let argument = bound[parameter.name]!
             let metadata = argument.types.map { unsafeBitCast($0, to: UInt.self) }
             if argument.isPack {
-                metadataArguments.append(appendPack(metadata))
+                metadataWords.append((.parameter(parameter.name), appendPack(metadata)))
             } else {
-                metadataArguments.append(metadata[0])
+                metadataWords.append((.parameter(parameter.name), metadata[0]))
             }
         }
-        for conformance in conformances {
+        for (index, conformance) in conformances.enumerated() {
             let types = try types(conformance.subject)
             if let descriptor = conformance.descriptor {
-                images.append(descriptor.image)
+                if let image = descriptor.image { images.append(image) }
                 var witnesses: [UInt] = []
                 for type in types {
                     let pointer = unsafeBitCast(type, to: UnsafeRawPointer.self)
@@ -164,12 +175,27 @@ struct SwiftGenericBinding: Sendable {
                     if let address = ABISwiftConformanceDescriptor(witness),
                        let image = try swiftImplementationImage(containing: address) { images.append(image) }
                 }
-                if isPack(conformance.subject) { metadataArguments.append(appendPack(witnesses)) }
-                else { metadataArguments.append(contentsOf: witnesses) }
+                if isPack(conformance.subject) { metadataWords.append((.conformance(index), appendPack(witnesses))) }
+                else { metadataWords.append(contentsOf: witnesses.map { (.conformance(index), $0) }) }
             } else if conformance.name.hasSuffix("AnyObject") {
                 guard types.allSatisfy({ $0 is AnyClass }) else {
                     throw ABIResolutionError.signatureMismatch(.init(expected: "A class type", found: types.map { String(reflecting: $0) }))
                 }
+            }
+        }
+    }
+
+    func metadataArguments(fulfilledBy context: SwiftGenericTypeContext) -> [UInt] {
+        let parameters = Set(context.parameters.map(\.name))
+        return metadataWords.compactMap { source, value in
+            switch source {
+            case .shape(let names): return names.isSubset(of: parameters) ? nil : value
+            case .parameter(let name): return parameters.contains(name) ? nil : value
+            case .conformance(let index):
+                let conformance = conformances[index]
+                return context.conformances.contains {
+                    $0.subject == conformance.subject && $0.name == conformance.name
+                } ? nil : value
             }
         }
     }
@@ -202,6 +228,20 @@ struct SwiftGenericBinding: Sendable {
         }
     }
 
+    private func conformances(for subject: String) throws -> [Conformance] {
+        var result = conformances.filter { $0.subject.spelling == subject && $0.descriptor != nil }
+        if let separator = subject.lastIndex(of: ".") {
+            let parent = String(subject[..<separator])
+            let member = String(subject[subject.index(after: separator)...])
+            for conformance in try conformances(for: parent) {
+                for descriptor in try conformance.descriptor!.associatedConformances(of: member) {
+                    result.append(try Conformance(subject: .named(subject, []), name: descriptor.name(), descriptor: descriptor))
+                }
+            }
+        }
+        return result
+    }
+
     func types(_ type: SwiftFormalType) throws -> [Any.Type] {
         if case .pack(let pattern) = type { return try types(pattern) }
         if case .named(let name, let parameters) = type, parameters.isEmpty {
@@ -213,11 +253,12 @@ struct SwiftGenericBinding: Sendable {
                     var path = root
                     var remaining = Array(components.dropFirst())
                     while !remaining.isEmpty {
-                        var candidates = conformances.filter { $0.subject.spelling == path && $0.descriptor != nil }
+                        var candidates = try conformances(for: path)
                         if remaining.count > 2 {
                             let qualified = remaining.dropLast().joined(separator: ".")
-                            if let chosen = conformances.first(where: { $0.name == qualified }) {
-                                candidates = [chosen]
+                            let qualifiedCandidates = try candidates.filter { try $0.descriptor!.qualifiedNames().contains(qualified) }
+                            if !qualifiedCandidates.isEmpty {
+                                candidates = qualifiedCandidates
                                 remaining = [remaining.last!]
                             }
                         }
@@ -270,6 +311,7 @@ struct SwiftGenericBinding: Sendable {
                     counts.append(argument.types.count)
                 }
                 parameters.forEach(visit)
+            case .nominal(_, let parameters): parameters.forEach(visit)
             case .tuple(let fields): fields.forEach(visit)
             case .function(let parameters, let result, let failure, _):
                 parameters.forEach(visit); visit(result); if let failure { visit(failure) }
@@ -286,13 +328,15 @@ struct SwiftGenericBinding: Sendable {
     func spelling(_ type: SwiftFormalType, packIndex: Int? = nil) throws -> String {
         switch type {
         case .named(let name, let parameters):
-            if arguments[String(name.prefix { $0 != "." })] != nil {
+            if parameters.isEmpty && arguments[String(name.prefix { $0 != "." })] != nil {
                 let resolved = try types(type)
                 if let packIndex, arguments[String(name.prefix { $0 != "." })]!.isPack {
                     return try swiftNativeTypeName(resolved[packIndex])
                 }
                 return try resolved.map(swiftNativeTypeName).joined(separator: ", ")
             }
+            return name + (parameters.isEmpty ? "" : "<" + (try parameters.map { try spelling($0, packIndex: packIndex) }).joined(separator: ", ") + ">")
+        case .nominal(let name, let parameters):
             return name + (parameters.isEmpty ? "" : "<" + (try parameters.map { try spelling($0, packIndex: packIndex) }).joined(separator: ", ") + ">")
         case .tuple(let values): return "(" + (try values.map { try spelling($0, packIndex: packIndex) }).filter { !$0.isEmpty }.joined(separator: ", ") + ")"
         case .pack(let value):

@@ -1,6 +1,21 @@
 import Foundation
 
-public class GenericTypeClass<Value: Equatable>: NSObject {}
+public protocol GenericTree { associatedtype Child: GenericTree }
+public struct GenericLeaf: GenericTree, Equatable { public typealias Child = GenericLeaf }
+public struct GenericRecursive<Value: GenericTree> where Value.Child.Child: Equatable {}
+
+public class GenericTypeClass<Value: Equatable>: NSObject {
+    private var storage: Value
+    public var value: Value {
+        @inline(never) get { storage }
+        @inline(never) set { storage = newValue }
+    }
+    public init(_ value: Value) { storage = value }
+    @inline(never) public static func identity(_ value: Value) -> Value { value }
+    @inline(never) public func compare<Other: Equatable>(_ other: Other) -> (Value, Other, Bool) {
+        (storage, other, storage == storage && other == other)
+    }
+}
 public final class GenericTypeDerived<Value: Equatable>: GenericTypeClass<[Value]> {}
 public enum GenericTypeEnum<Value> { case value(Value) }
 public struct GenericTypeCollection<Value: Collection> where Value.Element: Equatable {
