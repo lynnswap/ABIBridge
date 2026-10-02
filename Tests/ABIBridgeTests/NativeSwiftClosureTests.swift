@@ -31,7 +31,74 @@ private struct RejectingClosureArgument: ABIBridgeValue {
     static func nativeValue(from value: Self) throws -> NativeValue { throw ClosureConversionError.rejected }
 }
 
+private final class ReentrantClosureCapture: Sendable {
+    let destroyed: ClosureCounter
+    init(_ destroyed: ClosureCounter) { self.destroyed = destroyed }
+    deinit {
+        do {
+            let callback = try NativeSwiftClosure { Int64(42) }
+            #expect(try unsafe callback.unsafeInvoke() == 42)
+        } catch { Issue.record(error) }
+        destroyed.increment()
+    }
+}
+
 struct NativeSwiftClosureTests {
+    @Test func callbackPageReuseReleasesCapturesAndPermitsDestructionReentry() throws {
+        let destroyed = ClosureCounter()
+        for expected in 1...128 {
+            do {
+                let capture = ReentrantClosureCapture(destroyed)
+                let callback = try NativeSwiftClosure { [capture] in
+                    withExtendedLifetime(capture) { Int64(42) }
+                }
+                #expect(try unsafe callback.unsafeInvoke() == 42)
+            }
+            #expect(destroyed.count == expected)
+        }
+    }
+
+    @Test func callbacksAcrossMultiplePagesKeepIndependentContexts() throws {
+        let destroyed = ClosureCounter()
+        var callbacks: [NativeSwiftClosure<Int64, Int64>] = []
+        for index in 0..<1100 {
+            let capture = ClosureCapture(destroyed, bias: Int64(index))
+            callbacks.append(try NativeSwiftClosure { (value: Int64) in value + capture.bias })
+        }
+        for index in callbacks.indices {
+            #expect(try unsafe callbacks[index].unsafeInvoke(1) == Int64(index + 1))
+        }
+        callbacks.removeFirst(1000)
+        #expect(destroyed.count == 1000)
+        for index in callbacks.indices {
+            #expect(try unsafe callbacks[index].unsafeInvoke(2) == Int64(index + 1002))
+        }
+        callbacks.removeAll()
+        #expect(destroyed.count == 1100)
+        let next = try NativeSwiftClosure { Int64(7) }
+        #expect(try unsafe next.unsafeInvoke() == 7)
+    }
+
+    @Test func concurrentCallbackCreationAndReleaseKeepBodiesIndependent() async throws {
+        let total = try await withThrowingTaskGroup(of: Int64.self) { group in
+            for worker in 0..<8 {
+                group.addTask {
+                    var sum: Int64 = 0
+                    for index in 0..<128 {
+                        let value = Int64(worker * 128 + index)
+                        let callback = try NativeSwiftClosure { value }
+                        sum += try unsafe callback.unsafeInvoke()
+                    }
+                    return sum
+                }
+            }
+            var total: Int64 = 0
+            for try await value in group { total += value }
+            return total
+        }
+        #expect(total == 1023 * 1024 / 2)
+    }
+
     @Test func sendableNativeCallersCanInvokeOneContextConcurrently() async throws {
         let callbackType = String(reflecting: (@Sendable (Int64) -> Int64).self)
         let apply = try await ABIRuntime.shared.swiftFunction(
@@ -388,6 +455,26 @@ struct NativeSwiftClosureTests {
     }
 
 #if DEBUG
+    @Test func cachedInterfacesPreserveIndirectionErrorsAndLiveHandlesAfterEviction() throws {
+        let word = try CValueType(scalar: ABIValueInt64)
+        let direct = try SwiftCallInterface.cached(result: word, parameters: [word])
+        let indirect = try CValueType(indirectSwiftSize: 8, alignment: 8)
+        #expect(try SwiftCallInterface.cached(result: indirect, parameters: [word]) !== direct)
+        #expect(try SwiftCallInterface.cached(result: word, parameters: [indirect]) !== direct)
+        let typed = try SwiftCallInterface.cached(result: word, parameters: [word],
+                                                  errorPlan: SwiftErrorPlan.make(ScalarFailure.self))
+        let untyped = try SwiftCallInterface.cached(result: word, parameters: [word],
+                                                    errorPlan: SwiftErrorPlan.make((any Error).self))
+        #expect(typed !== untyped && typed !== direct && untyped !== direct)
+        let callback = try NativeSwiftClosure { (value: Int64) in value + 1 }
+        for size in 1...80 {
+            _ = try SwiftCallInterface.cached(result: CValueType(indirectSwiftSize: size, alignment: 1), parameters: [])
+        }
+        #expect(try unsafe callback.unsafeInvoke(41) == 42)
+        let repeated = try NativeSwiftClosure { (value: Int64) in value + 2 }
+        #expect(try unsafe repeated.unsafeInvoke(40) == 42)
+    }
+
     @Test func closureDiscriminatorsMatchCompilerEvidence() throws {
         #expect(swiftClosureDiscriminator(parameters: [try swiftClosureAuthType(Int64.self)],
                                           result: try swiftClosureAuthType(Int64.self)) == 21761)

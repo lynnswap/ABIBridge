@@ -34,7 +34,7 @@ struct SwiftArgumentCodec<Value>: Sendable {
         case ordinary(SwiftValueCodec<Value>)
         case explicit(SwiftConventionCodec)
         case genericValue
-        case genericClosure
+        case genericClosure(SwiftCallInterface)
     }
     private let encoding: Encoding
 
@@ -47,7 +47,7 @@ struct SwiftArgumentCodec<Value>: Sendable {
         case .closureResult:
             type = try SwiftValueCodec<Value>().type
             consumes = false
-            encoding = .genericClosure
+            encoding = .genericClosure(try (Value.self as! any SwiftGenericResultClosure.Type).genericResultInterface())
         case .concrete:
             if let argument = Value.self as? any SwiftConventionArgument.Type {
                 let codec = try argument.makeArgumentCodec()
@@ -65,8 +65,8 @@ struct SwiftArgumentCodec<Value>: Sendable {
         switch encoding {
         case .ordinary(let codec): return try codec.encode(value)
         case .explicit(let codec): return try codec.encode(value)
-        case .genericClosure:
-            return try (value as! any SwiftGenericResultClosure).encodeGenericResultClosure(retainingCode: owner)
+        case .genericClosure(let interface):
+            return try (value as! any SwiftGenericResultClosure).encodeGenericResultClosure(interface: interface, retainingCode: owner)
         case .genericValue:
             // The callee receives Value's metadata and operates on Value itself,
             // even when Value also provides a different foreign representation.

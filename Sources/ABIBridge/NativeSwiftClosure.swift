@@ -186,11 +186,13 @@ extension NativeSwiftClosure: SwiftGenericResultClosure {
         return result
     }
 
-    func encodeGenericResultClosure(retainingCode owner: Any?) throws -> NativeValueStorage {
+    static func genericResultInterface() throws -> SwiftCallInterface {
         // The declaration-level result stays indirect even for scalar substitutions.
-        // Forwarding through the concrete interface performs the reabstraction.
         let result = try CValueType(indirectSwiftSize: MemoryLayout<Result>.size, alignment: MemoryLayout<Result>.alignment)
-        let interface = try SwiftCallInterface(result: result, parameters: [])
+        return try SwiftCallInterface.cached(result: result, parameters: [])
+    }
+
+    func encodeGenericResultClosure(interface: SwiftCallInterface, retainingCode owner: Any?) throws -> NativeValueStorage {
         let original = closureStorage
         let concrete = call.interface
         let callback = try SwiftClosureCallbackOwner(interface: interface, body: SwiftClosureBody(retainingCode: (original.codeOwner, owner)) { arguments, output in

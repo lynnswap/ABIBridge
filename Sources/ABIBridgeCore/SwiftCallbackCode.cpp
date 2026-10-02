@@ -25,6 +25,8 @@ struct Page {
 struct PageRegistry {
     std::mutex mutex;
     std::vector<std::weak_ptr<Page>> pages;
+    // One empty page amortizes sequential callbacks without retaining their contexts.
+    std::shared_ptr<Page> idlePage;
 };
 PageRegistry &pageRegistry() {
     // Callback owners may be destroyed by another translation unit's static
@@ -65,8 +67,11 @@ struct SwiftCallbackCode::Storage {
     std::shared_ptr<Page> page;
     size_t index;
     ~Storage() {
-        std::lock_guard lock(pageRegistry().mutex);
+        auto &registry = pageRegistry();
+        std::lock_guard lock(registry.mutex);
+        reinterpret_cast<Configuration *>(page->base)[index] = {};
         page->free.push_back(index);
+        if (page->free.size() == entryCount && !registry.idlePage) registry.idlePage = page;
     }
 };
 
@@ -87,6 +92,7 @@ SwiftCallbackCode::SwiftCallbackCode(void *context, ABIResolutionFailure **error
         if (!page) return;
         pages.push_back(page);
     }
+    if (registry.idlePage == page) registry.idlePage.reset();
     const auto index = page->free.back();
     page->free.pop_back();
     storage = std::make_unique<Storage>();

@@ -25,7 +25,7 @@ struct SwiftCall<Result, each Argument>: Sendable {
         argumentCount = parameters.count
         if let trailingType { parameters.append(trailingType) }
         if generic != nil { parameters.append(try CValueType(scalar: ABIValuePointer)) }
-        interface = try SwiftCallInterface(result: result.type, parameters: parameters, errorPlan: errorPlan)
+        interface = try SwiftCallInterface.cached(result: result.type, parameters: parameters, errorPlan: errorPlan)
         self.arguments = arguments
         self.result = result
         hasTrailingValue = trailingType != nil

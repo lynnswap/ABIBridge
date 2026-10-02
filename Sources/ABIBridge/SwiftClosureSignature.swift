@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import Synchronization
 
 // The SIL discriminator hashes formal value types, not their register widths.
 // Class identity, isolation, and ownership qualifiers are intentionally erased.
@@ -63,10 +64,18 @@ private func swiftNominalClosureName(_ mangled: String) throws -> String {
     )
 }
 
+private let swiftClosureDiscriminators = Mutex<[String: UInt16]>([:])
+
 func swiftClosureDiscriminator(parameters: [String], result: String?) -> UInt16 {
     let description = "function:\(parameters.count):" + parameters.map { $0 + ":" }.joined()
         + (result.map { "1:" + $0 + ":" } ?? "0:")
-    return swiftPointerAuthHash(description)
+    return swiftClosureDiscriminators.withLock { cache in
+        if let value = cache[description] { return value }
+        let value = swiftPointerAuthHash(description)
+        if cache.count == 128 { cache.removeAll(keepingCapacity: true) }
+        cache[description] = value
+        return value
+    }
 }
 
 // ABI-stable SipHash-2-4, with LLVM's fixed ptrauth key and nonzero 16-bit range.

@@ -6,7 +6,8 @@ enum SwiftGenericArgument: Sendable { case concrete, parameter, closureResult }
 protocol SwiftGenericResultClosure: SwiftClosureValue {
     static var resultType: Any.Type { get }
     static var parameterTypes: [Any.Type] { get }
-    func encodeGenericResultClosure(retainingCode owner: Any?) throws -> NativeValueStorage
+    static func genericResultInterface() throws -> SwiftCallInterface
+    func encodeGenericResultClosure(interface: SwiftCallInterface, retainingCode owner: Any?) throws -> NativeValueStorage
 }
 
 struct SwiftGenericCallPlan: Sendable {
