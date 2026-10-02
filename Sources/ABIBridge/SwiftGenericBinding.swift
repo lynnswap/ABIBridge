@@ -134,9 +134,10 @@ struct SwiftGenericBinding: Sendable {
         for requirement in declaration.requirements {
             switch requirement {
             case .sameType(let left, let right):
-                let lhs = try spelling(left), rhs = try spelling(right)
-                guard try Self.key(lhs) == Self.key(rhs) else {
-                    throw ABIResolutionError.signatureMismatch(.init(expected: lhs, found: [rhs]))
+                let lhs = try types(left), rhs = try types(right)
+                guard lhs.count == rhs.count, zip(lhs, rhs).allSatisfy({ $0 == $1 }) else {
+                    throw ABIResolutionError.signatureMismatch(.init(
+                        expected: try spelling(left), found: [try spelling(right)]))
                 }
             case .sameShape(let left, let right):
                 guard try types(left).count == types(right).count else {
@@ -217,7 +218,7 @@ struct SwiftGenericBinding: Sendable {
                     throw ABIResolutionError.signatureMismatch(.init(expected: conformance.name,
                         found: types.map { String(reflecting: $0) }))
                 }
-            } else if conformance.name.hasSuffix("AnyObject") {
+            } else if ["AnyObject", "Swift.AnyObject"].contains(conformance.name) {
                 guard types.allSatisfy({ SwiftObjectType($0) != nil }) else {
                     throw ABIResolutionError.signatureMismatch(.init(expected: "A class type", found: types.map { String(reflecting: $0) }))
                 }
@@ -468,7 +469,7 @@ struct SwiftGenericBinding: Sendable {
             let candidates = try conformances(for: type)
                 + conformances.filter { $0.subject == type && $0.descriptor == nil }
             for conformance in candidates {
-                if conformance.name.hasSuffix("AnyObject") || conformance.objectiveC != nil { return true }
+                if ["AnyObject", "Swift.AnyObject"].contains(conformance.name) || conformance.objectiveC != nil { return true }
                 if let descriptor = conformance.descriptor,
                    unsafe descriptor.withUnsafeAddress({ $0.loadUnaligned(as: UInt32.self) & 0x10000 == 0 }) { return true }
             }

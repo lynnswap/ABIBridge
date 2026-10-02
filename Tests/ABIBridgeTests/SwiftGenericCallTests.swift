@@ -12,6 +12,11 @@ extension GenericElementStorage: ABIBridgeSwiftValue {
     }
 }
 
+private struct GenericConstraintValue: GenericNotAnyObject, ABIBridgeSwiftValue, Equatable {
+    let text: String
+    static var swiftABIType: NativeType { try! .opaque(named: "GenericConstraintValue") }
+}
+
 private enum GenericConversionFailure: Error { case rejected }
 private struct RejectGenericArgument: ABIBridgeValue {
     static var abiType: NativeType { .int64 }
@@ -42,6 +47,14 @@ private final class GenericCaptureState: Sendable {
 
 @Suite(.serialized)
 struct SwiftGenericCallTests {
+    @Test func protocolNameSuffixDoesNotChangeGenericValueConvention() async throws {
+        let method = try await ABIRuntime().swiftFunction(
+            named: "ManagedSwiftFixtures.similarlyNamedConstraintGeneric<A where A: ManagedSwiftFixtures.GenericNotAnyObject>(A) -> A",
+            as: ((GenericConstraintValue) -> GenericConstraintValue).self,
+            genericArguments: [.type(GenericConstraintValue.self)])
+        let value = GenericConstraintValue(text: String(repeating: "indirect", count: 100))
+        #expect(try unsafe method.unsafeInvoke(value) == similarlyNamedConstraintGeneric(value))
+    }
 
     @MainActor @Test func ownershipWrappersPreserveGenericClosureEncoding() async throws {
         let runtime = ABIRuntime()

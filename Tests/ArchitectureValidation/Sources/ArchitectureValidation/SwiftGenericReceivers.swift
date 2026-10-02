@@ -4,6 +4,11 @@ import Synchronization
 import SwiftValueFixtures
 import SwiftOpaqueExtensions
 
+private struct BindingConstraintValue: BindingNotAnyObject, ABIBridgeSwiftValue, Equatable {
+    let text: String
+    static var swiftABIType: NativeType { try! .opaque(named: "BindingConstraintValue") }
+}
+
 private struct BindingBoolAdapter: ABIBridgeValue {
     let value: Bool
     init(_ value: Bool) { self.value = value }
@@ -82,6 +87,20 @@ private struct BindingBoolAdapter: ABIBridgeValue {
                 "Declared generic witnesses preserve typed-error output: \(importsConformance)")
         }
     }
+    let similarConstraint = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.bindingSimilarConstraint<A where A: SwiftValueFixtures.BindingNotAnyObject>(A) -> A",
+        as: ((BindingConstraintValue) -> BindingConstraintValue).self, genericArguments: [.type(BindingConstraintValue.self)])
+    let indirectValue = BindingConstraintValue(text: String(repeating: "indirect", count: 100))
+    try check(unsafe similarConstraint.unsafeInvoke(indirectValue) == bindingSimilarConstraint(indirectValue),
+        "Protocol names ending in AnyObject preserve indirect generic value conventions")
+    let overloadReceiver = InheritedGenericMemberReceiver(GenericReceiverNumber(42))
+    let overloadObject = runtime.object(overloadReceiver)
+    let overloadRead = try await overloadObject.method(named: "read(_:)", as: ((Int64) -> Int64).self)
+    try check(unsafe overloadRead.unsafeInvoke(41) == overloadReceiver.read(Int64(41)),
+        "Unsupported opaque overloads do not hide supported superclass members")
+    let extensionRead = try await overloadObject.method(named: "read(_:)", as: ((Double) -> Double).self)
+    try check(unsafe extensionRead.unsafeInvoke(40) == overloadReceiver.read(Double(40)),
+        "Unsupported opaque overloads do not hide constrained extension members")
     let object: AnyObject = NSObject()
     let objectType = try await runtime.swiftType(named: "SwiftValueFixtures.BindingObjectBox", genericArguments: [.type(AnyObject.self)])
     let objectInit = try await objectType.initializer(named: "init(_:)", as: ((AnyObject) -> AnyObject).self)

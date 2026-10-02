@@ -34,6 +34,9 @@ private class GenericReceiver<Value: ReceiverMetric>: NSObject {
     var suffix = ""
     init(_ value: Value) { self.value = value }
     @inline(never) @_optimize(none) func title(_ prefix: String) -> String { prefix + value.text + suffix }
+    @inline(never) @_optimize(none) func read(_ value: Int64) -> Int64 { value + 1 }
+    @inline(never) @_optimize(none) func read(_ value: String) -> some Any { value }
+    @inline(never) @_optimize(none) func unsupportedRead(_ value: String) -> some Any { value }
     var text: String {
         @inline(never) @_optimize(none) get { value.text + suffix }
         @inline(never) @_optimize(none) set { suffix = newValue }
@@ -49,10 +52,31 @@ private class GenericReceiver<Value: ReceiverMetric>: NSObject {
     }
     @inline(never) @_optimize(none) func asyncTitle(_ prefix: String) async -> String { prefix + value.text }
 }
+extension GenericReceiver where Value == ReceiverNumber {
+    @inline(never) @_optimize(none) func read(_ value: Double) -> Double { value + 2 }
+}
 private final class InheritedGenericReceiver: GenericReceiver<ReceiverNumber> {}
 private enum ReceiverFailure: Error { case rejected }
 
 struct SwiftGenericReceiverTests {
+    @MainActor @Test func unsupportedOverloadsDoNotHideUsableMembers() async throws {
+        let runtime = ABIRuntime()
+        for receiver in [GenericReceiver(ReceiverNumber(number: 42)),
+                         InheritedGenericReceiver(ReceiverNumber(number: 43))] {
+            let object = runtime.object(receiver)
+            let read = try await object.method(named: "read(_:)", as: ((Int64) -> Int64).self)
+            #expect(try unsafe read.unsafeInvoke(41) == receiver.read(Int64(41)))
+            let extensionRead = try await object.method(named: "read(_:)", as: ((Double) -> Double).self)
+            #expect(try unsafe extensionRead.unsafeInvoke(40) == receiver.read(Double(40)))
+            do {
+                _ = try await object.method(named: "unsupportedRead(_:)", as: ((String) -> String).self)
+                Issue.record("Expected the unsupported candidate's preparation error")
+            } catch ABIResolutionError.unsupportedDeclaration(let reason) {
+                #expect(reason.contains("OpaqueReturnType"))
+            }
+        }
+    }
+
     @MainActor @Test func completeMemberDeclarationsPreserveConcreteAdapters() async throws {
         let runtime = ABIRuntime()
         let receiver = GenericReceiver(ReceiverNumber(number: 42))

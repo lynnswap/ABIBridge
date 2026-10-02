@@ -1,6 +1,8 @@
 import Foundation
 
 public protocol GenericReceiverMetric { var text: String { get } }
+public protocol BindingNotAnyObject {}
+@inline(never) public func bindingSimilarConstraint<Value: BindingNotAnyObject>(_ value: Value) -> Value { value }
 
 public struct GenericReceiverNumber: GenericReceiverMetric, CustomStringConvertible {
     public let number: Int
@@ -18,6 +20,8 @@ public class GenericMemberReceiver<Value: GenericReceiverMetric>: NSObject {
     private let value: Value
     public init(_ value: Value) { self.value = value }
     @inline(never) public func concrete(_ prefix: String) -> String { prefix + value.text }
+    @inline(never) public func read(_ value: Int64) -> Int64 { value + 1 }
+    @inline(never) public func read(_ value: String) -> some Any { value }
     public var valueText: String { @inline(never) get { value.text } }
     @inline(never) public func projected() -> Value { value }
     @inline(never) public func echo(_ value: Value) -> Value { value }
@@ -27,6 +31,7 @@ public class GenericMemberReceiver<Value: GenericReceiverMetric>: NSObject {
 public final class InheritedGenericMemberReceiver: GenericMemberReceiver<GenericReceiverNumber> {}
 
 extension GenericMemberReceiver where Value == GenericReceiverNumber {
+    @inline(never) public func read(_ value: Double) -> Double { value + 2 }
     @inline(never) public func specialized(_ prefix: String) -> String { prefix + valueText }
     public var specializedText: String { @inline(never) get { valueText } }
 }

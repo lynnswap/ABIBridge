@@ -136,6 +136,10 @@ public actor NativeSwiftType {
                                     arguments: genericArguments, declaredSignature: declaredSignature) else { return false }
                                 return try explicitSignature || plan.matches(SwiftFunctionSignature(signature))
                             } catch ABIResolutionError.signatureMismatch { return false }
+                            catch ABIResolutionError.unsupportedDeclaration(let reason) {
+                                unsupported = .unsupportedDeclaration(reason)
+                                return false
+                            }
                         }
                         if matches.count > 1 {
                             throw ABIResolutionError.ambiguousDeclaration(request, candidates: matches.map(\.linkageName))

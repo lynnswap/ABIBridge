@@ -1,5 +1,8 @@
 @inline(never) public func runGeneric<Value>(_ apply: () -> Value) -> Value { apply() }
 
+public protocol GenericNotAnyObject {}
+@inline(never) public func similarlyNamedConstraintGeneric<Value: GenericNotAnyObject>(_ value: Value) -> Value { value }
+
 @inline(never) public func existentialMetatypesGeneric<Value>(
     _ type: any CustomStringConvertible.Type, _ protocolType: (any CustomStringConvertible).Type, _ value: Value
 ) -> (any CustomStringConvertible.Type, (any CustomStringConvertible).Type, Value) {
