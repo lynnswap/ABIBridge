@@ -14,6 +14,7 @@ private final class BorrowResults: @unchecked Sendable {
     var escaped: NativeSwiftBorrowedValue?
     var returned: AnyObject?
     var owned: NativeSwiftValue?
+    var tasks: [Task<Int64, any Error>] = []
     func record(_ body: () throws -> Void) {
         lock.lock(); defer { lock.unlock() }
         do { try body() } catch { errors.append(String(describing: error)) }
@@ -98,6 +99,36 @@ struct SwiftBorrowedValueTests {
         let expired = try #require(results.escaped)
         #expect(throws: NativeSwiftBorrowError.expiredBorrow) {
             try unsafe text.unsafeInvoke(on: expired)
+        }
+    }
+
+    @Test(arguments: [false, true]) @MainActor func aSynchronousNativeBorrowCannotBeginAnAsyncMember(_ inoutReceiver: Bool) async throws {
+        guard #available(macOS 26, iOS 26, tvOS 26, watchOS 26, visionOS 26, *) else { return }
+        let runtime = ABIRuntime.shared
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeRecord")
+        let length = try await type.method(named: "lengthAsync()", as: (() async -> Int64).self,
+            receiverABI: .opaque(named: type.name))
+        let visit = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitRuntimeRecord(Swift.AnyObject, Swift.String, Swift.UnsafeMutablePointer<Swift.Int32>, (ManagedSwiftFixtures.RuntimeRecord) -> ()) -> ()",
+            as: ((AnyObject, String, UnsafeMutablePointer<Int32>, NativeSwiftBorrowingClosure<Void>) -> Void).self)
+        let results = BorrowResults()
+        let callback = try NativeSwiftBorrowingClosure(borrowing: type) { value in
+            let box = BorrowBox(value)
+            let task = Task.immediate { @MainActor in
+                var receiver = box.value
+                if inoutReceiver { return try unsafe await length.unsafeInvoke(on: &receiver) }
+                return try unsafe await length.unsafeInvoke(on: receiver)
+            }
+            results.record { results.tasks.append(task) }
+        }
+        var cancellations: Int32 = 0
+        try withUnsafeMutablePointer(to: &cancellations) {
+            try unsafe visit.unsafeInvoke(NSObject(), "text", $0, callback)
+        }
+        #expect(results.tasks.count == 3)
+        for task in results.tasks {
+            do { _ = try await task.value; Issue.record("A synchronous native borrow escaped into an async member") }
+            catch NativeSwiftBorrowError.synchronousBorrow { }
         }
     }
 

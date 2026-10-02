@@ -38,6 +38,10 @@ public struct RuntimeRecord {
 
     public var changed: AnyObject? { object }
     public func length() -> Int64 { Int64(text.count) }
+    public nonisolated(nonsending) func lengthAsync() async -> Int64 {
+        await Task.yield()
+        return Int64(text.count)
+    }
     public func cancel() { cancellations.pointee += 1 }
 }
 

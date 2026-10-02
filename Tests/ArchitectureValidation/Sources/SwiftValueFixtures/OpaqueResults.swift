@@ -55,6 +55,10 @@ public struct OpaqueTicket: ~Copyable {
     public var number: Int64
     public func read() -> Int64 { number }
     public mutating func add(_ value: Int64) { number += value }
+    public nonisolated(nonsending) func readAfter(_ gate: AsyncValueGate) async -> Int64 {
+        await gate.wait()
+        return number
+    }
     public nonisolated(nonsending) consuming func takeNumber() async -> Int64 {
         await Task.yield()
         return number

@@ -103,7 +103,7 @@ struct SwiftReceiverPlan: Sendable {
 
     var trailingType: CValueType? { mode == .value ? codec.type : nil }
 
-    func encode(_ receiver: Any) throws -> NativeValueStorage {
+    func encode(_ receiver: Any, asynchronous: Bool = false) throws -> NativeValueStorage {
         let actual: NativeSwiftType
         if let value = receiver as? NativeSwiftValue {
             actual = value.type
@@ -128,9 +128,7 @@ struct SwiftReceiverPlan: Sendable {
         guard !isConsuming && (!isMutating || mode == .object) else {
             throw NativeSwiftValueError.valueInUse
         }
-        return try value.borrow.withAddress {
-            NativeValueStorage(borrowing: UnsafeMutableRawPointer(mutating: $0), owner: value.borrow)
-        }
+        return try value.borrow.access(asynchronous: asynchronous)
     }
 
     func finishInvocation<Result, Receiver>(

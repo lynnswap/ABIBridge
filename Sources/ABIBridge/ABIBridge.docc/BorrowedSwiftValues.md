@@ -43,6 +43,8 @@ Callbacks execute synchronously on the native caller's thread. Prepare member ha
 
 Call `copy()` on an active borrowed view to create an independent NativeSwiftValue. Copying requires a copyable native type; otherwise it throws NativeSwiftValueError.noncopyableType. The owner can outlive the callback and uses the same prepared member handles. NativeSwiftValue.withBorrowedValue provides the reverse path, a scoped view of an owned value.
 
+A borrowed view from a synchronous native callback cannot begin an async member call: it throws NativeSwiftBorrowError.synchronousBorrow because the native caller can release that storage when the callback returns. An owned-value borrow can begin an async member call while active; the operation retains read access until native completion. The view still expires when its scope ends, and saving the view alone never prolongs access.
+
 A borrowed view cannot mutate or consume its native value. An owned value supports mutating and consuming members, including async methods: access remains active through native completion. Mutation updates the owned storage even when the native method throws. Consumption marks the owner consumed after the native call takes its value; a failure before invocation leaves it owned. Copying, borrowing, or consuming through another alias during exclusive access throws NativeSwiftValueError.valueInUse.
 
 The callback creation API here still requires a single formally indirect argument. Generic outer entry points can use explicit substitutions in <doc:GenericSwiftValues>.

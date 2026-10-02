@@ -84,11 +84,13 @@ public final class NativeSwiftValue {
     ///
     /// The view expires at the end of this scope even if it is saved elsewhere.
     /// A conflicting mutation or transfer fails while this borrow remains active.
+    /// An async member started during the scope retains its read access until
+    /// native completion, even after the view expires at the end of body.
     public func withBorrowedValue<Result>(
         _ body: (NativeSwiftBorrowedValue) throws -> Result
     ) throws -> Result {
         let source = try access(.borrowing)
-        let borrow = SwiftValueBorrow(UnsafeRawPointer(source.address))
+        let borrow = SwiftValueBorrow(UnsafeRawPointer(source.address), retaining: source)
         defer { withExtendedLifetime(source) { borrow.expire() } }
         return try body(NativeSwiftBorrowedValue(type: type, borrow: borrow))
     }

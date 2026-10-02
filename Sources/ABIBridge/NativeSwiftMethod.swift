@@ -335,14 +335,14 @@ extension NativeSwiftMethod {
         guard !self.receiver.isMutating || self.receiver.mode == .object || receiver is NativeSwiftValue else {
             throw ABIResolutionError.unsupportedDeclaration("A mutating Swift value member requires an inout receiver.")
         }
-        let storage = try self.receiver.encode(receiver)
+        let storage = try self.receiver.encode(receiver, asynchronous: true)
         return try unsafe await invokeAsync(storage, repeat each values)
     }
 
     @unsafe @usableFromInline nonisolated(nonsending) func invokeAsync<Receiver, Result, each Argument>(
         on receiver: inout Receiver, _ values: repeat each Argument
     ) async throws -> Result {
-        let storage = try self.receiver.encode(receiver)
+        let storage = try self.receiver.encode(receiver, asynchronous: true)
         var invoked = false
         let outcome: Swift.Result<Result, any Error>
         do { outcome = .success(try unsafe await invokeAsync(storage, didInvoke: { invoked = true }, repeat each values)) }

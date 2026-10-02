@@ -94,7 +94,7 @@ import Foundation
     let readMember = try await memberValue.type.method(named: "read()", as: (() -> Int64).self, receiverABI: selfABI)
     let addMember = try await memberValue.type.method(named: "add(_:)", as: ((Int64) -> Void).self,
         receiverABI: selfABI, mutating: true)
-    let takeMember = try await memberValue.type.method(named: "takeNumber()", as: (() async -> Int64).self,
+    let takeMember = try await memberValue.type.method(named: "takeNumber()", as: (nonisolated(nonsending) () async -> Int64).self,
         receiverABI: selfABI, consuming: true)
     try check(try unsafe readMember.unsafeInvoke(on: memberValue) == 42,
               "An owned noncopyable value uses ordinary member invocation")
@@ -118,6 +118,24 @@ import Foundation
         throw ArchitectureValidationFailure(description: "Expected an expired member receiver")
     } catch NativeSwiftBorrowError.expiredBorrow {
         checks.append("Ordinary member calls reject an expired borrowed receiver")
+    }
+    if #available(macOS 26, iOS 26, tvOS 26, watchOS 26, visionOS 26, *) {
+        let readAfter = try await memberValue.type.method(named: "readAfter(_:)",
+            as: (nonisolated(nonsending) (AsyncValueGate) async -> Int64).self, receiverABI: selfABI)
+        let gate = AsyncValueGate()
+        let operation = try memberValue.withBorrowedValue { borrowed in
+            Task.immediate { @MainActor in try unsafe await readAfter.unsafeInvoke(on: borrowed, gate) }
+        }
+        await gate.waitUntilSuspended()
+        do {
+            try unsafe addMember.unsafeInvoke(on: memberValue, 1)
+            throw ArchitectureValidationFailure(description: "Suspended member lost its borrowed self access")
+        } catch NativeSwiftValueError.valueInUse {
+            checks.append("A started async member retains borrowed self access after scope exit")
+        }
+        await gate.open()
+        let number = try await operation.value
+        try check(number == 47, "Retained borrowed self remains valid until native async completion")
     }
     let consumedNumber = try unsafe await takeMember.unsafeInvoke(on: memberValue)
     try check(consumedNumber == 47 && memberValue.isConsumed,

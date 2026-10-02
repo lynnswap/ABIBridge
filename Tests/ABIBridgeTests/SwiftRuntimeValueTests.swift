@@ -103,6 +103,37 @@ private struct RuntimeMoveOnlyPayload: ~Copyable {
         #expect(throws: NativeSwiftValueError.consumedValue) { try unsafe read.unsafeInvoke(on: value) }
     }
 
+    @Test(arguments: [false, true]) @MainActor func aStartedAsyncBorrowRetainsItsOwnerAccessAfterScopeExit(_ inoutReceiver: Bool) async throws {
+        guard #available(macOS 26, iOS 26, tvOS 26, watchOS 26, visionOS 26, *) else { return }
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self)
+        let counts = ArgumentCounts()
+        let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
+        let abi = try NativeType.opaque(named: value.type.name)
+        let read = try await value.type.method(named: "readAfter(_:)", as: ((AsyncGate) async -> Int64).self,
+            receiverABI: abi)
+        let add = try await value.type.method(named: "add(_:)", as: ((Int64) -> Void).self,
+            receiverABI: abi, mutating: true)
+        let gate = AsyncGate()
+        let task = try value.withBorrowedValue { borrowed in
+            Task.immediate { @MainActor in
+                var receiver = borrowed
+                if inoutReceiver { return try unsafe await read.unsafeInvoke(on: &receiver, gate) }
+                return try unsafe await read.unsafeInvoke(on: receiver, gate)
+            }
+        }
+        await gate.waitUntilSuspended()
+        #expect(throws: NativeSwiftValueError.valueInUse) { try unsafe add.unsafeInvoke(on: value, 1) }
+        await gate.open()
+        #expect(try await task.value == 42)
+        do {
+            let ticket = try value.take(as: RuntimeTicket.self)
+            #expect(ticket.number == 42)
+        }
+        #expect(value.isConsumed && counts.destructions == 1)
+    }
+
     @Test func runtimeMemberAccessSurvivesSuspensionAndNativeFailure() async throws {
         let runtime = ABIRuntime.shared
         let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",

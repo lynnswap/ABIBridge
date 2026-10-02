@@ -26,7 +26,7 @@ def main():
         directory = output / target
         directory.mkdir(parents=True, exist_ok=True)
         sdk = run('xcrun', '--sdk', sdk_name, '--show-sdk-path').strip()
-        provider = [str(root / 'Tests/ManagedSwiftFixtures' / name) for name in ['Errors.swift', 'Async.swift', 'Existentials.swift']]
+        provider = [str(root / 'Tests/ManagedSwiftFixtures' / name) for name in ['Errors.swift', 'Async.swift', 'RuntimeValues.swift', 'Existentials.swift']]
         ir_path = directory / 'provider.ll'
         run('xcrun', 'swiftc', '-swift-version', '6', '-parse-as-library', '-enable-library-evolution',
             '-whole-module-optimization', '-Onone', '-module-name', 'ManagedSwiftFixtures',

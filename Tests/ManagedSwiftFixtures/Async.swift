@@ -145,3 +145,10 @@ public actor AsyncCounter {
         return value
     }
 }
+
+extension RuntimeTicket {
+    public nonisolated(nonsending) func readAfter(_ gate: AsyncGate) async -> Int64 {
+        await gate.wait()
+        return number
+    }
+}
