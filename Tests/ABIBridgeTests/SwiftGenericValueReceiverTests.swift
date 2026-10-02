@@ -38,6 +38,18 @@ struct SwiftGenericValueReceiverTests {
         } catch let error as NativeSwiftError {
             #expect(error.withUnderlyingError { ($0 as? GenericGetterFailure)?.code == 42 })
         }
+        let aliasedType = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericAssociatedAliasOwner",
+            genericArguments: [.type(GenericAssociatedValue.self), .type(String.self)])
+        let aliased = try await aliasedType.staticMethod(named: "aliasedWitness(_:_:_:)",
+            as: ((String, GenericGetterFailure, Bool) throws(GenericGetterFailure) -> Int).self,
+            genericArguments: [.type(GenericGetterFailure.self)])
+        #expect(try unsafe aliased.unsafeInvoke("aliased", GenericGetterFailure(43), false) == "aliased".hashValue)
+        do {
+            _ = try unsafe aliased.unsafeInvoke("aliased", GenericGetterFailure(43), true)
+            Issue.record("Expected the aliased member's typed error.")
+        } catch let error as NativeSwiftError {
+            #expect(error.withUnderlyingError { ($0 as? GenericGetterFailure)?.code == 43 })
+        }
         let refined = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericHashOwner",
             genericArguments: [.type(String.self)])
         let hash = try await refined.staticMethod(named: "refinedWitness(_:)", as: ((String) -> Int).self)

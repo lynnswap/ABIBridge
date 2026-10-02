@@ -304,6 +304,7 @@ extension ABIRuntime {
     ///   - signature: The complete Swift function type, including native error and async isolation conventions.
     ///   - scope: Images to search; automatic scope considers only loaded images.
     ///   - genericArguments: Scalar types and packs in declaration parameter order.
+    ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
     ///   - loading: Whether an explicit image may be acquired and initialized.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
     /// - Throws: A resolution, unsupported representation, or call preparation error.
@@ -311,14 +312,16 @@ extension ABIRuntime {
         named name: String,
         as signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument] = [],
+        declaredAs declaredSignature: String? = nil,
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftFunction<Signature> {
         let declaration = try genericArguments.isEmpty ? swiftFunctionDeclaration(named: name, as: signature)
             : NativeDeclaration(name: name, language: .swift)
         let symbol = try resolve(declaration, in: scope, loading: loading)
-        if !genericArguments.isEmpty {
-            return try preparedGenericFunction(symbol: symbol, signature: signature, genericArguments: genericArguments)
+        if !genericArguments.isEmpty || declaredSignature != nil {
+            return try preparedGenericFunction(symbol: symbol, signature: signature, genericArguments: genericArguments,
+                                               declaredSignature: declaredSignature)
         }
         return try NativeSwiftFunction(symbol: symbol, resolver: resolver)
     }
@@ -330,6 +333,7 @@ extension ABIRuntime {
     ///   - signature: The complete Swift function type, including native error and async isolation conventions.
     ///   - image: An image whose symbol index is reused.
     ///   - genericArguments: Scalar types and packs in declaration parameter order.
+    ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
     /// - Throws: A resolution, unsupported representation, or call preparation error.
@@ -337,14 +341,16 @@ extension ABIRuntime {
         named name: String,
         as signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument] = [],
+        declaredAs declaredSignature: String? = nil,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftFunction<Signature> {
         let declaration = try genericArguments.isEmpty ? swiftFunctionDeclaration(named: name, as: signature)
             : NativeDeclaration(name: name, language: .swift)
         let symbol = try resolve(declaration, in: image, loading: loading)
-        if !genericArguments.isEmpty {
-            return try preparedGenericFunction(symbol: symbol, signature: signature, genericArguments: genericArguments)
+        if !genericArguments.isEmpty || declaredSignature != nil {
+            return try preparedGenericFunction(symbol: symbol, signature: signature, genericArguments: genericArguments,
+                                               declaredSignature: declaredSignature)
         }
         return try NativeSwiftFunction(symbol: symbol, resolver: resolver)
     }

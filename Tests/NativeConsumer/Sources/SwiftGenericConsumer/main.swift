@@ -13,15 +13,17 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
     let runtime = ABIRuntime()
     let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericTypeClass",
                                          genericArguments: [.type(String.self)])
-    let initialize = try await type.initializer(named: "init(_:)", as: ((String) -> AnyObject).self)
+    let initialize = try await type.initializer(named: "init(_:)", as: ((String) -> AnyObject).self,
+        declaredAs: "<A where A: Swift.Equatable> (A) -> ManagedSwiftFixtures.GenericTypeClass<A>")
     let object = try unsafe initialize.unsafeInvoke("first")
-    let set = try await runtime.object(object).setter(named: "value", as: String.self)
+    let set = try await runtime.object(object).setter(named: "value", as: String.self, declaredAs: "<A where A: Swift.Equatable> (A) -> ()")
     try unsafe set.unsafeInvoke("updated")
     let get = try await type.getter(named: "value", as: (() -> String).self)
     let updated = try unsafe get.unsafeInvoke(on: object)
     precondition(updated == "updated")
     let compare = try await runtime.object(object).method(named: "compare(_:)",
-        as: ((Int64) -> (String, Int64, Bool)).self, genericArguments: [.type(Int64.self)])
+        as: ((Int64) -> (String, Int64, Bool)).self, genericArguments: [.type(Int64.self)],
+        declaredAs: "<A, A1 where A: Swift.Equatable, A1: Swift.Equatable> (A1) -> (A, A1, Swift.Bool)")
     let comparison = try unsafe compare.unsafeInvoke(42)
     precondition(comparison == ("updated", 42, true))
 
@@ -30,7 +32,8 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
     let pack = try await runtime.swiftFunction(
         named: "ManagedSwiftFixtures.constrainedPackGeneric<each A where A: Swift.Equatable>(repeat A) -> (repeat A)",
         as: ((Int64, String) -> (Int64, String)).self,
-        genericArguments: [.pack([.type(Int64.self), .type(String.self)])])
+        genericArguments: [.pack([.type(Int64.self), .type(String.self)])],
+        declaredAs: "<each A where A: Swift.Equatable> (repeat A) -> (repeat A)")
     let packed = try unsafe pack.unsafeInvoke(43, "pack")
     precondition(packed == (43, "pack"))
     let transform = try await runtime.swiftFunction(

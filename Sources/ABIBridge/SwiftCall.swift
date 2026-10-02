@@ -8,6 +8,7 @@ struct SwiftCall: Sendable {
     private let generic: SwiftGenericCallPlan?
 
     init(signature: Any.Type, trailingType: CValueType? = nil, consumesArguments: Bool = false, errorPlan: SwiftErrorPlan? = nil, opaqueResult: SwiftOpaqueResultPlan? = nil, generic: SwiftGenericCallPlan? = nil) throws {
+        try generic?.validateMetadataArguments()
         self.errorPlan = errorPlan
         self.generic = generic
         values = try SwiftCallValues(signature: SwiftFunctionSignature(signature), consumesArguments: consumesArguments,

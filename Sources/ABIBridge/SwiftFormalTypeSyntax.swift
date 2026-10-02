@@ -3,7 +3,7 @@ import Foundation
 
 extension SwiftGenericDeclaration {
     init(linkageName: String, enclosing context: SwiftGenericTypeContext? = nil,
-         getterSignature: SwiftFormalType? = nil, caller: SwiftFunctionSignature? = nil) throws {
+         declaredSignature: SwiftDeclaredSignature? = nil, caller: SwiftFunctionSignature? = nil) throws {
         let syntax = try SwiftSyntax(symbol: linkageName)
         var entry = syntax.root
         while ["Global", "Static"].contains(entry.kind) {
@@ -58,7 +58,7 @@ extension SwiftGenericDeclaration {
             arguments = accessor == "Setter" ? [property] : []
             result = accessor == "Setter" ? .tuple([]) : property
             if accessor == "Getter" {
-                if let getterSignature {
+                if let getterSignature = declaredSignature?.function {
                     guard case .function(let parameters, _, let failure, let isAsync) = getterSignature, parameters.isEmpty else {
                         throw ABIResolutionError.signatureMismatch(.init(expected: "A zero-argument declared getter signature", found: [getterSignature.spelling]))
                     }
@@ -83,6 +83,11 @@ extension SwiftGenericDeclaration {
             self.result = result
             self.failure = failure
             self.isAsync = isAsync
+        }
+        implicitRequirements = context?.requirements ?? []
+        abiRequirements = try declaredSignature?.requirements(for: self)
+        if let abiRequirements {
+            self.requirements += abiRequirements.filter { !self.requirements.contains($0) }
         }
     }
 

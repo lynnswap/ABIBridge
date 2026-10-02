@@ -62,6 +62,7 @@ struct SwiftAsyncCall: Sendable {
 
     init(signature: Any.Type, trailingType: CValueType? = nil, consumesArguments: Bool = false,
          errorPlan: SwiftErrorPlan? = nil, inheritsCallerIsolation: Bool, opaqueResult: SwiftOpaqueResultPlan? = nil, generic: SwiftGenericCallPlan? = nil) throws {
+        try generic?.validateMetadataArguments()
         values = try SwiftCallValues(signature: SwiftFunctionSignature(signature), consumesArguments: consumesArguments,
             opaqueResult: opaqueResult, generic: generic)
         let logical = values.arguments.map(\.type)

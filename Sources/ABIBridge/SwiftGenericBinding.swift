@@ -243,19 +243,48 @@ struct SwiftGenericBinding: Sendable {
     }
 
     func metadataArguments(fulfilledBy context: SwiftGenericTypeContext) throws -> [UInt] {
+        try unfulfilledMetadata(in: context).map(\.value)
+    }
+
+    private func unfulfilledMetadata(in context: SwiftGenericTypeContext?) throws -> [(source: MetadataSource, value: UInt)] {
+        guard let context else { return metadataWords }
         let parameters = Set(context.parameters.map(\.name))
-        return try metadataWords.compactMap { source, value in
+        return try metadataWords.filter { source, _ in
             switch source {
-            case .shape(let names): return names.isSubset(of: parameters) ? nil : value
-            case .parameter(let name): return parameters.contains(name) ? nil : value
+            case .shape(let names): return !names.isSubset(of: parameters)
+            case .parameter(let name): return !parameters.contains(name)
             case .conformance(let index):
                 let conformance = conformances[index]
-                return try context.conformances.contains { source in
+                return try !context.conformances.contains { source in
                     guard try equivalentTypes(of: conformance.subject).contains(where: { try sameFormalType($0, source.subject) }) else {
                         return false
                     }
                     return try source.descriptor?.qualifiedNames().contains(conformance.name) ?? (source.name == conformance.name)
-                } ? nil : value
+                }
+            }
+        }
+    }
+
+    func validateMetadataArguments(fulfilledBy context: SwiftGenericTypeContext?) throws {
+        guard declaration.abiRequirements == nil else { return }
+        // A retroactive superclass conformance may or may not have been
+        // visible to the provider. Runtime availability cannot recover that
+        // import boundary, so it cannot decide whether a witness was omitted.
+        for requirement in declaration.requirements {
+            guard case .superclass(let subject, let superclass) = requirement else { continue }
+            for (source, _) in try unfulfilledMetadata(in: context) {
+                guard case .conformance(let index) = source else { continue }
+                let conformance = conformances[index]
+                guard let descriptor = conformance.descriptor,
+                      declaration.implicitRequirements.contains(.conformance(conformance.subject, conformance.name)),
+                      try equivalentTypes(of: subject).contains(where: { try sameFormalType($0, conformance.subject) }) else { continue }
+                for type in try types(superclass) {
+                    if unsafe descriptor.withUnsafeAddress({ ABISwiftConformance(unsafeBitCast(type, to: UnsafeRawPointer.self), $0) }) != nil {
+                        throw ABIResolutionError.unsupportedDeclaration(
+                            "The superclass conformance " + superclass.spelling + ": " + conformance.name
+                            + " may have been omitted from this member's generic ABI. Supply declaredAs: with the provider's complete canonical generic signature, including its <...> clause.")
+                    }
+                }
             }
         }
     }
@@ -264,6 +293,16 @@ struct SwiftGenericBinding: Sendable {
     /// refined protocols, and then orders protocol declarations by context/name.
     /// See Swift 6.3 GenericSignature.cpp, Requirement.cpp, and TypeDecl::compare.
     private func canonicalWitnessIndices() throws -> [Int] {
+        if let requirements = declaration.abiRequirements {
+            return try requirements.compactMap { requirement in
+                guard case .conformance(let subject, let name) = requirement else { return nil }
+                return try conformances.indices.first { index in
+                    let conformance = conformances[index]
+                    return try conformance.descriptor != nil && conformance.name == name
+                        && sameFormalType(conformance.subject, subject)
+                }
+            }
+        }
         func protocolLess(_ left: String, _ right: String) -> Bool {
             let lhs = left.split(separator: "."), rhs = right.split(separator: ".")
             if lhs.count != rhs.count { return lhs.count < rhs.count }
@@ -288,13 +327,10 @@ struct SwiftGenericBinding: Sendable {
             let subject = try canonicalType(of: conformance.subject)
             guard isArchetype(subject) else { continue }
             let name = try descriptor.name()
-            if try associatedConformances(for: subject).contains(where: {
-                try $0.descriptor!.qualifiedNames().contains(name)
-            }) { continue }
             let representative = try equivalentTypes(of: subject).min(by: subjectLess) ?? subject
             sources.append((index, representative, name, try descriptor.qualifiedNames(), try descriptor.orderingPath()))
         }
-        let required = try sources.filter { source in
+        var required = try sources.filter { source in
             try !sources.contains { other in
                 guard source.index != other.index,
                       try sameFormalType(source.subject, other.subject),
@@ -302,11 +338,25 @@ struct SwiftGenericBinding: Sendable {
                 return source.name != other.name || other.index < source.index
             }
         }
-        return try required.sorted { left, right in
+        required = try required.sorted { left, right in
             if try !sameFormalType(left.subject, right.subject) { return subjectLess(left.subject, right.subject) }
             if left.path.count != right.path.count { return left.path.count < right.path.count }
             return left.path.lexicographicallyPrecedes(right.path) { $0.utf8.lexicographicallyPrecedes($1.utf8) }
-        }.map(\.index)
+        }
+        // A same-type alias can receive a conformance through another
+        // parameter's associated-type requirements. Derive it only from
+        // witnesses that remain, so cycles cannot remove every source.
+        for position in required.indices.reversed() {
+            let candidate = required[position]
+            let others = Set(required.map(\.index)).subtracting([candidate.index])
+            let aliases = try equivalentTypes(of: conformances[candidate.index].subject)
+            if try aliases.contains(where: { subject in
+                try associatedConformances(for: subject, from: others).contains(where: {
+                    try $0.descriptor!.qualifiedNames().contains(candidate.name)
+                })
+            }) { required.remove(at: position) }
+        }
+        return required.map(\.index)
     }
 
     private static func key(_ name: String) throws -> [UInt8] {
@@ -424,10 +474,10 @@ struct SwiftGenericBinding: Sendable {
         return false
     }
 
-    private func associatedConformances(for subject: SwiftFormalType) throws -> [Conformance] {
+    private func associatedConformances(for subject: SwiftFormalType, from sources: Set<Int>? = nil) throws -> [Conformance] {
         var result: [Conformance] = []
         if case .associated(let parent, let member, let qualifier) = subject {
-            for conformance in try conformances(for: parent, qualifiedBy: qualifier) {
+            for conformance in try conformances(for: parent, qualifiedBy: qualifier, from: sources) {
                 for descriptor in try conformance.descriptor!.associatedConformances(of: member) {
                     result.append(try Conformance(subject: subject, name: descriptor.name(), descriptor: descriptor))
                 }
@@ -436,9 +486,11 @@ struct SwiftGenericBinding: Sendable {
         return result
     }
 
-    private func conformances(for subject: SwiftFormalType, qualifiedBy protocolName: String? = nil) throws -> [Conformance] {
-        var result = try conformances.filter { try $0.descriptor != nil && sameFormalType($0.subject, subject) }
-            + associatedConformances(for: subject)
+    private func conformances(for subject: SwiftFormalType, qualifiedBy protocolName: String? = nil,
+                              from sources: Set<Int>? = nil) throws -> [Conformance] {
+        var result = try conformances.enumerated().filter { index, conformance in
+            try (sources?.contains(index) ?? true) && conformance.descriptor != nil && sameFormalType(conformance.subject, subject)
+        }.map(\.element) + associatedConformances(for: subject, from: sources)
         if let protocolName {
             result = try result.filter { try $0.descriptor!.qualifiedNames().contains(protocolName) }
             if result.isEmpty && !isArchetype(subject) {

@@ -2,6 +2,7 @@ import ABIBridge
 import Foundation
 import Synchronization
 import SwiftValueFixtures
+import SwiftOpaqueExtensions
 
 @MainActor func validateSwiftGenericReceivers() async throws -> [String] {
     let runtime = ABIRuntime()
@@ -53,6 +54,25 @@ import SwiftValueFixtures
     func check(_ condition: Bool, _ message: String) throws {
         guard condition else { throw ArchitectureValidationFailure(description: message) }
         checks.append(message)
+    }
+    for (name, importsConformance) in [
+        ("SwiftValueFixtures.BindingDeclaredUnknown", false), ("SwiftOpaqueExtensions.BindingDeclaredKnown", true)
+    ] {
+        let owner = try await runtime.swiftType(named: name, genericArguments: [.type(BindingDeclaredBase.self)])
+        let witness = importsConformance ? "" : ", A: SwiftValueFixtures.BindingDeclaredScore"
+        let entry = try await owner.staticMethod(named: "entry(_:_:)", as: ((SmallError, Bool) throws(SmallError) -> Int64).self,
+            genericArguments: [.type(SmallError.self)],
+            declaredAs: "<A, A1 where A: SwiftValueFixtures.BindingDeclaredBase" + witness
+                + ", A1: Swift.Error> (A1, Swift.Bool) throws(A1) -> Swift.Int64")
+        try check(unsafe entry.unsafeInvoke(SmallError(45), false) == 42,
+            "Declared generic witnesses preserve provider import visibility: \(importsConformance)")
+        do {
+            _ = try unsafe entry.unsafeInvoke(SmallError(45), true)
+            throw ArchitectureValidationFailure(description: "Expected the declared generic typed error")
+        } catch let error as NativeSwiftError {
+            try check(error.withUnderlyingError { ($0 as? SmallError)?.code == 45 },
+                "Declared generic witnesses preserve typed-error output: \(importsConformance)")
+        }
     }
     let refined = try await runtime.swiftType(named: "SwiftValueFixtures.BindingHashOwner", genericArguments: [.type(String.self)])
     let hash = try await refined.staticMethod(named: "refinedWitness(_:)", as: ((String) -> Int).self)

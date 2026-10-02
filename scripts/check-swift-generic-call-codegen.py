@@ -42,6 +42,36 @@ def main():
         directory.mkdir(parents=True, exist_ok=True)
         sdk = run("xcrun", "--sdk", sdk_name, "--show-sdk-path").strip()
         common = ["xcrun", "swiftc", "-swift-version", "6", "-parse-as-library", "-Onone", "-target", target, "-sdk", sdk]
+        declared_base = directory / "DeclaredBase.swift"
+        declared_base.write_text("public protocol Score { static func score() -> Int }\nopen class Base {}\n")
+        run(*common, "-module-name", "DeclaredBase", "-emit-module", str(declared_base),
+            "-emit-module-path", str(directory / "DeclaredBase.swiftmodule"))
+        declared_conformance = directory / "DeclaredConformance.swift"
+        declared_conformance.write_text("import DeclaredBase\nextension Base: @retroactive Score { public static func score() -> Int { 42 } }\n")
+        run(*common, "-module-name", "DeclaredConformance", "-I", str(directory), "-emit-module", str(declared_conformance),
+            "-emit-module-path", str(directory / "DeclaredConformance.swiftmodule"))
+        declared_entries = {}
+        for visible in [False, True]:
+            declared_source = directory / ("DeclaredWith.swift" if visible else "DeclaredWithout.swift")
+            declared_source.write_text("import DeclaredBase\n" + ("import DeclaredConformance\n" if visible else "") + """
+                public struct Box<Value: Score> {}
+                extension Box where Value: Base {
+                    public static func entry<Failure: Error>(_ error: Failure, _ shouldThrow: Bool) throws(Failure) -> Int {
+                        if shouldThrow { throw error }
+                        return Value.score()
+                    }
+                }
+                """)
+            declared_ir = declared_source.with_suffix(".ll")
+            run(*common, "-module-name", "DeclaredCaller", "-I", str(directory), "-emit-ir", str(declared_source), "-o", str(declared_ir))
+            declared_entries[str(visible)] = next(line for line in declared_ir.read_text().splitlines()
+                if line.startswith("define ") and "5entry" in line and "swiftcc" in line)
+        require(re.search(r'@("[^"\n]+"|[^ (]+)\(', declared_entries["False"]).group(1)
+                == re.search(r'@("[^"\n]+"|[^ (]+)\(', declared_entries["True"]).group(1),
+                f"{target}: provider import visibility must not change the member symbol")
+        require("ptr %Value.Score" in declared_entries["False"] and "ptr %Value.Score" not in declared_entries["True"]
+                and all("ptr %Failure.Error" in entry for entry in declared_entries.values()),
+                f"{target}: superclass conformance visibility changes the witnesses before typed-error output")
         provider = root / "Tests/ManagedSwiftFixtures"
         run(*common, "-enable-library-evolution", "-module-name", "ManagedSwiftFixtures", "-emit-module",
             str(provider / "RuntimeValues.swift"), str(provider / "GenericCalls.swift"),
@@ -113,7 +143,11 @@ def main():
             str(provider / "ExplicitValues.swift"), "-o", str(value_ir_path))
         value_ir = value_ir_path.read_text()
         witness_entries = {name: body(value_ir, name).splitlines()[0] for name in [
-            "refinedWitness", "orderedWitnesses", "concreteWitness"]}
+            "refinedWitness", "orderedWitnesses", "concreteWitness", "associatedWitness", "aliasedWitness"]}
+        for name in ["associatedWitness", "aliasedWitness"]:
+            require("Value.GenericAssociatedRefined" in witness_entries[name] and "Equatable" not in witness_entries[name]
+                    and "Failure.Error" in witness_entries[name],
+                    f"{target}: associated-type refinements remove directly named and aliased redundant witnesses")
         require("Value.Hashable" in witness_entries["refinedWitness"]
                 and "Equatable" not in witness_entries["refinedWitness"],
                 f"{target}: a refined protocol replaces the nominal base witness")
@@ -235,7 +269,7 @@ def main():
                         "nestedSource": nested_source, "superclassSource": superclass_source,
                         "metatypeCallbacks": metatypes, "packSources": pack_sources,
                         "associatedStorage": associated_storage, "getterErrors": getter_errors,
-                        "errorSubstitutions": error_substitutions, "witnessEntries": witness_entries})
+                        "errorSubstitutions": error_substitutions, "witnessEntries": witness_entries, "providerImportEntries": declared_entries})
     report = {"compiler": run("xcrun", "swiftc", "--version").strip(), "runtimeTested": False,
               "demanglerRevision": upstream["revision"], "targets": targets}
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")

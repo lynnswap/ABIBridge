@@ -14,13 +14,85 @@ struct SwiftGenericDeclaration: Sendable {
         case superclass(SwiftFormalType, SwiftFormalType)
     }
     let parameters: [Parameter]
-    let requirements: [Requirement]
+    var requirements: [Requirement]
     let arguments: [SwiftFormalType]
     let result: SwiftFormalType
     let failure: SwiftFormalType?
     let isAsync: Bool
     let consumesArguments: Bool
+    // An explicit canonical signature describes physical generic arguments.
+    // The full requirements above remain available for constraint validation.
+    var abiRequirements: [Requirement]? = nil
+    var implicitRequirements: [Requirement] = []
 
+}
+
+/// Source-level information omitted from a callable's mangling, supplied by
+/// the caller using the provider's canonical generic signature.
+struct SwiftDeclaredSignature {
+    let function: SwiftFormalType
+    let genericClause: String?
+
+    init(_ source: String) throws {
+        let text = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasPrefix("<") {
+            guard let group = SwiftGenericSyntax.groups(in: text).first,
+                  group.range.lowerBound == text.startIndex else {
+                throw ABIResolutionError.unsupportedDeclaration("Incomplete declaredAs: generic signature: " + source)
+            }
+            genericClause = String(group.contents)
+            function = try SwiftFormalType(String(text[group.range.upperBound...]))
+        } else {
+            genericClause = nil
+            function = try SwiftFormalType(text)
+        }
+        guard case .function = function else {
+            throw ABIResolutionError.unsupportedDeclaration("declaredAs: requires a Swift function type: " + source)
+        }
+    }
+
+    func requirements(for declaration: SwiftGenericDeclaration) throws -> [SwiftGenericDeclaration.Requirement]? {
+        guard let genericClause else { return nil }
+        let clause = genericClause.range(of: " where ")
+        let parameterText = clause.map { String(genericClause[..<$0.lowerBound]) } ?? genericClause
+        let names = SwiftFormalSyntax.fields(parameterText[...]).map { $0.trimmingCharacters(in: .whitespaces) }
+        let expected = declaration.parameters.map { ($0.isPack ? "each " : "") + $0.name }
+        guard names == expected else {
+            throw ABIResolutionError.signatureMismatch(.init(expected: "Generic parameters " + expected.joined(separator: ", "), found: names))
+        }
+        guard let clause else { return [] }
+        func type(_ text: String) throws -> SwiftFormalType {
+            let value = try SwiftFormalType(text)
+            if case .named(let name, []) = value {
+                let parts = name.split(separator: ".").map(String.init)
+                if let root = parts.first, declaration.parameters.contains(where: { $0.name == root }) {
+                    return parts.dropFirst().reduce(.named(root, [])) { .associated($0, $1) }
+                }
+            }
+            return value
+        }
+        return try SwiftFormalSyntax.fields(genericClause[clause.upperBound...]).map { field in
+            for separator in ["==", "~"] {
+                if let range = field.range(of: separator) {
+                    let left = try type(String(field[..<range.lowerBound]))
+                    let right = try type(String(field[range.upperBound...]))
+                    return separator == "==" ? .sameType(left, right) : .sameShape(left, right)
+                }
+            }
+            guard let colon = SwiftFormalSyntax.topLevelColon(in: field) else {
+                throw ABIResolutionError.unsupportedDeclaration("Invalid declaredAs: generic requirement: " + field)
+            }
+            let subject = try type(String(field[..<colon]))
+            let constraint = try type(String(field[field.index(after: colon)...]))
+            // Superclass requirements are encoded in the declaration. Reuse
+            // that classification rather than infer it from current conformances.
+            if declaration.requirements.contains(where: {
+                guard case .superclass(_, let known) = $0 else { return false }
+                return DeclarationKey.make(known.spelling, language: .swift) == DeclarationKey.make(constraint.spelling, language: .swift)
+            }) { return .superclass(subject, constraint) }
+            return .conformance(subject, constraint.spelling)
+        }
+    }
 }
 
 indirect enum SwiftFormalType: Sendable, Equatable {

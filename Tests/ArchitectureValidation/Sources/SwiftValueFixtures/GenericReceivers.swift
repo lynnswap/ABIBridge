@@ -142,3 +142,16 @@ public final class BindingPackSource<each Value: Equatable> { public init() {} }
 @inline(never) public func bindingExistentialMetatype<Value>(
     _ type: any CustomStringConvertible.Type, _ protocolType: (any CustomStringConvertible).Type, _ value: Value
 ) -> (any CustomStringConvertible.Type, (any CustomStringConvertible).Type, Value) { (type, protocolType, value) }
+
+// This module cannot see the retroactive conformance in SwiftOpaqueExtensions.
+public protocol BindingDeclaredScore { static func score() -> Int64 }
+open class BindingDeclaredBase { public init() {} }
+public struct BindingDeclaredUnknown<Value: BindingDeclaredScore> {}
+extension BindingDeclaredUnknown where Value: BindingDeclaredBase {
+    @inline(never) public static func entry<Failure: Error>(
+        _ error: Failure, _ shouldThrow: Bool
+    ) throws(Failure) -> Int64 {
+        if shouldThrow { throw error }
+        return Value.score()
+    }
+}

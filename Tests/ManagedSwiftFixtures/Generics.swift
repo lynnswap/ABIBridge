@@ -23,6 +23,16 @@ extension GenericAssociatedOwner where Value: GenericAssociatedRefined {
         return value.hashValue
     }
 }
+public struct GenericAssociatedAliasOwner<Value: GenericAssociatedBase, Element>
+    where Value.Item == Element, Element: Equatable {}
+extension GenericAssociatedAliasOwner where Value: GenericAssociatedRefined {
+    @inline(never) public static func aliasedWitness<Failure: Error>(
+        _ value: Element, _ failure: Failure, _ fail: Bool
+    ) throws(Failure) -> Int {
+        if fail { throw failure }
+        return value.hashValue
+    }
+}
 extension GenericHashOwner where Value: Hashable {
     @inline(never) public static func refinedWitness(_ value: Value) -> Int { value.hashValue }
 }

@@ -73,6 +73,93 @@ extension ConstrainedOuter.Inner where First == Int, Second == String {
 }
 
 struct SwiftConstrainedExtensionTests {
+    private struct DeclaredFailure: Error, Equatable { let value: Int }
+
+    @Test func canonicalDeclarationsPreserveProviderImportBoundaries() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let baseModule = "DeclaredBaseProvider"
+        let conformanceModule = "DeclaredConformanceProvider"
+        let base = try FixtureLibrary(swiftModule: baseModule, swiftSource: """
+            public protocol Score { static func score() -> Int }
+            open class Base { public init() {} }
+            """, linkArguments: ["-emit-module", "-emit-module-path", directory.appendingPathComponent(baseModule + ".swiftmodule").path])
+        defer { base.cleanup() }
+        let conformance = try FixtureLibrary(swiftModule: conformanceModule, swiftSource: """
+            import \(baseModule)
+            extension Base: @retroactive Score { public static func score() -> Int { 42 } }
+            """, linkArguments: ["-I", directory.path, base.libraryURL.path, "-emit-module", "-emit-module-path",
+                                  directory.appendingPathComponent(conformanceModule + ".swiftmodule").path])
+        defer { conformance.cleanup() }
+        let runtime = ABIRuntime()
+        let baseType = try await runtime.swiftType(named: baseModule + ".Base", in: .path(base.libraryURL))
+        for importsConformance in [false, true] {
+            let module = importsConformance ? "DeclaredWithProvider" : "DeclaredWithoutProvider"
+            let provider = try FixtureLibrary(swiftModule: module, swiftSource: """
+                import \(baseModule)
+                \(importsConformance ? "import " + conformanceModule : "")
+                public final class ObjectBox<Value: Score> { public init() {} }
+                extension ObjectBox where Value: Base {
+                    public static func score() -> Int { Value.score() }
+                    public func entry<Failure: Error>(_ error: Failure, _ shouldThrow: Bool) throws(Failure) -> Int {
+                        if shouldThrow { throw error }
+                        return Value.score()
+                    }
+                }
+                public struct Box<Value: Score> {}
+                extension Box where Value: Base {
+                    public static func entry<Failure: Error>(_ error: Failure, _ shouldThrow: Bool) throws(Failure) -> Int {
+                        if shouldThrow { throw error }
+                        return Value.score()
+                    }
+                    public static var score: Int { Value.score() }
+                }
+                """, linkArguments: ["-I", directory.path, base.libraryURL.path]
+                    + (importsConformance ? [conformance.libraryURL.path] : []))
+            defer { provider.cleanup() }
+            let objectType = try await runtime.swiftType(named: module + ".ObjectBox", in: .path(provider.libraryURL), genericArguments: [.type(baseType)])
+            let classScore = try await objectType.staticMethod(named: "score()", as: (() -> Int).self)
+            #expect(try unsafe classScore.unsafeInvoke() == 42)
+            let initialize = try await objectType.initializer(named: "init()", as: (() -> AnyObject).self)
+            let object = try unsafe initialize.unsafeInvoke()
+            let classEntry = try await runtime.object(object).method(named: "entry(_:_:)",
+                as: ((DeclaredFailure, Bool) throws(DeclaredFailure) -> Int).self,
+                genericArguments: [.type(DeclaredFailure.self)])
+            #expect(try unsafe classEntry.unsafeInvoke(DeclaredFailure(value: 38), false) == 42)
+            do {
+                _ = try unsafe classEntry.unsafeInvoke(DeclaredFailure(value: 38), true)
+                Issue.record("The class member's typed error was not thrown")
+            } catch let error as NativeSwiftError {
+                #expect(error.withUnderlyingError { ($0 as? DeclaredFailure) == DeclaredFailure(value: 38) })
+            }
+            let box = try await runtime.swiftType(named: module + ".Box", in: .path(provider.libraryURL), genericArguments: [.type(baseType)])
+            do {
+                _ = try await box.staticMethod(named: "entry(_:_:)", as: ((DeclaredFailure, Bool) throws(DeclaredFailure) -> Int).self,
+                    genericArguments: [.type(DeclaredFailure.self)])
+                Issue.record("A provider-dependent witness convention was inferred from runtime conformance availability")
+            } catch ABIResolutionError.unsupportedDeclaration(let reason) {
+                #expect(reason.contains("declaredAs:"))
+            }
+            let witness = importsConformance ? "" : ", A: " + baseModule + ".Score"
+            let prefix = "<A, A1 where A: " + baseModule + ".Base" + witness + ", A1: Swift.Error> "
+            let entry = try await box.staticMethod(named: "entry(_:_:)",
+                as: ((DeclaredFailure, Bool) throws(DeclaredFailure) -> Int).self,
+                genericArguments: [.type(DeclaredFailure.self)],
+                declaredAs: prefix + "(A1, Swift.Bool) throws(A1) -> Swift.Int")
+            #expect(try unsafe entry.unsafeInvoke(DeclaredFailure(value: 37), false) == 42)
+            do {
+                _ = try unsafe entry.unsafeInvoke(DeclaredFailure(value: 37), true)
+                Issue.record("The typed provider error was not thrown")
+            } catch let error as NativeSwiftError {
+                #expect(error.withUnderlyingError { ($0 as? DeclaredFailure) == DeclaredFailure(value: 37) })
+            }
+            let getter = try await box.staticGetter(named: "score", as: (() -> Int).self,
+                declaredAs: "<A where A: " + baseModule + ".Base" + witness + "> () -> Swift.Int")
+            #expect(try unsafe getter.unsafeInvoke() == 42)
+        }
+    }
+
     @Test func qualifiedExternalExtensionsNormalizeCollectionSpellings() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

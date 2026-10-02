@@ -43,6 +43,7 @@ struct SwiftGenericCallPlan: Sendable {
     private(set) var metadata: SwiftGenericArgumentBuffer
     private let context: SwiftGenericTypeContext?
     private let enclosingMetadata: Any.Type?
+    private var receiver: SwiftReceiverMode?
     let parameters: SwiftGenericParameters
     var arguments: [SwiftGenericArgument] { parameters.arguments }
     let result: SwiftGenericResult
@@ -52,15 +53,24 @@ struct SwiftGenericCallPlan: Sendable {
     init(declaration: String, linkageName: String, genericArguments: [NativeSwiftGenericArgument],
          signature: SwiftFunctionSignature, resolver: SymbolResolver,
          enclosing: SwiftGenericTypeMetadata? = nil, receiver: SwiftReceiverMode? = nil,
-         getterSignature: String? = nil) throws {
+         declaredSignature: String? = nil) throws {
         let context = try enclosing.flatMap { $0.arguments.isEmpty ? nil : try SwiftGenericTypeContext(metadata: $0.value) }
-        let formalGetter = try getterSignature.map(SwiftFormalType.init)
+        let declared = try declaredSignature.map(SwiftDeclaredSignature.init)
         let declaration = try SwiftGenericDeclaration(linkageName: linkageName, enclosing: context,
-                                                       getterSignature: formalGetter, caller: signature)
+                                                       declaredSignature: declared, caller: signature)
         let binding = try SwiftGenericBinding(declaration: declaration,
             arguments: (enclosing?.arguments ?? []) + genericArguments,
             signature: signature, resolver: resolver, enclosing: context)
-        if case .function(_, let result, _, _) = formalGetter {
+        if case .function(let arguments, let result, let failure, let isAsync) = declared?.function {
+            _ = try SwiftGenericParameters(formal: arguments, actual: signature.parameters, binding: binding,
+                defaultConsuming: declaration.consumesArguments)
+            guard isAsync == declaration.isAsync else {
+                throw ABIResolutionError.signatureMismatch(.init(expected: "The declaration's async effect", found: [declared!.function.spelling]))
+            }
+            if let failure { try binding.validate(signature.failure, for: failure) }
+            else if signature.failure != Never.self {
+                throw ABIResolutionError.signatureMismatch(.init(expected: "A nonthrowing declaredAs: signature", found: [String(reflecting: signature.failure)]))
+            }
             _ = try binding.resultType(signature.result, for: result)
         }
         guard declaration.isAsync == signature.isAsync,
@@ -71,6 +81,7 @@ struct SwiftGenericCallPlan: Sendable {
         self.binding = binding
         if let failure = declaration.failure { try binding.validate(signature.failure, for: failure) }
         self.context = context
+        self.receiver = receiver
         enclosingMetadata = enclosing?.value
         if let context, let receiver, receiver != .value {
             let prefix: [UInt] = receiver == .address ? [unsafeBitCast(enclosing!.value, to: UInt.self)] : []
@@ -105,11 +116,16 @@ struct SwiftGenericCallPlan: Sendable {
 
     func includingReceiver(_ receiver: SwiftReceiverMode) throws -> Self {
         var result = self
+        result.receiver = receiver
         if let context, let enclosingMetadata, receiver != .value {
             let prefix: [UInt] = receiver == .address ? [unsafeBitCast(enclosingMetadata, to: UInt.self)] : []
             result.metadata = try SwiftGenericArgumentBuffer(prefix + binding.metadataArguments(fulfilledBy: context))
         }
         return result
+    }
+
+    func validateMetadataArguments() throws {
+        try binding.validateMetadataArguments(fulfilledBy: receiver == .object || receiver == .address ? context : nil)
     }
 
     func receiverType() throws -> CValueType? {
@@ -384,13 +400,14 @@ extension SwiftGenericBinding {
 
 extension ABIRuntime {
     func preparedGenericFunction<Signature>(
-        symbol: ResolvedSymbol, signature: Signature.Type, genericArguments: [NativeSwiftGenericArgument]
+        symbol: ResolvedSymbol, signature: Signature.Type, genericArguments: [NativeSwiftGenericArgument],
+        declaredSignature: String? = nil
     ) throws -> NativeSwiftFunction<Signature> {
         guard let declaration = DeclarationKey.demangle(symbol.linkageName, language: .swift) else {
             throw ABIResolutionError.metadataUnavailable("The Swift declaration cannot be demangled.")
         }
         let plan = try SwiftGenericCallPlan(declaration: declaration, linkageName: symbol.linkageName, genericArguments: genericArguments,
-                                            signature: SwiftFunctionSignature(signature), resolver: resolver)
+                                            signature: SwiftFunctionSignature(signature), resolver: resolver, declaredSignature: declaredSignature)
         return try NativeSwiftFunction(symbol: symbol, resolver: resolver, generic: plan)
     }
 }

@@ -90,7 +90,7 @@ public actor NativeSwiftType {
 
     private func resolveMember(
         signature: Any.Type? = nil, genericArguments: [NativeSwiftGenericArgument] = [], inherited: Bool = true,
-        exact: Bool = false, getterSignature: String? = nil,
+        exact: Bool = false, declaredSignature: String? = nil,
         _ declaration: (String) throws -> NativeDeclaration
     ) throws -> (symbol: ResolvedSymbol, metadata: Any.Type) {
         let originalRequest = try declaration(name)
@@ -103,7 +103,7 @@ public actor NativeSwiftType {
         while true {
             let owner: Any.Type = ownerClass ?? metadata
             let enclosing = try owner == metadata ? genericMetadata : SwiftGenericTypeMetadata(metadata: owner)
-            let usesBinding = signature != nil && (!(enclosing?.arguments.isEmpty ?? true) || !genericArguments.isEmpty || getterSignature != nil)
+            let usesBinding = signature != nil && (!(enclosing?.arguments.isEmpty ?? true) || !genericArguments.isEmpty || declaredSignature != nil)
             let belongs = !exact || SwiftMemberLookup.belongs(request.name, to: ownerName)
             if belongs && (!usesBinding || exact) {
                 do {
@@ -111,7 +111,7 @@ public actor NativeSwiftType {
                         try ownerClass.flatMap { try SwiftGenericContext($0, owner: ownerName) }
                     }
                     if usesBinding, let signature {
-                        let plan = try genericPlan((symbol, owner), signature: signature, arguments: genericArguments, getterSignature: getterSignature)
+                        let plan = try genericPlan((symbol, owner), signature: signature, arguments: genericArguments, declaredSignature: declaredSignature)
                         guard try plan?.matches(SwiftFunctionSignature(signature)) == true else {
                             throw ABIResolutionError.signatureMismatch(.init(expected: request.name, found: [String(reflecting: signature)]))
                         }
@@ -132,7 +132,7 @@ public actor NativeSwiftType {
                         let matches = try candidates.filter { symbol in
                             do {
                                 guard let plan = try genericPlan((symbol, owner), signature: signature,
-                                    arguments: genericArguments, getterSignature: getterSignature) else { return false }
+                                    arguments: genericArguments, declaredSignature: declaredSignature) else { return false }
                                 return try plan.matches(SwiftFunctionSignature(signature))
                             } catch ABIResolutionError.signatureMismatch { return false }
                         }
@@ -170,6 +170,7 @@ public actor NativeSwiftType {
     ///   - name: A relative member name or a complete qualified declaration.
     ///   - signature: Explicit arguments and result.
     ///   - genericArguments: Type arguments introduced by the member.
+    ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
     ///   - isMutating: Whether a value receiver is passed inout.
     ///   - isConsuming: Whether the member consumes its receiver copy.
     /// - Returns: A reusable method with an explicit receiver.
@@ -177,15 +178,16 @@ public actor NativeSwiftType {
     public func method<Signature>(
         named name: String, as signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument] = [],
+        declaredAs declaredSignature: String? = nil,
         mutating isMutating: Bool = false, consuming isConsuming: Bool = false
     ) throws -> NativeSwiftMethod<Signature> {
         let symbol = try resolveMember(signature: signature, genericArguments: genericArguments,
-                                       exact: SwiftMemberLookup.isQualified(name)) {
+                                       exact: SwiftMemberLookup.isQualified(name), declaredSignature: declaredSignature) {
             let member = try SwiftMemberLookup.qualifiedName(name, owner: $0)
             return try genericArguments.isEmpty ? swiftFunctionDeclaration(named: member, as: signature)
                 : NativeDeclaration(name: member, language: .swift)
         }
-        let generic = try genericPlan(symbol, signature: signature, arguments: genericArguments)
+        let generic = try genericPlan(symbol, signature: signature, arguments: genericArguments, declaredSignature: declaredSignature)
         let receiver = try receiverPlan(mutating: isMutating, consuming: isConsuming, generic: generic)
         return try NativeSwiftMethod(symbol: symbol.symbol, type: self, receiver: receiver,
             generic: generic?.includingReceiver(receiver.mode))
@@ -194,16 +196,16 @@ public actor NativeSwiftType {
     private func genericPlan(
         _ member: (symbol: ResolvedSymbol, metadata: Any.Type), signature: Any.Type,
         arguments: [NativeSwiftGenericArgument] = [], receiver: SwiftReceiverMode? = nil,
-        getterSignature: String? = nil
+        declaredSignature: String? = nil
     ) throws -> SwiftGenericCallPlan? {
         let enclosing = try member.metadata == metadata ? genericMetadata : SwiftGenericTypeMetadata(metadata: member.metadata)
-        guard !(enclosing?.arguments.isEmpty ?? true) || !arguments.isEmpty || getterSignature != nil else { return nil }
+        guard !(enclosing?.arguments.isEmpty ?? true) || !arguments.isEmpty || declaredSignature != nil else { return nil }
         guard let declaration = DeclarationKey.demangle(member.symbol.linkageName, language: .swift) else {
             throw ABIResolutionError.metadataUnavailable("The Swift member declaration cannot be demangled.")
         }
         return try SwiftGenericCallPlan(declaration: declaration, linkageName: member.symbol.linkageName,
             genericArguments: arguments, signature: SwiftFunctionSignature(signature), resolver: resolver,
-            enclosing: enclosing, receiver: receiver, getterSignature: getterSignature)
+            enclosing: enclosing, receiver: receiver, declaredSignature: declaredSignature)
     }
     /// Resolves a nonmutating member with formally indirect borrowed self.
     ///
@@ -211,26 +213,29 @@ public actor NativeSwiftType {
     /// NativeSwiftBorrowingClosure. The caller establishes this self convention;
     /// metadata size alone does not imply it. The signature excludes self.
     public func borrowedMethod<Result, each Argument>(
-        named name: String, as signature: ((repeat each Argument) -> Result).Type
+        named name: String, as signature: ((repeat each Argument) -> Result).Type,
+        declaredAs declaredSignature: String? = nil
     ) throws -> NativeSwiftBorrowedMethod<Result, repeat each Argument> {
-        let symbol = try resolveMember(signature: signature, exact: SwiftMemberLookup.isQualified(name)) {
+        let symbol = try resolveMember(signature: signature, exact: SwiftMemberLookup.isQualified(name), declaredSignature: declaredSignature) {
             try swiftFunctionDeclaration(named: SwiftMemberLookup.qualifiedName(name, owner: $0), as: signature)
         }
         return try NativeSwiftBorrowedMethod(symbol: symbol.symbol, type: self,
-            generic: genericPlan(symbol, signature: signature, receiver: .address))
+            generic: genericPlan(symbol, signature: signature, receiver: .address, declaredSignature: declaredSignature))
     }
 
     /// Resolves a nonmutating getter with formally indirect borrowed self.
     ///
     /// The getter must be synchronous, nonthrowing and nonconsuming. Its value
     /// uses the supported concrete Swift result representations.
-    public func borrowedGetter<Value>(named name: String, as value: Value.Type) throws -> NativeSwiftBorrowedMethod<Value> {
+    public func borrowedGetter<Value>(
+        named name: String, as value: Value.Type, declaredAs declaredSignature: String? = nil
+    ) throws -> NativeSwiftBorrowedMethod<Value> {
         let signature = (() -> Value).self
-        let symbol = try resolveMember(signature: signature, exact: SwiftMemberLookup.isQualified(name)) {
+        let symbol = try resolveMember(signature: signature, exact: SwiftMemberLookup.isQualified(name), declaredSignature: declaredSignature) {
             try accessorDeclaration(named: name, ownerName: $0, valueType: value, setter: false, isStatic: false)
         }
         return try NativeSwiftBorrowedMethod(symbol: symbol.symbol, type: self,
-            generic: genericPlan(symbol, signature: signature, receiver: .address))
+            generic: genericPlan(symbol, signature: signature, receiver: .address, declaredSignature: declaredSignature))
     }
 
     /// Resolves a concrete allocating initializer.
@@ -243,25 +248,27 @@ public actor NativeSwiftType {
     ///   - name: The relative initializer name, such as init(text:).
     ///   - signature: Explicit arguments and constructed result.
     ///   - genericArguments: Type arguments introduced by the initializer.
+    ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
     /// - Returns: A reusable initializer retaining its type and implementation.
     /// - Throws: A lookup, representation, or preparation error.
     public func initializer<Signature>(
         named name: String, as signature: Signature.Type,
-        genericArguments: [NativeSwiftGenericArgument] = []
+        genericArguments: [NativeSwiftGenericArgument] = [],
+        declaredAs declaredSignature: String? = nil
     ) throws -> NativeSwiftFunction<Signature> {
         guard name.hasPrefix("init(") || name.hasPrefix("init<") else {
             throw ABIResolutionError.unsupportedDeclaration("An initializer name must start with init( or init<.")
         }
         let member = metadata is AnyClass ? "__allocating_" + name : name
         let resultName = try SwiftFunctionSignature(signature).result is any NativeOptionalValue.Type ? "Swift.Optional<" + self.name + ">" : self.name
-        let symbol = try resolveMember(signature: signature, genericArguments: genericArguments, inherited: false) {
+        let symbol = try resolveMember(signature: signature, genericArguments: genericArguments, inherited: false, declaredSignature: declaredSignature) {
             try genericArguments.isEmpty ? swiftFunctionDeclaration(
                 named: $0 + "." + member, as: signature, resultName: resultName, defaultConsuming: true)
                 : NativeDeclaration(name: $0 + "." + member, language: .swift)
         }
         return try NativeSwiftFunction(symbol: symbol.symbol, metadata: metadata, owner: self, consumesArguments: true,
             generic: genericPlan(symbol, signature: signature, arguments: genericArguments,
-                                 receiver: metadata is AnyClass ? .object : nil))
+                                 receiver: metadata is AnyClass ? .object : nil, declaredSignature: declaredSignature))
     }
 
     /// Resolves a concrete static or class implementation.
@@ -271,21 +278,23 @@ public actor NativeSwiftType {
     ///   - name: A relative member name or a complete qualified declaration.
     ///   - signature: Explicit arguments and result.
     ///   - genericArguments: Type arguments introduced by the member.
+    ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
     /// - Returns: A reusable function retaining its type and implementation.
     /// - Throws: A lookup, representation, or preparation error.
     public func staticMethod<Signature>(
         named name: String, as signature: Signature.Type,
-        genericArguments: [NativeSwiftGenericArgument] = []
+        genericArguments: [NativeSwiftGenericArgument] = [],
+        declaredAs declaredSignature: String? = nil
     ) throws -> NativeSwiftFunction<Signature> {
         let symbol = try resolveMember(signature: signature, genericArguments: genericArguments,
-                                       exact: SwiftMemberLookup.isQualified(name)) {
+                                       exact: SwiftMemberLookup.isQualified(name), declaredSignature: declaredSignature) {
             let member = try SwiftMemberLookup.qualifiedName(name, owner: $0, isStatic: true)
             return try genericArguments.isEmpty ? swiftFunctionDeclaration(named: member, as: signature)
                 : NativeDeclaration(name: member, language: .swift)
         }
         return try NativeSwiftFunction(symbol: symbol.symbol, metadata: metadata, owner: self,
             generic: genericPlan(symbol, signature: signature, arguments: genericArguments,
-                                 receiver: symbol.metadata is AnyClass ? .object : nil))
+                                 receiver: symbol.metadata is AnyClass ? .object : nil, declaredSignature: declaredSignature))
     }
 
     private func accessorDeclaration(
@@ -310,18 +319,20 @@ public actor NativeSwiftType {
     /// - Parameters:
     ///   - name: A property name or complete relative setter declaration.
     ///   - valueType: The incoming value representation.
+    ///   - declaredSignature: The formal setter type and optional canonical generic signature.
     ///   - isMutating: An inout override. Nil selects inout unless consuming is true.
     ///   - isConsuming: Whether the setter consumes its receiver copy.
     /// - Returns: A reusable method with one explicit value argument.
     /// - Throws: A lookup or unsupported-representation error.
     public func setter<Value>(
-        named name: String, as valueType: Value.Type, mutating isMutating: Bool? = nil,
+        named name: String, as valueType: Value.Type, declaredAs declaredSignature: String? = nil,
+        mutating isMutating: Bool? = nil,
         consuming isConsuming: Bool = false
     ) throws -> NativeSwiftMethod<(Value) -> Void> {
-        let symbol = try resolveMember(signature: ((Value) -> Void).self, exact: SwiftMemberLookup.isQualified(name)) {
+        let symbol = try resolveMember(signature: ((Value) -> Void).self, exact: SwiftMemberLookup.isQualified(name), declaredSignature: declaredSignature) {
             try accessorDeclaration(named: name, ownerName: $0, valueType: valueType, setter: true, isStatic: false)
         }
-        let generic = try genericPlan(symbol, signature: ((Value) -> Void).self)
+        let generic = try genericPlan(symbol, signature: ((Value) -> Void).self, declaredSignature: declaredSignature)
         let receiver = try receiverPlan(mutating: isMutating ?? !isConsuming, consuming: isConsuming, generic: generic)
         return try NativeSwiftMethod(symbol: symbol.symbol, type: self, receiver: receiver, consumesArguments: true,
             generic: generic?.includingReceiver(receiver.mode))
@@ -332,17 +343,18 @@ public actor NativeSwiftType {
     /// - Parameters:
     ///   - name: A property name or complete relative setter declaration.
     ///   - valueType: The incoming value representation.
+    ///   - declaredSignature: The formal setter type and optional canonical generic signature.
     /// - Returns: A one-argument function with bound type metadata.
     /// - Throws: A lookup or unsupported-representation error.
     public func staticSetter<Value>(
-        named name: String, as valueType: Value.Type
+        named name: String, as valueType: Value.Type, declaredAs declaredSignature: String? = nil
     ) throws -> NativeSwiftFunction<(Value) -> Void> {
-        let symbol = try resolveMember(signature: ((Value) -> Void).self, exact: SwiftMemberLookup.isQualified(name)) {
+        let symbol = try resolveMember(signature: ((Value) -> Void).self, exact: SwiftMemberLookup.isQualified(name), declaredSignature: declaredSignature) {
             try accessorDeclaration(named: name, ownerName: $0, valueType: valueType, setter: true, isStatic: true)
         }
         return try NativeSwiftFunction(symbol: symbol.symbol, metadata: metadata, owner: self, consumesArguments: true,
             generic: genericPlan(symbol, signature: ((Value) -> Void).self,
-                                 receiver: symbol.metadata is AnyClass ? .object : nil))
+                                 receiver: symbol.metadata is AnyClass ? .object : nil, declaredSignature: declaredSignature))
     }
 
 }
@@ -504,10 +516,10 @@ extension NativeSwiftType {
         mutating isMutating: Bool = false, consuming isConsuming: Bool = false
     ) throws -> NativeSwiftMethod<Signature> {
         let result = try getterResult(signature)
-        let symbol = try resolveMember(signature: signature, exact: SwiftMemberLookup.isQualified(name), getterSignature: declaredSignature) {
+        let symbol = try resolveMember(signature: signature, exact: SwiftMemberLookup.isQualified(name), declaredSignature: declaredSignature) {
             try accessorDeclaration(named: name, ownerName: $0, valueType: result, setter: false, isStatic: false)
         }
-        let generic = try genericPlan(symbol, signature: signature, getterSignature: declaredSignature)
+        let generic = try genericPlan(symbol, signature: signature, declaredSignature: declaredSignature)
         let receiver = try receiverPlan(mutating: isMutating, consuming: isConsuming, generic: generic)
         return try NativeSwiftMethod(symbol: symbol.symbol, type: self, receiver: receiver,
             generic: generic?.includingReceiver(receiver.mode))
@@ -520,12 +532,12 @@ extension NativeSwiftType {
         named name: String, as signature: Signature.Type, declaredAs declaredSignature: String? = nil
     ) throws -> NativeSwiftFunction<Signature> {
         let result = try getterResult(signature)
-        let symbol = try resolveMember(signature: signature, exact: SwiftMemberLookup.isQualified(name), getterSignature: declaredSignature) {
+        let symbol = try resolveMember(signature: signature, exact: SwiftMemberLookup.isQualified(name), declaredSignature: declaredSignature) {
             try accessorDeclaration(named: name, ownerName: $0, valueType: result, setter: false, isStatic: true)
         }
         return try NativeSwiftFunction(symbol: symbol.symbol, metadata: metadata, owner: self,
             generic: genericPlan(symbol, signature: signature, receiver: symbol.metadata is AnyClass ? .object : nil,
-                                 getterSignature: declaredSignature))
+                                 declaredSignature: declaredSignature))
     }
 
     private func getterResult(_ signature: Any.Type) throws -> Any.Type {

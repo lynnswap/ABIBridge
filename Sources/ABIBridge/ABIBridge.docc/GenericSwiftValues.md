@@ -81,6 +81,36 @@ Type lookup requests complete canonical metadata for the specialization, includi
 
 Dependent results, initializers, static members, and inherited members use that enclosing context. Applicable constrained extensions are checked against the current specialization. Multiple matching short-name candidates report ambiguity; a fully qualified constrained declaration selects that exact implementation. See <doc:SwiftMemberInvocation> for receiver ownership and dispatch.
 
+## Supply declaration information omitted from the binary
+
+`declaredAs:` accepts the provider's formal function type, optionally prefixed by its complete canonical generic signature. It is available on free functions, methods, initializers, getters, setters, and bound object members. Keep `as:` as the concrete function type used by the caller.
+
+Most declarations need only `as:` and their generic arguments. An effectful generic getter additionally needs its formal error type, as described below. A member combining a nominal protocol constraint with a superclass constraint may also need a canonical generic signature: a retroactive superclass conformance can change the hidden witnesses without changing the member's mangled symbol. Finding that conformance in the running process cannot establish whether the provider imported it when compiling the member. When preparation detects this ambiguity, it requests a `declaredAs:` signature before invocation.
+
+For `Box<Value: Score>` with a static `score() -> Int` member in `extension Box where Value: Base`, a provider that compiled with the `Base: Score` conformance visible can use:
+
+```swift
+let score = try await boxType.staticMethod(
+    named: "score()", as: (() -> Int).self,
+    declaredAs: "<A where A: BaseModule.Base> () -> Swift.Int"
+)
+let result = try unsafe score.unsafeInvoke()
+```
+
+If that conformance was not visible to the provider, include its remaining witness requirement:
+
+```swift
+// Same member symbol; a different canonical signature at compilation.
+let score = try await boxType.staticMethod(
+    named: "score()", as: (() -> Int).self,
+    declaredAs: "<A where A: BaseModule.Base, A: BaseModule.Score> () -> Swift.Int"
+)
+```
+
+Use the canonical signature from the provider's compiler output, with the same imports and build settings. For example, Swift SIL includes the canonical generic parameters and requirements on the function declaration. Rename its parameters to the demangler's names: `A`, `B`, and so on for the outer context, then `A1`, `B1` for the next depth. Include all enclosing and member parameters in order, use `each A` for a pack, and preserve the canonical order of conformance requirements. Same-type and same-shape requirements use `==` and `~`. This describes the provider's declaration; it is not a list of conformances discovered at runtime.
+
+When a `<...>` clause is present, its conformance requirements determine which physical witnesses are passed. The original declaration's type constraints are still validated against the supplied arguments. Known argument and result conventions continue to come from the symbol's formal types. As with `as:`, the caller is responsible for accurately describing the native implementation; a guessed canonical signature can violate its ABI.
+
 ## Effects, callbacks, and ownership
 
 Include `async`, the native isolation convention, and the actual error type in `as:`. Use `nonisolated(nonsending)` explicitly for a caller-isolated declaration when the consumer's default is concurrent. The original declaration still determines hidden error storage: binding `Failure` to `Never` produces a nonthrowing concrete signature while preserving the formal generic error convention. Binding it to `any Error` preserves that convention as well. Native failures arrive as ``NativeSwiftError`` with the original error available through `withUnderlyingError`.
@@ -95,7 +125,7 @@ Direct `T` values use the bound type's actual Swift storage and compiler-generat
 
 ## Validation and value boundaries
 
-The macOS runtime tests compare these bindings with separately compiled Swift implementations. They cover dependent values, associated types, conditional conformances, inherited members, packs, ownership, metatypes, callbacks, async calls, and typed errors. The external consumer exercises public APIs without importing the provider module. The `swift-generic-bindings` device mode passed 30 checks on iPhone Air / iOS 27.0.1 (24A446), built with Xcode 27.0 / Swift 6.4 in Release for arm64e with pointer authentication enabled. Sixteen related modes also passed on the same build, for 257 checks across 17 modes. The [architecture validation guide](https://github.com/lynnswap/ABIBridge/blob/main/Tests/ArchitectureValidation/README.md#generic-declaration-bindings) records the covered operations.
+The macOS runtime tests compare these bindings with separately compiled Swift implementations. They cover dependent values, associated types, conditional conformances, inherited members, packs, ownership, metatypes, callbacks, async calls, and typed errors. The external consumer exercises public APIs without importing the provider module. The `swift-generic-bindings` device mode passed 34 checks on iPhone Air / iOS 27.0.1 (24A446), built with Xcode 27.0 / Swift 6.4 in Release for arm64e with pointer authentication enabled. Sixteen related modes also passed on the same build, for 261 checks across 17 modes. The [architecture validation guide](https://github.com/lynnswap/ABIBridge/blob/main/Tests/ArchitectureValidation/README.md#generic-declaration-bindings) records the covered operations.
 
 Compiler probes check formal argument/result conventions, hidden metadata and witness arguments, and pointer-authentication discriminators for arm64, x86_64, arm64e, and arm64_32. Compilation evidence does not establish runtime execution on the other architectures.
 

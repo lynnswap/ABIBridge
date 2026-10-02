@@ -125,17 +125,19 @@ public final class NativeObject {
     ///   - name: A relative Swift member name and argument labels.
     ///   - signature: Explicit arguments and result, excluding self.
     ///   - genericArguments: Type arguments introduced by the member.
+    ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
     ///   - isConsuming: Whether the Swift member consumes its receiver copy.
     /// - Returns: A reusable method bound to this receiver.
     /// - Throws: A lookup or unsupported-representation error.
     public nonisolated(nonsending) func method<Signature>(
         named name: String, as signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument] = [],
+        declaredAs declaredSignature: String? = nil,
         consuming isConsuming: Bool = false
     ) async throws -> NativeBoundSwiftMethod<Signature> {
         let object = receiver!
         let type = try await swiftType()
-        let method = try await type.method(named: name, as: signature, genericArguments: genericArguments, consuming: isConsuming)
+        let method = try await type.method(named: name, as: signature, genericArguments: genericArguments, declaredAs: declaredSignature, consuming: isConsuming)
         return NativeBoundSwiftMethod(method: method, receiver: object)
     }
 
@@ -145,13 +147,15 @@ public final class NativeObject {
     /// - Parameters:
     ///   - name: The Swift property name or complete relative setter declaration.
     ///   - valueType: The incoming representation.
+    ///   - declaredSignature: The formal setter type and optional canonical generic signature.
     ///   - isConsuming: Whether the setter also consumes a receiver copy.
     /// - Returns: A one-argument bound method.
     /// - Throws: A lookup or representation error.
     public nonisolated(nonsending) func setter<Value>(
-        named name: String, as valueType: Value.Type, consuming isConsuming: Bool = false
+        named name: String, as valueType: Value.Type, declaredAs declaredSignature: String? = nil,
+        consuming isConsuming: Bool = false
     ) async throws -> NativeBoundSwiftMethod<(Value) -> Void> {
-        let method = try await swiftType().setter(named: name, as: valueType, consuming: isConsuming)
+        let method = try await swiftType().setter(named: name, as: valueType, declaredAs: declaredSignature, consuming: isConsuming)
         return NativeBoundSwiftMethod(method: method, receiver: receiver!)
     }
 
