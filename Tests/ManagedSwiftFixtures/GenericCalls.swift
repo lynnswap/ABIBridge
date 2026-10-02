@@ -1,5 +1,28 @@
 @inline(never) public func runGeneric<Value>(_ apply: () -> Value) -> Value { apply() }
 
+@inline(never) public func borrowingGeneric<Value>(_ value: borrowing Value) -> Value { copy value }
+@inline(never) public func consumingGeneric<Value>(_ value: consuming Value) -> Value { value }
+@inline(never) public func consumeGenericFailure<Value, Failure: Error>(
+    _ value: consuming Value, _ failure: Failure, _ shouldThrow: Bool
+) throws(Failure) {
+    if shouldThrow { throw failure }
+    withExtendedLifetime(value) {}
+}
+@inline(never) public func consumeThenArgumentGeneric<Value>(_ value: consuming Value, _ number: Int64) {}
+@inline(never) public func mutateGeneric<Value, Failure: Error>(
+    _ value: inout Value, _ replacement: consuming Value, _ failure: Failure, _ shouldThrow: Bool
+) throws(Failure) {
+    value = replacement
+    if shouldThrow { throw failure }
+}
+@inline(never) public nonisolated(nonsending) func suspendedMutateGeneric<Value, Failure: Error>(
+    _ value: inout Value, _ replacement: consuming Value, _ failure: Failure, _ shouldThrow: Bool
+) async throws(Failure) {
+    await Task.yield()
+    value = replacement
+    if shouldThrow { throw failure }
+}
+
 @frozen public struct GenericMetatypeValue<Value> {}
 @inline(never) public func valueMetatypeGeneric<Value>(
     _ type: GenericMetatypeValue<Value>.Type, _ value: Int64

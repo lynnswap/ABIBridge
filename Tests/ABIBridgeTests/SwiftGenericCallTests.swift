@@ -34,6 +34,89 @@ private final class GenericCaptureState: Sendable {
 
 @Suite(.serialized)
 struct SwiftGenericCallTests {
+    @Test func genericConsumedCopiesReleaseOnSuccessErrorAndEncodingFailure() async throws {
+        let runtime = ABIRuntime()
+        let consume = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.consumeGenericFailure<A, B where B: Swift.Error>(__owned A, B, Swift.Bool) throws(B) -> ()",
+            as: ((NativeSwiftConsuming<GenericCapture>, ScalarFailure, Bool) throws(ScalarFailure) -> Void).self,
+            genericArguments: [.type(GenericCapture.self), .type(ScalarFailure.self)])
+        let conversion = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.consumeThenArgumentGeneric<A>(__owned A, Swift.Int64) -> ()",
+            as: ((NativeSwiftConsuming<GenericCapture>, RejectGenericArgument) -> Void).self,
+            genericArguments: [.type(GenericCapture.self)])
+        let state = GenericCaptureState()
+        for fail in [false, true] {
+            weak var observed: GenericCapture?
+            do {
+                let value = GenericCapture(state)
+                observed = value
+                do {
+                    try unsafe consume.unsafeInvoke(.init(value), ScalarFailure(42), fail)
+                    #expect(!fail)
+                } catch let error as NativeSwiftError {
+                    error.withUnderlyingError { #expect(fail && ($0 as? ScalarFailure)?.code == 42) }
+                }
+                #expect(observed === value)
+            }
+            #expect(observed == nil)
+        }
+        weak var observed: GenericCapture?
+        do {
+            let value = GenericCapture(state)
+            observed = value
+            #expect(throws: GenericConversionFailure.rejected) {
+                try unsafe conversion.unsafeInvoke(.init(value), RejectGenericArgument())
+            }
+            #expect(observed === value)
+        }
+        #expect(observed == nil && state.deaths.withLock { $0 } == 3)
+    }
+
+    @Test func genericOwnershipPreservesRawStorageAndWritebackOnErrors() async throws {
+        let runtime = ABIRuntime()
+        let borrowed = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.borrowingGeneric<A>(A) -> A",
+            as: ((NativeSwiftBorrowing<String>) -> String).self, genericArguments: [.type(String.self)])
+        let owned = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.consumingGeneric<A>(__owned A) -> A",
+            as: ((NativeSwiftConsuming<String>) -> String).self, genericArguments: [.type(String.self)])
+        let text = String(repeating: "ownership", count: 100)
+        #expect(try unsafe borrowed.unsafeInvoke(.init(text)) == text)
+        #expect(try unsafe owned.unsafeInvoke(.init(text)) == text)
+        let mutate = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.mutateGeneric<A, B where B: Swift.Error>(inout A, __owned A, B, Swift.Bool) throws(B) -> ()",
+            as: ((NativeSwiftInout<GenericPointerWrapper>, NativeSwiftConsuming<GenericPointerWrapper>, ScalarFailure, Bool) throws(ScalarFailure) -> Void).self,
+            genericArguments: [.type(GenericPointerWrapper.self), .type(ScalarFailure.self)])
+        let pointer = UnsafeRawPointer(bitPattern: 0x1234)!
+        let value = NativeSwiftInout(GenericPointerWrapper(pointer: pointer, marker: 1))
+        for fail in [false, true] {
+            let marker: Int64 = fail ? 3 : 2
+            do {
+                try unsafe mutate.unsafeInvoke(value, .init(.init(pointer: pointer, marker: marker)), ScalarFailure(42), fail)
+                #expect(!fail)
+            } catch let error as NativeSwiftError {
+                error.withUnderlyingError { #expect(fail && ($0 as? ScalarFailure)?.code == 42) }
+            }
+            #expect(value.value.pointer == pointer && value.value.marker == marker)
+        }
+        let suspended = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.suspendedMutateGeneric<A, B where B: Swift.Error>(inout A, __owned A, B, Swift.Bool) async throws(B) -> ()",
+            as: ((NativeSwiftInout<String>, NativeSwiftConsuming<String>, ScalarFailure, Bool) async throws(ScalarFailure) -> Void).self,
+            genericArguments: [.type(String.self), .type(ScalarFailure.self)])
+        let buffer = NativeSwiftInout("before")
+        do {
+            try unsafe await suspended.unsafeInvoke(buffer, .init(text), ScalarFailure(43), true)
+            Issue.record("Expected the native typed error")
+        } catch let error as NativeSwiftError {
+            error.withUnderlyingError { #expect(($0 as? ScalarFailure)?.code == 43) }
+        }
+        #expect(buffer.value == text)
+        await #expect(throws: ABIResolutionError.self) {
+            try await runtime.swiftFunction(named: "ManagedSwiftFixtures.consumingGeneric<A>(__owned A) -> A",
+                as: ((NativeSwiftBorrowing<String>) -> String).self, genericArguments: [.type(String.self)])
+        }
+    }
+
     @Test func nominalPackSourcesMatchCompilerMetadataFulfillments() async throws {
         let runtime = ABIRuntime()
         let arguments: [NativeSwiftGenericArgument] = [.pack([.type(Int64.self), .type(String.self)])]

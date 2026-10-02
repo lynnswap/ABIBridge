@@ -19,6 +19,7 @@ struct SwiftGenericDeclaration: Sendable {
     let result: SwiftFormalType
     let failure: SwiftFormalType?
     let isAsync: Bool
+    let consumesArguments: Bool
 
 }
 

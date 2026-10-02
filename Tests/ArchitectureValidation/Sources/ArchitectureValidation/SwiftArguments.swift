@@ -10,9 +10,9 @@ import SwiftValueFixtures
     }
     let mutate = try await runtime.swiftFunction(named: "SwiftValueFixtures.mutateArguments(_:_:_:_:)",
         as: ((NativeSwiftInout<String>, NativeSwiftInout<[String]>, NativeSwiftInout<Int64>, Bool) throws(SmallError) -> Void).self)
-    let text = try NativeSwiftInout(String(repeating: "text", count: 100))
-    let values = try NativeSwiftInout([String]())
-    let count = try NativeSwiftInout(Int64(40))
+    let text = NativeSwiftInout(String(repeating: "text", count: 100))
+    let values = NativeSwiftInout([String]())
+    let count = NativeSwiftInout(Int64(40))
     try unsafe mutate.unsafeInvoke(text, values, count, false)
     try check(count.value == 41 && values.value == [text.value], "Inout writes back managed and scalar Swift values")
     do {
@@ -56,7 +56,7 @@ import SwiftValueFixtures
         as: (@concurrent (AsyncValueGate, NativeSwiftInout<String>, NativeSwiftConsuming<String>, NativeSwiftBorrowing<String>) async throws(SmallError) -> String).self)
     for cancelled in [false, true] {
         let gate = AsyncValueGate()
-        let buffer = try NativeSwiftInout("value")
+        let buffer = NativeSwiftInout("value")
         let task = Task { @MainActor in try unsafe await async.unsafeInvoke(gate, buffer, .init("!"), .init("?")) }
         await gate.waitUntilSuspended()
         if cancelled { task.cancel() }

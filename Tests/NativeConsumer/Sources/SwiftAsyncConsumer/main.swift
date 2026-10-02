@@ -93,7 +93,7 @@ do {
 }
 let update = try await runtime.swiftFunction(named: "SwiftAsyncConsumer.update(_:_:_:)",
     as: (@concurrent (NativeSwiftInout<String>, NativeSwiftConsuming<String>, NativeSwiftBorrowing<String>) async throws(Failure) -> String).self)
-let buffer = try NativeSwiftInout("value")
+let buffer = NativeSwiftInout("value")
 let updated = try unsafe await update.unsafeInvoke(buffer, .init("!"), .init("public:"))
 precondition(updated == "public:value!" && buffer.value == "value!")
 do {

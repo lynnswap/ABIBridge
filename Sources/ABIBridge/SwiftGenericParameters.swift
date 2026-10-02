@@ -14,7 +14,7 @@ struct SwiftGenericParameters: Sendable {
     private let constants: [SwiftValueConstants]
     var needsEncoding: Bool { hasPacks || constants.contains { !$0.isEmpty } }
 
-    init(formal: [SwiftFormalType], actual: [Any.Type], binding: SwiftGenericBinding) throws {
+    init(formal: [SwiftFormalType], actual: [Any.Type], binding: SwiftGenericBinding, defaultConsuming: Bool = false) throws {
         var arguments: [SwiftGenericArgument] = []
         var groups: [Group] = []
         var index = 0
@@ -35,7 +35,8 @@ struct SwiftGenericParameters: Sendable {
             } else {
                 guard index < actual.count else { throw Self.mismatch(actual.count) }
                 groups.append(.value(index))
-                arguments.append(try SwiftGenericCallPlan.argument(parameter, actual: actual[index], binding: binding))
+                arguments.append(try SwiftGenericCallPlan.argument(parameter, actual: actual[index], binding: binding,
+                    defaultConsuming: defaultConsuming))
                 index += 1
             }
         }

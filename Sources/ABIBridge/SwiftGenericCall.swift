@@ -2,6 +2,7 @@ import ABIBridgeCore
 
 enum SwiftGenericArgument: Sendable {
     case concrete
+    case convention(SwiftConventionCodec)
     case value(CValueType, consuming: Bool)
     case closure(SwiftGenericClosurePlan)
 }
@@ -69,7 +70,8 @@ struct SwiftGenericCallPlan: Sendable {
         } else {
             metadata = SwiftGenericArgumentBuffer(binding.metadataArguments)
         }
-        parameters = try SwiftGenericParameters(formal: declaration.arguments, actual: signature.parameters, binding: binding)
+        parameters = try SwiftGenericParameters(formal: declaration.arguments, actual: signature.parameters, binding: binding,
+            defaultConsuming: declaration.consumesArguments)
         if binding.dependsOnParameters(declaration.result) {
             try binding.validate(signature.result, for: declaration.result)
             if case .function = declaration.result {
@@ -114,7 +116,11 @@ struct SwiftGenericCallPlan: Sendable {
         do {
             for (formal, group) in zip(binding.declaration.arguments, parameters.groups) {
                 switch group {
-                case .value(let index): try binding.validate(signature.parameters[index], for: formal)
+                case .value(let index):
+                    if try binding.conventionArgument(signature.parameters[index], for: formal,
+                        defaultConsuming: binding.declaration.consumesArguments) == nil {
+                        try binding.validate(signature.parameters[index], for: formal)
+                    }
                 case .pack(let range, _):
                     guard case .pack(let pattern, _) = formal else { preconditionFailure("A pack group has a pack formal type.") }
                     for (packIndex, index) in range.enumerated() {
@@ -128,7 +134,12 @@ struct SwiftGenericCallPlan: Sendable {
     }
 
     static func argument(_ formal: SwiftFormalType, actual: Any.Type,
-                         binding: SwiftGenericBinding) throws -> SwiftGenericArgument {
+                         binding: SwiftGenericBinding, defaultConsuming: Bool = false) throws -> SwiftGenericArgument {
+        if let argument = try binding.conventionArgument(actual, for: formal, defaultConsuming: defaultConsuming) {
+            let type = try binding.dependsOnParameters(argument.value)
+                ? layout(argument.value, actual: argument.wrapper.wrappedType, binding: binding) : nil
+            return .convention(try argument.wrapper.makeArgumentCodec(genericType: type))
+        }
         if case .function = formal, binding.dependsOnParameters(formal) {
             guard let closure = actual as? any SwiftGenericClosureValue.Type else {
                 throw ABIResolutionError.signatureMismatch(.init(expected: "NativeSwiftClosure for " + formal.spelling, found: [String(reflecting: actual)]))
@@ -313,7 +324,36 @@ struct SwiftGenericCallPlan: Sendable {
     }
 }
 
+extension SwiftFormalType {
+    var argumentConvention: (value: Self, convention: SwiftArgumentConvention)? {
+        switch self {
+        case .borrowing(let value): (value, .borrowing)
+        case .consuming(let value): (value, .consuming)
+        case .inoutValue(let value): (value, .inoutValue)
+        default: nil
+        }
+    }
+}
+
 extension SwiftGenericBinding {
+    func conventionArgument(_ actual: Any.Type, for formal: SwiftFormalType, defaultConsuming: Bool) throws
+        -> (wrapper: any SwiftConventionArgument.Type, value: SwiftFormalType)? {
+        if let convention = formal.argumentConvention {
+            try validate(actual, for: formal)
+            return (actual as! any SwiftConventionArgument.Type, convention.value)
+        }
+        guard dependsOnParameters(formal), let wrapper = actual as? any SwiftConventionArgument.Type else { return nil }
+        // A wrapper can itself be the explicitly bound T. In that case its
+        // ordinary Swift value is passed, without applying an argument marker.
+        do { try validate(actual, for: formal); return nil }
+        catch ABIResolutionError.signatureMismatch {}
+        guard wrapper.convention == (defaultConsuming ? .consuming : .borrowing) else {
+            throw ABIResolutionError.signatureMismatch(.init(expected: "The declaration's default argument ownership", found: [String(reflecting: actual)]))
+        }
+        try validate(wrapper.wrappedType, for: formal)
+        return (wrapper, formal)
+    }
+
     func dependsOnParameters(_ type: SwiftFormalType) -> Bool {
         return switch type {
         case .named(let name, let parameters):

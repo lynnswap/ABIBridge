@@ -11,7 +11,7 @@ let append = try await ABIRuntime.shared.swiftFunction(
     named: "Example.append(_:_:)",
     as: (@concurrent (NativeSwiftInout<String>, NativeSwiftConsuming<String>) async throws -> Void).self
 )
-let text = try NativeSwiftInout("Hello")
+let text = NativeSwiftInout("Hello")
 try unsafe await append.unsafeInvoke(text, .init("!"))
 print(text.value)
 ```
@@ -50,8 +50,8 @@ Explicit arguments are independent of a method receiver's mutating or consuming 
 
 ## Representation and scope
 
-Inout buffers support the existing actual Swift value representations, including String, Array, supported Optionals, class references, and values described with ABIBridgeSwiftValue. Borrowing uses the underlying value codec. Consuming requires Swift-owned copying and destruction; foreign ABIBridgeValue conversions alone do not establish that contract. See <doc:ExplicitSwiftValues>.
+An inout buffer stores its value using the value's actual Swift representation. Creating the buffer does not require a foreign representation. Preparing a concrete native call validates that representation; binding a generic parameter uses the bound Swift type's own storage and value witnesses. Borrowing and consuming follow the same distinction, so an unrelated ABIBridgeValue conversion does not change a generic argument's storage. See <doc:ExplicitSwiftValues>.
 
-The wrappers describe arguments to native entries. They are not result representations or callback-body parameters for managed hooks and generated closures. Closure-value wrappers do not expose actual Swift closure storage suitable for an inout pointee. Noncopyable values and generic declarations with hidden metadata/witness arguments require a compiled adapter.
+The wrappers describe arguments to native entries. They are not result representations or callback-body parameters for managed hooks and generated closures. Closure-value wrappers do not expose actual Swift closure storage suitable for a concrete closure's inout pointee. Noncopyable values require a compiled adapter.
 
 The compiler fixtures verify guaranteed, owned, and inout conventions on arm64, x86_64, arm64e, and arm64_32. Runtime tests cover independent copies, managed and scalar writeback, throwing completion, later argument-conversion failure, mixed initializer ownership, mutating receivers, and suspension/cancellation.

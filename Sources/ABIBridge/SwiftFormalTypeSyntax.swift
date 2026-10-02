@@ -50,6 +50,7 @@ extension SwiftGenericDeclaration {
             value = try value.requiredChild(kind: "Type").requiredChild()
         }
         self.parameters = parameters
+        consumesArguments = accessor == "Setter" || ["Allocator", "Constructor"].contains(declaration.kind)
         self.requirements = requirements.reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
         if let accessor {
             let property = try SwiftFormalType(value)

@@ -20,7 +20,9 @@ def main():
         sdk = run('xcrun','--sdk',sdk_name,'--show-sdk-path').strip()
         sil = run('xcrun','swiftc','-swift-version','6','-parse-as-library','-enable-library-evolution',
                   '-module-name','ManagedSwiftFixtures','-target',target,'-sdk',sdk,'-emit-silgen',
-                  *[str(root/'Tests/ManagedSwiftFixtures'/name) for name in ['Errors.swift','Async.swift','ParameterConventions.swift']])
+                  *[str(root/'Tests/ManagedSwiftFixtures'/name) for name in [
+                      'Errors.swift','Async.swift','ParameterConventions.swift','GenericCalls.swift',
+                      'RuntimeValues.swift','Values.swift','ExplicitValues.swift']])
         (directory/'provider.sil').write_text(sil)
         signatures = {}
         for name, expected in {
@@ -28,6 +30,10 @@ def main():
             'consumeArguments': '(@owned String, @guaranteed String, @owned ArgumentToken, Bool)',
             'consumeLargeArgument': '(@owned ErrorSuccessPayload, @guaranteed ArgumentCounts, Bool)',
             'asyncArguments': '(@guaranteed AsyncGate, @inout String, @owned String, @guaranteed String, Bool)',
+            'borrowingGeneric': '(@in_guaranteed Value)',
+            'consumingGeneric': '(@in Value)',
+            'mutateGeneric': '(@inout Value, @in Value, @in_guaranteed Failure, Bool)',
+            'suspendedMutateGeneric': '(@sil_isolated @sil_implicit_leading_param @guaranteed Builtin.ImplicitActor, @inout Value, @in Value, @in_guaranteed Failure, Bool)',
         }.items():
             candidates = [line for line in sil.splitlines() if line.startswith('sil [noinline]') and name in line]
             if len(candidates) != 1 or expected not in candidates[0]:

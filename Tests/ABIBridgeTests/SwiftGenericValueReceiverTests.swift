@@ -24,6 +24,22 @@ extension GenericValueBox: ABIBridgeSwiftValue {
 
 @Suite(.serialized)
 struct SwiftGenericValueReceiverTests {
+    @MainActor @Test func genericMembersUseDeclarationOwnershipDefaults() async throws {
+        let type = try await ABIRuntime().swiftType(named: "ManagedSwiftFixtures.GenericValueBox",
+            genericArguments: [.type(String.self)])
+        let create = try await type.initializer(named: "init(_:)",
+            as: ((NativeSwiftConsuming<String>) -> GenericValueBox<String>).self)
+        let replace = try await type.method(named: "replace(_:)",
+            as: ((NativeSwiftBorrowing<String>) -> Void).self, mutating: true)
+        let setter = try await type.setter(named: "value", as: NativeSwiftConsuming<String>.self)
+        var value = try unsafe create.unsafeInvoke(.init("created"))
+        #expect(value.value == "created")
+        try unsafe replace.unsafeInvoke(on: &value, .init("replaced"))
+        #expect(value.value == "replaced")
+        try unsafe setter.unsafeInvoke(on: &value, .init("set"))
+        #expect(value.value == "set")
+    }
+
     @MainActor @Test func nominalConstraintsAndNestedFieldsPreserveReceiverLayouts() async throws {
         let runtime = ABIRuntime()
         let object = NSObject()

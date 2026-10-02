@@ -73,6 +73,7 @@ struct SwiftGenericBinding: Sendable {
                 for element in tuple.elements { try remember(element.type) }
             }
             if let optional = type as? any NativeOptionalValue.Type { try remember(optional.wrappedType) }
+            if let argument = type as? any SwiftConventionArgument.Type { try remember(argument.wrappedType) }
             if let closure = type as? any SwiftClosureValue.Type {
                 let function = try SwiftFunctionSignature(closure.swiftFunctionType)
                 for type in function.parameters { try remember(type) }
@@ -496,6 +497,13 @@ struct SwiftGenericBinding: Sendable {
     }
 
     func validate(_ type: Any.Type, for formal: SwiftFormalType, packIndex: Int? = nil) throws {
+        if let convention = formal.argumentConvention {
+            guard let argument = type as? any SwiftConventionArgument.Type, argument.convention == convention.convention else {
+                throw ABIResolutionError.signatureMismatch(.init(expected: formal.spelling + " with its Swift argument wrapper",
+                    found: [String(reflecting: type)]))
+            }
+            return try validate(argument.wrappedType, for: convention.value, packIndex: packIndex)
+        }
         let expected = try spelling(formal, packIndex: packIndex)
         let actual: String
         if case .function = formal { actual = try swiftFunctionTypeName(type) }
