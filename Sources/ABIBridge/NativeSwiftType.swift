@@ -49,12 +49,17 @@ public actor NativeSwiftType {
         self.genericMetadata = genericMetadata
     }
 
-    func receiverPlan(mutating isMutating: Bool, consuming isConsuming: Bool = false) throws -> SwiftReceiverPlan {
-        if cachedReceiver == nil {
-            cachedReceiver = try SwiftReceiverCodec.make(for: representation ?? metadata)
+    func receiverPlan(mutating isMutating: Bool, consuming isConsuming: Bool = false,
+                      generic: SwiftGenericCallPlan? = nil) throws -> SwiftReceiverPlan {
+        let codec: SwiftReceiverCodec
+        if (representation == nil || representation == metadata), let formalType = try generic?.receiverType() {
+            codec = try SwiftReceiverCodec.make(for: metadata, formalType: formalType)
+        } else {
+            if cachedReceiver == nil { cachedReceiver = try SwiftReceiverCodec.make(for: representation ?? metadata) }
+            codec = cachedReceiver!
         }
         return try SwiftReceiverPlan(
-            codec: cachedReceiver!, metadata: metadata, isMutating: isMutating, isConsuming: isConsuming,
+            codec: codec, metadata: metadata, isMutating: isMutating, isConsuming: isConsuming,
             validateClass: representation != nil && representation != metadata
         )
     }
@@ -156,9 +161,10 @@ public actor NativeSwiftType {
             try genericArguments.isEmpty ? swiftFunctionDeclaration(named: $0 + "." + name, as: signature)
                 : NativeDeclaration(name: $0 + "." + name, language: .swift)
         }
-        let receiver = try receiverPlan(mutating: isMutating, consuming: isConsuming)
+        let generic = try genericPlan(symbol, signature: signature, arguments: genericArguments)
+        let receiver = try receiverPlan(mutating: isMutating, consuming: isConsuming, generic: generic)
         return try NativeSwiftMethod(symbol: symbol.symbol, type: self, receiver: receiver,
-            generic: genericPlan(symbol, signature: signature, arguments: genericArguments, receiver: receiver.mode))
+            generic: generic?.includingReceiver(receiver.mode))
     }
 
     private func genericPlan(
@@ -284,9 +290,10 @@ public actor NativeSwiftType {
         let symbol = try resolveMember(signature: ((Value) -> Void).self) {
             try accessorDeclaration(named: name, ownerName: $0, valueType: valueType, setter: true, isStatic: false)
         }
-        let receiver = try receiverPlan(mutating: isMutating ?? !isConsuming, consuming: isConsuming)
+        let generic = try genericPlan(symbol, signature: ((Value) -> Void).self)
+        let receiver = try receiverPlan(mutating: isMutating ?? !isConsuming, consuming: isConsuming, generic: generic)
         return try NativeSwiftMethod(symbol: symbol.symbol, type: self, receiver: receiver, consumesArguments: true,
-            generic: genericPlan(symbol, signature: ((Value) -> Void).self, receiver: receiver.mode))
+            generic: generic?.includingReceiver(receiver.mode))
     }
 
     /// Resolves a static property setter that consumes its incoming value.
@@ -463,9 +470,10 @@ extension NativeSwiftType {
         let symbol = try resolveMember(signature: signature) {
             try accessorDeclaration(named: name, ownerName: $0, valueType: result, setter: false, isStatic: false)
         }
-        let receiver = try receiverPlan(mutating: isMutating, consuming: isConsuming)
+        let generic = try genericPlan(symbol, signature: signature)
+        let receiver = try receiverPlan(mutating: isMutating, consuming: isConsuming, generic: generic)
         return try NativeSwiftMethod(symbol: symbol.symbol, type: self, receiver: receiver,
-            generic: genericPlan(symbol, signature: signature, receiver: receiver.mode))
+            generic: generic?.includingReceiver(receiver.mode))
     }
 
     /// Resolves a static getter using its complete zero-argument function type.

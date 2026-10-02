@@ -1,7 +1,7 @@
 import ABIBridgeCore
 import Foundation
 
-private func swiftGenericRequirementSubject(_ subject: String, qualifiers: Set<String>) -> String {
+func swiftGenericRequirementSubject(_ subject: String, qualifiers: Set<String>) -> String {
     // A symbolic protocol reference was replaced with __C.<identifier>.
     // Objective-C protocols cannot declare associated types, so this synthetic
     // qualification is unambiguous in a dependent member path.

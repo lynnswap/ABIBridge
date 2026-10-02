@@ -9,7 +9,27 @@ struct SwiftReceiverCodec: Sendable {
     let clone: @Sendable (NativeValueStorage) throws -> NativeValueStorage
     let destroy: @Sendable (UnsafeMutableRawPointer) -> Void
 
-    init<Value>(_ valueType: Value.Type) throws {
+    init<Value>(_ valueType: Value.Type, formalType: CValueType? = nil) throws {
+        if let formalType {
+            type = formalType
+            representation = ObjectIdentifier(Value.self)
+            @Sendable func storage(_ value: Value) -> NativeValueStorage {
+                let storage = NativeValueStorage(size: MemoryLayout<Value>.stride, alignment: MemoryLayout<Value>.alignment)
+                storage.initialize(value)
+                return storage
+            }
+            encode = { value in
+                guard let value = value as? Value else {
+                    throw ABIInvocationError.incompatibleValue(
+                        expected: String(reflecting: Value.self), actual: String(reflecting: Swift.type(of: value)))
+                }
+                return storage(value)
+            }
+            decode = { source, _ in source.address.load(as: Value.self) }
+            clone = { storage($0.address.load(as: Value.self)) }
+            destroy = { $0.assumingMemoryBound(to: Value.self).deinitialize(count: 1) }
+            return
+        }
         let codec = try SwiftValueCodec<Value>()
         type = codec.type
         representation = ObjectIdentifier(Value.self)
@@ -26,8 +46,8 @@ struct SwiftReceiverCodec: Sendable {
         destroy = { codec.destroyNativeValue(at: $0) }
     }
 
-    static func make(for type: Any.Type) throws -> Self {
-        func open<Value>(_ type: Value.Type) throws -> Self { try Self(type) }
+    static func make(for type: Any.Type, formalType: CValueType? = nil) throws -> Self {
+        func open<Value>(_ type: Value.Type) throws -> Self { try Self(type, formalType: formalType) }
         return try _openExistential(type, do: open)
     }
 }

@@ -75,6 +75,22 @@ def main():
             require("swiftself" in body(ir, name), f"{target}: member needs indirect self context")
         require("@out Value" in sil and "@in_guaranteed RuntimeRecord" in sil,
                 f"{target}: missing formal generic/resilient SIL conventions")
+        value_ir_path = directory / "values.ll"
+        run(*common, "-enable-library-evolution", "-whole-module-optimization", "-module-name", "ManagedSwiftFixtures",
+            "-emit-ir", str(provider / "Generics.swift"), str(provider / "Values.swift"), "-o", str(value_ir_path))
+        value_ir = value_ir_path.read_text()
+        receiver = body(value_ir, "GenericValueBoxV7project").splitlines()[0]
+        concrete = body(value_ir, "GenericValueBoxVAASiRszlE8concrete").splitlines()[0]
+        reference = body(value_ir, "GenericValueBoxVAARlzClE9reference").splitlines()[0]
+        phantom = body(value_ir, "GenericPhantomV4read").splitlines()[0]
+        require("sret(" in receiver and "swiftself" in receiver and 'ptr %"GenericValueBox<Value>"' in receiver,
+                f"{target}: an unbound inline field needs indirect self and its enclosing metadata")
+        require("swiftself" not in concrete and "ptr" not in concrete,
+                f"{target}: a same-type Int constraint removes the generic metadata and indirect self")
+        require("swiftself" not in reference and "swiftcc ptr" in reference and "ptr %Value" in reference,
+                f"{target}: a class-bound field has direct self but retains its generic metadata")
+        require("swiftself" not in phantom and "ptr %Value" in phantom,
+                f"{target}: a phantom generic parameter does not make the receiver indirect")
         if target.startswith("arm64e"):
             require('"ptrauth"(i32 0, i64 55683)' in large_callback, "Large fixed callback authentication changed")
             require('"ptrauth"(i32 0, i64 47754)' in pack_callback, "Generic pack callback authentication changed")
@@ -93,7 +109,9 @@ def main():
                     "The runtime TypeContextDescriptor return must use its C++ struct authentication")
         targets.append({"target": target, "genericCall": generic, "genericCallback": callback,
                         "borrowedCallback": borrowed, "tupleCallback": tuple_callback, "concreteTupleCallback": concrete_tuple,
-                        "packCallback": pack_callback, "largeFixedCallback": large_callback})
+                        "packCallback": pack_callback, "largeFixedCallback": large_callback,
+                        "indirectReceiver": receiver, "concreteReceiver": concrete,
+                        "referenceReceiver": reference, "phantomReceiver": phantom})
     report = {"compiler": run("xcrun", "swiftc", "--version").strip(), "runtimeTested": False, "targets": targets}
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))

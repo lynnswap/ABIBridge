@@ -17,7 +17,50 @@ public class GenericTypeClass<Value: Equatable>: NSObject {
     }
 }
 public final class GenericTypeDerived<Value: Equatable>: GenericTypeClass<[Value]> {}
-public enum GenericTypeEnum<Value> { case value(Value) }
+public enum GenericTypeEnum<Value> {
+    case value(Value)
+    @inline(never) public func payload() -> Value {
+        switch self { case .value(let value): value }
+    }
+}
+
+@frozen public struct GenericValueBox<Value> {
+    public var value: Value
+    public init(_ value: Value) { self.value = value }
+    @inline(never) public func project() -> Value { value }
+    @inline(never) public mutating func replace(_ value: Value) { self.value = value }
+    @inline(never) public consuming func take() -> Value { value }
+    @inline(never) public func paired<Other: Equatable>(_ other: Other) -> (Value, Other, Bool) {
+        (value, other, other == other)
+    }
+    @inline(never) public func checked<Failure: Error>(_ failure: Failure, fail: Bool) throws(Failure) -> Value {
+        if fail { throw failure }
+        return value
+    }
+    @inline(never) public static func identity(_ value: Value) -> Value { value }
+}
+
+extension GenericValueBox where Value: Sendable {
+    @inline(never) public nonisolated(nonsending) func asynchronously() async -> Value { value }
+}
+extension GenericValueBox where Value == Int {
+    @inline(never) public func concrete() -> Int { value }
+}
+extension GenericValueBox where Value: AnyObject {
+    @inline(never) public func reference() -> Value { value }
+}
+
+@frozen public struct GenericPhantom<Value> {
+    public var number: Int64
+    public init(_ number: Int64) { self.number = number }
+    @inline(never) public func read() -> Int64 { number }
+    @inline(never) public func paired<Other>(_ other: Other) -> (Int64, Other) { (number, other) }
+}
+
+@inline(never) public func phantomGeneric<Value>(_ value: GenericPhantom<Value>) -> GenericPhantom<Value> { value }
+@inline(never) public func boxedGeneric<Value>(_ value: GenericValueBox<Value>) -> GenericValueBox<Value> { value }
+@inline(never) public func optionalArrayGeneric<Value>(_ value: [Value]?) -> [Value]? { value }
+
 public struct GenericTypeCollection<Value: Collection> where Value.Element: Equatable {
     public let value: Value
 }
@@ -60,6 +103,8 @@ extension ResilientRecord: GenericMetric { public var metric: Int64 { number } }
 @frozen public struct GenericRecord<Value: GenericMetric> {
     public let value: Value
     public init(_ value: Value) { self.value = value }
+    @inline(never) public func project() -> Value { value }
+    @inline(never) public func measure() -> Int64 { value.metric }
 }
 
 @frozen public struct ConditionalMetric<Value> {

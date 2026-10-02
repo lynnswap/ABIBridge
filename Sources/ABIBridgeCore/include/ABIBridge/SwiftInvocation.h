@@ -34,6 +34,11 @@ ABISwiftTypeMetadata *ABICreateSwiftTypeMetadata(const void *descriptor,
     const void *const *arguments, size_t count, ABIResolutionFailure **error);
 /// Returns an authenticated raw nominal descriptor, or null for a non-nominal type.
 const void *ABISwiftTypeDescriptor(const void *metadata);
+/// Reflection fields whose storage is inline in a struct or enum. Field type
+/// references preserve generic parameters; unsupported symbolic nominal types
+/// return null and do not establish a formal calling convention.
+size_t ABISwiftTypeFieldCount(const void *metadata);
+char *ABICopySwiftTypeFieldReference(const void *metadata, size_t index);
 /// Recovers the source-written arguments of existing complete metadata.
 ABISwiftTypeMetadata *ABICopySwiftTypeMetadata(const void *metadata, ABIResolutionFailure **error);
 size_t ABISwiftTypeMetadataArgumentCount(const ABISwiftTypeMetadata *result);

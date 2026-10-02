@@ -482,6 +482,31 @@ ABISwiftTypeMetadata *ABICopySwiftTypeMetadata(const void *metadata, ABIResoluti
 
 const void *ABISwiftTypeDescriptor(const void *metadata) { return typeContextDescriptor(metadata); }
 
+namespace {
+const char *valueFields(const void *metadata) {
+    const char *descriptor = typeContextDescriptor(metadata);
+    if (!descriptor) return nullptr;
+    const auto kind = read<uint32_t>(descriptor) & 0x1f;
+    return kind == 17 || kind == 18 ? relative(descriptor + 16) : nullptr;
+}
+}
+
+size_t ABISwiftTypeFieldCount(const void *metadata) {
+    const char *fields = valueFields(metadata);
+    return fields ? read<uint32_t>(fields + 12) : 0;
+}
+
+char *ABICopySwiftTypeFieldReference(const void *metadata, size_t index) {
+    const char *fields = valueFields(metadata);
+    if (!fields || index >= read<uint32_t>(fields + 12)) return nullptr;
+    const char *field = fields + 16 + index * read<uint16_t>(fields + 10);
+    if (read<uint32_t>(field) & 1) return nullptr; // An indirect case stores a box.
+    const char *reference = relative(field + 4);
+    if (!reference) return nullptr; // A case without a payload.
+    auto subject = requirementSubject(reference);
+    return subject.empty() ? nullptr : strdup(subject.c_str());
+}
+
 size_t ABISwiftTypeMetadataArgumentCount(const ABISwiftTypeMetadata *result) { return result->arguments.size(); }
 bool ABISwiftTypeMetadataArgumentIsPack(const ABISwiftTypeMetadata *result, size_t index) {
     return reinterpret_cast<uintptr_t>(result->arguments[index]) & 1;

@@ -37,7 +37,9 @@ struct SwiftGenericClosurePlan: Sendable {
 
 struct SwiftGenericCallPlan: Sendable {
     let binding: SwiftGenericBinding
-    let metadata: SwiftGenericArgumentBuffer
+    private(set) var metadata: SwiftGenericArgumentBuffer
+    private let context: SwiftGenericTypeContext?
+    private let enclosingMetadata: Any.Type?
     let parameters: SwiftGenericParameters
     var arguments: [SwiftGenericArgument] { parameters.arguments }
     let result: SwiftGenericResult
@@ -66,7 +68,9 @@ struct SwiftGenericCallPlan: Sendable {
                 expected: "The declaration's async and error effects", found: []))
         }
         self.binding = binding
-        if let context, let receiver {
+        self.context = context
+        enclosingMetadata = enclosing?.value
+        if let context, let receiver, receiver != .value {
             let prefix: [UInt] = receiver == .address ? [unsafeBitCast(enclosing!.value, to: UInt.self)] : []
             metadata = SwiftGenericArgumentBuffer(prefix + binding.metadataArguments(fulfilledBy: context))
         } else {
@@ -95,6 +99,22 @@ struct SwiftGenericCallPlan: Sendable {
         } else {
             errorType = nil
         }
+    }
+
+    func includingReceiver(_ receiver: SwiftReceiverMode) -> Self {
+        var result = self
+        if let context, let enclosingMetadata, receiver != .value {
+            let prefix: [UInt] = receiver == .address ? [unsafeBitCast(enclosingMetadata, to: UInt.self)] : []
+            result.metadata = SwiftGenericArgumentBuffer(prefix + binding.metadataArguments(fulfilledBy: context))
+        }
+        return result
+    }
+
+    func receiverType() throws -> CValueType? {
+        guard let context, let enclosingMetadata, !(enclosingMetadata is AnyClass) else { return nil }
+        let arguments = context.parameters.map { SwiftFormalType.named($0.name, []) }
+        return try SwiftGenericValueLayout.isIndirect(enclosingMetadata, arguments: arguments, binding: binding)
+            ? SwiftGenericParameters.storageType(enclosingMetadata) : nil
     }
 
     func matches(_ signature: SwiftFunctionSignature) throws -> Bool {
@@ -207,20 +227,31 @@ struct SwiftGenericCallPlan: Sendable {
     private static func layout(_ formal: SwiftFormalType, actual: Any.Type,
                                binding: SwiftGenericBinding) throws -> CValueType {
         func prepare<Value>(_ type: Value.Type) throws -> CValueType {
-            if !binding.dependsOnParameters(formal) { return try SwiftValueCodec<Value>().type }
-            if binding.isClassBound(formal) { return try CValueType(scalar: ABIValuePointer) }
+            if binding.concreteEquivalent(of: formal) != nil { return try SwiftValueCodec<Value>().type }
+            if try binding.isClassBound(formal) { return try CValueType(scalar: ABIValuePointer) }
             switch formal {
             case .named(let name, let arguments), .nominal(let name, let arguments):
                 if !arguments.isEmpty && actual is AnyClass { return try CValueType(scalar: ABIValuePointer) }
                 if ["Swift.Array", "Swift.Dictionary", "Swift.Set"].contains(name) {
                     return try CValueType(scalar: ABIValuePointer)
                 }
-                if name == "Swift.Optional", let wrapped = arguments.first,
-                   binding.isClassBound(wrapped) {
-                    return try CValueType(scalar: ABIValuePointer)
+                if name == "Swift.Optional", let wrapped = arguments.first {
+                    if try binding.isClassBound(wrapped) { return try CValueType(scalar: ABIValuePointer) }
+                    let wrappedType = try binding.types(wrapped)[0]
+                    let wrappedLayout = try Self.layout(wrapped, actual: wrappedType, binding: binding)
+                    if withExtendedLifetime(wrappedLayout, { ABISwiftValueIsIndirect(wrappedLayout.handle) }) {
+                        return try SwiftGenericParameters.storageType(actual)
+                    }
+                    return try SwiftValueCodec<Value>().type
                 }
-                return try CValueType(indirectSwiftSize: MemoryLayout<Value>.size,
-                                      alignment: MemoryLayout<Value>.alignment)
+                let isArchetype: Bool
+                if case .named = formal {
+                    isArchetype = arguments.isEmpty && binding.arguments[String(name.prefix { $0 != "." })] != nil
+                } else { isArchetype = false }
+                if try isArchetype || SwiftGenericValueLayout.isIndirect(actual, arguments: arguments, binding: binding) {
+                    return try SwiftGenericParameters.storageType(actual)
+                }
+                return try SwiftValueCodec<Value>().type
             case .metatype:
                 return try CValueType(scalar: ABIValuePointer)
             case .tuple(let fields):

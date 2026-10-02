@@ -149,7 +149,12 @@ struct SwiftGenericBinding: Sendable {
             let parameter = declaration.parameters.first { shape.contains($0.name) }!
             metadataWords.append((.shape(shape), UInt(bound[parameter.name]!.types.count)))
         }
-        for parameter in declaration.parameters {
+        for (index, parameter) in declaration.parameters.enumerated() {
+            if let context, context.parameters.contains(where: { $0.name == parameter.name }),
+               !context.keyParameters.contains(parameter.name) { continue }
+            let equivalents = equivalentTypes(of: .named(parameter.name, []))
+            if equivalents.contains(where: { !dependsOnParameters($0) }) { continue }
+            if declaration.parameters[..<index].contains(where: { equivalents.contains(.named($0.name, [])) }) { continue }
             let argument = bound[parameter.name]!
             let metadata = argument.types.map { unsafeBitCast($0, to: UInt.self) }
             if argument.isPack {
@@ -219,13 +224,35 @@ struct SwiftGenericBinding: Sendable {
         }
     }
 
-    func isClassBound(_ type: SwiftFormalType) -> Bool {
-        conformances.contains { conformance in
-            guard conformance.subject == type else { return false }
-            if conformance.name.hasSuffix("AnyObject") { return true }
-            guard let descriptor = conformance.descriptor else { return false }
-            return unsafe descriptor.withUnsafeAddress { $0.loadUnaligned(as: UInt32.self) & 0x10000 == 0 }
+    func equivalentTypes(of type: SwiftFormalType) -> [SwiftFormalType] {
+        var types = [type], index = 0
+        while index < types.count {
+            let current = types[index]
+            for requirement in declaration.requirements {
+                guard case .sameType(let left, let right) = requirement else { continue }
+                let other = left == current ? right : right == current ? left : nil
+                if let other, !types.contains(other) { types.append(other) }
+            }
+            index += 1
         }
+        return types
+    }
+
+    func concreteEquivalent(of type: SwiftFormalType) -> SwiftFormalType? {
+        equivalentTypes(of: type).first { !dependsOnParameters($0) }
+    }
+
+    func isClassBound(_ type: SwiftFormalType) throws -> Bool {
+        for type in equivalentTypes(of: type) {
+            let candidates = try conformances(for: type.spelling)
+                + conformances.filter { $0.subject == type && $0.descriptor == nil }
+            for conformance in candidates {
+                if conformance.name.hasSuffix("AnyObject") { return true }
+                if let descriptor = conformance.descriptor,
+                   unsafe descriptor.withUnsafeAddress({ $0.loadUnaligned(as: UInt32.self) & 0x10000 == 0 }) { return true }
+            }
+        }
+        return false
     }
 
     private func conformances(for subject: String) throws -> [Conformance] {
