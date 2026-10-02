@@ -1,0 +1,2 @@
+# Keep the upstream snapshot byte-for-byte; upstream.json verifies its contents.
+Sources/ABIBridgeCore/SwiftDemangling/Upstream/** -whitespace
