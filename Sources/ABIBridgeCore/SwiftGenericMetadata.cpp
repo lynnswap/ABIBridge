@@ -496,15 +496,26 @@ size_t ABISwiftTypeFieldCount(const void *metadata) {
     return fields ? read<uint32_t>(fields + 12) : 0;
 }
 
-char *ABICopySwiftTypeFieldReference(const void *metadata, size_t index) {
+namespace {
+const char *inlineFieldReference(const void *metadata, size_t index) {
     const char *fields = valueFields(metadata);
     if (!fields || index >= read<uint32_t>(fields + 12)) return nullptr;
     const char *field = fields + 16 + index * read<uint16_t>(fields + 10);
     if (read<uint32_t>(field) & 1) return nullptr; // An indirect case stores a box.
-    const char *reference = relative(field + 4);
-    if (!reference) return nullptr; // A case without a payload.
+    return relative(field + 4);
+}
+}
+
+char *ABICopySwiftTypeFieldReference(const void *metadata, size_t index) {
+    const char *reference = inlineFieldReference(metadata, index);
+    if (!reference) return nullptr;
     auto subject = requirementSubject(reference);
     return subject.empty() ? nullptr : strdup(subject.c_str());
+}
+
+ABISwiftSyntax *ABICopySwiftTypeFieldSyntax(const void *metadata, size_t index) {
+    const char *reference = inlineFieldReference(metadata, index);
+    return reference ? ABICopySwiftTypeSyntax(reference, symbolicNameLength(reference)) : nullptr;
 }
 
 size_t ABISwiftTypeMetadataArgumentCount(const ABISwiftTypeMetadata *result) { return result->arguments.size(); }

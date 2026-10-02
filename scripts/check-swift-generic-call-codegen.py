@@ -2,6 +2,7 @@
 """Verify declaration-level generic calls and resilient borrowed callbacks."""
 
 import json
+import hashlib
 from pathlib import Path
 import re
 import subprocess
@@ -24,6 +25,11 @@ def body(ir, name):
 
 def main():
     root = Path(__file__).resolve().parent.parent
+    vendor = root / "Sources/ABIBridgeCore/SwiftDemangling"
+    upstream = json.loads((vendor / "upstream.json").read_text())
+    for source in upstream["files"]:
+        digest = hashlib.sha256((vendor / "Upstream" / source["path"]).read_bytes()).hexdigest()
+        require(digest == source["sha256"], f"The upstream demangler snapshot changed: {source['path']}")
     output = root / ".build/swift-generic-call-codegen"
     targets = []
     for target, sdk_name in [
@@ -103,6 +109,10 @@ def main():
             "-I", str(root / "Sources/ABIBridgeCore/include"), "-S", "-emit-llvm",
             str(root / "Sources/ABIBridgeCore/SwiftGenericMetadata.cpp"), "-o", str(metadata_ir_path))
         metadata_ir = metadata_ir_path.read_text()
+        run("xcrun", "clang++", "-std=c++20", "-O2", "-fvisibility=hidden", "-target", target, "-isysroot", sdk,
+            "-I", str(root / "Sources/ABIBridgeCore/include"),
+            "-I", str(vendor / "Support"), "-I", str(vendor / "Upstream/include"),
+            "-c", str(root / "Sources/ABIBridgeCore/SwiftDemangling.cpp"), "-o", str(directory / "demangling.o"))
         if target.startswith("arm64e"):
             require(re.search(r"@llvm\.ptrauth\.auth\([^\n]*i32 3, i64 62533\)",
                               body(metadata_ir, "ABICopySwiftTypeMetadata")),
@@ -112,7 +122,8 @@ def main():
                         "packCallback": pack_callback, "largeFixedCallback": large_callback,
                         "indirectReceiver": receiver, "concreteReceiver": concrete,
                         "referenceReceiver": reference, "phantomReceiver": phantom})
-    report = {"compiler": run("xcrun", "swiftc", "--version").strip(), "runtimeTested": False, "targets": targets}
+    report = {"compiler": run("xcrun", "swiftc", "--version").strip(), "runtimeTested": False,
+              "demanglerRevision": upstream["revision"], "targets": targets}
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))
 

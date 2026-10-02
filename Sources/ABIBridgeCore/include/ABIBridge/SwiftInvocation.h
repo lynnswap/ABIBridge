@@ -2,6 +2,7 @@
 #define ABIBRIDGE_SWIFT_INVOCATION_H
 
 #include <ABIBridge/Invocation.h>
+#include <ABIBridge/SwiftDemangling.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -39,6 +40,7 @@ const void *ABISwiftTypeDescriptor(const void *metadata);
 /// return null and do not establish a formal calling convention.
 size_t ABISwiftTypeFieldCount(const void *metadata);
 char *ABICopySwiftTypeFieldReference(const void *metadata, size_t index);
+ABISwiftSyntax *ABICopySwiftTypeFieldSyntax(const void *metadata, size_t index);
 /// Recovers the source-written arguments of existing complete metadata.
 ABISwiftTypeMetadata *ABICopySwiftTypeMetadata(const void *metadata, ABIResolutionFailure **error);
 size_t ABISwiftTypeMetadataArgumentCount(const ABISwiftTypeMetadata *result);

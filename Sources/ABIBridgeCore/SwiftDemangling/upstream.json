@@ -1,0 +1,104 @@
+{
+  "repository": "https://github.com/swiftlang/swift",
+  "revision": "aa782beb23b8bd83bd16fca831532a05dd6cea39",
+  "tag": "swift-6.3-RELEASE",
+  "license": "Apache License 2.0 with Runtime Library Exception",
+  "files": [
+    {
+      "path": "LICENSE.txt",
+      "sha256": "770af8291f708538d8ff885a0bbc4e045cd700531741c4f99528d435c14d7f55"
+    },
+    {
+      "path": "include/swift/ABI/InvertibleProtocols.def",
+      "sha256": "96182ba146491e3b52914043729b7743443f4e8e20e181fe76bd6652d42ab902"
+    },
+    {
+      "path": "include/swift/AST/Ownership.h",
+      "sha256": "f487dd3fb21d40722ec56071f0a8cce4d561512f3551ff91db69495a0dd7b840"
+    },
+    {
+      "path": "include/swift/AST/ReferenceStorage.def",
+      "sha256": "364eed86a0c7b6d1f988bcfd1daf0ff126aad3b4fcf396eebc236e86b48759cf"
+    },
+    {
+      "path": "include/swift/Basic/InlineBitfield.h",
+      "sha256": "d555ed766c8b7c2b1417a15d9135857d476df711a9aa05ca15c12896c2c9c29f"
+    },
+    {
+      "path": "include/swift/Basic/MacroRoles.def",
+      "sha256": "d11873fc895fa1a6afac71089f394d00748e3af624b221d38fcb5662414aeace"
+    },
+    {
+      "path": "include/swift/Demangling/Demangle.h",
+      "sha256": "6236f2b87fc5c954bc3e5f05aeeff0b8a5966161fb698bbda286a7df5cdce316"
+    },
+    {
+      "path": "include/swift/Demangling/DemangleNodes.def",
+      "sha256": "6e088e05277b3a016d06330d28251b52571bf6106da2a694a1252b1948a84ab2"
+    },
+    {
+      "path": "include/swift/Demangling/Demangler.h",
+      "sha256": "ef37d331b4ca302638b536b75d1108e291db24011dedab16db23a6fe750d7773"
+    },
+    {
+      "path": "include/swift/Demangling/Errors.h",
+      "sha256": "4f85aa84ba4252d445b5de136e92efd75f5b1d8ef5d2302d0abc523b8ed29dec"
+    },
+    {
+      "path": "include/swift/Demangling/ManglingFlavor.h",
+      "sha256": "ecd4f5165a6d91883ce3f0b8128a0bb06350ea8f30ab2395251da4dab67f2f9f"
+    },
+    {
+      "path": "include/swift/Demangling/ManglingMacros.h",
+      "sha256": "331dfef7e10d82e0ef7e922e24a0fc1e90f707efdab99f4db06d0da97d9e0a59"
+    },
+    {
+      "path": "include/swift/Demangling/ManglingUtils.h",
+      "sha256": "3b12d1ea9c717233ede0e92edc6006907b1573d9cab9f0161c125e0d9e0e60d0"
+    },
+    {
+      "path": "include/swift/Demangling/NamespaceMacros.h",
+      "sha256": "959b28d9f022a25d13b8a56871129cd39f69eef538a44806d765f9a3f24b7d7f"
+    },
+    {
+      "path": "include/swift/Demangling/Punycode.h",
+      "sha256": "29a7222122f83be74c8c2089f5b08acae897b730fbb1170261ca5c68f5c0dec2"
+    },
+    {
+      "path": "include/swift/Demangling/StandardTypesMangling.def",
+      "sha256": "54c02d0f388e8043d395940f92fd3651fe5cb5042328c83b466963cfc5911f40"
+    },
+    {
+      "path": "include/swift/Demangling/ValueWitnessMangling.def",
+      "sha256": "7395a5bf5fd045c254b9c14d9528a0adda90fd03496e37b0f72a091ce0e5f2d3"
+    },
+    {
+      "path": "include/swift/Strings.h",
+      "sha256": "ff9dedc55fd9eb33a306c3be20864bce58f709d7fc1ab091ecf1d5e8b9b7f136"
+    },
+    {
+      "path": "lib/Demangling/Demangler.cpp",
+      "sha256": "09dfcffde8c354b436a15d6d857a122a2052559ec3b13fc6b10ad85bfdac72dd"
+    },
+    {
+      "path": "lib/Demangling/DemanglerAssert.h",
+      "sha256": "bd457600a3dd8b091b8c1889a285179f2f2468b5fddf335d1776662e1c3eeed1"
+    },
+    {
+      "path": "lib/Demangling/ManglingUtils.cpp",
+      "sha256": "aa9e387f435b17bb75035a4029a3b0dc8dbd967d617ea4ec5d3f05762cc0b600"
+    },
+    {
+      "path": "lib/Demangling/Punycode.cpp",
+      "sha256": "fe8b0aa3253cfc4d5b645c45da73b5dd46f0048f507dbe540dc1b7a1e0276b2e"
+    },
+    {
+      "path": "lib/Demangling/Remangler.cpp",
+      "sha256": "fa947a17e9b01172ac28c9c9c37f9a4d72e7d0f418227980c2bfba4de3611479"
+    },
+    {
+      "path": "lib/Demangling/RemanglerBase.h",
+      "sha256": "cfbde43c7bd284e9057d4e144cf933162a75eb7361c63b4fa6cc861e30171637"
+    }
+  ]
+}

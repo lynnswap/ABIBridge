@@ -5,6 +5,29 @@ import ManagedSwiftFixtures
 import Testing
 
 struct SwiftGenericBindingTests {
+    @Test func syntaxPreservesGenericDepthWithoutPrintedParameterNames() throws {
+        let node: SwiftSyntax.Node
+        do {
+            let syntax = try SwiftSyntax(symbol: "$s20ManagedSwiftFixtures15GenericValueBoxV7checked_4failxqd___Sbtqd__YKs5ErrorRd__lF")
+            node = try #require(syntax.root.child(kind: "Function")?.child(kind: "Type")?
+                .child(kind: "DependentGenericType")?.child(kind: "Type")?
+                .child(kind: "FunctionType")?.child(kind: "TypedThrowsAnnotation")?
+                .child(kind: "DependentGenericParamType"))
+        }
+        #expect(node.children().compactMap(\.index) == [1, 0])
+        #expect(try node.name() == "A1")
+        #expect(throws: ABIResolutionError.self) { try SwiftSyntax(symbol: "not a Swift symbol") }
+    }
+
+    @Test func syntaxReadsSymbolicNominalFieldReferencesAtTheirOriginalAddress() throws {
+        let metadata = unsafeBitCast(ResilientRecord.self, to: UnsafeRawPointer.self)
+        let handle = try #require(ABICopySwiftTypeFieldSyntax(metadata, 0))
+        let syntax = SwiftSyntax(adopting: handle)
+        let reference = try #require(syntax.root.child(kind: "TypeSymbolicReference"))
+        let descriptor = try #require(ABISwiftTypeDescriptor(unsafeBitCast(ManagedRecord.self, to: UnsafeRawPointer.self)))
+        #expect(reference.index == UInt64(UInt(bitPattern: descriptor)))
+    }
+
     @Test func genericClassInitializersPropertiesAndMethodsShareBinding() async throws {
         let runtime = ABIRuntime()
         let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericTypeClass",
