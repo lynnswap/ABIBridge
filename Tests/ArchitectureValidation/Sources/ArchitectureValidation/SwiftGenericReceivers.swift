@@ -74,6 +74,48 @@ import SwiftOpaqueExtensions
                 "Declared generic witnesses preserve typed-error output: \(importsConformance)")
         }
     }
+    let concreteMember = try await runtime.object(GenericMemberReceiver(GenericReceiverNumber(42))).method(
+        named: "concrete(_:)", as: ((NativeSwiftBorrowing<String>) -> String).self)
+    try check(unsafe concreteMember.unsafeInvoke(.init("borrowed:")) == "borrowed:42",
+        "Generic members accept borrowing markers on concrete arguments")
+    let closureType = try await runtime.swiftType(named: "SwiftValueFixtures.BindingClosureOwner", genericArguments: [.type(String.self)])
+    let makeClosureOwner = try await closureType.initializer(named: "init(_:)",
+        as: ((NativeSwiftClosure<() -> String>) -> BindingClosureOwner<String>).self)
+    let setClosure = try await closureType.setter(named: "body", as: NativeSwiftClosure<() -> String>.self)
+    let deaths = Mutex([0, 0])
+    var closureOwner: BindingClosureOwner<String>?
+    do {
+        let token = ErrorToken { deaths.withLock { $0[0] += 1 } }
+        closureOwner = try unsafe makeClosureOwner.unsafeInvoke(NativeSwiftClosure<() -> String> {
+            withExtendedLifetime(token) { "initialized" }
+        })
+    }
+    try check(closureOwner!.run() == "initialized" && deaths.withLock { $0[0] } == 0,
+        "Generic initializer transfers the adapted closure capture")
+    do {
+        let token = ErrorToken { deaths.withLock { $0[1] += 1 } }
+        try unsafe setClosure.unsafeInvoke(on: closureOwner!, NativeSwiftClosure<() -> String> {
+            withExtendedLifetime(token) { "replaced" }
+        })
+    }
+    try check(closureOwner!.run() == "replaced" && deaths.withLock { $0 } == [1, 0],
+        "Generic closure setter transfers its new capture and releases its previous capture")
+    closureOwner = nil
+    try check(deaths.withLock { $0 } == [1, 1], "Stored generic closure captures are released exactly once")
+    let consumeClosure = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.bindingConsumeClosure<A, B where B: Swift.Error>(__owned () -> A, B, Swift.Bool) throws(B) -> A",
+        as: ((NativeSwiftConsuming<NativeSwiftClosure<() -> String>>, SmallError, Bool) throws(SmallError) -> String).self,
+        genericArguments: [.type(String.self), .type(SmallError.self)])
+    let consumedBody = try NativeSwiftClosure<() -> String> { "consumed" }
+    try check(unsafe consumeClosure.unsafeInvoke(.init(consumedBody), SmallError(46), false) == "consumed",
+        "Consuming generic closure markers preserve native callback encoding")
+    do {
+        _ = try unsafe consumeClosure.unsafeInvoke(.init(consumedBody), SmallError(46), true)
+        throw ArchitectureValidationFailure(description: "Missing consuming generic closure error")
+    } catch let error as NativeSwiftError {
+        try check(error.withUnderlyingError { ($0 as? SmallError)?.code == 46 },
+            "Consumed generic closure copies preserve the native typed-error path")
+    }
     let refined = try await runtime.swiftType(named: "SwiftValueFixtures.BindingHashOwner", genericArguments: [.type(String.self)])
     let hash = try await refined.staticMethod(named: "refinedWitness(_:)", as: ((String) -> Int).self)
     try check(unsafe hash.unsafeInvoke("hash") == BindingHashOwner<String>.refinedWitness("hash"),
@@ -161,6 +203,12 @@ import SwiftOpaqueExtensions
     let body = try NativeSwiftClosure<(Int64) throws -> String> { "value: \($0)" }
     try check(unsafe transform.unsafeInvoke([1, 2], body) == ["value: 1", "value: 2"],
         "Generic collection callback preserves rethrows and managed results")
+    let borrowedTransform = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.bindingTransform<A, B>([A], (A) throws -> B) throws -> [B]",
+        as: (([Int64], NativeSwiftBorrowing<NativeSwiftClosure<(Int64) throws -> String>>) throws -> [String]).self,
+        genericArguments: [.type(Int64.self), .type(String.self)])
+    try check(unsafe borrowedTransform.unsafeInvoke([3], .init(body)) == ["value: 3"],
+        "Borrowing markers preserve generic closure argument and result reabstraction")
     let make = try await runtime.swiftFunction(named: "SwiftValueFixtures.bindingClosure<A>(A) -> (A) -> A",
         as: ((String) -> NativeSwiftClosure<(String) -> String>).self, genericArguments: [.type(String.self)])
     let closure = try unsafe make.unsafeInvoke(String(repeating: "retained", count: 100))
@@ -198,6 +246,10 @@ import SwiftOpaqueExtensions
         named: "SwiftValueFixtures.bindingAsyncCallback<A, B where B: Swift.Error>(A, nonisolated(nonsending) (A) async throws(B) -> A) async throws(B) -> A",
         as: (nonisolated(nonsending) (String, NativeSwiftClosure<nonisolated(nonsending) (String) async throws(SmallError) -> String>) async throws(SmallError) -> String).self,
         genericArguments: [.type(String.self), .type(SmallError.self)])
+    let borrowedAsyncCallback = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.bindingAsyncCallback<A, B where B: Swift.Error>(A, nonisolated(nonsending) (A) async throws(B) -> A) async throws(B) -> A",
+        as: (nonisolated(nonsending) (String, NativeSwiftBorrowing<NativeSwiftClosure<nonisolated(nonsending) (String) async throws(SmallError) -> String>>) async throws(SmallError) -> String).self,
+        genericArguments: [.type(String.self), .type(SmallError.self)])
     for shouldThrow in [false, true] {
         let operation: (nonisolated(nonsending) @Sendable (String) async throws(SmallError) -> String) = {
             value async throws(SmallError) in
@@ -212,6 +264,13 @@ import SwiftOpaqueExtensions
         } catch let error as NativeSwiftError {
             try check(shouldThrow && error.withUnderlyingError { ($0 as? SmallError)?.code == 47 },
                 "Generic async callback preserves its typed failure")
+        }
+        do {
+            let result = try unsafe await borrowedAsyncCallback.unsafeInvoke("borrowed", .init(callback))
+            try check(!shouldThrow && result == "borrowed!", "Borrowed generic async callback authenticates across suspension")
+        } catch let error as NativeSwiftError {
+            try check(shouldThrow && error.withUnderlyingError { ($0 as? SmallError)?.code == 47 },
+                "Borrowed generic async callback preserves its typed failure")
         }
     }
     let makeAsync = try await runtime.swiftFunction(

@@ -45,6 +45,13 @@ private final class InheritedGenericReceiver: GenericReceiver<ReceiverNumber> {}
 private enum ReceiverFailure: Error { case rejected }
 
 struct SwiftGenericReceiverTests {
+    @MainActor @Test func concreteMemberArgumentsKeepTheirBorrowingMarkers() async throws {
+        let receiver = GenericReceiver(ReceiverNumber(number: 42))
+        let method = try await ABIRuntime().object(receiver).method(named: "title(_:)",
+            as: ((NativeSwiftBorrowing<String>) -> String).self)
+        #expect(try unsafe method.unsafeInvoke(.init("borrowed:")) == receiver.title("borrowed:"))
+    }
+
     @MainActor @Test func effectfulGenericGettersUseTheDeclaredErrorConvention() async throws {
         let runtime = ABIRuntime()
         let owner = GenericEffectfulGetter("getter", GenericGetterFailure(42), false)

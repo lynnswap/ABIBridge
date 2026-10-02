@@ -209,3 +209,22 @@ public func genericCallbackThenArgument<Value>(_ apply: () -> Value, _ argument:
     if shouldThrow { throw failure }
     return value
 }
+
+public final class GenericClosureOwner<Value> {
+    public var body: () -> Value
+    public init(_ body: @escaping () -> Value) { self.body = body }
+    @inline(never) public func run() -> Value { body() }
+}
+@inline(never) public func consumeClosureGeneric<Value, Failure: Error>(
+    _ body: consuming @escaping () -> Value, _ error: Failure, _ shouldThrow: Bool
+) throws(Failure) -> Value {
+    if shouldThrow { throw error }
+    return body()
+}
+@inline(never) public func consumeClosureThenArgumentGeneric<Value>(
+    _ body: consuming @escaping () -> Value, _ number: Int64
+) -> Value { body() }
+
+@inline(never) public func replaceClosureGeneric<Value>(_ body: inout () -> Value, _ value: Value) {
+    body = { value }
+}

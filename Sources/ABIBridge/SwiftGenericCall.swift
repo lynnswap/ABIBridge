@@ -159,9 +159,9 @@ struct SwiftGenericCallPlan: Sendable {
     static func argument(_ formal: SwiftFormalType, actual: Any.Type,
                          binding: SwiftGenericBinding, defaultConsuming: Bool = false) throws -> SwiftGenericArgument {
         if let argument = try binding.conventionArgument(actual, for: formal, defaultConsuming: defaultConsuming) {
-            let type = try binding.dependsOnParameters(argument.value)
-                ? layout(argument.value, actual: argument.wrapper.wrappedType, binding: binding) : nil
-            return .convention(try argument.wrapper.makeArgumentCodec(genericType: type))
+            let value = try Self.argument(argument.value, actual: argument.wrapper.wrappedType, binding: binding,
+                                          defaultConsuming: argument.wrapper.convention == .consuming)
+            return .convention(try argument.wrapper.makeArgumentCodec(generic: value))
         }
         if case .function = formal, binding.dependsOnParameters(formal) {
             guard let closure = actual as? any SwiftGenericClosureValue.Type else {
@@ -369,7 +369,7 @@ extension SwiftGenericBinding {
             try validate(actual, for: formal)
             return (actual as! any SwiftConventionArgument.Type, convention.value)
         }
-        guard dependsOnParameters(formal), let wrapper = actual as? any SwiftConventionArgument.Type else { return nil }
+        guard let wrapper = actual as? any SwiftConventionArgument.Type else { return nil }
         // A wrapper can itself be the explicitly bound T. In that case its
         // ordinary Swift value is passed, without applying an argument marker.
         do { try validate(actual, for: formal); return nil }

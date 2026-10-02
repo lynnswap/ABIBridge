@@ -155,3 +155,15 @@ extension BindingDeclaredUnknown where Value: BindingDeclaredBase {
         return Value.score()
     }
 }
+
+public final class BindingClosureOwner<Value> {
+    public var body: () -> Value
+    public init(_ body: @escaping () -> Value) { self.body = body }
+    @inline(never) public func run() -> Value { body() }
+}
+@inline(never) public func bindingConsumeClosure<Value, Failure: Error>(
+    _ body: consuming @escaping () -> Value, _ error: Failure, _ shouldThrow: Bool
+) throws(Failure) -> Value {
+    if shouldThrow { throw error }
+    return body()
+}

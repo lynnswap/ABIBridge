@@ -44,7 +44,12 @@ def main():
             raise RuntimeError(f'{target}: mixed initializer ownership changed: {initializers}')
         if not any('@async' in line and '@owned AsyncGate' in line for line in initializers):
             raise RuntimeError(f'{target}: ordinary initializer arguments must retain owned convention')
-        reports.append({'target':target, 'signatures':signatures, 'initializers':initializers})
+        owned_closures = [line for line in sil.splitlines() if line.startswith('sil ') and (
+            'consumeClosureGeneric' in line or 'consumeClosureThenArgumentGeneric' in line
+            or ('GenericClosureOwnerC' in line and ('cfC :' in line or '4bodyxycvs :' in line)))]
+        if len(owned_closures) != 4 or not all('(@owned @callee_guaranteed @substituted' in line for line in owned_closures):
+            raise RuntimeError(f'{target}: generic closure initializer/setter/consuming ownership changed: {owned_closures}')
+        reports.append({'target':target, 'signatures':signatures, 'initializers':initializers, 'ownedGenericClosures':owned_closures})
     report = {'compiler':run('xcrun','swiftc','--version').strip(), 'runtimeTested':False, 'targets':reports}
     (output/'report.json').write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps(report,indent=2))

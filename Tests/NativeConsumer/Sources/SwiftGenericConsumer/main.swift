@@ -27,6 +27,17 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
     let comparison = try unsafe compare.unsafeInvoke(42)
     precondition(comparison == ("updated", 42, true))
 
+    let closureType = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericClosureOwner", genericArguments: [.type(String.self)])
+    let makeClosureOwner = try await closureType.initializer(named: "init(_:)", as: ((NativeSwiftClosure<() -> String>) -> AnyObject).self)
+    let closureOwner = try unsafe makeClosureOwner.unsafeInvoke(NativeSwiftClosure<() -> String> { "initialized" })
+    let invokeStored = try await runtime.object(closureOwner).method(named: "run()", as: (() -> String).self)
+    let initialized = try unsafe invokeStored.unsafeInvoke()
+    precondition(initialized == "initialized")
+    let setClosure = try await runtime.object(closureOwner).setter(named: "body", as: NativeSwiftClosure<() -> String>.self)
+    try unsafe setClosure.unsafeInvoke(NativeSwiftClosure<() -> String> { "replaced" })
+    let replaced = try unsafe invokeStored.unsafeInvoke()
+    precondition(replaced == "replaced")
+
     let argument = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericSourceValue")
     _ = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericSourceBox", genericArguments: [.type(argument)])
     let pack = try await runtime.swiftFunction(
@@ -38,10 +49,10 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
     precondition(packed == (43, "pack"))
     let transform = try await runtime.swiftFunction(
         named: "ManagedSwiftFixtures.transformGeneric<A, B>([A], (A) throws -> B) throws -> [B]",
-        as: (([Int64], NativeSwiftClosure<(Int64) throws -> String>) throws -> [String]).self,
+        as: (([Int64], NativeSwiftBorrowing<NativeSwiftClosure<(Int64) throws -> String>>) throws -> [String]).self,
         genericArguments: [.type(Int64.self), .type(String.self)])
     let callback = try NativeSwiftClosure<(Int64) throws -> String> { "value: \($0)" }
-    let transformed = try unsafe transform.unsafeInvoke([1, 2], callback)
+    let transformed = try unsafe transform.unsafeInvoke([1, 2], .init(callback))
     precondition(transformed == ["value: 1", "value: 2"])
     let select = try await runtime.swiftFunction(
         named: "ManagedSwiftFixtures.selectGeneric<A, B where A == B.Element, B: Swift.Collection>(A, B) -> A",
