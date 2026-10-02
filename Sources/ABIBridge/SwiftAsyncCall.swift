@@ -53,36 +53,26 @@ final class SwiftAsyncCallInterface: @unchecked Sendable {
     deinit { ABIReleaseSwiftAsyncCallInterface(handle) }
 }
 
-struct SwiftAsyncCall<Result, each Argument>: Sendable {
+struct SwiftAsyncCall: Sendable {
     let interface: SwiftAsyncCallInterface
-    private let arguments: (repeat SwiftArgumentCodec<each Argument>)
-    private let result: SwiftResultCodec<Result>
+    private let values: SwiftCallValues
     let errorPlan: SwiftErrorPlan?
     private let hasTrailingValue: Bool
-    private let consumedArguments: [Int]
 
-    init(trailingType: CValueType? = nil, consumesArguments: Bool = false,
+    init(signature: Any.Type, trailingType: CValueType? = nil, consumesArguments: Bool = false,
          errorPlan: SwiftErrorPlan? = nil, inheritsCallerIsolation: Bool, opaqueResult: SwiftOpaqueResultPlan? = nil) throws {
-        let arguments = (repeat try SwiftArgumentCodec<each Argument>(defaultConsuming: consumesArguments))
-        let result = try SwiftResultCodec<Result>(opaque: opaqueResult)
-        var types: [CValueType] = []
-        for argument in repeat each arguments { types.append(argument.type) }
+        values = try SwiftCallValues(signature: SwiftFunctionSignature(signature), consumesArguments: consumesArguments,
+            opaqueResult: opaqueResult)
+        var types = values.arguments.map(\.type)
         if let trailingType { types.append(trailingType) }
-        interface = try SwiftAsyncCallInterface(result: result.type, parameters: types,
+        interface = try SwiftAsyncCallInterface(result: values.result.type, parameters: types,
             errorPlan: errorPlan, inheritsCallerIsolation: inheritsCallerIsolation)
-        self.arguments = arguments
-        self.result = result
         self.errorPlan = errorPlan
         hasTrailingValue = trailingType != nil
-        var consumed: [Int] = [], index = 0
-        for argument in repeat each arguments {
-            if argument.consumes { consumed.append(index) }
-            index += 1
-        }
-        consumedArguments = consumed
+
     }
 
-    @unsafe nonisolated(nonsending) func unsafeInvoke(
+    @unsafe nonisolated(nonsending) func unsafeInvoke<Result, each Argument>(
         implementation: SwiftAsyncImplementation, context: UnsafeRawPointer? = nil,
         trailingValue: NativeValueStorage? = nil, retaining owner: Any? = nil,
         retainingCode codeOwner: Any? = nil, didInvoke: (() -> Void)? = nil,
@@ -93,18 +83,17 @@ struct SwiftAsyncCall<Result, each Argument>: Sendable {
             retainingCode: (implementation, codeOwner), didInvoke: didInvoke, repeat each values)
     }
 
-    @unsafe nonisolated(nonsending) func unsafeInvoke(
+    @unsafe nonisolated(nonsending) func unsafeInvoke<Result, each Argument>(
         entry: SwiftAsyncEntry, context: UnsafeRawPointer? = nil,
         trailingValue: NativeValueStorage? = nil, retaining owner: Any? = nil,
         retainingCode codeOwner: Any? = nil, didInvoke: (() -> Void)? = nil,
         _ values: repeat each Argument
     ) async throws -> Result {
         precondition(hasTrailingValue == (trailingValue != nil))
-        var storage: [NativeValueStorage] = []
-        for (codec, value) in repeat (each arguments, each values) { storage.append(try codec.encode(value)) }
+        let storage = try self.values.encode(repeat each values, retainingCode: codeOwner)
         var addresses: [UnsafeMutableRawPointer?] = storage.map(\.address)
         if let trailingValue { addresses.append(trailingValue.address) }
-        let output = result.makeStorage()
+        let output = self.values.result.makeStorage()
         let nativeError = errorPlan?.makeStorage()
         let codeOwners: Any = (entry, codeOwner)
         var failure: OpaquePointer?
@@ -121,11 +110,11 @@ struct SwiftAsyncCall<Result, each Argument>: Sendable {
             }
         }
         await invokeSwiftAsync(invocation)
-        for index in consumedArguments { storage[index].relinquishValue() }
+        self.values.relinquishConsumed(storage)
         didInvoke?()
         if ABISwiftAsyncInvocationDidThrow(invocation), let errorPlan, let nativeError {
             throw NativeSwiftError(try errorPlan.decode(nativeError), retainingCode: codeOwners)
         }
-        return try result.decode(output, retaining: owner, retainingCode: codeOwners)
+        return try self.values.decode(output, retaining: owner, retainingCode: codeOwners)
     }
 }

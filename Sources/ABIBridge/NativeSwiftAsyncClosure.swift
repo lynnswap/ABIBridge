@@ -95,7 +95,7 @@ private final class SwiftAsyncClosureCallbackOwner {
 
 private struct SwiftAsyncClosureCore<Result, Failure: Error, each Argument> {
     let storage: SwiftAsyncClosureStorage
-    let call: SwiftAsyncCall<Result, repeat each Argument>
+    let call: SwiftAsyncCall
 
     init(_ body: @escaping @Sendable (repeat each Argument) async throws(Failure) -> Result,
          inheritsCallerIsolation: Bool) throws {
@@ -120,11 +120,11 @@ private struct SwiftAsyncClosureCore<Result, Failure: Error, each Argument> {
         call = prepared.call
     }
 
-    private init(storage: SwiftAsyncClosureStorage, call: SwiftAsyncCall<Result, repeat each Argument>) {
+    private init(storage: SwiftAsyncClosureStorage, call: SwiftAsyncCall) {
         self.storage = storage; self.call = call
     }
 
-    private static func prepare(inheritsCallerIsolation: Bool) throws -> (call: SwiftAsyncCall<Result, repeat each Argument>, discriminator: UInt16) {
+    private static func prepare(inheritsCallerIsolation: Bool) throws -> (call: SwiftAsyncCall, discriminator: UInt16) {
         // SIL hashes the implicit actor as a class parameter; IRGen expands it
         // into the two-word opaque isolation prefix used by the call interface.
         var parameters = inheritsCallerIsolation ? ["-class"] : []
@@ -132,7 +132,7 @@ private struct SwiftAsyncClosureCore<Result, Failure: Error, each Argument> {
             if type != Void.self { parameters.append(try swiftClosureAuthType(type)) }
         }
         let result = Result.self == Void.self ? nil : try swiftClosureAuthType(Result.self)
-        return (try SwiftAsyncCall(errorPlan: SwiftErrorPlan.make(Failure.self), inheritsCallerIsolation: inheritsCallerIsolation),
+        return (try SwiftAsyncCall(signature: ((repeat each Argument) -> Result).self, errorPlan: SwiftErrorPlan.make(Failure.self), inheritsCallerIsolation: inheritsCallerIsolation),
                 swiftClosureDiscriminator(parameters: parameters, result: result))
     }
 

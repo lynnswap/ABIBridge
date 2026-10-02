@@ -35,7 +35,7 @@ private func throwingClosureOwner(_ interface: SwiftCallInterface, body: SwiftTh
 /// declared error into native code. See <doc:SwiftClosureValues>.
 public struct NativeSwiftThrowingClosure<Result, Failure: Error, each Argument> {
     let closureStorage: SwiftClosureStorage
-    private let call: SwiftCall<Result, repeat each Argument>
+    private let call: SwiftCall
 
     /// Creates a throwing callback whose captures may escape into native storage.
     ///
@@ -62,7 +62,7 @@ public struct NativeSwiftThrowingClosure<Result, Failure: Error, each Argument> 
         call = prepared.call
     }
 
-    private init(storage: SwiftClosureStorage, call: SwiftCall<Result, repeat each Argument>) {
+    private init(storage: SwiftClosureStorage, call: SwiftCall) {
         closureStorage = storage
         self.call = call
     }
@@ -73,13 +73,13 @@ public struct NativeSwiftThrowingClosure<Result, Failure: Error, each Argument> 
             context: Unmanaged.passRetained(owner).toOpaque()), discriminator: discriminator, retaining: nil)
     }
 
-    private static func prepare() throws -> (call: SwiftCall<Result, repeat each Argument>, discriminator: UInt16) {
+    private static func prepare() throws -> (call: SwiftCall, discriminator: UInt16) {
         var parameters: [String] = []
         for type in repeat (each Argument).self {
             if type != Void.self { parameters.append(try swiftClosureAuthType(type)) }
         }
         let result = Result.self == Void.self ? nil : try swiftClosureAuthType(Result.self)
-        return (try SwiftCall(errorPlan: SwiftErrorPlan.make(Failure.self)),
+        return (try SwiftCall(signature: ((repeat each Argument) -> Result).self, errorPlan: SwiftErrorPlan.make(Failure.self)),
                 swiftClosureDiscriminator(parameters: parameters, result: result))
     }
 

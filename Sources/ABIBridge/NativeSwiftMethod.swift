@@ -23,7 +23,7 @@ public struct NativeSwiftMethod<Result, each Argument>: Sendable {
     let receiver: SwiftReceiverPlan
     let consumesArguments: Bool
     var errorPlan: SwiftErrorPlan? { call.errorPlan }
-    private let call: SwiftCall<Result, repeat each Argument>
+    private let call: SwiftCall
 
     init(symbol: ResolvedSymbol, type: NativeSwiftType, receiver: SwiftReceiverPlan,
          consumesArguments: Bool = false, errorPlan: SwiftErrorPlan? = nil) throws {
@@ -31,7 +31,7 @@ public struct NativeSwiftMethod<Result, each Argument>: Sendable {
         self.type = type
         self.receiver = receiver
         self.consumesArguments = consumesArguments
-        call = try SwiftCall(trailingType: receiver.trailingType, consumesArguments: consumesArguments, errorPlan: errorPlan,
+        call = try SwiftCall(signature: ((repeat each Argument) -> Result).self, trailingType: receiver.trailingType, consumesArguments: consumesArguments, errorPlan: errorPlan,
             opaqueResult: SwiftOpaqueResultPlan.make(for: Result.self, symbol: symbol, resolver: type.resolver))
     }
 

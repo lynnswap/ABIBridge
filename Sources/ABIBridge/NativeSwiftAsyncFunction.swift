@@ -9,7 +9,7 @@ public struct NativeSwiftAsyncFunction<Result, each Argument>: Sendable {
     public var symbol: ResolvedSymbol { implementation.symbol }
 
     private let implementation: SwiftAsyncImplementation
-    private let call: SwiftAsyncCall<Result, repeat each Argument>
+    private let call: SwiftAsyncCall
     private let context: UInt
     private let owner: NativeSwiftType?
 
@@ -17,7 +17,7 @@ public struct NativeSwiftAsyncFunction<Result, each Argument>: Sendable {
          inheritsCallerIsolation: Bool, metadata: Any.Type? = nil, owner: NativeSwiftType? = nil,
          consumesArguments: Bool = false) throws {
         implementation = try SwiftAsyncImplementation(symbol: symbol, resolver: resolver)
-        call = try SwiftAsyncCall(consumesArguments: consumesArguments, errorPlan: errorPlan,
+        call = try SwiftAsyncCall(signature: ((repeat each Argument) -> Result).self, consumesArguments: consumesArguments, errorPlan: errorPlan,
                                    inheritsCallerIsolation: inheritsCallerIsolation,
                                    opaqueResult: SwiftOpaqueResultPlan.make(for: Result.self, symbol: symbol, resolver: resolver))
         context = metadata.map { unsafeBitCast($0, to: UInt.self) } ?? 0

@@ -192,7 +192,7 @@ public struct NativeSwiftFunction<Result, each Argument>: Sendable {
     public let symbol: ResolvedSymbol
 
     private var implementation: SwiftImplementation?
-    private let call: SwiftCall<Result, repeat each Argument>
+    private let call: SwiftCall
     private let context: UInt
     private let typeOwner: NativeSwiftType?
     let consumesArguments: Bool
@@ -206,7 +206,7 @@ public struct NativeSwiftFunction<Result, each Argument>: Sendable {
         isGeneric = generic != nil
         context = metadata.map { unsafeBitCast($0, to: UInt.self) } ?? 0
         typeOwner = owner
-        call = try SwiftCall(consumesArguments: consumesArguments, errorPlan: errorPlan,
+        call = try SwiftCall(signature: ((repeat each Argument) -> Result).self, consumesArguments: consumesArguments, errorPlan: errorPlan,
             opaqueResult: generic?.indirectResult == true ? nil
                 : SwiftOpaqueResultPlan.make(for: Result.self, symbol: symbol, resolver: resolver ?? owner?.resolver), generic: generic)
     }

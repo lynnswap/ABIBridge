@@ -10,14 +10,14 @@ public struct NativeSwiftAsyncMethod<Result, each Argument>: Sendable {
     private let implementation: SwiftAsyncImplementation
     private let type: NativeSwiftType
     private let receiver: SwiftReceiverPlan
-    private let call: SwiftAsyncCall<Result, repeat each Argument>
+    private let call: SwiftAsyncCall
 
     init(symbol: ResolvedSymbol, type: NativeSwiftType, receiver: SwiftReceiverPlan,
          errorPlan: SwiftErrorPlan?, inheritsCallerIsolation: Bool) throws {
         implementation = try SwiftAsyncImplementation(symbol: symbol, resolver: type.resolver)
         self.type = type
         self.receiver = receiver
-        call = try SwiftAsyncCall(trailingType: receiver.trailingType, errorPlan: errorPlan,
+        call = try SwiftAsyncCall(signature: ((repeat each Argument) -> Result).self, trailingType: receiver.trailingType, errorPlan: errorPlan,
                                    inheritsCallerIsolation: inheritsCallerIsolation,
                                    opaqueResult: SwiftOpaqueResultPlan.make(for: Result.self, symbol: symbol, resolver: type.resolver))
     }

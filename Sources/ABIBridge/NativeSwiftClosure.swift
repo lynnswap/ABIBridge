@@ -57,7 +57,7 @@ final class SwiftClosureCallbackOwner {
 /// See <doc:SwiftClosureValues>.
 public struct NativeSwiftClosure<Result, each Argument> {
     let closureStorage: SwiftClosureStorage
-    private let call: SwiftCall<Result, repeat each Argument>
+    private let call: SwiftCall
 
     /// Creates a concrete native callback from a nonisolated Swift closure.
     ///
@@ -108,19 +108,19 @@ public struct NativeSwiftClosure<Result, each Argument> {
         call = prepared.call
     }
 
-    private init(storage: SwiftClosureStorage, call: SwiftCall<Result, repeat each Argument>) {
+    private init(storage: SwiftClosureStorage, call: SwiftCall) {
         closureStorage = storage
         self.call = call
     }
 
-    private static func prepare() throws -> (call: SwiftCall<Result, repeat each Argument>, discriminator: UInt16) {
+    private static func prepare() throws -> (call: SwiftCall, discriminator: UInt16) {
         var parameters: [String] = []
         for type in repeat (each Argument).self {
             // SIL flattens an explicit empty-tuple argument into no formal parameters.
             if type != Void.self { parameters.append(try swiftClosureAuthType(type)) }
         }
         let result = Result.self == Void.self ? nil : try swiftClosureAuthType(Result.self)
-        let call = try SwiftCall<Result, repeat each Argument>()
+        let call = try SwiftCall(signature: ((repeat each Argument) -> Result).self)
         return (call, swiftClosureDiscriminator(parameters: parameters, result: result))
     }
 
