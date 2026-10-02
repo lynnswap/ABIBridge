@@ -32,7 +32,7 @@ Untyped and concrete typed native failures are returned as ``NativeSwiftError``,
 
 Async closure arguments and results use NativeSwiftClosure with an async function signature; see <doc:SwiftClosureValues>. Inout and per-argument ownership use the same typed wrappers as synchronous calls; see <doc:SwiftArgumentConventions>. Generic signatures with hidden metadata or witness arguments require a compiled adapter. Calls require a valid async descriptor. See <doc:SwiftFunctionInvocation> for value support and <doc:SwiftErrorABI> for error inspection.
 
-Opaque some results can use NativeSwiftOpaqueValue in the async signature. Their dynamic storage is adopted only on success; see <doc:SwiftOpaqueResults>.
+Opaque some results can use NativeSwiftValue in the async signature. Their dynamic storage is adopted only on success; see <doc:SwiftOpaqueResults>.
 
 ## Entry and completion
 

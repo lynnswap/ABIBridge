@@ -59,6 +59,15 @@ final class NativeValueStorage {
     let address: UnsafeMutableRawPointer
     let owner: AnyObject?
     private var destroyValue: ((UnsafeMutableRawPointer) -> Void)?
+    private let ownsAllocation: Bool
+    private var didRelinquish: (() -> Void)?
+
+    init(borrowing address: UnsafeMutableRawPointer, owner: AnyObject, didRelinquish: (() -> Void)? = nil) {
+        self.address = address
+        self.owner = owner
+        self.didRelinquish = didRelinquish
+        ownsAllocation = false
+    }
 
     init(size: Int, alignment: Int, owner: AnyObject? = nil,
          destroyingWith destroy: ((UnsafeMutableRawPointer) -> Void)? = nil) {
@@ -66,10 +75,11 @@ final class NativeValueStorage {
         address.initializeMemory(as: UInt8.self, repeating: 0, count: max(size, 1))
         self.owner = owner
         destroyValue = destroy
+        ownsAllocation = true
     }
     deinit {
         withExtendedLifetime(owner) { destroyValue?(address) }
-        address.deallocate()
+        if ownsAllocation { address.deallocate() }
     }
 
     func initialize<Value>(_ value: Value) {
@@ -86,7 +96,7 @@ final class NativeValueStorage {
         destroyValue = destroy
     }
 
-    func take<Value>(as type: Value.Type) -> Value {
+    func take<Value: ~Copyable>(as type: Value.Type) -> Value {
         let value = address.assumingMemoryBound(to: type).move()
         destroyValue = nil
         return value
@@ -100,7 +110,12 @@ final class NativeValueStorage {
     }
 
     // Called only after a native call has consumed the initialized value.
-    func relinquishValue() { destroyValue = nil }
+    func relinquishValue() {
+        destroyValue = nil
+        let notify = didRelinquish
+        didRelinquish = nil
+        notify?()
+    }
 
     func store<T>(_ value: T) {
         withUnsafeBytes(of: value) {

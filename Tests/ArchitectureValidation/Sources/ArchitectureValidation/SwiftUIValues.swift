@@ -46,7 +46,7 @@ extension Container: ABIBridgeSwiftValue {
         } else {
             let name = route == "opaque" ? "makePanel" : "makeComposedPanel"
             let make = try await runtime.swiftFunction(named: "SwiftUIFixtures." + name + "(_:_:_:)",
-                as: ((PanelModel, RenderEvents, NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftOpaqueValue).self)
+                as: ((PanelModel, RenderEvents, NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftValue).self)
             let result = try unsafe make.unsafeInvoke(model, events, increment)
             let view = try NativeSwiftView(result)
             #if canImport(UIKit)
@@ -125,7 +125,7 @@ private struct SwiftUIRender {
     try check(try swiftUIImage(unsafe wrap.unsafeInvoke(input)).matches(swiftUIImage(SwiftUIFixtures.wrap(input))), "Compiled specialization supplies generic View metadata and witnesses")
 
     let opaque = try await runtime.swiftFunction(named: "SwiftUIFixtures.makeComposedPanel(_:_:_:)",
-        as: ((PanelModel, RenderEvents, NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftOpaqueValue).self)
+        as: ((PanelModel, RenderEvents, NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftValue).self)
     let model = PanelModel(), events = RenderEvents()
     let result = try unsafe opaque.unsafeInvoke(model, events, .init { $0 + 1 })
     let view = try NativeSwiftView(result)
@@ -134,7 +134,7 @@ private struct SwiftUIRender {
     let after = try swiftUIImage(view)
     try check(!before.matches(after), "Private some View composition renders an observable state change")
     try check(after.matches(swiftUIImage(SwiftUIFixtures.makeComposedPanel(model, events, { $0 + 1 }))), "Opaque View erasure matches the ordinary compiler call")
-    let number = try await runtime.swiftFunction(named: "SwiftUIFixtures.makeNumber()", as: (() -> NativeSwiftOpaqueValue).self)
+    let number = try await runtime.swiftFunction(named: "SwiftUIFixtures.makeNumber()", as: (() -> NativeSwiftValue).self)
     let nonView = try unsafe number.unsafeInvoke()
     do {
         _ = try NativeSwiftView(nonView)
@@ -143,7 +143,7 @@ private struct SwiftUIRender {
         try check(error == .incompatibleValue(expected: "any SwiftUI.View", actual: "Swift.Int64"),
                   "Non-View result reports its actual type through ABIInvocationError")
     }
-    try nonView.withValue { try check($0 as? Int64 == 42, "Failed view conversion leaves the owned result usable") }
+    try nonView.withCopy { try check($0 as? Int64 == 42, "Failed view conversion leaves the owned result usable") }
 
     weak var capturedModel: PanelModel?
     var ownedView: NativeSwiftView?

@@ -1,35 +1,5 @@
 import ABIBridgeCore
 
-/// An owned value returned by a native Swift declaration returning some P.
-///
-/// Use this type as the result in a function-type metatype. The bridge resolves
-/// the opaque descriptor and complete underlying metadata before preparing the
-/// native result convention. The value, metadata, and implementation images remain
-/// alive through this handle's final release. The hidden value is not assumed
-/// Sendable. Generic substitutions and noncopyable/nonescapable opaque contracts
-/// require a compiled adapter.
-public struct NativeSwiftOpaqueValue {
-    private let storage: NativeValueStorage
-    private let plan: SwiftOpaqueResultPlan
-
-    /// The runtime type of the hidden concrete value.
-    public var valueType: Any.Type { plan.metadata }
-
-    init(storage: NativeValueStorage, plan: SwiftOpaqueResultPlan) {
-        self.storage = storage
-        self.plan = plan
-    }
-
-    /// Borrows access to an Any copy of the hidden value.
-    ///
-    /// Standard Swift casts can inspect its existing protocol conformances.
-    /// Keep this handle alive if a native value or metatype escapes the body
-    /// and may later execute code from its image, including during destruction.
-    public func withValue<Result>(_ body: (Any) throws -> Result) rethrows -> Result {
-        try withExtendedLifetime(self) { try body(plan.read(storage)) }
-    }
-}
-
 final class SwiftOpaqueResultPlan: Sendable {
     let metadata: Any.Type
     let type: CValueType
@@ -37,9 +7,9 @@ final class SwiftOpaqueResultPlan: Sendable {
     private let alignment: Int
     private let owners: [ResolvedSymbol]
     private let adopt: @Sendable (NativeValueStorage) -> Void
-    let read: @Sendable (NativeValueStorage) -> Any
+    let valueType: NativeSwiftType
 
-    private init(metadata: Any.Type, classBound: Bool, owners: [ResolvedSymbol]) throws {
+    private init(metadata: Any.Type, classBound: Bool, owners: [ResolvedSymbol], resolver: SymbolResolver) throws {
         self.metadata = metadata
         let layout = ABISwiftGetValueLayout(unsafeBitCast(metadata, to: UnsafeRawPointer.self))
         size = layout.stride
@@ -52,15 +22,14 @@ final class SwiftOpaqueResultPlan: Sendable {
                 ABISwiftDestroyValue(unsafeBitCast(metadata, to: UnsafeRawPointer.self), $0)
             }
         }
-        func reader<Value>(_ type: Value.Type) -> @Sendable (NativeValueStorage) -> Any {
-            { $0.address.load(as: Value.self) }
-        }
-        read = _openExistential(metadata, do: reader)
+        valueType = NativeSwiftType(name: try swiftNativeTypeName(metadata), image: owners[0].image,
+            metadata: metadata, representation: nil, resolver: resolver,
+            genericMetadata: try SwiftGenericTypeMetadata(metadata: metadata))
     }
 
     static func make(for result: Any.Type, symbol: ResolvedSymbol,
                              resolver: SymbolResolver?) throws -> SwiftOpaqueResultPlan? {
-        guard result == NativeSwiftOpaqueValue.self else { return nil }
+        guard result == NativeSwiftValue.self else { return nil }
         guard let resolver else {
             throw ABIResolutionError.unsupportedDeclaration("Opaque results require source declaration lookup.")
         }
@@ -90,7 +59,7 @@ final class SwiftOpaqueResultPlan: Sendable {
         }
         let metadata = unsafeBitCast(response.address, to: Any.Type.self)
         return try SwiftOpaqueResultPlan(metadata: metadata, classBound: classBound,
-                                         owners: [symbol, descriptor, accessor])
+                                         owners: [symbol, descriptor, accessor], resolver: resolver)
     }
 
     // Opaque descriptors include the result's own generic parameters. Only the
@@ -128,8 +97,8 @@ final class SwiftOpaqueResultPlan: Sendable {
                 let kind = requirement.loadUnaligned(as: UInt32.self) & 0x1f
                 if kind == 5,
                    requirement.loadUnaligned(fromByteOffset: 8, as: UInt16.self) == UInt16(parameters - 1),
-                   requirement.loadUnaligned(fromByteOffset: 10, as: UInt16.self) & 3 != 0 {
-                    throw ABIResolutionError.unsupportedDeclaration("Opaque result erasure requires a Copyable and Escapable result contract.")
+                   requirement.loadUnaligned(fromByteOffset: 10, as: UInt16.self) & 2 != 0 {
+                    throw ABIResolutionError.unsupportedDeclaration("A nonescapable opaque result requires a scoped result lifetime.")
                 }
                 let subjectField = requirement.advanced(by: 4)
                 let subject = subjectField.advanced(by: Int(subjectField.loadUnaligned(as: Int32.self)))
@@ -151,13 +120,13 @@ final class SwiftOpaqueResultPlan: Sendable {
         NativeValueStorage(size: size, alignment: alignment, owner: self)
     }
 
-    func decode(_ storage: NativeValueStorage) throws -> NativeSwiftOpaqueValue {
+    func decode(_ storage: NativeValueStorage) throws -> NativeSwiftValue {
         if metadata is AnyClass || !ABISwiftValueIsIndirect(type.handle),
            storage.address.load(as: UnsafeRawPointer?.self) == nil {
             throw ABIInvocationError.unexpectedNilResult(expected: String(reflecting: metadata))
         }
         adopt(storage)
-        return NativeSwiftOpaqueValue(storage: storage, plan: self)
+        return NativeSwiftValue(storage: storage, type: valueType)
     }
 }
 
@@ -180,7 +149,7 @@ struct SwiftResultCodec<Value>: Sendable {
         if let closure = Value.self as? any SwiftClosureValue.Type, !closure.supportsResult {
             throw ABIResolutionError.unsupportedDeclaration("Runtime-typed callbacks are supported as inputs, not returned closures.")
         }
-        if Value.self == NativeSwiftOpaqueValue.self {
+        if Value.self == NativeSwiftValue.self {
             guard let opaque else {
                 throw ABIResolutionError.unsupportedDeclaration("Opaque result handles require an opaque-return declaration.")
             }

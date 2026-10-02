@@ -21,7 +21,7 @@ def main():
         sdk = run('xcrun', '--sdk', sdk_name, '--show-sdk-path').strip()
         common = ['xcrun', 'swiftc', '-swift-version', '6', '-parse-as-library', '-Onone', '-target', target, '-sdk', sdk]
         provider = [*common, '-whole-module-optimization', '-enable-library-evolution', '-module-name', 'ManagedSwiftFixtures',
-                    *[str(root / 'Tests/ManagedSwiftFixtures' / name) for name in ['Errors.swift', 'Async.swift', 'Existentials.swift', 'OpaqueResults.swift']]]
+                    *[str(root / 'Tests/ManagedSwiftFixtures' / name) for name in ['Errors.swift', 'Async.swift', 'Existentials.swift', 'RuntimeValues.swift', 'OpaqueResults.swift']]]
         run(*provider, '-emit-module', '-emit-module-path', str(directory / 'ManagedSwiftFixtures.swiftmodule'))
         run(*provider, '-emit-ir', '-o', str(directory / 'provider.ll'))
         run(*common, '-module-name', 'OpaqueAdapterProbe', '-I', str(directory), '-emit-ir',

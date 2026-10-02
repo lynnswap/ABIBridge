@@ -45,6 +45,11 @@ public struct NativeSwiftBorrowedValue {
         self.type = type
         self.borrow = borrow
     }
+
+    /// Copies the native value into an independent owner while the borrow is active.
+    public func copy() throws -> NativeSwiftValue {
+        try borrow.withAddress { try NativeSwiftValue.copy(from: $0, type: type) }
+    }
 }
 
 /// A synchronous Swift callback borrowing one formally indirect native value.

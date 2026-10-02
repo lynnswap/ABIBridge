@@ -1,4 +1,6 @@
+import ABIBridge
 import ABIBridgeCore
+import ManagedSwiftFixtures
 import Foundation
 import Synchronization
 import Testing
@@ -21,6 +23,84 @@ private struct RuntimeMoveOnlyPayload: ~Copyable {
 }
 
 @Suite struct SwiftRuntimeValueTests {
+    @Test func aCopyOfATemporaryRetainsItsManagedPayload() async throws {
+        let make = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.makeOpaque(_:_:)",
+            as: ((ErrorLifetimeToken, Int64) -> NativeSwiftValue).self)
+        let counts = ArgumentCounts()
+        var copy: NativeSwiftValue? = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() }, 42).copy()
+        #expect(counts.destructions == 0)
+        try copy!.withCopy { #expect(($0 as? any ExistentialValue)?.number == 42) }
+        copy = nil
+        #expect(counts.destructions == 1)
+    }
+
+    @Test func opaqueNoncopyableValuesMoveWithoutAnyErasure() async throws {
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self)
+        let counts = ArgumentCounts()
+        weak var observed: ErrorLifetimeToken?
+        let value: NativeSwiftValue
+        do {
+            let token = ErrorLifetimeToken { counts.destroyed() }
+            observed = token
+            value = try unsafe make.unsafeInvoke(token)
+        }
+        #expect(!value.isCopyable && !value.isConsumed && observed != nil)
+        #expect(throws: NativeSwiftValueError.noncopyableType) { try value.copy() }
+        #expect(throws: NativeSwiftValueError.noncopyableType) { try value.withCopy { _ in } }
+        try value.withBorrowedValue { borrowed in
+            #expect(throws: NativeSwiftValueError.noncopyableType) { try borrowed.copy() }
+        }
+        do {
+            let ticket = try value.take(as: RuntimeTicket.self)
+            #expect(ticket.number == 42 && value.isConsumed && observed != nil)
+        }
+        #expect(observed == nil && counts.destructions == 1)
+
+        let copyable = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeCopyableNoncopyableOpaque()",
+            as: (() -> NativeSwiftValue).self)
+        let actual = try unsafe copyable.unsafeInvoke()
+        #expect(actual.isCopyable)
+        let copy = try actual.copy()
+        #expect(try copy.take(as: Int64.self) == 42)
+        #expect(try actual.take(as: Int64.self) == 42)
+    }
+
+    @Test func ownedCopiesMovesAndScopedBorrowsHaveIndependentLifetimes() async throws {
+        let make = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)", as: ((Int64) -> NativeSwiftValue).self)
+        let value = try unsafe make.unsafeInvoke(42)
+        #expect(value.isCopyable && !value.isConsumed)
+        let copy = try value.copy()
+        var escaped: NativeSwiftBorrowedValue?
+        var borrowedCopy: NativeSwiftValue?
+        try value.withBorrowedValue { borrowed in
+            escaped = borrowed
+            borrowedCopy = try borrowed.copy()
+            #expect(throws: NativeSwiftValueError.valueInUse) {
+                try value.take(as: Int64.self)
+            }
+            #expect(try copy.take(as: Int64.self) == 42)
+        }
+        #expect(copy.isConsumed)
+        #expect(try value.take(as: Int64.self) == 42)
+        #expect(value.isConsumed)
+        #expect(throws: NativeSwiftValueError.consumedValue) { try value.copy() }
+        #expect(throws: NativeSwiftValueError.consumedValue) { try value.take(as: Int64.self) }
+        #expect(throws: NativeSwiftBorrowError.expiredBorrow) { try escaped!.copy() }
+        #expect(try borrowedCopy!.take(as: Int64.self) == 42)
+    }
+
+    @Test func aMismatchedTypedTakeLeavesTheOwnedValueUsable() async throws {
+        let make = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)", as: ((Int64) -> NativeSwiftValue).self)
+        let value = try unsafe make.unsafeInvoke(42)
+        #expect(throws: ABIInvocationError.self) { try value.take(as: String.self) }
+        #expect(!value.isConsumed)
+        #expect(try value.take(as: Int64.self) == 42)
+    }
+
     @Test func witnessesCopyAndDestroyManagedStorage() throws {
         let deaths = RuntimeValueDeaths()
         let metadata = unsafeBitCast(RuntimeCopyablePayload.self, to: UnsafeRawPointer.self)

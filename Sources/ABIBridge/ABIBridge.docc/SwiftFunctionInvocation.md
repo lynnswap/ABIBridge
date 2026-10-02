@@ -52,7 +52,7 @@ Getter lookup now takes a complete zero-argument function type: replace `getter(
 | Any, simple protocol existentials, and their single-level optional forms | Compiler-managed containers with the native existential calling convention; see <doc:SwiftExistentialValues> |
 | ABIBridgeSwiftValue | Actual Swift values with explicit fixed or formally indirect conventions and compiler-owned copying/destruction |
 | ABIBridgeValue | Explicit trivial native layouts representable by NativeType's scalar/structure descriptions |
-| NativeSwiftOpaqueValue | Owned hidden result of a single native some declaration; see <doc:SwiftOpaqueResults> |
+| NativeSwiftValue | Owned hidden result of a single native some declaration; see <doc:SwiftOpaqueResults> |
 | Ordinary and existential metatypes | Preserve thin values, runtime type metadata, and required witnesses |
 | Void | An empty result or explicit empty-tuple argument |
 

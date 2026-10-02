@@ -2,7 +2,7 @@ import ABIBridgeCore
 import Synchronization
 
 func swiftFunctionTypeName(_ type: Any.Type) throws -> String {
-    if type == NativeSwiftOpaqueValue.self { return "some" }
+    if type == NativeSwiftValue.self { return "some" }
     if let closure = type as? any SwiftClosureValue.Type {
         guard !closure.requiresExplicitDeclaration else {
             throw ABIResolutionError.unsupportedDeclaration("Runtime-typed callbacks require a complete source-level declaration.")

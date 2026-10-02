@@ -31,7 +31,7 @@ Use the native declaration's calling convention to select a representation. Buil
 
 - <doc:SwiftExistentialValues>
 - <doc:SwiftOpaqueResults>
-- ``NativeSwiftOpaqueValue``
+- ``NativeSwiftValue``
 
 ### Borrowed runtime values
 

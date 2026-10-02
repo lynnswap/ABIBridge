@@ -1,3 +1,15 @@
+public struct RuntimeTicket: ~Copyable {
+    public let token: AnyObject
+    public var number: Int64
+    public init(token: AnyObject, number: Int64) {
+        self.token = token
+        self.number = number
+    }
+    public func read() -> Int64 { number }
+    public mutating func add(_ value: Int64) { number += value }
+    public consuming func takeNumber() -> Int64 { number }
+}
+
 public struct RuntimeRecord {
     public let object: AnyObject
     public let text: String

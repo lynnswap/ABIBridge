@@ -113,7 +113,7 @@ precondition(summary.number == 42 && summary is SummaryValue)
 private struct HiddenSummary: Summary { let number: Int64 }
 public func makeSummary() -> some Summary { HiddenSummary(number: 43) }
 let makeSummaryFunction = try await runtime.swiftFunction(named: "SwiftAsyncConsumer.makeSummary()",
-    as: (() -> NativeSwiftOpaqueValue).self)
+    as: (() -> NativeSwiftValue).self)
 let opaque = try unsafe makeSummaryFunction.unsafeInvoke()
-opaque.withValue { precondition(($0 as? any Summary)?.number == 43) }
+try opaque.withCopy { precondition(($0 as? any Summary)?.number == 43) }
 print("Public async consumer passed: suspension, task locals, caller executor, typed errors, inout, per-argument ownership, existentials, and opaque results")
