@@ -12,6 +12,7 @@ struct SwiftGenericDeclaration: Sendable {
         case sameType(SwiftFormalType, SwiftFormalType)
         case sameShape(SwiftFormalType, SwiftFormalType)
         case superclass(SwiftFormalType, SwiftFormalType)
+        case invertedProtocols(SwiftFormalType, UInt16)
     }
     let parameters: [Parameter]
     var requirements: [Requirement]

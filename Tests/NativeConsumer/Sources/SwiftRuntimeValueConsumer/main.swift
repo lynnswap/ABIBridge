@@ -68,3 +68,24 @@ do {
 guard let owned = state.owned,
       try unsafe prepared.text.unsafeInvoke(on: owned) == input else { throw ConsumerError.wrongResult }
 print("Direct generic invocation and ordinary members on owned and borrowed runtime values passed")
+
+let runtime = ABIRuntime()
+let source = ImageSelector.path(URL(fileURLWithPath: CommandLine.arguments[1]))
+let makeTicket = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeTicket(_:)",
+    as: ((AnyObject) -> NativeSwiftValue).self, in: source)
+let ticket = try unsafe makeTicket.unsafeInvoke(NSObject())
+let moveTicket = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.moveRuntimeValue<A where A: ~Swift.Copyable>(__owned A) -> A",
+    as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self,
+    genericArguments: [.type(ticket.type)], in: source)
+let moved = try unsafe moveTicket.unsafeInvoke(NativeSwiftConsuming(ticket))
+guard ticket.isConsumed && !moved.isCopyable else { throw ConsumerError.wrongResult }
+let readTicket = try await moved.type.method(named: "read()", as: (() -> Int64).self,
+    receiverABI: .opaque(named: moved.type.name))
+guard try unsafe readTicket.unsafeInvoke(on: moved) == 42 else { throw ConsumerError.wrongResult }
+let copyRecord = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+    as: ((NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: [.type(owned.type)], in: source)
+let copiedRecord = try unsafe copyRecord.unsafeInvoke(owned)
+guard !owned.isConsumed && copiedRecord.isCopyable,
+      try unsafe prepared.text.unsafeInvoke(on: copiedRecord) == input else { throw ConsumerError.wrongResult }
+print("Runtime-only generic arguments preserve native copying and noncopyable transfer")

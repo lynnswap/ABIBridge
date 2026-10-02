@@ -36,15 +36,11 @@ const ValueWitnessTable *valueWitnesses(const void *metadata) {
 
 ABISwiftValueLayout ABISwiftGetValueLayout(const void *metadata) {
     auto table = valueWitnesses(metadata);
-    return {table->size, table->stride, (table->flags & 0xff) + size_t(1),
-            !(table->flags & 0x00800000)};
+    return {table->size, table->stride, (table->flags & 0xff) + size_t(1)};
 }
 
-bool ABISwiftCopyValue(const void *metadata, void *destination, const void *source) {
-    auto table = valueWitnesses(metadata);
-    if (table->flags & 0x00800000) return false;
-    table->initializeWithCopy(destination, source, metadata);
-    return true;
+void ABISwiftCopyValue(const void *metadata, void *destination, const void *source) {
+    valueWitnesses(metadata)->initializeWithCopy(destination, source, metadata);
 }
 
 void ABISwiftTakeValue(const void *metadata, void *destination, void *source) {

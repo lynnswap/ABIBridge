@@ -214,6 +214,7 @@ struct SwiftMetadataRequirement {
         case 1: value = .sameType(subject, try type(constraint: true))
         case 2: value = .superclass(subject, try type(constraint: true))
         case 4: value = .sameShape(subject, try type(constraint: true))
+        case 5: value = .invertedProtocols(subject, address.loadUnaligned(fromByteOffset: 10, as: UInt16.self))
         case 31:
             guard address.loadUnaligned(fromByteOffset: 8, as: UInt32.self) == 0 else {
                 throw ABIResolutionError.unsupportedDeclaration("The Swift metadata layout requirement is not a class constraint.")

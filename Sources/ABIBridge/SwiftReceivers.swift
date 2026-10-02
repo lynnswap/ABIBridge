@@ -39,13 +39,13 @@ struct SwiftReceiverCodec: Sendable {
                 storage.initialize(value)
                 return storage
             }
-            guard ABISwiftGetValueLayout(unsafeBitCast(metadata, to: UnsafeRawPointer.self)).isCopyable else {
+            guard SwiftCopyability.accepts(metadata) else {
                 throw NativeSwiftValueError.noncopyableType
             }
             return try _openExistential(metadata, do: copy)
         }
         decode = { source, _ in
-            guard ABISwiftGetValueLayout(unsafeBitCast(metadata, to: UnsafeRawPointer.self)).isCopyable else {
+            guard SwiftCopyability.accepts(metadata) else {
                 throw NativeSwiftValueError.noncopyableType
             }
             func read<Value>(_ type: Value.Type) -> Any { source.address.load(as: Value.self) }
@@ -55,9 +55,10 @@ struct SwiftReceiverCodec: Sendable {
             let pointer = unsafeBitCast(metadata, to: UnsafeRawPointer.self)
             let layout = ABISwiftGetValueLayout(pointer)
             let copy = NativeValueStorage(size: layout.stride, alignment: layout.alignment)
-            guard ABISwiftCopyValue(pointer, copy.address, source.address) else {
+            guard SwiftCopyability.accepts(metadata) else {
                 throw NativeSwiftValueError.noncopyableType
             }
+            ABISwiftCopyValue(pointer, copy.address, source.address)
             copy.assumeInitialized { ABISwiftDestroyValue(pointer, $0) }
             return copy
         }

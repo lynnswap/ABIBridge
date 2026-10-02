@@ -1,41 +1,15 @@
 import ABIBridgeCore
 
 final class SwiftOpaqueResultPlan: Sendable {
-    let metadata: Any.Type
     let type: CValueType
-    private let size: Int
-    private let alignment: Int
-    private let owners: [ResolvedSymbol]
-    private let adopt: @Sendable (NativeValueStorage) -> Void
-    let valueType: NativeSwiftType
+    private let value: SwiftRuntimeValuePlan
 
     private init(metadata: Any.Type, classBound: Bool, owners: [ResolvedSymbol], resolver: SymbolResolver) throws {
-        self.metadata = metadata
         let layout = ABISwiftGetValueLayout(unsafeBitCast(metadata, to: UnsafeRawPointer.self))
-        size = layout.stride
-        alignment = layout.alignment
         type = try classBound ? CValueType(scalar: ABIValuePointer)
-            : CValueType(indirectSwiftSize: layout.size, alignment: alignment)
-        self.owners = owners
-        adopt = { storage in
-            storage.assumeInitialized {
-                ABISwiftDestroyValue(unsafeBitCast(metadata, to: UnsafeRawPointer.self), $0)
-            }
-        }
-        let name = try swiftNativeTypeName(metadata)
-        let image: NativeImage
-        if let descriptor = ABISwiftTypeDescriptor(unsafeBitCast(metadata, to: UnsafeRawPointer.self)),
-           let definingImage = try swiftImplementationImage(containing: descriptor) {
-            image = definingImage
-        } else if let objectType = metadata as? AnyClass {
-            image = try swiftClassImage(objectType, named: name, resolver: resolver)
-        } else {
-            image = owners[0].image
-        }
-        let declarationName = try swiftTypeDeclarationName(metadata, in: image, suggestedName: name, resolver: resolver)
-        valueType = NativeSwiftType(name: declarationName, image: image,
-            metadata: metadata, representation: nil, resolver: resolver,
-            genericMetadata: try SwiftGenericTypeMetadata(metadata: metadata, retaining: owners.map(\.image)))
+            : CValueType(indirectSwiftSize: layout.size, alignment: layout.alignment)
+        value = try SwiftRuntimeValuePlan(metadata: metadata, type: type, resolver: resolver,
+                                         retaining: owners.map(\.image))
     }
 
     static func make(for result: Any.Type, symbol: ResolvedSymbol,
@@ -127,18 +101,9 @@ final class SwiftOpaqueResultPlan: Sendable {
         }
     }
 
-    func makeStorage() -> NativeValueStorage {
-        NativeValueStorage(size: size, alignment: alignment, owner: self)
-    }
+    func makeStorage() -> NativeValueStorage { value.makeStorage() }
+    func decode(_ storage: NativeValueStorage) throws -> NativeSwiftValue { try value.decode(storage) }
 
-    func decode(_ storage: NativeValueStorage) throws -> NativeSwiftValue {
-        if metadata is AnyClass || !ABISwiftValueIsIndirect(type.handle),
-           storage.address.load(as: UnsafeRawPointer?.self) == nil {
-            throw ABIInvocationError.unexpectedNilResult(expected: String(reflecting: metadata))
-        }
-        adopt(storage)
-        return NativeSwiftValue(storage: storage, type: valueType)
-    }
 }
 
 struct SwiftResultCodec<Value>: Sendable {
@@ -148,8 +113,10 @@ struct SwiftResultCodec<Value>: Sendable {
     private let genericValue: Bool
     private let constants = SwiftValueConstants(Value.self)
     private let closure: SwiftClosureCodec?
+    private let runtimeValue: SwiftRuntimeValuePlan?
 
     init(opaque: SwiftOpaqueResultPlan? = nil, generic: SwiftGenericResult = .concrete) throws {
+        if case .runtimeValue(let plan) = generic { runtimeValue = plan } else { runtimeValue = nil }
         if case .closure(let codec) = generic { closure = codec } else { closure = nil }
         if case .value = generic { genericValue = true } else { genericValue = false }
         if let genericType = generic.type {
@@ -176,6 +143,7 @@ struct SwiftResultCodec<Value>: Sendable {
     }
 
     func makeStorage() -> NativeValueStorage {
+        if let runtimeValue { return runtimeValue.makeStorage() }
         if closure != nil { return NativeValueStorage(size: type.size, alignment: type.alignment) }
         if genericValue { return NativeValueStorage(size: MemoryLayout<Value>.stride, alignment: MemoryLayout<Value>.alignment) }
         if let opaque { return opaque.makeStorage() }
@@ -183,6 +151,7 @@ struct SwiftResultCodec<Value>: Sendable {
     }
 
     func decode(_ storage: NativeValueStorage, retaining owner: Any?, retainingCode codeOwner: Any?) throws -> Value {
+        if let runtimeValue { return try runtimeValue.decode(storage) as! Value }
         if let closure { return try closure.makeValue(storage.address.load(as: ABISwiftClosureValue.self), codeOwner, true) as! Value }
         if genericValue {
             constants.initialize(at: storage.address)

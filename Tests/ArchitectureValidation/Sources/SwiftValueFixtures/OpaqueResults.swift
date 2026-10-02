@@ -1,5 +1,32 @@
 import Foundation
 
+@inline(never) public func borrowRuntimeValue<T: ~Copyable>(_ value: borrowing T) -> Int64 { Int64(MemoryLayout<T>.size) }
+@inline(never) public func moveRuntimeValue<T: ~Copyable>(_ value: consuming T) -> T { value }
+@inline(never) public func copyRuntimeValue<T>(_ value: T) -> T { value }
+@inline(never) public func replaceRuntimeValue<T: ~Copyable>(_ target: inout T, _ value: consuming T) {
+    target = consume value
+}
+@inline(never) public func consumeRuntimeValueAndThrow<T: ~Copyable>(_ value: consuming T) throws { throw SmallError(42) }
+@inline(never) public nonisolated(nonsending) func borrowRuntimeValueAsync<T: ~Copyable>(_ value: borrowing T, _ gate: AsyncValueGate) async -> Int64 {
+    await gate.wait()
+    return Int64(MemoryLayout<T>.size)
+}
+@inline(never) public nonisolated(nonsending) func moveRuntimeValueAsync<T: ~Copyable>(_ value: consuming T) async -> T {
+    await Task.yield()
+    return value
+}
+
+public struct RuntimeValueBox<Value: ~Copyable>: ~Copyable {
+    public var value: Value
+    public init(_ value: consuming Value) { self.value = value }
+    public consuming func takeValue() -> Value { value }
+}
+public struct RuntimeConditionalValueBox<Value: ~Copyable>: ~Copyable {
+    public var value: Value
+    public init(_ value: consuming Value) { self.value = value }
+}
+extension RuntimeConditionalValueBox: Copyable where Value: Copyable {}
+
 private struct HiddenOpaqueValue: ExistentialValue, ExistentialLabel {
     let token: ErrorToken
     let number: Int64

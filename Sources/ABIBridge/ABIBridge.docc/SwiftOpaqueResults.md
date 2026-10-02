@@ -54,6 +54,24 @@ The opaque descriptor describes the factory's result convention, not every under
 
 Consuming members prepared with `consuming: true` transfer the owner's native value, including noncopyable payloads. The same handle accepts an active borrowed view for nonmutating, nonconsuming members. NativeSwiftBorrowedMethod, borrowedMethod and borrowedGetter are replaced by these ordinary handles; getter signatures now use the complete zero-argument function type.
 
+## Pass values through generic calls
+
+Bind a native generic parameter to the value's retained type. The signature uses NativeSwiftValue for owned runtime inputs and results, or NativeSwiftBorrowedValue for an active borrowed input. For a provider declaring `move<T: ~Copyable>(_ value: consuming T) -> T`:
+
+```swift
+let move = try await runtime.swiftFunction(
+    named: "Provider.move<A where A: ~Swift.Copyable>(__owned A) -> A",
+    as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self,
+    genericArguments: [.type(result.type)]
+)
+let moved = try unsafe move.unsafeInvoke(NativeSwiftConsuming(result))
+// result.isConsumed is true; moved owns the same native payload.
+```
+
+An ordinary runtime argument borrows its value. NativeSwiftConsuming transfers the existing owned payload; it does not make a native copy. NativeSwiftInout retains the same owner and grants exclusive access to its storage. A later argument conversion failure preserves all runtime owners because native execution has not begun. Once execution begins, a consuming argument transfers on both success and native failure. The bridge checks exact native type identity and conflicting access before entering native code.
+
+These conventions also apply through async suspension. An async call started with an owned-value borrow retains its read access through completion, even when the borrowed view's scope has ended. Generic results initialize the same owned storage used by opaque results. A declaration with an implicit Copyable requirement rejects a noncopyable substitution; `~Copyable` permits both copyable and noncopyable substitutions.
+
 ## Why an existential result is different
 
 A function returning `some P` does not directly initialize an `any P` or Any container. Class-constrained opaque contracts return an owned object pointer. Unconstrained contracts use indirect storage, including hidden integers, empty tuples, and class instances. The bridge first receives the actual concrete value, then lets the compiler build the Any copy inside withCopy. See <doc:SwiftExistentialValues> for declarations that themselves accept or return existential containers.

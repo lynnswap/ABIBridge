@@ -16,12 +16,11 @@ typedef struct ABISwiftValueLayout {
     size_t size;
     size_t stride;
     size_t alignment;
-    bool isCopyable;
 } ABISwiftValueLayout;
 ABISwiftValueLayout ABISwiftGetValueLayout(const void *metadata);
-/// Initializes uninitialized destination storage. Returns false without changing
-/// either buffer when the type is noncopyable.
-bool ABISwiftCopyValue(const void *metadata, void *destination, const void *source);
+/// Initializes destination by copying source. The caller establishes Copyable
+/// conformance before invoking the native witness.
+void ABISwiftCopyValue(const void *metadata, void *destination, const void *source);
 /// Initializes destination by taking source, which is left uninitialized.
 void ABISwiftTakeValue(const void *metadata, void *destination, void *source);
 /// Destroys one initialized value, leaving its storage uninitialized.

@@ -19,7 +19,7 @@ public enum NativeSwiftValueError: Error, Sendable, Equatable {
 public final class NativeSwiftValue {
     /// The actual runtime type and its retained implementation images.
     public let type: NativeSwiftType
-    /// Whether the native value-witness table permits copying.
+    /// Whether the actual native type conforms to Copyable.
     public let isCopyable: Bool
 
     private let lock = NSLock()
@@ -30,7 +30,7 @@ public final class NativeSwiftValue {
     init(storage: NativeValueStorage, type: NativeSwiftType) {
         self.storage = storage
         self.type = type
-        isCopyable = ABISwiftGetValueLayout(unsafeBitCast(type.metadata, to: UnsafeRawPointer.self)).isCopyable
+        isCopyable = SwiftCopyability.accepts(type.metadata)
     }
 
     /// Whether this handle has transferred its value to native code or take(as:).
@@ -99,9 +99,10 @@ public final class NativeSwiftValue {
         let metadata = unsafeBitCast(type.metadata, to: UnsafeRawPointer.self)
         let layout = ABISwiftGetValueLayout(metadata)
         let destination = NativeValueStorage(size: layout.stride, alignment: layout.alignment, owner: type)
-        guard ABISwiftCopyValue(metadata, destination.address, source) else {
+        guard SwiftCopyability.accepts(type.metadata) else {
             throw NativeSwiftValueError.noncopyableType
         }
+        ABISwiftCopyValue(metadata, destination.address, source)
         destination.assumeInitialized {
             ABISwiftDestroyValue(unsafeBitCast(type.metadata, to: UnsafeRawPointer.self), $0)
         }
@@ -131,6 +132,27 @@ public final class NativeSwiftValue {
     }
 }
 
+// The runtime checks the compiler-emitted Copyable requirement, including
+// conditional conformances. Swift 6.3's initialized generic value-witness flags
+// can omit IsNonCopyable even when their copy witness traps. Suppress Escapable
+// so this query tests only Copyable, independently of the caller's lifetime.
+private struct SwiftCopyabilityQuery<Value: ~Escapable> {}
+
+enum SwiftCopyability {
+    private static let descriptor = UInt(bitPattern: ABISwiftTypeDescriptor(
+        unsafeBitCast(SwiftCopyabilityQuery<Int>.self, to: UnsafeRawPointer.self))!)
+
+    static func accepts(_ type: Any.Type) -> Bool {
+        var argument: UnsafeRawPointer? = unsafeBitCast(type, to: UnsafeRawPointer.self)
+        let result = withUnsafePointer(to: &argument) {
+            ABICreateSwiftTypeMetadata(UnsafeRawPointer(bitPattern: descriptor), $0, 1, nil)
+        }
+        guard let result else { return false }
+        ABIReleaseSwiftTypeMetadata(result)
+        return true
+    }
+}
+
 private final class SwiftRuntimeValueAccess {
     let storage: NativeValueStorage
     private let finish: (Bool) -> Void
@@ -141,4 +163,64 @@ private final class SwiftRuntimeValueAccess {
     }
     func consume() { consumed = true }
     deinit { finish(consumed) }
+}
+
+/// Native metadata owns value operations; the formal declaration owns ABI placement.
+struct SwiftRuntimeValuePlan: Sendable {
+    let valueType: NativeSwiftType
+    let type: CValueType
+    private let size: Int
+    private let alignment: Int
+
+    init(metadata: Any.Type, type: CValueType, resolver: SymbolResolver, retaining images: [NativeImage]) throws {
+        self.type = type
+        let pointer = unsafeBitCast(metadata, to: UnsafeRawPointer.self)
+        let layout = ABISwiftGetValueLayout(pointer)
+        size = layout.stride
+        alignment = layout.alignment
+        let name = try swiftNativeTypeName(metadata)
+        let image: NativeImage
+        if let descriptor = ABISwiftTypeDescriptor(pointer),
+           let definingImage = try swiftImplementationImage(containing: descriptor) {
+            image = definingImage
+        } else if let objectType = metadata as? AnyClass {
+            image = try swiftClassImage(objectType, named: name, resolver: resolver)
+        } else if let owner = images.first {
+            image = owner
+        } else {
+            throw ABIResolutionError.metadataUnavailable("The runtime value's implementation image is unavailable.")
+        }
+        let declarationName = try swiftTypeDeclarationName(metadata, in: image, suggestedName: name, resolver: resolver)
+        valueType = NativeSwiftType(name: declarationName, image: image, metadata: metadata,
+            representation: nil, resolver: resolver,
+            genericMetadata: try SwiftGenericTypeMetadata(metadata: metadata, retaining: images))
+    }
+
+    func makeStorage() -> NativeValueStorage {
+        NativeValueStorage(size: size, alignment: alignment, owner: valueType)
+    }
+
+    func decode(_ storage: NativeValueStorage) throws -> NativeSwiftValue {
+        if valueType.metadata is AnyClass, storage.address.load(as: UnsafeRawPointer?.self) == nil {
+            throw ABIInvocationError.unexpectedNilResult(expected: valueType.name)
+        }
+        storage.assumeInitialized {
+            ABISwiftDestroyValue(unsafeBitCast(valueType.metadata, to: UnsafeRawPointer.self), $0)
+        }
+        return NativeSwiftValue(storage: storage, type: valueType)
+    }
+
+    func encode(_ value: Any, convention: SwiftArgumentConvention, asynchronous: Bool) throws -> NativeValueStorage {
+        let actual: NativeSwiftType
+        if let owned = value as? NativeSwiftValue { actual = owned.type }
+        else { actual = (value as! NativeSwiftBorrowedValue).type }
+        guard actual.metadata == valueType.metadata else {
+            throw ABIInvocationError.incompatibleValue(expected: valueType.name, actual: actual.name)
+        }
+        if let owned = value as? NativeSwiftValue { return try owned.access(convention) }
+        guard convention == .borrowing else {
+            throw ABIResolutionError.unsupportedDeclaration("A borrowed runtime value cannot be mutated or consumed.")
+        }
+        return try (value as! NativeSwiftBorrowedValue).borrow.access(asynchronous: asynchronous)
+    }
 }

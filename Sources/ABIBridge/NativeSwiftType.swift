@@ -232,7 +232,7 @@ public actor NativeSwiftType {
         guard let declaration = DeclarationKey.demangle(member.symbol.linkageName, language: .swift) else {
             throw ABIResolutionError.metadataUnavailable("The Swift member declaration cannot be demangled.")
         }
-        return try SwiftGenericCallPlan(declaration: declaration, linkageName: member.symbol.linkageName,
+        return try SwiftGenericCallPlan(declaration: declaration, linkageName: member.symbol.linkageName, image: member.symbol.image,
             genericArguments: arguments, signature: SwiftFunctionSignature(signature), resolver: resolver,
             enclosing: enclosing, receiver: receiver, declaredSignature: declaredSignature)
     }

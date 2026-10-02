@@ -64,13 +64,14 @@ struct SwiftGenericBinding: Sendable {
 
     init(declaration: SwiftGenericDeclaration, arguments: [NativeSwiftGenericArgument],
          signature: SwiftFunctionSignature, resolver: SymbolResolver,
-         enclosing context: SwiftGenericTypeContext? = nil) throws {
+         enclosing context: SwiftGenericTypeContext? = nil, image: NativeImage? = nil) throws {
         guard arguments.count == declaration.parameters.count else {
             throw ABIResolutionError.signatureMismatch(.init(
                 expected: "\(declaration.parameters.count) generic arguments", found: ["\(arguments.count) generic arguments"]))
         }
         self.declaration = declaration
         self.resolver = resolver
+        if let image { images.append(image) }
         var bound: [String: BoundArgument] = [:]
         var owners: [NativeSwiftType] = []
         var known: [[UInt8]: Any.Type] = [:]
@@ -122,8 +123,8 @@ struct SwiftGenericBinding: Sendable {
         for requirement in declaration.requirements {
             guard case .conformance(let subject, let name) = requirement else { continue }
             if conformances.contains(where: { $0.subject == subject && $0.name == name }) { continue }
-            // Marker protocols have no runtime witness table. Their source-level
-            // concurrency/ownership requirements remain the unsafe caller's contract.
+            // Marker protocols have no runtime witness table. Copyability is
+            // checked separately against the runtime's generic constraint rules.
             if ["AnyObject", "Swift.AnyObject", "Swift.Sendable", "Swift.Copyable", "Swift.Escapable"].contains(name) {
                 conformances.append(Conformance(subject: subject, name: name, descriptor: nil))
                 continue
@@ -190,7 +191,25 @@ struct SwiftGenericBinding: Sendable {
                         throw ABIResolutionError.signatureMismatch(.init(expected: constraint.spelling, found: [String(reflecting: type)]))
                     }
                 }
-            case .conformance: break
+            case .conformance, .invertedProtocols: break
+            }
+        }
+        for parameter in declaration.parameters {
+            let subject = SwiftFormalType.named(parameter.name, [])
+            let equivalents = try equivalentTypes(of: subject)
+            let suppressesCopyable = declaration.requirements.contains {
+                if case .invertedProtocols(let type, let mask) = $0 {
+                    return mask & 1 != 0 && equivalents.contains(type)
+                }
+                return false
+            }
+            if !suppressesCopyable {
+                for type in bound[parameter.name]!.types {
+                    guard SwiftCopyability.accepts(type) else {
+                        throw ABIResolutionError.signatureMismatch(.init(
+                            expected: parameter.name + ": Swift.Copyable", found: [String(reflecting: type)]))
+                    }
+                }
             }
         }
         var shapeClasses: [Set<String>] = []
@@ -702,6 +721,7 @@ struct SwiftGenericBinding: Sendable {
     }
 
     func resultType(_ actual: Any.Type, for formal: SwiftFormalType) throws -> Any.Type {
+        if actual == NativeSwiftValue.self { return try types(formal)[0] }
         let optional = actual as? any NativeOptionalValue.Type
         if (optional?.wrappedType ?? actual) == AnyObject.self {
             let native = try types(formal)[0]
@@ -733,6 +753,19 @@ struct SwiftGenericBinding: Sendable {
         else { actual = try swiftNativeTypeName(type) }
         guard try Self.key(expected) == Self.key(actual) else {
             throw ABIResolutionError.signatureMismatch(.init(expected: expected, found: [actual]))
+        }
+    }
+
+    func runtimeValuePlan(metadata: Any.Type, type: CValueType) throws -> SwiftRuntimeValuePlan {
+        try SwiftRuntimeValuePlan(metadata: metadata, type: type, resolver: resolver,
+            retaining: images + typeOwners.map(\.image))
+    }
+
+    func validateArgument(_ actual: Any.Type, for formal: SwiftFormalType) throws {
+        if actual == NativeSwiftValue.self || actual == NativeSwiftBorrowedValue.self {
+            _ = try types(formal)
+        } else {
+            try validate(actual, for: formal)
         }
     }
 }

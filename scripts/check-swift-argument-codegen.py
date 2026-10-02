@@ -58,8 +58,24 @@ def main():
             raise RuntimeError(f'{target}: closure pack borrowing or element reabstraction changed: {pack_closures}')
         if len(pack_initializers) != 1 or '@pack_owned Pack{repeat' not in pack_initializers[0]:
             raise RuntimeError(f'{target}: closure pack initializer ownership changed: {pack_initializers}')
+        runtime_values = {}
+        for name, convention in {
+            'borrowRuntimeValue': '(@in_guaranteed T) -> Int64',
+            'moveRuntimeValue': '(@in T) -> @out T',
+            'consumeRuntimeValueAndThrow': '(@in T) -> @error any Error',
+            'replaceRuntimeValue': '(@inout T, @in T) -> ()',
+            'moveRuntimeValueAfterArgument': '(@in T, Int64) -> @out T',
+            'borrowRuntimeValueAsync': '(@sil_isolated @sil_implicit_leading_param @guaranteed Builtin.ImplicitActor, @in_guaranteed T, @guaranteed AsyncGate) -> Int64',
+            'moveRuntimeValueAsync': '(@sil_isolated @sil_implicit_leading_param @guaranteed Builtin.ImplicitActor, @in T) -> @out T',
+        }.items():
+            # The length-prefixed identifier excludes names extending this one.
+            identifier = str(len(name)) + name
+            candidates = [line for line in sil.splitlines() if line.startswith('sil [noinline]') and identifier in line]
+            if len(candidates) != 1 or '<T where T : ~Copyable>' not in candidates[0] or convention not in candidates[0]:
+                raise RuntimeError(f'{target}: runtime value ownership changed for {name}: {candidates}')
+            runtime_values[name] = candidates[0]
         reports.append({'target':target, 'signatures':signatures, 'initializers':initializers, 'ownedGenericClosures':owned_closures,
-                        'closurePacks':pack_closures, 'closurePackInitializers':pack_initializers})
+                        'closurePacks':pack_closures, 'closurePackInitializers':pack_initializers, 'runtimeValues':runtime_values})
     report = {'compiler':run('xcrun','swiftc','--version').strip(), 'runtimeTested':False, 'targets':reports}
     (output/'report.json').write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps(report,indent=2))

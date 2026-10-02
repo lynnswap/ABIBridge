@@ -30,7 +30,205 @@ private struct RuntimeWordResult: ABIBridgeValue {
     func read() throws -> Int64 { try unsafe storage.read(as: Int64.self) }
 }
 
+private struct RuntimeRejectedArgument: ABIBridgeValue {
+    enum Failure: Error { case rejected }
+    static let abiType = NativeType.int64
+    init() {}
+    init(nativeValue: NativeValue) { }
+    static func nativeValue(from value: Self) throws -> NativeValue { throw Failure.rejected }
+}
+
 @Suite struct SwiftRuntimeValueTests {
+    @Test func genericRuntimeArgumentsAndResultsPreserveNativeOwnership() async throws {
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self)
+        let counts = ArgumentCounts()
+        let original = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
+        let arguments: [NativeSwiftGenericArgument] = [.type(original.type)]
+        let borrow = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.borrowRuntimeValue<A where A: ~Swift.Copyable>(A) -> Swift.Int64",
+            as: ((NativeSwiftValue) -> Int64).self, genericArguments: arguments)
+        #expect(try unsafe borrow.unsafeInvoke(original) == Int64(MemoryLayout<RuntimeTicket>.size))
+        let borrowed = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.borrowRuntimeValue<A where A: ~Swift.Copyable>(A) -> Swift.Int64",
+            as: ((NativeSwiftBorrowedValue) -> Int64).self, genericArguments: arguments)
+        try original.withBorrowedValue { value throws -> Void in
+            #expect(try unsafe borrowed.unsafeInvoke(value) == Int64(MemoryLayout<RuntimeTicket>.size))
+        }
+        #expect(!original.isConsumed && counts.destructions == 0)
+        do {
+            _ = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+                as: ((NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: arguments)
+            Issue.record("A Copyable generic declaration accepted a noncopyable substitution")
+        } catch ABIResolutionError.signatureMismatch(let detail) {
+            #expect(detail.expected == "A: Swift.Copyable")
+        }
+        let move = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.moveRuntimeValue<A where A: ~Swift.Copyable>(__owned A) -> A",
+            as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self, genericArguments: arguments)
+        let moved = try unsafe move.unsafeInvoke(NativeSwiftConsuming(original))
+        #expect(original.isConsumed && !moved.isConsumed && !moved.isCopyable)
+        #expect(counts.destructions == 0)
+        let consume = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.consumeRuntimeValueAndThrow<A where A: ~Swift.Copyable>(__owned A) throws -> ()",
+            as: ((NativeSwiftConsuming<NativeSwiftValue>) throws -> Void).self, genericArguments: arguments)
+        do {
+            try unsafe consume.unsafeInvoke(NativeSwiftConsuming(moved))
+            Issue.record("The native error was not propagated")
+        } catch let error as NativeSwiftError {
+            error.withUnderlyingError { #expect($0 is RuntimeTicketFailure) }
+        }
+        #expect(moved.isConsumed && counts.destructions == 1)
+    }
+
+    @Test func runtimeInoutTransfersTheReplacementAndProtectsConflictingAliases() async throws {
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self)
+        let counts = ArgumentCounts()
+        let first = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
+        let second = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
+        let replace = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.replaceRuntimeValue<A where A: ~Swift.Copyable>(inout A, __owned A) -> ()",
+            as: ((NativeSwiftInout<NativeSwiftValue>, NativeSwiftConsuming<NativeSwiftValue>) -> Void).self,
+            genericArguments: [.type(first.type)])
+        let buffer = NativeSwiftInout(first)
+        #expect(throws: NativeSwiftValueError.valueInUse) {
+            try unsafe replace.unsafeInvoke(buffer, NativeSwiftConsuming(first))
+        }
+        #expect(!first.isConsumed && counts.destructions == 0)
+        try unsafe replace.unsafeInvoke(buffer, NativeSwiftConsuming(second))
+        #expect(!first.isConsumed && second.isConsumed && counts.destructions == 1)
+        do {
+            let value = try first.take(as: RuntimeTicket.self)
+            #expect(value.number == 42)
+        }
+        #expect(first.isConsumed && counts.destructions == 2)
+    }
+
+    @Test func runtimeTransferSurvivesALaterArgumentConversionFailure() async throws {
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self)
+        let counts = ArgumentCounts()
+        let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
+        let move = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.moveRuntimeValueAfterArgument<A where A: ~Swift.Copyable>(__owned A, Swift.Int64) -> A",
+            as: ((NativeSwiftConsuming<NativeSwiftValue>, RuntimeRejectedArgument) -> NativeSwiftValue).self,
+            genericArguments: [.type(value.type)])
+        #expect(throws: RuntimeRejectedArgument.Failure.rejected) {
+            try unsafe move.unsafeInvoke(NativeSwiftConsuming(value), RuntimeRejectedArgument())
+        }
+        #expect(!value.isConsumed && counts.destructions == 0)
+        do {
+            let native = try value.take(as: RuntimeTicket.self)
+            #expect(native.number == 42)
+        }
+        #expect(counts.destructions == 1)
+    }
+
+    @Test func copyableRuntimeResultsAndMismatchedArgumentsPreserveTheirOwners() async throws {
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
+            as: ((Int64) -> NativeSwiftValue).self)
+        let original = try unsafe make.unsafeInvoke(42)
+        let copy = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+            as: ((NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: [.type(original.type)])
+        let copied = try unsafe copy.unsafeInvoke(original)
+        #expect(try copied.take(as: Int64.self) == 42)
+        #expect(!original.isConsumed)
+        let makeTicket = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self)
+        let ticket = try unsafe makeTicket.unsafeInvoke(ErrorLifetimeToken {})
+        do {
+            _ = try unsafe copy.unsafeInvoke(ticket)
+            Issue.record("A runtime argument with different native metadata was accepted")
+        } catch ABIInvocationError.incompatibleValue { }
+        #expect(!ticket.isConsumed)
+        #expect(try original.take(as: Int64.self) == 42)
+    }
+
+    @Test func noncopyableNominalContextsPreserveTheirSuppressedRequirements() async throws {
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeTicket(_:)",
+            as: ((AnyObject) -> NativeSwiftValue).self)
+        let counts = ArgumentCounts()
+        let ticket = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeValueBox",
+            genericArguments: [.type(ticket.type)])
+        let initialize = try await type.initializer(named: "init(_:)",
+            as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self)
+        let box = try unsafe initialize.unsafeInvoke(NativeSwiftConsuming(ticket))
+        #expect(ticket.isConsumed && !box.isConsumed && !box.isCopyable)
+        #expect(throws: NativeSwiftValueError.noncopyableType) { try box.copy() }
+        #expect(throws: NativeSwiftValueError.noncopyableType) { try box.withCopy { _ in } }
+        let take = try await type.method(named: "takeValue()", as: (() -> NativeSwiftValue).self,
+            consuming: true)
+        let result = try unsafe take.unsafeInvoke(on: box)
+        #expect(box.isConsumed && !result.isConsumed && counts.destructions == 0)
+        do {
+            let native = try result.take(as: RuntimeTicket.self)
+            #expect(native.number == 42)
+        }
+        #expect(counts.destructions == 1)
+    }
+
+    @Test func runtimeCopyabilityEvaluatesConditionalConformance() async throws {
+        let runtime = ABIRuntime.shared
+        let makeInteger = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
+            as: ((Int64) -> NativeSwiftValue).self)
+        let integer = try unsafe makeInteger.unsafeInvoke(42)
+        let copyableType = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeConditionalValueBox",
+            genericArguments: [.type(integer.type)])
+        let makeCopyable = try await copyableType.initializer(named: "init(_:)",
+            as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self)
+        let copyable = try unsafe makeCopyable.unsafeInvoke(NativeSwiftConsuming(integer))
+        #expect(copyable.isCopyable)
+        let copy = try copyable.copy()
+        #expect(try copy.take(as: RuntimeConditionalValueBox<Int64>.self).value == 42)
+        let makeTicket = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeTicket(_:)",
+            as: ((AnyObject) -> NativeSwiftValue).self)
+        let ticket = try unsafe makeTicket.unsafeInvoke(NSObject())
+        let noncopyableType = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeConditionalValueBox",
+            genericArguments: [.type(ticket.type)])
+        let makeNoncopyable = try await noncopyableType.initializer(named: "init(_:)",
+            as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self)
+        let noncopyable = try unsafe makeNoncopyable.unsafeInvoke(NativeSwiftConsuming(ticket))
+        #expect(!noncopyable.isCopyable)
+        #expect(throws: NativeSwiftValueError.noncopyableType) { try noncopyable.copy() }
+        do {
+            _ = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+                as: ((NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: [.type(noncopyable.type)])
+            Issue.record("A conditional Copyable constraint accepted a noncopyable argument")
+        } catch ABIResolutionError.signatureMismatch { }
+    }
+
+    @Test @MainActor func runtimeArgumentsKeepAccessThroughAsyncCompletion() async throws {
+        guard #available(macOS 26, iOS 26, tvOS 26, watchOS 26, visionOS 26, *) else { return }
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self)
+        let counts = ArgumentCounts()
+        let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
+        let arguments: [NativeSwiftGenericArgument] = [.type(value.type)]
+        let borrow = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.borrowRuntimeValueAsync<A where A: ~Swift.Copyable>(A, ManagedSwiftFixtures.AsyncGate) async -> Swift.Int64",
+            as: ((NativeSwiftBorrowedValue, AsyncGate) async -> Int64).self, genericArguments: arguments)
+        let gate = AsyncGate()
+        let task = try value.withBorrowedValue { borrowed in
+            Task.immediate { try unsafe await borrow.unsafeInvoke(borrowed, gate) }
+        }
+        await gate.waitUntilSuspended()
+        #expect(throws: NativeSwiftValueError.valueInUse) { _ = try value.take(as: RuntimeTicket.self) }
+        await gate.open()
+        #expect(try await task.value == Int64(MemoryLayout<RuntimeTicket>.size))
+        let move = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.moveRuntimeValueAsync<A where A: ~Swift.Copyable>(__owned A) async -> A",
+            as: ((NativeSwiftConsuming<NativeSwiftValue>) async -> NativeSwiftValue).self, genericArguments: arguments)
+        let moved = try unsafe await move.unsafeInvoke(NativeSwiftConsuming(value))
+        #expect(value.isConsumed && counts.destructions == 0)
+        do {
+            let native = try moved.take(as: RuntimeTicket.self)
+            #expect(native.number == 42)
+        }
+        #expect(moved.isConsumed && counts.destructions == 1)
+    }
     #if DEBUG && os(macOS)
     @Test func anOpaqueFactoryKeepsItsOwnCodeAndUsesTheUnderlyingTypeImage() async throws {
         let module = "OpaqueType_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
@@ -305,12 +503,11 @@ private struct RuntimeWordResult: ABIBridgeValue {
         #expect(layout.size == MemoryLayout<RuntimeCopyablePayload>.size)
         #expect(layout.stride == MemoryLayout<RuntimeCopyablePayload>.stride)
         #expect(layout.alignment == MemoryLayout<RuntimeCopyablePayload>.alignment)
-        #expect(layout.isCopyable)
         let source = UnsafeMutablePointer<RuntimeCopyablePayload>.allocate(capacity: 1)
         source.initialize(to: RuntimeCopyablePayload(life: RuntimeValueLife(deaths), text: String(repeating: "owned", count: 100)))
         let copy = UnsafeMutableRawPointer.allocate(byteCount: layout.stride, alignment: layout.alignment)
         defer { source.deallocate(); copy.deallocate() }
-        #expect(ABISwiftCopyValue(metadata, copy, source))
+        ABISwiftCopyValue(metadata, copy, source)
         ABISwiftDestroyValue(metadata, source)
         #expect(deaths.count.withLock { $0 } == 0)
         #expect(copy.load(as: RuntimeCopyablePayload.self).text == String(repeating: "owned", count: 100))
@@ -325,14 +522,11 @@ private struct RuntimeWordResult: ABIBridgeValue {
         #expect(layout.size == MemoryLayout<RuntimeMoveOnlyPayload>.size)
         #expect(layout.stride == MemoryLayout<RuntimeMoveOnlyPayload>.stride)
         #expect(layout.alignment == MemoryLayout<RuntimeMoveOnlyPayload>.alignment)
-        #expect(!layout.isCopyable)
         let source = UnsafeMutablePointer<RuntimeMoveOnlyPayload>.allocate(capacity: 1)
         source.initialize(to: RuntimeMoveOnlyPayload(life: RuntimeValueLife(deaths), text: String(repeating: "moved", count: 100)))
         let destination = UnsafeMutableRawPointer.allocate(byteCount: layout.stride, alignment: layout.alignment)
         destination.initializeMemory(as: UInt8.self, repeating: 0xa5, count: layout.stride)
         defer { source.deallocate(); destination.deallocate() }
-        #expect(!ABISwiftCopyValue(metadata, destination, source))
-        #expect(UnsafeRawBufferPointer(start: destination, count: layout.stride).allSatisfy { $0 == 0xa5 })
         #expect(source.pointee.text == String(repeating: "moved", count: 100))
         ABISwiftTakeValue(metadata, destination, source)
         #expect(deaths.count.withLock { $0 } == 0)

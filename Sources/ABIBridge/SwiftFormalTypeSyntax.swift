@@ -111,8 +111,13 @@ extension SwiftGenericDeclaration {
                     throw ABIResolutionError.unsupportedDeclaration("The Swift generic layout requirement is not a class constraint.")
                 }
                 return .conformance(try SwiftFormalType(children[0]), "Swift.AnyObject")
-            case "DependentGenericParamCount", "DependentGenericParamPackMarker",
-                 "DependentGenericInverseConformanceRequirement":
+            case "DependentGenericInverseConformanceRequirement":
+                let children = node.children()
+                guard let index = children[1].index, index < 16 else {
+                    throw ABIResolutionError.unsupportedDeclaration("Unknown Swift invertible protocol.")
+                }
+                return .invertedProtocols(try SwiftFormalType(children[0]), 1 << UInt16(index))
+            case "DependentGenericParamCount", "DependentGenericParamPackMarker":
                 return nil
             default:
                 throw ABIResolutionError.unsupportedDeclaration("Cannot decode the Swift " + node.kind + " requirement.")

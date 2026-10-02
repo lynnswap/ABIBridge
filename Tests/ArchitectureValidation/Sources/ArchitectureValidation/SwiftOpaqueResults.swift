@@ -229,5 +229,118 @@ private struct OpaqueWordResult: ABIBridgeValue {
     }
     await directGate.waitUntilSuspended(); await directGate.open()
     try check(try await directTask.value == 46, "Async class-constrained opaque result resumes with a direct object pointer")
+    checks += try await validateRuntimeValueArguments()
+    return checks
+}
+
+@MainActor private func validateRuntimeValueArguments() async throws -> [String] {
+    let runtime = ABIRuntime()
+    var checks: [String] = []
+    func check(_ condition: Bool, _ message: String) throws {
+        guard condition else { throw ArchitectureValidationFailure(description: message) }
+        checks.append(message)
+    }
+    let make = try await runtime.swiftFunction(named: "SwiftValueFixtures.makeOpaqueTicket(_:)",
+        as: ((ErrorToken) -> NativeSwiftValue).self)
+    let counts = ArgumentCounts()
+    let original = try unsafe make.unsafeInvoke(ErrorToken { counts.destroyed() })
+    let arguments: [NativeSwiftGenericArgument] = [.type(original.type)]
+    let borrow = try await runtime.swiftFunction(named: "SwiftValueFixtures.borrowRuntimeValue<A where A: ~Swift.Copyable>(A) -> Swift.Int64",
+        as: ((NativeSwiftValue) -> Int64).self, genericArguments: arguments)
+    try check(try unsafe borrow.unsafeInvoke(original) == Int64(MemoryLayout<OpaqueTicket>.size),
+              "Generic argument borrowing uses the noncopyable value's native storage")
+    do {
+        _ = try await runtime.swiftFunction(named: "SwiftValueFixtures.copyRuntimeValue<A>(A) -> A",
+            as: ((NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: arguments)
+        throw ArchitectureValidationFailure(description: "A Copyable requirement accepted a noncopyable value")
+    } catch ABIResolutionError.signatureMismatch {
+        checks.append("Implicit Copyable requirements reject noncopyable generic substitutions")
+    }
+    let move = try await runtime.swiftFunction(named: "SwiftValueFixtures.moveRuntimeValue<A where A: ~Swift.Copyable>(__owned A) -> A",
+        as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self, genericArguments: arguments)
+    let moved = try unsafe move.unsafeInvoke(NativeSwiftConsuming(original))
+    try check(original.isConsumed && !moved.isConsumed && counts.destructions == 0,
+              "Generic native results own the transferred noncopyable value")
+    let replace = try await runtime.swiftFunction(named: "SwiftValueFixtures.replaceRuntimeValue<A where A: ~Swift.Copyable>(inout A, __owned A) -> ()",
+        as: ((NativeSwiftInout<NativeSwiftValue>, NativeSwiftConsuming<NativeSwiftValue>) -> Void).self,
+        genericArguments: arguments)
+    let buffer = NativeSwiftInout(moved)
+    do {
+        try unsafe replace.unsafeInvoke(buffer, NativeSwiftConsuming(moved))
+        throw ArchitectureValidationFailure(description: "Conflicting argument access reached the native function")
+    } catch NativeSwiftValueError.valueInUse {
+        checks.append("Conflicting generic argument aliases fail without consuming the native value")
+    }
+    let replacement = try unsafe make.unsafeInvoke(ErrorToken { counts.destroyed() })
+    try unsafe replace.unsafeInvoke(buffer, NativeSwiftConsuming(replacement))
+    try check(!moved.isConsumed && replacement.isConsumed && counts.destructions == 1,
+              "Runtime inout replaces and destroys the original native payload exactly once")
+    if #available(macOS 26, iOS 26, tvOS 26, watchOS 26, visionOS 26, *) {
+        let asynchronous = try await runtime.swiftFunction(
+            named: "SwiftValueFixtures.borrowRuntimeValueAsync<A where A: ~Swift.Copyable>(A, SwiftValueFixtures.AsyncValueGate) async -> Swift.Int64",
+            as: (nonisolated(nonsending) (NativeSwiftBorrowedValue, AsyncValueGate) async -> Int64).self,
+            genericArguments: arguments)
+        let gate = AsyncValueGate()
+        let operation = try moved.withBorrowedValue { borrowed in
+            Task.immediate { @MainActor in try unsafe await asynchronous.unsafeInvoke(borrowed, gate) }
+        }
+        await gate.waitUntilSuspended()
+        do {
+            _ = try moved.take(as: OpaqueTicket.self)
+            throw ArchitectureValidationFailure(description: "Suspended argument lost its borrowed access")
+        } catch NativeSwiftValueError.valueInUse {
+            checks.append("An async runtime argument preserves access after the view's scope expires")
+        }
+        await gate.open()
+        try check(try await operation.value == Int64(MemoryLayout<OpaqueTicket>.size),
+                  "An async borrowed generic argument completes using retained native storage")
+    }
+    let moveAsync = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.moveRuntimeValueAsync<A where A: ~Swift.Copyable>(__owned A) async -> A",
+        as: (nonisolated(nonsending) (NativeSwiftConsuming<NativeSwiftValue>) async -> NativeSwiftValue).self,
+        genericArguments: arguments)
+    let final = try unsafe await moveAsync.unsafeInvoke(NativeSwiftConsuming(moved))
+    try check(moved.isConsumed && !final.isConsumed && counts.destructions == 1,
+              "Async generic results preserve a noncopyable ownership transfer")
+    let boxType = try await runtime.swiftType(named: "SwiftValueFixtures.RuntimeValueBox", genericArguments: arguments)
+    let makeBox = try await boxType.initializer(named: "init(_:)",
+        as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self)
+    let box = try unsafe makeBox.unsafeInvoke(NativeSwiftConsuming(final))
+    try check(final.isConsumed && !box.isCopyable, "Generic initializers transfer noncopyable runtime inputs into owned results")
+    do {
+        _ = try box.copy()
+        throw ArchitectureValidationFailure(description: "A generic noncopyable value allowed copying")
+    } catch NativeSwiftValueError.noncopyableType {
+        checks.append("Runtime Copyable constraints protect generic types whose value-witness flags omit noncopyability")
+    }
+    let takeBox = try await boxType.method(named: "takeValue()", as: (() -> NativeSwiftValue).self, consuming: true)
+    let unboxed = try unsafe takeBox.unsafeInvoke(on: box)
+    try check(box.isConsumed && !unboxed.isConsumed && counts.destructions == 1,
+              "Ordinary generic members transfer runtime result ownership")
+    let consume = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.consumeRuntimeValueAndThrow<A where A: ~Swift.Copyable>(__owned A) throws -> ()",
+        as: ((NativeSwiftConsuming<NativeSwiftValue>) throws -> Void).self, genericArguments: arguments)
+    do {
+        try unsafe consume.unsafeInvoke(NativeSwiftConsuming(unboxed))
+        throw ArchitectureValidationFailure(description: "A native consuming failure was lost")
+    } catch let error as NativeSwiftError {
+        try error.withUnderlyingError { try check($0 is SmallError && unboxed.isConsumed && counts.destructions == 2,
+            "A native error consumes and destroys the runtime argument exactly once") }
+    }
+    let integer = try await runtime.swiftFunction(named: "SwiftValueFixtures.makeOpaqueInteger(_:)", as: ((Int64) -> NativeSwiftValue).self)
+    let scalar = try unsafe integer.unsafeInvoke(42)
+    let conditional = try await runtime.swiftType(named: "SwiftValueFixtures.RuntimeConditionalValueBox", genericArguments: [.type(scalar.type)])
+    let makeConditional = try await conditional.initializer(named: "init(_:)",
+        as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self)
+    let copyable = try unsafe makeConditional.unsafeInvoke(NativeSwiftConsuming(scalar))
+    let copied = try copyable.copy()
+    try check(copyable.isCopyable && (try copied.take(as: RuntimeConditionalValueBox<Int64>.self)).value == 42,
+              "Conditional Copyable conformance permits a native generic value copy")
+    let ticket = try unsafe make.unsafeInvoke(ErrorToken {})
+    let noncopyableType = try await runtime.swiftType(named: "SwiftValueFixtures.RuntimeConditionalValueBox", genericArguments: [.type(ticket.type)])
+    let makeNoncopyable = try await noncopyableType.initializer(named: "init(_:)",
+        as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self)
+    let noncopyable = try unsafe makeNoncopyable.unsafeInvoke(NativeSwiftConsuming(ticket))
+    try check(!noncopyable.isCopyable, "Conditional Copyable conformance checks the actual noncopyable type argument")
     return checks
 }
