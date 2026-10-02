@@ -52,7 +52,13 @@ private struct HiddenNoncopyableOpaque: ~Copyable { let value: Int64 }
 
 public struct OpaqueTicket: ~Copyable {
     public let token: ErrorToken
-    public let number: Int64
+    public var number: Int64
+    public func read() -> Int64 { number }
+    public mutating func add(_ value: Int64) { number += value }
+    public nonisolated(nonsending) consuming func takeNumber() async -> Int64 {
+        await Task.yield()
+        return number
+    }
 }
 @inline(never) public func makeOpaqueTicket(_ token: ErrorToken) -> some ~Copyable {
     OpaqueTicket(token: token, number: 42)

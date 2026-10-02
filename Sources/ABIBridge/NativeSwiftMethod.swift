@@ -56,15 +56,18 @@ public struct NativeSwiftMethod<Signature>: Sendable {
 
     /// Calls a class member or nonmutating value member.
     ///
-    /// Consuming members transfer an independent receiver copy. The consuming
-    /// option selected during lookup must match the actual Swift declaration.
+    /// Typed receivers transfer an independent copy to consuming members.
+    /// NativeSwiftValue accesses its owned storage directly: mutating members
+    /// update that value and consuming members leave its handle consumed.
+    /// NativeSwiftBorrowedValue permits nonmutating, nonconsuming scoped access.
+    /// The lookup's ownership options must match the actual native declaration.
     ///
     /// - Parameters:
     ///   - receiver: An instance or adapter matching the declaring native type.
     ///   - values: Explicit method arguments.
     /// - Returns: The converted result.
     /// - Throws: A NativeSwiftError or a receiver conversion/invocation error. Use the inout
-    ///   overload for a mutating value member.
+    ///   overload for a mutating typed value; owned runtime values update in place.
     @unsafe public func unsafeInvoke<Receiver, Result, Failure: Error, each Argument>(
         on receiver: Receiver, _ values: repeat each Argument
     ) throws -> Result where Signature == (repeat each Argument) throws(Failure) -> Result {
@@ -103,9 +106,9 @@ public struct NativeSwiftMethod<Signature>: Sendable {
     ) throws -> Result {
         guard case .synchronous(let call) = call else { preconditionFailure("A synchronous signature has a synchronous call plan.") }
         let context = try unsafe receiver.context(for: storage)
-        // A consuming class method gets its own +1, including when the receiver
-        // was supplied by a raw-pointer adapter rather than a managed codec.
-        let consumedObject = receiver.isConsuming && receiver.mode == .object
+        // Typed and raw-pointer receivers need a separate +1. An owned runtime
+        // receiver already transfers its reference through its access lease.
+        let consumedObject = receiver.isConsuming && receiver.mode == .object && !storage.transfersOwnership
             ? Unmanaged<AnyObject>.fromOpaque(context!).retain() : nil
         var invoked = false
         defer { if !invoked { consumedObject?.release() } }
@@ -114,7 +117,7 @@ public struct NativeSwiftMethod<Signature>: Sendable {
             trailingValue: receiver.mode == .value ? storage : nil,
             retaining: (symbol, type, storage), retainingCode: type.image, didInvoke: {
                 invoked = true
-                if receiver.isConsuming && receiver.mode != .object { storage.relinquishValue() }
+                if receiver.isConsuming && (receiver.mode != .object || storage.transfersOwnership) { storage.relinquishValue() }
                 didInvoke?()
             }, implementation: implementation, repeat each values
         )
@@ -172,8 +175,9 @@ extension NativeSwiftMethod {
     /// Awaits a class member or nonmutating value member.
     ///
     /// The supplied receiver and native signature must match. The caller
-    /// satisfies the target's actor/thread contract. Consuming members transfer
-    /// a receiver copy; cancellation remains cooperative until native completion.
+    /// satisfies the target's actor/thread contract. NativeSwiftValue retains
+    /// access across suspension and transfers its owned value to consuming
+    /// members. Typed receivers transfer a copy. Cancellation remains cooperative.
     @_transparent
     @unsafe public nonisolated(nonsending) func unsafeInvoke<Receiver, Result, Failure: Error, each Argument>(
         on receiver: Receiver, _ values: repeat each Argument
@@ -209,8 +213,9 @@ extension NativeSwiftMethod {
     /// Awaits a class member or nonmutating value member.
     ///
     /// The supplied receiver and native signature must match. The caller
-    /// satisfies the target's actor/thread contract. Consuming members transfer
-    /// a receiver copy; cancellation remains cooperative until native completion.
+    /// satisfies the target's actor/thread contract. NativeSwiftValue retains
+    /// access across suspension and transfers its owned value to consuming
+    /// members. Typed receivers transfer a copy. Cancellation remains cooperative.
     @_transparent
     @unsafe public nonisolated(nonsending) func unsafeInvoke<Receiver, Result, Failure: Error, each Argument>(
         on receiver: Receiver, _ values: repeat each Argument
@@ -248,7 +253,7 @@ extension NativeSwiftMethod {
     ) async throws -> Result {
         guard case .asynchronous(let call, let implementation) = call else { preconditionFailure("An async signature has an async call plan.") }
         let context = try unsafe receiver.context(for: storage)
-        let consumedObject = receiver.isConsuming && receiver.mode == .object
+        let consumedObject = receiver.isConsuming && receiver.mode == .object && !storage.transfersOwnership
             ? Unmanaged<AnyObject>.fromOpaque(context!).retain() : nil
         var invoked = false
         defer { if !invoked { consumedObject?.release() } }
@@ -256,7 +261,7 @@ extension NativeSwiftMethod {
             trailingValue: receiver.mode == .value ? storage : nil, retaining: (implementation, type, storage),
             retainingCode: type.image, didInvoke: {
                 invoked = true
-                if receiver.isConsuming && receiver.mode != .object { storage.relinquishValue() }
+                if receiver.isConsuming && (receiver.mode != .object || storage.transfersOwnership) { storage.relinquishValue() }
                 didInvoke?()
             }, repeat each values)
     }
@@ -305,17 +310,17 @@ extension NativeSwiftMethod {
     @unsafe private func invoke<Receiver, Result, each Argument>(
         on receiver: Receiver, _ values: repeat each Argument
     ) throws -> Result {
-        guard !self.receiver.isMutating || self.receiver.mode == .object else {
+        guard !self.receiver.isMutating || self.receiver.mode == .object || receiver is NativeSwiftValue else {
             throw ABIResolutionError.unsupportedDeclaration("A mutating Swift value member requires an inout receiver.")
         }
-        let storage = try self.receiver.codec.encode(receiver)
+        let storage = try self.receiver.encode(receiver)
         return try unsafe invoke(storage, repeat each values)
     }
 
     @unsafe private func invoke<Receiver, Result, each Argument>(
         on receiver: inout Receiver, _ values: repeat each Argument
     ) throws -> Result {
-        let storage = try self.receiver.codec.encode(receiver)
+        let storage = try self.receiver.encode(receiver)
         var invoked = false
         let outcome = Swift.Result<Result, any Error> {
             try unsafe invoke(storage, didInvoke: { invoked = true }, repeat each values)
@@ -327,17 +332,17 @@ extension NativeSwiftMethod {
     @unsafe @usableFromInline nonisolated(nonsending) func invokeAsync<Receiver, Result, each Argument>(
         on receiver: Receiver, _ values: repeat each Argument
     ) async throws -> Result {
-        guard !self.receiver.isMutating || self.receiver.mode == .object else {
+        guard !self.receiver.isMutating || self.receiver.mode == .object || receiver is NativeSwiftValue else {
             throw ABIResolutionError.unsupportedDeclaration("A mutating Swift value member requires an inout receiver.")
         }
-        let storage = try self.receiver.codec.encode(receiver)
+        let storage = try self.receiver.encode(receiver)
         return try unsafe await invokeAsync(storage, repeat each values)
     }
 
     @unsafe @usableFromInline nonisolated(nonsending) func invokeAsync<Receiver, Result, each Argument>(
         on receiver: inout Receiver, _ values: repeat each Argument
     ) async throws -> Result {
-        let storage = try self.receiver.codec.encode(receiver)
+        let storage = try self.receiver.encode(receiver)
         var invoked = false
         let outcome: Swift.Result<Result, any Error>
         do { outcome = .success(try unsafe await invokeAsync(storage, didInvoke: { invoked = true }, repeat each values)) }

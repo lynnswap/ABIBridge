@@ -31,11 +31,13 @@ private struct RuntimeMoveOnlyPayload: ~Copyable {
                 private let body: () -> Int64
                 public init(_ body: @escaping () -> Int64) { self.body = body }
                 public var value: Int64 { body() }
+                public consuming func take() -> Int64 { body() }
             }
             private final class HiddenBox {
                 private let body: () -> Int64
                 init(_ body: @escaping () -> Int64) { self.body = body }
                 var value: Int64 { body() }
+                consuming func take() -> Int64 { body() }
             }
             public func hidden(_ body: @escaping () -> Int64) -> some AnyObject { HiddenBox(body) }
             """, linkArguments: ["-swift-version", "6", "-emit-module", "-enable-library-evolution"])
@@ -60,13 +62,69 @@ private struct RuntimeMoveOnlyPayload: ~Copyable {
             let expected = try #require(try await runtime.images(matching: .path(provider.libraryURL)).first)
             #expect(value.type.image.identity == expected.identity)
             let getter = try await value.type.getter(named: "value", as: (() -> Int64).self)
-            try value.withCopy { object in
-                let result = try unsafe getter.unsafeInvoke(on: object as AnyObject)
-                #expect(result == number)
-            }
+            #expect(try unsafe getter.unsafeInvoke(on: value) == number)
+            weak var observed: AnyObject?
+            try value.withCopy { observed = $0 as AnyObject }
+            let take = try await value.type.method(named: "take()", as: (() -> Int64).self, consuming: true)
+            #expect(try unsafe take.unsafeInvoke(on: value) == number)
+            #expect(value.isConsumed && observed == nil)
         }
     }
     #endif
+
+    @Test func runtimeValuesUseOrdinaryMembersWithExplicitOwnership() async throws {
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self)
+        let counts = ArgumentCounts()
+        let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
+        let abi = try NativeType.opaque(named: value.type.name)
+        let read = try await value.type.method(named: "read()", as: (() -> Int64).self, receiverABI: abi)
+        let getter = try await value.type.getter(named: "number", as: (() -> Int64).self, receiverABI: abi)
+        let add = try await value.type.method(named: "add(_:)", as: ((Int64) -> Void).self,
+            receiverABI: abi, mutating: true)
+        let take = try await value.type.method(named: "takeNumber()", as: (() -> Int64).self,
+            receiverABI: abi, consuming: true)
+        #expect(try unsafe read.unsafeInvoke(on: value) == 42)
+        try unsafe add.unsafeInvoke(on: value, 5)
+        #expect(try unsafe getter.unsafeInvoke(on: value) == 47)
+        var escaped: NativeSwiftBorrowedValue?
+        try value.withBorrowedValue { borrowed in
+            escaped = borrowed
+            let number = try unsafe read.unsafeInvoke(on: borrowed)
+            #expect(number == 47)
+            #expect(throws: NativeSwiftValueError.valueInUse) { try unsafe add.unsafeInvoke(on: value, 1) }
+            #expect(throws: NativeSwiftValueError.valueInUse) { try unsafe take.unsafeInvoke(on: borrowed) }
+            #expect(throws: NativeSwiftValueError.valueInUse) { try unsafe take.unsafeInvoke(on: value) }
+        }
+        #expect(throws: NativeSwiftBorrowError.expiredBorrow) { try unsafe read.unsafeInvoke(on: escaped!) }
+        #expect(try unsafe take.unsafeInvoke(on: value) == 47)
+        #expect(value.isConsumed && counts.destructions == 1)
+        #expect(throws: NativeSwiftValueError.consumedValue) { try unsafe read.unsafeInvoke(on: value) }
+    }
+
+    @Test func runtimeMemberAccessSurvivesSuspensionAndNativeFailure() async throws {
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self)
+        let counts = ArgumentCounts()
+        let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
+        let abi = try NativeType.opaque(named: value.type.name)
+        let read = try await value.type.method(named: "readAsync()", as: (() async -> Int64).self, receiverABI: abi)
+        let add = try await value.type.method(named: "addThenThrow(_:)", as: ((Int64) async throws -> Void).self,
+            receiverABI: abi, mutating: true)
+        let take = try await value.type.method(named: "takeNumberAsync()", as: (() async -> Int64).self,
+            receiverABI: abi, consuming: true)
+        #expect(try unsafe await read.unsafeInvoke(on: value) == 42)
+        do {
+            try unsafe await add.unsafeInvoke(on: value, 5)
+            Issue.record("Native failure was not propagated")
+        } catch is NativeSwiftError { }
+        #expect(try unsafe await read.unsafeInvoke(on: value) == 47)
+        #expect(!value.isConsumed && counts.destructions == 0)
+        #expect(try unsafe await take.unsafeInvoke(on: value) == 47)
+        #expect(value.isConsumed && counts.destructions == 1)
+    }
 
     @Test func aCopyOfATemporaryRetainsItsManagedPayload() async throws {
         let make = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.makeOpaque(_:_:)",

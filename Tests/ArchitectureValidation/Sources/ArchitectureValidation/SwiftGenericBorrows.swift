@@ -68,10 +68,10 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     try check(try unsafe echo.unsafeInvoke(nil) == nil, "Generic optional wrapper preserves nil")
 
     let type = try await runtime.swiftType(named: "SwiftValueFixtures.BorrowedRuntimeRecord")
-    let text = try await type.borrowedGetter(named: "text", as: String.self)
-    let changed = try await type.borrowedGetter(named: "changed", as: AnyObject?.self)
-    let length = try await type.borrowedMethod(named: "length()", as: (() -> Int).self)
-    let cancel = try await type.borrowedMethod(named: "cancel()", as: (() -> Void).self)
+    let text = try await type.getter(named: "text", as: (() -> String).self, receiverABI: .opaque(named: type.name))
+    let changed = try await type.getter(named: "changed", as: (() -> AnyObject?).self, receiverABI: .opaque(named: type.name))
+    let length = try await type.method(named: "length()", as: (() -> Int).self, receiverABI: .opaque(named: type.name))
+    let cancel = try await type.method(named: "cancel()", as: (() -> Void).self, receiverABI: .opaque(named: type.name))
     let observe = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.observeGeneric<A>(() -> A, Swift.String, Swift.AnyObject, Swift.UnsafeMutablePointer<Swift.Int32>, (SwiftValueFixtures.BorrowedRuntimeRecord) -> ()) -> A",
         as: ((NativeSwiftClosure<() -> Bool>, String, AnyObject, UnsafeMutablePointer<Int32>, NativeSwiftBorrowingClosure<Void>) -> Bool).self,

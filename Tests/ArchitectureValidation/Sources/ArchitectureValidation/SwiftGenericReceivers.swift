@@ -334,8 +334,8 @@ private struct BindingBoolAdapter: ABIBridgeValue {
     try check(unsafe both.unsafeInvoke() == 42, "Independent nominal and member witnesses follow canonical order")
     let argument = try await runtime.swiftType(named: "SwiftValueFixtures.GenericReceiverNumber")
     let borrowedType = try await runtime.swiftType(named: "SwiftValueFixtures.BindingBorrowedRecord", genericArguments: [.type(argument)])
-    let measure = try await borrowedType.borrowedMethod(named: "measure()", as: (() -> Int64).self)
-    let measured = try await borrowedType.borrowedGetter(named: "measured", as: Int64.self)
+    let measure = try await borrowedType.method(named: "measure()", as: (() -> Int64).self, receiverABI: .opaque(named: borrowedType.name))
+    let measured = try await borrowedType.getter(named: "measured", as: (() -> Int64).self, receiverABI: .opaque(named: borrowedType.name))
     let callbackFailure = Mutex<(any Error)?>(nil)
     let callback = try NativeSwiftBorrowingClosure<(Int64, Int64)>(borrowing: borrowedType) { value in
         do { return try unsafe (measure.unsafeInvoke(on: value), measured.unsafeInvoke(on: value)) }

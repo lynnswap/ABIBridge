@@ -1,3 +1,5 @@
+public enum RuntimeTicketFailure: Error { case rejected }
+
 public struct RuntimeTicket: ~Copyable {
     public let token: AnyObject
     public var number: Int64
@@ -8,6 +10,19 @@ public struct RuntimeTicket: ~Copyable {
     public func read() -> Int64 { number }
     public mutating func add(_ value: Int64) { number += value }
     public consuming func takeNumber() -> Int64 { number }
+    public nonisolated(nonsending) func readAsync() async -> Int64 {
+        await Task.yield()
+        return number
+    }
+    public nonisolated(nonsending) mutating func addThenThrow(_ value: Int64) async throws {
+        await Task.yield()
+        number += value
+        throw RuntimeTicketFailure.rejected
+    }
+    public nonisolated(nonsending) consuming func takeNumberAsync() async -> Int64 {
+        await Task.yield()
+        return number
+    }
 }
 
 public struct RuntimeRecord {

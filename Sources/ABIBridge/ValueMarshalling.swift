@@ -61,6 +61,7 @@ final class NativeValueStorage {
     private var destroyValue: ((UnsafeMutableRawPointer) -> Void)?
     private let ownsAllocation: Bool
     private var didRelinquish: (() -> Void)?
+    var transfersOwnership: Bool { didRelinquish != nil }
 
     init(borrowing address: UnsafeMutableRawPointer, owner: AnyObject, didRelinquish: (() -> Void)? = nil) {
         self.address = address

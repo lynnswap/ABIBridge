@@ -88,6 +88,43 @@ import Foundation
     try check(ticketToken == nil && ticketCounts.destructions == 1,
               "A transferred noncopyable payload is destroyed exactly once")
 
+    let memberCounts = ArgumentCounts()
+    let memberValue = try unsafe makeTicket.unsafeInvoke(ErrorToken { memberCounts.destroyed() })
+    let selfABI = try NativeType.opaque(named: memberValue.type.name)
+    let readMember = try await memberValue.type.method(named: "read()", as: (() -> Int64).self, receiverABI: selfABI)
+    let addMember = try await memberValue.type.method(named: "add(_:)", as: ((Int64) -> Void).self,
+        receiverABI: selfABI, mutating: true)
+    let takeMember = try await memberValue.type.method(named: "takeNumber()", as: (() async -> Int64).self,
+        receiverABI: selfABI, consuming: true)
+    try check(try unsafe readMember.unsafeInvoke(on: memberValue) == 42,
+              "An owned noncopyable value uses ordinary member invocation")
+    try unsafe addMember.unsafeInvoke(on: memberValue, 5)
+    try check(try unsafe readMember.unsafeInvoke(on: memberValue) == 47,
+              "A mutating member updates the runtime owner's storage directly")
+    var memberBorrow: NativeSwiftBorrowedValue?
+    try memberValue.withBorrowedValue { borrowed in
+        memberBorrow = borrowed
+        try check(try unsafe readMember.unsafeInvoke(on: borrowed) == 47,
+                  "The same member handle accepts a scoped borrowed value")
+        do {
+            try unsafe addMember.unsafeInvoke(on: memberValue, 1)
+            throw ArchitectureValidationFailure(description: "Expected conflicting runtime access")
+        } catch NativeSwiftValueError.valueInUse {
+            checks.append("An active borrow prevents alias mutation")
+        }
+    }
+    do {
+        _ = try unsafe readMember.unsafeInvoke(on: memberBorrow!)
+        throw ArchitectureValidationFailure(description: "Expected an expired member receiver")
+    } catch NativeSwiftBorrowError.expiredBorrow {
+        checks.append("Ordinary member calls reject an expired borrowed receiver")
+    }
+    let consumedNumber = try unsafe await takeMember.unsafeInvoke(on: memberValue)
+    try check(consumedNumber == 47 && memberValue.isConsumed,
+              "An async consuming member transfers the owned noncopyable value")
+    try check(memberCounts.destructions == 1,
+              "Async consuming self destroys its managed payload once")
+
     let empty = try await runtime.swiftFunction(named: "SwiftValueFixtures.makeOpaqueEmpty()",
         as: (() -> NativeSwiftValue).self)
     try unsafe empty.unsafeInvoke().withCopy { try check($0 is Void, "Empty opaque values preserve their runtime type") }
