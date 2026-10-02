@@ -25,7 +25,19 @@ struct SwiftValueCodec<Value>: Sendable {
         let isAdapter = base is any ABIBridgeValue.Type
         let managed = Value.self as? any ABIBridgeSwiftValue.Type
         objectResult = isObject && (!isAdapter || managed != nil)
-        if let managed {
+        if let tuple = SwiftTupleMetadata(Value.self) {
+            func field<Element>(_ type: Element.Type) throws -> CValueType {
+                guard !(type is any ABIBridgeValue.Type) || type is any ABIBridgeSwiftValue.Type,
+                      !(type is any SwiftClosureValue.Type) else {
+                    throw ABIResolutionError.unsupportedDeclaration("Tuple elements require their native Swift storage representation.")
+                }
+                return try SwiftValueCodec<Element>().type
+            }
+            type = try tuple.layout(for: Value.self, fields: tuple.elements.map {
+                try _openExistential($0.type, do: field)
+            })
+            cValue = nil
+        } else if let managed {
             if let components = managed.swiftABIType.cType {
                 guard (MemoryLayout<Value>.size...MemoryLayout<Value>.stride).contains(components.size) else {
                     throw ABIResolutionError.unsupportedDeclaration(

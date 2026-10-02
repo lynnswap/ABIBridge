@@ -59,6 +59,12 @@ ABIValueType *ABICreateSwiftStorageType(
 ABIValueType *ABICreateSwiftIndirectStorageType(
     size_t size, size_t alignment, ABIResolutionFailure **error);
 
+/// A formal tuple expands into independent SIL parameters/results. Offsets
+/// describe its concrete Swift storage, including nested tuple elements.
+ABIValueType *ABICreateSwiftTupleStorageType(
+    const ABIValueType *const *fields, const size_t *offsets, size_t count,
+    size_t size, size_t alignment, ABIResolutionFailure **error);
+
 /// Prepares a concrete synchronous, nonthrowing Swift call from fixed value
 /// layouts. These are storage descriptions, not a C calling convention.
 /// Parameters must use ordinary guaranteed ownership. Declared formally

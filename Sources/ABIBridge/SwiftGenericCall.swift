@@ -11,7 +11,11 @@ protocol SwiftGenericClosureValue: SwiftClosureValue {
 }
 
 struct SwiftGenericClosurePlan: Sendable {
-    let interface: SwiftCallInterface
+    enum Transport: Sendable {
+        case synchronous(SwiftCallInterface)
+        case asynchronous(SwiftAsyncCallInterface, inheritsCallerIsolation: Bool)
+    }
+    let transport: Transport
     let discriminator: UInt16
 }
 
@@ -73,31 +77,40 @@ struct SwiftGenericCallPlan: Sendable {
               (failure == nil) == (signature.failure == Never.self) else {
             throw ABIResolutionError.signatureMismatch(.init(expected: formal.spelling, found: []))
         }
-        guard !isAsync else {
-            throw ABIResolutionError.unsupportedDeclaration("Generic async callbacks require async reabstraction.")
-        }
         var types: [CValueType] = []
-        var authentication: [String] = []
+        var authentication = isAsync && signature.inheritsCallerIsolation ? ["-class"] : []
         for (formal, actual) in zip(parameters, signature.parameters) {
             try binding.validate(actual, for: formal)
             let type = try layout(formal, actual: actual, binding: binding)
             types.append(type)
-            authentication.append(try authType(actual, layout: type))
+            authentication.append(contentsOf: try authTypes(formal, actual: actual, binding: binding))
         }
         try binding.validate(signature.result, for: result)
         let resultType = try layout(result, actual: signature.result, binding: binding)
         let errorType = try failure.flatMap {
             binding.dependsOnParameters($0) ? try layout($0, actual: signature.failure, binding: binding) : nil
         }
-        return try SwiftGenericClosurePlan(interface: SwiftCallInterface.cached(result: resultType,
-            parameters: types, errorPlan: signature.makeErrorPlan(genericType: errorType)),
+        let errorPlan = try signature.makeErrorPlan(genericType: errorType)
+        let transport: SwiftGenericClosurePlan.Transport = isAsync
+            ? .asynchronous(try SwiftAsyncCallInterface(result: resultType, parameters: types,
+                errorPlan: errorPlan, inheritsCallerIsolation: signature.inheritsCallerIsolation),
+                inheritsCallerIsolation: signature.inheritsCallerIsolation)
+            : .synchronous(try SwiftCallInterface.cached(result: resultType, parameters: types, errorPlan: errorPlan))
+        return try SwiftGenericClosurePlan(transport: transport,
             discriminator: swiftClosureDiscriminator(parameters: authentication,
-                result: result == .tuple([]) ? nil : authType(signature.result, layout: resultType)))
+                results: authTypes(result, actual: signature.result, binding: binding)))
     }
 
-    private static func authType(_ type: Any.Type, layout: CValueType) throws -> String {
-        if ABISwiftValueIsIndirect(layout.handle) { return "-indirect" }
-        return try swiftClosureAuthType(type)
+    private static func authTypes(_ formal: SwiftFormalType, actual: Any.Type,
+                                  binding: SwiftGenericBinding) throws -> [String] {
+        if case .tuple(let fields) = formal, let tuple = SwiftTupleMetadata(actual) {
+            return try zip(fields, tuple.elements).flatMap {
+                try authTypes($0.0, actual: $0.1.type, binding: binding)
+            }
+        }
+        let layout = try layout(formal, actual: actual, binding: binding)
+        if ABISwiftValueIsIndirect(layout.handle) { return ["-indirect"] }
+        return [try swiftClosureAuthType(actual)]
     }
 
     private static func layout(_ formal: SwiftFormalType, actual: Any.Type,
@@ -118,8 +131,13 @@ struct SwiftGenericCallPlan: Sendable {
                                       alignment: MemoryLayout<Value>.alignment)
             case .metatype:
                 return try CValueType(scalar: ABIValuePointer)
-            case .tuple:
-                throw ABIResolutionError.unsupportedDeclaration("Generic tuple values require declaration-level element lowering.")
+            case .tuple(let fields):
+                guard let tuple = SwiftTupleMetadata(actual), fields.count == tuple.elements.count else {
+                    throw ABIResolutionError.signatureMismatch(.init(expected: formal.spelling, found: [String(reflecting: actual)]))
+                }
+                return try tuple.layout(for: type, fields: zip(fields, tuple.elements).map {
+                    try layout($0.0, actual: $0.1.type, binding: binding)
+                })
             case .pack:
                 throw ABIResolutionError.unsupportedDeclaration("Generic pack values require their element buffers.")
             case .function:

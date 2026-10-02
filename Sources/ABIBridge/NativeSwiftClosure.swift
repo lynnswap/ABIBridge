@@ -186,10 +186,14 @@ extension NativeSwiftClosure: SwiftClosureValue {
 
 extension NativeSwiftClosure: SwiftGenericClosureValue {
     func encodeGenericClosure(plan: SwiftGenericClosurePlan, retainingCode owner: Any?) throws -> NativeValueStorage {
-        guard case .synchronous(let original, let prepared) = call else {
-            throw ABIResolutionError.unsupportedDeclaration("A synchronous generic callback requires a synchronous closure.")
+        if case .asynchronous = plan.transport {
+            return try encodeGenericAsyncClosure(plan: plan, retainingCode: owner)
         }
-        let callback = try throwingClosureOwner(plan.interface, body: SwiftThrowingClosureBody(retainingCode: (original.codeOwner, owner)) { arguments, output, error in
+        guard case .synchronous(let interface) = plan.transport,
+              case .synchronous(let original, let prepared) = call else {
+            preconditionFailure("The prepared callback and its formal transport must agree.")
+        }
+        let callback = try throwingClosureOwner(interface, body: SwiftThrowingClosureBody(retainingCode: (original.codeOwner, owner)) { arguments, output, error in
             var didThrow = false
             let success: Bool
             if prepared.errorPlan != nil {

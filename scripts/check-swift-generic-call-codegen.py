@@ -39,6 +39,7 @@ def main():
         provider = root / "Tests/ManagedSwiftFixtures"
         run(*common, "-enable-library-evolution", "-module-name", "ManagedSwiftFixtures", "-emit-module",
             str(provider / "RuntimeValues.swift"), str(provider / "GenericCalls.swift"),
+            str(provider / "Values.swift"), str(provider / "ExplicitValues.swift"),
             "-emit-module-path", str(directory / "ManagedSwiftFixtures.swiftmodule"))
         source = root / "Tests/ManagedSwiftAdapters/GenericCallAdapters.swift"
         ir_path = directory / "calls.ll"
@@ -58,14 +59,23 @@ def main():
                         if "call swiftcc" in line and "swiftself" in line)
         require("call swiftcc void" in borrowed and "sret(" not in borrowed and "ptr noalias" in borrowed,
                 f"{target}: resilient callback must borrow one indirect input and return Void")
+        tuple_callback = next(line.strip() for line in body(ir, "probeGenericTupleCallback").splitlines()
+                              if "call swiftcc" in line and "swiftself" in line)
+        require("call swiftcc i16" in tuple_callback and "sret(" not in tuple_callback,
+                f"{target}: a generic tuple mixes a formal output pointer with coalesced direct results")
+        concrete_tuple = next(line.strip() for line in body(ir, "probeConcreteTupleCallback").splitlines()
+                              if "call swiftcc" in line and "swiftself" in line)
         for name in ["probeBorrowedGetter", "probeBorrowedMethod"]:
             require("swiftself" in body(ir, name), f"{target}: member needs indirect self context")
         require("@out Value" in sil and "@in_guaranteed RuntimeRecord" in sil,
                 f"{target}: missing formal generic/resilient SIL conventions")
         if target.startswith("arm64e"):
+            require('"ptrauth"(i32 0, i64 8528)' in tuple_callback, "Generic tuple callback authentication changed")
+            require('"ptrauth"(i32 0, i64 3335)' in concrete_tuple, "Concrete tuple callback authentication changed")
             require('"ptrauth"(i32 0, i64 29199)' in callback, "Generic result callback authentication changed")
             require('"ptrauth"(i32 0, i64 18589)' in borrowed, "Borrowed value callback authentication changed")
-        targets.append({"target": target, "genericCall": generic, "genericCallback": callback, "borrowedCallback": borrowed})
+        targets.append({"target": target, "genericCall": generic, "genericCallback": callback,
+                        "borrowedCallback": borrowed, "tupleCallback": tuple_callback, "concreteTupleCallback": concrete_tuple})
     report = {"compiler": run("xcrun", "swiftc", "--version").strip(), "runtimeTested": False, "targets": targets}
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))

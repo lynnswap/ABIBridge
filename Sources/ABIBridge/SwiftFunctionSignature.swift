@@ -70,11 +70,11 @@ struct SwiftFunctionSignature: Sendable {
 
     func closureDiscriminator() throws -> UInt16 {
         var parameters = isAsync && inheritsCallerIsolation ? ["-class"] : []
-        for type in self.parameters where type != Void.self {
-            parameters.append(try swiftClosureAuthType(type))
+        for type in self.parameters {
+            parameters.append(contentsOf: try swiftClosureAuthTypes(type))
         }
         return swiftClosureDiscriminator(parameters: parameters,
-            result: result == Void.self ? nil : try swiftClosureAuthType(result))
+            results: try swiftClosureAuthTypes(result))
     }
 }
 

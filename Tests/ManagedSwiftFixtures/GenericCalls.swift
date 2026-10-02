@@ -37,6 +37,21 @@ public func genericCallbackThenArgument<Value>(_ apply: () -> Value, _ argument:
     try values.map(transform)
 }
 @inline(never) public func optionalGeneric<Value>(_ value: Value?) -> Value? { value }
+@inline(never) public func tupleGeneric<Value>(_ value: (Value, Int8, Int8)) -> (Value, Int8, Int8) { value }
+@inline(never) public func pairGeneric<First, Second>(_ value: (First, Second)) -> (Second, First) { (value.1, value.0) }
+@inline(never) public func largeTupleGeneric<Value>(_ value: (Value, LargeManagedValue, Int64)) -> (Value, LargeManagedValue, Int64) { value }
+@inline(never) public func tupleCallbackGeneric<Value>(
+    _ value: (Value, Int8), _ body: ((Value, Int8)) -> (Value, Int8, Int8)
+) -> (Value, Int8, Int8) { body(value) }
+@inline(never) public nonisolated(nonsending) func suspendedPairGeneric<First, Second>(
+    _ value: (First, Second)
+) async -> (Second, First) { await Task.yield(); return (value.1, value.0) }
+@inline(never) public nonisolated(nonsending) func suspendedTransformGeneric<Input, Output>(
+    _ value: Input, _ body: (nonisolated(nonsending) (Input) async throws -> (Output, Int8))
+) async rethrows -> (Output, Int8) { try await body(value) }
+@inline(never) public nonisolated(nonsending) func suspendedLargeTupleGeneric<Value>(
+    _ value: (Value, LargeManagedValue, Int64)
+) async -> (Value, LargeManagedValue, Int64) { await Task.yield(); return value }
 @inline(never) public func genericFailure<Value, Failure: Error>(_ value: Value, _ failure: Failure, _ shouldThrow: Bool) throws(Failure) -> Value {
     if shouldThrow { throw failure }
     return value

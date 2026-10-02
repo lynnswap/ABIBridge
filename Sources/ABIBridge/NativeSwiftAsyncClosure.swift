@@ -94,6 +94,24 @@ private final class SwiftAsyncClosureCallbackOwner {
 }
 
 extension NativeSwiftClosure {
+    func encodeGenericAsyncClosure(plan: SwiftGenericClosurePlan, retainingCode owner: Any?) throws -> NativeValueStorage {
+        guard case .asynchronous(let interface, let isolation) = plan.transport,
+              case .asynchronous(let original, let prepared) = call else {
+            preconditionFailure("The prepared callback and its formal transport must agree.")
+        }
+        let callback = try SwiftAsyncClosureCallbackOwner(interface: interface,
+            body: SwiftAsyncClosureBody(inheritsCallerIsolation: isolation,
+                retainingCode: (original.codeOwner, owner)) { arguments, result, error in
+                let invocation = ABICreateSwiftAsyncInvocation(prepared.interface.handle, original.entry.function,
+                    original.entry.contextSize, result, arguments, original.value.context, error, nil)
+                precondition(invocation != nil, "The prepared async closure reabstraction must be valid.")
+                defer { withExtendedLifetime(original) { ABIReleaseSwiftAsyncInvocation(invocation!) } }
+                await invokeSwiftAsync(invocation!)
+                return ABISwiftAsyncInvocationDidThrow(invocation!)
+            })
+        return try Self.asyncStorage(callback, discriminator: plan.discriminator).encoded()
+    }
+
     /// Creates an async callback that preserves the native caller's task and isolation.
     /// The Sendable body may escape and be called concurrently. Native code receives its declared errors.
     public init<Result, Failure: Error, each Argument>(

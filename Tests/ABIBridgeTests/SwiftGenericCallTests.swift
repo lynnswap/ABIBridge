@@ -34,6 +34,83 @@ private final class GenericCaptureState: Sendable {
 
 @Suite(.serialized)
 struct SwiftGenericCallTests {
+    @Test func genericTupleElementsUseTheirDeclaredConventions() async throws {
+        let runtime = ABIRuntime.shared
+        let tuple = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.tupleGeneric<A>((A, Swift.Int8, Swift.Int8)) -> (A, Swift.Int8, Swift.Int8)",
+            as: (((String, Int8, Int8)) -> (String, Int8, Int8)).self,
+            genericArguments: [.type(String.self)])
+        let input: (String, Int8, Int8) = (String(repeating: "tuple", count: 100), -31, 72)
+        let output = try unsafe tuple.unsafeInvoke(input)
+        let control = tupleGeneric(input)
+        #expect(output.0 == control.0 && output.1 == control.1 && output.2 == control.2)
+
+        let pair = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.pairGeneric<A, B>((A, B)) -> (B, A)",
+            as: (((String, Int64)) -> (Int64, String)).self,
+            genericArguments: [.type(String.self), .type(Int64.self)])
+        let swapped = try unsafe pair.unsafeInvoke((input.0, Int64(42)))
+        #expect(swapped.0 == 42 && swapped.1 == input.0)
+
+        let callback = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.tupleCallbackGeneric<A>((A, Swift.Int8), ((A, Swift.Int8)) -> (A, Swift.Int8, Swift.Int8)) -> (A, Swift.Int8, Swift.Int8)",
+            as: (((String, Int8), NativeSwiftClosure<((String, Int8)) -> (String, Int8, Int8)>) -> (String, Int8, Int8)).self,
+            genericArguments: [.type(String.self)])
+        let body: NativeSwiftClosure<((String, Int8)) -> (String, Int8, Int8)> = try NativeSwiftClosure {
+            ($0.0 + "!", $0.1, -$0.1)
+        }
+        let called = try unsafe callback.unsafeInvoke((input.0, Int8(27)), body)
+        #expect(called.0 == input.0 + "!" && called.1 == 27 && called.2 == -27)
+    }
+
+    @MainActor @Test func mixedTupleResultsSurviveAsyncSuspension() async throws {
+        let runtime = ABIRuntime.shared
+        let large = LargeManagedValue(token: LifetimeToken(), a: 1, b: 2, c: 3, d: 4)
+        let input = (String(repeating: "large", count: 100), large, Int64(91))
+        let direct = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.largeTupleGeneric<A>((A, ManagedSwiftFixtures.LargeManagedValue, Swift.Int64)) -> (A, ManagedSwiftFixtures.LargeManagedValue, Swift.Int64)",
+            as: (((String, LargeManagedValue, Int64)) -> (String, LargeManagedValue, Int64)).self,
+            genericArguments: [.type(String.self)])
+        let output = try unsafe direct.unsafeInvoke(input)
+        #expect(output.0 == input.0 && output.1.token === large.token && output.1.d == 4 && output.2 == 91)
+        let suspended = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.suspendedLargeTupleGeneric<A>((A, ManagedSwiftFixtures.LargeManagedValue, Swift.Int64)) async -> (A, ManagedSwiftFixtures.LargeManagedValue, Swift.Int64)",
+            as: (((String, LargeManagedValue, Int64)) async -> (String, LargeManagedValue, Int64)).self,
+            genericArguments: [.type(String.self)])
+        let awaited = try unsafe await suspended.unsafeInvoke(input)
+        #expect(awaited.0 == input.0 && awaited.1.token === large.token && awaited.1.d == 4 && awaited.2 == 91)
+        let pair = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.suspendedPairGeneric<A, B>((A, B)) async -> (B, A)",
+            as: (((String, Int64)) async -> (Int64, String)).self,
+            genericArguments: [.type(String.self), .type(Int64.self)])
+        let swapped = try unsafe await pair.unsafeInvoke((input.0, Int64(55)))
+        #expect(swapped.0 == 55 && swapped.1 == input.0)
+    }
+
+    @MainActor @Test func genericAsyncCallbacksPreserveIsolationTupleResultsAndErrors() async throws {
+        let function = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.suspendedTransformGeneric<A, B>(A, nonisolated(nonsending) (A) async throws -> (B, Swift.Int8)) async throws -> (B, Swift.Int8)",
+            as: ((String, NativeSwiftClosure<(String) async throws -> (String, Int8)>) async throws -> (String, Int8)).self,
+            genericArguments: [.type(String.self), .type(String.self)])
+        let operation: @Sendable (String) async throws -> (String, Int8) = { value in
+            MainActor.preconditionIsolated()
+            await Task.yield()
+            MainActor.preconditionIsolated()
+            if value.isEmpty { throw GenericConversionFailure.rejected }
+            return (value + "!", 42)
+        }
+        let body = try NativeSwiftClosure<(String) async throws -> (String, Int8)>(operation)
+        let text = String(repeating: "async tuple", count: 50)
+        let output = try unsafe await function.unsafeInvoke(text, body)
+        #expect(output.0 == text + "!" && output.1 == 42)
+        do {
+            _ = try unsafe await function.unsafeInvoke("", body)
+            Issue.record("Expected the callback's original error")
+        } catch let error as NativeSwiftError {
+            #expect(error.withUnderlyingError { $0 is GenericConversionFailure })
+        }
+    }
+
     @Test func multipleBindingsConstraintsAndCompositeValuesMatchNativeCalls() async throws {
         let runtime = ABIRuntime.shared
         let equal = try await runtime.swiftFunction(

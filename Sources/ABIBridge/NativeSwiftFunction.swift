@@ -153,9 +153,7 @@ extension SwiftCallInterface {
         }
 
         private static func equal(_ first: CValueType, _ second: CValueType) -> Bool {
-            // Storage equality alone does not include Swift's formal indirection.
-            first === second || (ABIValueTypesEqual(first.handle, second.handle)
-                && ABISwiftValueIsIndirect(first.handle) == ABISwiftValueIsIndirect(second.handle))
+            first === second || ABIValueTypesEqual(first.handle, second.handle)
         }
     }
 

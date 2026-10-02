@@ -4,6 +4,13 @@ import ABIBridgeCore
 import Testing
 
 struct SwiftGenericBindingTests {
+    @Test func tupleClosureAuthenticationMatchesCompilerLowering() throws {
+        let signature = try SwiftFunctionSignature((((String, Int8)) -> (String, Int8, Int8)).self)
+        #expect(try signature.closureDiscriminator() == 3335)
+        #expect(swiftClosureDiscriminator(parameters: ["-indirect", "$ss4Int8V"],
+            results: ["-indirect", "$ss4Int8V", "$ss4Int8V"]) == 8528)
+    }
+
     @Test func collectionSugarMatchesRuntimeAndToolchainDemanglers() {
         let nominal = "Example.map<A, B>(Swift.Array<A>, (A) -> B) -> Swift.Dictionary<Swift.String, Swift.Optional<B>>"
         let sugared = "Example.map<A, B>([A], (A) -> B) -> [Swift.String: B?]"

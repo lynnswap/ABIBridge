@@ -6,3 +6,9 @@ import ManagedSwiftFixtures
 @inline(never) public func probeBorrowedCallback(_ body: (RuntimeRecord) -> Void, _ value: RuntimeRecord) { body(value) }
 @inline(never) public func probeBorrowedGetter(_ value: RuntimeRecord) -> String { value.text }
 @inline(never) public func probeBorrowedMethod(_ value: RuntimeRecord) { value.cancel() }
+@inline(never) public func probeGenericTupleCallback<Value>(
+    _ body: ((Value, Int8)) -> (Value, Int8, Int8), _ value: (Value, Int8)
+) -> (Value, Int8, Int8) { body(value) }
+@inline(never) public func probeConcreteTupleCallback(
+    _ body: ((String, Int8)) -> (String, Int8, Int8), _ value: (String, Int8)
+) -> (String, Int8, Int8) { body(value) }
