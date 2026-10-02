@@ -23,8 +23,8 @@ struct SwiftArgumentConventionTests {
         #expect(try unsafe await seven.unsafeInvoke(1, 2, 3, 4, 5, 6, 7) == 28)
         #expect(try unsafe await nine.unsafeInvoke(1, 2, 3, 4, 5, 6, 7, 8, 9) == 45)
 
-        typealias Seven = NativeSwiftConcurrentClosure<Int64, Never, Int64, Int64, Int64, Int64, Int64, Int64, Int64>
-        typealias Nine = NativeSwiftConcurrentClosure<Int64, Never, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64>
+        typealias Seven = NativeSwiftClosure<@Sendable @concurrent (Int64, Int64, Int64, Int64, Int64, Int64, Int64) async -> Int64>
+        typealias Nine = NativeSwiftClosure<@Sendable @concurrent (Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64) async -> Int64>
         let applySeven = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.applySeven(_:)",
             as: (@concurrent (Seven) async -> Int64).self)
         let applyNine = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.applyNine(_:)",

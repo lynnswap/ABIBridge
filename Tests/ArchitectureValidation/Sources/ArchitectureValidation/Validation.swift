@@ -286,7 +286,7 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
             try check(unsafe decorate.unsafeInvoke(value) == architectureDecorate(value), "Swift owned String result (\(size))")
         }
         weak var observed: ArchitectureCounter?
-        var bound: NativeBoundSwiftMethod<Int, Int>?
+        var bound: NativeBoundSwiftMethod<(Int) -> Int>?
         do {
             let receiver = ArchitectureCounter(40)
             observed = receiver
@@ -298,7 +298,7 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         try check(observed == nil, "Swift bound receiver release")
 
         weak var privateObserved: ArchitecturePrivateCounter?
-        var privateMethod: NativeBoundSwiftMethod<Int, Int>?
+        var privateMethod: NativeBoundSwiftMethod<(Int) -> Int>?
         do {
             let receiver = ArchitecturePrivateCounter()
             privateObserved = receiver
@@ -312,7 +312,7 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
             try check(unsafe complete.unsafeInvoke(2) == 42, "Private Swift complete member declaration")
             let inherited = try await object.method(named: "inherited()", as: (() -> Int).self)
             try check(unsafe inherited.unsafeInvoke() == 42, "Private Swift superclass declaration")
-            let getter = try await object.getter(named: "value", as: Int.self)
+            let getter = try await object.getter(named: "value", as: (() -> Int).self)
             let setter = try await object.setter(named: "value", as: Int.self)
             try unsafe setter.unsafeInvoke(50)
             try check(unsafe getter.unsafeInvoke() == 50, "Private Swift getter and setter")

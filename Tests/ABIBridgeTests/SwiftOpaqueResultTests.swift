@@ -60,7 +60,7 @@ struct SwiftOpaqueResultTests {
         let type = try await ABIRuntime.shared.swiftType(named: "ManagedSwiftFixtures.OpaqueOwner")
         let owner = OpaqueOwner(ErrorLifetimeToken())
         let method = try await type.method(named: "extensionOpaque(_:)", as: ((Int64) -> NativeSwiftOpaqueValue).self)
-        let getter = try await type.getter(named: "extensionSummary", as: NativeSwiftOpaqueValue.self)
+        let getter = try await type.getter(named: "extensionSummary", as: (() -> NativeSwiftOpaqueValue).self)
         let object = try await type.method(named: "extensionClassOpaque()", as: (() -> NativeSwiftOpaqueValue).self)
         try unsafe method.unsafeInvoke(on: owner, 47).withValue { #expect(($0 as? any ExistentialValue)?.number == 47) }
         try unsafe getter.unsafeInvoke(on: owner).withValue { #expect(($0 as? any ExistentialValue)?.number == 48) }
@@ -170,7 +170,7 @@ struct SwiftOpaqueResultTests {
         let type = try await ABIRuntime.shared.swiftType(named: "ManagedSwiftFixtures.OpaqueOwner")
         let token = ErrorLifetimeToken(), owner = OpaqueOwner(token)
         let method = try await type.method(named: "make(_:)", as: ((Int64) -> NativeSwiftOpaqueValue).self)
-        let getter = try await type.getter(named: "summary", as: NativeSwiftOpaqueValue.self)
+        let getter = try await type.getter(named: "summary", as: (() -> NativeSwiftOpaqueValue).self)
         let staticMethod = try await type.staticMethod(named: "makeStatic(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftOpaqueValue).self)
         try unsafe method.unsafeInvoke(on: owner, 41).withValue { #expect(($0 as? any ExistentialValue)?.number == 41) }

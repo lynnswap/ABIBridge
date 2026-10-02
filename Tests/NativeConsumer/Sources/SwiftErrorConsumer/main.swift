@@ -15,7 +15,7 @@ func prepareAsyncClosureError(_ path: String, factoryPath: String, handoffs: Int
     defer { dlclose(original) }
     let descriptor = unsafeBitCast(accessor, to: (@convention(c) () -> UnsafeRawPointer).self)()
     let runtime = ABIRuntime()
-    typealias Callback = NativeSwiftConcurrentClosure<Void, any Error, UnsafeRawPointer>
+    typealias Callback = NativeSwiftClosure<@Sendable @concurrent (UnsafeRawPointer) async throws -> Void>
     let factory = try await runtime.swiftFunction(named: "ErrorClosureFactory.makeAsync(_:)",
         as: ((UnsafeRawPointer) -> Callback).self, in: .path(URL(fileURLWithPath: factoryPath)))
     let identity = try await runtime.swiftFunction(named: "SwiftErrorConsumer.handoffAsync(_:)",
@@ -42,11 +42,11 @@ func prepareClosureError(_ path: String, factoryPath: String, handoffs: Int) asy
     let entry = unsafeBitCast(accessor, to: (@convention(c) () -> UnsafeRawPointer).self)()
     let runtime = ABIRuntime()
     let factory = try await runtime.swiftFunction(named: "ErrorClosureFactory.make(_:)",
-        as: ((UnsafeRawPointer) -> NativeSwiftThrowingClosure<Void, any Error, UnsafeRawPointer>).self,
+        as: ((UnsafeRawPointer) -> NativeSwiftClosure<(UnsafeRawPointer) throws -> Void>).self,
         in: .path(URL(fileURLWithPath: factoryPath)))
     var closure = try unsafe factory.unsafeInvoke(UnsafeRawPointer(entry))
     let identity = try await runtime.swiftFunction(named: "SwiftErrorConsumer.handoff(_:)",
-        as: ((NativeSwiftThrowingClosure<Void, any Error, UnsafeRawPointer>) -> NativeSwiftThrowingClosure<Void, any Error, UnsafeRawPointer>).self)
+        as: ((NativeSwiftClosure<(UnsafeRawPointer) throws -> Void>) -> NativeSwiftClosure<(UnsafeRawPointer) throws -> Void>).self)
     for _ in 0..<handoffs { closure = try unsafe identity.unsafeInvoke(closure) }
     let value: any Error = PayloadError(code: 43)
     let result: NativeSwiftError

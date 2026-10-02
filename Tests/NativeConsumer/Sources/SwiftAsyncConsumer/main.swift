@@ -25,9 +25,9 @@ public final class AsyncReceiver {
 }
 
 @MainActor
-func extractedAsyncMethod() async throws -> NativeSwiftAsyncMethod<Int64, Int64> {
+func extractedAsyncMethod() async throws -> NativeSwiftMethod<nonisolated(nonsending) (Int64) async throws(Failure) -> Int64> {
     weak var observed: AsyncReceiver?
-    let method: NativeSwiftAsyncMethod<Int64, Int64>
+    let method: NativeSwiftMethod<nonisolated(nonsending) (Int64) async throws(Failure) -> Int64>
     do {
         let original = AsyncReceiver(1)
         observed = original
@@ -76,7 +76,7 @@ let callbackBody: (nonisolated(nonsending) @Sendable (Int64) async throws(Failur
     if value < 0 { throw Failure(code: 43) }
     return value + Context.value
 }
-let callback = try NativeSwiftAsyncClosure<Int64, Failure, Int64>(callbackBody)
+let callback = try NativeSwiftClosure<nonisolated(nonsending) @Sendable (Int64) async throws(Failure) -> Int64>(callbackBody)
 let callbackResult = try await Context.$value.withValue(35) { try unsafe await callback.unsafeInvoke(7) }
 precondition(callbackResult == 42)
 do {

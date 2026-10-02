@@ -26,7 +26,7 @@ import Synchronization
         checks.append(message)
     }
 
-    let getter = try await type.getter(named: "count", as: Int64.self)
+    let getter = try await type.getter(named: "count", as: (() -> Int64).self)
     let setter = try await type.setter(named: "count", as: Int64.self)
     let method = try await type.method(named: "render(_:)", as: ((Int64) -> Int64).self)
     let oracle = try await runtime.swiftFunction(named: "SwiftImportCallerControl.hookRender(\(name), Swift.Int64) -> Swift.Int64",
@@ -65,7 +65,7 @@ import Synchronization
     try check(try unsafe directOracle.unsafeInvoke(object!, 2) == 32, "Imported member fallback remains callable")
 
     let textSetter = try await type.setter(named: "text", as: String.self)
-    let textGetter = try await type.getter(named: "text", as: String.self)
+    let textGetter = try await type.getter(named: "text", as: (() -> String).self)
     let textOracle = try await runtime.swiftFunction(named: "SwiftImportCallerControl.hookSetText(\(name), Swift.String) -> Swift.String",
         as: ((AnyObject, String) -> String).self, in: caller)
     let setHook = try await unsafe textSetter.hookVirtualCalls(onFailure: failure) { call, value in try call.proceed(value + " set") }

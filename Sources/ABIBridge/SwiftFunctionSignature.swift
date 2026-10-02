@@ -78,6 +78,39 @@ struct SwiftFunctionSignature: Sendable {
     }
 }
 
+enum SwiftCallablePlan: Sendable {
+    case synchronous(SwiftCall)
+    case asynchronous(SwiftAsyncCall, SwiftAsyncImplementation)
+
+    init(signature: Any.Type, symbol: ResolvedSymbol, resolver: SymbolResolver?,
+         trailingType: CValueType? = nil, consumesArguments: Bool = false,
+         generic: SwiftGenericCallPlan? = nil) throws {
+        let description = try SwiftFunctionSignature(signature)
+        let errorPlan = try description.makeErrorPlan()
+        let opaque = try generic?.indirectResult == true ? nil
+            : SwiftOpaqueResultPlan.make(for: description.result, symbol: symbol, resolver: resolver)
+        if description.isAsync {
+            guard let resolver else {
+                throw ABIResolutionError.metadataUnavailable("Async calls require the native descriptor's resolver.")
+            }
+            self = .asynchronous(try SwiftAsyncCall(signature: signature, trailingType: trailingType,
+                consumesArguments: consumesArguments, errorPlan: errorPlan,
+                inheritsCallerIsolation: description.inheritsCallerIsolation,
+                opaqueResult: opaque), try SwiftAsyncImplementation(symbol: symbol, resolver: resolver))
+        } else {
+            self = .synchronous(try SwiftCall(signature: signature, trailingType: trailingType,
+                consumesArguments: consumesArguments, errorPlan: errorPlan, opaqueResult: opaque, generic: generic))
+        }
+    }
+
+    var errorPlan: SwiftErrorPlan? {
+        switch self {
+        case .synchronous(let call): call.errorPlan
+        case .asynchronous(let call, _): call.errorPlan
+        }
+    }
+}
+
 /// Shares value preparation between synchronous and asynchronous transports.
 /// The containing signature establishes the types used by typed invocation.
 struct SwiftCallValues: Sendable {

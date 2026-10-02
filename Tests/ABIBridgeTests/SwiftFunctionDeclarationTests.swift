@@ -49,6 +49,22 @@ struct SwiftFunctionDeclarationTests {
     }
 
     #if DEBUG
+    @Test func functionMetadataPreservesTheCompleteSignature() throws {
+        enum Failure: Error { case expected }
+        let synchronous = try SwiftFunctionSignature(((Int64, String) throws(Failure) -> String).self)
+        #expect(synchronous.parameters.elementsEqual([Int64.self, String.self], by: { $0 == $1 }))
+        #expect(synchronous.result == String.self && synchronous.failure == Failure.self)
+        #expect(!synchronous.isAsync)
+
+        let caller = try SwiftFunctionSignature((nonisolated(nonsending) @Sendable () async throws -> Void).self)
+        #expect(caller.parameters.isEmpty && caller.result == Void.self)
+        #expect(caller.failure == (any Error).self && caller.isAsync && caller.inheritsCallerIsolation)
+
+        let concurrent = try SwiftFunctionSignature((@concurrent (String) async -> Int64).self)
+        #expect(concurrent.parameters.elementsEqual([String.self], by: { $0 == $1 }) && concurrent.result == Int64.self)
+        #expect(concurrent.failure == Never.self && concurrent.isAsync && !concurrent.inheritsCallerIsolation)
+    }
+
     @Test(arguments: [
         "Example.use<A where A.Callback == (Swift.Int) -> Swift.String>(A) async throws -> Swift.String",
         "Example.use<A where A.Callback == Swift.Array<(Swift.Int) -> Swift.String>>(A) async throws -> Swift.String",

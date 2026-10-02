@@ -26,6 +26,10 @@ extension ABIRuntime {
 }
 
 extension NativeSwiftFunction {
+    // Swift 6.3 mismanages async task allocations when a same-type requirement
+    // decomposes Signature into a parameter pack. Transparent entry thunks keep
+    // that requirement out of the implementation frame, including in Debug builds.
+
     /// Intercepts this concrete Swift function through imports in loaded callers.
     ///
     /// The capturing closure receives typed arguments and a scoped `proceed`
@@ -56,14 +60,14 @@ extension NativeSwiftFunction {
     /// - Returns: A registration whose captures can be independently invalidated.
     /// - Throws: Selection/preparation errors or `NativeSwiftHookInstallationError`
     ///   containing partial publication and rollback outcomes.
-    @unsafe public nonisolated(nonsending) func hookImportedCalls(
+    @_transparent
+    @unsafe public nonisolated(nonsending) func hookImportedCalls<Result, Failure: Error, each Argument>(
         in importer: ImageSelector, from provider: ImageSelector? = nil,
         using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body: @escaping @Sendable (NativeSwiftFunctionInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
-    ) async throws -> NativeSwiftImportedFunctionHook {
-        try await installImportedHook(in: importer, from: provider, using: runtime, retaining: owner,
-            requiresMainActor: false, onFailure: onFailure, body: body)
+    ) async throws -> NativeSwiftImportedFunctionHook where Signature == (repeat each Argument) throws(Failure) -> Result {
+        try await _hookImportedCalls(in: importer, from: provider, using: runtime, retaining: owner, onFailure: onFailure, body: body)
     }
 
     /// Intercepts imports whose native callers are required to enter on MainActor.
@@ -72,28 +76,20 @@ extension NativeSwiftFunction {
     /// entry reports `wrongThread` and bypasses this callback before decoding its
     /// Swift arguments. `onFailure` must also be safe on background threads.
     /// Import selection, failure recovery and lifetime match `hookImportedCalls`.
-    @unsafe @MainActor public func hookMainActorImportedCalls(
+    @_transparent
+    @unsafe @MainActor public func hookMainActorImportedCalls<Result, Failure: Error, each Argument>(
         in importer: ImageSelector, from provider: ImageSelector? = nil,
         using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body: @escaping @MainActor @Sendable (NativeSwiftFunctionInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
-    ) async throws -> NativeSwiftImportedFunctionHook {
-        try await installImportedHook(in: importer, from: provider, using: runtime, retaining: owner,
-            requiresMainActor: true, onFailure: onFailure) {
-                (call: NativeSwiftFunctionInvocation<Result, repeat each Argument>, values: repeat each Argument) in
-                let input = ObjCReplacementIsolatedValue(value: (call, (repeat each values)))
-                return try MainActor.assumeIsolated {
-                    ObjCReplacementIsolatedValue(value: try body(input.value.0, repeat each input.value.1))
-                }.value
-            }
+    ) async throws -> NativeSwiftImportedFunctionHook where Signature == (repeat each Argument) throws(Failure) -> Result {
+        try await _hookMainActorImportedCalls(in: importer, from: provider, using: runtime, retaining: owner, onFailure: onFailure, body: body)
     }
 
-    private nonisolated(nonsending) func installImportedHook(
-        in importer: ImageSelector, from provider: ImageSelector?, using runtime: ABIRuntime,
-        retaining owner: (any Sendable)?, requiresMainActor: Bool,
-        onFailure: @escaping @Sendable (any Error) -> Void,
+    private func prepareHook<Result, each Argument>(
+        requiresMainActor: Bool, onFailure: @escaping @Sendable (any Error) -> Void,
         body: @escaping @Sendable (NativeSwiftFunctionInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
-    ) async throws -> NativeSwiftImportedFunctionHook {
+    ) throws -> (signature: SwiftHookSignature, handler: SwiftHookHandler) {
         guard errorPlan == nil else {
             throw ABIResolutionError.unsupportedDeclaration("Managed hooks cannot yet return native Swift errors.")
         }
@@ -104,9 +100,43 @@ extension NativeSwiftFunction {
         let signature = try prepared.erased(consumingArguments: consumesArguments, retaining: self)
         let handler = prepareSwiftImportedHandler(declaration: symbol.declaration, prepared: prepared,
             requiresMainActor: requiresMainActor, onFailure: onFailure, body: body)
+        return (signature, handler)
+    }
+
+    private nonisolated(nonsending) func installImportedHook(
+        in importer: ImageSelector, from provider: ImageSelector?, using runtime: ABIRuntime,
+        retaining owner: (any Sendable)?, prepared: (signature: SwiftHookSignature, handler: SwiftHookHandler)
+    ) async throws -> NativeSwiftImportedFunctionHook {
         let selection = try await runtime.swiftHookSelection(declaration: symbol.declaration,
             importer: importer, provider: provider)
-        return try await SwiftHookRegistry.shared.register(selection: selection, signature: signature,
-            handler: handler, codeOwner: owner)
+        return try await SwiftHookRegistry.shared.register(selection: selection, signature: prepared.signature,
+            handler: prepared.handler, codeOwner: owner)
     }
+
+    @usableFromInline nonisolated(nonsending) func _hookImportedCalls<Result, each Argument>(
+        in importer: ImageSelector, from provider: ImageSelector? = nil,
+        using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        body: @escaping @Sendable (NativeSwiftFunctionInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+    ) async throws -> NativeSwiftImportedFunctionHook {
+        let prepared = try prepareHook(requiresMainActor: false, onFailure: onFailure, body: body)
+        return try await installImportedHook(in: importer, from: provider, using: runtime, retaining: owner, prepared: prepared)
+    }
+
+    @usableFromInline @MainActor func _hookMainActorImportedCalls<Result, each Argument>(
+        in importer: ImageSelector, from provider: ImageSelector? = nil,
+        using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        body: @escaping @MainActor @Sendable (NativeSwiftFunctionInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+    ) async throws -> NativeSwiftImportedFunctionHook {
+        let prepared = try prepareHook(requiresMainActor: true, onFailure: onFailure) {
+                (call: NativeSwiftFunctionInvocation<Result, repeat each Argument>, values: repeat each Argument) in
+                let input = ObjCReplacementIsolatedValue(value: (call, (repeat each values)))
+                return try MainActor.assumeIsolated {
+                    ObjCReplacementIsolatedValue(value: try body(input.value.0, repeat each input.value.1))
+                }.value
+            }
+        return try await installImportedHook(in: importer, from: provider, using: runtime, retaining: owner, prepared: prepared)
+    }
+
 }

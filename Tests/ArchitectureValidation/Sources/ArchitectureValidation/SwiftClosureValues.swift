@@ -52,7 +52,7 @@ private final class ClosureProbeCapture: Sendable {
     }
     let apply = try await runtime.swiftFunction(
         named: "SwiftReplacementFixtures.callClosureValue(_:_:)",
-        as: ((NativeSwiftClosure<Int64, Int64>, Int64) -> Int64).self
+        as: ((NativeSwiftClosure<(Int64) -> Int64>, Int64) -> Int64).self
     )
     let callback = try NativeSwiftClosure { (value: Int64) in value + 7 }
     try check(try unsafe apply.unsafeInvoke(callback, 35) == 42,
@@ -62,7 +62,7 @@ private final class ClosureProbeCapture: Sendable {
 
     let echo = try await runtime.swiftFunction(
         named: "SwiftReplacementFixtures.echoClosureValue(_:)",
-        as: ((NativeSwiftClosure<Int64, Int64>) -> NativeSwiftClosure<Int64, Int64>).self
+        as: ((NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftClosure<(Int64) -> Int64>).self
     )
     var roundTrip = callback
     for _ in 0..<10_000 { roundTrip = try unsafe echo.unsafeInvoke(roundTrip) }
@@ -71,7 +71,7 @@ private final class ClosureProbeCapture: Sendable {
 
     let retain = try await runtime.swiftFunction(
         named: "SwiftReplacementFixtures.holdClosureValue(_:)",
-        as: ((NativeSwiftClosure<Int64, Int64>) -> ClosureValueHolder).self
+        as: ((NativeSwiftClosure<(Int64) -> Int64>) -> ClosureValueHolder).self
     )
     let destroyed = ClosureProbeCounter()
     weak var observed: ClosureProbeCapture?
@@ -92,7 +92,7 @@ private final class ClosureProbeCapture: Sendable {
 
     let factory = try await runtime.swiftFunction(
         named: "SwiftReplacementFixtures.makeStringClosureValue(_:)",
-        as: ((String) -> NativeSwiftClosure<String, String>).self
+        as: ((String) -> NativeSwiftClosure<(String) -> String>).self
     )
     let prefix = String(repeating: "owned prefix ", count: 100)
     let returned = try unsafe factory.unsafeInvoke(prefix)
@@ -101,7 +101,7 @@ private final class ClosureProbeCapture: Sendable {
 
     let applyRect = try await runtime.swiftFunction(
         named: "SwiftReplacementFixtures.callRectClosureValue(_:_:)",
-        as: ((NativeSwiftClosure<CGRect, CGRect>, CGRect) -> CGRect).self
+        as: ((NativeSwiftClosure<(CGRect) -> CGRect>, CGRect) -> CGRect).self
     )
     let translate = try NativeSwiftClosure { (value: CGRect) in value.offsetBy(dx: 3, dy: 4) }
     let rectangle = CGRect(x: 1, y: 2, width: 5, height: 6)
@@ -110,7 +110,7 @@ private final class ClosureProbeCapture: Sendable {
 
     let applyPointer = try await runtime.swiftFunction(
         named: "SwiftReplacementFixtures.callPointerClosureValue(_:_:)",
-        as: ((NativeSwiftClosure<Int64, UnsafePointer<Int64>?>, UnsafePointer<Int64>?) -> Int64).self
+        as: ((NativeSwiftClosure<(UnsafePointer<Int64>?) -> Int64>, UnsafePointer<Int64>?) -> Int64).self
     )
     let read = try NativeSwiftClosure { (value: UnsafePointer<Int64>?) -> Int64 in value?.pointee ?? -1 }
     var number: Int64 = 42
@@ -120,29 +120,29 @@ private final class ClosureProbeCapture: Sendable {
 
     let applyVoid = try await runtime.swiftFunction(
         named: "SwiftReplacementFixtures.callVoidClosureValue(_:)",
-        as: ((NativeSwiftClosure<Void>) -> Void).self
+        as: ((NativeSwiftClosure<() -> Void>) -> Void).self
     )
     let calls = ClosureProbeCounter()
-    let empty = try NativeSwiftClosure<Void> { calls.increment() }
+    let empty = try NativeSwiftClosure<() -> Void> { calls.increment() }
     try unsafe applyVoid.unsafeInvoke(empty)
     try check(calls.count == 1, "Zero-argument Void closure matches the native signature")
     let applyArray = try await runtime.swiftFunction(
         named: "SwiftReplacementFixtures.callArrayClosureValue(_:_:)",
-        as: ((NativeSwiftClosure<[String], [String]>, [String]) -> [String]).self
+        as: ((NativeSwiftClosure<([String]) -> [String]>, [String]) -> [String]).self
     )
     let arrayCallback = try NativeSwiftClosure { (value: [String]) in value + ["callback"] }
     try check(try unsafe applyArray.unsafeInvoke(arrayCallback, ["input"]) == ["input", "callback"],
               "Array callback uses the native nominal discriminator and buffer ownership")
     let makeArray = try await runtime.swiftFunction(
         named: "SwiftReplacementFixtures.makeArrayClosureValue(_:)",
-        as: ((String) -> NativeSwiftClosure<[String], [String]>).self
+        as: ((String) -> NativeSwiftClosure<([String]) -> [String]>).self
     )
     let returnedArray = try unsafe makeArray.unsafeInvoke(prefix)
     try check(try unsafe returnedArray.unsafeInvoke([]) == [prefix],
               "Returned Array closure retains its capture and transfers its result")
     let optionalArrays = try await runtime.swiftFunction(
         named: "SwiftReplacementFixtures.callOptionalArrayClosureValue(_:_:)",
-        as: ((NativeSwiftClosure<[String]?, [String]?>, [String]?) -> [String]?).self
+        as: ((NativeSwiftClosure<([String]?) -> [String]?>, [String]?) -> [String]?).self
     )
     let optionalArrayCallback = try NativeSwiftClosure { (value: [String]?) in value }
     let absentArray = try unsafe optionalArrays.unsafeInvoke(optionalArrayCallback, nil)
@@ -151,7 +151,7 @@ private final class ClosureProbeCapture: Sendable {
               "Optional Array preserves nil and empty with authenticated callback calls")
     let optionalStrings = try await runtime.swiftFunction(
         named: "SwiftReplacementFixtures.callOptionalStringClosureValue(_:_:)",
-        as: ((NativeSwiftClosure<String?, String?>, String?) -> String?).self
+        as: ((NativeSwiftClosure<(String?) -> String?>, String?) -> String?).self
     )
     let optionalStringCallback = try NativeSwiftClosure { (value: String?) in value.map { $0 + "!" } }
     let absentString = try unsafe optionalStrings.unsafeInvoke(optionalStringCallback, nil)
@@ -160,7 +160,7 @@ private final class ClosureProbeCapture: Sendable {
               "Optional String callback preserves its spare-bit payload and ownership")
     let makeOptionalString = try await runtime.swiftFunction(
         named: "SwiftReplacementFixtures.makeOptionalStringClosureValue(_:)",
-        as: ((String) -> NativeSwiftClosure<String?, String?>).self
+        as: ((String) -> NativeSwiftClosure<(String?) -> String?>).self
     )
     let returnedOptional = try unsafe makeOptionalString.unsafeInvoke(prefix)
     let absentResult = try unsafe returnedOptional.unsafeInvoke(nil)
@@ -169,7 +169,7 @@ private final class ClosureProbeCapture: Sendable {
               "Returned Optional String closure matches native pointer authentication")
     let vectorCall = try await runtime.swiftFunction(
         named: "SwiftReplacementFixtures.callExplicitVector(_:_:)",
-        as: ((NativeSwiftClosure<ExplicitVector, ExplicitVector>, ExplicitVector) -> ExplicitVector).self
+        as: ((NativeSwiftClosure<(ExplicitVector) -> ExplicitVector>, ExplicitVector) -> ExplicitVector).self
     )
     let vectorBody = try NativeSwiftClosure { (value: ExplicitVector) in
         ExplicitVector(token: value.token, x: value.x + 1, y: value.y + 2)
@@ -180,16 +180,16 @@ private final class ClosureProbeCapture: Sendable {
               "Explicit managed struct preserves mixed registers, ownership, and authentication")
     let choiceCall = try await runtime.swiftFunction(
         named: "SwiftReplacementFixtures.callExplicitChoice(_:_:)",
-        as: ((NativeSwiftClosure<ExplicitChoice, ExplicitChoice>, ExplicitChoice) -> ExplicitChoice).self
+        as: ((NativeSwiftClosure<(ExplicitChoice) -> ExplicitChoice>, ExplicitChoice) -> ExplicitChoice).self
     )
-    let choiceBody = try NativeSwiftClosure<ExplicitChoice, ExplicitChoice> { $0 }
+    let choiceBody = try NativeSwiftClosure<(ExplicitChoice) -> ExplicitChoice> { $0 }
     let choice = try unsafe choiceCall.unsafeInvoke(choiceBody, .number(-42))
     if case .number(let actual) = choice {
         try check(actual == -42, "Explicit enum preserves its payload and tag in an authenticated callback")
     } else { throw ArchitectureValidationFailure(description: "Explicit enum lost its number tag") }
     let choiceFactory = try await runtime.swiftFunction(
         named: "SwiftReplacementFixtures.makeExplicitChoice()",
-        as: (() -> NativeSwiftClosure<ExplicitChoice, ExplicitChoice>).self
+        as: (() -> NativeSwiftClosure<(ExplicitChoice) -> ExplicitChoice>).self
     )
     let returnedChoice = try unsafe choiceFactory.unsafeInvoke()
     weak var observedValue: ExplicitValueToken?
@@ -206,9 +206,9 @@ private final class ClosureProbeCapture: Sendable {
     try check(observedValue == nil, "Explicit enum destruction releases its reference payload")
     let largeCall = try await runtime.swiftFunction(
         named: "SwiftReplacementFixtures.callExplicitLarge(_:_:)",
-        as: ((NativeSwiftClosure<ExplicitLarge, ExplicitLarge>, ExplicitLarge) -> ExplicitLarge).self
+        as: ((NativeSwiftClosure<(ExplicitLarge) -> ExplicitLarge>, ExplicitLarge) -> ExplicitLarge).self
     )
-    let largeBody = try NativeSwiftClosure<ExplicitLarge, ExplicitLarge> { $0 }
+    let largeBody = try NativeSwiftClosure<(ExplicitLarge) -> ExplicitLarge> { $0 }
     let large = try unsafe largeCall.unsafeInvoke(largeBody, ExplicitLarge(token: token, a: 1, b: 2, c: 3, d: 4))
     try check(large.token === token && large.a == 1 && large.d == 4,
               "Indirect large managed value uses the compiler's closure discriminator")
@@ -222,7 +222,7 @@ private final class ClosureProbeCapture: Sendable {
               "Small resilient value uses declared indirect arguments and results")
     let applyResilient = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.applyResilient(_:_:)",
-        as: ((NativeSwiftClosure<ResilientValue, ResilientValue>, ResilientValue) -> ResilientValue).self
+        as: ((NativeSwiftClosure<(ResilientValue) -> ResilientValue>, ResilientValue) -> ResilientValue).self
     )
     let resilientBody = try NativeSwiftClosure { (value: ResilientValue) in value.advanced(7) }
     let resilientResult = try unsafe applyResilient.unsafeInvoke(resilientBody, resilient)
@@ -230,7 +230,7 @@ private final class ClosureProbeCapture: Sendable {
               "Resilient callback reabstracts indirect storage with native authentication")
     let makeResilient = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.returnResilient(_:)",
-        as: ((Int64) -> NativeSwiftClosure<ResilientValue, ResilientValue>).self
+        as: ((Int64) -> NativeSwiftClosure<(ResilientValue) -> ResilientValue>).self
     )
     let returnedResilient = try unsafe makeResilient.unsafeInvoke(7)
     let indirectResult = try unsafe returnedResilient.unsafeInvoke(resilient)
@@ -238,21 +238,21 @@ private final class ClosureProbeCapture: Sendable {
               "Returned resilient closure preserves ownership and authenticated indirect convention")
     let applyGeneric = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.applyGeneric(_:_:)",
-        as: ((NativeSwiftClosure<GenericValue<Int64>, GenericValue<Int64>>, GenericValue<Int64>) -> GenericValue<Int64>).self
+        as: ((NativeSwiftClosure<(GenericValue<Int64>) -> GenericValue<Int64>>, GenericValue<Int64>) -> GenericValue<Int64>).self
     )
     let genericBody = try NativeSwiftClosure { (value: GenericValue<Int64>) in GenericValue(value.value + 7) }
     try check(try unsafe applyGeneric.unsafeInvoke(genericBody, GenericValue(35)).value == 42,
               "Generic closure authentication uses the unspecialized nominal declaration")
     let makeGeneric = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.returnGeneric(_:)",
-        as: ((Int64) -> NativeSwiftClosure<GenericValue<Int64>, GenericValue<Int64>>).self
+        as: ((Int64) -> NativeSwiftClosure<(GenericValue<Int64>) -> GenericValue<Int64>>).self
     )
     let returnedGeneric = try unsafe makeGeneric.unsafeInvoke(7)
     try check(try unsafe returnedGeneric.unsafeInvoke(GenericValue(35)).value == 42,
               "Returned generic closure uses the same nominal authentication")
     let applyNested = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.applyNested(_:_:)",
-        as: ((NativeSwiftClosure<Namespace.箱<Int64>, Namespace.箱<Int64>>, Namespace.箱<Int64>) -> Namespace.箱<Int64>).self
+        as: ((NativeSwiftClosure<(Namespace.箱<Int64>) -> Namespace.箱<Int64>>, Namespace.箱<Int64>) -> Namespace.箱<Int64>).self
     )
     let nestedBody = try NativeSwiftClosure { (value: Namespace.箱<Int64>) in Namespace.箱(value.value + 7) }
     try check(try unsafe applyNested.unsafeInvoke(nestedBody, Namespace.箱(35)).value == 42,

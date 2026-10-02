@@ -40,16 +40,16 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
         checks.append(message)
     }
     let produce = try await runtime.swiftFunction(named: "SwiftValueFixtures.produceGeneric<A>(() -> A) -> A",
-        as: ((NativeSwiftClosure<Bool>) -> Bool).self, substituting: Bool.self)
+        as: ((NativeSwiftClosure<() -> Bool>) -> Bool).self, substituting: Bool.self)
     var applications = 0
-    let scalar = try unsafe NativeSwiftClosure<Bool>.withUnsafeNonescaping({ applications += 1; return true }) {
+    let scalar = try unsafe NativeSwiftClosure<() -> Bool>.withUnsafeNonescaping({ applications += 1; return true }) {
         try unsafe produce.unsafeInvoke($0)
     }
     try check(scalar && applications == 1, "Generic Bool result and scoped callback preserve caller isolation")
 
     let stringType = try await runtime.swiftType(named: "Swift.String")
     let string = try await runtime.swiftFunction(named: "SwiftValueFixtures.produceGeneric<A>(() -> A) -> A",
-        as: ((NativeSwiftClosure<String>) -> String).self, substituting: stringType)
+        as: ((NativeSwiftClosure<() -> String>) -> String).self, substituting: stringType)
     let reference = try await runtime.swiftFunction(named: "SwiftValueFixtures.referenceProducedString(_:)", as: ((String) -> String).self)
     let input = String(repeating: "managed", count: 100)
     let apply = try NativeSwiftClosure { input + "!" }
@@ -74,7 +74,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     let cancel = try await type.borrowedMethod(named: "cancel()", as: (() -> Void).self)
     let observe = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.observeGeneric<A>(() -> A, Swift.String, Swift.AnyObject, Swift.UnsafeMutablePointer<Swift.Int32>, (SwiftValueFixtures.BorrowedRuntimeRecord) -> ()) -> A",
-        as: ((NativeSwiftClosure<Bool>, String, AnyObject, UnsafeMutablePointer<Int32>, NativeSwiftBorrowingClosure<Void>) -> Bool).self,
+        as: ((NativeSwiftClosure<() -> Bool>, String, AnyObject, UnsafeMutablePointer<Int32>, NativeSwiftBorrowingClosure<Void>) -> Bool).self,
         substituting: Bool.self)
     let fire = try await runtime.swiftFunction(named: "SwiftValueFixtures.fireBorrowedRecord(_:_:_:)",
         as: ((String, AnyObject, UnsafeMutablePointer<Int32>) -> Void).self)

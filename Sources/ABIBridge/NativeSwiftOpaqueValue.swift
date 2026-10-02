@@ -50,7 +50,7 @@ final class SwiftOpaqueResultPlan: Sendable {
         read = { $0.address.load(as: Value.self) }
     }
 
-    static func make<Result>(for result: Result.Type, symbol: ResolvedSymbol,
+    static func make(for result: Any.Type, symbol: ResolvedSymbol,
                              resolver: SymbolResolver?) throws -> SwiftOpaqueResultPlan? {
         guard result == NativeSwiftOpaqueValue.self else { return nil }
         guard let resolver else {
@@ -73,7 +73,7 @@ final class SwiftOpaqueResultPlan: Sendable {
         let classBound = try classConstraint(descriptor)
         let accessor = try resolver.resolve(.init(name: "swift_getOpaqueTypeMetadata", language: .c),
                                             in: ImageSelector.automatic, loading: .loadedOnly)
-        let function = try NativeSwiftFunction<SwiftMetadataResponse, UInt, UnsafeRawPointer?, UnsafeRawPointer, UInt>(symbol: accessor)
+        let function = try NativeSwiftFunction<(UInt, UnsafeRawPointer?, UnsafeRawPointer, UInt) -> SwiftMetadataResponse>(symbol: accessor)
         let response = try unsafe descriptor.withUnsafeAddress { address in
             try unsafe function.unsafeInvoke(0, nil, address, 0)
         }

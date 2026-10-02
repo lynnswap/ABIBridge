@@ -21,8 +21,8 @@ private nonisolated(nonsending) func inheritedValueBody(_ gate: AsyncValueGate, 
         guard condition else { throw ArchitectureValidationFailure(description: message) }
         checks.append(message)
     }
-    typealias Concurrent = NativeSwiftConcurrentClosure<String, Never, AsyncValueGate, Int64>
-    typealias Caller = NativeSwiftAsyncClosure<Int64, Never, AsyncValueGate, Int64>
+    typealias Concurrent = NativeSwiftClosure<@Sendable @concurrent (AsyncValueGate, Int64) async -> String>
+    typealias Caller = NativeSwiftClosure<nonisolated(nonsending) @Sendable (AsyncValueGate, Int64) async -> Int64>
     let concurrent = try await runtime.swiftFunction(named: "SwiftValueFixtures.applyConcurrentValueClosure(_:_:_:)",
         as: (@concurrent (Concurrent, AsyncValueGate, Int64) async -> String).self)
     let gate = AsyncValueGate()
@@ -50,13 +50,13 @@ private nonisolated(nonsending) func inheritedValueBody(_ gate: AsyncValueGate, 
     try check(try await inherited.value == 42, "Caller-isolated callback retains native isolation across suspension")
 
     let small = try await runtime.swiftFunction(named: "SwiftValueFixtures.applySmallAsyncClosure(_:_:)",
-        as: (@concurrent (NativeSwiftConcurrentClosure<Int64, SmallError, Int64>, Int64) async throws(SmallError) -> Int64).self)
+        as: (@concurrent (NativeSwiftClosure<@Sendable @concurrent (Int64) async throws(SmallError) -> Int64>, Int64) async throws(SmallError) -> Int64).self)
     let smallBody: @Sendable (Int64) async throws(SmallError) -> Int64 = { (value: Int64) async throws(SmallError) in
         await Task.yield()
         if value < 0 { throw SmallError(0) }
         return value + 7
     }
-    let callback = try NativeSwiftConcurrentClosure<Int64, SmallError, Int64>(smallBody)
+    let callback = try NativeSwiftClosure<@Sendable @concurrent (Int64) async throws(SmallError) -> Int64>(smallBody)
     try check(try unsafe await small.unsafeInvoke(callback, 35) == 42, "Compiler caller invokes an authenticated async throwing callback")
     do {
         _ = try unsafe await small.unsafeInvoke(callback, -1)
@@ -66,13 +66,13 @@ private nonisolated(nonsending) func inheritedValueBody(_ gate: AsyncValueGate, 
     }
 
     let large = try await runtime.swiftFunction(named: "SwiftValueFixtures.applyLargeAsyncClosure(_:_:_:)",
-        as: (@concurrent (NativeSwiftConcurrentClosure<LargeError, LargeError, ErrorToken, Bool>, ErrorToken, Bool) async throws(LargeError) -> LargeError).self)
+        as: (@concurrent (NativeSwiftClosure<@Sendable @concurrent (ErrorToken, Bool) async throws(LargeError) -> LargeError>, ErrorToken, Bool) async throws(LargeError) -> LargeError).self)
     let largeBody: @Sendable (ErrorToken, Bool) async throws(LargeError) -> LargeError = { (token: ErrorToken, fail: Bool) async throws(LargeError) in
         await Task.yield()
         if fail { throw LargeError(token) }
         return LargeError(token)
     }
-    let largeCallback = try NativeSwiftConcurrentClosure<LargeError, LargeError, ErrorToken, Bool>(largeBody)
+    let largeCallback = try NativeSwiftClosure<@Sendable @concurrent (ErrorToken, Bool) async throws(LargeError) -> LargeError>(largeBody)
     let token = ErrorToken()
     let result = try unsafe await large.unsafeInvoke(largeCallback, token, false)
     try check(result.token === token && result.d == 4, "Async callback returns an owned indirect value")
@@ -83,7 +83,7 @@ private nonisolated(nonsending) func inheritedValueBody(_ gate: AsyncValueGate, 
         try error.withUnderlyingError { try check(($0 as? LargeError)?.token === token, "Async callback errors use independent indirect storage") }
     }
 
-    typealias Stack = NativeSwiftConcurrentClosure<Int64, Never, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64>
+    typealias Stack = NativeSwiftClosure<@Sendable @concurrent (Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64) async -> Int64>
     let stack = try await runtime.swiftFunction(named: "SwiftValueFixtures.applyStackAsyncClosure(_:)",
         as: (@concurrent (Stack) async -> Int64).self)
     try check(try unsafe await stack.unsafeInvoke(Stack(asyncStack)) == 385, "Async callback cleans up native stack arguments before suspension")
@@ -130,7 +130,7 @@ private nonisolated(nonsending) func inheritedValueBody(_ gate: AsyncValueGate, 
             await gate.wait()
             try Task.checkCancellation()
         }
-        let value = try NativeSwiftConcurrentClosure<Void, any Error, AsyncValueGate>(body)
+        let value = try NativeSwiftClosure<@Sendable @concurrent (AsyncValueGate) async throws -> Void>(body)
         try unsafe await value.unsafeInvoke(cancellationGate)
     }
     await cancellationGate.waitUntilSuspended(); cancelled.cancel(); await cancellationGate.open()

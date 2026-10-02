@@ -17,7 +17,7 @@ struct ForeignPoint: ABIBridgeValue {
 }
 
 @MainActor
-func prepare(_ path: String, extensionPath: String) async throws -> [NativeBoundSwiftMethod<Int, Int>] {
+func prepare(_ path: String, extensionPath: String) async throws -> [NativeBoundSwiftMethod<(Int) -> Int>] {
     guard let original = dlopen(path, RTLD_NOW | RTLD_LOCAL) else {
         fatalError(String(cString: dlerror()))
     }
@@ -31,10 +31,10 @@ func prepare(_ path: String, extensionPath: String) async throws -> [NativeBound
     let object = try unsafe initialize.unsafeInvoke("initial")
     let setText = try await type.setter(named: "text", as: String.self)
     try unsafe setText.unsafeInvoke(on: object, "ready")
-    let getText = try await type.getter(named: "text", as: String.self)
+    let getText = try await type.getter(named: "text", as: (() -> String).self)
     let text = try unsafe getText.unsafeInvoke(on: object)
     precondition(text == "ready")
-    let standard = try await type.staticGetter(named: "standard", as: String.self)
+    let standard = try await type.staticGetter(named: "standard", as: (() -> String).self)
     let standardText = try unsafe standard.unsafeInvoke()
     precondition(standardText == "standard")
 
@@ -62,7 +62,7 @@ func prepare(_ path: String, extensionPath: String) async throws -> [NativeBound
     let privateReceiver = try unsafe makePrivate.unsafeInvoke(40)
     let privateBound = try await runtime.object(privateReceiver).method(named: "score(_:)", as: ((Int) -> Int).self)
     weak var releasedPrivate: AnyObject?
-    let reusable: NativeSwiftMethod<Int, Int>
+    let reusable: NativeSwiftMethod<(Int) -> Int>
     do {
         let temporary = try unsafe makePrivate.unsafeInvoke(1)
         releasedPrivate = temporary
@@ -78,7 +78,7 @@ func prepare(_ path: String, extensionPath: String) async throws -> [NativeBound
     )
     let genericReceiver = try unsafe makeGeneric.unsafeInvoke(41)
     let genericBound = try await runtime.object(genericReceiver).method(named: "score(_:)", as: ((Int) -> Int).self)
-    let genericGetter = try await runtime.object(genericReceiver).getter(named: "currentScore", as: Int.self)
+    let genericGetter = try await runtime.object(genericReceiver).getter(named: "currentScore", as: (() -> Int).self)
     let genericValue = try unsafe genericGetter.unsafeInvoke()
     precondition(genericValue == 41)
     let makeConstrained = try await runtime.swiftFunction(
@@ -88,7 +88,7 @@ func prepare(_ path: String, extensionPath: String) async throws -> [NativeBound
     let constrained = try await runtime.object(constrainedReceiver).method(
         named: "constrainedScore(_:)", as: ((Int) -> Int).self
     )
-    let constrainedGetter = try await runtime.object(constrainedReceiver).getter(named: "constrainedValue", as: Int.self)
+    let constrainedGetter = try await runtime.object(constrainedReceiver).getter(named: "constrainedValue", as: (() -> Int).self)
     let constrainedValue = try unsafe constrainedGetter.unsafeInvoke()
     precondition(constrainedValue == 40)
     await runtime.removeCachedResults()

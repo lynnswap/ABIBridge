@@ -91,8 +91,7 @@ struct SwiftAsyncInvocationTests {
             as: (nonisolated(nonsending) (Int64) async -> Int64).self, in: immediate.symbol.image)
         #expect(try unsafe await inImage.unsafeInvoke(9) == 10)
         let explicitConvention = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.asyncConcurrent(_:_:_:)",
-            as: (nonisolated(nonsending) (AsyncGate, ErrorLifetimeToken, Int64) async -> String).self,
-            inheritsCallerIsolation: false)
+            as: (@concurrent (AsyncGate, ErrorLifetimeToken, Int64) async -> String).self)
         let overrideGate = AsyncGate()
         let overrideTask = Task { try unsafe await explicitConvention.unsafeInvoke(overrideGate, token, 8) }
         await overrideGate.waitUntilSuspended(); await overrideGate.open()

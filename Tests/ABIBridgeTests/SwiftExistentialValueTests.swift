@@ -151,7 +151,7 @@ struct SwiftExistentialValueTests {
     }
 
     @Test func generatedAndReturnedClosuresCarryOpaqueContainers() async throws {
-        typealias Callback = NativeSwiftClosure<any ExistentialValue, any ExistentialValue>
+        typealias Callback = NativeSwiftClosure<(any ExistentialValue) -> any ExistentialValue>
         let runtime = ABIRuntime.shared
         let apply = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.applyExistentialClosure(_:_:)",
             as: ((Callback, any ExistentialValue) -> any ExistentialValue).self)
@@ -164,18 +164,18 @@ struct SwiftExistentialValueTests {
         #expect(try unsafe stored.unsafeInvoke(InlineExistentialValue(7)).number == 7)
 
         let applyAny = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.applyAnyExistentialClosure(_:_:)",
-            as: ((NativeSwiftClosure<Any, Any>, Any) -> Any).self)
-        #expect(try unsafe applyAny.unsafeInvoke(NativeSwiftClosure<Any, Any> { $0 }, "value") as? String == "value")
+            as: ((NativeSwiftClosure<(Any) -> Any>, Any) -> Any).self)
+        #expect(try unsafe applyAny.unsafeInvoke(NativeSwiftClosure<(Any) -> Any> { $0 }, "value") as? String == "value")
     }
 
     @Test func generatedClassAndErrorCallbacksUseTheirDistinctConventions() async throws {
         let runtime = ABIRuntime.shared
         let apply = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.applyClassExistentialClosure(_:_:)",
-            as: ((NativeSwiftClosure<any ExistentialObjectValue, any ExistentialObjectValue>, any ExistentialObjectValue) -> any ExistentialObjectValue).self)
+            as: ((NativeSwiftClosure<(any ExistentialObjectValue) -> any ExistentialObjectValue>, any ExistentialObjectValue) -> any ExistentialObjectValue).self)
         let large = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.applyManyClassExistentialClosure(_:_:)",
-            as: ((NativeSwiftClosure<ManyObjectProtocols, ManyObjectProtocols>, ManyObjectProtocols) -> ManyObjectProtocols).self)
+            as: ((NativeSwiftClosure<(ManyObjectProtocols) -> ManyObjectProtocols>, ManyObjectProtocols) -> ManyObjectProtocols).self)
         let error = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.applyErrorExistentialClosure(_:_:)",
-            as: ((NativeSwiftClosure<any Error, any Error>, any Error) -> any Error).self)
+            as: ((NativeSwiftClosure<(any Error) -> any Error>, any Error) -> any Error).self)
         let object = ExistentialObject(ErrorLifetimeToken(), 42)
         #expect(try unsafe apply.unsafeInvoke(.init { $0 }, object) === object)
         #expect(try unsafe large.unsafeInvoke(.init { $0 }, object) === object)
@@ -184,8 +184,8 @@ struct SwiftExistentialValueTests {
 
     @Test func optionalCallbacksPreserveNilAndAuthentication() async throws {
         let runtime = ABIRuntime.shared
-        typealias Object = NativeSwiftClosure<(any ExistentialObjectValue)?, (any ExistentialObjectValue)?>
-        typealias Failure = NativeSwiftClosure<(any Error)?, (any Error)?>
+        typealias Object = NativeSwiftClosure<((any ExistentialObjectValue)?) -> (any ExistentialObjectValue)?>
+        typealias Failure = NativeSwiftClosure<((any Error)?) -> (any Error)?>
         let object = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.applyOptionalClassClosure(_:_:)",
             as: ((Object, (any ExistentialObjectValue)?) -> (any ExistentialObjectValue)?).self)
         let error = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.applyOptionalErrorClosure(_:_:)",
@@ -195,7 +195,7 @@ struct SwiftExistentialValueTests {
     }
 
     @Test func asyncGeneratedCallbackReturnsAnOwnedExistential() async throws {
-        typealias Callback = NativeSwiftConcurrentClosure<any ExistentialValue, Never, any ExistentialValue>
+        typealias Callback = NativeSwiftClosure<@Sendable @concurrent (any ExistentialValue) async -> any ExistentialValue>
         let body: @Sendable (any ExistentialValue) async -> any ExistentialValue = { value in
             await Task.yield()
             return InlineExistentialValue(value.number + 1)

@@ -86,7 +86,7 @@ struct SwiftConstrainedExtensionTests {
         let textMethod = try await runtime.object(text).method(named: "title(_:)", as: ((String) -> String).self)
         #expect(try unsafe numberMethod.unsafeInvoke("number:") == number.title("number:"))
         #expect(try unsafe textMethod.unsafeInvoke("text:") == text.title("text:"))
-        let getter = try await runtime.object(number).getter(named: "number", as: Int.self)
+        let getter = try await runtime.object(number).getter(named: "number", as: (() -> Int).self)
         let setter = try await runtime.object(number).setter(named: "number", as: Int.self)
         number.number = 43
         #expect(number.number == 43)
@@ -412,7 +412,7 @@ struct SwiftConstrainedExtensionTests {
     @MainActor @Test func boundConstraintRetainsReceiverUntilFinalRelease() async throws {
         let runtime = ABIRuntime()
         weak var observed: ConstrainedBox<String>?
-        var method: NativeBoundSwiftMethod<String, String>?
+        var method: NativeBoundSwiftMethod<(String) -> String>?
         do {
             let receiver = ConstrainedBox(String(repeating: "retained", count: 100))
             observed = receiver

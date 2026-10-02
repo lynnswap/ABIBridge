@@ -118,7 +118,7 @@ struct SwiftClassHookTests {
         let object = try unsafe make.unsafeInvoke()
         let oracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".setAndRead(\(name), Swift.String) -> Swift.String",
             as: ((AnyObject, String) -> String).self, in: fixture.callerScope)
-        let getter = try await type.getter(named: "text", as: String.self)
+        let getter = try await type.getter(named: "text", as: (() -> String).self)
         let setter = try await type.setter(named: "text", as: String.self)
         let setterHook = try await unsafe setter.hookVirtualCalls(onFailure: { Issue.record("Unexpected: \($0)") }) { call, value in
             try call.proceed(value + " set")

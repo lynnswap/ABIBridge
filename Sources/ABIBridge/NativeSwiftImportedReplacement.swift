@@ -82,6 +82,10 @@ extension ABIRuntime {
 }
 
 extension NativeSwiftFunction {
+    // Swift 6.3 mismanages async task allocations when a same-type requirement
+    // decomposes Signature into a parameter pack. Transparent entry thunks keep
+    // that requirement out of the implementation frame, including in Debug builds.
+
     /// Prepares compiled Swift replacement at references in loaded importing images.
     ///
     /// The receiver is the source declaration to select; `replacement` is an
@@ -98,10 +102,18 @@ extension NativeSwiftFunction {
     ///     loader images. Keep such code alive yourself if no owner is supplied.
     /// - Returns: A plan whose typed originals are available before publication.
     /// - Throws: Declaration, image, import metadata or capture errors.
-    @unsafe public nonisolated(nonsending) func prepareImportedReplacement(
-        with replacement: NativeSwiftFunction<Result, repeat each Argument>, in importer: ImageSelector,
+    @_transparent
+    @unsafe public nonisolated(nonsending) func prepareImportedReplacement<Result, Failure: Error, ReplacementFailure: Error, each Argument>(
+        with replacement: NativeSwiftFunction<(repeat each Argument) throws(ReplacementFailure) -> Result>, in importer: ImageSelector,
         from provider: ImageSelector? = nil, using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil
-    ) async throws -> NativeSwiftImportedReplacement<NativeSwiftFunctionImplementation<Result, repeat each Argument>> {
+    ) async throws -> NativeSwiftImportedReplacement<NativeSwiftFunctionImplementation<Signature>> where Signature == (repeat each Argument) throws(Failure) -> Result {
+        try await _prepareImportedReplacement(with: replacement, in: importer, from: provider, using: runtime, retaining: owner)
+    }
+
+    @usableFromInline nonisolated(nonsending) func _prepareImportedReplacement<ReplacementSignature>(
+        with replacement: NativeSwiftFunction<ReplacementSignature>, in importer: ImageSelector,
+        from provider: ImageSelector? = nil, using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil
+    ) async throws -> NativeSwiftImportedReplacement<NativeSwiftFunctionImplementation<Signature>> {
         guard !isGeneric, !replacement.isGeneric else {
             throw ABIResolutionError.unsupportedDeclaration("Generic imported replacement requires a polymorphic replacement contract; use direct invocation.")
         }
@@ -120,10 +132,18 @@ extension NativeSwiftMethod {
     /// contract as the original member. Slot originals use this member's receiver
     /// plan, including mutating/consuming behavior selected at lookup.
     /// Other scope and lifetime requirements match function preparation.
-    @unsafe public nonisolated(nonsending) func prepareImportedReplacement(
-        with replacement: NativeSwiftMethod<Result, repeat each Argument>, in importer: ImageSelector,
+    @_transparent
+    @unsafe public nonisolated(nonsending) func prepareImportedReplacement<Result, Failure: Error, ReplacementFailure: Error, each Argument>(
+        with replacement: NativeSwiftMethod<(repeat each Argument) throws(ReplacementFailure) -> Result>, in importer: ImageSelector,
         from provider: ImageSelector? = nil, using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil
-    ) async throws -> NativeSwiftImportedReplacement<NativeSwiftMethodImplementation<Result, repeat each Argument>> {
+    ) async throws -> NativeSwiftImportedReplacement<NativeSwiftMethodImplementation<Signature>> where Signature == (repeat each Argument) throws(Failure) -> Result {
+        try await _prepareImportedReplacement(with: replacement, in: importer, from: provider, using: runtime, retaining: owner)
+    }
+
+    @usableFromInline nonisolated(nonsending) func _prepareImportedReplacement<ReplacementSignature>(
+        with replacement: NativeSwiftMethod<ReplacementSignature>, in importer: ImageSelector,
+        from provider: ImageSelector? = nil, using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil
+    ) async throws -> NativeSwiftImportedReplacement<NativeSwiftMethodImplementation<Signature>> {
         try SwiftErrorPlan.validateReplacement(replacement.errorPlan, for: errorPlan)
         let storage = try await runtime.prepareSwiftImportReplacement(target: symbol, replacement: replacement.symbol,
             importer: importer, provider: provider, owner: owner)

@@ -18,6 +18,27 @@ A label-only name obtains its parameter and result type names from the function 
 
 The framework/path and retained-image overloads use the same symbol indexes as other runtime lookups. Explicit targets are acquired by default; `loading: .loadedOnly` opts out. See <doc:ImageLoading>.
 
+## Complete callable signatures
+
+Prepared functions, methods, bound methods, and closures use one complete function type as their generic parameter:
+
+```swift
+let decorate: NativeSwiftFunction<(String) -> String> = try await runtime.swiftFunction(
+    named: "Example.decorate(_:)", as: ((String) -> String).self
+)
+let load: NativeSwiftFunction<@concurrent (String) async throws -> String> = try await runtime.swiftFunction(
+    named: "Example.load(_:)", as: (@concurrent (String) async throws -> String).self
+)
+```
+
+Calls can still throw lookup/conversion/invocation errors even when the native signature is nonthrowing. Native failures use NativeSwiftError. Async calls preserve their original task and resume on the caller's executor.
+
+When migrating existing annotations, replace the result-first argument list with a function type. For example, `NativeSwiftFunction<String, Int64>` becomes `NativeSwiftFunction<(Int64) -> String>` for a nonthrowing declaration. Include its native `throws(Failure)` and `async` effects when present. Apply the same change to NativeSwiftMethod, NativeBoundSwiftMethod, NativeSwiftFunctionImplementation, and NativeSwiftMethodImplementation.
+
+The separate async function/method types and throwing/async/concurrent closure types have been removed. Use NativeSwiftClosure with the corresponding function type, including `@Sendable` when the native closure declaration includes it. Returned closure wrappers and bound methods retain their original isolation requirements and are not Sendable merely because their signature is Sendable.
+
+Getter lookup now takes a complete zero-argument function type: replace `getter(named: "text", as: String.self)` with `getter(named: "text", as: (() -> String).self)`. The same rule applies to staticGetter and bound-object getters. Include native errors and async isolation in that function type. Use `@concurrent` in place of the former `inheritsCallerIsolation: false` override.
+
 ## Supported representations
 
 | Swift representation | Calling behavior |
@@ -25,8 +46,7 @@ The framework/path and retained-image overloads use the same symbol indexes as o
 | Bool, signed/unsigned 8–64-bit integers, Int, UInt, Float, Double, CGFloat | Native Swift scalar arguments and results |
 | Class references, AnyObject, and their optional forms | Guaranteed arguments and owned results |
 | String, Array<Element>, and their single-level optional forms | Stable Swift storage with Swift ownership, including array element lifetimes |
-| NativeSwiftClosure, NativeSwiftThrowingClosure | Owned concrete synchronous callbacks and returned closures, with declared error effects |
-| NativeSwiftAsyncClosure, NativeSwiftConcurrentClosure | Owned async closures with caller-isolated or concurrent conventions and declared error effects |
+| NativeSwiftClosure<Signature> | Owned callbacks and returned closures; the function signature carries native errors, async effects, and the caller-isolated or concurrent convention |
 | Unsafe pointers, OpaquePointer, Selector, and optional pointers | Borrowed pointer values |
 | CGPoint, CGSize, CGRect, NSRange | Known fixed value layouts lowered with the Swift ABI |
 | Any, simple protocol existentials, and their single-level optional forms | Compiler-managed containers with the native existential calling convention; see <doc:SwiftExistentialValues> |
@@ -49,7 +69,7 @@ The prepared handle is Sendable and can be reused concurrently. Each call uses s
 
 ## Unsupported declarations
 
-Use NativeSwiftInout, NativeSwiftBorrowing, and NativeSwiftConsuming for explicit parameter conventions; see <doc:SwiftArgumentConventions>. The explicit `substituting:` overload handles one unconstrained generic parameter and zero-argument callbacks returning it; see <doc:GenericSwiftValues>. Protocol witnesses and other generic shapes need separate adapters. Async function metatypes produce NativeSwiftAsyncFunction handles; see <doc:SwiftAsyncABI>. Synchronous throwing calls use the function metatype's declared error type; see <doc:SwiftErrorABI>. The caller still establishes the exact native signature: the resolver does not prove ABI compatibility from a name, a metatype, or a storage size.
+Use NativeSwiftInout, NativeSwiftBorrowing, and NativeSwiftConsuming for explicit parameter conventions; see <doc:SwiftArgumentConventions>. The explicit `substituting:` overload handles one unconstrained generic parameter and zero-argument callbacks returning it; see <doc:GenericSwiftValues>. Protocol witnesses and other generic shapes need separate adapters. Async function metatypes produce NativeSwiftFunction handles with an async Signature; see <doc:SwiftAsyncABI>. Synchronous throwing calls use the function metatype's declared error type; see <doc:SwiftErrorABI>. The caller still establishes the exact native signature: the resolver does not prove ABI compatibility from a name, a metatype, or a storage size.
 
 Incorrect signatures, invalid pointers, and violated ownership or isolation contracts can corrupt memory. The unsafe invocation boundary exposes that responsibility; conversion and resolution failures use Swift errors.
 

@@ -26,9 +26,6 @@ Start with <doc:SwiftFunctionInvocation> for free functions or <doc:SwiftMemberI
 - <doc:SwiftErrorABI>
 - <doc:SwiftAsyncABI>
 - ``NativeSwiftError``
-- ``NativeSwiftAsyncFunction``
-- ``NativeSwiftAsyncMethod``
-- ``NativeBoundSwiftAsyncMethod``
 
 ### Values and callbacks
 

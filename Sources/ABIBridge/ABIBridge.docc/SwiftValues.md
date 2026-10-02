@@ -19,9 +19,6 @@ Use the native declaration's calling convention to select a representation. Buil
 
 - <doc:SwiftClosureValues>
 - ``NativeSwiftClosure``
-- ``NativeSwiftThrowingClosure``
-- ``NativeSwiftAsyncClosure``
-- ``NativeSwiftConcurrentClosure``
 
 ### Custom and generic values
 

@@ -2,6 +2,11 @@ import ABIBridge
 import Darwin
 import Foundation
 
+func prepare<Signature>(named name: String, as signature: Signature.Type, in scope: ImageSelector,
+                        using runtime: ABIRuntime) async throws -> NativeSwiftFunction<Signature> {
+    try await runtime.swiftFunction(named: name, as: signature, in: scope)
+}
+
 struct ThreeValue: ABIBridgeValue {
     static let abiType = try! NativeType.structure(
         named: "SwiftFunctionFixture.Three", fields: [.int64, .int64, .int64]
@@ -17,7 +22,7 @@ struct ThreeValue: ABIBridgeValue {
 }
 
 @MainActor
-func prepare(_ path: String) async throws -> NativeSwiftFunction<String, String> {
+func prepare(_ path: String) async throws -> NativeSwiftFunction<(String) -> String> {
     guard let original = dlopen(path, RTLD_NOW | RTLD_LOCAL) else {
         fatalError(String(cString: dlerror()))
     }
@@ -29,8 +34,8 @@ func prepare(_ path: String) async throws -> NativeSwiftFunction<String, String>
     )
     let value = try unsafe answer.unsafeInvoke()
     precondition(value == 42)
-    let function = try await runtime.swiftFunction(
-        named: "SwiftFunctionFixture.decorate(_:)", as: ((String) -> String).self, in: scope
+    let function = try await prepare(
+        named: "SwiftFunctionFixture.decorate(_:)", as: ((String) -> String).self, in: scope, using: runtime
     )
     let transform = try await runtime.swiftFunction(
         named: "SwiftFunctionFixture.transform(SwiftFunctionFixture.Three) -> SwiftFunctionFixture.Three",

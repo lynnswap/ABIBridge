@@ -9,7 +9,7 @@ For a provider declaring `func run<T>(_ apply: () -> T) -> T`, supply its comple
 ```swift
 let run = try await ABIRuntime.shared.swiftFunction(
     named: "Example.run<A>(() -> A) -> A",
-    as: ((NativeSwiftClosure<String>) -> String).self,
+    as: ((NativeSwiftClosure<() -> String>) -> String).self,
     substituting: String.self
 )
 let suffix = "!"
@@ -28,11 +28,11 @@ For a native nonescaping `apply`, use ``NativeSwiftClosure/withUnsafeNonescaping
 ```swift
 let run = try await ABIRuntime.shared.swiftFunction(
     named: "Example.run<A>(() -> A) -> A",
-    as: ((NativeSwiftClosure<Bool>) -> Bool).self,
+    as: ((NativeSwiftClosure<() -> Bool>) -> Bool).self,
     substituting: Bool.self
 )
 var calls = 0
-let result = try unsafe NativeSwiftClosure<Bool>.withUnsafeNonescaping({
+let result = try unsafe NativeSwiftClosure<() -> Bool>.withUnsafeNonescaping({
     calls += 1
     return true
 }) { callback in
