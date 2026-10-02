@@ -89,7 +89,7 @@ struct SwiftValueCodec<Value>: Sendable {
 
     func makeStorage() -> NativeValueStorage {
         NativeValueStorage(size: cValue == nil && closure == nil ? MemoryLayout<Value>.stride : type.size,
-                           alignment: type.alignment)
+                           alignment: type.alignment, codeLifetime: closure == nil ? nil : SwiftValueCodeLifetime([]))
     }
 
     func encode(_ value: Value) throws -> NativeValueStorage {
@@ -102,7 +102,7 @@ struct SwiftValueCodec<Value>: Sendable {
     }
 
     func copy(from storage: NativeValueStorage, retaining owner: Any?) throws -> Value {
-        if let closure { return try closure.makeValue(storage.address.load(as: ABISwiftClosureValue.self), owner, false) as! Value }
+        if let closure { return try closure.makeValue(storage.address.load(as: ABISwiftClosureValue.self), owner, false, storage.codeLifetime) as! Value }
         if let cValue { return try cValue.decode(storage, retaining: owner) }
         if objectResult, !(Value.self is any NativeOptionalValue.Type), storage.address.load(as: UnsafeRawPointer?.self) == nil {
             throw ABIInvocationError.unexpectedNilResult(expected: String(reflecting: Value.self))
@@ -131,7 +131,7 @@ struct SwiftValueCodec<Value>: Sendable {
     func decode(_ storage: NativeValueStorage, retaining owner: Any?, retainingCode codeOwner: Any? = nil) throws -> Value {
         // Receiver/argument storage can belong to the object receiving this
         // closure later. Only code dependencies belong in its escaping context.
-        if let closure { return try closure.makeValue(storage.address.load(as: ABISwiftClosureValue.self), codeOwner, true) as! Value }
+        if let closure { return try closure.makeValue(storage.address.load(as: ABISwiftClosureValue.self), codeOwner, true, storage.codeLifetime) as! Value }
         if let cValue { return try cValue.decode(storage, retaining: owner) }
         if objectResult, !(Value.self is any NativeOptionalValue.Type),
            storage.address.load(as: UnsafeRawPointer?.self) == nil {

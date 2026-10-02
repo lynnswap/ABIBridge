@@ -168,6 +168,12 @@ struct SwiftGenericBinding: Sendable {
                 guard types.allSatisfy({ SwiftObjectType($0) != nil }) else {
                     throw ABIResolutionError.signatureMismatch(.init(expected: "A class type", found: types.map { String(reflecting: $0) }))
                 }
+            } else if conformance.name == "Swift.Copyable" {
+                guard types.allSatisfy(SwiftCopyability.accepts) else {
+                    throw ABIResolutionError.signatureMismatch(.init(
+                        expected: conformance.subject.spelling + ": Swift.Copyable",
+                        found: types.map { String(reflecting: $0) }))
+                }
             }
         }
         for requirement in declaration.requirements {

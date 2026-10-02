@@ -315,6 +315,12 @@ private struct OpaqueWordResult: ABIBridgeValue {
         checks.append("Runtime Copyable constraints protect generic types whose value-witness flags omit noncopyability")
     }
     let takeBox = try await boxType.method(named: "takeValue()", as: (() -> NativeSwiftValue).self, consuming: true)
+    do {
+        _ = try await boxType.method(named: "copiedValue()", as: (() -> NativeSwiftValue).self)
+        throw ArchitectureValidationFailure(description: "A noncopyable argument selected a Copyable-only member")
+    } catch ABIResolutionError.declarationNotFound {
+        checks.append("A member's Copyable requirement overrides nominal suppression")
+    }
     let unboxed = try unsafe takeBox.unsafeInvoke(on: box)
     try check(box.isConsumed && !unboxed.isConsumed && counts.destructions == 1,
               "Ordinary generic members transfer runtime result ownership")
@@ -337,6 +343,14 @@ private struct OpaqueWordResult: ABIBridgeValue {
     let copied = try copyable.copy()
     try check(copyable.isCopyable && (try copied.take(as: RuntimeConditionalValueBox<Int64>.self)).value == 42,
               "Conditional Copyable conformance permits a native generic value copy")
+    let copyableBoxType = try await runtime.swiftType(named: "SwiftValueFixtures.RuntimeValueBox",
+        genericArguments: [.type(Int64.self)])
+    let makeCopyableBox = try await copyableBoxType.initializer(named: "init(_:)",
+        as: ((NativeSwiftConsuming<Int64>) -> NativeSwiftValue).self)
+    let copyableBox = try unsafe makeCopyableBox.unsafeInvoke(NativeSwiftConsuming(Int64(42)))
+    let copyMember = try await copyableBoxType.method(named: "copiedValue()", as: (() -> Int64).self)
+    try check(try unsafe copyMember.unsafeInvoke(on: copyableBox) == 42,
+              "A Copyable-only member accepts a copyable argument on a noncopyable nominal owner")
     let ticket = try unsafe make.unsafeInvoke(ErrorToken {})
     let noncopyableType = try await runtime.swiftType(named: "SwiftValueFixtures.RuntimeConditionalValueBox", genericArguments: [.type(ticket.type)])
     let makeNoncopyable = try await noncopyableType.initializer(named: "init(_:)",

@@ -9,7 +9,13 @@ extension SwiftGenericDeclaration {
         while ["Global", "Static"].contains(entry.kind) {
             entry = try entry.requiredChild()
         }
-        var requirements = context?.requirements ?? []
+        // A nominal ~Copyable parameter may have a Copyable-only member.
+        // Swift emits that member with the default requirement; members that
+        // preserve suppression encode it in their own generic context.
+        var requirements = context?.requirements.filter {
+            if case .invertedProtocols = $0 { return false }
+            return true
+        } ?? []
         func collectContext(_ node: SwiftSyntax.Node) throws {
             for child in node.children() {
                 if child.kind == "DependentGenericSignature" {

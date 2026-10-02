@@ -41,7 +41,7 @@ The callback itself may escape and be called repeatedly; its native capture cont
 
 Callbacks execute synchronously on the native caller's thread. Prepare member handles before entry, and satisfy the declaration's actor or thread requirements at the calling boundary. No task or actor hop is introduced. A nonthrowing callback must handle member-invocation errors within its body, as the example reports them through `onFailure`.
 
-Call `copy()` on an active borrowed view to create an independent NativeSwiftValue. Copying requires a copyable native type; otherwise it throws NativeSwiftValueError.noncopyableType. The owner can outlive the callback and uses the same prepared member handles. NativeSwiftValue.withBorrowedValue provides the reverse path, a scoped view of an owned value.
+Call `copy()` on an active borrowed view to create an independent NativeSwiftValue. Copying requires a copyable native type; otherwise it throws NativeSwiftValueError.noncopyableType. An owned copy also requires Escapable: a nonescapable type reports ABIResolutionError.unsupportedDeclaration instead of escaping its native scope. The owner can outlive the callback and uses the same prepared member handles. NativeSwiftValue.withBorrowedValue provides the reverse path, a scoped view of an owned value.
 
 A borrowed view from a synchronous native callback cannot begin an async member call: it throws NativeSwiftBorrowError.synchronousBorrow because the native caller can release that storage when the callback returns. An owned-value borrow can begin an async member call while active; the operation retains read access until native completion. The view still expires when its scope ends, and saving the view alone never prolongs access.
 

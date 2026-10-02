@@ -10,6 +10,7 @@ final class SwiftOpaqueResultPlan: Sendable {
             : CValueType(indirectSwiftSize: layout.size, alignment: layout.alignment)
         value = try SwiftRuntimeValuePlan(metadata: metadata, type: type, resolver: resolver,
                                          retaining: owners.map(\.image))
+        try value.requireOwnedValue()
     }
 
     static func make(for result: Any.Type, symbol: ResolvedSymbol,
@@ -118,7 +119,10 @@ struct SwiftResultCodec<Value>: Sendable {
     private let runtimeValue: SwiftRuntimeValuePlan?
 
     init(opaque: SwiftOpaqueResultPlan? = nil, generic: SwiftGenericResult = .concrete) throws {
-        if case .runtimeValue(let plan) = generic { runtimeValue = plan } else { runtimeValue = nil }
+        if case .runtimeValue(let plan) = generic {
+            try plan.requireOwnedValue()
+            runtimeValue = plan
+        } else { runtimeValue = nil }
         if case .closure(let codec) = generic { closure = codec } else { closure = nil }
         if case .value = generic { genericValue = true } else { genericValue = false }
         if let genericType = generic.type {
@@ -146,7 +150,9 @@ struct SwiftResultCodec<Value>: Sendable {
 
     func makeStorage() -> NativeValueStorage {
         if let runtimeValue { return runtimeValue.makeStorage() }
-        if closure != nil { return NativeValueStorage(size: type.size, alignment: type.alignment) }
+        if closure != nil {
+            return NativeValueStorage(size: type.size, alignment: type.alignment, codeLifetime: SwiftValueCodeLifetime([]))
+        }
         if genericValue { return NativeValueStorage(size: MemoryLayout<Value>.stride, alignment: MemoryLayout<Value>.alignment) }
         if let opaque { return opaque.makeStorage() }
         return ordinary!.makeStorage()
@@ -154,7 +160,7 @@ struct SwiftResultCodec<Value>: Sendable {
 
     func decode(_ storage: NativeValueStorage, retaining owner: Any?, retainingCode codeOwner: Any?) throws -> Value {
         if let runtimeValue { return try runtimeValue.decode(storage) as! Value }
-        if let closure { return try closure.makeValue(storage.address.load(as: ABISwiftClosureValue.self), codeOwner, true) as! Value }
+        if let closure { return try closure.makeValue(storage.address.load(as: ABISwiftClosureValue.self), codeOwner, true, storage.codeLifetime) as! Value }
         if genericValue {
             constants.initialize(at: storage.address)
             return storage.take(as: Value.self)

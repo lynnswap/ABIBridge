@@ -79,6 +79,7 @@ public struct NativeSwiftBorrowedValue {
     }
 
     /// Copies the native value into an independent owner while the borrow is active.
+    /// The native type must be Copyable and Escapable.
     public func copy() throws -> NativeSwiftValue {
         try borrow.withAddress { try NativeSwiftValue.copy(from: $0, type: type) }
     }
@@ -116,7 +117,8 @@ public struct NativeSwiftBorrowingClosure<Result> {
         let result = try SwiftValueCodec<Result>()
         let discriminator = swiftClosureDiscriminator(parameters: ["-indirect"], results: try swiftClosureAuthTypes(Result.self))
         let interface = try SwiftCallInterface.cached(result: result.type, parameters: [argument])
-        let callback = try SwiftClosureCallbackOwner(interface: interface, body: SwiftClosureBody(retainingCode: type) { arguments, output in
+        let callback = try SwiftClosureCallbackOwner(interface: interface, body: SwiftClosureBody(
+            retainingCode: type, codeLifetime: codeLifetime) { arguments, output in
             let borrow = SwiftValueBorrow(UnsafeRawPointer(arguments![0]!))
             defer { borrow.expire() }
             let value = body(NativeSwiftBorrowedValue(type: type, borrow: borrow))
@@ -138,7 +140,7 @@ extension NativeSwiftBorrowingClosure: SwiftClosureValue {
 
     static func makeClosureCodec() throws -> SwiftClosureCodec {
         let pointer = try CValueType(scalar: ABIValuePointer)
-        return SwiftClosureCodec(type: try CValueType(fields: [pointer, pointer])) { _, _, _ in
+        return SwiftClosureCodec(type: try CValueType(fields: [pointer, pointer])) { _, _, _, _ in
             throw ABIResolutionError.unsupportedDeclaration("Runtime-typed callbacks cannot be decoded as returned closures.")
         }
     }

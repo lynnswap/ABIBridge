@@ -244,6 +244,28 @@ private struct RuntimeRejectedArgument: ABIBridgeValue {
         } catch ABIResolutionError.signatureMismatch { }
     }
 
+    @Test func memberCopyableRequirementsOverrideNominalSuppression() async throws {
+        let runtime = ABIRuntime.shared
+        let copyable = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeValueBox",
+            genericArguments: [.type(Int64.self)])
+        let initialize = try await copyable.initializer(named: "init(_:)",
+            as: ((NativeSwiftConsuming<Int64>) -> NativeSwiftValue).self)
+        let box = try unsafe initialize.unsafeInvoke(NativeSwiftConsuming(Int64(42)))
+        let copy = try await copyable.method(named: "copiedValue()", as: (() -> Int64).self)
+        #expect(try unsafe copy.unsafeInvoke(on: box) == 42)
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeTicket(_:)",
+            as: ((AnyObject) -> NativeSwiftValue).self)
+        let ticket = try unsafe make.unsafeInvoke(NSObject())
+        let noncopyable = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeValueBox",
+            genericArguments: [.type(ticket.type)])
+        do {
+            _ = try await noncopyable.method(named: "copiedValue()", as: (() -> NativeSwiftValue).self)
+            Issue.record("A member's explicit Copyable requirement was suppressed by its nominal type")
+        } catch ABIResolutionError.declarationNotFound(let declaration) {
+            #expect(declaration.name == "ManagedSwiftFixtures.RuntimeValueBox.copiedValue()")
+        }
+    }
+
     @Test @MainActor func runtimeArgumentsKeepAccessThroughAsyncCompletion() async throws {
         guard #available(macOS 26, iOS 26, tvOS 26, watchOS 26, visionOS 26, *) else { return }
         let runtime = ABIRuntime.shared

@@ -140,16 +140,18 @@ extension SwiftClosureValue {
 
 struct SwiftClosureCodec: Sendable {
     let type: CValueType
-    let makeValue: @Sendable (ABISwiftClosureValue, Any?, Bool) throws -> Any
+    let makeValue: @Sendable (ABISwiftClosureValue, Any?, Bool, SwiftValueCodeLifetime?) throws -> Any
 }
 
 final class SwiftClosureStorage {
     let value: ABISwiftClosureValue
     let implementation: SwiftImplementation
     let codeOwner: Any?
+    let codeLifetime: SwiftValueCodeLifetime?
 
     // Consumes one native context reference, including on preparation failure.
-    init(adopting value: ABISwiftClosureValue, discriminator: UInt16, retaining owner: Any?) throws {
+    init(adopting value: ABISwiftClosureValue, discriminator: UInt16, retaining owner: Any?,
+         codeLifetime: SwiftValueCodeLifetime? = nil) throws {
         do {
             guard let function = ABIAuthenticateSwiftClosureFunction(value.function, discriminator) else {
                 throw ABIInvocationError.unexpectedNilResult(expected: "a Swift closure")
@@ -164,6 +166,12 @@ final class SwiftClosureStorage {
             Unmanaged<AnyObject>.fromOpaque($0).takeRetainedValue()
         }
         codeOwner = (owner, implementation, callbackOwner)
+        let callbackLifetime = (callbackOwner as? SwiftClosureCodeOwner)?.codeLifetime
+        let images = implementation.image.map { [$0] } ?? []
+        let lifetime = codeLifetime ?? callbackLifetime
+            ?? (images.isEmpty ? nil : SwiftValueCodeLifetime(images))
+        self.codeLifetime = SwiftValueCodeLifetime.connect([lifetime, callbackLifetime].compactMap { $0 },
+            retaining: images)
     }
 
     deinit {
@@ -171,7 +179,7 @@ final class SwiftClosureStorage {
     }
 
     func encoded(codeLifetime: SwiftValueCodeLifetime? = nil) -> NativeValueStorage {
-        Self.copy(value, retaining: self, codeLifetime: codeLifetime)
+        Self.copy(value, retaining: self, codeLifetime: codeLifetime ?? self.codeLifetime)
     }
 
     static func copy(_ value: ABISwiftClosureValue, retaining owner: AnyObject,

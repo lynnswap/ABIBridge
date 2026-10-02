@@ -2,14 +2,19 @@ import ABIBridgeCore
 
 final class SwiftClosureCodeOwner {
     let value: Any
-    init(_ value: Any) { self.value = value }
+    let codeLifetime: SwiftValueCodeLifetime?
+    init(_ value: Any, codeLifetime: SwiftValueCodeLifetime? = nil) {
+        self.value = value
+        self.codeLifetime = codeLifetime
+    }
 }
 
 final class SwiftClosureBody {
     let codeOwner: SwiftClosureCodeOwner?
     let invoke: (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer) -> Void
-    init(retainingCode codeOwner: Any? = nil, _ invoke: @escaping (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer) -> Void) {
-        self.codeOwner = codeOwner.map(SwiftClosureCodeOwner.init)
+    init(retainingCode codeOwner: Any? = nil, codeLifetime: SwiftValueCodeLifetime? = nil,
+         _ invoke: @escaping (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer) -> Void) {
+        self.codeOwner = codeOwner.map { SwiftClosureCodeOwner($0, codeLifetime: codeLifetime) }
         self.invoke = invoke
     }
 }
@@ -124,10 +129,12 @@ public struct NativeSwiftClosure<Signature> {
         call = .synchronous(try Self.storage(callback, discriminator: discriminator), prepared)
     }
 
-    private static func storage(_ callback: SwiftClosureCallbackOwner, discriminator: UInt16) throws -> SwiftClosureStorage {
+    private static func storage(_ callback: SwiftClosureCallbackOwner, discriminator: UInt16,
+                                codeLifetime: SwiftValueCodeLifetime? = nil) throws -> SwiftClosureStorage {
         try SwiftClosureStorage(adopting: ABISwiftClosureValue(
             function: ABISignSwiftClosureFunction(callback.function, discriminator),
-            context: Unmanaged.passRetained(callback).toOpaque()), discriminator: discriminator, retaining: nil)
+            context: Unmanaged.passRetained(callback).toOpaque()), discriminator: discriminator, retaining: nil,
+            codeLifetime: codeLifetime)
     }
 
     /// Calls the retained native closure. Native errors are surfaced as NativeSwiftError.
@@ -170,15 +177,17 @@ extension NativeSwiftClosure: SwiftClosureValue {
             interface = original
         } else { interface = prepared.interface }
         let pointer = try CValueType(scalar: ABIValuePointer)
-        return SwiftClosureCodec(type: try CValueType(fields: [pointer, pointer])) { value, owner, taking in
+        return SwiftClosureCodec(type: try CValueType(fields: [pointer, pointer])) { value, owner, taking, codeLifetime in
             if !taking { ABIRetainSwiftClosureContext(value.context) }
-            let original = try SwiftClosureStorage(adopting: value, discriminator: generic?.discriminator ?? discriminator, retaining: owner)
+            let original = try SwiftClosureStorage(adopting: value, discriminator: generic?.discriminator ?? discriminator,
+                retaining: owner, codeLifetime: codeLifetime)
             if generic == nil && ABIIsSwiftClosureCallbackFunction(original.implementation.function) {
                 return Self(call: .synchronous(original, prepared))
             }
             // Native copies retain only the closure's heap context. Forwarding keeps
             // implementation images alive until the final native copy is destroyed.
-            let callback = try throwingClosureOwner(prepared.interface, body: SwiftThrowingClosureBody(retainingCode: original.codeOwner) { arguments, result, failure in
+            let callback = try throwingClosureOwner(prepared.interface, body: SwiftThrowingClosureBody(
+                retainingCode: original.codeOwner, codeLifetime: original.codeLifetime) { arguments, result, failure in
                 var didThrow = false
                 let encoded = generic?.parameters.needsEncoding == true ? generic!.parameters.encode(arguments) : nil
                 // throws(E) keeps its error output when E is bound to Never.
@@ -198,7 +207,8 @@ extension NativeSwiftClosure: SwiftClosureValue {
                 precondition(succeeded, "The prepared Swift closure forwarding call must be valid.")
                 return didThrow
             })
-            return Self(call: .synchronous(try storage(callback, discriminator: discriminator), prepared))
+            return Self(call: .synchronous(try storage(callback, discriminator: discriminator,
+                codeLifetime: original.codeLifetime), prepared))
         }
     }
 }
@@ -216,7 +226,8 @@ extension NativeSwiftClosure: SwiftGenericClosureValue {
               case .synchronous(let original, let prepared) = call else {
             preconditionFailure("The prepared callback and its formal transport must agree.")
         }
-        let callback = try throwingClosureOwner(interface, body: SwiftThrowingClosureBody(retainingCode: (original.codeOwner, owner)) { arguments, output, error in
+        let callback = try throwingClosureOwner(interface, body: SwiftThrowingClosureBody(
+            retainingCode: (original.codeOwner, owner), codeLifetime: original.codeLifetime) { arguments, output, error in
             var didThrow = false
             func invoke(_ arguments: UnsafePointer<UnsafeMutableRawPointer?>?) -> Bool {
                 if prepared.errorPlan != nil {
@@ -235,7 +246,8 @@ extension NativeSwiftClosure: SwiftGenericClosureValue {
         })
         let value = ABISwiftClosureValue(function: ABISignSwiftClosureFunction(callback.function, plan.discriminator),
             context: Unmanaged.passRetained(callback).toOpaque())
-        let adapted = try SwiftClosureStorage(adopting: value, discriminator: plan.discriminator, retaining: original)
+        let adapted = try SwiftClosureStorage(adopting: value, discriminator: plan.discriminator, retaining: original,
+            codeLifetime: original.codeLifetime)
         return adapted.encoded()
     }
 }

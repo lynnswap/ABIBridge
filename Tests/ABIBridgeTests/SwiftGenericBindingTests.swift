@@ -26,11 +26,42 @@ private final class RuntimeBorrowCopy: @unchecked Sendable {
 }
 
 struct SwiftGenericBindingTests {
+    @Test func nonescapableBorrowedValuesCannotBecomeOwnedCopies() async throws {
+        let module = "ScopedValue_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let fixture = try FixtureLibrary(swiftModule: module, swiftSource: """
+            public struct View: ~Escapable {
+                public let number: Int64
+                @_lifetime(immortal) public init(_ number: Int64) { self.number = number }
+            }
+            public func visit(_ body: (borrowing View) -> Void) { body(View(42)) }
+            """, linkArguments: ["-swift-version", "6", "-enable-library-evolution", "-enable-experimental-feature", "Lifetimes"])
+        defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        let type = try await runtime.swiftType(named: module + ".View", in: .path(fixture.libraryURL))
+        let metadata = await type.metadata
+        #expect(SwiftCopyability.accepts(metadata))
+        #expect(!SwiftEscapability.accepts(metadata))
+        let copied = RuntimeBorrowCopy()
+        let callback = try NativeSwiftBorrowingClosure<Void>(borrowing: type) { copied.accept($0) }
+        let visit = try await runtime.swiftFunction(named: module + ".visit((" + module + ".View) -> ()) -> ()",
+            as: ((NativeSwiftBorrowingClosure<Void>) -> Void).self, in: .path(fixture.libraryURL))
+        try unsafe visit.unsafeInvoke(callback)
+        do {
+            _ = try copied.take()
+            Issue.record("A nonescapable native borrow escaped into an owned runtime value")
+        } catch ABIResolutionError.unsupportedDeclaration { }
+        let plan = try SwiftRuntimeValuePlan(metadata: metadata, type: SwiftGenericParameters.storageType(metadata),
+            resolver: .shared, retaining: [type.image])
+        #expect(throws: ABIResolutionError.self) {
+            _ = try SwiftResultCodec<NativeSwiftValue>(generic: .runtimeValue(plan))
+        }
+    }
+
     enum RuntimeDependencyOperation: CaseIterable {
         case copiedResult, asyncMovedResult, receiverResult, asyncReceiverResult
         case addressReceiverResult, asyncAddressReceiverResult
         case replacedInout, throwingInout, copiedAlias, nativeCopiedAlias
-        case calleeMutation, throwingCalleeMutation, borrowedCallback
+        case calleeMutation, throwingCalleeMutation, borrowedCallback, callbackMutation, asyncCallbackMutation
     }
 
     @Test(.serialized, arguments: RuntimeDependencyOperation.allCases)
@@ -44,6 +75,8 @@ struct SwiftGenericBindingTests {
                 public consuming func opaqueSelf() -> some AnyObject { self }
                 public nonisolated(nonsending) consuming func opaqueSelfAsync() async -> some AnyObject { self }
                 public func update(from other: Box) { body = other.body }
+                public func apply(_ callback: (AnyObject) -> Void) { callback(self) }
+                public nonisolated(nonsending) func applyAsync(_ callback: nonisolated(nonsending) (AnyObject) async -> Void) async { await callback(self) }
             }
             public protocol Reader { func read() -> Int64 }
             public struct Record: Reader {
@@ -70,6 +103,10 @@ struct SwiftGenericBindingTests {
                 public func make() -> some AnyObject { Box { number() } }
                 public func makeRecord() -> some Reader { Record { number() } }
                 public func visit(_ callback: (Record) -> Void) { callback(Record { number() }) }
+                public func callback() -> (AnyObject) -> Void { { ($0 as! Box).update(from: Box { number() }) } }
+                public func asyncCallback() -> nonisolated(nonsending) (AnyObject) async -> Void {
+                    { object in await Task.yield(); (object as! Box).update(from: Box { number() }) }
+                }
                 public func update<T>(_ value: T) {
                     (value as AnyObject as! Box).update(from: Box { number() })
                 }
@@ -102,6 +139,25 @@ struct SwiftGenericBindingTests {
             }
             let receiverABI: NativeType? = factoryName == "makeRecord()" ? try .opaque(named: argument.type.name) : nil
             switch operation {
+            case .callbackMutation:
+                let make = try await runtime.swiftFunction(named: module + "Second.callback()",
+                    as: (() -> NativeSwiftClosure<(AnyObject) -> Void>).self, in: .path(second.libraryURL))
+                argumentLease = make.symbol.image.lease
+                let callback = try unsafe make.unsafeInvoke()
+                let apply = try await binding.type.method(named: "apply(_:)",
+                    as: ((NativeSwiftClosure<(AnyObject) -> Void>) -> Void).self)
+                try unsafe apply.unsafeInvoke(on: binding, callback)
+                return binding
+            case .asyncCallbackMutation:
+                let make = try await runtime.swiftFunction(named: module + "Second.asyncCallback()",
+                    as: (() -> NativeSwiftClosure<nonisolated(nonsending) (AnyObject) async -> Void>).self,
+                    in: .path(second.libraryURL))
+                argumentLease = make.symbol.image.lease
+                let callback = try unsafe make.unsafeInvoke()
+                let apply = try await binding.type.method(named: "applyAsync(_:)",
+                    as: (nonisolated(nonsending) (NativeSwiftClosure<nonisolated(nonsending) (AnyObject) async -> Void>) async -> Void).self)
+                try unsafe await apply.unsafeInvoke(on: binding, callback)
+                return binding
             case .receiverResult, .addressReceiverResult:
                 let method = try await argument.type.method(named: "opaqueSelf()", as: (() -> NativeSwiftValue).self, receiverABI: receiverABI, consuming: true)
                 return try unsafe method.unsafeInvoke(on: argument)

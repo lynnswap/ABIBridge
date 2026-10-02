@@ -501,7 +501,7 @@ struct NativeSwiftClosureTests {
         let destroyed = ClosureCounter()
         let context = Unmanaged.passRetained(ClosureCapture(destroyed)).toOpaque()
         #expect(throws: ABIInvocationError.self) {
-            _ = try codec.makeValue(ABISwiftClosureValue(function: nil, context: context), nil, true)
+            _ = try codec.makeValue(ABISwiftClosureValue(function: nil, context: context), nil, true, nil)
         }
         #expect(destroyed.count == 1)
     }

@@ -11,7 +11,7 @@ public enum NativeSwiftValueError: Error, Sendable, Equatable {
     case valueInUse
 }
 
-/// Owns a Swift value whose concrete type need not be available at compile time.
+/// Owns an Escapable Swift value whose concrete type need not be available at compile time.
 ///
 /// Assignment shares this handle. Use copy() for an independent native value.
 /// Native code, metadata, and value witnesses remain retained through destruction.
@@ -96,6 +96,9 @@ public final class NativeSwiftValue {
     }
 
     static func copy(from source: UnsafeRawPointer, type: NativeSwiftType) throws -> NativeSwiftValue {
+        guard SwiftEscapability.accepts(type.metadata) else {
+            throw ABIResolutionError.unsupportedDeclaration("An owned runtime value requires an Escapable native type.")
+        }
         let metadata = unsafeBitCast(type.metadata, to: UnsafeRawPointer.self)
         let layout = ABISwiftGetValueLayout(metadata)
         let destination = NativeValueStorage(size: layout.stride, alignment: layout.alignment, owner: type,
@@ -138,19 +141,33 @@ public final class NativeSwiftValue {
 // can omit IsNonCopyable even when their copy witness traps. Suppress Escapable
 // so this query tests only Copyable, independently of the caller's lifetime.
 private struct SwiftCopyabilityQuery<Value: ~Escapable> {}
+private struct SwiftEscapabilityQuery<Value: ~Copyable> {}
+
+private func swiftTypeSatisfiesRequirement(_ type: Any.Type, descriptor: UInt) -> Bool {
+    var argument: UnsafeRawPointer? = unsafeBitCast(type, to: UnsafeRawPointer.self)
+    let result = withUnsafePointer(to: &argument) {
+        ABICreateSwiftTypeMetadata(UnsafeRawPointer(bitPattern: descriptor), $0, 1, nil)
+    }
+    guard let result else { return false }
+    ABIReleaseSwiftTypeMetadata(result)
+    return true
+}
 
 enum SwiftCopyability {
     private static let descriptor = UInt(bitPattern: ABISwiftTypeDescriptor(
         unsafeBitCast(SwiftCopyabilityQuery<Int>.self, to: UnsafeRawPointer.self))!)
 
     static func accepts(_ type: Any.Type) -> Bool {
-        var argument: UnsafeRawPointer? = unsafeBitCast(type, to: UnsafeRawPointer.self)
-        let result = withUnsafePointer(to: &argument) {
-            ABICreateSwiftTypeMetadata(UnsafeRawPointer(bitPattern: descriptor), $0, 1, nil)
-        }
-        guard let result else { return false }
-        ABIReleaseSwiftTypeMetadata(result)
-        return true
+        swiftTypeSatisfiesRequirement(type, descriptor: descriptor)
+    }
+}
+
+enum SwiftEscapability {
+    private static let descriptor = UInt(bitPattern: ABISwiftTypeDescriptor(
+        unsafeBitCast(SwiftEscapabilityQuery<Int>.self, to: UnsafeRawPointer.self))!)
+
+    static func accepts(_ type: Any.Type) -> Bool {
+        swiftTypeSatisfiesRequirement(type, descriptor: descriptor)
     }
 }
 
@@ -204,6 +221,12 @@ struct SwiftRuntimeValuePlan: Sendable {
                            codeLifetime: SwiftValueCodeLifetime(valueType.codeImages))
     }
 
+    func requireOwnedValue() throws {
+        guard SwiftEscapability.accepts(valueType.metadata) else {
+            throw ABIResolutionError.unsupportedDeclaration("An owned runtime value requires an Escapable native type.")
+        }
+    }
+
     func decode(_ storage: NativeValueStorage) throws -> NativeSwiftValue {
         if valueType.metadata is AnyClass, storage.address.load(as: UnsafeRawPointer?.self) == nil {
             throw ABIInvocationError.unexpectedNilResult(expected: valueType.name)
@@ -227,7 +250,7 @@ struct SwiftRuntimeValuePlan: Sendable {
             // An inout Base may replace a Derived reference with another Base.
             // Borrowing and consuming preserve the value's dynamic class.
             compatible = valueType.metadata == AnyObject.self
-                || (valueType.metadata as? AnyClass).map { swiftClass(actualClass, isSubclassOf: $0) } == true
+                || (valueType.metadata as? AnyClass).map { SwiftObjectType(actualClass)?.isSubclass(of: $0) == true } == true
         } else {
             compatible = false
         }

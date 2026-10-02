@@ -21,6 +21,7 @@ public struct RuntimeValueBox<Value: ~Copyable>: ~Copyable {
     public var value: Value
     public init(_ value: consuming Value) { self.value = value }
     public consuming func takeValue() -> Value { value }
+    public func copiedValue() -> Value where Value: Copyable { value }
 }
 public struct RuntimeConditionalValueBox<Value: ~Copyable>: ~Copyable {
     public var value: Value
