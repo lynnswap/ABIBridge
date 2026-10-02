@@ -35,6 +35,7 @@ struct SwiftGenericClosurePlan: Sendable {
     let parameters: SwiftGenericParameters
     let discriminator: UInt16
     let resultConstants: SwiftValueConstants
+    let errorPlan: SwiftErrorPlan?
 }
 
 struct SwiftGenericCallPlan: Sendable {
@@ -59,16 +60,16 @@ struct SwiftGenericCallPlan: Sendable {
         let binding = try SwiftGenericBinding(declaration: declaration,
             arguments: (enclosing?.arguments ?? []) + genericArguments,
             signature: signature, resolver: resolver, enclosing: context)
-        if case .function(_, let result, let failure, _) = formalGetter {
+        if case .function(_, let result, _, _) = formalGetter {
             try binding.validate(signature.result, for: result)
-            if let failure { try binding.validate(signature.failure, for: failure) }
         }
         guard declaration.isAsync == signature.isAsync,
-              (declaration.failure == nil) == (signature.failure == Never.self) else {
+              declaration.failure != nil || signature.failure == Never.self else {
             throw ABIResolutionError.signatureMismatch(.init(
                 expected: "The declaration's async and error effects", found: []))
         }
         self.binding = binding
+        if let failure = declaration.failure { try binding.validate(signature.failure, for: failure) }
         self.context = context
         enclosingMetadata = enclosing?.value
         if let context, let receiver, receiver != .value {
@@ -96,7 +97,6 @@ struct SwiftGenericCallPlan: Sendable {
             result = .concrete
         }
         if let failure = declaration.failure, binding.dependsOnParameters(failure) {
-            try binding.validate(signature.failure, for: failure)
             errorType = try Self.layout(failure, actual: signature.failure, binding: binding)
         } else {
             errorType = nil
@@ -164,10 +164,11 @@ struct SwiftGenericCallPlan: Sendable {
             preconditionFailure("A closure plan requires a function type.")
         }
         guard isAsync == signature.isAsync,
-              (failure == nil) == (signature.failure == Never.self) else {
+              failure != nil || signature.failure == Never.self else {
             throw ABIResolutionError.signatureMismatch(.init(expected: formal.spelling, found: []))
         }
         let parameterPlan = try SwiftGenericParameters(formal: parameters, actual: signature.parameters, binding: binding)
+        if let failure { try binding.validate(signature.failure, for: failure) }
         var logicalTypes: [CValueType] = []
         var authentication = isAsync && signature.inheritsCallerIsolation ? ["-class"] : []
         for (formal, group) in zip(parameters, parameterPlan.groups) {
@@ -199,7 +200,7 @@ struct SwiftGenericCallPlan: Sendable {
         return try SwiftGenericClosurePlan(transport: transport, parameters: parameterPlan,
             discriminator: swiftClosureDiscriminator(parameters: authentication,
                 results: authTypes(result, actual: signature.result, binding: binding, isResult: true)),
-            resultConstants: SwiftValueConstants(signature.result))
+            resultConstants: SwiftValueConstants(signature.result), errorPlan: errorPlan)
     }
 
     private static func authTypes(_ formal: SwiftFormalType, actual: Any.Type,

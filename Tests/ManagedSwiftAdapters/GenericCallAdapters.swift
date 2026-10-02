@@ -1,5 +1,12 @@
 import ManagedSwiftFixtures
 
+@inline(never) public func probeNeverError() -> Int64 { genericErrorType(Never.self) }
+@inline(never) public func probeExistentialError() throws -> Int64 { try genericErrorType((any Error).self) }
+@inline(never) public func probeNeverErrorCallback(_ body: () -> Int64) -> Int64 { genericErrorCallback(body) }
+@inline(never) public func probeExistentialErrorCallback(_ body: () throws -> Int64) throws -> Int64 {
+    try genericErrorCallback(body)
+}
+
 @inline(never) public func probeThinMetatype(_ body: (Int64.Type) -> Int64.Type) -> Int64.Type { body(Int64.self) }
 @inline(never) public func probeThickMetatype<Value>(_ body: (Value.Type) -> Value.Type, _ type: Value.Type) -> Value.Type { body(type) }
 @inline(never) public func probeOptionalMetatype(_ body: (Int64.Type?) -> Int64.Type?) -> Int64.Type? { body(Int64.self) }

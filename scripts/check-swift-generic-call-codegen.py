@@ -54,6 +54,15 @@ def main():
         run(*adapter, "-emit-ir", "-o", str(ir_path))
         run(*adapter, "-emit-sil", "-o", str(sil_path))
         ir, sil = ir_path.read_text(), sil_path.read_text()
+        error_substitutions = {}
+        for name in ["probeNeverError", "probeExistentialError", "probeNeverErrorCallback", "probeExistentialErrorCallback"]:
+            call = next(line.strip() for line in body(ir, name).splitlines()
+                        if "call swiftcc" in line and "genericError" in line)
+            error_substitutions[name] = call
+            require("swifterror" in call and re.search(r", ptr (?:undef|%[^)]+)\)$", call),
+                    f"{target}: throws(E) retains a trailing error output for Never and any Error")
+            witness = "$ss5NeverOs5ErrorsWP" if "Never" in name else "$ss5ErrorWS"
+            require(witness in call, f"{target}: the substituted error must supply its Error witness")
         generic = next(line.strip() for line in ir.splitlines() if line.startswith("declare ") and "runGeneric" in line)
         require("sret(" in generic and generic.count("ptr") == 4,
                 f"{target}: generic call needs indirect result, closure pair and one metadata pointer")
@@ -207,7 +216,8 @@ def main():
                         "tupleSource": tuple_source, "metatypeSource": metatype_source,
                         "nestedSource": nested_source, "superclassSource": superclass_source,
                         "metatypeCallbacks": metatypes, "packSources": pack_sources,
-                        "associatedStorage": associated_storage, "getterErrors": getter_errors})
+                        "associatedStorage": associated_storage, "getterErrors": getter_errors,
+                        "errorSubstitutions": error_substitutions})
     report = {"compiler": run("xcrun", "swiftc", "--version").strip(), "runtimeTested": False,
               "demanglerRevision": upstream["revision"], "targets": targets}
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")

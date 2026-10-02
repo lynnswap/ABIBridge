@@ -168,6 +168,26 @@ public func genericCallbackThenArgument<Value>(_ apply: () -> Value, _ argument:
 @inline(never) public nonisolated(nonsending) func suspendedLargeTupleGeneric<Value>(
     _ value: (Value, LargeManagedValue, Int64)
 ) async -> (Value, LargeManagedValue, Int64) { await Task.yield(); return value }
+@inline(never) public func genericErrorType<Failure: Error>(_ type: Failure.Type) throws(Failure) -> Int64 { 42 }
+@inline(never) public func genericErrorCallback<Failure: Error>(_ body: () throws(Failure) -> Int64) throws(Failure) -> Int64 {
+    try body()
+}
+@inline(never) public func genericErrorClosure<Failure: Error>(
+    _ failure: Failure?
+) -> (Bool) throws(Failure) -> Int64 {
+    { shouldThrow throws(Failure) in if shouldThrow, let failure { throw failure }; return 43 }
+}
+@inline(never) public nonisolated(nonsending) func suspendedGenericErrorType<Failure: Error>(
+    _ type: Failure.Type
+) async throws(Failure) -> Int64 { await Task.yield(); return 44 }
+@inline(never) public nonisolated(nonsending) func suspendedGenericErrorCallback<Failure: Error>(
+    _ body: (nonisolated(nonsending) () async throws(Failure) -> Int64)
+) async throws(Failure) -> Int64 { await Task.yield(); return try await body() }
+@inline(never) public func suspendedGenericErrorClosure<Failure: Error>(
+    _ failure: Failure?
+) -> (nonisolated(nonsending) @Sendable (Bool) async throws(Failure) -> Int64) {
+    { shouldThrow throws(Failure) in await Task.yield(); if shouldThrow, let failure { throw failure }; return 45 }
+}
 @inline(never) public func genericFailure<Value, Failure: Error>(_ value: Value, _ failure: Failure, _ shouldThrow: Bool) throws(Failure) -> Value {
     if shouldThrow { throw failure }
     return value

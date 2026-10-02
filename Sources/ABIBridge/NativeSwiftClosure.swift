@@ -181,15 +181,18 @@ extension NativeSwiftClosure: SwiftClosureValue {
             let callback = try throwingClosureOwner(prepared.interface, body: SwiftThrowingClosureBody(retainingCode: original.codeOwner) { arguments, result, failure in
                 var didThrow = false
                 let encoded = generic?.parameters.needsEncoding == true ? generic!.parameters.encode(arguments) : nil
+                // throws(E) keeps its error output when E is bound to Never.
+                let unusedError = prepared.errorPlan == nil ? generic?.errorPlan?.makeStorage() : nil
                 func invoke(_ arguments: UnsafePointer<UnsafeMutableRawPointer?>?) -> Bool {
-                    if prepared.errorPlan != nil {
+                    if generic?.errorPlan != nil || prepared.errorPlan != nil {
                         return ABIUnsafeInvokeSwiftThrowingCallInterface(interface.handle,
-                            original.implementation.function, result, arguments, original.value.context, failure, &didThrow, nil)
+                            original.implementation.function, result, arguments, original.value.context,
+                            failure ?? unusedError?.address, &didThrow, nil)
                     }
                     return ABIUnsafeInvokeSwiftCallInterface(interface.handle,
                             original.implementation.function, result, arguments, original.value.context, nil)
                 }
-                let succeeded = withExtendedLifetime(encoded) {
+                let succeeded = withExtendedLifetime((encoded, unusedError)) {
                     encoded.map { $0.addresses.withUnsafeBufferPointer { invoke($0.baseAddress) } } ?? invoke(arguments)
                 }
                 precondition(succeeded, "The prepared Swift closure forwarding call must be valid.")

@@ -42,6 +42,125 @@ private final class GenericCaptureState: Sendable {
 
 @Suite(.serialized)
 struct SwiftGenericCallTests {
+
+    @MainActor @Test func neverBoundErrorsPreserveTheFormalThrowingConvention() async throws {
+        let runtime = ABIRuntime()
+        let function = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.genericErrorType<A where A: Swift.Error>(A.Type) throws(A) -> Swift.Int64",
+            as: ((Never.Type) -> Int64).self, genericArguments: [.type(Never.self)])
+        #expect(try unsafe function.unsafeInvoke(Never.self) == 42)
+        let asynchronous = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.suspendedGenericErrorType<A where A: Swift.Error>(A.Type) async throws(A) -> Swift.Int64",
+            as: ((Never.Type) async -> Int64).self, genericArguments: [.type(Never.self)])
+        #expect(try unsafe await asynchronous.unsafeInvoke(Never.self) == 44)
+        let callback = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.genericErrorCallback<A where A: Swift.Error>(() throws(A) -> Swift.Int64) throws(A) -> Swift.Int64",
+            as: ((NativeSwiftClosure<() -> Int64>) -> Int64).self, genericArguments: [.type(Never.self)])
+        #expect(try unsafe callback.unsafeInvoke(NativeSwiftClosure<() -> Int64> { 46 }) == 46)
+        let asyncCallback = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.suspendedGenericErrorCallback<A where A: Swift.Error>(nonisolated(nonsending) () async throws(A) -> Swift.Int64) async throws(A) -> Swift.Int64",
+            as: ((NativeSwiftClosure<() async -> Int64>) async -> Int64).self, genericArguments: [.type(Never.self)])
+        let asyncBody = try NativeSwiftClosure<() async -> Int64> { await Task.yield(); return 47 }
+        #expect(try unsafe await asyncCallback.unsafeInvoke(asyncBody) == 47)
+        let make = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.genericErrorClosure<A where A: Swift.Error>(A?) -> (Swift.Bool) throws(A) -> Swift.Int64",
+            as: ((Never?) -> NativeSwiftClosure<(Bool) -> Int64>).self, genericArguments: [.type(Never.self)])
+        let closure = try unsafe make.unsafeInvoke(nil)
+        #expect(try unsafe closure.unsafeInvoke(true) == 43)
+        let makeAsync = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.suspendedGenericErrorClosure<A where A: Swift.Error>(A?) -> nonisolated(nonsending) @Sendable (Swift.Bool) async throws(A) -> Swift.Int64",
+            as: ((Never?) -> NativeSwiftClosure<@Sendable (Bool) async -> Int64>).self, genericArguments: [.type(Never.self)])
+        let asyncClosure = try unsafe makeAsync.unsafeInvoke(nil)
+        #expect(try unsafe await asyncClosure.unsafeInvoke(true) == 45)
+    }
+
+    @MainActor @Test func existentialBoundErrorsUseTypedGenericOutputs() async throws {
+        let runtime = ABIRuntime()
+        let error: any Error = GenericConversionFailure.rejected
+        let function = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.genericErrorType<A where A: Swift.Error>(A.Type) throws(A) -> Swift.Int64",
+            as: (((any Error).Type) throws -> Int64).self, genericArguments: [.type((any Error).self)])
+        #expect(try unsafe function.unsafeInvoke((any Error).self) == 42)
+        let failure = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.genericFailure<A, B where B: Swift.Error>(A, B, Swift.Bool) throws(B) -> A",
+            as: ((Int64, any Error, Bool) throws -> Int64).self,
+            genericArguments: [.type(Int64.self), .type((any Error).self)])
+        #expect(try unsafe failure.unsafeInvoke(41, error, false) == 41)
+        do {
+            _ = try unsafe failure.unsafeInvoke(41, error, true)
+            Issue.record("Expected the generic error.")
+        } catch let error as NativeSwiftError {
+            #expect(error.withUnderlyingError { ($0 as? GenericConversionFailure) == .rejected })
+        }
+        let asyncFailure = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.suspendedGenericFailure<A, B where B: Swift.Error>(A, B, Swift.Bool) async throws(B) -> A",
+            as: ((Int64, any Error, Bool) async throws -> Int64).self,
+            genericArguments: [.type(Int64.self), .type((any Error).self)])
+        #expect(try unsafe await asyncFailure.unsafeInvoke(42, error, false) == 42)
+        do {
+            _ = try unsafe await asyncFailure.unsafeInvoke(42, error, true)
+            Issue.record("Expected the generic async error.")
+        } catch let error as NativeSwiftError {
+            #expect(error.withUnderlyingError { ($0 as? GenericConversionFailure) == .rejected })
+        }
+        let callback = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.genericErrorCallback<A where A: Swift.Error>(() throws(A) -> Swift.Int64) throws(A) -> Swift.Int64",
+            as: ((NativeSwiftClosure<() throws -> Int64>) throws -> Int64).self,
+            genericArguments: [.type((any Error).self)])
+        for shouldThrow in [false, true] {
+            let body = try NativeSwiftClosure<() throws -> Int64> { if shouldThrow { throw error }; return 46 }
+            do {
+                #expect(try unsafe callback.unsafeInvoke(body) == 46)
+                #expect(!shouldThrow)
+            } catch let error as NativeSwiftError {
+                #expect(shouldThrow)
+                #expect(error.withUnderlyingError { ($0 as? GenericConversionFailure) == .rejected })
+            }
+        }
+        let asyncCallback = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.suspendedGenericErrorCallback<A where A: Swift.Error>(nonisolated(nonsending) () async throws(A) -> Swift.Int64) async throws(A) -> Swift.Int64",
+            as: ((NativeSwiftClosure<() async throws -> Int64>) async throws -> Int64).self,
+            genericArguments: [.type((any Error).self)])
+        for shouldThrow in [false, true] {
+            let operation: @Sendable () async throws -> Int64 = {
+                await Task.yield()
+                if shouldThrow { throw error }
+                return 47
+            }
+            let body = try NativeSwiftClosure<() async throws -> Int64>(operation)
+            do {
+                #expect(try unsafe await asyncCallback.unsafeInvoke(body) == 47)
+                #expect(!shouldThrow)
+            } catch let error as NativeSwiftError {
+                #expect(shouldThrow)
+                #expect(error.withUnderlyingError { ($0 as? GenericConversionFailure) == .rejected })
+            }
+        }
+        let make = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.genericErrorClosure<A where A: Swift.Error>(A?) -> (Swift.Bool) throws(A) -> Swift.Int64",
+            as: (((any Error)?) -> NativeSwiftClosure<(Bool) throws -> Int64>).self,
+            genericArguments: [.type((any Error).self)])
+        let closure = try unsafe make.unsafeInvoke(error)
+        #expect(try unsafe closure.unsafeInvoke(false) == 43)
+        do {
+            _ = try unsafe closure.unsafeInvoke(true)
+            Issue.record("Expected the returned closure's error.")
+        } catch let error as NativeSwiftError {
+            #expect(error.withUnderlyingError { ($0 as? GenericConversionFailure) == .rejected })
+        }
+        let makeAsync = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.suspendedGenericErrorClosure<A where A: Swift.Error>(A?) -> nonisolated(nonsending) @Sendable (Swift.Bool) async throws(A) -> Swift.Int64",
+            as: (((any Error)?) -> NativeSwiftClosure<@Sendable (Bool) async throws -> Int64>).self,
+            genericArguments: [.type((any Error).self)])
+        let asyncClosure = try unsafe makeAsync.unsafeInvoke(error)
+        #expect(try unsafe await asyncClosure.unsafeInvoke(false) == 45)
+        do {
+            _ = try unsafe await asyncClosure.unsafeInvoke(true)
+            Issue.record("Expected the returned async closure's error.")
+        } catch let error as NativeSwiftError {
+            #expect(error.withUnderlyingError { ($0 as? GenericConversionFailure) == .rejected })
+        }
+    }
     @Test func associatedElementStorageUsesItsFormalWitness() async throws {
         let runtime = ABIRuntime()
         let array = try await runtime.swiftFunction(

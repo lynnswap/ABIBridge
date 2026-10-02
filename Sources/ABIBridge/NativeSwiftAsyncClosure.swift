@@ -204,13 +204,14 @@ extension NativeSwiftClosure {
             let callback = try SwiftAsyncClosureCallbackOwner(interface: prepared.interface,
                 body: SwiftAsyncClosureBody(inheritsCallerIsolation: signature.inheritsCallerIsolation, retainingCode: original.codeOwner) { arguments, result, error in
                     let encoded = generic?.parameters.needsEncoding == true ? generic!.parameters.encode(arguments) : nil
+                    let unusedError = prepared.errorPlan == nil ? generic?.errorPlan?.makeStorage() : nil
                     func prepare(_ arguments: UnsafePointer<UnsafeMutableRawPointer?>?) -> OpaquePointer? {
                         ABICreateSwiftAsyncInvocation(interface.handle, original.entry.function,
-                            original.entry.contextSize, result, arguments, original.value.context, error, nil)
+                            original.entry.contextSize, result, arguments, original.value.context, error ?? unusedError?.address, nil)
                     }
                     let invocation = encoded.map { $0.addresses.withUnsafeBufferPointer { prepare($0.baseAddress) } } ?? prepare(arguments)
                     precondition(invocation != nil, "The prepared async closure forwarding call must be valid.")
-                    defer { withExtendedLifetime((original, encoded)) { ABIReleaseSwiftAsyncInvocation(invocation!) } }
+                    defer { withExtendedLifetime((original, encoded, unusedError)) { ABIReleaseSwiftAsyncInvocation(invocation!) } }
                     await invokeSwiftAsync(invocation!)
                     return ABISwiftAsyncInvocationDidThrow(invocation!)
                 })

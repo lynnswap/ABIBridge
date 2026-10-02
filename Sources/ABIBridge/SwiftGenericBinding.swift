@@ -529,10 +529,17 @@ struct SwiftGenericBinding: Sendable {
         case .packValue(let elements):
             return "Pack{" + (try elements.map { try spelling($0, packIndex: packIndex) }).filter { !$0.isEmpty }.joined(separator: ", ") + "}"
         case .inoutValue(let value), .borrowing(let value), .consuming(let value): return try spelling(value, packIndex: packIndex)
-        case .metatype(let value): return try spelling(value, packIndex: packIndex) + ".Type"
+        case .metatype(let value):
+            if dependsOnParameters(value) {
+                let instance = try types(value, packIndex: packIndex)[0]
+                let metadata = ABISwiftMetatypeMetadata(unsafeBitCast(instance, to: UnsafeRawPointer.self))!
+                return try swiftNativeTypeName(unsafeBitCast(metadata, to: Any.Type.self))
+            }
+            return try spelling(value, packIndex: packIndex) + ".Type"
         case .function(let values, let result, let failure, let isAsync):
+            let error = try failure.map { try spelling($0, packIndex: packIndex) }
             return "(" + (try values.map { try spelling($0, packIndex: packIndex) }).joined(separator: ", ") + ")" + (isAsync ? " async" : "")
-                + (try failure.map { $0.spelling == "Swift.Error" ? " throws" : " throws(" + (try spelling($0, packIndex: packIndex)) + ")" } ?? "")
+                + (error.map { $0 == "Swift.Never" ? "" : $0 == "Swift.Error" ? " throws" : " throws(" + $0 + ")" } ?? "")
                 + " -> " + (try spelling(result, packIndex: packIndex))
         }
     }

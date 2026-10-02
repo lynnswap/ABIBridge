@@ -60,8 +60,8 @@ struct SwiftFunctionSignature: Sendable {
     }
 
     func makeErrorPlan(genericType: CValueType? = nil) throws -> SwiftErrorPlan? {
-        if failure == Never.self { return nil }
-        if failure == (any Error).self { return try SwiftErrorPlan.make((any Error).self) }
+        if failure == Never.self && genericType == nil { return nil }
+        if failure == (any Error).self { return try SwiftErrorPlan.make((any Error).self, genericType: genericType) }
         guard let error = failure as? any Error.Type else {
             throw ABIResolutionError.unsupportedDeclaration("The function's thrown type does not conform to Error.")
         }
