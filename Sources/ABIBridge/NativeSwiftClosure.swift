@@ -91,6 +91,7 @@ public struct NativeSwiftClosure<Signature> {
 
     /// Borrows a Sendable body while preserving that attribute in the native signature.
     /// The callback remains nonescaping and synchronous on the caller's executor.
+    @_disfavoredOverload
     @unsafe public static func withUnsafeNonescaping<Output, Result, each Argument>(
         _ body: @Sendable (repeat each Argument) -> Result, _ use: (Self) throws -> Output
     ) throws -> Output where Signature == @Sendable (repeat each Argument) -> Result {

@@ -44,6 +44,13 @@ private final class ReentrantClosureCapture: Sendable {
 }
 
 struct NativeSwiftClosureTests {
+    @Test func nonescapingConstructionInfersTheOrdinarySignature() throws {
+        let result = try unsafe NativeSwiftClosure.withUnsafeNonescaping({ (value: Int64) in value + 7 }) {
+            try unsafe $0.unsafeInvoke(35)
+        }
+        #expect(result == 42)
+    }
+
     @Test func sendableNonescapingSignaturePreservesItsTypedBody() throws {
         let result = try unsafe NativeSwiftClosure<@Sendable (Int64) -> Int64>.withUnsafeNonescaping({ $0 + 7 }) {
             try unsafe $0.unsafeInvoke(35)
