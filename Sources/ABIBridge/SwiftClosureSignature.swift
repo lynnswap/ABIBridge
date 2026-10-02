@@ -16,6 +16,9 @@ func swiftClosureAuthType(_ type: Any.Type) throws -> String {
         )
     }
     if base is AnyClass || base == AnyObject.self { return "-class" }
+    if let metatype = SwiftMetatypeMetadata(base) {
+        return type is any NativeOptionalValue.Type && metatype.isExistential ? "Optional<-metatype>" : "-metatype"
+    }
     if let existential = SwiftExistentialRepresentation(base) {
         return existential.closureAuthType(optional: type is any NativeOptionalValue.Type)
     }

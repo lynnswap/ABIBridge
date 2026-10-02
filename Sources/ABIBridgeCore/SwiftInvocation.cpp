@@ -78,6 +78,7 @@ struct Component {
     size_t offset;
     size_t size;
     bool floating;
+    bool optionalSingleton = false;
 };
 struct Layout {
     std::vector<Component> components;
@@ -108,6 +109,7 @@ void flatten(TypeStorage &type, size_t offset, std::vector<Component> &component
 
 Layout lower(TypeStorage &type) {
     if (type.swiftIndirect) return Layout{{}, true};
+    if (type.swiftOptionalSingleton) return Layout{{{0, 1, false, true}}, false};
     std::vector<Component> fields;
     flatten(type, 0, fields);
     Layout result;
@@ -197,6 +199,25 @@ ABIValueType *ABICreateSwiftStorageType(
     return new ABIValueType{std::move(storage)};
 }
 
+ABIValueType *ABICreateSwiftOptionalSingletonType(void) {
+    auto storage = std::make_shared<TypeStorage>();
+    storage->swiftOptionalSingleton = true;
+    storage->aggregate = {sizeof(void *), alignof(void *), FFI_TYPE_STRUCT, nullptr};
+    return new ABIValueType{std::move(storage)};
+}
+
+static void packOptionalSingleton(void *destination, const void *source) {
+    uintptr_t value;
+    std::memcpy(&value, source, sizeof(value));
+    *static_cast<uint8_t *>(destination) = value == 0;
+}
+
+static void unpackOptionalSingleton(void *destination, const void *source) {
+    // Swift restores the singleton's metadata before loading this value.
+    const uintptr_t value = *static_cast<const uint8_t *>(source) == 0;
+    std::memcpy(destination, &value, sizeof(value));
+}
+
 ABIValueType *ABICreateSwiftIndirectStorageType(
     size_t size, size_t alignment, ABIResolutionFailure **error)
 {
@@ -259,7 +280,7 @@ static std::vector<void *> swiftPackElements(TypeStorage &type, void *value) {
 struct ABISwiftCallInterface {
     std::shared_ptr<TypeStorage> result;
     std::shared_ptr<TypeStorage> directResult;
-    struct ResultCopy { size_t logical, direct, size; };
+    struct ResultCopy { size_t logical, direct, size; bool optionalSingleton = false; };
     std::vector<ResultCopy> resultCopies;
     std::vector<SwiftField> indirectResults;
     std::vector<std::shared_ptr<TypeStorage>> parameters;
@@ -276,19 +297,27 @@ static void prepareSwiftResult(ABISwiftCallInterface &interface) {
     interface.directResult = interface.result;
     std::vector<SwiftField> fields;
     expandTuple(interface.result, 0, fields);
-    if (interface.result->swiftTuple && std::any_of(fields.begin(), fields.end(),
-        [](const SwiftField &field) { return field.type->swiftIndirect; })) {
+    if ((interface.result->swiftTuple || interface.result->swiftOptionalSingleton) &&
+        std::any_of(fields.begin(), fields.end(), [](const SwiftField &field) {
+            return field.type->swiftIndirect || field.type->swiftOptionalSingleton || lower(*field.type).components.empty();
+        })) {
         auto direct = std::make_shared<TypeStorage>();
         size_t size = 0, alignment = 1;
         for (const auto &field : fields) {
             if (field.type->swiftIndirect) { interface.indirectResults.push_back(field); continue; }
-            size = aligned(size, field.type->native()->alignment);
-            direct->fields.push_back(field.type);
+            if (lower(*field.type).components.empty()) continue;
+            auto physical = field.type;
+            if (physical->swiftOptionalSingleton) {
+                physical = std::make_shared<TypeStorage>();
+                physical->scalar = &ffi_type_uint8;
+            }
+            size = aligned(size, physical->native()->alignment);
+            direct->fields.push_back(physical);
             direct->offsets.push_back(size);
-            direct->elements.push_back(field.type->native());
-            interface.resultCopies.push_back({field.offset, size, field.type->size()});
-            size += field.type->size();
-            alignment = std::max(alignment, size_t(field.type->native()->alignment));
+            direct->elements.push_back(physical->native());
+            interface.resultCopies.push_back({field.offset, size, field.type->size(), field.type->swiftOptionalSingleton});
+            size += physical->size();
+            alignment = std::max(alignment, size_t(physical->native()->alignment));
         }
         direct->elements.push_back(nullptr);
         direct->aggregate = {size, static_cast<unsigned short>(alignment), FFI_TYPE_STRUCT, direct->elements.data()};
@@ -315,6 +344,7 @@ struct SwiftResultStorage {
             pack = swiftPackElements(*interface.directResult, static_cast<uint8_t *>(logical) + offset);
             direct = pack.data();
         } else if (interface.resultCopies.size() == 1 && interface.resultCopies[0].direct == 0 &&
+            !interface.resultCopies[0].optionalSingleton &&
             interface.resultCopies[0].size == interface.directResult->size()) {
             direct = static_cast<uint8_t *>(logical) + interface.resultCopies[0].logical;
         } else if (!interface.resultCopies.empty()) {
@@ -324,9 +354,12 @@ struct SwiftResultStorage {
     }
     void copyToLogical(const ABISwiftCallInterface &interface, void *logical) {
         if (!temporary) return;
-        for (const auto &copy : interface.resultCopies)
-            std::memcpy(static_cast<uint8_t *>(logical) + copy.logical,
-                        static_cast<const uint8_t *>(direct) + copy.direct, copy.size);
+        for (const auto &copy : interface.resultCopies) {
+            auto destination = static_cast<uint8_t *>(logical) + copy.logical;
+            auto source = static_cast<const uint8_t *>(direct) + copy.direct;
+            if (copy.optionalSingleton) unpackOptionalSingleton(destination, source);
+            else std::memcpy(destination, source, copy.size);
+        }
     }
 };
 
@@ -469,6 +502,8 @@ static void marshalSwiftArguments(
             }
             const uintptr_t address = reinterpret_cast<uintptr_t>(value);
             std::memcpy(destination, &address, sizeof(address));
+        } else if (move.component.optionalSingleton) {
+            packOptionalSingleton(destination, source);
         } else {
             const auto available = errorArgument ? sizeof(errorAddress) : move.extent;
             std::memcpy(destination, source, std::min(move.component.size, available));
@@ -950,6 +985,8 @@ void unpackArguments(const ABISwiftCallInterface &interface, CallFrame &frame,
             } else if (borrowIndirect && !interface.parameters[move.argument]->swiftTuple)
                 arguments[move.argument] = reinterpret_cast<void *>(pointer);
             else std::memcpy(destination + move.component.offset, reinterpret_cast<const void *>(pointer), move.extent);
+        } else if (move.component.optionalSingleton) {
+            unpackOptionalSingleton(destination + move.component.offset, source);
         } else {
             const auto available = move.extent;
             std::memcpy(destination + move.component.offset, source, std::min(move.component.size, available));
@@ -995,9 +1032,12 @@ void packResult(const ABISwiftCallInterface &interface, CallFrame &frame, const 
         return;
     }
     SwiftResultStorage storage(interface, const_cast<void *>(value));
-    if (storage.temporary) for (const auto &copy : interface.resultCopies)
-        std::memcpy(static_cast<uint8_t *>(storage.direct) + copy.direct,
-                    static_cast<const uint8_t *>(value) + copy.logical, copy.size);
+    if (storage.temporary) for (const auto &copy : interface.resultCopies) {
+        auto destination = static_cast<uint8_t *>(storage.direct) + copy.direct;
+        auto source = static_cast<const uint8_t *>(value) + copy.logical;
+        if (copy.optionalSingleton) packOptionalSingleton(destination, source);
+        else std::memcpy(destination, source, copy.size);
+    }
     if (interface.resultLayout.indirect) {
         std::memcpy(reinterpret_cast<void *>(frame.indirectResult), storage.direct, interface.directResult->size());
         return;
@@ -1275,6 +1315,7 @@ bool swiftStorageTypesEqual(const std::shared_ptr<TypeStorage> &first, const std
     if (first->native()->type != second->native()->type || first->size() != second->size()
         || first->native()->alignment != second->native()->alignment || first->fields.size() != second->fields.size()
         || first->swiftIndirect != second->swiftIndirect || first->swiftTuple != second->swiftTuple || first->swiftPack != second->swiftPack
+        || first->swiftOptionalSingleton != second->swiftOptionalSingleton
         || first->offsets != second->offsets) return false;
     for (size_t index = 0; index < first->fields.size(); ++index)
         if (!swiftStorageTypesEqual(first->fields[index], second->fields[index])) return false;

@@ -9,6 +9,7 @@ struct SwiftValueCodec<Value>: Sendable {
     private let cValue: CValueCodec<Value>?
     private let objectResult: Bool
     private let closure: SwiftClosureCodec?
+    private let constants = SwiftValueConstants(Value.self)
 
     init() throws {
         guard !(Value.self is any SwiftConventionArgument.Type) else {
@@ -36,6 +37,10 @@ struct SwiftValueCodec<Value>: Sendable {
             type = try tuple.layout(for: Value.self, fields: tuple.elements.map {
                 try _openExistential($0.type, do: field)
             })
+            cValue = nil
+        } else if let metatype = SwiftMetatypeMetadata(base) {
+            type = Value.self is any NativeOptionalValue.Type && metatype.isSingleton
+                ? CValueType(swiftOptionalSingleton: ()) : try metatype.valueType(for: Value.self)
             cValue = nil
         } else if let managed {
             if let components = managed.swiftABIType.cType {
@@ -102,7 +107,7 @@ struct SwiftValueCodec<Value>: Sendable {
         if objectResult, !(Value.self is any NativeOptionalValue.Type), storage.address.load(as: UnsafeRawPointer?.self) == nil {
             throw ABIInvocationError.unexpectedNilResult(expected: String(reflecting: Value.self))
         }
-        return storage.address.load(as: Value.self)
+        return constants.load(from: storage.address, as: Value.self)
     }
 
     func copyNativeStorage(_ storage: NativeValueStorage) throws -> NativeValueStorage {
@@ -133,6 +138,7 @@ struct SwiftValueCodec<Value>: Sendable {
         }
         // A Swift result is +1. Taking it avoids adding another retain or
         // destroying bytes whose ownership has already moved to the caller.
+        constants.initialize(at: storage.address)
         return storage.take(as: Value.self)
     }
 }

@@ -34,6 +34,105 @@ private final class GenericCaptureState: Sendable {
 
 @Suite(.serialized)
 struct SwiftGenericCallTests {
+    @Test func metatypesPreserveFormalAndConcreteCallingConventions() async throws {
+        let runtime = ABIRuntime()
+        let nominal = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.valueMetatypeGeneric<A>(ManagedSwiftFixtures.GenericMetatypeValue<A>.Type, Swift.Int64) -> (ManagedSwiftFixtures.GenericMetatypeValue<A>.Type, Swift.Int64)",
+            as: ((GenericMetatypeValue<String>.Type, Int64) -> (GenericMetatypeValue<String>.Type, Int64)).self,
+            genericArguments: [.type(String.self)])
+        let result = try unsafe nominal.unsafeInvoke(GenericMetatypeValue<String>.self, Int64(40))
+        #expect(result.0 == GenericMetatypeValue<String>.self && result.1 == 41)
+        let archetype = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.archetypeMetatypeGeneric<A>(A.Type, Swift.Int64) -> (A.Type, Swift.Int64)",
+            as: ((Int64.Type, Int64) -> (Int64.Type, Int64)).self, genericArguments: [.type(Int64.self)])
+        let genericResult = try unsafe archetype.unsafeInvoke(Int64.self, Int64(40))
+        #expect(genericResult.0 == Int64.self && genericResult.1 == 42)
+        let concrete = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.concreteMetatype((Swift.Int64.Type, Swift.Int64)) -> (Swift.Int64.Type, Swift.Int64)",
+            as: (((Int64.Type, Int64)) -> (Int64.Type, Int64)).self)
+        let concreteResult = try unsafe concrete.unsafeInvoke((Int64.self, Int64(40)))
+        #expect(concreteResult.0 == Int64.self && concreteResult.1 == 43)
+        let optional = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.optionalMetatype(Swift.Int64.Type?) -> Swift.Int64.Type?",
+            as: ((Int64.Type?) -> Int64.Type?).self)
+        #expect(try unsafe optional.unsafeInvoke(Int64.self) == nil)
+        #expect(try unsafe optional.unsafeInvoke(nil) == Int64.self)
+        let tuple = try NativeSwiftClosure<((Int64.Type, Int64)) -> (Int64.Type, Int64)> { pair in
+            #expect(pair.0 == Int64.self)
+            return (pair.0, pair.1 + 4)
+        }
+        let tupleResult = try unsafe tuple.unsafeInvoke((Int64.self, Int64(40)))
+        #expect(tupleResult.0 == Int64.self && tupleResult.1 == 44)
+        let existential = try NativeSwiftClosure<(any CustomStringConvertible.Type) -> any CustomStringConvertible.Type> { $0 }
+        #expect(try unsafe existential.unsafeInvoke(String.self) == String.self)
+    }
+
+    @Test func optionalMetatypesPreserveTagsAcrossTupleAndGenericResults() async throws {
+        let runtime = ABIRuntime()
+        let optional = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.optionalMetatypeGeneric<A>(A.Type?) -> A.Type?",
+            as: ((Int64.Type?) -> Int64.Type?).self, genericArguments: [.type(Int64.self)])
+        #expect(try unsafe optional.unsafeInvoke(Int64.self) == Int64.self)
+        #expect(try unsafe optional.unsafeInvoke(nil) == nil)
+        let tuple = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.optionalNominalMetatypeGeneric<A>(ManagedSwiftFixtures.GenericMetatypeValue<A>.Type?, A) -> (ManagedSwiftFixtures.GenericMetatypeValue<A>.Type?, Swift.Int8, A, Swift.Int8)",
+            as: ((GenericMetatypeValue<String>.Type?, String) -> (GenericMetatypeValue<String>.Type?, Int8, String, Int8)).self,
+            genericArguments: [.type(String.self)])
+        let text = String(repeating: "optional", count: 100)
+        for input: GenericMetatypeValue<String>.Type? in [nil, GenericMetatypeValue<String>.self] {
+            let result = try unsafe tuple.unsafeInvoke(input, text)
+            #expect(result.0 == (input == nil ? GenericMetatypeValue<String>.self : nil))
+            #expect(result.1 == 13 && result.2 == text && result.3 == 14)
+        }
+        let indirect = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.metatypeAndValueGeneric<A>(A) -> (Swift.Int64.Type, A)",
+            as: ((String) -> (Int64.Type, String)).self, genericArguments: [.type(String.self)])
+        let result = try unsafe indirect.unsafeInvoke(text)
+        #expect(result.0 == Int64.self && result.1 == text)
+        let closure = try NativeSwiftClosure<(Int64.Type?) -> Int64.Type?> { $0 == nil ? Int64.self : nil }
+        #expect(try unsafe closure.unsafeInvoke(nil) == Int64.self)
+        #expect(try unsafe closure.unsafeInvoke(Int64.self) == nil)
+        let tupleClosure = try NativeSwiftClosure<((Int64.Type?, Int8)) -> (Int64.Type?, Int8)> { ($0.0 == nil ? Int64.self : nil, $0.1 + 1) }
+        let closureResult = try unsafe tupleClosure.unsafeInvoke((nil, Int8(40)))
+        #expect(closureResult.0 == Int64.self && closureResult.1 == 41)
+    }
+
+    @Test func metatypeCallbacksReabstractBothDirectionsAndAsyncResults() async throws {
+        let runtime = ABIRuntime()
+        let closure = try NativeSwiftClosure<(Int64.Type) -> Int64.Type> { type in
+            #expect(type == Int64.self)
+            return type
+        }
+        let callback = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.callbackMetatypeGeneric<A>(A.Type, (A.Type) -> A.Type) -> A.Type",
+            as: ((Int64.Type, NativeSwiftClosure<(Int64.Type) -> Int64.Type>) -> Int64.Type).self,
+            genericArguments: [.type(Int64.self)])
+        #expect(try unsafe callback.unsafeInvoke(Int64.self, closure) == Int64.self)
+        let factory = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeMetatypeClosureGeneric<A>() -> (A.Type) -> A.Type",
+            as: (() -> NativeSwiftClosure<(Int64.Type) -> Int64.Type>).self, genericArguments: [.type(Int64.self)])
+        #expect(try unsafe factory.unsafeInvoke().unsafeInvoke(Int64.self) == Int64.self)
+        let erasedResult = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.runGeneric<A>(() -> A) -> A",
+            as: ((NativeSwiftClosure<() -> Int64.Type>) -> Int64.Type).self, genericArguments: [.type(Int64.Type.self)])
+        #expect(try unsafe erasedResult.unsafeInvoke(NativeSwiftClosure<() -> Int64.Type> { Int64.self }) == Int64.self)
+        let asyncBody: @Sendable (Int64.Type) async -> Int64.Type = { type in
+            await Task.yield()
+            #expect(type == Int64.self)
+            return type
+        }
+        let asyncClosure = try NativeSwiftClosure<(Int64.Type) async -> Int64.Type>(asyncBody)
+        let asyncCallback = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.callbackAsyncMetatypeGeneric<A>(A.Type, nonisolated(nonsending) (A.Type) async -> A.Type) async -> A.Type",
+            as: ((Int64.Type, NativeSwiftClosure<(Int64.Type) async -> Int64.Type>) async -> Int64.Type).self,
+            genericArguments: [.type(Int64.self)])
+        #expect(try unsafe await asyncCallback.unsafeInvoke(Int64.self, asyncClosure) == Int64.self)
+        let asyncFactory = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeAsyncMetatypeClosureGeneric<A>() -> nonisolated(nonsending) @Sendable (A.Type) async -> A.Type",
+            as: (() -> NativeSwiftClosure<nonisolated(nonsending) @Sendable (Int64.Type) async -> Int64.Type>).self,
+            genericArguments: [.type(Int64.self)])
+        #expect(try unsafe await asyncFactory.unsafeInvoke().unsafeInvoke(Int64.self) == Int64.self)
+    }
+
     @Test func explicitClassAndMetatypeArgumentsFulfillGenericRequirements() async throws {
         let runtime = ABIRuntime()
         let box = GenericSourceBox(GenericSourceValue(41))

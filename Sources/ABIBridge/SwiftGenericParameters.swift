@@ -11,6 +11,8 @@ struct SwiftGenericParameters: Sendable {
     let arguments: [SwiftGenericArgument]
     let groups: [Group]
     let hasPacks: Bool
+    private let constants: [SwiftValueConstants]
+    var needsEncoding: Bool { hasPacks || constants.contains { !$0.isEmpty } }
 
     init(formal: [SwiftFormalType], actual: [Any.Type], binding: SwiftGenericBinding) throws {
         var arguments: [SwiftGenericArgument] = []
@@ -41,6 +43,7 @@ struct SwiftGenericParameters: Sendable {
         self.arguments = arguments
         self.groups = groups
         self.hasPacks = hasPacks
+        constants = actual.map(SwiftValueConstants.init)
     }
 
     static func storageType(_ type: Any.Type) throws -> CValueType {
@@ -69,8 +72,14 @@ struct SwiftGenericParameters: Sendable {
     }
 
     func encode(_ logical: [UnsafeMutableRawPointer?]) -> Encoded {
-        guard hasPacks else { return Encoded(addresses: logical, packs: []) }
+        guard needsEncoding else { return Encoded(addresses: logical, packs: []) }
         var packs: [NativeValueStorage] = []
+        let logical = zip(logical, constants).map { address, constants -> UnsafeMutableRawPointer? in
+            guard !constants.isEmpty, let address else { return address }
+            let storage = constants.copyStorage(from: address)
+            packs.append(storage)
+            return storage.address
+        }
         let addresses = groups.map { group -> UnsafeMutableRawPointer? in
             switch group {
             case .value(let index): return logical[index]

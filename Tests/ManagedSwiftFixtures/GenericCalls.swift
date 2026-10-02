@@ -1,4 +1,31 @@
 @inline(never) public func runGeneric<Value>(_ apply: () -> Value) -> Value { apply() }
+
+@frozen public struct GenericMetatypeValue<Value> {}
+@inline(never) public func valueMetatypeGeneric<Value>(
+    _ type: GenericMetatypeValue<Value>.Type, _ value: Int64
+) -> (GenericMetatypeValue<Value>.Type, Int64) { (type, value + 1) }
+@inline(never) public func archetypeMetatypeGeneric<Value>(
+    _ type: Value.Type, _ value: Int64
+) -> (Value.Type, Int64) { (type, value + 2) }
+@inline(never) public func callbackMetatypeGeneric<Value>(
+    _ type: Value.Type, _ body: (Value.Type) -> Value.Type
+) -> Value.Type { body(type) }
+@inline(never) public func makeMetatypeClosureGeneric<Value>() -> (Value.Type) -> Value.Type { { $0 } }
+@inline(never) public nonisolated(nonsending) func callbackAsyncMetatypeGeneric<Value>(
+    _ type: Value.Type, _ body: (nonisolated(nonsending) (Value.Type) async -> Value.Type)
+) async -> Value.Type { await body(type) }
+@inline(never) public func makeAsyncMetatypeClosureGeneric<Value>() -> (nonisolated(nonsending) @Sendable (Value.Type) async -> Value.Type) {
+    { type in await Task.yield(); return type }
+}
+@inline(never) public func concreteMetatype(_ pair: (Int64.Type, Int64)) -> (Int64.Type, Int64) { (pair.0, pair.1 + 3) }
+@inline(never) public func optionalMetatype(_ type: Int64.Type?) -> Int64.Type? { type == nil ? Int64.self : nil }
+@inline(never) public func optionalMetatypeGeneric<Value>(_ type: Value.Type?) -> Value.Type? { type }
+@inline(never) public func optionalNominalMetatypeGeneric<Value>(
+    _ type: GenericMetatypeValue<Value>.Type?, _ value: Value
+) -> (GenericMetatypeValue<Value>.Type?, Int8, Value, Int8) {
+    (type == nil ? GenericMetatypeValue<Value>.self : nil, 13, value, 14)
+}
+@inline(never) public func metatypeAndValueGeneric<Value>(_ value: Value) -> (Int64.Type, Value) { (Int64.self, value) }
 @inline(never) public func echoGeneric<Value>(_ value: Value) -> Value { value }
 @inline(never) public func chooseGeneric<Value>(_ value: Value, _ apply: () -> Value, _ useCallback: Bool) -> Value {
     useCallback ? apply() : value

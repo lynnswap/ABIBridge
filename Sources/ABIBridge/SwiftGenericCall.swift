@@ -33,6 +33,7 @@ struct SwiftGenericClosurePlan: Sendable {
     let transport: Transport
     let parameters: SwiftGenericParameters
     let discriminator: UInt16
+    let resultConstants: SwiftValueConstants
 }
 
 struct SwiftGenericCallPlan: Sendable {
@@ -179,7 +180,8 @@ struct SwiftGenericCallPlan: Sendable {
             : .synchronous(try SwiftCallInterface.cached(result: resultType, parameters: types, errorPlan: errorPlan))
         return try SwiftGenericClosurePlan(transport: transport, parameters: parameterPlan,
             discriminator: swiftClosureDiscriminator(parameters: authentication,
-                results: authTypes(result, actual: signature.result, binding: binding, isResult: true)))
+                results: authTypes(result, actual: signature.result, binding: binding, isResult: true)),
+            resultConstants: SwiftValueConstants(signature.result))
     }
 
     private static func authTypes(_ formal: SwiftFormalType, actual: Any.Type,
@@ -232,6 +234,10 @@ struct SwiftGenericCallPlan: Sendable {
                 if name == "Swift.Optional", let wrapped = arguments.first {
                     if try binding.isClassBound(wrapped) { return try CValueType(scalar: ABIValuePointer) }
                     let wrappedType = try binding.types(wrapped)[0]
+                    if case .metatype(let instance) = wrapped, let metatype = SwiftMetatypeMetadata(wrappedType) {
+                        return try !metatype.isExistential && singletonMetatype(instance, binding: binding)
+                            ? CValueType(swiftOptionalSingleton: ()) : metatype.valueType(for: Value.self, thin: false)
+                    }
                     let wrappedLayout = try Self.layout(wrapped, actual: wrappedType, binding: binding)
                     if withExtendedLifetime(wrappedLayout, { ABISwiftValueIsIndirect(wrappedLayout.handle) }) {
                         return try SwiftGenericParameters.storageType(actual)
@@ -258,8 +264,11 @@ struct SwiftGenericCallPlan: Sendable {
                     return try SwiftGenericParameters.storageType(actual)
                 }
                 return try SwiftValueCodec<Value>().type
-            case .metatype:
-                return try CValueType(scalar: ABIValuePointer)
+            case .metatype(let instance):
+                guard let metatype = SwiftMetatypeMetadata(actual) else {
+                    throw ABIResolutionError.signatureMismatch(.init(expected: formal.spelling, found: [String(reflecting: actual)]))
+                }
+                return try metatype.valueType(for: Value.self, thin: !metatype.isExistential && singletonMetatype(instance, binding: binding))
             case .tuple(let fields):
                 let elements = try tupleElements(fields, actual: actual, binding: binding)
                 var types: [CValueType] = [], offsets: [Int] = []
@@ -293,6 +302,14 @@ struct SwiftGenericCallPlan: Sendable {
             }
         }
         return try _openExistential(actual, do: prepare)
+    }
+
+    private static func singletonMetatype(_ type: SwiftFormalType, binding: SwiftGenericBinding) throws -> Bool {
+        let type = binding.canonicalType(of: type)
+        if case .metatype(let instance) = type { return try singletonMetatype(instance, binding: binding) }
+        if case .named(let name, let arguments) = type, arguments.isEmpty,
+           binding.arguments[String(name.prefix { $0 != "." })] != nil { return false }
+        return try !(binding.types(type)[0] is AnyClass)
     }
 }
 

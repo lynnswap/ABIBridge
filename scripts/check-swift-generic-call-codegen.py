@@ -77,6 +77,18 @@ def main():
                 f"{target}: a pack callback receives input and output address vectors")
         large_callback = next(line.strip() for line in body(ir, "probeLargeFixedCallback").splitlines()
                               if "call swiftcc" in line and "swiftself" in line)
+        metatypes = {}
+        for name in ["Thin", "Thick", "Optional", "Existential", "OptionalExistential"]:
+            metatypes[name] = next(line.strip() for line in body(ir, "probe" + name + "Metatype").splitlines()
+                                  if "call swiftcc" in line and "swiftself" in line)
+        require("call swiftcc void" in metatypes["Thin"] and len(re.findall(r"\bptr\b", metatypes["Thin"])) == 1,
+                f"{target}: singleton metatypes have no physical argument or result")
+        require("call swiftcc ptr" in metatypes["Thick"] and len(re.findall(r"\bptr\b", metatypes["Thick"])) == 3,
+                f"{target}: archetype metatypes preserve their metadata argument and result")
+        require("call swiftcc i8" in metatypes["Optional"] and "i8 0" in metatypes["Optional"],
+                f"{target}: an optional singleton metatype passes only its enum tag")
+        require("call swiftcc { ptr, ptr }" in metatypes["Existential"],
+                f"{target}: existential metatypes carry their metadata and witness table")
         for name in ["probeBorrowedGetter", "probeBorrowedMethod"]:
             require("swiftself" in body(ir, name), f"{target}: member needs indirect self context")
         require("@out Value" in sil and "@in_guaranteed RuntimeRecord" in sil,
@@ -125,6 +137,10 @@ def main():
         require("ptr %Object" in superclass_source and "ptr %Value" not in superclass_source,
                 f"{target}: a superclass source fulfills its arguments but not the derived archetype")
         if target.startswith("arm64e"):
+            for name, entry in metatypes.items():
+                discriminator = 53055 if name == "OptionalExistential" else 30738
+                require(f'"ptrauth"(i32 0, i64 {discriminator})' in entry,
+                        f"{name} metatype callback authentication changed")
             require('"ptrauth"(i32 0, i64 55683)' in large_callback, "Large fixed callback authentication changed")
             require('"ptrauth"(i32 0, i64 47754)' in pack_callback, "Generic pack callback authentication changed")
             require('"ptrauth"(i32 0, i64 8528)' in tuple_callback, "Generic tuple callback authentication changed")
@@ -153,7 +169,8 @@ def main():
                         "nestedReceiver": nested_receiver, "arrayReceiver": array_receiver,
                         "associatedClass": associated_object, "classSource": class_source,
                         "tupleSource": tuple_source, "metatypeSource": metatype_source,
-                        "nestedSource": nested_source, "superclassSource": superclass_source})
+                        "nestedSource": nested_source, "superclassSource": superclass_source,
+                        "metatypeCallbacks": metatypes})
     report = {"compiler": run("xcrun", "swiftc", "--version").strip(), "runtimeTested": False,
               "demanglerRevision": upstream["revision"], "targets": targets}
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")

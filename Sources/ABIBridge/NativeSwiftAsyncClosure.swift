@@ -112,7 +112,9 @@ extension NativeSwiftClosure {
                 precondition(invocation != nil, "The prepared async closure reabstraction must be valid.")
                 defer { withExtendedLifetime((original, unpacked)) { ABIReleaseSwiftAsyncInvocation(invocation!) } }
                 await invokeSwiftAsync(invocation!)
-                return ABISwiftAsyncInvocationDidThrow(invocation!)
+                let didThrow = ABISwiftAsyncInvocationDidThrow(invocation!)
+                if !didThrow { plan.resultConstants.initialize(at: result) }
+                return didThrow
             })
         return try Self.asyncStorage(callback, discriminator: plan.discriminator).encoded()
     }
@@ -154,12 +156,13 @@ extension NativeSwiftClosure {
         let discriminator = try signature.closureDiscriminator()
         let prepared = try SwiftAsyncCall(signature: Signature.self, errorPlan: signature.makeErrorPlan(),
             inheritsCallerIsolation: signature.inheritsCallerIsolation)
+        let constants = signature.parameters.map(SwiftValueConstants.init)
         let callback = try SwiftAsyncClosureCallbackOwner(interface: prepared.interface,
             body: SwiftAsyncClosureBody(inheritsCallerIsolation: signature.inheritsCallerIsolation) { arguments, result, errorOutput in
                 var index = 0
                 func decode<Value>(_ type: Value.Type) -> Value {
                     defer { index += 1 }
-                    return arguments![index]!.load(as: type)
+                    return constants[index].load(from: arguments![index]!, as: type)
                 }
                 let values = (repeat decode((each Argument).self))
                 do throws(Failure) {
@@ -200,7 +203,7 @@ extension NativeSwiftClosure {
             }
             let callback = try SwiftAsyncClosureCallbackOwner(interface: prepared.interface,
                 body: SwiftAsyncClosureBody(inheritsCallerIsolation: signature.inheritsCallerIsolation, retainingCode: original.codeOwner) { arguments, result, error in
-                    let encoded = generic?.parameters.hasPacks == true ? generic!.parameters.encode(arguments) : nil
+                    let encoded = generic?.parameters.needsEncoding == true ? generic!.parameters.encode(arguments) : nil
                     func prepare(_ arguments: UnsafePointer<UnsafeMutableRawPointer?>?) -> OpaquePointer? {
                         ABICreateSwiftAsyncInvocation(interface.handle, original.entry.function,
                             original.entry.contextSize, result, arguments, original.value.context, error, nil)

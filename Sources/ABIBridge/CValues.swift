@@ -83,6 +83,12 @@ final class CValueType: @unchecked Sendable {
         self.alignment = alignment
     }
 
+    init(swiftOptionalSingleton: Void) {
+        handle = ABICreateSwiftOptionalSingletonType()!
+        size = MemoryLayout<UInt>.size
+        alignment = MemoryLayout<UInt>.alignment
+    }
+
     init(swiftComponents components: CValueType, size: Int, alignment: Int) throws {
         var failure: OpaquePointer?
         let handle = withExtendedLifetime(components) {

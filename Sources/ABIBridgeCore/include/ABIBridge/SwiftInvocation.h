@@ -93,6 +93,8 @@ void ABIReleaseSwiftClosureContext(void *context);
 /// Scalar field extents must fit size; component aggregate tail padding is
 /// excluded. Alignment must be a power of two.
 /// This layout is for Swift interfaces, not a libffi C calling convention.
+ABIValueType *ABICreateSwiftOptionalSingletonType(void);
+
 ABIValueType *ABICreateSwiftStorageType(
     const ABIValueType *components, size_t size, size_t alignment, ABIResolutionFailure **error);
 

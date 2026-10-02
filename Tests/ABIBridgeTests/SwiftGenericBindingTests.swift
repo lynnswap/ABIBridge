@@ -248,6 +248,13 @@ struct SwiftGenericBindingTests {
         #expect(swiftClosureDiscriminator(parameters: ["-indirect", "$ss4Int8V"],
             results: ["-indirect", "$ss4Int8V", "$ss4Int8V"]) == 8528)
         #expect(swiftClosureDiscriminator(parameters: ["-"], results: ["-indirect"]) == 47754)
+        let metatypes: [Any.Type] = [Int64.Type.self, Int64.Type?.self, (any CustomStringConvertible.Type).self]
+        for type in metatypes {
+            let auth = try swiftClosureAuthType(type)
+            #expect(swiftClosureDiscriminator(parameters: [auth], results: [auth]) == 30738)
+        }
+        let optional = try swiftClosureAuthType((any CustomStringConvertible.Type)?.self)
+        #expect(swiftClosureDiscriminator(parameters: [optional], results: [optional]) == 53055)
         #expect(try SwiftFunctionSignature(((LargeManagedValue) -> LargeManagedValue).self).closureDiscriminator() == 55683)
     }
 

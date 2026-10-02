@@ -104,11 +104,12 @@ public struct NativeSwiftClosure<Signature> {
         let signature = try SwiftFunctionSignature(Signature.self)
         let discriminator = try signature.closureDiscriminator()
         let prepared = try SwiftCall(signature: Signature.self, errorPlan: signature.makeErrorPlan())
+        let constants = signature.parameters.map(SwiftValueConstants.init)
         let callback = try throwingClosureOwner(prepared.interface, body: SwiftThrowingClosureBody { arguments, output, errorOutput in
             var index = 0
             func decode<Value>(_ type: Value.Type) -> Value {
                 defer { index += 1 }
-                return arguments![index]!.load(as: type)
+                return constants[index].load(from: arguments![index]!, as: type)
             }
             let values = (repeat decode((each Argument).self))
             do throws(Failure) {
@@ -179,7 +180,7 @@ extension NativeSwiftClosure: SwiftClosureValue {
             // implementation images alive until the final native copy is destroyed.
             let callback = try throwingClosureOwner(prepared.interface, body: SwiftThrowingClosureBody(retainingCode: original.codeOwner) { arguments, result, failure in
                 var didThrow = false
-                let encoded = generic?.parameters.hasPacks == true ? generic!.parameters.encode(arguments) : nil
+                let encoded = generic?.parameters.needsEncoding == true ? generic!.parameters.encode(arguments) : nil
                 func invoke(_ arguments: UnsafePointer<UnsafeMutableRawPointer?>?) -> Bool {
                     if prepared.errorPlan != nil {
                         return ABIUnsafeInvokeSwiftThrowingCallInterface(interface.handle,
@@ -226,6 +227,7 @@ extension NativeSwiftClosure: SwiftGenericClosureValue {
                 ? plan.parameters.unpack(arguments).withUnsafeBufferPointer { invoke($0.baseAddress) }
                 : invoke(arguments)
             precondition(success, "A prepared closure reabstraction must have a valid call frame.")
+            if !didThrow { plan.resultConstants.initialize(at: output) }
             return didThrow
         })
         let value = ABISwiftClosureValue(function: ABISignSwiftClosureFunction(callback.function, plan.discriminator),
