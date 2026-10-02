@@ -15,6 +15,14 @@ The added modes cover:
 
 The native mode also covers C++ `bound_method::method()` extraction and rebinding after the original owner is released. Device reports are observations of this configuration, not minimum OS/toolchain requirements. arm64e.x1 and other unexecuted configurations still need their own runtime evidence.
 
+## Generic declaration bindings
+
+The `swift-generic-bindings` mode checks constrained nominal construction, retained type arguments, dependent class/value members, associated and same-type requirements, empty and mixed packs, metadata fulfilled by class arguments, generic callback arguments/results, async suspension, typed errors, inout writeback, and ordinary/existential metatypes. Its getter controls bind the same concrete error type to both a generic and a fixed error declaration to verify their distinct physical conventions.
+
+On October 2, 2026, the new mode passed all 26 checks on iPhone Air / iOS 27.0.1 (24A446), using Xcode 27.0 (27A266a) / Swift 6.4, Release arm64e, CPU subtype `0x80000002`, and `pacCompiled: true`. The same build passed 16 related modes: `swift`, `swift-generic-borrows`, `method-extraction`, `swift-closures`, `swift-throwing-closures`, `swift-async-closures`, `swift-callback`, `swift-errors`, `swift-async`, `swift-arguments`, `swift-existentials`, `swift-opaque`, `swift-function-hooks`, `swift-method-hooks`, `swift-value-hooks`, and `swiftui`. These 17 modes produced 253 successful checks in newly written reports from separate launches.
+
+The architecture package also passed all 30 parameterized macOS cases with Xcode 26.6 / Swift 6.3.3. This is runtime evidence for those configurations; the four-architecture compiler probes remain separate evidence for other targets.
+
 ## Concrete Swift closure values
 
 The `swift-closures` mode calls the public `NativeSwiftClosure` API against the separately compiled `SwiftReplacementFixtures` provider. It checks generated callbacks, native escaping storage after wrapper release, final capture destruction, returned String closures, CGRect's floating registers, typed/optional pointers, and zero-argument Void callbacks.

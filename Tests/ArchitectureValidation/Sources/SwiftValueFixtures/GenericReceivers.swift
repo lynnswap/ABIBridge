@@ -33,3 +33,84 @@ extension GenericMemberReceiver where Value == GenericReceiverNumber {
 extension GenericMemberReceiver where Value: CustomStringConvertible {
     @inline(never) public func witnessText() -> String { value.description }
 }
+
+public final class BindingBox<Value: Equatable> {
+    public var value: Value
+    public init(_ value: Value) { self.value = value }
+    @inline(never) public func compare<Other: Equatable>(_ other: Other) -> (Value, Other, Bool) {
+        (value, other, value == value && other == other)
+    }
+}
+@frozen public struct BindingValue<Value> {
+    public var value: Value
+    public init(_ value: Value) { self.value = value }
+    @inline(never) public mutating func replace(_ value: Value) { self.value = value }
+    @inline(never) public consuming func take() -> Value { value }
+}
+public final class BindingGetter<Value, Failure: Error> {
+    public var value: Value
+    public var failure: Failure
+    public var shouldThrow: Bool
+    public init(_ value: Value, _ failure: Failure, _ shouldThrow: Bool) {
+        self.value = value; self.failure = failure; self.shouldThrow = shouldThrow
+    }
+    public var checkedNumber: Int64 {
+        get throws(Failure) { if shouldThrow { throw failure }; return 42 }
+    }
+    public var fixedNumber: Int64 {
+        get throws(SmallError) { if shouldThrow { throw SmallError(43) }; return 43 }
+    }
+    nonisolated(nonsending) public var delayed: Value {
+        get async throws(Failure) { await Task.yield(); if shouldThrow { throw failure }; return value }
+    }
+}
+
+@inline(never) public func bindingSelect<Value, Values: Collection>(
+    _ fallback: Value, _ values: Values
+) -> Value where Values.Element == Value { values.first ?? fallback }
+@inline(never) public func bindingPack<each Value: Equatable>(_ values: repeat each Value) -> (repeat each Value) {
+    (repeat each values)
+}
+@inline(never) public func bindingPackCallback<each Value>(
+    _ body: (repeat each Value) -> (repeat each Value), _ values: repeat each Value
+) -> (repeat each Value) { body(repeat each values) }
+public final class BindingPackSource<each Value: Equatable> { public init() {} }
+@inline(never) public func bindingPackSource<each Value: Equatable>(
+    _ source: BindingPackSource<repeat each Value>, _ values: repeat each Value
+) -> Int64 {
+    var count: Int64 = 0
+    func equal<Element: Equatable>(_ value: Element) { if value == value { count += 1 } }
+    repeat equal(each values)
+    return count
+}
+@inline(never) public func bindingTransform<Input, Output>(
+    _ values: [Input], _ body: (Input) throws -> Output
+) rethrows -> [Output] { try values.map(body) }
+@inline(never) public func bindingClosure<Value>(_ value: Value) -> (Value) -> Value { { _ in value } }
+@inline(never) public func bindingError<Failure: Error>(_ type: Failure.Type) throws(Failure) -> Int64 { 44 }
+@inline(never) public func bindingErrorCallback<Failure: Error>(
+    _ body: () throws(Failure) -> Int64
+) throws(Failure) -> Int64 { try body() }
+@inline(never) public nonisolated(nonsending) func bindingAsync<Value>(_ value: Value) async -> Value {
+    await Task.yield(); return value
+}
+@inline(never) public nonisolated(nonsending) func bindingAsyncCallback<Value, Failure: Error>(
+    _ value: Value, _ body: (nonisolated(nonsending) (Value) async throws(Failure) -> Value)
+) async throws(Failure) -> Value { await Task.yield(); return try await body(value) }
+@inline(never) public func bindingAsyncClosure<Value: Sendable>(
+    _ value: Value
+) -> (nonisolated(nonsending) @Sendable (Value) async -> Value) {
+    { _ in await Task.yield(); return value }
+}
+@inline(never) public func bindingMutate<Value, Failure: Error>(
+    _ value: inout Value, _ replacement: consuming Value, _ failure: Failure, _ shouldThrow: Bool
+) throws(Failure) { value = replacement; if shouldThrow { throw failure } }
+@inline(never) public func bindingMetatypes<Value>(
+    _ type: Value.Type, _ optional: Int64.Type?, _ value: Value
+) -> (Value.Type, Int64.Type?, Value) { (type, optional == nil ? Int64.self : nil, value) }
+@inline(never) public func bindingMetatypeCallback<Value>(
+    _ type: Value.Type, _ body: (Value.Type) -> Value.Type
+) -> Value.Type { body(type) }
+@inline(never) public func bindingExistentialMetatype<Value>(
+    _ type: any CustomStringConvertible.Type, _ protocolType: (any CustomStringConvertible).Type, _ value: Value
+) -> (any CustomStringConvertible.Type, (any CustomStringConvertible).Type, Value) { (type, protocolType, value) }
