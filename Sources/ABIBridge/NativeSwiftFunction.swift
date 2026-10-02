@@ -74,7 +74,7 @@ func swiftFunctionDeclaration(
     guard !generic, (isAsync || !effectWords.contains("async")),
           (failureType != Never.self || !effectWords.contains("throws")) else {
         throw ABIResolutionError.unsupportedDeclaration(
-            "Generic signatures require a native adapter; async and throwing calls require matching function types."
+            "Generic signatures require genericArguments; async and throwing calls require matching function types."
         )
     }
     return NativeDeclaration(name: declaration, language: .swift)
@@ -183,9 +183,10 @@ extension SwiftCallInterface {
 /// layouts supplied by ABIBridgeSwiftValue, and trivial ABIBridgeValue layouts.
 /// Use NativeSwiftClosure for supported concrete callbacks. Inout and explicit
 /// ownership use NativeSwiftInout, NativeSwiftBorrowing, and NativeSwiftConsuming.
-/// The explicit substitution overload supports one unconstrained generic parameter.
-/// Other generic declarations, undescribed resilient values, and ordinary unwrapped
-/// closures require separate adapters. Async signatures preserve the native task and suspension. Throwing signatures
+/// Generic declarations use explicit genericArguments and preserve their formal
+/// metadata, witness, and value conventions; see <doc:GenericSwiftValues>.
+/// Undescribed resilient values and ordinary unwrapped closures require separate
+/// representations. Async signatures preserve the native task and suspension. Throwing signatures
 /// return native failures as NativeSwiftError.
 /// See <doc:SwiftFunctionInvocation>.
 public struct NativeSwiftFunction<Signature>: Sendable {

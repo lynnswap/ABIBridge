@@ -117,6 +117,7 @@ extension SwiftFormalType {
         case .consuming(let value): return .consuming(value.substituting(substitutions))
         case .inoutValue(let value): return .inoutValue(value.substituting(substitutions))
         case .metatype(let value): return .metatype(value.substituting(substitutions))
+        case .existentialMetatype(let value): return .existentialMetatype(value.substituting(substitutions))
         case .function(let parameters, let result, let failure, let isAsync):
             return .function(parameters.map { $0.substituting(substitutions) }, result.substituting(substitutions),
                 failure: failure?.substituting(substitutions), isAsync: isAsync)

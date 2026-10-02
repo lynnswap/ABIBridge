@@ -8,9 +8,9 @@ SwiftUI interoperability reuses the Swift invocation APIs. Choose a path based o
 | Concrete Text, Image, Color, or AnyView | Import SwiftUI and declare the established ABI with ABIBridgeSwiftValue | Pass/return the actual Swift value; the compiler owns its reference payloads |
 | Nongeneric factory returning some View | SwiftUI and the exact arguments; the provider module need not be importable | Receive NativeSwiftOpaqueValue, cast its Any value to any View, and erase with AnyView |
 | Concrete Container<Text> from a resilient module | Import the provider and declare its indirect convention | Use a nongeneric factory or concrete entry |
-| Generic Container<Content> construction or arbitrary View modifiers | A compiler-authored specialization/adapter | Let Swift supply generic metadata, View witnesses, closures, and body composition |
+| Generic function constrained to View, such as `(T) -> T` | Import SwiftUI and bind the concrete content type | Use `genericArguments:` to supply metadata and existing View witnesses |
 
-Knowing a metatype does not infer an arbitrary SwiftUI value's calling convention. Knowing that a symbol returns some View does not provide hidden arguments for a generic function. The direct-call responsibility described in <doc:SwiftFunctionInvocation> still applies.
+Generic bindings use the declaration's formal calling convention and existing View conformance. A concrete nominal result still needs an established representation; knowing its metatype does not infer an arbitrary SwiftUI value's direct calling convention. See <doc:GenericSwiftValues> and <doc:ExplicitSwiftValues>.
 
 ## A compiled host factory
 
@@ -75,7 +75,7 @@ extension Color: @retroactive ABIBridgeSwiftValue {
 
 Use <doc:ExplicitSwiftValues> for the contract. Validate the actual target declaration against its SDK/compiler ABI before adding a conformance. A .pointer layout here describes an actual managed Swift value, not an arbitrary reinterpretation of a foreign object.
 
-An imported resilient Container<Text> can declare a formally indirect convention and use a concrete function signature. For the generic wrap<Content: View> entry, the fixture instead compiles wrapText(_:) as an adapter. A nongeneric factory returning some View can hide the same generic composition without exposing its concrete type to the consumer.
+An imported resilient Container<Text> can declare a formally indirect convention and use a concrete function signature. The architecture fixture uses the compiled `wrapText(_:)` specialization for that rendering check. The external consumer separately calls a generic `echo<Content: View>(_:) -> Content` with `genericArguments: [.type(Text.self)]` and compares its rendered result. A nongeneric factory returning some View can hide a generic composition without exposing its concrete type to the consumer.
 
 ## Isolation, updates, and lifetime
 

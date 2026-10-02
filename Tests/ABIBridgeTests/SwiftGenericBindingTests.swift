@@ -5,6 +5,22 @@ import ManagedSwiftFixtures
 import Testing
 
 struct SwiftGenericBindingTests {
+    @Test func existentialMetatypesKeepTheirRuntimeRepresentation() throws {
+        let binding = try SwiftGenericBinding(declaration: SwiftGenericDeclaration(linkageName:
+            "$s20ManagedSwiftFixtures10runGenericyxyxXElF"),
+            arguments: [.type((any CustomStringConvertible).self)],
+            signature: SwiftFunctionSignature((() -> Void).self), resolver: .shared)
+        let parameter = SwiftFormalType.named("A", [])
+        let ordinary = try binding.types(.metatype(parameter))
+        let existential = try binding.types(.existentialMetatype(parameter))
+        let nested = try binding.types(.existentialMetatype(.existentialMetatype(parameter)))
+        #expect(ObjectIdentifier(ordinary[0]) == ObjectIdentifier((any CustomStringConvertible).Type.self))
+        #expect(ObjectIdentifier(existential[0]) == ObjectIdentifier((any CustomStringConvertible.Type).self))
+        #expect(ObjectIdentifier(nested[0]) == ObjectIdentifier((any CustomStringConvertible.Type.Type).self))
+        #expect(try binding.spelling(.metatype(parameter)) == "Swift.CustomStringConvertible.Protocol")
+        #expect(try binding.spelling(.existentialMetatype(parameter)) == "Swift.CustomStringConvertible.Type")
+    }
+
     @Test func associatedWitnessesPreserveFormalSubstitutions() throws {
         let binding = try SwiftGenericBinding(declaration: SwiftGenericDeclaration(linkageName:
             "$s20ManagedSwiftFixtures10runGenericyxyxXElF"),
@@ -150,6 +166,9 @@ struct SwiftGenericBindingTests {
             named: "init(_:)",
             as: ((String) -> GenericTypeClass<String>).self)
         let receiver = try unsafe initialize.unsafeInvoke(String(repeating: "initial", count: 20))
+        let erasedInitialize = try await type.initializer(named: "init(_:)", as: ((String) -> AnyObject).self)
+        let erasedReceiver = try unsafe erasedInitialize.unsafeInvoke("erased")
+        #expect((erasedReceiver as? GenericTypeClass<String>)?.value == "erased")
         let get = try await type.getter(named: "value", as: (() -> String).self)
         let set = try await type.setter(named: "value", as: String.self)
         let identity = try await type.staticMethod(named: "identity(_:)", as: ((String) -> String).self)

@@ -31,6 +31,11 @@ private final class Capture: Sendable {
 // swiftmodule. Only the loaded binary and the declared ABI are available.
 let library = URL(fileURLWithPath: CommandLine.arguments[1])
 let runtime = ABIRuntime()
+let echo = try await runtime.swiftFunction(
+    named: "SwiftUIPlugin.echo<A where A: SwiftUI.View>(A) -> A",
+    as: ((Text) -> Text).self, genericArguments: [.type(Text.self)], in: .path(library))
+let echoed = try unsafe echo.unsafeInvoke(Text(verbatim: "Generic SwiftUI value"))
+precondition(pixels(echoed) == pixels(Text(verbatim: "Generic SwiftUI value")))
 let make = try await runtime.swiftFunction(named: "SwiftUIPlugin.makeView(_:_:)",
     as: ((String, NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftOpaqueValue).self, in: .path(library))
 let host = try await runtime.swiftFunction(named: "SwiftUIPlugin.makeHost(_:_:)",

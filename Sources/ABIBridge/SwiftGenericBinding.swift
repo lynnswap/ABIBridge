@@ -73,6 +73,7 @@ struct SwiftGenericBinding: Sendable {
                 for element in tuple.elements { try remember(element.type) }
             }
             if let optional = type as? any NativeOptionalValue.Type { try remember(optional.wrappedType) }
+            if let metatype = SwiftMetatypeMetadata(type) { try remember(metatype.instance) }
             if let argument = type as? any SwiftConventionArgument.Type { try remember(argument.wrappedType) }
             if let closure = type as? any SwiftClosureValue.Type {
                 let function = try SwiftFunctionSignature(closure.swiftFunctionType)
@@ -429,13 +430,21 @@ struct SwiftGenericBinding: Sendable {
                 return matches[0]
             }
         }
+        switch type {
+        case .metatype(let instance), .existentialMetatype(let instance):
+            let metadata = unsafeBitCast(try types(instance, packIndex: packIndex)[0], to: UnsafeRawPointer.self)
+            let result: UnsafeRawPointer?
+            if case .existentialMetatype = type { result = ABISwiftExistentialMetatypeMetadata(metadata) }
+            else { result = ABISwiftMetatypeMetadata(metadata) }
+            guard let result else {
+                throw ABIResolutionError.metadataUnavailable("An existential metatype requires an existential instance type.")
+            }
+            return [unsafeBitCast(result, to: Any.Type.self)]
+        default: break
+        }
         if case .reference = type {} else {
             let name = try spelling(type, packIndex: packIndex)
             if let known = knownTypes[try Self.key(name)] { return [known] }
-        }
-        if case .metatype(let instance) = type {
-            let metadata = try types(instance, packIndex: packIndex)[0]
-            return [unsafeBitCast(ABISwiftMetatypeMetadata(unsafeBitCast(metadata, to: UnsafeRawPointer.self))!, to: Any.Type.self)]
         }
         if case .tuple(let fields) = type {
             let elements = try fields.flatMap { try types($0, packIndex: packIndex) }
@@ -496,7 +505,7 @@ struct SwiftGenericBinding: Sendable {
             case .function(let parameters, let result, let failure, _):
                 parameters.forEach(visit); visit(result); if let failure { visit(failure) }
             case .pack(let value, let shape): visit(shape ?? value)
-            case .borrowing(let value), .consuming(let value), .inoutValue(let value), .metatype(let value): visit(value)
+            case .borrowing(let value), .consuming(let value), .inoutValue(let value), .metatype(let value), .existentialMetatype(let value): visit(value)
             }
         }
         visit(type)
@@ -529,19 +538,26 @@ struct SwiftGenericBinding: Sendable {
         case .packValue(let elements):
             return "Pack{" + (try elements.map { try spelling($0, packIndex: packIndex) }).filter { !$0.isEmpty }.joined(separator: ", ") + "}"
         case .inoutValue(let value), .borrowing(let value), .consuming(let value): return try spelling(value, packIndex: packIndex)
-        case .metatype(let value):
-            if dependsOnParameters(value) {
-                let instance = try types(value, packIndex: packIndex)[0]
-                let metadata = ABISwiftMetatypeMetadata(unsafeBitCast(instance, to: UnsafeRawPointer.self))!
-                return try swiftNativeTypeName(unsafeBitCast(metadata, to: Any.Type.self))
-            }
-            return try spelling(value, packIndex: packIndex) + ".Type"
+        case .metatype, .existentialMetatype:
+            return try swiftNativeTypeName(types(type, packIndex: packIndex)[0])
         case .function(let values, let result, let failure, let isAsync):
             let error = try failure.map { try spelling($0, packIndex: packIndex) }
             return "(" + (try values.map { try spelling($0, packIndex: packIndex) }).joined(separator: ", ") + ")" + (isAsync ? " async" : "")
                 + (error.map { $0 == "Swift.Never" ? "" : $0 == "Swift.Error" ? " throws" : " throws(" + $0 + ")" } ?? "")
                 + " -> " + (try spelling(result, packIndex: packIndex))
         }
+    }
+
+    func resultType(_ actual: Any.Type, for formal: SwiftFormalType) throws -> Any.Type {
+        let optional = actual as? any NativeOptionalValue.Type
+        if (optional?.wrappedType ?? actual) == AnyObject.self {
+            let native = try types(formal)[0]
+            let nativeOptional = native as? any NativeOptionalValue.Type
+            if (optional != nil) == (nativeOptional != nil),
+               (nativeOptional?.wrappedType ?? native) is AnyClass { return native }
+        }
+        try validate(actual, for: formal)
+        return actual
     }
 
     func validate(_ type: Any.Type, for formal: SwiftFormalType, packIndex: Int? = nil) throws {

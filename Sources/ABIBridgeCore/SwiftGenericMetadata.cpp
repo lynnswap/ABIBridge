@@ -19,6 +19,7 @@ struct MetadataResponse { const void *value; uintptr_t state; };
 extern "C" const void *swift_conformsToProtocol(const void *, const void *);
 extern "C" const void *swift_getExistentialTypeMetadata(bool, const void *, size_t, const uintptr_t *);
 extern "C" const void *swift_getMetatypeMetadata(const void *);
+extern "C" const void *swift_getExistentialMetatypeMetadata(const void *);
 extern "C" MetadataResponse __attribute__((swiftcall))
 swift_getTupleTypeMetadata(uintptr_t, uintptr_t, const void *const *, const char *, const void *);
 extern "C" MetadataResponse __attribute__((swiftcall))
@@ -103,6 +104,12 @@ const void *ABISwiftConformance(const void *metadata, const void *protocol) {
 
 const void *ABISwiftMetatypeMetadata(const void *instance) {
     return swift_getMetatypeMetadata(instance);
+}
+
+const void *ABISwiftExistentialMetatypeMetadata(const void *instance) {
+    const uintptr_t kind = read<uintptr_t>(instance);
+    if (kind != 0x303 && kind != 0x306) return nullptr;
+    return swift_getExistentialMetatypeMetadata(instance);
 }
 
 const void *ABISwiftTupleTypeMetadata(const void *const *elements, size_t count) {

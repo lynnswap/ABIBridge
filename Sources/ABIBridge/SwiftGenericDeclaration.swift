@@ -37,6 +37,7 @@ indirect enum SwiftFormalType: Sendable, Equatable {
     case borrowing(SwiftFormalType)
     case consuming(SwiftFormalType)
     case metatype(SwiftFormalType)
+    case existentialMetatype(SwiftFormalType)
 
     init(_ source: String) throws {
         var text = source.trimmingCharacters(in: .whitespaces)
@@ -81,6 +82,10 @@ indirect enum SwiftFormalType: Sendable, Equatable {
         }
         if text.hasSuffix(".Type") {
             self = .metatype(try Self(String(text.dropLast(5))))
+            return
+        }
+        if text.hasSuffix(".Protocol") {
+            self = .metatype(try Self(String(text.dropLast(9))))
             return
         }
         if text.hasSuffix("?") {
@@ -143,6 +148,7 @@ indirect enum SwiftFormalType: Sendable, Equatable {
         case .borrowing(let value): "__shared " + value.spelling
         case .consuming(let value): "__owned " + value.spelling
         case .metatype(let value): value.spelling + ".Type"
+        case .existentialMetatype(let value): value.spelling + ".Type"
         }
     }
 }

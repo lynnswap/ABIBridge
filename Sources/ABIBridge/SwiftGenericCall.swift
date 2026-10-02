@@ -61,7 +61,7 @@ struct SwiftGenericCallPlan: Sendable {
             arguments: (enclosing?.arguments ?? []) + genericArguments,
             signature: signature, resolver: resolver, enclosing: context)
         if case .function(_, let result, _, _) = formalGetter {
-            try binding.validate(signature.result, for: result)
+            _ = try binding.resultType(signature.result, for: result)
         }
         guard declaration.isAsync == signature.isAsync,
               declaration.failure != nil || signature.failure == Never.self else {
@@ -81,7 +81,7 @@ struct SwiftGenericCallPlan: Sendable {
         parameters = try SwiftGenericParameters(formal: declaration.arguments, actual: signature.parameters, binding: binding,
             defaultConsuming: declaration.consumesArguments)
         if binding.dependsOnParameters(declaration.result) {
-            try binding.validate(signature.result, for: declaration.result)
+            let nativeResult = try binding.resultType(signature.result, for: declaration.result)
             if case .function = declaration.result {
                 guard let closure = signature.result as? any SwiftGenericClosureValue.Type else {
                     throw ABIResolutionError.signatureMismatch(.init(expected: "NativeSwiftClosure for " + declaration.result.spelling,
@@ -91,7 +91,7 @@ struct SwiftGenericCallPlan: Sendable {
                     signature: SwiftFunctionSignature(closure.swiftFunctionType), binding: binding)
                 result = .closure(try closure.makeGenericClosureCodec(plan: plan))
             } else {
-                result = .value(try Self.layout(declaration.result, actual: signature.result, binding: binding))
+                result = .value(try Self.layout(declaration.result, actual: nativeResult, binding: binding))
             }
         } else {
             result = .concrete
@@ -135,7 +135,7 @@ struct SwiftGenericCallPlan: Sendable {
                     }
                 }
             }
-            try binding.validate(signature.result, for: binding.declaration.result)
+            _ = try binding.resultType(signature.result, for: binding.declaration.result)
             return true
         } catch ABIResolutionError.signatureMismatch { return false }
     }
@@ -186,8 +186,8 @@ struct SwiftGenericCallPlan: Sendable {
             }
         }
         let types = parameterPlan.types(from: logicalTypes)
-        try binding.validate(signature.result, for: result)
-        let resultType = try layout(result, actual: signature.result, binding: binding)
+        let nativeResult = try binding.resultType(signature.result, for: result)
+        let resultType = try layout(result, actual: nativeResult, binding: binding)
         let errorType = try failure.flatMap {
             binding.dependsOnParameters($0) ? try layout($0, actual: signature.failure, binding: binding) : nil
         }
@@ -199,7 +199,7 @@ struct SwiftGenericCallPlan: Sendable {
             : .synchronous(try SwiftCallInterface.cached(result: resultType, parameters: types, errorPlan: errorPlan))
         return try SwiftGenericClosurePlan(transport: transport, parameters: parameterPlan,
             discriminator: swiftClosureDiscriminator(parameters: authentication,
-                results: authTypes(result, actual: signature.result, binding: binding, isResult: true)),
+                results: authTypes(result, actual: nativeResult, binding: binding, isResult: true)),
             resultConstants: SwiftValueConstants(signature.result), errorPlan: errorPlan)
     }
 
@@ -290,6 +290,8 @@ struct SwiftGenericCallPlan: Sendable {
                     throw ABIResolutionError.signatureMismatch(.init(expected: formal.spelling, found: [String(reflecting: actual)]))
                 }
                 return try metatype.valueType(for: Value.self, thin: !metatype.isExistential && singletonMetatype(instance, binding: binding))
+            case .existentialMetatype:
+                return try SwiftValueCodec<Value>().type
             case .tuple(let fields):
                 let elements = try tupleElements(fields, actual: actual, binding: binding)
                 var types: [CValueType] = [], offsets: [Int] = []
@@ -374,7 +376,7 @@ extension SwiftGenericBinding {
         case .function(let parameters, let result, let failure, _):
             parameters.contains(where: dependsOnParameters) || dependsOnParameters(result) || (failure.map(dependsOnParameters) ?? false)
         case .pack(let type, let shape): dependsOnParameters(type) || (shape.map(dependsOnParameters) ?? false)
-        case .borrowing(let type), .consuming(let type), .inoutValue(let type), .metatype(let type):
+        case .borrowing(let type), .consuming(let type), .inoutValue(let type), .metatype(let type), .existentialMetatype(let type):
             dependsOnParameters(type)
         }
     }

@@ -171,8 +171,10 @@ extension SwiftFormalType {
             self = .pack(try Self(children[0]), shape: try Self(children[1]))
         case "Pack":
             self = .packValue(try children.map(Self.init))
-        case "Metatype", "ExistentialMetatype":
+        case "Metatype":
             self = .metatype(try Self(node.requiredChild(kind: "Type", fallingBackToFirst: true)))
+        case "ExistentialMetatype":
+            self = .existentialMetatype(try Self(node.requiredChild(kind: "Type", fallingBackToFirst: true)))
         case "InOut": self = .inoutValue(try Self(node.requiredChild()))
         case "Shared": self = .borrowing(try Self(node.requiredChild()))
         case "Owned": self = .consuming(try Self(node.requiredChild()))

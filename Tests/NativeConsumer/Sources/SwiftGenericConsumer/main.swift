@@ -5,6 +5,80 @@ import Foundation
 private enum GenericConsumerFailure: Error { case load(String), initialize(Int32) }
 
 @MainActor
+func exerciseGenericBindings(_ adapterPath: String) async throws {
+    guard let original = dlopen(adapterPath, RTLD_NOW | RTLD_LOCAL) else {
+        throw GenericConsumerFailure.load(String(cString: dlerror()))
+    }
+    defer { dlclose(original) }
+    let runtime = ABIRuntime()
+    let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericTypeClass",
+                                         genericArguments: [.type(String.self)])
+    let initialize = try await type.initializer(named: "init(_:)", as: ((String) -> AnyObject).self)
+    let object = try unsafe initialize.unsafeInvoke("first")
+    let set = try await runtime.object(object).setter(named: "value", as: String.self)
+    try unsafe set.unsafeInvoke("updated")
+    let get = try await type.getter(named: "value", as: (() -> String).self)
+    let updated = try unsafe get.unsafeInvoke(on: object)
+    precondition(updated == "updated")
+    let compare = try await runtime.object(object).method(named: "compare(_:)",
+        as: ((Int64) -> (String, Int64, Bool)).self, genericArguments: [.type(Int64.self)])
+    let comparison = try unsafe compare.unsafeInvoke(42)
+    precondition(comparison == ("updated", 42, true))
+
+    let argument = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericSourceValue")
+    _ = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericSourceBox", genericArguments: [.type(argument)])
+    let pack = try await runtime.swiftFunction(
+        named: "ManagedSwiftFixtures.constrainedPackGeneric<each A where A: Swift.Equatable>(repeat A) -> (repeat A)",
+        as: ((Int64, String) -> (Int64, String)).self,
+        genericArguments: [.pack([.type(Int64.self), .type(String.self)])])
+    let packed = try unsafe pack.unsafeInvoke(43, "pack")
+    precondition(packed == (43, "pack"))
+    let transform = try await runtime.swiftFunction(
+        named: "ManagedSwiftFixtures.transformGeneric<A, B>([A], (A) throws -> B) throws -> [B]",
+        as: (([Int64], NativeSwiftClosure<(Int64) throws -> String>) throws -> [String]).self,
+        genericArguments: [.type(Int64.self), .type(String.self)])
+    let callback = try NativeSwiftClosure<(Int64) throws -> String> { "value: \($0)" }
+    let transformed = try unsafe transform.unsafeInvoke([1, 2], callback)
+    precondition(transformed == ["value: 1", "value: 2"])
+    let select = try await runtime.swiftFunction(
+        named: "ManagedSwiftFixtures.selectGeneric<A, B where A == B.Element, B: Swift.Collection>(A, B) -> A",
+        as: ((String, [String]) -> String).self, genericArguments: [.type(String.self), .type([String].self)])
+    let selected = try unsafe select.unsafeInvoke("fallback", ["element"])
+    precondition(selected == "element")
+    let suspended = try await runtime.swiftFunction(
+        named: "ManagedSwiftFixtures.suspendedGeneric<A>(A) async -> A",
+        as: (nonisolated(nonsending) (String) async -> String).self, genericArguments: [.type(String.self)])
+    let resumed = try unsafe await suspended.unsafeInvoke("resumed")
+    precondition(resumed == "resumed")
+
+    let getterType = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericEffectfulGetter",
+        genericArguments: [.type(String.self), .type(GenericConsumerFailure.self)])
+    let makeGetter = try await getterType.initializer(named: "init(_:_:_:)",
+        as: ((String, GenericConsumerFailure, Bool) -> AnyObject).self)
+    let getterObject = try unsafe makeGetter.unsafeInvoke("checked", .initialize(44), false)
+    let checked = try await getterType.getter(named: "checked",
+        as: (() throws(GenericConsumerFailure) -> String).self, declaredAs: "() throws(B) -> A")
+    let checkedValue = try unsafe checked.unsafeInvoke(on: getterObject)
+    precondition(checkedValue == "checked")
+    let delayed = try await runtime.object(getterObject).getter(named: "delayedChecked",
+        as: (nonisolated(nonsending) () async throws(GenericConsumerFailure) -> String).self, declaredAs: "() async throws(B) -> A")
+    let delayedValue = try unsafe await delayed.unsafeInvoke()
+    precondition(delayedValue == "checked")
+    let shouldThrow = try await getterType.setter(named: "shouldThrow", as: Bool.self)
+    try unsafe shouldThrow.unsafeInvoke(on: getterObject, true)
+    do {
+        _ = try unsafe checked.unsafeInvoke(on: getterObject)
+        preconditionFailure("Expected the provider's typed error.")
+    } catch let error as NativeSwiftError {
+        let matched = error.withUnderlyingError {
+            if case GenericConsumerFailure.initialize(44) = $0 { return true }
+            return false
+        }
+        precondition(matched)
+    }
+}
+
+@MainActor
 func prepare(_ path: String, destroyed: UnsafeMutablePointer<Int32>) async throws -> (
     NativeValue, NativeFunction<Int32, UnsafeRawPointer?, UnsafeRawPointer, UnsafeMutablePointer<Int64>>, UnsafeRawPointer
 ) {
@@ -90,3 +164,5 @@ withExtendedLifetime(value) { precondition(destroyed.pointee == 0) }
 value = nil
 precondition(destroyed.pointee == 1)
 print("Generic Swift consumer passed")
+try await exerciseGenericBindings(CommandLine.arguments[1])
+print("Generic Swift binding consumer passed")

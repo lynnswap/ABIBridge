@@ -43,6 +43,30 @@ private final class GenericCaptureState: Sendable {
 @Suite(.serialized)
 struct SwiftGenericCallTests {
 
+    @MainActor @Test func classResultsUseTheExistingAnyObjectRepresentation() async throws {
+        let runtime = ABIRuntime()
+        let object = NSObject()
+        let echo = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.echoGeneric<A>(A) -> A",
+            as: ((NSObject) -> AnyObject).self, genericArguments: [.type(NSObject.self)])
+        #expect(try unsafe echo.unsafeInvoke(object) === object)
+        let optional = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.optionalGeneric<A>(A?) -> A?",
+            as: ((NSObject?) -> AnyObject?).self, genericArguments: [.type(NSObject.self)])
+        #expect(try unsafe optional.unsafeInvoke(object) === object)
+        #expect(try unsafe optional.unsafeInvoke(nil) == nil)
+    }
+
+    @MainActor @Test func existentialAndProtocolMetatypesRoundTripWithGenericValues() async throws {
+        let function = try await ABIRuntime().swiftFunction(
+            named: "ManagedSwiftFixtures.existentialMetatypesGeneric<A>(Swift.CustomStringConvertible.Type, Swift.CustomStringConvertible.Protocol, A) -> (Swift.CustomStringConvertible.Type, Swift.CustomStringConvertible.Protocol, A)",
+            as: ((any CustomStringConvertible.Type, (any CustomStringConvertible).Type, String)
+                -> (any CustomStringConvertible.Type, (any CustomStringConvertible).Type, String)).self,
+            genericArguments: [.type(String.self)])
+        let result = try unsafe function.unsafeInvoke(Int64.self, (any CustomStringConvertible).self, "metadata")
+        #expect(ObjectIdentifier(result.0) == ObjectIdentifier(Int64.self))
+        #expect(result.1 == (any CustomStringConvertible).self)
+        #expect(result.2 == "metadata")
+    }
+
     @MainActor @Test func neverBoundErrorsPreserveTheFormalThrowingConvention() async throws {
         let runtime = ABIRuntime()
         let function = try await runtime.swiftFunction(

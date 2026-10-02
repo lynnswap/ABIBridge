@@ -77,6 +77,7 @@ extension SwiftFormalType {
         case .packValue(let values): return .packValue(try values.map(qualify))
         case .pack(let value, let shape): return .pack(try qualify(value), shape: try shape.map(qualify))
         case .metatype(let value): return .metatype(try qualify(value))
+        case .existentialMetatype(let value): return .existentialMetatype(try qualify(value))
         case .borrowing(let value): return .borrowing(try qualify(value))
         case .consuming(let value): return .consuming(try qualify(value))
         case .inoutValue(let value): return .inoutValue(try qualify(value))

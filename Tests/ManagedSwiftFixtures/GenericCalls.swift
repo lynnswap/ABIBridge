@@ -1,5 +1,11 @@
 @inline(never) public func runGeneric<Value>(_ apply: () -> Value) -> Value { apply() }
 
+@inline(never) public func existentialMetatypesGeneric<Value>(
+    _ type: any CustomStringConvertible.Type, _ protocolType: (any CustomStringConvertible).Type, _ value: Value
+) -> (any CustomStringConvertible.Type, (any CustomStringConvertible).Type, Value) {
+    (type, protocolType, value)
+}
+
 @frozen public struct GenericElementStorage<Values: Collection> {
     public var element: Values.Element
     public init(_ element: Values.Element) { self.element = element }

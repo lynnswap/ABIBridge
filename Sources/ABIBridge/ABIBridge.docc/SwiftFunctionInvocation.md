@@ -53,6 +53,7 @@ Getter lookup now takes a complete zero-argument function type: replace `getter(
 | ABIBridgeSwiftValue | Actual Swift values with explicit fixed or formally indirect conventions and compiler-owned copying/destruction |
 | ABIBridgeValue | Explicit trivial native layouts representable by NativeType's scalar/structure descriptions |
 | NativeSwiftOpaqueValue | Owned hidden result of a single native some declaration; see <doc:SwiftOpaqueResults> |
+| Ordinary and existential metatypes | Preserve thin values, runtime type metadata, and required witnesses |
 | Void | An empty result or explicit empty-tuple argument |
 
 The call interface expands values into Swift integer/floating components, spills excess arguments to the stack, and handles direct or indirect results. There is no fixed argument-count limit. It does not call a Swift implementation through a C ABI interface or cast its address to an ordinary Swift closure.
@@ -67,9 +68,9 @@ The function retains its implementation image. Keep an image owner alive while a
 
 The prepared handle is Sendable and can be reused concurrently. Each call uses separate argument, result, and register storage. Calling remains synchronous on the caller's executor; satisfy the declaration's actor and thread requirements.
 
-## Unsupported declarations
+## Declaration conventions
 
-Use NativeSwiftInout, NativeSwiftBorrowing, and NativeSwiftConsuming for explicit parameter conventions; see <doc:SwiftArgumentConventions>. The explicit `substituting:` overload handles one unconstrained generic parameter and zero-argument callbacks returning it; see <doc:GenericSwiftValues>. Protocol witnesses and other generic shapes need separate adapters. Async function metatypes produce NativeSwiftFunction handles with an async Signature; see <doc:SwiftAsyncABI>. Synchronous throwing calls use the function metatype's declared error type; see <doc:SwiftErrorABI>. The caller still establishes the exact native signature: the resolver does not prove ABI compatibility from a name, a metatype, or a storage size.
+Use NativeSwiftInout, NativeSwiftBorrowing, and NativeSwiftConsuming for explicit parameter conventions; see <doc:SwiftArgumentConventions>. Generic declarations accept `genericArguments:` for their scalar parameters and packs, including constrained declarations and callbacks; see <doc:GenericSwiftValues>. Async function metatypes produce NativeSwiftFunction handles with an async Signature; see <doc:SwiftAsyncABI>. Throwing calls include the native error type in the signature; see <doc:SwiftErrorABI>. The caller still establishes the actual native signature and ownership: a source name or storage size alone does not prove ABI compatibility.
 
 Incorrect signatures, invalid pointers, and violated ownership or isolation contracts can corrupt memory. The unsafe invocation boundary exposes that responsibility; conversion and resolution failures use Swift errors.
 

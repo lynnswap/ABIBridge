@@ -53,6 +53,18 @@ let decorate = try await runtime.swiftFunction(
 let message = try unsafe decorate.unsafeInvoke("Hello")
 ```
 
+Generic declarations use the same callable handles with explicit type arguments:
+
+```swift
+let echo = try await runtime.swiftFunction(
+    named: "Example.echo<A>(A) -> A", as: ((String) -> String).self,
+    genericArguments: [.type(String.self)]
+)
+let message = try unsafe echo.unsafeInvoke("Hello")
+```
+
+See [Swift generic calls](https://lynnswap.github.io/ABIBridge/documentation/abibridge/genericswiftvalues) for constraints, packs, generic types, and members.
+
 ### Call an existing Objective-C instance
 
 For a `renderer` exposing `setImage:animated:`, pass ordinary Swift values:
