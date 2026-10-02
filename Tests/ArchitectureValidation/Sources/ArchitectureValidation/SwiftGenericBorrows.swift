@@ -40,7 +40,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
         checks.append(message)
     }
     let produce = try await runtime.swiftFunction(named: "SwiftValueFixtures.produceGeneric<A>(() -> A) -> A",
-        as: ((NativeSwiftClosure<() -> Bool>) -> Bool).self, substituting: Bool.self)
+        as: ((NativeSwiftClosure<() -> Bool>) -> Bool).self, genericArguments: [.type(Bool.self)])
     var applications = 0
     let scalar = try unsafe NativeSwiftClosure<() -> Bool>.withUnsafeNonescaping({ applications += 1; return true }) {
         try unsafe produce.unsafeInvoke($0)
@@ -49,7 +49,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
 
     let stringType = try await runtime.swiftType(named: "Swift.String")
     let string = try await runtime.swiftFunction(named: "SwiftValueFixtures.produceGeneric<A>(() -> A) -> A",
-        as: ((NativeSwiftClosure<() -> String>) -> String).self, substituting: stringType)
+        as: ((NativeSwiftClosure<() -> String>) -> String).self, genericArguments: [.type(stringType)])
     let reference = try await runtime.swiftFunction(named: "SwiftValueFixtures.referenceProducedString(_:)", as: ((String) -> String).self)
     let input = String(repeating: "managed", count: 100)
     let apply = try NativeSwiftClosure { input + "!" }
@@ -62,7 +62,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     checks.append("Capturing generic String callback matches compiler calls across repeated authenticated entries")
 
     let echo = try await runtime.swiftFunction(named: "SwiftValueFixtures.replayGeneric<A>(A) -> A",
-        as: ((GenericBorrowPointer?) -> GenericBorrowPointer?).self, substituting: GenericBorrowPointer?.self)
+        as: ((GenericBorrowPointer?) -> GenericBorrowPointer?).self, genericArguments: [.type(GenericBorrowPointer?.self)])
     let pointer = GenericBorrowPointer(0x1000, 42)
     try check(try unsafe echo.unsafeInvoke(pointer) == pointer, "Generic optional wrapper uses actual Swift storage rather than its foreign pointer conversion")
     try check(try unsafe echo.unsafeInvoke(nil) == nil, "Generic optional wrapper preserves nil")
@@ -75,7 +75,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     let observe = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.observeGeneric<A>(() -> A, Swift.String, Swift.AnyObject, Swift.UnsafeMutablePointer<Swift.Int32>, (SwiftValueFixtures.BorrowedRuntimeRecord) -> ()) -> A",
         as: ((NativeSwiftClosure<() -> Bool>, String, AnyObject, UnsafeMutablePointer<Int32>, NativeSwiftBorrowingClosure<Void>) -> Bool).self,
-        substituting: Bool.self)
+        genericArguments: [.type(Bool.self)])
     let fire = try await runtime.swiftFunction(named: "SwiftValueFixtures.fireBorrowedRecord(_:_:_:)",
         as: ((String, AnyObject, UnsafeMutablePointer<Int32>) -> Void).self)
     let clear = try await runtime.swiftFunction(named: "SwiftValueFixtures.clearBorrowedRecord()", as: (() -> Void).self)

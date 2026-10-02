@@ -49,15 +49,24 @@ struct SwiftErrorPlan: Sendable {
         }
     }
 
-    static func make<Failure: Error>(_ failure: Failure.Type) throws -> Self? {
-        if Failure.self == Never.self { return nil }
-        return try Self(failure)
+    static func make<Failure: Error>(_ failure: Failure.Type, genericType: CValueType? = nil) throws -> Self? {
+        if Failure.self == Never.self && genericType == nil { return nil }
+        return try Self(failure, genericType: genericType)
     }
 
-    private init<Failure: Error>(_ failure: Failure.Type) throws {
+    private init<Failure: Error>(_ failure: Failure.Type, genericType: CValueType?) throws {
         identity = ObjectIdentifier(Failure.self)
-        isTyped = Failure.self != (any Error).self
-        if !isTyped {
+        isTyped = genericType != nil || Failure.self != (any Error).self
+        if let genericType {
+            type = genericType
+            makeStorage = { NativeValueStorage(size: MemoryLayout<Failure>.stride, alignment: MemoryLayout<Failure>.alignment) }
+            decode = { storage in
+                guard Failure.self != Never.self else {
+                    throw ABIInvocationError.incompatibleValue(expected: "Never", actual: "a thrown native error")
+                }
+                return storage.take(as: Failure.self)
+            }
+        } else if !isTyped {
             type = try CValueType(scalar: ABIValuePointer)
             makeStorage = { NativeValueStorage(size: MemoryLayout<Failure>.stride,
                                                alignment: MemoryLayout<Failure>.alignment) }

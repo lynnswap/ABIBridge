@@ -20,7 +20,9 @@ def main():
         sdk = run('xcrun','--sdk',sdk_name,'--show-sdk-path').strip()
         sil = run('xcrun','swiftc','-swift-version','6','-parse-as-library','-enable-library-evolution',
                   '-module-name','ManagedSwiftFixtures','-target',target,'-sdk',sdk,'-emit-silgen',
-                  *[str(root/'Tests/ManagedSwiftFixtures'/name) for name in ['Errors.swift','Async.swift','ParameterConventions.swift']])
+                  *[str(root/'Tests/ManagedSwiftFixtures'/name) for name in [
+                      'Errors.swift','Async.swift','ParameterConventions.swift','GenericCalls.swift',
+                      'RuntimeValues.swift','Values.swift','ExplicitValues.swift']])
         (directory/'provider.sil').write_text(sil)
         signatures = {}
         for name, expected in {
@@ -28,6 +30,10 @@ def main():
             'consumeArguments': '(@owned String, @guaranteed String, @owned ArgumentToken, Bool)',
             'consumeLargeArgument': '(@owned ErrorSuccessPayload, @guaranteed ArgumentCounts, Bool)',
             'asyncArguments': '(@guaranteed AsyncGate, @inout String, @owned String, @guaranteed String, Bool)',
+            'borrowingGeneric': '(@in_guaranteed Value)',
+            'consumingGeneric': '(@in Value)',
+            'mutateGeneric': '(@inout Value, @in Value, @in_guaranteed Failure, Bool)',
+            'suspendedMutateGeneric': '(@sil_isolated @sil_implicit_leading_param @guaranteed Builtin.ImplicitActor, @inout Value, @in Value, @in_guaranteed Failure, Bool)',
         }.items():
             candidates = [line for line in sil.splitlines() if line.startswith('sil [noinline]') and name in line]
             if len(candidates) != 1 or expected not in candidates[0]:
@@ -38,7 +44,22 @@ def main():
             raise RuntimeError(f'{target}: mixed initializer ownership changed: {initializers}')
         if not any('@async' in line and '@owned AsyncGate' in line for line in initializers):
             raise RuntimeError(f'{target}: ordinary initializer arguments must retain owned convention')
-        reports.append({'target':target, 'signatures':signatures, 'initializers':initializers})
+        owned_closures = [line for line in sil.splitlines() if line.startswith('sil ') and (
+            'consumeClosureGeneric' in line or 'consumeClosureThenArgumentGeneric' in line
+            or ('GenericClosureOwnerC' in line and ('cfC :' in line or '4bodyxycvs :' in line)))]
+        if len(owned_closures) != 4 or not all('(@owned @callee_guaranteed @substituted' in line for line in owned_closures):
+            raise RuntimeError(f'{target}: generic closure initializer/setter/consuming ownership changed: {owned_closures}')
+        pack_closures = [line for line in sil.splitlines() if line.startswith('sil ') and any(
+            name in line for name in ['closurePackGeneric', 'asyncClosurePackGeneric', 'throwingClosurePackGeneric'])]
+        pack_initializers = [line for line in sil.splitlines() if line.startswith('sil ')
+                             and 'GenericClosurePackOwnerC' in line and 'cfC :' in line]
+        if len(pack_closures) != 3 or not all('@pack_guaranteed Pack{repeat' in line and '@substituted' in line and '@out ' in line
+                                             for line in pack_closures):
+            raise RuntimeError(f'{target}: closure pack borrowing or element reabstraction changed: {pack_closures}')
+        if len(pack_initializers) != 1 or '@pack_owned Pack{repeat' not in pack_initializers[0]:
+            raise RuntimeError(f'{target}: closure pack initializer ownership changed: {pack_initializers}')
+        reports.append({'target':target, 'signatures':signatures, 'initializers':initializers, 'ownedGenericClosures':owned_closures,
+                        'closurePacks':pack_closures, 'closurePackInitializers':pack_initializers})
     report = {'compiler':run('xcrun','swiftc','--version').strip(), 'runtimeTested':False, 'targets':reports}
     (output/'report.json').write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps(report,indent=2))

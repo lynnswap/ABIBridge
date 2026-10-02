@@ -9,6 +9,9 @@ namespace abibridge {
 struct TypeStorage {
     ffi_type *scalar = nullptr;
     bool swiftIndirect = false;
+    bool swiftTuple = false;
+    bool swiftPack = false;
+    bool swiftOptionalSingleton = false;
     ffi_type aggregate{0, 0, FFI_TYPE_STRUCT, nullptr};
     std::vector<std::shared_ptr<TypeStorage>> fields;
     std::vector<ffi_type*> elements;

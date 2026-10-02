@@ -59,7 +59,7 @@ struct SwiftArgumentConventionTests {
         let call = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.mutateBeforeConversionFailure(inout Swift.String, Swift.Int64) -> ()",
             as: ((NativeSwiftInout<String>, BadArgumentEncoding) -> Void).self)
-        let text = try NativeSwiftInout("original")
+        let text = NativeSwiftInout("original")
         do { try unsafe call.unsafeInvoke(text, .init()); Issue.record("Expected argument conversion failure") }
         catch ArgumentEncodingFailure.expected {}
         #expect(text.value == "original")
@@ -69,9 +69,9 @@ struct SwiftArgumentConventionTests {
     @Test func inoutValuesKeepNativeWritebackOnSuccessAndError() async throws {
         let call = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.mutateArguments(_:_:_:_:)",
             as: ((NativeSwiftInout<String>, NativeSwiftInout<[String]>, NativeSwiftInout<Int64>, Bool) throws(ScalarFailure) -> Void).self)
-        let text = try NativeSwiftInout(String(repeating: "text", count: 100))
-        let values = try NativeSwiftInout([String]())
-        let count = try NativeSwiftInout(Int64(40))
+        let text = NativeSwiftInout(String(repeating: "text", count: 100))
+        let values = NativeSwiftInout([String]())
+        let count = NativeSwiftInout(Int64(40))
         try unsafe call.unsafeInvoke(text, values, count, false)
         #expect(count.value == 41 && values.value == [text.value])
         do { try unsafe call.unsafeInvoke(text, values, count, true); Issue.record("Expected typed failure") }
@@ -146,7 +146,7 @@ struct SwiftArgumentConventionTests {
             as: ((NativeSwiftInout<String>, NativeSwiftConsuming<String>, Bool) throws(ScalarFailure) -> Void).self,
             mutating: true)
         var receiver = ArgumentCounter(40)
-        let text = try NativeSwiftInout("value")
+        let text = NativeSwiftInout("value")
         do { try unsafe update.unsafeInvoke(on: &receiver, text, .init("!"), true); Issue.record("Expected failure") }
         catch let error as NativeSwiftError {
             error.withUnderlyingError { #expect(($0 as? ScalarFailure)?.code == 41) }
@@ -159,7 +159,7 @@ struct SwiftArgumentConventionTests {
             as: (@concurrent (AsyncGate, NativeSwiftInout<String>, NativeSwiftConsuming<String>, NativeSwiftBorrowing<String>, Bool) async throws(ScalarFailure) -> String).self)
         for cancel in [false, true] {
             let gate = AsyncGate()
-            let text = try NativeSwiftInout("value")
+            let text = NativeSwiftInout("value")
             let task = Task { @MainActor in
                 try unsafe await call.unsafeInvoke(gate, text, .init("!"), .init("?"), false)
             }

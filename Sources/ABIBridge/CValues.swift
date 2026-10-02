@@ -61,6 +61,34 @@ final class CValueType: @unchecked Sendable {
         self.alignment = alignment
     }
 
+    init(swiftTuple fields: [CValueType], offsets: [Int], size: Int, alignment: Int, isPack: Bool = false) throws {
+        let handles: [OpaquePointer?] = fields.map(\.handle)
+        var failure: OpaquePointer?
+        let handle = withExtendedLifetime(fields) {
+            handles.withUnsafeBufferPointer { handles in
+                offsets.withUnsafeBufferPointer { offsets in
+                    if isPack {
+                        ABICreateSwiftPackStorageType(handles.baseAddress, offsets.baseAddress,
+                            fields.count, size, alignment, &failure)
+                    } else {
+                        ABICreateSwiftTupleStorageType(handles.baseAddress, offsets.baseAddress,
+                            fields.count, size, alignment, &failure)
+                    }
+                }
+            }
+        }
+        guard let handle else { throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftInvocation") }
+        self.handle = handle
+        self.size = size
+        self.alignment = alignment
+    }
+
+    init(swiftOptionalSingleton: Void) {
+        handle = ABICreateSwiftOptionalSingletonType()!
+        size = MemoryLayout<UInt>.size
+        alignment = MemoryLayout<UInt>.alignment
+    }
+
     init(swiftComponents components: CValueType, size: Int, alignment: Int) throws {
         var failure: OpaquePointer?
         let handle = withExtendedLifetime(components) {

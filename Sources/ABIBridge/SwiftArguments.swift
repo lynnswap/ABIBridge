@@ -1,18 +1,18 @@
 import ABIBridgeCore
 
-enum SwiftArgumentConvention: Sendable {
+enum SwiftArgumentConvention: Sendable, Equatable {
     case borrowing, consuming, inoutValue
 }
 
 struct SwiftConventionCodec: Sendable {
     let type: CValueType
     let consumes: Bool
-    let encode: @Sendable (Any) throws -> NativeValueStorage
+    let encode: @Sendable (Any, Any?) throws -> NativeValueStorage
 }
 protocol SwiftConventionArgument: SendableMetatype {
     static var wrappedType: Any.Type { get }
     static var convention: SwiftArgumentConvention { get }
-    static func makeArgumentCodec() throws -> SwiftConventionCodec
+    static func makeArgumentCodec(generic: SwiftGenericArgument) throws -> SwiftConventionCodec
 }
 
 func swiftArgumentTypeName(_ type: Any.Type, defaultConsuming: Bool) throws -> String {
@@ -34,23 +34,26 @@ struct SwiftArgumentCodec<Value>: Sendable {
         case ordinary(SwiftValueCodec<Value>)
         case explicit(SwiftConventionCodec)
         case genericValue
-        case genericClosure(SwiftCallInterface)
+        case genericClosure(SwiftGenericClosurePlan)
     }
     private let encoding: Encoding
 
     init(defaultConsuming: Bool, generic: SwiftGenericArgument = .concrete) throws {
         switch generic {
-        case .parameter:
-            type = try CValueType(indirectSwiftSize: MemoryLayout<Value>.size, alignment: MemoryLayout<Value>.alignment)
-            consumes = false
+        case .convention(let codec):
+            type = codec.type; consumes = codec.consumes
+            encoding = .explicit(codec)
+        case .value(let nativeType, let consuming):
+            type = nativeType
+            consumes = consuming || defaultConsuming
             encoding = .genericValue
-        case .closureResult:
+        case .closure(let plan):
             type = try SwiftValueCodec<Value>().type
-            consumes = false
-            encoding = .genericClosure(try (Value.self as! any SwiftGenericResultClosure.Type).genericResultInterface())
+            consumes = defaultConsuming
+            encoding = .genericClosure(plan)
         case .concrete:
             if let argument = Value.self as? any SwiftConventionArgument.Type {
-                let codec = try argument.makeArgumentCodec()
+                let codec = try argument.makeArgumentCodec(generic: .concrete)
                 type = codec.type; consumes = codec.consumes
                 encoding = .explicit(codec)
             } else {
@@ -64,9 +67,9 @@ struct SwiftArgumentCodec<Value>: Sendable {
     func encode(_ value: Value, retainingCode owner: Any? = nil) throws -> NativeValueStorage {
         switch encoding {
         case .ordinary(let codec): return try codec.encode(value)
-        case .explicit(let codec): return try codec.encode(value)
-        case .genericClosure(let interface):
-            return try (value as! any SwiftGenericResultClosure).encodeGenericResultClosure(interface: interface, retainingCode: owner)
+        case .explicit(let codec): return try codec.encode(value, owner)
+        case .genericClosure(let plan):
+            return try (value as! any SwiftGenericClosureValue).encodeGenericClosure(plan: plan, retainingCode: owner)
         case .genericValue:
             // The callee receives Value's metadata and operates on Value itself,
             // even when Value also provides a different foreign representation.
@@ -74,6 +77,14 @@ struct SwiftArgumentCodec<Value>: Sendable {
             storage.initialize(value)
             return storage
         }
+    }
+}
+
+private func swiftConventionCodec<Value>(for type: Value.Type, generic: SwiftGenericArgument, consumes: Bool,
+                                        unwrap: @escaping @Sendable (Any) -> Value) throws -> SwiftConventionCodec {
+    let codec = try SwiftArgumentCodec<Value>(defaultConsuming: consumes, generic: generic)
+    return SwiftConventionCodec(type: codec.type, consumes: consumes) { value, owner in
+        try codec.encode(unwrap(value), retainingCode: owner)
     }
 }
 
@@ -86,9 +97,8 @@ public struct NativeSwiftBorrowing<Value> {
 extension NativeSwiftBorrowing: SwiftConventionArgument {
     static var wrappedType: Any.Type { Value.self }
     static var convention: SwiftArgumentConvention { .borrowing }
-    static func makeArgumentCodec() throws -> SwiftConventionCodec {
-        let codec = try SwiftValueCodec<Value>()
-        return SwiftConventionCodec(type: codec.type, consumes: false) { try codec.encode(($0 as! Self).value) }
+    static func makeArgumentCodec(generic: SwiftGenericArgument) throws -> SwiftConventionCodec {
+        try swiftConventionCodec(for: Value.self, generic: generic, consumes: false) { ($0 as! Self).value }
     }
 }
 extension NativeSwiftBorrowing: Sendable where Value: Sendable {}
@@ -104,13 +114,14 @@ public struct NativeSwiftConsuming<Value> {
 extension NativeSwiftConsuming: SwiftConventionArgument {
     static var wrappedType: Any.Type { Value.self }
     static var convention: SwiftArgumentConvention { .consuming }
-    static func makeArgumentCodec() throws -> SwiftConventionCodec {
+    static func makeArgumentCodec(generic: SwiftGenericArgument) throws -> SwiftConventionCodec {
         let base = (Value.self as? any NativeOptionalValue.Type)?.wrappedType ?? Value.self
-        guard !(base is any ABIBridgeValue.Type) || Value.self is any ABIBridgeSwiftValue.Type else {
+        let usesNativeStorage: Bool
+        if case .value = generic { usesNativeStorage = true } else { usesNativeStorage = false }
+        guard usesNativeStorage || !(base is any ABIBridgeValue.Type) || Value.self is any ABIBridgeSwiftValue.Type else {
             throw ABIResolutionError.unsupportedDeclaration("Consuming arguments require an actual Swift value representation and its owned copy.")
         }
-        let codec = try SwiftValueCodec<Value>()
-        return SwiftConventionCodec(type: codec.type, consumes: true) { try codec.encode(($0 as! Self).value) }
+        return try swiftConventionCodec(for: Value.self, generic: generic, consumes: true) { ($0 as! Self).value }
     }
 }
 extension NativeSwiftConsuming: Sendable where Value: Sendable {}
@@ -124,8 +135,7 @@ extension NativeSwiftConsuming: Sendable where Value: Sendable {}
 public final class NativeSwiftInout<Value> {
     private let storage: NativeValueStorage
 
-    public init(_ value: Value) throws {
-        try Self.validatePointee()
+    public init(_ value: Value) {
         storage = NativeValueStorage(size: MemoryLayout<Value>.stride, alignment: MemoryLayout<Value>.alignment)
         storage.initialize(value)
     }
@@ -155,10 +165,10 @@ public final class NativeSwiftInout<Value> {
 extension NativeSwiftInout: SwiftConventionArgument {
     static var wrappedType: Any.Type { Value.self }
     static var convention: SwiftArgumentConvention { .inoutValue }
-    static func makeArgumentCodec() throws -> SwiftConventionCodec {
+    static func makeArgumentCodec(generic: SwiftGenericArgument) throws -> SwiftConventionCodec {
         // Preparing a signature must establish the pointee contract even before
         // an actual buffer is supplied.
-        try Self.validatePointee()
-        return SwiftConventionCodec(type: try CValueType(scalar: ABIValuePointer), consumes: false) { ($0 as! Self).encoded() }
+        if case .value = generic {} else { try Self.validatePointee() }
+        return SwiftConventionCodec(type: try CValueType(scalar: ABIValuePointer), consumes: false) { value, _ in (value as! Self).encoded() }
     }
 }

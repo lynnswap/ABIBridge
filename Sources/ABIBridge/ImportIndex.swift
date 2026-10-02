@@ -64,7 +64,7 @@ final class ImportIndex: Sendable {
                                 spellings.append(name)
                                 if declaration.language == .swift, let alias = SymbolIndex.operatorAlias(name) { spellings.append(alias) }
                             }
-                            keys = spellings.map(DeclarationKey.make)
+                            keys = spellings.map { DeclarationKey.make($0, language: declaration.language) }
                             names[raw] = keys
                         }
                         for key in keys { index[DeclarationKey.fingerprint(key), default: []].append((key, offset)) }

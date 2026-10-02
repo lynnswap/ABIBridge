@@ -73,7 +73,7 @@ let callback = try NativeSwiftClosure<nonisolated(nonsending) @Sendable (Int64) 
 let result = try unsafe await callback.unsafeInvoke(35)
 ```
 
-With Swift 6.3.3, give a closure expression its concrete function type before passing it to the initializer, as above. Passing an async closure expression directly into the parameter-pack initializer can crash that compiler during SIL generation. A pretyped closure or a function reference avoids that compiler limitation.
+With Swift 6.3.3, give a closure expression its concrete function type before passing it to the initializer, as above. Passing an async closure expression directly into the parameter-pack initializer can crash that compiler during SIL generation or reuse a previous capture context under `NonisolatedNonsendingByDefault`. Bind the expression to a variable with the complete function type before constructing the wrapper, or pass a function reference. The [compiler-only reproduction](https://github.com/lynnswap/ABIBridge/issues/285#issuecomment-5952463646) records the capture case and its working control.
 
 A caller-isolated signature carries the native caller's hidden isolation argument. A concurrent signature enters the generic executor before running its body; the body can perform its own actor hops. Both preserve the original Task, including task-local values, cooperative cancellation, and executor preferences. Calling `unsafeInvoke` restores the Swift caller's executor after native completion.
 

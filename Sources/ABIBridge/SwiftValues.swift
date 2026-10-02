@@ -9,6 +9,7 @@ struct SwiftValueCodec<Value>: Sendable {
     private let cValue: CValueCodec<Value>?
     private let objectResult: Bool
     private let closure: SwiftClosureCodec?
+    private let constants = SwiftValueConstants(Value.self)
 
     init() throws {
         guard !(Value.self is any SwiftConventionArgument.Type) else {
@@ -25,7 +26,23 @@ struct SwiftValueCodec<Value>: Sendable {
         let isAdapter = base is any ABIBridgeValue.Type
         let managed = Value.self as? any ABIBridgeSwiftValue.Type
         objectResult = isObject && (!isAdapter || managed != nil)
-        if let managed {
+        if let tuple = SwiftTupleMetadata(Value.self) {
+            func field<Element>(_ type: Element.Type) throws -> CValueType {
+                guard !(type is any ABIBridgeValue.Type) || type is any ABIBridgeSwiftValue.Type,
+                      !(type is any SwiftClosureValue.Type) else {
+                    throw ABIResolutionError.unsupportedDeclaration("Tuple elements require their native Swift storage representation.")
+                }
+                return try SwiftValueCodec<Element>().type
+            }
+            type = try tuple.layout(for: Value.self, fields: tuple.elements.map {
+                try _openExistential($0.type, do: field)
+            })
+            cValue = nil
+        } else if let metatype = SwiftMetatypeMetadata(base) {
+            type = Value.self is any NativeOptionalValue.Type && metatype.isSingleton
+                ? CValueType(swiftOptionalSingleton: ()) : try metatype.valueType(for: Value.self)
+            cValue = nil
+        } else if let managed {
             if let components = managed.swiftABIType.cType {
                 guard (MemoryLayout<Value>.size...MemoryLayout<Value>.stride).contains(components.size) else {
                     throw ABIResolutionError.unsupportedDeclaration(
@@ -90,7 +107,7 @@ struct SwiftValueCodec<Value>: Sendable {
         if objectResult, !(Value.self is any NativeOptionalValue.Type), storage.address.load(as: UnsafeRawPointer?.self) == nil {
             throw ABIInvocationError.unexpectedNilResult(expected: String(reflecting: Value.self))
         }
-        return storage.address.load(as: Value.self)
+        return constants.load(from: storage.address, as: Value.self)
     }
 
     func copyNativeStorage(_ storage: NativeValueStorage) throws -> NativeValueStorage {
@@ -121,6 +138,7 @@ struct SwiftValueCodec<Value>: Sendable {
         }
         // A Swift result is +1. Taking it avoids adding another retain or
         // destroying bytes whose ownership has already moved to the caller.
+        constants.initialize(at: storage.address)
         return storage.take(as: Value.self)
     }
 }

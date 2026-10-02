@@ -62,7 +62,7 @@ jobs:
           xcrun swift package dump-package
       - name: Test package shard
         id: package-tests
-        timeout-minutes: 12
+        timeout-minutes: 18
         if: contains(fromJSON('["Core", "Invocation", "Hooks"]'), matrix.suite)
         env:
           PACKAGE_SUITE: ${{ matrix.suite }}

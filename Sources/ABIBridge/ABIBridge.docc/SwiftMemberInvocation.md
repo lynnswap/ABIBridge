@@ -37,7 +37,7 @@ The prepared handle retains the native type context and implementation images wi
 
 ## Use an instantiated generic receiver
 
-An existing object such as `Renderer<Content>` can use the same `object(...).method/getter/setter` APIs for members with concrete parameter and result types. Lookup identifies the unspecialized declaration through the live class's nominal descriptor while retaining the instantiated metadata. The implementation obtains its enclosing generic metadata and protocol witnesses from self. Private declaration owners and inherited members follow the same lookup rules.
+An existing object such as `Renderer<Content>` uses the same `object(...).method/getter/setter` APIs for concrete and dependent parameter/result types. Lookup identifies the unspecialized declaration through the live class's nominal descriptor and binds its enclosing parameters from the instantiated metadata. Private declaration owners and inherited members follow the same lookup rules.
 
 For example, given an existing `Renderer<Content>` with `func title() -> String`:
 
@@ -48,11 +48,11 @@ let title = try await runtime.object(renderer).method(
 let text = try unsafe title.unsafeInvoke()
 ```
 
-This does not construct generic metadata or infer a substituted ABI. A member returning `Content` has a dependent formal result, which can remain indirect even when the actual value fits registers. Label-only lookup does not rewrite that declaration to the substituted concrete type. Use a compiled adapter, or the existing complete-declaration and explicit value-adapter APIs with the actual formal convention. A complete spelling such as `projected() -> A` only selects a symbol: it does not verify the supplied representation or turn the generic result into an ordinary direct result.
+A member returning `Content` has a dependent formal result, which can remain indirect even when the actual value fits registers. The prepared call preserves that formal convention and uses the enclosing specialization to validate the concrete signature. For a `Renderer<String>` returning `Content`, use `as: (() -> String).self`.
 
-Member lookup also considers same-type constrained extensions such as `extension Renderer where Content == Int`. Requirements can equate a whole type parameter to a concrete type or another enclosing type parameter. Lookup checks those requirements against the current receiver or superclass specialization; a cached result for one specialization does not apply to another. Multiple applicable extension declarations remain ambiguous rather than being ordered by Swift overload specificity. Associated-type projections and generic type expressions requiring substitution remain adapter cases. A new protocol constraint can add a witness argument beyond self and is not inferred by this lookup. Methods introducing additional generic parameters still require a compiled adapter because their metadata and witnesses are separate arguments. Generic opaque results and virtual replacement retain their existing adapter requirements. Receiver ownership, effects, actor isolation, and captured implementation dispatch are unchanged.
+Member lookup checks constrained extensions against the current receiver or superclass specialization, including protocol conformances, associated types, and same-type requirements. A cached result for one specialization does not apply to another. Multiple applicable short-name declarations remain ambiguous; a fully qualified constrained declaration selects that implementation explicitly. Methods introducing additional parameters accept `genericArguments:` for those parameters and supply the required metadata and witnesses. See <doc:GenericSwiftValues> for examples. Receiver ownership, effects, actor isolation, and captured implementation dispatch retain their ordinary contracts.
 
-When no supported candidate can be selected, an unestablished extension requirement or one needing a compiled adapter reports `ABIResolutionError.unsupportedDeclaration`. A proven specialization mismatch or an absent declaration reports `ABIResolutionError.declarationNotFound`. Unsupported candidates do not hide supported extensions or inherited members; a proven mismatch remains inapplicable even when another requirement cannot be evaluated.
+An absent declaration or specialization with no applicable candidate reports `ABIResolutionError.declarationNotFound`. A selected declaration whose requirements or representation cannot be established reports a preparation error before invocation.
 
 ## Reuse a type
 
@@ -64,7 +64,7 @@ try unsafe start.unsafeInvoke(on: renderer)
 try unsafe stop.unsafeInvoke(on: renderer)
 ```
 
-Type lookup obtains the nominal descriptor and requests complete metadata. It rejects generic descriptors before calling an accessor that would need additional metadata or witness arguments. Type handles share the runtime's symbol indexes, retain their defining image, and remain valid after removeCachedResults().
+Type lookup obtains the nominal descriptor and requests complete metadata. For a generic type, supply `genericArguments: [.type(String.self)]`, or the corresponding arguments and packs in outer-to-inner declaration order. Type handles share the runtime's symbol indexes, retain their defining image and argument owners, and remain valid after removeCachedResults().
 
 Methods capture the selected implementation. Lookup prefers declarations in the type's defining image, then searches extension-qualified implementations in loaded images, and then walks superclass declarations in each superclass's defining image. Calls do not perform virtual redispatch. Existing receiver metadata also supplies the context for concrete members declared by a generic superclass.
 
@@ -96,7 +96,24 @@ let text = try unsafe getText.unsafeInvoke(on: renderer)
 
 An object scope also provides getter(named:as:) and setter(named:as:) returning bound handles. Static properties use staticGetter(named:as:) and staticSetter(named:as:). Accessors use the same unsafeInvoke spelling as other native calls.
 
-Setters transfer ownership of the incoming value. Use a value metatype for a synchronous nonthrowing getter, or a zero-argument function metatype for a throwing or async getter, such as `(() throws -> String).self` or `(@concurrent () async -> String).self`. Getter symbol names do not establish these effects. See <doc:SwiftErrorABI>.
+Setters transfer ownership of the incoming value. Getters use a zero-argument function metatype, such as `(() -> String).self`, `(() throws -> String).self`, or `(@concurrent () async -> String).self`. Getter symbol names do not establish these effects. See <doc:SwiftErrorABI>.
+
+For a throwing getter in a generic type, also supply its source function type with `declaredAs:`. The getter symbol contains the property type but omits its formal error type. The concrete function metatype alone cannot distinguish `throws(B)` from a fixed error type that happens to equal the argument bound to `B`.
+
+```swift
+// For a provider declared as Getter<Value, Failure: Error>, with a property
+// checked: Value { get throws(Failure) }, and arguments String/ProviderFailure:
+let checked = try await type.getter(
+    named: "checked",
+    as: (() throws(ProviderFailure) -> String).self,
+    declaredAs: "() throws(B) -> A"
+)
+let value = try unsafe checked.unsafeInvoke(on: receiver)
+```
+
+`declaredAs:` is also available on methods, initializers, and setters. A complete canonical `<...>` prefix supplies generic ABI requirements when the provider's import environment is needed to determine them; see <doc:GenericSwiftValues>.
+
+`A` and `B` follow the declaration's generic parameter order. A fixed error type uses its qualified name, such as `"() throws(Example.ProviderFailure) -> A"`. Include `async` when needed. Bound object getters and static getters accept the same source signature. A getter declared with `throws(B)` still needs `declaredAs:` when `B` is bound to `Never`, even though its concrete `as:` signature is nonthrowing. Getters declared without native errors, including async getters, need only `as:`.
 
 Concrete callback parameters and returned closures use the synchronous or async closure wrapper in the function-type metatype, as described in <doc:SwiftClosureValues>. Initializers transfer the encoded owned context; ordinary methods borrow it for the call.
 
@@ -130,7 +147,7 @@ Label-only method names obtain canonical parameter/result names from their metat
 
 Framework, executable-path, install-name, and retained-image overloads acquire explicit targets by default. Pass `loading: .loadedOnly` to retain inspection behavior; see <doc:ImageLoading>. The method or type handle keeps its implementation alive, and custom wrapper results retain their call's owners. Raw pointers remain borrowed.
 
-The unsafe boundary requires the actual declaration's ownership, effects, and actor/thread requirements. Async function metatypes select NativeSwiftMethod or NativeSwiftFunction handles with an async Signature; see <doc:SwiftAsyncABI>. Generic metadata synthesis, nontrivial foreign value layouts, and resilient-layout inference remain adapter cases.
+The unsafe boundary requires the actual declaration's ownership, effects, and actor/thread requirements. Async function metatypes select NativeSwiftMethod or NativeSwiftFunction handles with an async Signature; see <doc:SwiftAsyncABI>. Constructing generic metadata does not establish an unknown foreign value's direct call layout; see <doc:ExplicitSwiftValues> and <doc:ManagedSwiftValues> for value representations.
 
 ## Resolve members from private receivers
 

@@ -2,6 +2,7 @@
 #define ABIBRIDGE_SWIFT_INVOCATION_H
 
 #include <ABIBridge/Invocation.h>
+#include <ABIBridge/SwiftDemangling.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -12,6 +13,62 @@ typedef struct ABISwiftCallInterface ABISwiftCallInterface;
 /// Reads a valid compiler-emitted generic protocol-requirement reference.
 /// Authenticates indirect Swift descriptor pointers before reading their flags.
 bool ABISwiftProtocolRequirementIsClassBound(const void *reference);
+/// Runtime metadata operations over valid compiler-emitted Swift descriptors.
+/// Type construction requires an already validated metadata/witness argument list.
+const void *ABISwiftProtocolRequirementDescriptor(const void *reference);
+const void *ABISwiftProtocolRequirementObjectiveCProtocol(const void *reference);
+const void *ABISwiftConformance(const void *metadata, const void *protocol);
+/// Canonical existential metadata for one valid Swift protocol descriptor.
+const void *ABISwiftProtocolTypeMetadata(const void *protocol);
+const void *ABISwiftMetatypeMetadata(const void *instance);
+const void *ABISwiftExistentialMetatypeMetadata(const void *instance);
+/// Labels are nil or one space-terminated name per element; an empty name is unlabeled.
+/// The labels buffer only needs to remain valid until this call returns.
+const void *ABISwiftTupleTypeMetadata(const void *const *elements, size_t count, const char *labels);
+/// Parses the subject or type constraint of a compiler-emitted requirement.
+/// A protocol or layout requirement has no type constraint in its second field.
+ABISwiftSyntax *ABICopySwiftGenericRequirementTypeSyntax(const void *requirement, bool constraint);
+const void *ABISwiftConformanceDescriptor(const void *witnessTable);
+const void *ABISwiftAssociatedType(const void *metadata, const void *protocol, const char *name);
+const void *ABISwiftGenericTypeMetadata(const void *descriptor, const void *const *arguments);
+/// Interns a metadata pack in the Swift runtime. The returned tagged pointer
+/// remains owned by the runtime and may be used in type construction.
+const void *ABISwiftMetadataPack(const void *const *elements, size_t count);
+typedef struct ABISwiftTypeMetadata ABISwiftTypeMetadata;
+/// Binds source-written type arguments through the runtime's generic type
+/// resolver, which validates constraints and obtains existing conformances.
+ABISwiftTypeMetadata *ABICreateSwiftTypeMetadata(const void *descriptor,
+    const void *const *arguments, size_t count, ABIResolutionFailure **error);
+/// Returns an authenticated raw nominal descriptor, or null for a non-nominal type.
+const void *ABISwiftTypeDescriptor(const void *metadata);
+/// Reflection fields whose storage is inline in a struct or enum. Syntax trees
+/// preserve generic parameters and symbolic descriptor identities.
+size_t ABISwiftTypeFieldCount(const void *metadata);
+ABISwiftSyntax *ABICopySwiftTypeFieldSyntax(const void *metadata, size_t index);
+ABISwiftSyntax *ABICopySwiftAssociatedTypeSyntax(const void *metadata, const void *protocol, const char *name);
+/// Recovers the source-written arguments of existing complete metadata.
+ABISwiftTypeMetadata *ABICopySwiftTypeMetadata(const void *metadata, ABIResolutionFailure **error);
+size_t ABISwiftTypeMetadataArgumentCount(const ABISwiftTypeMetadata *result);
+bool ABISwiftTypeMetadataArgumentIsPack(const ABISwiftTypeMetadata *result, size_t index);
+size_t ABISwiftTypeMetadataArgumentElementCount(const ABISwiftTypeMetadata *result, size_t index);
+const void *ABISwiftTypeMetadataArgumentElement(const ABISwiftTypeMetadata *result, size_t index, size_t element);
+/// Reads the nominal declaration context for member binding. This additional
+/// information is not required to construct or inspect nominal metadata.
+bool ABIPrepareSwiftTypeMetadataContext(ABISwiftTypeMetadata *result, ABIResolutionFailure **error);
+/// Type references preserve source generic depth/index for member binding.
+/// Call ABIPrepareSwiftTypeMetadataContext first; returned strings borrow result.
+const char *ABISwiftTypeMetadataParameterReference(const ABISwiftTypeMetadata *result, size_t index);
+bool ABISwiftTypeMetadataArgumentIsKey(const ABISwiftTypeMetadata *result, size_t index);
+size_t ABISwiftTypeMetadataRequirementCount(const ABISwiftTypeMetadata *result);
+/// Borrows a compiler-emitted generic requirement descriptor.
+const void *ABISwiftTypeMetadataRequirement(const ABISwiftTypeMetadata *result, size_t index);
+const void *ABISwiftTypeMetadataValue(const ABISwiftTypeMetadata *result);
+size_t ABISwiftTypeMetadataConformanceCount(const ABISwiftTypeMetadata *result);
+/// index must be less than ABISwiftTypeMetadataConformanceCount(result).
+const void *ABISwiftTypeMetadataConformance(const ABISwiftTypeMetadata *result, size_t index);
+void ABIReleaseSwiftTypeMetadata(ABISwiftTypeMetadata *result);
+const void *ABISwiftTypeForMangledName(const char *name, size_t length,
+                                    const void *context, const void *const *arguments);
 
 /// A concrete thick Swift closure. Its context is a Swift heap reference,
 /// including closure capture contexts that are not ordinary class instances.
@@ -42,12 +99,24 @@ void ABIReleaseSwiftClosureContext(void *context);
 /// Scalar field extents must fit size; component aggregate tail padding is
 /// excluded. Alignment must be a power of two.
 /// This layout is for Swift interfaces, not a libffi C calling convention.
+ABIValueType *ABICreateSwiftOptionalSingletonType(void);
+
 ABIValueType *ABICreateSwiftStorageType(
     const ABIValueType *components, size_t size, size_t alignment, ABIResolutionFailure **error);
 
 /// Describes a formally indirect Swift value, independent of its current size.
 /// There is no C representation and no scalar component description.
 ABIValueType *ABICreateSwiftIndirectStorageType(
+    size_t size, size_t alignment, ABIResolutionFailure **error);
+
+/// A formal tuple expands into independent SIL parameters/results. Offsets
+/// describe its concrete Swift storage, including nested tuple elements.
+ABIValueType *ABICreateSwiftTupleStorageType(
+    const ABIValueType *const *fields, const size_t *offsets, size_t count,
+    size_t size, size_t alignment, ABIResolutionFailure **error);
+/// A formal pack passes an address vector for these concrete elements.
+ABIValueType *ABICreateSwiftPackStorageType(
+    const ABIValueType *const *fields, const size_t *offsets, size_t count,
     size_t size, size_t alignment, ABIResolutionFailure **error);
 
 /// Prepares a concrete synchronous, nonthrowing Swift call from fixed value

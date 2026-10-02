@@ -1,3 +1,290 @@
+import Foundation
+
+public protocol GenericWitnessA { static func first() -> Int64 }
+public protocol GenericWitnessZ { static func last() -> Int64 }
+public struct GenericWitnessValue: GenericWitnessA, GenericWitnessZ {
+    public static func first() -> Int64 { 4 }
+    public static func last() -> Int64 { 2 }
+}
+public struct GenericWitnessOwner<Value: GenericWitnessZ> {}
+extension GenericWitnessOwner where Value: GenericWitnessA {
+    @inline(never) public static func orderedWitnesses() -> Int64 { Value.first() * 10 + Value.last() }
+}
+public struct GenericHashOwner<Value: Equatable> {}
+public protocol GenericAssociatedBase { associatedtype Item }
+public protocol GenericAssociatedRefined: GenericAssociatedBase where Item: Hashable {}
+public struct GenericAssociatedValue: GenericAssociatedRefined { public typealias Item = String }
+public struct GenericAssociatedOwner<Value: GenericAssociatedBase> where Value.Item: Equatable {}
+extension GenericAssociatedOwner where Value: GenericAssociatedRefined {
+    @inline(never) public static func associatedWitness<Failure: Error>(
+        _ value: Value.Item, _ failure: Failure, _ fail: Bool
+    ) throws(Failure) -> Int {
+        if fail { throw failure }
+        return value.hashValue
+    }
+}
+public struct GenericAssociatedAliasOwner<Value: GenericAssociatedBase, Element>
+    where Value.Item == Element, Element: Equatable {}
+extension GenericAssociatedAliasOwner where Value: GenericAssociatedRefined {
+    @inline(never) public static func aliasedWitness<Failure: Error>(
+        _ value: Element, _ failure: Failure, _ fail: Bool
+    ) throws(Failure) -> Int {
+        if fail { throw failure }
+        return value.hashValue
+    }
+}
+extension GenericHashOwner where Value: Hashable {
+    @inline(never) public static func refinedWitness(_ value: Value) -> Int { value.hashValue }
+}
+extension GenericHashOwner where Value == Int {
+    @inline(never) public static func concreteWitness<Other: Hashable>(_ value: Other) -> Int { value.hashValue }
+}
+
+@frozen public struct GenericGetterFailure: Error {
+    public let code: Int64
+    public init(_ code: Int64) { self.code = code }
+}
+public final class GenericEffectfulGetter<Value, Failure: Error> {
+    public var value: Value
+    public var failure: Failure
+    public var shouldThrow: Bool
+    public init(_ value: Value, _ failure: Failure, _ shouldThrow: Bool) {
+        self.value = value; self.failure = failure; self.shouldThrow = shouldThrow
+    }
+    public var checked: Value {
+        get throws(Failure) { if shouldThrow { throw failure }; return value }
+    }
+    public var fixedFailure: Value {
+        get throws(GenericGetterFailure) { if shouldThrow { throw GenericGetterFailure(71) }; return value }
+    }
+    public var checkedNumber: Int64 {
+        get throws(Failure) { if shouldThrow { throw failure }; return 41 }
+    }
+    public var fixedNumber: Int64 {
+        get throws(GenericGetterFailure) { if shouldThrow { throw GenericGetterFailure(72) }; return 42 }
+    }
+    nonisolated(nonsending) public var delayed: Value {
+        get async { await Task.yield(); return value }
+    }
+    nonisolated(nonsending) public var delayedChecked: Value {
+        get async throws(Failure) { await Task.yield(); if shouldThrow { throw failure }; return value }
+    }
+    nonisolated(nonsending) public var delayedNumber: Int64 {
+        get async throws(Failure) { await Task.yield(); if shouldThrow { throw failure }; return 43 }
+    }
+    nonisolated(nonsending) public var delayedFixedNumber: Int64 {
+        get async throws(GenericGetterFailure) { await Task.yield(); if shouldThrow { throw GenericGetterFailure(73) }; return 44 }
+    }
+    public static var checkedType: Value.Type {
+        get throws(Failure) { Value.self }
+    }
+    nonisolated(nonsending) public static var delayedType: Value.Type {
+        get async throws(Failure) { await Task.yield(); return Value.self }
+    }
+}
+
+public final class GenericSourcePack<each Value: Equatable> {
+    public init() {}
+}
+@inline(never) private func countEqualPack<each Value: Equatable>(_ values: repeat each Value) -> Int64 {
+    var count: Int64 = 0
+    func countValue<Element: Equatable>(_ value: Element) { if value == value { count += 1 } }
+    repeat countValue(each values)
+    return count
+}
+@inline(never) public func packClassSourceGeneric<each Value: Equatable>(
+    _ source: GenericSourcePack<repeat each Value>, _ values: repeat each Value
+) -> Int64 { countEqualPack(repeat each values) }
+@inline(never) public func packMetatypeSourceGeneric<each Value: Equatable>(
+    _ type: GenericSourcePack<repeat each Value>.Type, _ values: repeat each Value
+) -> Int64 { countEqualPack(repeat each values) }
+@inline(never) public func packValueMetatypeGeneric<each Value: Equatable>(
+    _ type: GenericTypePack<repeat each Value>.Type, _ values: repeat each Value
+) -> Int64 { countEqualPack(repeat each values) }
+@inline(never) public func prefixedPackSourceGeneric<each Value: Equatable>(
+    _ source: GenericSourcePack<Int64, repeat each Value>, _ values: repeat each Value
+) -> Int64 { countEqualPack(repeat each values) }
+@inline(never) public func arrayPackSourceGeneric<each Value: Equatable>(
+    _ source: GenericSourcePack<repeat [each Value]>, _ values: repeat each Value
+) -> Int64 { countEqualPack(repeat each values) }
+
+public protocol GenericSourceParent { var sourceNumber: Int64 { get } }
+public protocol GenericSourceChild: GenericSourceParent {}
+public struct GenericSourceValue: GenericSourceChild {
+    public let sourceNumber: Int64
+    public init(_ value: Int64) { sourceNumber = value }
+}
+public class GenericSourceBox<Value: GenericSourceChild> {
+    public let value: Value
+    public init(_ value: Value) { self.value = value }
+}
+public final class GenericSourceLeaf: GenericSourceBox<GenericSourceValue> {}
+public class GenericSourceNested<Value> {
+    public let value: Value
+    public init(_ value: Value) { self.value = value }
+}
+@inline(never) public func classSourceGeneric<Value: GenericSourceChild, Other>(
+    _ box: GenericSourceBox<Value>, _ other: Other
+) -> (Int64, Other) { (box.value.sourceNumber, other) }
+@inline(never) public func tupleSourceGeneric<Value: GenericSourceChild>(
+    _ input: (GenericSourceBox<Value>, Int64)
+) -> Int64 { input.0.value.sourceNumber + input.1 }
+@inline(never) public func metatypeSourceGeneric<Value: GenericSourceChild>(
+    _ type: GenericSourceBox<Value>.Type
+) -> Int64 { 72 }
+@inline(never) public func nestedSourceGeneric<Value>(
+    _ box: GenericSourceNested<[Value]>
+) -> Value { box.value[0] }
+@inline(never) public func superclassSourceGeneric<Value: GenericSourceChild, Object: GenericSourceBox<Value>>(
+    _ object: Object
+) -> Int64 { object.value.sourceNumber }
+
+@frozen public struct GenericObjectValue<Value: AnyObject> {
+    public var value: Value
+    public init(_ value: Value) { self.value = value }
+    @inline(never) public func project() -> Value { value }
+}
+
+@frozen public struct GenericSuperclassValue<Value: NSObject> {
+    public var value: Value
+    public init(_ value: Value) { self.value = value }
+    @inline(never) public func project() -> Value { value }
+}
+
+@frozen public struct GenericNestedValue<Value> {
+    public var box: GenericValueBox<Value>
+    public init(_ value: Value) { box = GenericValueBox(value) }
+    @inline(never) public func project() -> Value { box.value }
+}
+
+public struct GenericSameTypeValue<Values: Collection> where Values.Element == ManagedRecord {
+    public var values: Values
+    public init(_ values: Values) { self.values = values }
+    @inline(never) public func number() -> Int64 { values.first?.number ?? -1 }
+}
+
+public protocol GenericObjectContainer { associatedtype Item: AnyObject }
+public struct GenericObjectCarrier: GenericObjectContainer { public typealias Item = NSObject }
+
+@inline(never) public func associatedObjectGeneric<Value: GenericObjectContainer>(
+    _ type: Value.Type, _ value: Value.Item
+) -> Value.Item { value }
+
+@objc public protocol GenericObjCConstraint { var genericNumber: Int { get } }
+public class GenericObjCValue: NSObject, GenericObjCConstraint {
+    public var genericNumber: Int { 42 }
+}
+@inline(never) public func objectConstraintGeneric<Value: AnyObject>(_ value: Value) -> Value { value }
+@inline(never) public func objcSuperclassPairGeneric<Value: NSObject>(_ value: Value, _ protocolValue: any NSObjectProtocol) -> Value {
+    value
+}
+@inline(never) public func objcConstraintGeneric<Value: GenericObjCConstraint>(_ value: Value) -> Value { value }
+@inline(never) public func superclassConstraintGeneric<Value: GenericObjCValue>(_ value: Value) -> Value { value }
+
+extension GenericValueBox {
+    @inline(never) public func first<Element>() -> Element where Value == [Element] { value[0] }
+}
+
+public protocol GenericTree { associatedtype Child: GenericTree }
+public struct GenericLeaf: GenericTree, Equatable { public typealias Child = GenericLeaf }
+public struct GenericRecursive<Value: GenericTree> where Value.Child.Child: Equatable {}
+
+public class GenericTypeClass<Value: Equatable>: NSObject {
+    private var storage: Value
+    public var value: Value {
+        @inline(never) get { storage }
+        @inline(never) set { storage = newValue }
+    }
+    public init(_ value: Value) { storage = value }
+    @inline(never) public static func identity(_ value: Value) -> Value { value }
+    @inline(never) public func compare<Other: Equatable>(_ other: Other) -> (Value, Other, Bool) {
+        (storage, other, storage == storage && other == other)
+    }
+}
+public final class GenericTypeDerived<Value: Equatable>: GenericTypeClass<[Value]> {}
+public enum GenericTypeEnum<Value> {
+    case value(Value)
+    @inline(never) public func payload() -> Value {
+        switch self { case .value(let value): value }
+    }
+}
+
+@frozen public struct GenericValueBox<Value> {
+    public var value: Value
+    public init(_ value: Value) { self.value = value }
+    @inline(never) public func project() -> Value { value }
+    @inline(never) public mutating func replace(_ value: Value) { self.value = value }
+    @inline(never) public consuming func take() -> Value { value }
+    @inline(never) public func paired<Other: Equatable>(_ other: Other) -> (Value, Other, Bool) {
+        (value, other, other == other)
+    }
+    @inline(never) public func checked<Failure: Error>(_ failure: Failure, fail: Bool) throws(Failure) -> Value {
+        if fail { throw failure }
+        return value
+    }
+    @inline(never) public static func identity(_ value: Value) -> Value { value }
+}
+
+extension GenericValueBox where Value: Sendable {
+    @inline(never) public nonisolated(nonsending) func asynchronously() async -> Value { value }
+}
+extension GenericValueBox where Value == Int {
+    @inline(never) public func concrete() -> Int { value }
+}
+extension GenericValueBox where Value: AnyObject {
+    @inline(never) public func reference() -> Value { value }
+}
+extension GenericValueBox where Value: Equatable {
+    @inline(never) public func selected() -> Int64 { 11 }
+    public var selectedValue: Int64 { 12 }
+    @inline(never) public static func selectedStatic() -> Int64 { 13 }
+    public static var selectedStaticValue: Int64 { 14 }
+}
+extension GenericValueBox where Value: Hashable {
+    @inline(never) public func selected() -> Int64 { 21 }
+    public var selectedValue: Int64 { 22 }
+    @inline(never) public static func selectedStatic() -> Int64 { 23 }
+    public static var selectedStaticValue: Int64 { 24 }
+}
+
+@frozen public struct GenericPhantom<Value> {
+    public var number: Int64
+    public init(_ number: Int64) { self.number = number }
+    @inline(never) public func read() -> Int64 { number }
+    @inline(never) public func paired<Other>(_ other: Other) -> (Int64, Other) { (number, other) }
+}
+
+@inline(never) public func phantomGeneric<Value>(_ value: GenericPhantom<Value>) -> GenericPhantom<Value> { value }
+@inline(never) public func boxedGeneric<Value>(_ value: GenericValueBox<Value>) -> GenericValueBox<Value> { value }
+@inline(never) public func optionalArrayGeneric<Value>(_ value: [Value]?) -> [Value]? { value }
+
+public struct GenericTypeCollection<Value: Collection> where Value.Element: Equatable {
+    public let value: Value
+}
+public struct GenericTypeRelated<Values: Collection, Element> where Values.Element == Element {
+    public let values: Values
+}
+public struct GenericTypeOuter<Value> {
+    public struct Inner<Element> {}
+    public struct FixedInner {}
+}
+extension GenericTypeOuter where Value: Equatable {
+    public struct InExtension<Element> {}
+}
+extension GenericTypeOuter.Inner where Value: Collection, Value.Element == Element, Element: Equatable {
+    public struct Constrained<Third> {}
+}
+public enum GenericTypeNamespace {
+    public struct Member<Value> {}
+}
+public struct GenericTypePack<each Value: Equatable> {
+    public let values: (repeat each Value)
+}
+public struct GenericTypeMixedPack<First, each Element> {
+    public let first: First
+    public let elements: (repeat each Element)
+}
+
 @_cdecl("ABIGenericResilientArgument")
 public func genericResilientArgument() -> UnsafeRawPointer {
     unsafeBitCast(ResilientRecord.self, to: UnsafeRawPointer.self)
@@ -13,7 +300,14 @@ extension ResilientRecord: GenericMetric { public var metric: Int64 { number } }
 @frozen public struct GenericRecord<Value: GenericMetric> {
     public let value: Value
     public init(_ value: Value) { self.value = value }
+    @inline(never) public func project() -> Value { value }
+    @inline(never) public func measure() -> Int64 { value.metric }
+    public var measured: Int64 { value.metric }
 }
+
+@inline(never) public func visitBorrowedGenericRecord(
+    _ number: Int64, _ body: (GenericRecord<ResilientRecord>) -> (Int64, Int64)
+) -> (Int64, Int64) { body(GenericRecord(ResilientRecord(token: LifetimeToken(), number: number))) }
 
 @frozen public struct ConditionalMetric<Value> {
     public let value: Value

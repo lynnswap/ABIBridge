@@ -81,6 +81,8 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         checks += try await validateSwiftThrowingClosures()
     case "method-extraction":
         checks += try await validateMethodExtraction()
+    case "swift-generic-bindings":
+        checks += try await validateSwiftGenericBindings()
     case "swift-generic-borrows":
         checks += try await validateSwiftGenericBorrows()
     case "swift-closures":

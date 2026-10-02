@@ -9,10 +9,17 @@ func swiftFunctionTypeName(_ type: Any.Type) throws -> String {
         }
         return try swiftFunctionTypeName(closure.swiftFunctionType)
     }
+    return try swiftNativeTypeName(type)
+}
+
+func swiftNativeTypeName(_ type: Any.Type) throws -> String {
     // Objective-C metatypes can print an unqualified runtime name (NSString),
     // while Swift declarations use their imported identity (__C.NSString).
-    guard let mangled = _mangledTypeName(type),
-          let name = DeclarationKey.demangle("$s" + mangled, language: .swift) else {
+    // The runtime mangler has no spelling for Objective-C superclass
+    // existentials or containers containing them; their qualified runtime
+    // descriptions still name the valid Swift types.
+    guard let mangled = _mangledTypeName(type) else { return String(reflecting: type) }
+    guard let name = DeclarationKey.demangle("$s" + mangled, language: .swift) else {
         throw ABIResolutionError.metadataUnavailable("No canonical Swift name for \(String(reflecting: type)).")
     }
     return name
@@ -70,7 +77,7 @@ func swiftFunctionDeclaration(
     guard !generic, (isAsync || !effectWords.contains("async")),
           (failureType != Never.self || !effectWords.contains("throws")) else {
         throw ABIResolutionError.unsupportedDeclaration(
-            "Generic signatures require a native adapter; async and throwing calls require matching function types."
+            "Generic signatures require genericArguments; async and throwing calls require matching function types."
         )
     }
     return NativeDeclaration(name: declaration, language: .swift)
@@ -149,9 +156,7 @@ extension SwiftCallInterface {
         }
 
         private static func equal(_ first: CValueType, _ second: CValueType) -> Bool {
-            // Storage equality alone does not include Swift's formal indirection.
-            first === second || (ABIValueTypesEqual(first.handle, second.handle)
-                && ABISwiftValueIsIndirect(first.handle) == ABISwiftValueIsIndirect(second.handle))
+            first === second || ABIValueTypesEqual(first.handle, second.handle)
         }
     }
 
@@ -181,9 +186,10 @@ extension SwiftCallInterface {
 /// layouts supplied by ABIBridgeSwiftValue, and trivial ABIBridgeValue layouts.
 /// Use NativeSwiftClosure for supported concrete callbacks. Inout and explicit
 /// ownership use NativeSwiftInout, NativeSwiftBorrowing, and NativeSwiftConsuming.
-/// The explicit substitution overload supports one unconstrained generic parameter.
-/// Other generic declarations, undescribed resilient values, and ordinary unwrapped
-/// closures require separate adapters. Async signatures preserve the native task and suspension. Throwing signatures
+/// Generic declarations use explicit genericArguments and preserve their formal
+/// metadata, witness, and value conventions; see <doc:GenericSwiftValues>.
+/// Undescribed resilient values and ordinary unwrapped closures require separate
+/// representations. Async signatures preserve the native task and suspension. Throwing signatures
 /// return native failures as NativeSwiftError.
 /// See <doc:SwiftFunctionInvocation>.
 public struct NativeSwiftFunction<Signature>: Sendable {
@@ -300,19 +306,27 @@ extension ABIRuntime {
     ///   - name: A qualified label-only name, such as Example.decorate(_:), or a complete demangled declaration.
     ///   - signature: The complete Swift function type, including native error and async isolation conventions.
     ///   - scope: Images to search; automatic scope considers only loaded images.
+    ///   - genericArguments: Scalar types and packs in declaration parameter order.
+    ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
     ///   - loading: Whether an explicit image may be acquired and initialized.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
     /// - Throws: A resolution, unsupported representation, or call preparation error.
     public func swiftFunction<Signature>(
         named name: String,
         as signature: Signature.Type,
+        genericArguments: [NativeSwiftGenericArgument] = [],
+        declaredAs declaredSignature: String? = nil,
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftFunction<Signature> {
-        return try NativeSwiftFunction(
-            symbol: resolve(swiftFunctionDeclaration(named: name, as: signature), in: scope, loading: loading),
-            resolver: resolver
-        )
+        let declaration = try genericArguments.isEmpty ? swiftFunctionDeclaration(named: name, as: signature)
+            : NativeDeclaration(name: name, language: .swift)
+        let symbol = try resolve(declaration, in: scope, loading: loading)
+        if !genericArguments.isEmpty || declaredSignature != nil {
+            return try preparedGenericFunction(symbol: symbol, signature: signature, genericArguments: genericArguments,
+                                               declaredSignature: declaredSignature)
+        }
+        return try NativeSwiftFunction(symbol: symbol, resolver: resolver)
     }
 
     /// Resolves a concrete Swift free function in an already retained image.
@@ -321,18 +335,26 @@ extension ABIRuntime {
     ///   - name: The qualified demangled declaration.
     ///   - signature: The complete Swift function type, including native error and async isolation conventions.
     ///   - image: An image whose symbol index is reused.
+    ///   - genericArguments: Scalar types and packs in declaration parameter order.
+    ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
     /// - Throws: A resolution, unsupported representation, or call preparation error.
     public func swiftFunction<Signature>(
         named name: String,
         as signature: Signature.Type,
+        genericArguments: [NativeSwiftGenericArgument] = [],
+        declaredAs declaredSignature: String? = nil,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftFunction<Signature> {
-        return try NativeSwiftFunction(
-            symbol: resolve(swiftFunctionDeclaration(named: name, as: signature), in: image, loading: loading),
-            resolver: resolver
-        )
+        let declaration = try genericArguments.isEmpty ? swiftFunctionDeclaration(named: name, as: signature)
+            : NativeDeclaration(name: name, language: .swift)
+        let symbol = try resolve(declaration, in: image, loading: loading)
+        if !genericArguments.isEmpty || declaredSignature != nil {
+            return try preparedGenericFunction(symbol: symbol, signature: signature, genericArguments: genericArguments,
+                                               declaredSignature: declaredSignature)
+        }
+        return try NativeSwiftFunction(symbol: symbol, resolver: resolver)
     }
 }

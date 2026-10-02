@@ -1,6 +1,11 @@
 import ABIBridge
 import Foundation
+import ManagedSwiftFixtures
 import Testing
+
+extension GenericGetterFailure: ABIBridgeSwiftValue {
+    public static var swiftABIType: NativeType { .int64 }
+}
 
 private protocol ReceiverMetric { var text: String { get } }
 private struct ReceiverNumber: ReceiverMetric {
@@ -14,6 +19,14 @@ private struct ReceiverText: ReceiverMetric, ABIBridgeSwiftValue {
     static var swiftABIType: NativeType { try! .opaque(named: "ReceiverText") }
 }
 
+private struct ReceiverBoolAdapter: ABIBridgeValue {
+    let value: Bool
+    init(_ value: Bool) { self.value = value }
+    static let abiType: NativeType = .bool
+    init(nativeValue: NativeValue) throws { value = try unsafe nativeValue.read(as: Bool.self) }
+    static func nativeValue(from value: Self) throws -> NativeValue { try NativeValue(copying: value.value, as: .bool) }
+}
+
 // Keep the private generic entry points in optimized tests. Without this,
 // specialization removes their unspecialized symbols or changes ownership.
 private class GenericReceiver<Value: ReceiverMetric>: NSObject {
@@ -21,6 +34,9 @@ private class GenericReceiver<Value: ReceiverMetric>: NSObject {
     var suffix = ""
     init(_ value: Value) { self.value = value }
     @inline(never) @_optimize(none) func title(_ prefix: String) -> String { prefix + value.text + suffix }
+    @inline(never) @_optimize(none) func read(_ value: Int64) -> Int64 { value + 1 }
+    @inline(never) @_optimize(none) func read(_ value: String) -> some Any { value }
+    @inline(never) @_optimize(none) func unsupportedRead(_ value: String) -> some Any { value }
     var text: String {
         @inline(never) @_optimize(none) get { value.text + suffix }
         @inline(never) @_optimize(none) set { suffix = newValue }
@@ -36,10 +52,219 @@ private class GenericReceiver<Value: ReceiverMetric>: NSObject {
     }
     @inline(never) @_optimize(none) func asyncTitle(_ prefix: String) async -> String { prefix + value.text }
 }
+extension GenericReceiver where Value == ReceiverNumber {
+    @inline(never) @_optimize(none) func read(_ value: Double) -> Double { value + 2 }
+}
 private final class InheritedGenericReceiver: GenericReceiver<ReceiverNumber> {}
 private enum ReceiverFailure: Error { case rejected }
 
 struct SwiftGenericReceiverTests {
+    @Test func genericOperatorsPreserveAliasesAndExplicitFixity() async throws {
+        typealias Box = GenericOperatorBox<Int64>
+        let type = try await ABIRuntime().swiftType(named: "ManagedSwiftFixtures.GenericOperatorBox",
+            genericArguments: [.type(Int64.self)])
+        let lhs = Box(42), rhs = Box(1)
+        for (name, expected) in [(">", lhs > rhs), ("<", lhs < rhs), ("<<", lhs << rhs), ("<>", lhs <> rhs),
+                                 ("<≪", lhs <≪ rhs), ("≪<", lhs ≪< rhs), (".<>", lhs .<> rhs)] {
+            let method = try await type.staticMethod(named: name + "(_:_:)", as: ((Box, Box) -> Bool).self)
+            #expect(try unsafe method.unsafeInvoke(lhs, rhs) == expected)
+            let complete = try await type.staticMethod(
+                named: name + "(ManagedSwiftFixtures.GenericOperatorBox<A>, ManagedSwiftFixtures.GenericOperatorBox<A>) -> Swift.Bool",
+                as: ((Box, Box) -> ReceiverBoolAdapter).self)
+            #expect(try unsafe complete.unsafeInvoke(lhs, rhs).value == expected)
+        }
+        do {
+            _ = try await type.staticMethod(named: "^^^(_:)", as: ((Box) -> Int64).self)
+            Issue.record("Prefix and postfix implementations must remain ambiguous without fixity")
+        } catch ABIResolutionError.ambiguousDeclaration(_, let candidates) {
+            #expect(candidates.count == 2)
+        }
+        let prefix = try await type.staticMethod(named: "^^^ prefix(_:)", as: ((Box) -> Int64).self)
+        let postfix = try await type.staticMethod(named: "^^^ postfix(_:)", as: ((Box) -> Int64).self)
+        #expect(try unsafe prefix.unsafeInvoke(lhs) == ^^^lhs)
+        #expect(try unsafe postfix.unsafeInvoke(lhs) == lhs^^^)
+        let generic = try await type.staticMethod(named: "+(_:_:)", as: ((Box, String) -> String).self,
+            genericArguments: [.type(String.self)])
+        #expect(try unsafe generic.unsafeInvoke(lhs, "member") == lhs + "member")
+        let qualifiedAlias = generic.symbol.declaration.name.replacingOccurrences(of: " infix", with: "")
+        let qualified = try await type.staticMethod(named: qualifiedAlias, as: ((Box, String) -> String).self,
+            genericArguments: [.type(String.self)])
+        #expect(try unsafe qualified.unsafeInvoke(lhs, "qualified") == "qualified")
+    }
+
+    @Test func callbackConventionsStayDistinctDuringMemberLookup() async throws {
+        let object = ABIRuntime().object(GenericCallbackConventions<Int64>())
+        let call = try await object.method(named: "callback(_:)", as: ((NativeSwiftClosure<(Int64) -> Int64>) -> Int64).self)
+        let body = try NativeSwiftClosure<(Int64) -> Int64> { $0 + 2 }
+        #expect(try unsafe call.unsafeInvoke(body) == 42)
+        let returned = try await object.method(named: "returnedCallback()", as: (() -> NativeSwiftClosure<(Int64) -> Int64>).self)
+        let returnedBody = try unsafe returned.unsafeInvoke()
+        #expect(try unsafe returnedBody.unsafeInvoke(40) == 42)
+        for name in ["foreignC(_:)", "foreignBlock(_:)"] {
+            do {
+                _ = try await object.method(named: name, as: ((NativeSwiftClosure<(Int64) -> Int64>) -> Int64).self)
+                Issue.record("A Swift closure must not match a foreign function convention")
+            } catch ABIResolutionError.declarationNotFound {}
+        }
+        let cBody: @convention(c) (Int64) -> Int64 = { $0 + 2 }
+        let cCall = try await object.method(
+            named: "foreignC(@convention(c) (Swift.Int64) -> Swift.Int64) -> Swift.Int64",
+            as: ((UnsafeRawPointer) -> Int64).self)
+        #expect(try unsafe cCall.unsafeInvoke(unsafeBitCast(cBody, to: UnsafeRawPointer.self)) == 42)
+        let block: @convention(block) (Int64) -> Int64 = { $0 + 2 }
+        let blockCall = try await object.method(
+            named: "foreignBlock(@convention(block) (Swift.Int64) -> Swift.Int64) -> Swift.Int64",
+            as: ((AnyObject) -> Int64).self)
+        #expect(try unsafe blockCall.unsafeInvoke(unsafeBitCast(block, to: AnyObject.self)) == 42)
+    }
+
+    @MainActor @Test func unsupportedOverloadsDoNotHideUsableMembers() async throws {
+        let runtime = ABIRuntime()
+        for receiver in [GenericReceiver(ReceiverNumber(number: 42)),
+                         InheritedGenericReceiver(ReceiverNumber(number: 43))] {
+            let object = runtime.object(receiver)
+            let read = try await object.method(named: "read(_:)", as: ((Int64) -> Int64).self)
+            #expect(try unsafe read.unsafeInvoke(41) == receiver.read(Int64(41)))
+            let extensionRead = try await object.method(named: "read(_:)", as: ((Double) -> Double).self)
+            #expect(try unsafe extensionRead.unsafeInvoke(40) == receiver.read(Double(40)))
+            do {
+                _ = try await object.method(named: "unsupportedRead(_:)", as: ((String) -> String).self)
+                Issue.record("Expected the unsupported candidate's preparation error")
+            } catch ABIResolutionError.unsupportedDeclaration(let reason) {
+                #expect(reason.contains("OpaqueReturnType"))
+            }
+        }
+    }
+
+    @MainActor @Test func completeMemberDeclarationsPreserveConcreteAdapters() async throws {
+        let runtime = ABIRuntime()
+        let receiver = GenericReceiver(ReceiverNumber(number: 42))
+        let object = runtime.object(receiver)
+        let name = "throwingTitle(Swift.Bool) throws -> Swift.String"
+        let method = try await object.method(named: name, as: ((ReceiverBoolAdapter) throws -> String).self)
+        #expect(try unsafe method.unsafeInvoke(ReceiverBoolAdapter(false)) == "42")
+        do {
+            _ = try unsafe method.unsafeInvoke(ReceiverBoolAdapter(true))
+            Issue.record("Expected the concrete native error")
+        } catch let error as NativeSwiftError {
+            #expect(error.withUnderlyingError { $0 is ReceiverFailure })
+        }
+        let qualified = try await object.method(named: method.method.symbol.declaration.name,
+            as: ((ReceiverBoolAdapter) throws -> String).self)
+        #expect(try unsafe qualified.unsafeInvoke(ReceiverBoolAdapter(false)) == "42")
+        let borrowed = try await object.method(named: name,
+            as: ((NativeSwiftBorrowing<ReceiverBoolAdapter>) throws -> String).self)
+        #expect(try unsafe borrowed.unsafeInvoke(.init(ReceiverBoolAdapter(false))) == "42")
+        for invalidName in ["throwingTitle(_:)", "throwingTitle(Swift.String) throws -> Swift.String"] {
+            do {
+                _ = try await object.method(named: invalidName, as: ((ReceiverBoolAdapter) throws -> String).self)
+                Issue.record("An adapter must use the selected native declaration's concrete type")
+            } catch ABIResolutionError.declarationNotFound {}
+        }
+        do {
+            _ = try await object.method(named: "echo(A) -> A", as: ((ReceiverBoolAdapter) -> ReceiverBoolAdapter).self)
+            Issue.record("A dependent argument must still use its bound Swift type")
+        } catch ABIResolutionError.declarationNotFound {}
+    }
+
+    @Test func completeInitializersAndAccessorsPreserveConcreteAdapters() async throws {
+        let runtime = ABIRuntime()
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericEffectfulGetter",
+            genericArguments: [.type(String.self), .type(GenericGetterFailure.self)])
+        let initialize = try await type.initializer(
+            named: "init(A, B, Swift.Bool) -> ManagedSwiftFixtures.GenericEffectfulGetter<A, B>",
+            as: ((String, GenericGetterFailure, ReceiverBoolAdapter) -> GenericEffectfulGetter<String, GenericGetterFailure>).self)
+        let receiver = try unsafe initialize.unsafeInvoke("adapter", GenericGetterFailure(1), ReceiverBoolAdapter(false))
+        let object = runtime.object(receiver)
+        let getter = try await object.getter(named: "shouldThrow.getter : Swift.Bool", as: (() -> ReceiverBoolAdapter).self)
+        let setter = try await object.setter(named: "shouldThrow.setter : Swift.Bool", as: ReceiverBoolAdapter.self)
+        #expect(try unsafe getter.unsafeInvoke().value == false)
+        try unsafe setter.unsafeInvoke(ReceiverBoolAdapter(true))
+        let updated = try unsafe getter.unsafeInvoke()
+        #expect(receiver.shouldThrow && updated.value)
+    }
+
+    @MainActor @Test func concreteMemberArgumentsKeepTheirBorrowingMarkers() async throws {
+        let receiver = GenericReceiver(ReceiverNumber(number: 42))
+        let method = try await ABIRuntime().object(receiver).method(named: "title(_:)",
+            as: ((NativeSwiftBorrowing<String>) -> String).self)
+        #expect(try unsafe method.unsafeInvoke(.init("borrowed:")) == receiver.title("borrowed:"))
+    }
+
+    @MainActor @Test func effectfulGenericGettersUseTheDeclaredErrorConvention() async throws {
+        let runtime = ABIRuntime()
+        let owner = GenericEffectfulGetter("getter", GenericGetterFailure(42), false)
+        let object = runtime.object(owner)
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericEffectfulGetter",
+            genericArguments: [.type(String.self), .type(GenericGetterFailure.self)])
+        let checked = try await object.getter(named: "checked",
+            as: (() throws(GenericGetterFailure) -> String).self, declaredAs: "() throws(B) -> A")
+        let fixed = try await type.getter(named: "fixedFailure",
+            as: (() throws(GenericGetterFailure) -> String).self,
+            declaredAs: "() throws(ManagedSwiftFixtures.GenericGetterFailure) -> A")
+        let delayed = try await object.getter(named: "delayed", as: (() async -> String).self)
+        let delayedChecked = try await object.getter(named: "delayedChecked",
+            as: (() async throws(GenericGetterFailure) -> String).self, declaredAs: "() async throws(B) -> A")
+        let number = try await object.getter(named: "checkedNumber", as: (() throws(GenericGetterFailure) -> Int64).self,
+            declaredAs: "() throws(B) -> Swift.Int64")
+        let fixedNumber = try await object.getter(named: "fixedNumber", as: (() throws(GenericGetterFailure) -> Int64).self,
+            declaredAs: "() throws(ManagedSwiftFixtures.GenericGetterFailure) -> Swift.Int64")
+        let delayedNumber = try await object.getter(named: "delayedNumber", as: (() async throws(GenericGetterFailure) -> Int64).self,
+            declaredAs: "() async throws(B) -> Swift.Int64")
+        let delayedFixedNumber = try await object.getter(named: "delayedFixedNumber", as: (() async throws(GenericGetterFailure) -> Int64).self,
+            declaredAs: "() async throws(ManagedSwiftFixtures.GenericGetterFailure) -> Swift.Int64")
+        #expect(try unsafe checked.unsafeInvoke() == "getter")
+        #expect(try unsafe fixed.unsafeInvoke(on: owner) == "getter")
+        #expect(try unsafe await delayed.unsafeInvoke() == "getter")
+        #expect(try unsafe await delayedChecked.unsafeInvoke() == "getter")
+        #expect(try unsafe number.unsafeInvoke() == 41)
+        #expect(try unsafe fixedNumber.unsafeInvoke() == 42)
+        #expect(try unsafe await delayedNumber.unsafeInvoke() == 43)
+        #expect(try unsafe await delayedFixedNumber.unsafeInvoke() == 44)
+        owner.shouldThrow = true
+        for (call, code) in [({ try unsafe checked.unsafeInvoke() }, Int64(42)),
+                             ({ try unsafe fixed.unsafeInvoke(on: owner) }, Int64(71))] {
+            do { _ = try call(); Issue.record("Expected a native getter error") }
+            catch let error as NativeSwiftError { error.withUnderlyingError { #expect(($0 as? GenericGetterFailure)?.code == code) } }
+        }
+        do { _ = try unsafe await delayedChecked.unsafeInvoke(); Issue.record("Expected an async getter error") }
+        catch let error as NativeSwiftError { error.withUnderlyingError { #expect(($0 as? GenericGetterFailure)?.code == 42) } }
+        for (call, code) in [({ try unsafe number.unsafeInvoke() }, Int64(42)),
+                             ({ try unsafe fixedNumber.unsafeInvoke() }, Int64(72))] {
+            do { _ = try call(); Issue.record("Expected a scalar getter error") }
+            catch let error as NativeSwiftError { error.withUnderlyingError { #expect(($0 as? GenericGetterFailure)?.code == code) } }
+        }
+        do { _ = try unsafe await delayedNumber.unsafeInvoke(); Issue.record("Expected an async generic getter error") }
+        catch let error as NativeSwiftError { error.withUnderlyingError { #expect(($0 as? GenericGetterFailure)?.code == 42) } }
+        do { _ = try unsafe await delayedFixedNumber.unsafeInvoke(); Issue.record("Expected an async fixed getter error") }
+        catch let error as NativeSwiftError { error.withUnderlyingError { #expect(($0 as? GenericGetterFailure)?.code == 73) } }
+        let staticGetter = try await type.staticGetter(named: "checkedType",
+            as: (() throws(GenericGetterFailure) -> String.Type).self, declaredAs: "() throws(B) -> A.Type")
+        let asyncStaticGetter = try await type.staticGetter(named: "delayedType",
+            as: (() async throws(GenericGetterFailure) -> String.Type).self, declaredAs: "() async throws(B) -> A.Type")
+        #expect(try unsafe staticGetter.unsafeInvoke() == String.self)
+        #expect(try unsafe await asyncStaticGetter.unsafeInvoke() == String.self)
+        do {
+            _ = try await object.getter(named: "checked", as: (() throws(GenericGetterFailure) -> String).self)
+            Issue.record("The formal error cannot be inferred from the bound error type")
+        } catch ABIResolutionError.unsupportedDeclaration {}
+    }
+    @MainActor @Test(arguments: [false, true])
+    func dependentMembersAndIndependentParametersUseRawSwiftValues(_ inherited: Bool) async throws {
+        let receiver: GenericReceiver<ReceiverNumber> = inherited
+            ? InheritedGenericReceiver(.init(number: 42)) : GenericReceiver(.init(number: 42))
+        let object = ABIRuntime().object(receiver)
+        let projected = try await object.method(named: "projected()", as: (() -> ReceiverNumber).self)
+        let echo = try await object.method(named: "echo(_:)", as: ((ReceiverNumber) -> ReceiverNumber).self)
+        let getter = try await object.getter(named: "payload", as: (() -> ReceiverNumber).self)
+        let independent = try await object.method(named: "independent(_:)",
+            as: ((String) -> String).self, genericArguments: [.type(String.self)])
+        #expect(try unsafe projected.unsafeInvoke().number == 42)
+        #expect(try unsafe echo.unsafeInvoke(ReceiverNumber(number: 7)).number == 7)
+        #expect(try unsafe getter.unsafeInvoke().number == 42)
+        #expect(try unsafe independent.unsafeInvoke("member") == "member")
+    }
+
     @MainActor @Test func extractedGenericMethodsKeepContextWithoutRetainingTheOriginalObject() async throws {
         let runtime = ABIRuntime()
         weak var observed: GenericReceiver<ReceiverNumber>?

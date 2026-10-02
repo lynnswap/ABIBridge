@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ObjectiveC
 
 // Simple existential metadata has a kind word followed by 32-bit flags.
 // Extended existentials and existential metatypes have distinct metadata kinds.
@@ -44,5 +45,53 @@ enum SwiftExistentialRepresentation {
         case .error:
             return optional ? "Optional<$ss5ErrorP>" : "$ss5ErrorP"
         }
+    }
+}
+
+/// Concrete classes and Objective-C-compatible existentials satisfy Swift's
+/// object constraints. A Swift protocol existential with witness tables does
+/// not itself satisfy an AnyObject generic parameter.
+struct SwiftObjectType {
+    let classType: AnyClass?
+    private let protocols: [Protocol]
+
+    init?(_ type: Any.Type) {
+        if let type = type as? AnyClass {
+            classType = type
+            protocols = []
+            return
+        }
+        guard case .classBound(witnessTables: 0) = SwiftExistentialRepresentation(type) else { return nil }
+        let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
+        let word = MemoryLayout<UInt>.size
+        let flags = metadata.load(fromByteOffset: word, as: UInt32.self)
+        let count = metadata.load(fromByteOffset: word + 4, as: UInt32.self)
+        var offset = word + 8
+        if flags & 0x4000_0000 != 0 {
+            classType = unsafeBitCast(metadata.load(fromByteOffset: offset, as: UInt.self), to: AnyClass.self)
+            offset += word
+        } else {
+            classType = nil
+        }
+        // Metadata.h / MetadataRef.h: superclass metadata precedes tagged
+        // protocol references; Objective-C references have their low bit set.
+        protocols = (0..<Int(count)).compactMap { index in
+            let reference = metadata.load(fromByteOffset: offset + index * word, as: UInt.self)
+            return reference & 1 == 1 ? unsafeBitCast(reference & ~1, to: Protocol.self) : nil
+        }
+    }
+
+    func isSubclass(of expected: AnyClass) -> Bool {
+        var current: AnyClass? = classType
+        while let type = current {
+            if type === expected { return true }
+            current = class_getSuperclass(type)
+        }
+        return false
+    }
+
+    func conforms(to expected: Protocol) -> Bool {
+        if let classType, class_conformsToProtocol(classType, expected) { return true }
+        return protocols.contains { protocol_conformsToProtocol($0, expected) }
     }
 }

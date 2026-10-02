@@ -26,13 +26,13 @@ public struct NativeSwiftMethod<Signature>: Sendable {
     private let call: SwiftCallablePlan
 
     init(symbol: ResolvedSymbol, type: NativeSwiftType, receiver: SwiftReceiverPlan,
-         consumesArguments: Bool = false) throws {
+         consumesArguments: Bool = false, generic: SwiftGenericCallPlan? = nil) throws {
         self.symbol = symbol
         self.type = type
         self.receiver = receiver
         self.consumesArguments = consumesArguments
         call = try SwiftCallablePlan(signature: Signature.self, symbol: symbol, resolver: type.resolver,
-            trailingType: receiver.trailingType, consumesArguments: consumesArguments)
+            trailingType: receiver.trailingType, consumesArguments: consumesArguments, generic: generic)
     }
 
     func capturing(_ implementation: SwiftImplementation) -> Self {

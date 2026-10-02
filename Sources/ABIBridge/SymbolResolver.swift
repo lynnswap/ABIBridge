@@ -263,6 +263,25 @@ final class SymbolResolver: Sendable {
                     genericContext: genericContext)
     }
 
+    func swiftMemberCandidates(_ declaration: NativeDeclaration, in image: NativeImage?,
+                               extensionsOnly: Bool = false) throws -> [ResolvedSymbol] {
+        let scope = try image.map { SearchScope.images([$0]) }
+            ?? searchScope(.automatic, loading: .loadedOnly)
+        let query = SymbolQuery(declaration)
+        let indexes = state.withLock { state in scope.images.map { state.index(for: $0) } }
+        func matches(_ source: ResolvedSymbol.Source) -> [ResolvedSymbol] {
+            state.withLock { _ in
+                indexes.flatMap { $0.swiftMemberCandidates(query, source: source, extensionsOnly: extensionsOnly) }
+            }
+        }
+        let primary = matches(.image)
+        if !primary.isEmpty { return primary }
+        loadSharedCacheSymbols(for: query, into: indexes)
+        let fallback = matches(.sharedCache)
+        if fallback.isEmpty && !scope.isComplete { throw ABIResolutionError.imageUnavailable }
+        return fallback
+    }
+
     func removeCachedResults() {
         let removed = state.withLock { state in
             let indexes = (state.indexes, state.imports, state.virtualEntries, state.automatic, state.classImages, state.virtualTables)

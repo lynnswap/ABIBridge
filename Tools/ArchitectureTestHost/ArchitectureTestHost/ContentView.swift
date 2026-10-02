@@ -17,7 +17,7 @@ struct ContentView: View {
         "initializers", "native-hooks", "coordinated-hooks",
         "import-replacement", "import-hooks", "virtual-replacement",
         "virtual-hooks", "virtual-entries", "virtual-public",
-        "swift-replacement", "swift-callback", "swift-closures", "swift-generic-borrows", "method-extraction", "swift-throwing-closures", "swift-errors", "swift-async", "swift-async-closures", "swift-arguments", "swift-existentials", "swift-opaque", "swiftui", "objc-values", "swift-lookup", "native-lookup", "invocation-timing"
+        "swift-replacement", "swift-callback", "swift-closures", "swift-generic-borrows", "swift-generic-bindings", "method-extraction", "swift-throwing-closures", "swift-errors", "swift-async", "swift-async-closures", "swift-arguments", "swift-existentials", "swift-opaque", "swiftui", "objc-values", "swift-lookup", "native-lookup", "invocation-timing"
         ]
         #if targetEnvironment(simulator)
         return standard

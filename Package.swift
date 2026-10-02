@@ -42,9 +42,12 @@ let package = Package(
             name: "ABIBridgeCore",
             dependencies: [.product(name: "ZDLibffi", package: "ZDLibffi")],
             path: "Sources/ABIBridgeCore",
+            exclude: ["SwiftDemangling"],
             publicHeadersPath: "include",
             cxxSettings: [
                 .headerSearchPath("include"),
+                .headerSearchPath("SwiftDemangling/Support"),
+                .headerSearchPath("SwiftDemangling/Upstream/include"),
             ]
         ),
         .target(

@@ -118,7 +118,7 @@ struct SwiftExistentialValueTests {
         do { _ = try unsafe consume.unsafeInvoke(.init(value), true); Issue.record("Expected failure") }
         catch let error as NativeSwiftError { error.withUnderlyingError { #expect(($0 as? ScalarFailure)?.code == 42) } }
         #expect(value.number == 42)
-        let buffer = try NativeSwiftInout<any ExistentialValue>(InlineExistentialValue(1))
+        let buffer = NativeSwiftInout<any ExistentialValue>(InlineExistentialValue(1))
         do { try unsafe replace.unsafeInvoke(buffer, value, true); Issue.record("Expected failure") }
         catch let error as NativeSwiftError { error.withUnderlyingError { #expect(($0 as? ScalarFailure)?.code == 42) } }
         #expect(buffer.value.number == 42 && buffer.value is BoxedExistentialValue)

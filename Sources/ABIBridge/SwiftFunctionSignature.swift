@@ -59,22 +59,22 @@ struct SwiftFunctionSignature: Sendable {
         inheritsCallerIsolation = extended & 0x0e == 4
     }
 
-    func makeErrorPlan() throws -> SwiftErrorPlan? {
-        if failure == Never.self { return nil }
-        if failure == (any Error).self { return try SwiftErrorPlan.make((any Error).self) }
+    func makeErrorPlan(genericType: CValueType? = nil) throws -> SwiftErrorPlan? {
+        if failure == Never.self && genericType == nil { return nil }
+        if failure == (any Error).self { return try SwiftErrorPlan.make((any Error).self, genericType: genericType) }
         guard let error = failure as? any Error.Type else {
             throw ABIResolutionError.unsupportedDeclaration("The function's thrown type does not conform to Error.")
         }
-        return try SwiftErrorPlan.make(error)
+        return try SwiftErrorPlan.make(error, genericType: genericType)
     }
 
     func closureDiscriminator() throws -> UInt16 {
         var parameters = isAsync && inheritsCallerIsolation ? ["-class"] : []
-        for type in self.parameters where type != Void.self {
-            parameters.append(try swiftClosureAuthType(type))
+        for type in self.parameters {
+            parameters.append(contentsOf: try swiftClosureAuthTypes(type))
         }
         return swiftClosureDiscriminator(parameters: parameters,
-            result: result == Void.self ? nil : try swiftClosureAuthType(result))
+            results: try swiftClosureAuthTypes(result))
     }
 }
 
@@ -86,8 +86,8 @@ enum SwiftCallablePlan: Sendable {
          trailingType: CValueType? = nil, consumesArguments: Bool = false,
          generic: SwiftGenericCallPlan? = nil) throws {
         let description = try SwiftFunctionSignature(signature)
-        let errorPlan = try description.makeErrorPlan()
-        let opaque = try generic?.indirectResult == true ? nil
+        let errorPlan = try description.makeErrorPlan(genericType: generic?.errorType)
+        let opaque = try generic?.resultType != nil ? nil
             : SwiftOpaqueResultPlan.make(for: description.result, symbol: symbol, resolver: resolver)
         if description.isAsync {
             guard let resolver else {
@@ -96,7 +96,7 @@ enum SwiftCallablePlan: Sendable {
             self = .asynchronous(try SwiftAsyncCall(signature: signature, trailingType: trailingType,
                 consumesArguments: consumesArguments, errorPlan: errorPlan,
                 inheritsCallerIsolation: description.inheritsCallerIsolation,
-                opaqueResult: opaque), try SwiftAsyncImplementation(symbol: symbol, resolver: resolver))
+                opaqueResult: opaque, generic: generic), try SwiftAsyncImplementation(symbol: symbol, resolver: resolver))
         } else {
             self = .synchronous(try SwiftCall(signature: signature, trailingType: trailingType,
                 consumesArguments: consumesArguments, errorPlan: errorPlan, opaqueResult: opaque, generic: generic))
@@ -139,7 +139,7 @@ struct SwiftCallValues: Sendable {
             return try _openExistential(type, do: prepare)
         }
         func prepareResult<Value>(_ type: Value.Type) throws -> Result {
-            let codec = try SwiftResultCodec<Value>(opaque: opaqueResult, genericValue: generic?.indirectResult == true)
+            let codec = try SwiftResultCodec<Value>(opaque: opaqueResult, generic: generic?.result ?? .concrete)
             return Result(type: codec.type, makeStorage: { codec.makeStorage() },
                 initialize: { storage, owner, codeOwner, output in
                     let value = try codec.decode(storage, retaining: owner, retainingCode: codeOwner)

@@ -1,95 +1,134 @@
 # Calling Swift generics
 
-Call synchronous free functions with one unconstrained type parameter using an explicit substitution. Use an importing compiler adapter for constrained declarations and generic nominal metadata construction.
+Bind a declaration's type parameters with `genericArguments:` and pass its concrete callable signature with `as:`. The same binding model supports free functions, generic types, and members that introduce their own type parameters.
 
-## Call one unconstrained generic function
+## Bind a generic function
 
-For a provider declaring `func run<T>(_ apply: () -> T) -> T`, supply its complete source-level declaration and a concrete signature:
+For a provider declaring `func run<T>(_ apply: () -> T) -> T`, supply its complete source-level declaration:
 
 ```swift
 let run = try await ABIRuntime.shared.swiftFunction(
     named: "Example.run<A>(() -> A) -> A",
     as: ((NativeSwiftClosure<() -> String>) -> String).self,
-    substituting: String.self
+    genericArguments: [.type(String.self)]
 )
 let suffix = "!"
 let apply = try NativeSwiftClosure { "Hello" + suffix }
 let result = try unsafe run.unsafeInvoke(apply)
 ```
 
-`A` is the Swift demangler's source-level name for the first type parameter; no mangled symbol is needed. The supplied metatype must match every occurrence of `A` in the concrete signature. The `substituting:` overload also accepts a retained ``NativeSwiftType`` and retains its image through invocation and adapted callback contexts. Supplying a metatype directly assumes the type's implementation remains available, as for ordinary linked Swift types.
+`A`, `B`, and later names are the Swift demangler's names for the declaration's type parameters. Supply one argument per parameter in declaration order. A complete declaration selects the original generic implementation; `as:` describes the concrete values used by the caller. Generic member lookup also accepts the short member names shown below.
 
-The declaration controls physical lowering. `Bool` and `String` both use indirect generic arguments/results, even though their concrete calling conventions differ. The bridge appends the hidden type metadata and adapts a zero-argument callback to initialize its formal indirect result. Native escaping copies retain the adapted closure's context and required code owners. A failure converting a later argument releases earlier storage and adapted contexts without entering native code.
+Use `.type(String.self)` for a linked Swift type or `.type(retainedType)` for a ``NativeSwiftType`` obtained at runtime. The latter retains the type's metadata and implementation images through calls and adapted callback contexts. A bare metatype assumes its implementation remains loaded. Replace the former single `substituting:` argument with `genericArguments: [.type(...)]` when migrating.
 
-The initial direct subset supports synchronous, nonthrowing free functions with one unconstrained `<A>`. `A` can occur directly in arguments/results or as the result of `() -> A`; other positions use the existing concrete representations. Direct `A` arguments/results use the substituted type's actual Swift storage and compiler-generated value operations. `ABIBridgeValue` conversions and argument convention markers are not applied at those positions: explicitly substituting a wrapper type means `A` is the wrapper itself. A `() -> A` callback additionally requires `NativeSwiftClosure`'s supported concrete result representation for reabstraction. Constraints, dependent composites such as `Array<A>`, multiple parameters, generic members, packs, async/throwing effects, and imported hooks/replacements need additional contracts. Nongeneric nominal types containing concrete substitutions remain covered by <doc:ExplicitSwiftValues>.
+The declaration determines the physical convention before substitution. An unconstrained `T` parameter or result remains indirect when bound to `Bool` or `String`; a class constraint can establish a reference convention. Concrete tuple fields, collections, metatypes, optional values, and dependent nominal fields retain their declaration-level lowering. Metadata size alone does not establish that convention.
 
-For a native nonescaping `apply`, use ``NativeSwiftClosure/withUnsafeNonescaping(_:_:)-4ragm`` to keep a caller-isolated body within its synchronous call. Neither the callee nor the use body may retain that callback:
+## Constraints and multiple parameters
+
+Existing protocol conformances, including conditional conformances, supply the required witness tables. Same-type requirements and associated types are resolved against the supplied arguments. For example, given `func select<T, Values: Collection>(_ fallback: T, _ values: Values) -> T where Values.Element == T`:
 
 ```swift
-let run = try await ABIRuntime.shared.swiftFunction(
-    named: "Example.run<A>(() -> A) -> A",
-    as: ((NativeSwiftClosure<() -> Bool>) -> Bool).self,
-    substituting: Bool.self
+let select = try await runtime.swiftFunction(
+    named: "Example.select<A, B where A == B.Element, B: Swift.Collection>(A, B) -> A",
+    as: ((String, [String]) -> String).self,
+    genericArguments: [.type(String.self), .type([String].self)]
 )
-var calls = 0
-let result = try unsafe NativeSwiftClosure<() -> Bool>.withUnsafeNonescaping({
-    calls += 1
-    return true
-}) { callback in
-    try unsafe run.unsafeInvoke(callback)
-}
+let selected = try unsafe select.unsafeInvoke("fallback", ["first"])
 ```
 
-`SwiftGenericCallTests` compares scalar and managed substitutions with separately compiled compiler-generated calls, including capturing callbacks, indirect reference ownership, empty results, escaping copies and conversion failures. `SwiftRuntimeValueConsumer` combines this entry with a runtime-only borrowed callback without importing its concrete provider type. Runtime validation covers macOS arm64 in Debug and Release, and the `swift-generic-borrows` device probe passed on iPhone Air with iOS 27.0.1 (24A446), Xcode 27.0 / Swift 6.4, Release arm64e with pointer authentication enabled. `check-swift-generic-call-codegen.py` checks hidden metadata, formal result/self conventions, and arm64e callback discriminators on arm64, x86_64, arm64e and arm64_32. The compiler probes alone do not establish runtime coverage on x86_64 or arm64_32.
+The supplied arguments must satisfy the declaration's conformance, same-type, superclass, and pack-shape requirements. Class constraints include `AnyObject` and Objective-C-compatible existential compositions, following Swift's self-conformance rules. Binding uses Swift's existing metadata and conformances; it does not create new conformances. Unsatisfied arguments fail preparation before native invocation.
 
-## Choose the specialization boundary
+## Parameter packs
 
-A Swift generic accessor does not share the zero-substitution metadata contract used by ``NativeSwiftType``. The verified prototype uses a separate fixture module with a constrained `GenericRecord<Value: GenericMetric>` and an adapter module that imports its declaration. The adapter accepts a live element metatype, checks its existing `GenericMetric` conformance, and lets Swift open that metatype for generic code.
+Use one `.pack` argument for each declared type pack, including an empty array for an empty pack. Scalar parameters remain separate entries:
 
 ```swift
-func specializedType(for argument: Any.Type) -> Any.Type? {
-    guard let conforming = argument as? any GenericMetric.Type else { return nil }
-    func specialize<Value: GenericMetric>(_ type: Value.Type) -> Any.Type {
-        GenericRecord<Value>.self
-    }
-    return specialize(conforming)
-}
+// Provider: func echo<each T: Equatable>(_ values: repeat each T)
+//           -> (repeat each T)
+let echo = try await runtime.swiftFunction(
+    named: "Example.echo<each A where A: Swift.Equatable>(repeat A) -> (repeat A)",
+    as: ((Int64, String) -> (Int64, String)).self,
+    genericArguments: [.pack([.type(Int64.self), .type(String.self)])]
+)
+let values = try unsafe echo.unsafeInvoke(42, "answer")
 ```
 
-The caller supplies a metatype, not a mangled generic argument list. The compiler supplies the metadata and protocol witness arguments and requests complete specialization metadata. Repeated requests for the same nominal declaration and substitutions return the runtime's canonical metadata. Different substitutions have different identities. This compiler runtime cache does not replace ABIBridge's image-aware symbol cache or authorize persisting an unowned metadata address.
+For a pattern such as `repeat () -> each T`, supply one `NativeSwiftClosure<Signature>` per expanded argument. Each closure uses its element's generic calling and ownership convention. Short member names keep the source labels, such as `apply(_:)`, even when the caller's concrete signature contains several arguments.
 
-The constrained metadata prototype uses the C frontend. It does not extend the direct free-function subset above to arbitrary generic nominal lookup or protocol constraints. A metatype still does not provide all declaration-level lowering and ownership information.
+Pack expansion preserves the formal element pattern and shape. A nominal type such as `Bundle<repeat each T>` uses the same `.pack` spelling when requesting its type. Metadata and witness packs retain their ordered elements; transformed patterns and fixed prefix/suffix elements do not substitute for the declaration's hidden arguments.
 
-## Pass values and retain their owners
+## Construct a generic type and call its members
 
-The importing adapter can report a specialized type's stride and alignment, initialize that type into caller-provided storage, read it through a constrained generic operation, and destroy it. Invoke such C-compatible exports through the C frontend's ``NativeFunction`` and use ``NativeValue`` to own the initialized allocation.
+For `class Box<Value: Equatable>` with `init(_:)`, a `value` property, and `compare<Other: Equatable>(_:) -> (Value, Other, Bool)`:
 
-Keep these contracts together:
+```swift
+let boxType = try await runtime.swiftType(
+    named: "Example.Box", genericArguments: [.type(String.self)]
+)
+let initialize = try await boxType.initializer(
+    named: "init(_:)", as: ((String) -> AnyObject).self
+)
+let box = try unsafe initialize.unsafeInvoke("hello")
+let value = try await runtime.object(box).getter(
+    named: "value", as: (() -> String).self
+)
+let compare = try await runtime.object(box).method(
+    named: "compare(_:)", as: ((Int64) -> (String, Int64, Bool)).self,
+    genericArguments: [.type(Int64.self)]
+)
+let comparison = try unsafe compare.unsafeInvoke(42)
+```
 
-- The argument metadata comes from a valid live Swift metatype. A raw address is not validated by a conformance cast.
-- The adapter's compiler knows the generic nominal declaration and protocol. It checks the conformance before calling the accessor or interpreting value storage.
-- Input storage contains the exact substituted Swift type. An initializer borrows it and initializes one fresh, distinct output allocation.
-- The allocation uses the compiler-reported stride and alignment. An unsuccessful operation leaves output untouched and does not create a value to destroy.
-- Retain the adapter, nominal declaration, substituted type, and conformance implementation images through the final value operation, including destruction. The prototype's value retains the resolved adapter and argument-provider handles.
-- Destroy initialized values exactly once. The Swift compiler handles their value witnesses and payload references.
+Type lookup requests complete canonical metadata for the specialization, including its required witnesses. Nested type arguments are supplied from the outer declaration to the inner declaration. Existing objects and imported value receivers provide their enclosing specialization automatically. A member's `genericArguments:` supplies only parameters introduced by that member.
 
-The fixture's status distinguishes unavailable metadata from an unsatisfied conformance. This is an adapter-specific C contract, not a new ABIBridge error API. Its shape is known at compile time; it does not attempt to cast arbitrary protocols supplied by runtime name.
+Dependent results, initializers, static members, and inherited members use that enclosing context. Applicable constrained extensions are checked against the current specialization. Multiple matching short-name candidates report ambiguity; a fully qualified constrained declaration selects that exact implementation. See <doc:SwiftMemberInvocation> for receiver ownership and dispatch.
 
-## Supported evidence and remaining work
+## Supply declaration information omitted from the binary
 
-Runtime fixtures cover reference-bearing frozen and resilient substitutions, an existing conditional conformance, indirect generic results, copied value ownership, repeated specialization identity, and failure before output initialization. An external consumer loads separate fixture and adapter libraries without importing the Swift types, calls through retained metadata and storage handles, then destroys the value after its lookup runtime and original loader reference end. Swift's own runtime may retain these libraries independently; the check does not claim they physically unload.
+`declaredAs:` accepts the provider's formal function type, optionally prefixed by its complete canonical generic signature. It is available on free functions, methods, initializers, getters, setters, and bound object members. Keep `as:` as the concrete function type used by the caller.
 
-Compiler fixtures record the metadata accessor's request, substituted metadata and witness arguments, generic indirect value lowering, and value destruction for arm64, x86_64, arm64e, and arm64_32. These are compilation checks; runtime execution is verified separately on macOS arm64 in Debug and Release.
+Most declarations need only `as:` and their generic arguments. An effectful generic getter additionally needs its formal error type, as described below. A member combining a nominal protocol constraint with a superclass constraint may also need a canonical generic signature: a retroactive superclass conformance can change the hidden witnesses without changing the member's mangled symbol. Finding that conformance in the running process cannot establish whether the provider imported it when compiling the member. When preparation detects this ambiguity, it requests a `declaredAs:` signature before invocation.
 
-| Case | Prototype contract |
-| --- | --- |
-| One known generic nominal declaration and imported protocol | Compiler-owned specialization and constrained calls |
-| Existing conditional conformance | Checked by Swift's conformance cast, including failure |
-| Associated types and same-type requirements | Need their own substitution and witness evidence |
-| Generic superclass members | Need the inherited generic context and member convention |
-| Parameter packs | Need pack shape, metadata and witness argument lowering |
-| Protocol unavailable to the adapter compiler | Needs a separately established runtime conformance contract |
-| New arbitrary conformances | Not synthesized |
-| Unknown by-value struct or enum ABI | Not established by specialization metadata or storage size |
+For `Box<Value: Score>` with a static `score() -> Int` member in `extension Box where Value: Base`, a provider that compiled with the `Base: Score` conformance visible can use:
 
-See <doc:ManagedSwiftValues> for storage ownership and <doc:SwiftFunctionInvocation> for currently supported direct representations.
+```swift
+let score = try await boxType.staticMethod(
+    named: "score()", as: (() -> Int).self,
+    declaredAs: "<A where A: BaseModule.Base> () -> Swift.Int"
+)
+let result = try unsafe score.unsafeInvoke()
+```
+
+If that conformance was not visible to the provider, include its remaining witness requirement:
+
+```swift
+// Same member symbol; a different canonical signature at compilation.
+let score = try await boxType.staticMethod(
+    named: "score()", as: (() -> Int).self,
+    declaredAs: "<A where A: BaseModule.Base, A: BaseModule.Score> () -> Swift.Int"
+)
+```
+
+Use the canonical signature from the provider's compiler output, with the same imports and build settings. For example, Swift SIL includes the canonical generic parameters and requirements on the function declaration. Rename its parameters to the demangler's names: `A`, `B`, and so on for the outer context, then `A1`, `B1` for the next depth. Include all enclosing and member parameters in order, use `each A` for a pack, and preserve the canonical order of conformance requirements. Same-type and same-shape requirements use `==` and `~`. This describes the provider's declaration; it is not a list of conformances discovered at runtime.
+
+When a `<...>` clause is present, its conformance requirements determine which physical witnesses are passed. The original declaration's type constraints are still validated against the supplied arguments. Known argument and result conventions continue to come from the symbol's formal types. As with `as:`, the caller is responsible for accurately describing the native implementation; a guessed canonical signature can violate its ABI.
+
+## Effects, callbacks, and ownership
+
+Include `async`, the native isolation convention, and the actual error type in `as:`. Use `nonisolated(nonsending)` explicitly for a caller-isolated declaration when the consumer's default is concurrent. The original declaration still determines hidden error storage: binding `Failure` to `Never` produces a nonthrowing concrete signature while preserving the formal generic error convention. Binding it to `any Error` preserves that convention as well. Native failures arrive as ``NativeSwiftError`` with the original error available through `withUnderlyingError`.
+
+Generic getter symbols omit their error type. Supply `declaredAs: "() throws(B) -> A"` for a getter declared with `throws(Failure)`, including when `Failure` is bound to `Never`; include `async` for an async getter. Fixed errors use their qualified source name. See <doc:SwiftMemberInvocation>.
+
+Use ``NativeSwiftClosure`` for callback parameters and returned closures. The bridge adapts the concrete closure convention to the original generic declaration, including arguments, results, packs, async completion, and errors. Escaping copies retain their callback contexts and required images. Borrowing and consuming markers around a closure preserve this adaptation. Initializers and setters transfer an independently owned adapted closure, so a native property can keep calling it after the original wrapper is released. Follow the concrete closure representation and Swift 6.3 compiler guidance in <doc:SwiftClosureValues>.
+
+For a synchronous nonescaping callback with caller-isolated state, use `NativeSwiftClosure.withUnsafeNonescaping`. Neither the native callee nor the use body may retain that callback.
+
+Concrete argument and result positions retain the ordinary Swift adapter contract when `named:` supplies the complete native declaration. Direct `T` values use the bound type's actual Swift storage and compiler-generated value operations. An explicitly bound wrapper type is itself the native `T`; its `ABIBridgeValue` conversion is not applied. Use ``NativeSwiftBorrowing``, ``NativeSwiftConsuming``, or ``NativeSwiftInout`` to express the declaration's argument convention around the actual value. Initializers and setters retain their normal ownership defaults. Inout writeback and cleanup run on native error paths as well. See <doc:SwiftArgumentConventions>.
+
+## Validation and value boundaries
+
+The macOS runtime tests compare these bindings with separately compiled Swift implementations. They cover dependent values, associated types, conditional conformances, inherited members, packs, ownership, metatypes, callbacks, async calls, and typed errors. The external consumer exercises public APIs without importing the provider module. The `swift-generic-bindings` device mode passed 79 checks on iPhone Air / iOS 27.0.1 (24A446), built with Xcode 27.0 / Swift 6.4 in Release for arm64e with pointer authentication enabled. Sixteen related modes also passed on the same build, for 306 checks across 17 modes. The [architecture validation guide](https://github.com/lynnswap/ABIBridge/blob/main/Tests/ArchitectureValidation/README.md#generic-declaration-bindings) records the covered operations.
+
+Compiler probes check formal argument/result conventions, hidden metadata and witness arguments, and pointer-authentication discriminators for arm64, x86_64, arm64e, and arm64_32. Compilation evidence does not establish runtime execution on the other architectures.
+
+Generic metadata establishes a type's identity and storage operations. Passing a concrete nominal value directly still requires its native call representation; use <doc:ExplicitSwiftValues> for imported values and <doc:ManagedSwiftValues> for compiler-owned storage adapters. Runtime-only value ownership and nested callback composition are tracked in [the value API follow-up](https://github.com/lynnswap/ABIBridge/issues/285); generic hooks and replacement frontends are tracked in [the hook API follow-up](https://github.com/lynnswap/ABIBridge/issues/286).

@@ -30,7 +30,7 @@ private struct Prepared {
         run: runtime.swiftFunction(
             named: "ManagedSwiftFixtures.runAndVisitGeneric<A>(() -> A, Swift.AnyObject, Swift.String, Swift.UnsafeMutablePointer<Swift.Int32>, (ManagedSwiftFixtures.RuntimeRecord) -> ()) -> A",
             as: ((NativeSwiftClosure<() -> Bool>, AnyObject, String, UnsafeMutablePointer<Int32>, NativeSwiftBorrowingClosure<Void>) -> Bool).self,
-            substituting: Bool.self, in: scope),
+            genericArguments: [.type(Bool.self)], in: scope),
         reference: runtime.swiftFunction(named: "ManagedSwiftFixtures.referenceRuntimeRecord(_:_:_:)",
             as: ((AnyObject, String, UnsafeMutablePointer<Int32>) -> String).self, in: scope))
 }

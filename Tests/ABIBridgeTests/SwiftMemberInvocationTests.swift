@@ -581,7 +581,7 @@ struct SwiftMemberInvocationTests {
         }
     }
 
-    @Test func genericMetadataIsRejectedBeforeCallingItsAccessor() async throws {
+    @Test func missingGenericArgumentsFailBeforeCallingTheAccessor() async throws {
         await #expect(throws: ABIResolutionError.self) {
             _ = try await ABIRuntime.shared.swiftType(named: "ABIBridgeTests.SwiftMemberGeneric")
         }

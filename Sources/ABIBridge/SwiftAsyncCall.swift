@@ -58,13 +58,20 @@ struct SwiftAsyncCall: Sendable {
     private let values: SwiftCallValues
     let errorPlan: SwiftErrorPlan?
     private let hasTrailingValue: Bool
+    private let generic: SwiftGenericCallPlan?
 
     init(signature: Any.Type, trailingType: CValueType? = nil, consumesArguments: Bool = false,
-         errorPlan: SwiftErrorPlan? = nil, inheritsCallerIsolation: Bool, opaqueResult: SwiftOpaqueResultPlan? = nil) throws {
+         errorPlan: SwiftErrorPlan? = nil, inheritsCallerIsolation: Bool, opaqueResult: SwiftOpaqueResultPlan? = nil, generic: SwiftGenericCallPlan? = nil) throws {
+        try generic?.validateMetadataArguments()
         values = try SwiftCallValues(signature: SwiftFunctionSignature(signature), consumesArguments: consumesArguments,
-            opaqueResult: opaqueResult)
-        var types = values.arguments.map(\.type)
+            opaqueResult: opaqueResult, generic: generic)
+        let logical = values.arguments.map(\.type)
+        var types = generic?.parameters.types(from: logical) ?? logical
         if let trailingType { types.append(trailingType) }
+        if let generic {
+            types += Array(repeating: try CValueType(scalar: ABIValuePointer), count: generic.metadata.count)
+        }
+        self.generic = generic
         interface = try SwiftAsyncCallInterface(result: values.result.type, parameters: types,
             errorPlan: errorPlan, inheritsCallerIsolation: inheritsCallerIsolation)
         self.errorPlan = errorPlan
@@ -90,12 +97,15 @@ struct SwiftAsyncCall: Sendable {
         _ values: repeat each Argument
     ) async throws -> Result {
         precondition(hasTrailingValue == (trailingValue != nil))
-        let storage = try self.values.encode(repeat each values, retainingCode: codeOwner)
-        var addresses: [UnsafeMutableRawPointer?] = storage.map(\.address)
+        let logicalStorage = try self.values.encode(repeat each values, retainingCode: (codeOwner, generic))
+        let logicalAddresses: [UnsafeMutableRawPointer?] = logicalStorage.map(\.address)
+        let encoded = generic?.parameters.encode(logicalAddresses)
+        var addresses = encoded?.addresses ?? logicalAddresses
         if let trailingValue { addresses.append(trailingValue.address) }
+        if let generic { addresses.append(contentsOf: generic.metadata.addresses) }
         let output = self.values.result.makeStorage()
         let nativeError = errorPlan?.makeStorage()
-        let codeOwners: Any = (entry, codeOwner)
+        let codeOwners: Any = (entry, codeOwner, generic)
         var failure: OpaquePointer?
         let invocation = addresses.withUnsafeBufferPointer {
             ABICreateSwiftAsyncInvocation(interface.handle,
@@ -105,12 +115,12 @@ struct SwiftAsyncCall: Sendable {
         }
         guard let invocation else { throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftAsyncInvocation") }
         defer {
-            withExtendedLifetime((self, entry, storage, output, nativeError, trailingValue, owner, codeOwners)) {
+            withExtendedLifetime((self, entry, logicalStorage, encoded, output, nativeError, trailingValue, owner, codeOwners)) {
                 ABIReleaseSwiftAsyncInvocation(invocation)
             }
         }
         await invokeSwiftAsync(invocation)
-        self.values.relinquishConsumed(storage)
+        self.values.relinquishConsumed(logicalStorage)
         didInvoke?()
         if ABISwiftAsyncInvocationDidThrow(invocation), let errorPlan, let nativeError {
             throw NativeSwiftError(try errorPlan.decode(nativeError), retainingCode: codeOwners)
