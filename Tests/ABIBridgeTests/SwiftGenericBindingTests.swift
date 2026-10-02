@@ -5,6 +5,30 @@ import ManagedSwiftFixtures
 import Testing
 
 struct SwiftGenericBindingTests {
+    @Test func explicitNominalSourcesRemoveOnlyFulfilledMetadataWords() throws {
+        let mixed = try SwiftGenericBinding(declaration: SwiftGenericDeclaration(linkageName:
+            "$s20ManagedSwiftFixtures18classSourceGenericys5Int64V_q_tAA0fE3BoxCyxG_q_tAA0fE5ChildRzr0_lF"),
+            arguments: [.type(GenericSourceValue.self), .type(String.self)],
+            signature: SwiftFunctionSignature(((GenericSourceBox<GenericSourceValue>, String) -> (Int64, String)).self),
+            resolver: .shared)
+        #expect(mixed.metadataArguments == [unsafeBitCast(String.self, to: UInt.self)])
+        let metatype = try SwiftGenericBinding(declaration: SwiftGenericDeclaration(linkageName:
+            "$s20ManagedSwiftFixtures21metatypeSourceGenericys5Int64VAA0fE3BoxCyxGmAA0fE5ChildRzlF"),
+            arguments: [.type(GenericSourceValue.self)],
+            signature: SwiftFunctionSignature(((GenericSourceBox<GenericSourceValue>.Type) -> Int64).self), resolver: .shared)
+        #expect(metatype.metadataArguments.isEmpty)
+        let nested = try SwiftGenericBinding(declaration: SwiftGenericDeclaration(linkageName:
+            "$s20ManagedSwiftFixtures19nestedSourceGenericyxAA0fE6NestedCySayxGGlF"),
+            arguments: [.type(String.self)], signature: SwiftFunctionSignature(((GenericSourceNested<[String]>) -> String).self),
+            resolver: .shared)
+        #expect(nested.metadataArguments.isEmpty)
+        let superclass = try SwiftGenericBinding(declaration: SwiftGenericDeclaration(linkageName:
+            "$s20ManagedSwiftFixtures23superclassSourceGenericys5Int64Vq_AA0fE5ChildRzAA0fE3BoxCyxGRb_r0_lF"),
+            arguments: [.type(GenericSourceValue.self), .type(GenericSourceLeaf.self)],
+            signature: SwiftFunctionSignature(((GenericSourceLeaf) -> Int64).self), resolver: .shared)
+        #expect(superclass.metadataArguments == [unsafeBitCast(GenericSourceLeaf.self, to: UInt.self)])
+    }
+
     @Test func declarationSyntaxSeparatesNominalNamesAndGenericParameters() throws {
         // Swift 6.3: module A, collide<T>(_: T, _: Marker) -> (T, Marker).
         let collision = try SwiftGenericDeclaration(linkageName: "$s1A7collideyx_AA6MarkerVtx_ADtlF")

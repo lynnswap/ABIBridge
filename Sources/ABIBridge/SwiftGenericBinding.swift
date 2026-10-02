@@ -219,6 +219,20 @@ struct SwiftGenericBinding: Sendable {
                 }
             }
         }
+        let fulfilled = try argumentFulfillments()
+        func isFulfilled(_ source: MetadataSource) -> Bool {
+            switch source {
+            case .parameter(let name):
+                return equivalentTypes(of: .named(name, [])).contains { fulfilled.types.contains($0) }
+            case .shape(let names): return !names.isDisjoint(with: fulfilled.shapes)
+            case .conformance(let index):
+                let conformance = conformances[index]
+                return equivalentTypes(of: conformance.subject).contains { subject in
+                    fulfilled.conformances.contains { $0.0 == subject && $0.1.contains(conformance.name) }
+                }
+            }
+        }
+        metadataWords = metadataWords.filter { !isFulfilled($0.source) }
     }
 
     func metadataArguments(fulfilledBy context: SwiftGenericTypeContext) -> [UInt] {

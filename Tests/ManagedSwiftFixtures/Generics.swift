@@ -1,5 +1,36 @@
 import Foundation
 
+public protocol GenericSourceParent { var sourceNumber: Int64 { get } }
+public protocol GenericSourceChild: GenericSourceParent {}
+public struct GenericSourceValue: GenericSourceChild {
+    public let sourceNumber: Int64
+    public init(_ value: Int64) { sourceNumber = value }
+}
+public class GenericSourceBox<Value: GenericSourceChild> {
+    public let value: Value
+    public init(_ value: Value) { self.value = value }
+}
+public final class GenericSourceLeaf: GenericSourceBox<GenericSourceValue> {}
+public class GenericSourceNested<Value> {
+    public let value: Value
+    public init(_ value: Value) { self.value = value }
+}
+@inline(never) public func classSourceGeneric<Value: GenericSourceChild, Other>(
+    _ box: GenericSourceBox<Value>, _ other: Other
+) -> (Int64, Other) { (box.value.sourceNumber, other) }
+@inline(never) public func tupleSourceGeneric<Value: GenericSourceChild>(
+    _ input: (GenericSourceBox<Value>, Int64)
+) -> Int64 { input.0.value.sourceNumber + input.1 }
+@inline(never) public func metatypeSourceGeneric<Value: GenericSourceChild>(
+    _ type: GenericSourceBox<Value>.Type
+) -> Int64 { 72 }
+@inline(never) public func nestedSourceGeneric<Value>(
+    _ box: GenericSourceNested<[Value]>
+) -> Value { box.value[0] }
+@inline(never) public func superclassSourceGeneric<Value: GenericSourceChild, Object: GenericSourceBox<Value>>(
+    _ object: Object
+) -> Int64 { object.value.sourceNumber }
+
 @frozen public struct GenericObjectValue<Value: AnyObject> {
     public var value: Value
     public init(_ value: Value) { self.value = value }

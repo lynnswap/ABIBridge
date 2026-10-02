@@ -10,30 +10,6 @@ enum SwiftGenericValueLayout {
         let context = try SwiftGenericTypeContext(metadata: metadata)
         guard context.parameters.count == arguments.count else { return false }
         let substitutions = Dictionary(uniqueKeysWithValues: zip(context.parameters.map(\.name), arguments))
-        func replace(_ type: SwiftFormalType) -> SwiftFormalType {
-            switch type {
-            case .named(let name, let arguments):
-                if arguments.isEmpty {
-                    if let value = substitutions[name] { return value }
-                    if let dot = name.firstIndex(of: "."), let value = substitutions[String(name[..<dot])] {
-                        return .named(value.spelling + name[dot...], [])
-                    }
-                }
-                return .named(name, arguments.map(replace))
-            case .nominal(let name, let arguments): return .nominal(name, arguments.map(replace))
-            case .reference(let descriptor, let arguments): return .reference(descriptor, arguments.map(replace))
-            case .nested(let parent, let name, let arguments): return .nested(replace(parent), name, arguments.map(replace))
-            case .tuple(let elements): return .tuple(elements.map(replace))
-            case .pack(let value): return .pack(replace(value))
-            case .borrowing(let value): return .borrowing(replace(value))
-            case .consuming(let value): return .consuming(replace(value))
-            case .inoutValue(let value): return .inoutValue(replace(value))
-            case .metatype(let value): return .metatype(replace(value))
-            case .function(let parameters, let result, let failure, let isAsync):
-                return .function(parameters.map(replace), replace(result), failure: failure.map(replace), isAsync: isAsync)
-            }
-        }
-
         func hasUnboundStorage(_ type: SwiftFormalType) throws -> Bool {
             let type = binding.canonicalType(of: type)
             switch type {
@@ -66,7 +42,7 @@ enum SwiftGenericValueLayout {
         for index in 0..<ABISwiftTypeFieldCount(pointer) {
             guard let handle = ABICopySwiftTypeFieldSyntax(pointer, index) else { continue }
             let type = try SwiftFormalType(SwiftSyntax(adopting: handle).root)
-            if try hasUnboundStorage(replace(type)) { return true }
+            if try hasUnboundStorage(type.substituting(substitutions)) { return true }
         }
         return false
     }

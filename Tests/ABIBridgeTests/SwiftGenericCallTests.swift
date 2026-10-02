@@ -34,6 +34,37 @@ private final class GenericCaptureState: Sendable {
 
 @Suite(.serialized)
 struct SwiftGenericCallTests {
+    @Test func explicitClassAndMetatypeArgumentsFulfillGenericRequirements() async throws {
+        let runtime = ABIRuntime()
+        let box = GenericSourceBox(GenericSourceValue(41))
+        let mixed = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.classSourceGeneric<A, B where A: ManagedSwiftFixtures.GenericSourceChild>(ManagedSwiftFixtures.GenericSourceBox<A>, B) -> (Swift.Int64, B)",
+            as: ((GenericSourceBox<GenericSourceValue>, String) -> (Int64, String)).self,
+            genericArguments: [.type(GenericSourceValue.self), .type(String.self)])
+        let text = String(repeating: "fulfilled", count: 100)
+        let result = try unsafe mixed.unsafeInvoke(box, text)
+        #expect(result.0 == 41 && result.1 == text)
+        let tuple = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.tupleSourceGeneric<A where A: ManagedSwiftFixtures.GenericSourceChild>((ManagedSwiftFixtures.GenericSourceBox<A>, Swift.Int64)) -> Swift.Int64",
+            as: (((GenericSourceBox<GenericSourceValue>, Int64)) -> Int64).self,
+            genericArguments: [.type(GenericSourceValue.self)])
+        #expect(try unsafe tuple.unsafeInvoke((box, Int64(9))) == 50)
+        let metatype = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.metatypeSourceGeneric<A where A: ManagedSwiftFixtures.GenericSourceChild>(ManagedSwiftFixtures.GenericSourceBox<A>.Type) -> Swift.Int64",
+            as: ((GenericSourceBox<GenericSourceValue>.Type) -> Int64).self,
+            genericArguments: [.type(GenericSourceValue.self)])
+        #expect(try unsafe metatype.unsafeInvoke(GenericSourceBox<GenericSourceValue>.self) == 72)
+        let nested = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.nestedSourceGeneric<A>(ManagedSwiftFixtures.GenericSourceNested<[A]>) -> A",
+            as: ((GenericSourceNested<[String]>) -> String).self, genericArguments: [.type(String.self)])
+        #expect(try unsafe nested.unsafeInvoke(GenericSourceNested([text])) == text)
+        let superclass = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.superclassSourceGeneric<A, B where A: ManagedSwiftFixtures.GenericSourceChild, B: ManagedSwiftFixtures.GenericSourceBox<A>>(B) -> Swift.Int64",
+            as: ((GenericSourceLeaf) -> Int64).self,
+            genericArguments: [.type(GenericSourceValue.self), .type(GenericSourceLeaf.self)])
+        #expect(try unsafe superclass.unsafeInvoke(GenericSourceLeaf(GenericSourceValue(73))) == 73)
+    }
+
     @Test func associatedClassObjectiveCAndSuperclassConstraintsUseClassConventions() async throws {
         let runtime = ABIRuntime()
         let associated = try await runtime.swiftFunction(

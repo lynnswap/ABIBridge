@@ -112,6 +112,18 @@ def main():
                 f"{target}: a same-type Array expression keeps only its element metadata")
         require("swiftcc ptr" in associated_object and "sret(" not in associated_object,
                 f"{target}: an associated class requirement makes the result direct")
+        class_source = body(value_ir, "classSourceGeneric").splitlines()[0]
+        tuple_source = body(value_ir, "tupleSourceGeneric").splitlines()[0]
+        metatype_source = body(value_ir, "metatypeSourceGeneric").splitlines()[0]
+        nested_source = body(value_ir, "nestedSourceGeneric").splitlines()[0]
+        superclass_source = body(value_ir, "superclassSourceGeneric").splitlines()[0]
+        require("ptr %Other" in class_source and "ptr %Value" not in class_source,
+                f"{target}: class metadata fulfills its argument and protocol but not an unrelated parameter")
+        for entry in [tuple_source, metatype_source, nested_source]:
+            require("ptr %Value" not in entry and "ptr %Value.GenericSourceChild" not in entry,
+                    f"{target}: explicit nominal metadata fulfills nested type arguments")
+        require("ptr %Object" in superclass_source and "ptr %Value" not in superclass_source,
+                f"{target}: a superclass source fulfills its arguments but not the derived archetype")
         if target.startswith("arm64e"):
             require('"ptrauth"(i32 0, i64 55683)' in large_callback, "Large fixed callback authentication changed")
             require('"ptrauth"(i32 0, i64 47754)' in pack_callback, "Generic pack callback authentication changed")
@@ -139,7 +151,9 @@ def main():
                         "referenceReceiver": reference, "phantomReceiver": phantom,
                         "objectReceiver": object_receiver, "superclassReceiver": superclass_receiver,
                         "nestedReceiver": nested_receiver, "arrayReceiver": array_receiver,
-                        "associatedClass": associated_object})
+                        "associatedClass": associated_object, "classSource": class_source,
+                        "tupleSource": tuple_source, "metatypeSource": metatype_source,
+                        "nestedSource": nested_source, "superclassSource": superclass_source})
     report = {"compiler": run("xcrun", "swiftc", "--version").strip(), "runtimeTested": False,
               "demanglerRevision": upstream["revision"], "targets": targets}
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
