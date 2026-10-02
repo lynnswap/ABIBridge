@@ -10,6 +10,23 @@ extern "C" {
 
 typedef struct ABISwiftCallInterface ABISwiftCallInterface;
 
+/// Storage and ownership operations for a complete Swift metadata pointer.
+/// These operations authenticate the metadata's value witnesses on arm64e.
+typedef struct ABISwiftValueLayout {
+    size_t size;
+    size_t stride;
+    size_t alignment;
+    bool isCopyable;
+} ABISwiftValueLayout;
+ABISwiftValueLayout ABISwiftGetValueLayout(const void *metadata);
+/// Initializes uninitialized destination storage. Returns false without changing
+/// either buffer when the type is noncopyable.
+bool ABISwiftCopyValue(const void *metadata, void *destination, const void *source);
+/// Initializes destination by taking source, which is left uninitialized.
+void ABISwiftTakeValue(const void *metadata, void *destination, void *source);
+/// Destroys one initialized value, leaving its storage uninitialized.
+void ABISwiftDestroyValue(const void *metadata, void *value);
+
 /// Reads a valid compiler-emitted generic protocol-requirement reference.
 /// Authenticates indirect Swift descriptor pointers before reading their flags.
 bool ABISwiftProtocolRequirementIsClassBound(const void *reference);

@@ -78,8 +78,12 @@ final class NativeValueStorage {
     }
 
     // Native success has initialized this storage; failure paths never adopt it.
-    func assumeInitialized<Value>(as type: Value.Type) {
+    func assumeInitialized<Value: ~Copyable>(as type: Value.Type) {
         destroyValue = { $0.assumingMemoryBound(to: type).deinitialize(count: 1) }
+    }
+
+    func assumeInitialized(destroyingWith destroy: @escaping (UnsafeMutableRawPointer) -> Void) {
+        destroyValue = destroy
     }
 
     func take<Value>(as type: Value.Type) -> Value {

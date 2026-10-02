@@ -39,15 +39,23 @@ final class SwiftOpaqueResultPlan: Sendable {
     private let adopt: @Sendable (NativeValueStorage) -> Void
     let read: @Sendable (NativeValueStorage) -> Any
 
-    private init<Value>(metadata: Value.Type, classBound: Bool, owners: [ResolvedSymbol]) throws {
+    private init(metadata: Any.Type, classBound: Bool, owners: [ResolvedSymbol]) throws {
         self.metadata = metadata
-        size = MemoryLayout<Value>.stride
-        alignment = MemoryLayout<Value>.alignment
+        let layout = ABISwiftGetValueLayout(unsafeBitCast(metadata, to: UnsafeRawPointer.self))
+        size = layout.stride
+        alignment = layout.alignment
         type = try classBound ? CValueType(scalar: ABIValuePointer)
-            : CValueType(indirectSwiftSize: MemoryLayout<Value>.size, alignment: alignment)
+            : CValueType(indirectSwiftSize: layout.size, alignment: alignment)
         self.owners = owners
-        adopt = { $0.assumeInitialized(as: Value.self) }
-        read = { $0.address.load(as: Value.self) }
+        adopt = { storage in
+            storage.assumeInitialized {
+                ABISwiftDestroyValue(unsafeBitCast(metadata, to: UnsafeRawPointer.self), $0)
+            }
+        }
+        func reader<Value>(_ type: Value.Type) -> @Sendable (NativeValueStorage) -> Any {
+            { $0.address.load(as: Value.self) }
+        }
+        read = _openExistential(metadata, do: reader)
     }
 
     static func make(for result: Any.Type, symbol: ResolvedSymbol,
@@ -81,10 +89,8 @@ final class SwiftOpaqueResultPlan: Sendable {
             throw ABIResolutionError.metadataUnavailable("Complete opaque result metadata is unavailable.")
         }
         let metadata = unsafeBitCast(response.address, to: Any.Type.self)
-        func open<Value>(_ type: Value.Type) throws -> SwiftOpaqueResultPlan {
-            try SwiftOpaqueResultPlan(metadata: type, classBound: classBound, owners: [symbol, descriptor, accessor])
-        }
-        return try _openExistential(metadata, do: open)
+        return try SwiftOpaqueResultPlan(metadata: metadata, classBound: classBound,
+                                         owners: [symbol, descriptor, accessor])
     }
 
     // Opaque descriptors include the result's own generic parameters. Only the

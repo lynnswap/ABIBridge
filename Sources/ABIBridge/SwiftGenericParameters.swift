@@ -49,10 +49,8 @@ struct SwiftGenericParameters: Sendable {
     }
 
     static func storageType(_ type: Any.Type) throws -> CValueType {
-        func prepare<Value>(_ type: Value.Type) throws -> CValueType {
-            try CValueType(indirectSwiftSize: MemoryLayout<Value>.size, alignment: MemoryLayout<Value>.alignment)
-        }
-        return try _openExistential(type, do: prepare)
+        let layout = ABISwiftGetValueLayout(unsafeBitCast(type, to: UnsafeRawPointer.self))
+        return try CValueType(indirectSwiftSize: layout.size, alignment: layout.alignment)
     }
 
     private static func mismatch(_ count: Int) -> ABIResolutionError {
