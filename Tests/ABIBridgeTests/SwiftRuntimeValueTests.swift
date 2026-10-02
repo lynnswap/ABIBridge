@@ -39,6 +39,40 @@ private struct RuntimeRejectedArgument: ABIBridgeValue {
 }
 
 @Suite struct SwiftRuntimeValueTests {
+    @Test func runtimeClassArgumentsRespectVarianceAndInoutReplacement() async throws {
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueClassAny(_:)",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self)
+        let original = try unsafe make.unsafeInvoke(ErrorLifetimeToken {})
+        let copy = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+            as: ((NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: [.type(OpaqueBase.self)])
+        let copied = try unsafe copy.unsafeInvoke(original)
+        let object = try copied.take(as: OpaqueBase.self)
+        #expect(object.number == 41)
+        let borrowedCopy = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+            as: ((NativeSwiftBorrowedValue) -> NativeSwiftValue).self, genericArguments: [.type(AnyObject.self)])
+        try original.withBorrowedValue { value in
+            let copied = try unsafe borrowedCopy.unsafeInvoke(value)
+            #expect(try copied.take(as: AnyObject.self) === object)
+        }
+        let replace = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.replaceRuntimeValue<A where A: ~Swift.Copyable>(inout A, __owned A) -> ()",
+            as: ((NativeSwiftInout<NativeSwiftValue>, NativeSwiftConsuming<NativeSwiftValue>) -> Void).self,
+            genericArguments: [.type(OpaqueBase.self)])
+        let replacement = try unsafe copy.unsafeInvoke(original)
+        do {
+            try unsafe replace.unsafeInvoke(NativeSwiftInout(original), NativeSwiftConsuming(replacement))
+            Issue.record("An inout Base argument accepted storage owned as a derived type")
+        } catch ABIInvocationError.incompatibleValue { }
+        #expect(!original.isConsumed && !replacement.isConsumed)
+        let move = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.moveRuntimeValue<A where A: ~Swift.Copyable>(__owned A) -> A",
+            as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self,
+            genericArguments: [.type(OpaqueBase.self)],
+            declaredAs: "<A where A: ~Swift.Copyable>(__owned A) -> A")
+        let moved = try unsafe move.unsafeInvoke(NativeSwiftConsuming(original))
+        #expect(original.isConsumed)
+        #expect(try moved.take(as: OpaqueBase.self) === object)
+    }
+
     @Test func runtimeResultsRestoreElidedSingletonMetatypes() async throws {
         let function = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.valueMetatypeGeneric<A>(ManagedSwiftFixtures.GenericMetatypeValue<A>.Type, Swift.Int64) -> (ManagedSwiftFixtures.GenericMetatypeValue<A>.Type, Swift.Int64)",

@@ -70,7 +70,9 @@ let moved = try unsafe move.unsafeInvoke(NativeSwiftConsuming(result))
 // result.isConsumed is true; moved owns the same native payload.
 ```
 
-An ordinary runtime argument borrows its value. NativeSwiftConsuming transfers the existing owned payload; it does not make a native copy. NativeSwiftInout retains the same owner and grants exclusive access to its storage. A later argument conversion failure preserves all runtime owners because native execution has not begun. Once execution begins, a consuming argument transfers on both success and native failure. The bridge checks exact native type identity and conflicting access before entering native code.
+An ordinary runtime argument borrows its value. NativeSwiftConsuming transfers the existing owned payload; it does not make a native copy. NativeSwiftInout retains the same owner and grants exclusive access to its storage. A later argument conversion failure preserves all runtime owners because native execution has not begun. Once execution begins, a consuming argument transfers on both success and native failure. The bridge checks native type compatibility and conflicting access before entering native code.
+
+Borrowed and consuming class arguments allow a subclass to be passed to its superclass or AnyObject. Inout arguments require the exact storage type because the callee can replace the reference with a different instance of the declared type.
 
 These conventions also apply through async suspension. An async call started with an owned-value borrow retains its read access through completion, even when the borrowed view's scope has ended. Generic results initialize the same owned storage used by opaque results. A declaration with an implicit Copyable requirement rejects a noncopyable substitution; `~Copyable` permits both copyable and noncopyable substitutions.
 

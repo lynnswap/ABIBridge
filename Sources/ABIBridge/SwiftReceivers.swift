@@ -73,6 +73,15 @@ struct SwiftReceiverCodec: Sendable {
 
 enum SwiftReceiverMode: Sendable { case object, address, value }
 
+func swiftClass(_ actual: AnyClass, isSubclassOf expected: AnyClass) -> Bool {
+    var current: AnyClass? = actual
+    while let candidate = current {
+        if candidate === expected { return true }
+        current = class_getSuperclass(candidate)
+    }
+    return false
+}
+
 struct SwiftReceiverPlan: Sendable {
     let codec: SwiftReceiverCodec
     let mode: SwiftReceiverMode
@@ -114,9 +123,7 @@ struct SwiftReceiverPlan: Sendable {
             return try codec.encode(receiver)
         }
         if let expected = metadata as? AnyClass, let objectType = actual.metadata as? AnyClass {
-            var current: AnyClass? = objectType
-            while let candidate = current, candidate !== expected { current = class_getSuperclass(candidate) }
-            guard current != nil else {
+            guard swiftClass(objectType, isSubclassOf: expected) else {
                 throw ABIInvocationError.incompatibleValue(expected: String(reflecting: metadata), actual: actual.name)
             }
         } else if actual.metadata != metadata {
@@ -166,11 +173,7 @@ struct SwiftReceiverPlan: Sendable {
             // Explicit pointer/AnyObject adapters need this runtime class check.
             if let expectedClass {
                 let object = Unmanaged<AnyObject>.fromOpaque(pointer).takeUnretainedValue()
-                var type: AnyClass? = Swift.type(of: object)
-                while let candidate = type {
-                    if candidate === expectedClass { return pointer }
-                    type = class_getSuperclass(candidate)
-                }
+                if swiftClass(Swift.type(of: object), isSubclassOf: expectedClass) { return pointer }
                 throw ABIInvocationError.incompatibleValue(
                     expected: String(reflecting: expectedClass), actual: String(reflecting: Swift.type(of: object))
                 )

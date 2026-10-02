@@ -230,6 +230,7 @@ private struct OpaqueWordResult: ABIBridgeValue {
     await directGate.waitUntilSuspended(); await directGate.open()
     try check(try await directTask.value == 46, "Async class-constrained opaque result resumes with a direct object pointer")
     checks += try await validateRuntimeValueArguments()
+    checks += try await validateRuntimeClassArguments()
     return checks
 }
 
@@ -348,4 +349,45 @@ private struct OpaqueWordResult: ABIBridgeValue {
     try check(unsafeBitCast(metatypeResult.0, to: UInt.self) == unsafeBitCast(Int64.self, to: UInt.self) && metatypeResult.1 == "retained",
               "Runtime result storage restores elided singleton metatypes alongside managed generic fields")
     return checks
+}
+
+@MainActor private func validateRuntimeClassArguments() async throws -> [String] {
+    let runtime = ABIRuntime()
+    let make = try await runtime.swiftFunction(named: "SwiftValueFixtures.makeOpaqueClassAny(_:)",
+        as: ((ErrorToken) -> NativeSwiftValue).self)
+    let original = try unsafe make.unsafeInvoke(ErrorToken {})
+    let copy = try await runtime.swiftFunction(named: "SwiftValueFixtures.copyRuntimeValue<A>(A) -> A",
+        as: ((NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: [.type(OpaqueBase.self)])
+    let copied = try unsafe copy.unsafeInvoke(original)
+    let object = try copied.take(as: OpaqueBase.self)
+    guard object.number == 41 else { throw ArchitectureValidationFailure(description: "Runtime subclass upcast lost its value") }
+    let borrowedCopy = try await runtime.swiftFunction(named: "SwiftValueFixtures.copyRuntimeValue<A>(A) -> A",
+        as: ((NativeSwiftBorrowedValue) -> NativeSwiftValue).self, genericArguments: [.type(AnyObject.self)])
+    try original.withBorrowedValue { value in
+        let copied = try unsafe borrowedCopy.unsafeInvoke(value)
+        guard try copied.take(as: AnyObject.self) === object else {
+            throw ArchitectureValidationFailure(description: "Runtime AnyObject upcast changed object identity")
+        }
+    }
+    let replace = try await runtime.swiftFunction(named: "SwiftValueFixtures.replaceRuntimeValue<A where A: ~Swift.Copyable>(inout A, __owned A) -> ()",
+        as: ((NativeSwiftInout<NativeSwiftValue>, NativeSwiftConsuming<NativeSwiftValue>) -> Void).self,
+        genericArguments: [.type(OpaqueBase.self)])
+    let replacement = try unsafe copy.unsafeInvoke(original)
+    do {
+        try unsafe replace.unsafeInvoke(NativeSwiftInout(original), NativeSwiftConsuming(replacement))
+        throw ArchitectureValidationFailure(description: "Inout Base accepted storage owned as a derived type")
+    } catch ABIInvocationError.incompatibleValue { }
+    guard !original.isConsumed && !replacement.isConsumed else {
+        throw ArchitectureValidationFailure(description: "Rejected inout upcast consumed a value")
+    }
+    let move = try await runtime.swiftFunction(named: "SwiftValueFixtures.moveRuntimeValue<A where A: ~Swift.Copyable>(__owned A) -> A",
+        as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self,
+        genericArguments: [.type(OpaqueBase.self)], declaredAs: "<A where A: ~Swift.Copyable>(__owned A) -> A")
+    let moved = try unsafe move.unsafeInvoke(NativeSwiftConsuming(original))
+    guard original.isConsumed, try moved.take(as: OpaqueBase.self) === object else {
+        throw ArchitectureValidationFailure(description: "Consuming a runtime subclass lost ownership or identity")
+    }
+    return ["Runtime class arguments preserve subclass and AnyObject upcasts",
+            "Inout runtime classes require the declared storage type before replacement",
+            "Consuming a runtime subclass transfers the same object to its base type"]
 }

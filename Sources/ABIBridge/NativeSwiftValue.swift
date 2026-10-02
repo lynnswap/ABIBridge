@@ -220,7 +220,18 @@ struct SwiftRuntimeValuePlan: Sendable {
         let actual: NativeSwiftType
         if let owned = value as? NativeSwiftValue { actual = owned.type }
         else { actual = (value as! NativeSwiftBorrowedValue).type }
-        guard actual.metadata == valueType.metadata else {
+        let compatible: Bool
+        if actual.metadata == valueType.metadata {
+            compatible = true
+        } else if convention != .inoutValue, let actualClass = actual.metadata as? AnyClass {
+            // An inout Base may replace a Derived reference with another Base.
+            // Borrowing and consuming preserve the value's dynamic class.
+            compatible = valueType.metadata == AnyObject.self
+                || (valueType.metadata as? AnyClass).map { swiftClass(actualClass, isSubclassOf: $0) } == true
+        } else {
+            compatible = false
+        }
+        guard compatible else {
             throw ABIInvocationError.incompatibleValue(expected: valueType.name, actual: actual.name)
         }
         if let owned = value as? NativeSwiftValue { return try owned.access(convention) }
