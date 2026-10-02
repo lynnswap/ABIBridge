@@ -66,16 +66,31 @@ public actor NativeSwiftType {
 
     private func resolveDeclaredMember(
         _ declaration: NativeDeclaration, in image: NativeImage,
+        exact: Bool = false,
         genericContext: () throws -> SwiftGenericContext? = { nil }
     ) throws -> ResolvedSymbol {
         do { return try resolver.resolve(declaration, in: image, loading: .loadedOnly) }
         catch ABIResolutionError.declarationNotFound {
+            if exact {
+                let key = DeclarationKey.make(declaration.name)
+                let matches = try resolver.swiftMemberCandidates(declaration, in: nil, extensionsOnly: true).filter {
+                    let name = $0.declaration.name
+                    return DeclarationKey.make(name) == key
+                        || SymbolIndex.extensionMemberName(name).map { DeclarationKey.make($0) == key } == true
+                }
+                guard matches.count == 1 else {
+                    if matches.isEmpty { throw ABIResolutionError.declarationNotFound(declaration) }
+                    throw ABIResolutionError.ambiguousDeclaration(declaration, candidates: matches.map(\.linkageName))
+                }
+                return matches[0]
+            }
             return try resolver.resolveSwiftExtension(declaration, genericContext: genericContext())
         }
     }
 
     private func resolveMember(
         signature: Any.Type? = nil, genericArguments: [NativeSwiftGenericArgument] = [], inherited: Bool = true,
+        exact: Bool = false,
         _ declaration: (String) throws -> NativeDeclaration
     ) throws -> (symbol: ResolvedSymbol, metadata: Any.Type) {
         let originalRequest = try declaration(name)
@@ -89,10 +104,17 @@ public actor NativeSwiftType {
             let owner: Any.Type = ownerClass ?? metadata
             let enclosing = try owner == metadata ? genericMetadata : SwiftGenericTypeMetadata(metadata: owner)
             let usesBinding = signature != nil && (!(enclosing?.arguments.isEmpty ?? true) || !genericArguments.isEmpty)
-            if !usesBinding {
+            let belongs = !exact || SwiftMemberLookup.belongs(request.name, to: ownerName)
+            if belongs && (!usesBinding || exact) {
                 do {
-                    let symbol = try resolveDeclaredMember(request, in: ownerImage) {
+                    let symbol = try resolveDeclaredMember(request, in: ownerImage, exact: exact) {
                         try ownerClass.flatMap { try SwiftGenericContext($0, owner: ownerName) }
+                    }
+                    if usesBinding, let signature {
+                        let plan = try genericPlan((symbol, owner), signature: signature, arguments: genericArguments)
+                        guard try plan?.matches(SwiftFunctionSignature(signature)) == true else {
+                            throw ABIResolutionError.signatureMismatch(.init(expected: request.name, found: [String(reflecting: signature)]))
+                        }
                     }
                     return (symbol, owner)
                 } catch ABIResolutionError.declarationNotFound {
@@ -102,7 +124,7 @@ public actor NativeSwiftType {
                     hasUnavailableExtensions = true
                 }
             }
-            if usesBinding, let signature {
+            if belongs && usesBinding && !exact, let signature {
                 do {
                     for extensionsOnly in [false, true] {
                         let candidates = try resolver.swiftMemberCandidates(request,
@@ -145,7 +167,7 @@ public actor NativeSwiftType {
     /// Consuming members similarly require consuming: true; the call transfers
     /// a receiver copy and preserves the caller's original value.
     /// - Parameters:
-    ///   - name: A relative label-only or complete member declaration.
+    ///   - name: A relative member name or a complete qualified declaration.
     ///   - signature: Explicit arguments and result.
     ///   - genericArguments: Type arguments introduced by the member.
     ///   - isMutating: Whether a value receiver is passed inout.
@@ -157,9 +179,11 @@ public actor NativeSwiftType {
         genericArguments: [NativeSwiftGenericArgument] = [],
         mutating isMutating: Bool = false, consuming isConsuming: Bool = false
     ) throws -> NativeSwiftMethod<Signature> {
-        let symbol = try resolveMember(signature: signature, genericArguments: genericArguments) {
-            try genericArguments.isEmpty ? swiftFunctionDeclaration(named: $0 + "." + name, as: signature)
-                : NativeDeclaration(name: $0 + "." + name, language: .swift)
+        let symbol = try resolveMember(signature: signature, genericArguments: genericArguments,
+                                       exact: SwiftMemberLookup.isQualified(name)) {
+            let member = try SwiftMemberLookup.qualifiedName(name, owner: $0)
+            return try genericArguments.isEmpty ? swiftFunctionDeclaration(named: member, as: signature)
+                : NativeDeclaration(name: member, language: .swift)
         }
         let generic = try genericPlan(symbol, signature: signature, arguments: genericArguments)
         let receiver = try receiverPlan(mutating: isMutating, consuming: isConsuming, generic: generic)
@@ -238,7 +262,7 @@ public actor NativeSwiftType {
     ///
     /// The declaring type's metadata is supplied as the Swift context.
     /// - Parameters:
-    ///   - name: A relative Swift member declaration or argument-label name.
+    ///   - name: A relative member name or a complete qualified declaration.
     ///   - signature: Explicit arguments and result.
     ///   - genericArguments: Type arguments introduced by the member.
     /// - Returns: A reusable function retaining its type and implementation.
@@ -247,9 +271,11 @@ public actor NativeSwiftType {
         named name: String, as signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument] = []
     ) throws -> NativeSwiftFunction<Signature> {
-        let symbol = try resolveMember(signature: signature, genericArguments: genericArguments) {
-            try genericArguments.isEmpty ? swiftFunctionDeclaration(named: "static " + $0 + "." + name, as: signature)
-                : NativeDeclaration(name: "static " + $0 + "." + name, language: .swift)
+        let symbol = try resolveMember(signature: signature, genericArguments: genericArguments,
+                                       exact: SwiftMemberLookup.isQualified(name)) {
+            let member = try SwiftMemberLookup.qualifiedName(name, owner: $0, isStatic: true)
+            return try genericArguments.isEmpty ? swiftFunctionDeclaration(named: member, as: signature)
+                : NativeDeclaration(name: member, language: .swift)
         }
         return try NativeSwiftFunction(symbol: symbol.symbol, metadata: metadata, owner: self,
             generic: genericPlan(symbol, signature: signature, arguments: genericArguments,
@@ -260,7 +286,6 @@ public actor NativeSwiftType {
         named name: String, ownerName: String, valueType: Any.Type, setter: Bool, isStatic: Bool
     ) throws -> NativeDeclaration {
         let accessor = setter ? ".setter : " : ".getter : "
-        let prefix = (isStatic ? "static " : "") + ownerName + "."
         let member: String
         if name.contains(accessor) {
             member = name
@@ -268,7 +293,7 @@ public actor NativeSwiftType {
             let valueName = valueType == (representation ?? metadata) ? self.name : try swiftFunctionTypeName(valueType)
             member = name + accessor + valueName
         }
-        return .init(name: prefix + member, language: .swift)
+        return .init(name: try SwiftMemberLookup.qualifiedName(member, owner: ownerName, isStatic: isStatic), language: .swift)
     }
 
     /// Resolves a property setter that consumes its incoming value.
@@ -287,7 +312,7 @@ public actor NativeSwiftType {
         named name: String, as valueType: Value.Type, mutating isMutating: Bool? = nil,
         consuming isConsuming: Bool = false
     ) throws -> NativeSwiftMethod<(Value) -> Void> {
-        let symbol = try resolveMember(signature: ((Value) -> Void).self) {
+        let symbol = try resolveMember(signature: ((Value) -> Void).self, exact: SwiftMemberLookup.isQualified(name)) {
             try accessorDeclaration(named: name, ownerName: $0, valueType: valueType, setter: true, isStatic: false)
         }
         let generic = try genericPlan(symbol, signature: ((Value) -> Void).self)
@@ -306,7 +331,7 @@ public actor NativeSwiftType {
     public func staticSetter<Value>(
         named name: String, as valueType: Value.Type
     ) throws -> NativeSwiftFunction<(Value) -> Void> {
-        let symbol = try resolveMember(signature: ((Value) -> Void).self) {
+        let symbol = try resolveMember(signature: ((Value) -> Void).self, exact: SwiftMemberLookup.isQualified(name)) {
             try accessorDeclaration(named: name, ownerName: $0, valueType: valueType, setter: true, isStatic: true)
         }
         return try NativeSwiftFunction(symbol: symbol.symbol, metadata: metadata, owner: self, consumesArguments: true,
@@ -467,7 +492,7 @@ extension NativeSwiftType {
         mutating isMutating: Bool = false, consuming isConsuming: Bool = false
     ) throws -> NativeSwiftMethod<Signature> {
         let result = try getterResult(signature)
-        let symbol = try resolveMember(signature: signature) {
+        let symbol = try resolveMember(signature: signature, exact: SwiftMemberLookup.isQualified(name)) {
             try accessorDeclaration(named: name, ownerName: $0, valueType: result, setter: false, isStatic: false)
         }
         let generic = try genericPlan(symbol, signature: signature)
@@ -482,7 +507,7 @@ extension NativeSwiftType {
         named name: String, as signature: Signature.Type
     ) throws -> NativeSwiftFunction<Signature> {
         let result = try getterResult(signature)
-        let symbol = try resolveMember(signature: signature) {
+        let symbol = try resolveMember(signature: signature, exact: SwiftMemberLookup.isQualified(name)) {
             try accessorDeclaration(named: name, ownerName: $0, valueType: result, setter: false, isStatic: true)
         }
         return try NativeSwiftFunction(symbol: symbol.symbol, metadata: metadata, owner: self,

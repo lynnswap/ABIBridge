@@ -24,6 +24,35 @@ extension GenericValueBox: ABIBridgeSwiftValue {
 
 @Suite(.serialized)
 struct SwiftGenericValueReceiverTests {
+    @MainActor @Test func qualifiedMembersSelectTheRequestedConstraint() async throws {
+        let runtime = ABIRuntime()
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericValueBox",
+            genericArguments: [.type(Int.self)])
+        let receiver = GenericValueBox(42)
+        for (constraint, result) in [("Swift.Equatable", Int64(10)), ("Swift.Hashable", Int64(20))] {
+            let owner = "(extension in ManagedSwiftFixtures):ManagedSwiftFixtures.GenericValueBox<A where A: " + constraint + ">"
+            let method = try await type.method(named: owner + ".selected() -> Swift.Int64", as: (() -> Int64).self)
+            let getter = try await type.getter(named: owner + ".selectedValue.getter : Swift.Int64", as: (() -> Int64).self)
+            let staticMethod = try await type.staticMethod(named: "static " + owner + ".selectedStatic() -> Swift.Int64", as: (() -> Int64).self)
+            let staticGetter = try await type.staticGetter(named: "static " + owner + ".selectedStaticValue.getter : Swift.Int64", as: (() -> Int64).self)
+            #expect(try unsafe method.unsafeInvoke(on: receiver) == result + 1)
+            #expect(try unsafe getter.unsafeInvoke(on: receiver) == result + 2)
+            #expect(try unsafe staticMethod.unsafeInvoke() == result + 3)
+            #expect(try unsafe staticGetter.unsafeInvoke() == result + 4)
+        }
+        do {
+            _ = try await type.method(named: "selected()", as: (() -> Int64).self)
+            Issue.record("Expected the short member name to remain ambiguous")
+        } catch ABIResolutionError.ambiguousDeclaration {}
+        do {
+            _ = try await type.method(named: "(extension in ManagedSwiftFixtures):ManagedSwiftFixtures.GenericValueBox<A where A: Swift.Comparable>.selected() -> Swift.Int64", as: (() -> Int64).self)
+            Issue.record("An unavailable qualified declaration must not select another constraint")
+        } catch ABIResolutionError.declarationNotFound {}
+        do {
+            _ = try await type.method(named: "ManagedSwiftFixtures.GenericPhantom.read() -> Swift.Int64", as: (() -> Int64).self)
+            Issue.record("A qualified member must belong to the receiver's declaring type")
+        } catch ABIResolutionError.declarationNotFound {}
+    }
     @MainActor @Test func genericMembersUseDeclarationOwnershipDefaults() async throws {
         let type = try await ABIRuntime().swiftType(named: "ManagedSwiftFixtures.GenericValueBox",
             genericArguments: [.type(String.self)])

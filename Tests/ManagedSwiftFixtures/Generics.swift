@@ -147,6 +147,18 @@ extension GenericValueBox where Value == Int {
 extension GenericValueBox where Value: AnyObject {
     @inline(never) public func reference() -> Value { value }
 }
+extension GenericValueBox where Value: Equatable {
+    @inline(never) public func selected() -> Int64 { 11 }
+    public var selectedValue: Int64 { 12 }
+    @inline(never) public static func selectedStatic() -> Int64 { 13 }
+    public static var selectedStaticValue: Int64 { 14 }
+}
+extension GenericValueBox where Value: Hashable {
+    @inline(never) public func selected() -> Int64 { 21 }
+    public var selectedValue: Int64 { 22 }
+    @inline(never) public static func selectedStatic() -> Int64 { 23 }
+    public static var selectedStaticValue: Int64 { 24 }
+}
 
 @frozen public struct GenericPhantom<Value> {
     public var number: Int64

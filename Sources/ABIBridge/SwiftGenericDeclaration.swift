@@ -150,6 +150,32 @@ indirect enum SwiftFormalType: Sendable, Equatable {
 /// A lookup key preserves the member and labels while its bound signature is
 /// checked separately. This lets ordinary member names select generic entries.
 enum SwiftMemberLookup {
+    private static func owner(of declaration: String) -> String? {
+        var text = SymbolIndex.extensionMemberName(declaration) ?? declaration
+        if text.hasPrefix("static ") { text = String(text.dropFirst(7)) }
+        let accessor = [".getter : ", ".setter : "].compactMap { text.range(of: $0)?.lowerBound }.first
+        let opening = accessor ?? SwiftFormalSyntax.parameterOpening(in: text) ?? text.endIndex
+        var head = String(text[..<opening])
+        for group in SwiftGenericSyntax.groups(in: head).reversed() { head.removeSubrange(group.range) }
+        return head.lastIndex(of: ".").map { String(head[..<$0]) }
+    }
+
+    static func isQualified(_ declaration: String) -> Bool { owner(of: declaration) != nil }
+
+    static func belongs(_ declaration: String, to owner: String) -> Bool {
+        var nominal = owner
+        for group in SwiftGenericSyntax.groups(in: nominal).reversed() { nominal.removeSubrange(group.range) }
+        return Self.owner(of: declaration) == nominal
+    }
+
+    static func qualifiedName(_ member: String, owner: String, isStatic: Bool = false) throws -> String {
+        guard isStatic || !member.hasPrefix("static ") else {
+            throw ABIResolutionError.unsupportedDeclaration("A static declaration requires a static member lookup.")
+        }
+        let name = isQualified(member) ? member : owner + "." + member
+        return isStatic && !name.hasPrefix("static ") ? "static " + name : name
+    }
+
     static func key(_ declaration: String) -> [UInt8]? {
         let text = SymbolIndex.extensionMemberName(declaration) ?? declaration
         func head(_ source: String) -> String {
