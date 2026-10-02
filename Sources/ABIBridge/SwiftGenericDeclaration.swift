@@ -29,7 +29,8 @@ indirect enum SwiftFormalType: Sendable, Equatable {
     case reference(SwiftNominalDescriptor, [SwiftFormalType])
     case tuple([SwiftFormalType])
     case function([SwiftFormalType], SwiftFormalType, failure: SwiftFormalType?, isAsync: Bool)
-    case pack(SwiftFormalType)
+    case pack(SwiftFormalType, shape: SwiftFormalType? = nil)
+    case packValue([SwiftFormalType])
     case inoutValue(SwiftFormalType)
     case borrowing(SwiftFormalType)
     case consuming(SwiftFormalType)
@@ -43,6 +44,10 @@ indirect enum SwiftFormalType: Sendable, Equatable {
         }
         if text.hasPrefix("repeat ") {
             self = .pack(try Self(String(text.dropFirst(7))))
+            return
+        }
+        if text.hasPrefix("Pack{"), text.hasSuffix("}") {
+            self = .packValue(try SwiftFormalSyntax.fields(text.dropFirst(5).dropLast()).map { try Self($0) })
             return
         }
         if text.hasPrefix("each ") { text = String(text.dropFirst(5)) }
@@ -128,7 +133,8 @@ indirect enum SwiftFormalType: Sendable, Equatable {
                 + (isAsync ? " async" : "")
                 + (failure.map { $0.spelling == "Swift.Error" ? " throws" : " throws(" + $0.spelling + ")" } ?? "")
                 + " -> " + result.spelling
-        case .pack(let value): "repeat " + value.spelling
+        case .pack(let value, _): "repeat " + value.spelling
+        case .packValue(let elements): "Pack{" + elements.map(\.spelling).joined(separator: ", ") + "}"
         case .inoutValue(let value): "inout " + value.spelling
         case .borrowing(let value): "__shared " + value.spelling
         case .consuming(let value): "__owned " + value.spelling
@@ -230,8 +236,8 @@ enum SwiftFormalSyntax {
         var previous: Character?
         for index in text.indices {
             let character = text[index]
-            if "(<[".contains(character) { depth += 1 }
-            else if ")]".contains(character) || (character == ">" && previous != "-") { depth -= 1 }
+            if "(<[{".contains(character) { depth += 1 }
+            else if ")]}".contains(character) || (character == ">" && previous != "-") { depth -= 1 }
             else if character == ":", depth == 0 { return index }
             previous = character
         }

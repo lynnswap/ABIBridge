@@ -133,7 +133,7 @@ enum SwiftGenericSyntax {
     static func split(_ text: Substring) -> [String] {
         var result: [String] = []
         var start = text.startIndex
-        var angle = 0, parentheses = 0, brackets = 0
+        var angle = 0, parentheses = 0, brackets = 0, braces = 0
         var previous: Character?
         for index in text.indices {
             let character = text[index]
@@ -144,7 +144,9 @@ enum SwiftGenericSyntax {
             case ")": parentheses -= 1
             case "[": brackets += 1
             case "]": brackets -= 1
-            case "," where angle == 0 && parentheses == 0 && brackets == 0:
+            case "{": braces += 1
+            case "}": braces -= 1
+            case "," where angle == 0 && parentheses == 0 && brackets == 0 && braces == 0:
                 result.append(String(text[start..<index]))
                 start = text.index(after: index)
             default: break

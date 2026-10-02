@@ -1,5 +1,30 @@
 import Foundation
 
+public final class GenericSourcePack<each Value: Equatable> {
+    public init() {}
+}
+@inline(never) private func countEqualPack<each Value: Equatable>(_ values: repeat each Value) -> Int64 {
+    var count: Int64 = 0
+    func countValue<Element: Equatable>(_ value: Element) { if value == value { count += 1 } }
+    repeat countValue(each values)
+    return count
+}
+@inline(never) public func packClassSourceGeneric<each Value: Equatable>(
+    _ source: GenericSourcePack<repeat each Value>, _ values: repeat each Value
+) -> Int64 { countEqualPack(repeat each values) }
+@inline(never) public func packMetatypeSourceGeneric<each Value: Equatable>(
+    _ type: GenericSourcePack<repeat each Value>.Type, _ values: repeat each Value
+) -> Int64 { countEqualPack(repeat each values) }
+@inline(never) public func packValueMetatypeGeneric<each Value: Equatable>(
+    _ type: GenericTypePack<repeat each Value>.Type, _ values: repeat each Value
+) -> Int64 { countEqualPack(repeat each values) }
+@inline(never) public func prefixedPackSourceGeneric<each Value: Equatable>(
+    _ source: GenericSourcePack<Int64, repeat each Value>, _ values: repeat each Value
+) -> Int64 { countEqualPack(repeat each values) }
+@inline(never) public func arrayPackSourceGeneric<each Value: Equatable>(
+    _ source: GenericSourcePack<repeat [each Value]>, _ values: repeat each Value
+) -> Int64 { countEqualPack(repeat each values) }
+
 public protocol GenericSourceParent { var sourceNumber: Int64 { get } }
 public protocol GenericSourceChild: GenericSourceParent {}
 public struct GenericSourceValue: GenericSourceChild {

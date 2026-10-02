@@ -5,6 +5,44 @@ import ManagedSwiftFixtures
 import Testing
 
 struct SwiftGenericBindingTests {
+    @Test func nominalPackFulfillmentsKeepTransformedAndPrefixedArguments() throws {
+        let cases: [(String, Any.Type, Int)] = [
+            ("$s20ManagedSwiftFixtures22packClassSourceGenericys5Int64VAA0gF4PackCyxxQp_QPG_xxQptRvzSQRzlF",
+             ((GenericSourcePack<Int64, String>, Int64, String) -> Int64).self, 0),
+            ("$s20ManagedSwiftFixtures25packMetatypeSourceGenericys5Int64VAA0gF4PackCyxxQp_QPGm_xxQptRvzSQRzlF",
+             ((GenericSourcePack<Int64, String>.Type, Int64, String) -> Int64).self, 0),
+            ("$s20ManagedSwiftFixtures24packValueMetatypeGenericys5Int64VAA0G8TypePackVyxxQp_QPGm_xxQptRvzSQRzlF",
+             ((GenericTypePack<Int64, String>.Type, Int64, String) -> Int64).self, 3),
+            ("$s20ManagedSwiftFixtures25prefixedPackSourceGenericys5Int64VAA0gfE0CyAD_xxQpQPG_xxQptRvzSQRzlF",
+             ((GenericSourcePack<Int64, Int64, String>, Int64, String) -> Int64).self, 3),
+            ("$s20ManagedSwiftFixtures22arrayPackSourceGenericys5Int64VAA0gfE0CySayxGxQp_QPG_xxQptRvzSQRzlF",
+             ((GenericSourcePack<[Int64], [String]>, Int64, String) -> Int64).self, 3)
+        ]
+        for (symbol, signature, count) in cases {
+            let binding = try SwiftGenericBinding(declaration: SwiftGenericDeclaration(linkageName: symbol),
+                arguments: [.pack([.type(Int64.self), .type(String.self)])],
+                signature: SwiftFunctionSignature(signature), resolver: .shared)
+            #expect(binding.metadataArguments.count == count)
+        }
+    }
+
+    @Test func compositePackElementsConstructCanonicalMetadata() throws {
+        let binding = try SwiftGenericBinding(declaration: SwiftGenericDeclaration(linkageName:
+            "$s20ManagedSwiftFixtures22constrainedPackGenericyxxQp_txxQpRvzSQRzlF"),
+            arguments: [.pack([.type(Int.self), .type(String.self)])],
+            signature: SwiftFunctionSignature((() -> Void).self), resolver: .shared)
+        let element = SwiftFormalType.named("A", [])
+        let arrays = try binding.types(.pack(.nominal("Swift.Array", [element]), shape: element))
+        #expect(arrays.count == 2 && arrays[0] == [Int].self && arrays[1] == [String].self)
+        let tuples = try binding.types(.pack(.tuple([element, .nominal("Swift.Int64", [])]), shape: element))
+        #expect(tuples.count == 2 && tuples[0] == (Int, Int64).self && tuples[1] == (String, Int64).self)
+        let metatype = try binding.types(.metatype(.tuple([.pack(element, shape: element)])))
+        #expect(metatype.count == 1 && metatype[0] == (Int, String).Type.self)
+        let pack = try binding.types(.nominal("ManagedSwiftFixtures.GenericTypePack", [
+            .packValue([.nominal("Swift.Int64", []), .pack(element, shape: element)])]))
+        #expect(pack.count == 1 && pack[0] == GenericTypePack<Int64, Int, String>.self)
+    }
+
     @Test func explicitNominalSourcesRemoveOnlyFulfilledMetadataWords() throws {
         let mixed = try SwiftGenericBinding(declaration: SwiftGenericDeclaration(linkageName:
             "$s20ManagedSwiftFixtures18classSourceGenericys5Int64V_q_tAA0fE3BoxCyxG_q_tAA0fE5ChildRzr0_lF"),
@@ -62,7 +100,7 @@ struct SwiftGenericBindingTests {
         let packs = try SwiftGenericDeclaration(
             linkageName: "$s20ManagedSwiftFixtures17pairedPackGenericyq__xtxQp_tx_q_txQpRvzRv_q_Rhzr0_lF")
         #expect(packs.parameters.count == 2 && packs.parameters.allSatisfy(\.isPack))
-        #expect(packs.arguments == [.pack(.tuple([.named("A", []), .named("B", [])]))])
+        #expect(packs.arguments == [.pack(.tuple([.named("A", []), .named("B", [])]), shape: .named("A", []))])
         #expect(packs.requirements == [.sameShape(.named("A", []), .named("B", []))])
     }
 
@@ -308,8 +346,8 @@ struct SwiftGenericBindingTests {
         let pack = try SwiftGenericDeclaration(linkageName:
             "$s20ManagedSwiftFixtures22constrainedPackGenericyxxQp_txxQpRvzSQRzlF")
         #expect(pack.parameters.count == 1 && pack.parameters[0].isPack)
-        #expect(pack.arguments == [.pack(.named("A", []))])
-        #expect(pack.result == .tuple([.pack(.named("A", []))]))
+        #expect(pack.arguments == [.pack(.named("A", []), shape: .named("A", []))])
+        #expect(pack.result == .tuple([.pack(.named("A", []), shape: .named("A", []))]))
         #expect(pack.requirements == [.conformance(.named("A", []), "Swift.Equatable")])
     }
 

@@ -16,6 +16,9 @@ struct MetadataResponse { const void *value; uintptr_t state; };
 }
 extern "C" const void *swift_conformsToProtocol(const void *, const void *);
 extern "C" const void *swift_getExistentialTypeMetadata(bool, const void *, size_t, const uintptr_t *);
+extern "C" const void *swift_getMetatypeMetadata(const void *);
+extern "C" MetadataResponse __attribute__((swiftcall))
+swift_getTupleTypeMetadata(uintptr_t, uintptr_t, const void *const *, const char *, const void *);
 extern "C" MetadataResponse __attribute__((swiftcall))
 swift_getAssociatedTypeWitness(uintptr_t, const void *, const void *, const void *, const void *);
 extern "C" MetadataResponse __attribute__((swiftcall))
@@ -94,6 +97,17 @@ const void *associatedType(const void *metadata, const void *protocol,
 
 const void *ABISwiftConformance(const void *metadata, const void *protocol) {
     return swift_conformsToProtocol(metadata, protocol);
+}
+
+const void *ABISwiftMetatypeMetadata(const void *instance) {
+    return swift_getMetatypeMetadata(instance);
+}
+
+const void *ABISwiftTupleTypeMetadata(const void *const *elements, size_t count) {
+    // TupleTypeFlags reserves sixteen bits for the number of elements.
+    if (count > 0xffff) return nullptr;
+    if (count == 1) return elements[0];
+    return swift_getTupleTypeMetadata(0, count, elements, nullptr, nullptr).value;
 }
 
 const void *ABISwiftProtocolTypeMetadata(const void *protocol) {

@@ -129,6 +129,17 @@ def main():
         metatype_source = body(value_ir, "metatypeSourceGeneric").splitlines()[0]
         nested_source = body(value_ir, "nestedSourceGeneric").splitlines()[0]
         superclass_source = body(value_ir, "superclassSourceGeneric").splitlines()[0]
+        pack_sources = {name: body(value_ir, name).splitlines()[0] for name in [
+            "packClassSourceGeneric", "packMetatypeSourceGeneric", "packValueMetatypeGeneric",
+            "prefixedPackSourceGeneric", "arrayPackSourceGeneric"]}
+        for name in ["packClassSourceGeneric", "packMetatypeSourceGeneric"]:
+            require(len(re.findall(r"\bptr\b", pack_sources[name])) == 2,
+                    f"{target}: an exact pack source fulfills its shape, metadata and witnesses")
+        for name in ["packValueMetatypeGeneric", "prefixedPackSourceGeneric", "arrayPackSourceGeneric"]:
+            require('ptr %"each Value"' in pack_sources[name] and 'ptr %"each Value.Equatable"' in pack_sources[name],
+                    f"{target}: a thin or transformed pack source preserves the generic pack requirements")
+        require(len(re.findall(r"\bptr\b", pack_sources["packValueMetatypeGeneric"])) == 3,
+                f"{target}: a nominal value-pack metatype is thin")
         require("ptr %Other" in class_source and "ptr %Value" not in class_source,
                 f"{target}: class metadata fulfills its argument and protocol but not an unrelated parameter")
         for entry in [tuple_source, metatype_source, nested_source]:
@@ -170,7 +181,7 @@ def main():
                         "associatedClass": associated_object, "classSource": class_source,
                         "tupleSource": tuple_source, "metatypeSource": metatype_source,
                         "nestedSource": nested_source, "superclassSource": superclass_source,
-                        "metatypeCallbacks": metatypes})
+                        "metatypeCallbacks": metatypes, "packSources": pack_sources})
     report = {"compiler": run("xcrun", "swiftc", "--version").strip(), "runtimeTested": False,
               "demanglerRevision": upstream["revision"], "targets": targets}
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")

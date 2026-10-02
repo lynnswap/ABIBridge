@@ -20,8 +20,8 @@ struct SwiftGenericParameters: Sendable {
         var index = 0
         var hasPacks = false
         for parameter in formal {
-            if case .pack(let pattern) = parameter {
-                let count = try binding.packCount(in: pattern)
+            if case .pack(let pattern, let shape) = parameter {
+                let count = try binding.packCount(in: shape ?? pattern)
                 guard index + count <= actual.count else { throw Self.mismatch(actual.count) }
                 let range = index..<(index + count)
                 for (packIndex, position) in range.enumerated() {

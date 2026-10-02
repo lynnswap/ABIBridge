@@ -25,6 +25,11 @@ extension SwiftGenericBinding {
             }
             return nil
         }
+        func expansion(_ type: SwiftFormalType) -> (pattern: SwiftFormalType, shape: SwiftFormalType)? {
+            guard case .packValue(let elements) = type, elements.count == 1,
+                  case .pack(let pattern, let shape) = elements[0] else { return nil }
+            return (pattern, shape ?? pattern)
+        }
         func searchType(_ type: SwiftFormalType, exact: Bool) throws {
             let type = canonicalType(of: type)
             if exact && archetype(type) {
@@ -45,17 +50,19 @@ extension SwiftGenericBinding {
                 throw ABIResolutionError.metadataUnavailable("The nominal metadata does not match its formal generic arguments.")
             }
             let substitutions = Dictionary(uniqueKeysWithValues: zip(context.parameters.map(\.name), parameters))
-            for parameter in context.parameters where context.keyParameters.contains(parameter.name) {
+            for parameter in context.parameters {
                 let argument = substitutions[parameter.name]!
                 if parameter.isPack {
-                    if case .pack(let pattern) = argument, archetype(pattern) {
-                        if !result.types.contains(pattern) { result.types.append(pattern) }
-                        result.shapes.insert(pattern.spelling)
+                    if let source = expansion(argument), archetype(source.pattern) {
+                        result.shapes.insert(source.shape.spelling)
+                        if context.keyParameters.contains(parameter.name),
+                           !result.types.contains(source.pattern) { result.types.append(source.pattern) }
                     }
-                } else { try searchType(argument, exact: true) }
+                } else if context.keyParameters.contains(parameter.name) { try searchType(argument, exact: true) }
             }
             for conformance in context.conformances {
-                let subject = conformance.subject.substituting(substitutions)
+                let substituted = conformance.subject.substituting(substitutions)
+                let subject = expansion(substituted)?.pattern ?? substituted
                 guard archetype(subject), let descriptor = conformance.descriptor else { continue }
                 result.conformances.append((subject, try descriptor.qualifiedNames()))
             }
@@ -101,7 +108,8 @@ extension SwiftFormalType {
         case .nested(let parent, let name, let arguments):
             return .nested(parent.substituting(substitutions), name, arguments.map { $0.substituting(substitutions) })
         case .tuple(let elements): return .tuple(elements.map { $0.substituting(substitutions) })
-        case .pack(let value): return .pack(value.substituting(substitutions))
+        case .pack(let value, let shape): return .pack(value.substituting(substitutions), shape: shape?.substituting(substitutions))
+        case .packValue(let elements): return .packValue(elements.map { $0.substituting(substitutions) })
         case .borrowing(let value): return .borrowing(value.substituting(substitutions))
         case .consuming(let value): return .consuming(value.substituting(substitutions))
         case .inoutValue(let value): return .inoutValue(value.substituting(substitutions))

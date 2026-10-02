@@ -263,7 +263,7 @@ struct SwiftGenericBinding: Sendable {
 
     func isPack(_ type: SwiftFormalType) -> Bool {
         switch type {
-        case .pack: true
+        case .pack, .packValue: true
         case .named(let name, _): arguments[String(name.prefix { $0 != "." })]?.isPack == true
         default: false
         }
@@ -334,13 +334,27 @@ struct SwiftGenericBinding: Sendable {
         return result
     }
 
-    func types(_ type: SwiftFormalType) throws -> [Any.Type] {
-        if case .pack(let pattern) = type { return try types(pattern) }
+    func types(_ type: SwiftFormalType, packIndex: Int? = nil) throws -> [Any.Type] {
+        if case .pack(let pattern, let shape) = type {
+            return try (0..<packCount(in: shape ?? pattern)).flatMap { try types(pattern, packIndex: $0) }
+        }
+        if case .packValue(let elements) = type {
+            return try elements.flatMap { try types($0, packIndex: packIndex) }
+        }
+        func elements(of argument: BoundArgument) throws -> [Any.Type] {
+            if let packIndex, argument.isPack {
+                guard argument.types.indices.contains(packIndex) else {
+                    throw ABIResolutionError.signatureMismatch(.init(expected: "Equal lengths for the expanded packs", found: []))
+                }
+                return [argument.types[packIndex]]
+            }
+            return argument.types
+        }
         if case .named(let name, let parameters) = type, parameters.isEmpty {
-            if let direct = arguments[name] { return direct.types }
+            if let direct = arguments[name] { return try elements(of: direct) }
             let components = name.split(separator: ".").map(String.init)
             if let root = components.first, let argument = arguments[root], components.count > 1 {
-                return try argument.types.map { base in
+                return try elements(of: argument).map { base in
                     var metadata = base
                     var path = root
                     var remaining = Array(components.dropFirst())
@@ -377,8 +391,20 @@ struct SwiftGenericBinding: Sendable {
             }
         }
         if case .reference = type {} else {
-            let name = try spelling(type)
+            let name = try spelling(type, packIndex: packIndex)
             if let known = knownTypes[try Self.key(name)] { return [known] }
+        }
+        if case .metatype(let instance) = type {
+            let metadata = try types(instance, packIndex: packIndex)[0]
+            return [unsafeBitCast(ABISwiftMetatypeMetadata(unsafeBitCast(metadata, to: UnsafeRawPointer.self))!, to: Any.Type.self)]
+        }
+        if case .tuple(let fields) = type {
+            let elements = try fields.flatMap { try types($0, packIndex: packIndex) }
+            let pointers = elements.map { Optional(unsafeBitCast($0, to: UnsafeRawPointer.self)) }
+            guard let metadata = pointers.withUnsafeBufferPointer({ ABISwiftTupleTypeMetadata($0.baseAddress, $0.count) }) else {
+                throw ABIResolutionError.metadataUnavailable("The tuple exceeds Swift's metadata element count.")
+            }
+            return [unsafeBitCast(metadata, to: Any.Type.self)]
         }
         let descriptor: SwiftNominalDescriptor
         let parameters: [SwiftFormalType]
@@ -400,9 +426,11 @@ struct SwiftGenericBinding: Sendable {
                 in: .automatic, loading: .loadedOnly))
         }
         let arguments: [NativeSwiftGenericArgument] = try parameters.map { parameter in
-            let values = try types(parameter).map { NativeSwiftGenericArgument.type($0) }
-            if case .pack = parameter { return .pack(values) }
-            if isPack(parameter) { return .pack(values) }
+            let values = try types(parameter, packIndex: packIndex).map { NativeSwiftGenericArgument.type($0) }
+            switch parameter {
+            case .pack, .packValue: return .pack(values)
+            default: if packIndex == nil && isPack(parameter) { return .pack(values) }
+            }
             guard values.count == 1 else {
                 throw ABIResolutionError.signatureMismatch(.init(expected: "One type for " + parameter.spelling, found: []))
             }
@@ -424,10 +452,11 @@ struct SwiftGenericBinding: Sendable {
                 parameters.forEach(visit)
             case .nominal(_, let parameters), .reference(_, let parameters): parameters.forEach(visit)
             case .nested(let parent, _, let parameters): visit(parent); parameters.forEach(visit)
-            case .tuple(let fields): fields.forEach(visit)
+            case .tuple(let fields), .packValue(let fields): fields.forEach(visit)
             case .function(let parameters, let result, let failure, _):
                 parameters.forEach(visit); visit(result); if let failure { visit(failure) }
-            case .pack(let value), .borrowing(let value), .consuming(let value), .inoutValue(let value), .metatype(let value): visit(value)
+            case .pack(let value, let shape): visit(shape ?? value)
+            case .borrowing(let value), .consuming(let value), .inoutValue(let value), .metatype(let value): visit(value)
             }
         }
         visit(type)
@@ -441,23 +470,22 @@ struct SwiftGenericBinding: Sendable {
         switch type {
         case .named(let name, let parameters):
             if parameters.isEmpty && arguments[String(name.prefix { $0 != "." })] != nil {
-                let resolved = try types(type)
-                if let packIndex, arguments[String(name.prefix { $0 != "." })]!.isPack {
-                    return try swiftNativeTypeName(resolved[packIndex])
-                }
+                let resolved = try types(type, packIndex: packIndex)
                 return try resolved.map(swiftNativeTypeName).joined(separator: ", ")
             }
             return name + (parameters.isEmpty ? "" : "<" + (try parameters.map { try spelling($0, packIndex: packIndex) }).joined(separator: ", ") + ">")
         case .nominal(let name, let parameters):
             return name + (parameters.isEmpty ? "" : "<" + (try parameters.map { try spelling($0, packIndex: packIndex) }).joined(separator: ", ") + ">")
         case .reference:
-            return try types(type).map(swiftNativeTypeName).joined(separator: ", ")
+            return try types(type, packIndex: packIndex).map(swiftNativeTypeName).joined(separator: ", ")
         case .nested(let parent, let name, let parameters):
             return try spelling(parent, packIndex: packIndex) + "." + name
                 + (parameters.isEmpty ? "" : "<" + parameters.map { try spelling($0, packIndex: packIndex) }.joined(separator: ", ") + ">")
         case .tuple(let values): return "(" + (try values.map { try spelling($0, packIndex: packIndex) }).filter { !$0.isEmpty }.joined(separator: ", ") + ")"
-        case .pack(let value):
-            return try (0..<packCount(in: value)).map { try spelling(value, packIndex: $0) }.joined(separator: ", ")
+        case .pack(let value, let shape):
+            return try (0..<packCount(in: shape ?? value)).map { try spelling(value, packIndex: $0) }.joined(separator: ", ")
+        case .packValue(let elements):
+            return "Pack{" + (try elements.map { try spelling($0, packIndex: packIndex) }).filter { !$0.isEmpty }.joined(separator: ", ") + "}"
         case .inoutValue(let value), .borrowing(let value), .consuming(let value): return try spelling(value, packIndex: packIndex)
         case .metatype(let value): return try spelling(value, packIndex: packIndex) + ".Type"
         case .function(let values, let result, let failure, let isAsync):

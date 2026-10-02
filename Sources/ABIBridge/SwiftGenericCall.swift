@@ -116,7 +116,7 @@ struct SwiftGenericCallPlan: Sendable {
                 switch group {
                 case .value(let index): try binding.validate(signature.parameters[index], for: formal)
                 case .pack(let range, _):
-                    guard case .pack(let pattern) = formal else { preconditionFailure("A pack group has a pack formal type.") }
+                    guard case .pack(let pattern, _) = formal else { preconditionFailure("A pack group has a pack formal type.") }
                     for (packIndex, index) in range.enumerated() {
                         try binding.validate(signature.parameters[index], for: pattern, packIndex: packIndex)
                     }
@@ -190,8 +190,8 @@ struct SwiftGenericCallPlan: Sendable {
             let elements = try tupleElements(fields, actual: actual, binding: binding)
             var index = 0
             return try fields.flatMap { field -> [String] in
-                if case .pack(let pattern) = field {
-                    index += try binding.packCount(in: pattern)
+                if case .pack(let pattern, let shape) = field {
+                    index += try binding.packCount(in: shape ?? pattern)
                     return [isResult ? "-indirect" : "-"]
                 }
                 defer { index += 1 }
@@ -206,7 +206,7 @@ struct SwiftGenericCallPlan: Sendable {
     private static func tupleElements(_ fields: [SwiftFormalType], actual: Any.Type,
                                       binding: SwiftGenericBinding) throws -> [SwiftTupleMetadata.Element] {
         let count = try fields.reduce(0) { count, field in
-            if case .pack(let pattern) = field { return count + (try binding.packCount(in: pattern)) }
+            if case .pack(let pattern, let shape) = field { return count + (try binding.packCount(in: shape ?? pattern)) }
             return count + 1
         }
         // A substituted singleton pack is its element type, even when that
@@ -276,8 +276,8 @@ struct SwiftGenericCallPlan: Sendable {
                 for field in fields {
                     let offset = index < elements.count ? elements[index].offset : MemoryLayout<Value>.size
                     offsets.append(offset)
-                    if case .pack(let pattern) = field {
-                        let count = try binding.packCount(in: pattern)
+                    if case .pack(let pattern, let shape) = field {
+                        let count = try binding.packCount(in: shape ?? pattern)
                         let selected = elements[index..<(index + count)]
                         let layouts = try selected.map { try SwiftGenericParameters.storageType($0.type) }
                         let positions = selected.map { $0.offset - offset }
@@ -292,7 +292,7 @@ struct SwiftGenericCallPlan: Sendable {
                 }
                 return try CValueType(swiftTuple: types, offsets: offsets, size: MemoryLayout<Value>.size,
                     alignment: MemoryLayout<Value>.alignment)
-            case .pack:
+            case .pack, .packValue:
                 preconditionFailure("A pack expands within the containing parameter list or tuple.")
             case .function:
                 let pointer = try CValueType(scalar: ABIValuePointer)
@@ -320,10 +320,11 @@ extension SwiftGenericBinding {
             (parameters.isEmpty && arguments[String(name.prefix { $0 != "." })] != nil) || parameters.contains(where: dependsOnParameters)
         case .nominal(_, let parameters), .reference(_, let parameters): parameters.contains(where: dependsOnParameters)
         case .nested(let parent, _, let parameters): dependsOnParameters(parent) || parameters.contains(where: dependsOnParameters)
-        case .tuple(let fields): fields.contains(where: dependsOnParameters)
+        case .tuple(let fields), .packValue(let fields): fields.contains(where: dependsOnParameters)
         case .function(let parameters, let result, let failure, _):
             parameters.contains(where: dependsOnParameters) || dependsOnParameters(result) || (failure.map(dependsOnParameters) ?? false)
-        case .pack(let type), .borrowing(let type), .consuming(let type), .inoutValue(let type), .metatype(let type):
+        case .pack(let type, let shape): dependsOnParameters(type) || (shape.map(dependsOnParameters) ?? false)
+        case .borrowing(let type), .consuming(let type), .inoutValue(let type), .metatype(let type):
             dependsOnParameters(type)
         }
     }

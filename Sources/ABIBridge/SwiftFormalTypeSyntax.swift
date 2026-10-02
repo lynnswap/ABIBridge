@@ -148,7 +148,9 @@ extension SwiftFormalType {
         case "Tuple":
             self = .tuple(try children.map(Self.init))
         case "PackExpansion":
-            self = .pack(try Self(children[0]))
+            self = .pack(try Self(children[0]), shape: try Self(children[1]))
+        case "Pack":
+            self = .packValue(try children.map(Self.init))
         case "Metatype", "ExistentialMetatype":
             self = .metatype(try Self(node.requiredChild(kind: "Type", fallingBackToFirst: true)))
         case "InOut": self = .inoutValue(try Self(node.requiredChild()))

@@ -20,6 +20,8 @@ const void *ABISwiftProtocolRequirementObjectiveCProtocol(const void *reference)
 const void *ABISwiftConformance(const void *metadata, const void *protocol);
 /// Canonical existential metadata for one valid Swift protocol descriptor.
 const void *ABISwiftProtocolTypeMetadata(const void *protocol);
+const void *ABISwiftMetatypeMetadata(const void *instance);
+const void *ABISwiftTupleTypeMetadata(const void *const *elements, size_t count);
 /// Parses the subject or type constraint of a compiler-emitted requirement.
 /// A protocol or layout requirement has no type constraint in its second field.
 ABISwiftSyntax *ABICopySwiftGenericRequirementTypeSyntax(const void *requirement, bool constraint);

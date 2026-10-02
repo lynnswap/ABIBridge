@@ -34,6 +34,31 @@ private final class GenericCaptureState: Sendable {
 
 @Suite(.serialized)
 struct SwiftGenericCallTests {
+    @Test func nominalPackSourcesMatchCompilerMetadataFulfillments() async throws {
+        let runtime = ABIRuntime()
+        let arguments: [NativeSwiftGenericArgument] = [.pack([.type(Int64.self), .type(String.self)])]
+        let object = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.packClassSourceGeneric<each A where A: Swift.Equatable>(ManagedSwiftFixtures.GenericSourcePack<Pack{repeat A}>, repeat A) -> Swift.Int64",
+            as: ((GenericSourcePack<Int64, String>, Int64, String) -> Int64).self, genericArguments: arguments)
+        #expect(try unsafe object.unsafeInvoke(GenericSourcePack<Int64, String>(), Int64(1), "two") == 2)
+        let metatype = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.packMetatypeSourceGeneric<each A where A: Swift.Equatable>(ManagedSwiftFixtures.GenericSourcePack<Pack{repeat A}>.Type, repeat A) -> Swift.Int64",
+            as: ((GenericSourcePack<Int64, String>.Type, Int64, String) -> Int64).self, genericArguments: arguments)
+        #expect(try unsafe metatype.unsafeInvoke(GenericSourcePack<Int64, String>.self, Int64(1), "two") == 2)
+        let value = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.packValueMetatypeGeneric<each A where A: Swift.Equatable>(ManagedSwiftFixtures.GenericTypePack<Pack{repeat A}>.Type, repeat A) -> Swift.Int64",
+            as: ((GenericTypePack<Int64, String>.Type, Int64, String) -> Int64).self, genericArguments: arguments)
+        #expect(try unsafe value.unsafeInvoke(GenericTypePack<Int64, String>.self, Int64(1), "two") == 2)
+        let prefixed = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.prefixedPackSourceGeneric<each A where A: Swift.Equatable>(ManagedSwiftFixtures.GenericSourcePack<Pack{Swift.Int64, repeat A}>, repeat A) -> Swift.Int64",
+            as: ((GenericSourcePack<Int64, Int64, String>, Int64, String) -> Int64).self, genericArguments: arguments)
+        #expect(try unsafe prefixed.unsafeInvoke(GenericSourcePack<Int64, Int64, String>(), Int64(1), "two") == 2)
+        let arrays = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.arrayPackSourceGeneric<each A where A: Swift.Equatable>(ManagedSwiftFixtures.GenericSourcePack<Pack{repeat [A]}>, repeat A) -> Swift.Int64",
+            as: ((GenericSourcePack<[Int64], [String]>, Int64, String) -> Int64).self, genericArguments: arguments)
+        #expect(try unsafe arrays.unsafeInvoke(GenericSourcePack<[Int64], [String]>(), Int64(1), "two") == 2)
+    }
+
     @Test func metatypesPreserveFormalAndConcreteCallingConventions() async throws {
         let runtime = ABIRuntime()
         let nominal = try await runtime.swiftFunction(
