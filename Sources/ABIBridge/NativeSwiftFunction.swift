@@ -302,6 +302,7 @@ extension ABIRuntime {
     ///   - name: A qualified label-only name, such as Example.decorate(_:), or a complete demangled declaration.
     ///   - signature: The complete Swift function type, including native error and async isolation conventions.
     ///   - scope: Images to search; automatic scope considers only loaded images.
+    ///   - genericArguments: Scalar types and packs in declaration parameter order.
     ///   - loading: Whether an explicit image may be acquired and initialized.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
     /// - Throws: A resolution, unsupported representation, or call preparation error.
@@ -327,6 +328,7 @@ extension ABIRuntime {
     ///   - name: The qualified demangled declaration.
     ///   - signature: The complete Swift function type, including native error and async isolation conventions.
     ///   - image: An image whose symbol index is reused.
+    ///   - genericArguments: Scalar types and packs in declaration parameter order.
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
     /// - Throws: A resolution, unsupported representation, or call preparation error.

@@ -1,5 +1,48 @@
 import Foundation
 
+@frozen public struct GenericGetterFailure: Error {
+    public let code: Int64
+    public init(_ code: Int64) { self.code = code }
+}
+public final class GenericEffectfulGetter<Value, Failure: Error> {
+    public var value: Value
+    public var failure: Failure
+    public var shouldThrow: Bool
+    public init(_ value: Value, _ failure: Failure, _ shouldThrow: Bool) {
+        self.value = value; self.failure = failure; self.shouldThrow = shouldThrow
+    }
+    public var checked: Value {
+        get throws(Failure) { if shouldThrow { throw failure }; return value }
+    }
+    public var fixedFailure: Value {
+        get throws(GenericGetterFailure) { if shouldThrow { throw GenericGetterFailure(71) }; return value }
+    }
+    public var checkedNumber: Int64 {
+        get throws(Failure) { if shouldThrow { throw failure }; return 41 }
+    }
+    public var fixedNumber: Int64 {
+        get throws(GenericGetterFailure) { if shouldThrow { throw GenericGetterFailure(72) }; return 42 }
+    }
+    nonisolated(nonsending) public var delayed: Value {
+        get async { await Task.yield(); return value }
+    }
+    nonisolated(nonsending) public var delayedChecked: Value {
+        get async throws(Failure) { await Task.yield(); if shouldThrow { throw failure }; return value }
+    }
+    nonisolated(nonsending) public var delayedNumber: Int64 {
+        get async throws(Failure) { await Task.yield(); if shouldThrow { throw failure }; return 43 }
+    }
+    nonisolated(nonsending) public var delayedFixedNumber: Int64 {
+        get async throws(GenericGetterFailure) { await Task.yield(); if shouldThrow { throw GenericGetterFailure(73) }; return 44 }
+    }
+    public static var checkedType: Value.Type {
+        get throws(Failure) { Value.self }
+    }
+    nonisolated(nonsending) public static var delayedType: Value.Type {
+        get async throws(Failure) { await Task.yield(); return Value.self }
+    }
+}
+
 public final class GenericSourcePack<each Value: Equatable> {
     public init() {}
 }

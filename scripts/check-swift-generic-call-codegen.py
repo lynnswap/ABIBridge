@@ -99,6 +99,14 @@ def main():
             str(provider / "GenericCalls.swift"), str(provider / "RuntimeValues.swift"),
             str(provider / "ExplicitValues.swift"), "-o", str(value_ir_path))
         value_ir = value_ir_path.read_text()
+        getter_errors = {name: body(value_ir, name).splitlines()[0] for name in [
+            "checkedNumber", "fixedNumber", "delayedNumber", "delayedFixedNumber"]}
+        for name in ["checkedNumber", "delayedNumber"]:
+            require(len(re.findall(r"\bptr\b", getter_errors[name])) == 3,
+                    f"{target}: a generic getter error requires a separate output pointer")
+        for name in ["fixedNumber", "delayedFixedNumber"]:
+            require(len(re.findall(r"\bptr\b", getter_errors[name])) == 2,
+                    f"{target}: a direct scalar getter error shares the result registers")
         associated_storage = {name: body(value_ir, name).splitlines()[0] for name in [
             "arrayElementGeneric", "sliceElementGeneric", "nestedElementGeneric", "fixedElementGeneric",
             "constrainedElementGeneric"]}
@@ -199,7 +207,7 @@ def main():
                         "tupleSource": tuple_source, "metatypeSource": metatype_source,
                         "nestedSource": nested_source, "superclassSource": superclass_source,
                         "metatypeCallbacks": metatypes, "packSources": pack_sources,
-                        "associatedStorage": associated_storage})
+                        "associatedStorage": associated_storage, "getterErrors": getter_errors})
     report = {"compiler": run("xcrun", "swiftc", "--version").strip(), "runtimeTested": False,
               "demanglerRevision": upstream["revision"], "targets": targets}
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")

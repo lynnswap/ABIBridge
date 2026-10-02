@@ -96,7 +96,22 @@ let text = try unsafe getText.unsafeInvoke(on: renderer)
 
 An object scope also provides getter(named:as:) and setter(named:as:) returning bound handles. Static properties use staticGetter(named:as:) and staticSetter(named:as:). Accessors use the same unsafeInvoke spelling as other native calls.
 
-Setters transfer ownership of the incoming value. Use a value metatype for a synchronous nonthrowing getter, or a zero-argument function metatype for a throwing or async getter, such as `(() throws -> String).self` or `(@concurrent () async -> String).self`. Getter symbol names do not establish these effects. See <doc:SwiftErrorABI>.
+Setters transfer ownership of the incoming value. Getters use a zero-argument function metatype, such as `(() -> String).self`, `(() throws -> String).self`, or `(@concurrent () async -> String).self`. Getter symbol names do not establish these effects. See <doc:SwiftErrorABI>.
+
+For a throwing getter in a generic type, also supply its source function type with `declaredAs:`. The getter symbol contains the property type but omits its formal error type. The concrete function metatype alone cannot distinguish `throws(B)` from a fixed error type that happens to equal the argument bound to `B`.
+
+```swift
+// For a provider declared as Getter<Value, Failure: Error>, with a property
+// checked: Value { get throws(Failure) }, and arguments String/ProviderFailure:
+let checked = try await type.getter(
+    named: "checked",
+    as: (() throws(ProviderFailure) -> String).self,
+    declaredAs: "() throws(B) -> A"
+)
+let value = try unsafe checked.unsafeInvoke(on: receiver)
+```
+
+`A` and `B` follow the declaration's generic parameter order. A fixed error type uses its qualified name, such as `"() throws(Example.ProviderFailure) -> A"`. Include `async` when needed. Bound object getters and static getters accept the same source signature. Nonthrowing getters, including async getters, need only `as:`.
 
 Concrete callback parameters and returned closures use the synchronous or async closure wrapper in the function-type metatype, as described in <doc:SwiftClosureValues>. Initializers transfer the encoded owned context; ordinary methods borrow it for the call.
 

@@ -2,6 +2,16 @@ import ABIBridge
 import Darwin
 import Foundation
 
+@MainActor
+func prepareGenericGetters(type: NativeSwiftType, object: NativeObject) async throws {
+    _ = try await type.getter(named: "checked", as: (() throws -> String).self,
+                       declaredAs: "() throws(B) -> A")
+    _ = try await type.staticGetter(named: "checkedType", as: (() throws -> String.Type).self,
+                             declaredAs: "() throws(B) -> A.Type")
+    _ = try await object.getter(named: "delayedChecked", as: (() async throws -> String).self,
+                               declaredAs: "() async throws(B) -> A")
+}
+
 func prepare<Signature>(named name: String, as signature: Signature.Type, in scope: ImageSelector,
                         using runtime: ABIRuntime) async throws -> NativeSwiftFunction<Signature> {
     try await runtime.swiftFunction(named: name, as: signature, in: scope)

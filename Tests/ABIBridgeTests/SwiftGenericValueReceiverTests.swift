@@ -30,7 +30,8 @@ struct SwiftGenericValueReceiverTests {
             genericArguments: [.type(Int.self)])
         let receiver = GenericValueBox(42)
         for (constraint, result) in [("Swift.Equatable", Int64(10)), ("Swift.Hashable", Int64(20))] {
-            let owner = "(extension in ManagedSwiftFixtures):ManagedSwiftFixtures.GenericValueBox<A where A: " + constraint + ">"
+            let prefix = constraint == "Swift.Equatable" ? "" : "(extension in ManagedSwiftFixtures):"
+            let owner = prefix + "ManagedSwiftFixtures.GenericValueBox<A where A: " + constraint + ">"
             let method = try await type.method(named: owner + ".selected() -> Swift.Int64", as: (() -> Int64).self)
             let getter = try await type.getter(named: owner + ".selectedValue.getter : Swift.Int64", as: (() -> Int64).self)
             let staticMethod = try await type.staticMethod(named: "static " + owner + ".selectedStatic() -> Swift.Int64", as: (() -> Int64).self)

@@ -50,12 +50,19 @@ struct SwiftGenericCallPlan: Sendable {
 
     init(declaration: String, linkageName: String, genericArguments: [NativeSwiftGenericArgument],
          signature: SwiftFunctionSignature, resolver: SymbolResolver,
-         enclosing: SwiftGenericTypeMetadata? = nil, receiver: SwiftReceiverMode? = nil) throws {
+         enclosing: SwiftGenericTypeMetadata? = nil, receiver: SwiftReceiverMode? = nil,
+         getterSignature: String? = nil) throws {
         let context = try enclosing.flatMap { $0.arguments.isEmpty ? nil : try SwiftGenericTypeContext(metadata: $0.value) }
-        let declaration = try SwiftGenericDeclaration(linkageName: linkageName, enclosing: context)
+        let formalGetter = try getterSignature.map(SwiftFormalType.init)
+        let declaration = try SwiftGenericDeclaration(linkageName: linkageName, enclosing: context,
+                                                       getterSignature: formalGetter, caller: signature)
         let binding = try SwiftGenericBinding(declaration: declaration,
             arguments: (enclosing?.arguments ?? []) + genericArguments,
             signature: signature, resolver: resolver, enclosing: context)
+        if case .function(_, let result, let failure, _) = formalGetter {
+            try binding.validate(signature.result, for: result)
+            if let failure { try binding.validate(signature.failure, for: failure) }
+        }
         guard declaration.isAsync == signature.isAsync,
               (declaration.failure == nil) == (signature.failure == Never.self) else {
             throw ABIResolutionError.signatureMismatch(.init(

@@ -1,6 +1,11 @@
 import ABIBridge
 import Foundation
+import ManagedSwiftFixtures
 import Testing
+
+extension GenericGetterFailure: ABIBridgeSwiftValue {
+    public static var swiftABIType: NativeType { .int64 }
+}
 
 private protocol ReceiverMetric { var text: String { get } }
 private struct ReceiverNumber: ReceiverMetric {
@@ -40,6 +45,64 @@ private final class InheritedGenericReceiver: GenericReceiver<ReceiverNumber> {}
 private enum ReceiverFailure: Error { case rejected }
 
 struct SwiftGenericReceiverTests {
+    @MainActor @Test func effectfulGenericGettersUseTheDeclaredErrorConvention() async throws {
+        let runtime = ABIRuntime()
+        let owner = GenericEffectfulGetter("getter", GenericGetterFailure(42), false)
+        let object = runtime.object(owner)
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericEffectfulGetter",
+            genericArguments: [.type(String.self), .type(GenericGetterFailure.self)])
+        let checked = try await object.getter(named: "checked",
+            as: (() throws(GenericGetterFailure) -> String).self, declaredAs: "() throws(B) -> A")
+        let fixed = try await type.getter(named: "fixedFailure",
+            as: (() throws(GenericGetterFailure) -> String).self,
+            declaredAs: "() throws(ManagedSwiftFixtures.GenericGetterFailure) -> A")
+        let delayed = try await object.getter(named: "delayed", as: (() async -> String).self)
+        let delayedChecked = try await object.getter(named: "delayedChecked",
+            as: (() async throws(GenericGetterFailure) -> String).self, declaredAs: "() async throws(B) -> A")
+        let number = try await object.getter(named: "checkedNumber", as: (() throws(GenericGetterFailure) -> Int64).self,
+            declaredAs: "() throws(B) -> Swift.Int64")
+        let fixedNumber = try await object.getter(named: "fixedNumber", as: (() throws(GenericGetterFailure) -> Int64).self,
+            declaredAs: "() throws(ManagedSwiftFixtures.GenericGetterFailure) -> Swift.Int64")
+        let delayedNumber = try await object.getter(named: "delayedNumber", as: (() async throws(GenericGetterFailure) -> Int64).self,
+            declaredAs: "() async throws(B) -> Swift.Int64")
+        let delayedFixedNumber = try await object.getter(named: "delayedFixedNumber", as: (() async throws(GenericGetterFailure) -> Int64).self,
+            declaredAs: "() async throws(ManagedSwiftFixtures.GenericGetterFailure) -> Swift.Int64")
+        #expect(try unsafe checked.unsafeInvoke() == "getter")
+        #expect(try unsafe fixed.unsafeInvoke(on: owner) == "getter")
+        #expect(try unsafe await delayed.unsafeInvoke() == "getter")
+        #expect(try unsafe await delayedChecked.unsafeInvoke() == "getter")
+        #expect(try unsafe number.unsafeInvoke() == 41)
+        #expect(try unsafe fixedNumber.unsafeInvoke() == 42)
+        #expect(try unsafe await delayedNumber.unsafeInvoke() == 43)
+        #expect(try unsafe await delayedFixedNumber.unsafeInvoke() == 44)
+        owner.shouldThrow = true
+        for (call, code) in [({ try unsafe checked.unsafeInvoke() }, Int64(42)),
+                             ({ try unsafe fixed.unsafeInvoke(on: owner) }, Int64(71))] {
+            do { _ = try call(); Issue.record("Expected a native getter error") }
+            catch let error as NativeSwiftError { error.withUnderlyingError { #expect(($0 as? GenericGetterFailure)?.code == code) } }
+        }
+        do { _ = try unsafe await delayedChecked.unsafeInvoke(); Issue.record("Expected an async getter error") }
+        catch let error as NativeSwiftError { error.withUnderlyingError { #expect(($0 as? GenericGetterFailure)?.code == 42) } }
+        for (call, code) in [({ try unsafe number.unsafeInvoke() }, Int64(42)),
+                             ({ try unsafe fixedNumber.unsafeInvoke() }, Int64(72))] {
+            do { _ = try call(); Issue.record("Expected a scalar getter error") }
+            catch let error as NativeSwiftError { error.withUnderlyingError { #expect(($0 as? GenericGetterFailure)?.code == code) } }
+        }
+        do { _ = try unsafe await delayedNumber.unsafeInvoke(); Issue.record("Expected an async generic getter error") }
+        catch let error as NativeSwiftError { error.withUnderlyingError { #expect(($0 as? GenericGetterFailure)?.code == 42) } }
+        do { _ = try unsafe await delayedFixedNumber.unsafeInvoke(); Issue.record("Expected an async fixed getter error") }
+        catch let error as NativeSwiftError { error.withUnderlyingError { #expect(($0 as? GenericGetterFailure)?.code == 73) } }
+        let staticGetter = try await type.staticGetter(named: "checkedType",
+            as: (() throws(GenericGetterFailure) -> String.Type).self, declaredAs: "() throws(B) -> A.Type")
+        let asyncStaticGetter = try await type.staticGetter(named: "delayedType",
+            as: (() async throws(GenericGetterFailure) -> String.Type).self, declaredAs: "() async throws(B) -> A.Type")
+        #expect(try unsafe staticGetter.unsafeInvoke() == String.self)
+        #expect(try unsafe await asyncStaticGetter.unsafeInvoke() == String.self)
+        do {
+            _ = try await object.getter(named: "checked", as: (() throws(GenericGetterFailure) -> String).self)
+            Issue.record("The formal error cannot be inferred from the bound error type")
+        } catch ABIResolutionError.unsupportedDeclaration {}
+    }
     @MainActor @Test(arguments: [false, true])
     func dependentMembersAndIndependentParametersUseRawSwiftValues(_ inherited: Bool) async throws {
         let receiver: GenericReceiver<ReceiverNumber> = inherited

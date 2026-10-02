@@ -2,7 +2,8 @@ import ABIBridgeCore
 import Foundation
 
 extension SwiftGenericDeclaration {
-    init(linkageName: String, enclosing context: SwiftGenericTypeContext? = nil) throws {
+    init(linkageName: String, enclosing context: SwiftGenericTypeContext? = nil,
+         getterSignature: SwiftFormalType? = nil, caller: SwiftFunctionSignature? = nil) throws {
         let syntax = try SwiftSyntax(symbol: linkageName)
         var entry = syntax.root
         while ["Global", "Static"].contains(entry.kind) {
@@ -56,8 +57,24 @@ extension SwiftGenericDeclaration {
             let property = try SwiftFormalType(value)
             arguments = accessor == "Setter" ? [property] : []
             result = accessor == "Setter" ? .tuple([]) : property
-            failure = nil
-            isAsync = false
+            if accessor == "Getter" {
+                if let getterSignature {
+                    guard case .function(let parameters, _, let failure, let isAsync) = getterSignature, parameters.isEmpty else {
+                        throw ABIResolutionError.signatureMismatch(.init(expected: "A zero-argument declared getter signature", found: [getterSignature.spelling]))
+                    }
+                    self.failure = failure
+                    self.isAsync = isAsync
+                } else {
+                    if let caller, caller.failure != Never.self {
+                        throw ABIResolutionError.unsupportedDeclaration("A throwing generic getter requires declaredAs: with its source function type; its symbol does not encode the formal error type.")
+                    }
+                    failure = nil
+                    isAsync = caller?.isAsync ?? false
+                }
+            } else {
+                failure = nil
+                isAsync = false
+            }
         } else {
             guard case .function(let arguments, let result, let failure, let isAsync) = try SwiftFormalType(value) else {
                 throw ABIResolutionError.unsupportedDeclaration("The Swift declaration is missing its function type.")

@@ -341,9 +341,10 @@ extension NativeObject {
     /// Resolves a Swift property getter bound to this object.
     /// Supply its complete zero-argument function type, including native errors and async isolation.
     public nonisolated(nonsending) func getter<Signature>(
-        named name: String, as signature: Signature.Type, consuming isConsuming: Bool = false
+        named name: String, as signature: Signature.Type, declaredAs declaredSignature: String? = nil,
+        consuming isConsuming: Bool = false
     ) async throws -> NativeBoundSwiftMethod<Signature> {
-        let method = try await swiftType().getter(named: name, as: signature, consuming: isConsuming)
+        let method = try await swiftType().getter(named: name, as: signature, declaredAs: declaredSignature, consuming: isConsuming)
         return NativeBoundSwiftMethod(method: method, receiver: receiver!)
     }
 }
