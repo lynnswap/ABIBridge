@@ -45,7 +45,8 @@ final class SwiftValueBorrow {
             // An owned-value borrow can keep its read access through suspension.
             // A synchronous native callback gives us no way to extend its storage.
             guard !asynchronous || owner != nil else { throw NativeSwiftBorrowError.synchronousBorrow }
-            return NativeValueStorage(borrowing: UnsafeMutableRawPointer(mutating: address), owner: owner ?? self)
+            return NativeValueStorage(borrowing: UnsafeMutableRawPointer(mutating: address), owner: owner ?? self,
+                                      retainingResourcesOf: owner)
         }
     }
 

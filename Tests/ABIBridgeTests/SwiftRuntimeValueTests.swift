@@ -22,6 +22,14 @@ private struct RuntimeMoveOnlyPayload: ~Copyable {
     let text: String
 }
 
+private struct RuntimeWordResult: ABIBridgeValue {
+    static let abiType = NativeType.int64
+    let storage: NativeValue
+    init(nativeValue: NativeValue) { storage = nativeValue }
+    static func nativeValue(from value: Self) -> NativeValue { value.storage }
+    func read() throws -> Int64 { try unsafe storage.read(as: Int64.self) }
+}
+
 @Suite struct SwiftRuntimeValueTests {
     #if DEBUG && os(macOS)
     @Test func anOpaqueFactoryKeepsItsOwnCodeAndUsesTheUnderlyingTypeImage() async throws {
@@ -132,6 +140,61 @@ private struct RuntimeMoveOnlyPayload: ~Copyable {
             #expect(ticket.number == 42)
         }
         #expect(value.isConsumed && counts.destructions == 1)
+    }
+
+    @Test func resultAdaptersDoNotRetainReceiverAccess() async throws {
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self)
+        let counts = ArgumentCounts()
+        let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
+        let abi = try NativeType.opaque(named: value.type.name)
+        let read = try await value.type.method(named: "read() -> Swift.Int64", as: (() -> RuntimeWordResult).self,
+            receiverABI: abi)
+        let readAsync = try await value.type.method(named: "readAsync() async -> Swift.Int64",
+            as: (() async -> RuntimeWordResult).self, receiverABI: abi)
+        let add = try await value.type.method(named: "add(_:)", as: ((Int64) -> Void).self,
+            receiverABI: abi, mutating: true)
+        let take = try await value.type.method(named: "takeNumberAsync() async -> Swift.Int64",
+            as: (() async -> RuntimeWordResult).self, receiverABI: abi, consuming: true)
+        let first = try unsafe read.unsafeInvoke(on: value)
+        try unsafe add.unsafeInvoke(on: value, 1)
+        let second = try unsafe await readAsync.unsafeInvoke(on: value)
+        try unsafe add.unsafeInvoke(on: value, 1)
+        let final = try unsafe await take.unsafeInvoke(on: value)
+        #expect(try first.read() == 42 && second.read() == 43 && final.read() == 44)
+        #expect(value.isConsumed && counts.destructions == 1)
+    }
+
+    @Test @MainActor func borrowedResultAdaptersRetainResourcesAfterAccessEnds() async throws {
+        guard #available(macOS 26, iOS 26, tvOS 26, watchOS 26, visionOS 26, *) else { return }
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self)
+        let counts = ArgumentCounts()
+        var results: [RuntimeWordResult] = []
+        do {
+            let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
+            let abi = try NativeType.opaque(named: value.type.name)
+            let read = try await value.type.method(named: "read() -> Swift.Int64", as: (() -> RuntimeWordResult).self,
+                receiverABI: abi)
+            let readAsync = try await value.type.method(named: "readAsync() async -> Swift.Int64",
+                as: (() async -> RuntimeWordResult).self, receiverABI: abi)
+            let add = try await value.type.method(named: "add(_:)", as: ((Int64) -> Void).self,
+                receiverABI: abi, mutating: true)
+            results.append(try value.withBorrowedValue { try unsafe read.unsafeInvoke(on: $0) })
+            let operation = try value.withBorrowedValue { borrowed in
+                Task.immediate { @MainActor in
+                    results.append(try unsafe await readAsync.unsafeInvoke(on: borrowed))
+                }
+            }
+            try await operation.value
+            try unsafe add.unsafeInvoke(on: value, 1)
+        }
+        #expect(counts.destructions == 0)
+        #expect(try results.map { try $0.read() } == [42, 42])
+        results.removeAll()
+        #expect(counts.destructions == 1)
     }
 
     @Test func runtimeMemberAccessSurvivesSuspensionAndNativeFailure() async throws {

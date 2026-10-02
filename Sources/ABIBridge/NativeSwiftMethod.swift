@@ -105,6 +105,7 @@ public struct NativeSwiftMethod<Signature>: Sendable {
         _ storage: NativeValueStorage, didInvoke: (() -> Void)? = nil, _ values: repeat each Argument
     ) throws -> Result {
         guard case .synchronous(let call) = call else { preconditionFailure("A synchronous signature has a synchronous call plan.") }
+        defer { withExtendedLifetime(storage) {} }
         let context = try unsafe receiver.context(for: storage)
         // Typed and raw-pointer receivers need a separate +1. An owned runtime
         // receiver already transfers its reference through its access lease.
@@ -115,7 +116,7 @@ public struct NativeSwiftMethod<Signature>: Sendable {
         return try unsafe call.unsafeInvoke(
             symbol: symbol, context: context,
             trailingValue: receiver.mode == .value ? storage : nil,
-            retaining: (symbol, type, storage), retainingCode: type.image, didInvoke: {
+            retaining: (symbol, type, storage.ownerForResult), retainingCode: type.image, didInvoke: {
                 invoked = true
                 if receiver.isConsuming && (receiver.mode != .object || storage.transfersOwnership) { storage.relinquishValue() }
                 didInvoke?()
@@ -252,13 +253,14 @@ extension NativeSwiftMethod {
         _ storage: NativeValueStorage, didInvoke: (() -> Void)? = nil, _ values: repeat each Argument
     ) async throws -> Result {
         guard case .asynchronous(let call, let implementation) = call else { preconditionFailure("An async signature has an async call plan.") }
+        defer { withExtendedLifetime(storage) {} }
         let context = try unsafe receiver.context(for: storage)
         let consumedObject = receiver.isConsuming && receiver.mode == .object && !storage.transfersOwnership
             ? Unmanaged<AnyObject>.fromOpaque(context!).retain() : nil
         var invoked = false
         defer { if !invoked { consumedObject?.release() } }
         return try unsafe await call.unsafeInvoke(implementation: implementation, context: context,
-            trailingValue: receiver.mode == .value ? storage : nil, retaining: (implementation, type, storage),
+            trailingValue: receiver.mode == .value ? storage : nil, retaining: (implementation, type, storage.ownerForResult),
             retainingCode: type.image, didInvoke: {
                 invoked = true
                 if receiver.isConsuming && (receiver.mode != .object || storage.transfersOwnership) { storage.relinquishValue() }

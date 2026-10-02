@@ -60,13 +60,18 @@ final class NativeValueStorage {
     let owner: AnyObject?
     private var destroyValue: ((UnsafeMutableRawPointer) -> Void)?
     private let ownsAllocation: Bool
+    private let resultStorage: NativeValueStorage?
+    var ownerForResult: NativeValueStorage { resultStorage ?? self }
     private var didRelinquish: (() -> Void)?
     var transfersOwnership: Bool { didRelinquish != nil }
 
-    init(borrowing address: UnsafeMutableRawPointer, owner: AnyObject, didRelinquish: (() -> Void)? = nil) {
+    init(borrowing address: UnsafeMutableRawPointer, owner: AnyObject,
+         retainingResourcesOf storage: NativeValueStorage? = nil, didRelinquish: (() -> Void)? = nil) {
         self.address = address
         self.owner = owner
         self.didRelinquish = didRelinquish
+        // Escaping results retain the value's resources, not its active access.
+        resultStorage = storage?.ownerForResult
         ownsAllocation = false
     }
 
@@ -76,6 +81,7 @@ final class NativeValueStorage {
         address.initializeMemory(as: UInt8.self, repeating: 0, count: max(size, 1))
         self.owner = owner
         destroyValue = destroy
+        resultStorage = nil
         ownsAllocation = true
     }
     deinit {
@@ -104,6 +110,7 @@ final class NativeValueStorage {
     }
 
     func writebackOwner(retaining images: [NativeImage]) -> Any {
+        if let resultStorage { return resultStorage.writebackOwner(retaining: images) }
         if let value = owner as? NativeValue {
             return value.lifetimeForCopy(retaining: images)
         }

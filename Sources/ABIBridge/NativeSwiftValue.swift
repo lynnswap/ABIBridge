@@ -126,7 +126,7 @@ public final class NativeSwiftValue {
             if writes { self.exclusive = false } else { self.readers -= 1 }
             self.lock.unlock()
         }
-        return NativeValueStorage(borrowing: storage.address, owner: access,
+        return NativeValueStorage(borrowing: storage.address, owner: access, retainingResourcesOf: storage,
                                   didRelinquish: convention == .consuming ? { access.consume() } : nil)
     }
 }

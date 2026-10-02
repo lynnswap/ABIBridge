@@ -3,6 +3,14 @@ import SwiftValueFixtures
 import SwiftOpaqueExtensions
 import Foundation
 
+private struct OpaqueWordResult: ABIBridgeValue {
+    static let abiType = NativeType.int64
+    let storage: NativeValue
+    init(nativeValue: NativeValue) { storage = nativeValue }
+    static func nativeValue(from value: Self) -> NativeValue { value.storage }
+    func read() throws -> Int64 { try unsafe storage.read(as: Int64.self) }
+}
+
 @MainActor func validateSwiftOpaqueResults() async throws -> [String] {
     let runtime = ABIRuntime()
     var checks: [String] = []
@@ -94,7 +102,11 @@ import Foundation
     let readMember = try await memberValue.type.method(named: "read()", as: (() -> Int64).self, receiverABI: selfABI)
     let addMember = try await memberValue.type.method(named: "add(_:)", as: ((Int64) -> Void).self,
         receiverABI: selfABI, mutating: true)
-    let takeMember = try await memberValue.type.method(named: "takeNumber()", as: (nonisolated(nonsending) () async -> Int64).self,
+    let adaptedRead = try await memberValue.type.method(named: "read() -> Swift.Int64",
+        as: (() -> OpaqueWordResult).self, receiverABI: selfABI)
+    let retainedReadResult = try unsafe adaptedRead.unsafeInvoke(on: memberValue)
+    let takeMember = try await memberValue.type.method(named: "takeNumber() async -> Swift.Int64",
+        as: (nonisolated(nonsending) () async -> OpaqueWordResult).self,
         receiverABI: selfABI, consuming: true)
     try check(try unsafe readMember.unsafeInvoke(on: memberValue) == 42,
               "An owned noncopyable value uses ordinary member invocation")
@@ -137,11 +149,15 @@ import Foundation
         let number = try await operation.value
         try check(number == 47, "Retained borrowed self remains valid until native async completion")
     }
-    let consumedNumber = try unsafe await takeMember.unsafeInvoke(on: memberValue)
-    try check(consumedNumber == 47 && memberValue.isConsumed,
-              "An async consuming member transfers the owned noncopyable value")
-    try check(memberCounts.destructions == 1,
-              "Async consuming self destroys its managed payload once")
+    let consumed = try unsafe await takeMember.unsafeInvoke(on: memberValue)
+    try withExtendedLifetime((retainedReadResult, consumed)) {
+        try check(try consumed.read() == 47 && memberValue.isConsumed,
+                  "An async consuming member transfers the owned noncopyable value")
+        try check(memberCounts.destructions == 1,
+                  "Async consuming self destroys its managed payload once")
+        try check(try retainedReadResult.read() == 42,
+                  "Result adapters retain native resources without extending receiver access")
+    }
 
     let empty = try await runtime.swiftFunction(named: "SwiftValueFixtures.makeOpaqueEmpty()",
         as: (() -> NativeSwiftValue).self)
