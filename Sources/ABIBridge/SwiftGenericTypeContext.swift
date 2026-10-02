@@ -180,8 +180,7 @@ struct SwiftObjectiveCProtocol: Sendable {
     }
 
     func accepts(_ type: Any.Type) -> Bool {
-        guard let type = type as? AnyClass else { return false }
-        return class_conformsToProtocol(type, unsafeBitCast(address, to: Protocol.self))
+        SwiftObjectType(type)?.conforms(to: unsafeBitCast(address, to: Protocol.self)) ?? false
     }
 }
 

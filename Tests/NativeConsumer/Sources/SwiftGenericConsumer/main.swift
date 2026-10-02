@@ -19,6 +19,12 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
     }
     defer { dlclose(original) }
     let runtime = ABIRuntime()
+    let objectIdentity = try await runtime.swiftFunction(
+        named: "ManagedSwiftFixtures.objectConstraintGeneric<A where A: AnyObject>(A) -> A",
+        as: ((AnyObject) -> AnyObject).self, genericArguments: [.type(AnyObject.self)])
+    let originalObject = NSObject()
+    let returnedObject = try unsafe objectIdentity.unsafeInvoke(originalObject)
+    precondition(returnedObject === originalObject)
     let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericTypeClass",
                                          genericArguments: [.type(String.self)])
     let initialize = try await type.initializer(named: "init(_:)", as: ((String) -> AnyObject).self,

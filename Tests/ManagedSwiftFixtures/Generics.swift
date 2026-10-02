@@ -174,6 +174,10 @@ public struct GenericObjectCarrier: GenericObjectContainer { public typealias It
 public class GenericObjCValue: NSObject, GenericObjCConstraint {
     public var genericNumber: Int { 42 }
 }
+@inline(never) public func objectConstraintGeneric<Value: AnyObject>(_ value: Value) -> Value { value }
+@inline(never) public func objcSuperclassPairGeneric<Value: NSObject>(_ value: Value, _ protocolValue: any NSObjectProtocol) -> Value {
+    value
+}
 @inline(never) public func objcConstraintGeneric<Value: GenericObjCConstraint>(_ value: Value) -> Value { value }
 @inline(never) public func superclassConstraintGeneric<Value: GenericObjCValue>(_ value: Value) -> Value { value }
 

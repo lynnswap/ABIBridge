@@ -1,8 +1,11 @@
 #if DEBUG
 @testable import ABIBridge
 import ABIBridgeCore
+import Foundation
 import ManagedSwiftFixtures
 import Testing
+
+private protocol GenericSwiftClassOnly: AnyObject {}
 
 protocol GenericOrderingA {}
 private protocol GenericOrderingZ {}
@@ -10,6 +13,20 @@ private struct GenericOrderingValue: GenericOrderingA, GenericOrderingZ {}
 private struct GenericOrderingOwner<Value: GenericOrderingZ> {}
 
 struct SwiftGenericBindingTests {
+    @Test func objectConstraintMetadataFollowsSwiftSelfConformanceRules() throws {
+        #expect(SwiftObjectType(AnyObject.self) != nil)
+        #expect(SwiftObjectType((any NSObjectProtocol).self) != nil)
+        let object = try #require(SwiftObjectType((any NSCopying & NSObject).self))
+        #expect(object.isSubclass(of: NSObject.self))
+        #expect(!object.isSubclass(of: NSString.self))
+        #expect(object.conforms(to: try #require(NSProtocolFromString("NSCopying"))))
+        #expect(object.conforms(to: try #require(NSProtocolFromString("NSObject"))))
+        for type: Any.Type in [String.self, AnyObject.Type.self, AnyObject.Protocol.self,
+                              (any GenericSwiftClassOnly).self, (@convention(block) () -> Void).self] {
+            #expect(SwiftObjectType(type) == nil)
+        }
+    }
+
     @Test func privateProtocolIdentityDoesNotChangeWitnessOrdering() throws {
         let name = try swiftNativeTypeName((any GenericOrderingA).self)
         let context = try SwiftGenericTypeContext(metadata: GenericOrderingOwner<GenericOrderingValue>.self)

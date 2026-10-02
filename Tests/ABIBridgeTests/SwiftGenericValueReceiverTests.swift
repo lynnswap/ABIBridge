@@ -24,6 +24,45 @@ extension GenericValueBox: ABIBridgeSwiftValue {
 
 @Suite(.serialized)
 struct SwiftGenericValueReceiverTests {
+    @MainActor @Test func objectConstraintsAcceptObjectiveCExistentialSpecializations() async throws {
+        let runtime = ABIRuntime()
+        let object: AnyObject = NSObject()
+        let free = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.objectConstraintGeneric<A where A: AnyObject>(A) -> A",
+            as: ((AnyObject) -> AnyObject).self, genericArguments: [.type(AnyObject.self)])
+        #expect(try unsafe free.unsafeInvoke(object) === object)
+        let anyType = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericObjectValue",
+            genericArguments: [.type(AnyObject.self)])
+        let make = try await anyType.initializer(named: "init(_:)", as: ((AnyObject) -> GenericObjectValue<AnyObject>).self)
+        let value = try unsafe make.unsafeInvoke(object)
+        let project = try await anyType.method(named: "project()", as: (() -> AnyObject).self)
+        #expect(try unsafe project.unsafeInvoke(on: value) === object)
+
+        let objc: any NSObjectProtocol = NSObject()
+        let objcType = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericObjectValue",
+            genericArguments: [.type((any NSObjectProtocol).self)])
+        let objcProject = try await objcType.method(named: "project()", as: (() -> any NSObjectProtocol).self)
+        #expect(try unsafe objcProject.unsafeInvoke(on: GenericObjectValue<any NSObjectProtocol>(objc)) === objc)
+
+        let constrained: any NSCopying & NSObject = NSString(string: "class existential")
+        let superType = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericSuperclassValue",
+            genericArguments: [.type((any NSCopying & NSObject).self)])
+        let superProject = try await superType.method(named: "project()", as: (() -> any NSCopying & NSObject).self)
+        #expect(try unsafe superProject.unsafeInvoke(on: GenericSuperclassValue<any NSCopying & NSObject>(constrained)) === constrained)
+
+        let protocolValue: any GenericObjCConstraint = GenericObjCValue()
+        let protocolCall = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.objcConstraintGeneric<A where A: ManagedSwiftFixtures.GenericObjCConstraint>(A) -> A",
+            as: ((any GenericObjCConstraint) -> any GenericObjCConstraint).self,
+            genericArguments: [.type((any GenericObjCConstraint).self)])
+        #expect(try unsafe protocolCall.unsafeInvoke(protocolValue) === protocolValue)
+        let pair = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.objcSuperclassPairGeneric<A where A: __C.NSObject>(A, __C.NSObject) -> A",
+            as: ((NSObject, any NSObjectProtocol) -> NSObject).self, genericArguments: [.type(NSObject.self)])
+        let instance = NSObject()
+        #expect(try unsafe pair.unsafeInvoke(instance, objc) === instance)
+    }
+
     @Test func memberWitnessesUseTheCanonicalRefinedSignature() async throws {
         let runtime = ABIRuntime()
         let associatedType = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericAssociatedOwner",

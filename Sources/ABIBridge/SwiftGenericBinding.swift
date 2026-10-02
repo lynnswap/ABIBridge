@@ -143,13 +143,15 @@ struct SwiftGenericBinding: Sendable {
                     throw ABIResolutionError.signatureMismatch(.init(expected: "Equal type pack lengths", found: [left.spelling, right.spelling]))
                 }
             case .superclass(let subject, let constraint):
-                guard let expected = try types(constraint).first as? AnyClass else {
+                // Objective-C classes and protocols can share a demangled name.
+                // A superclass requirement identifies the class namespace.
+                let name = constraint.spelling
+                let importedClass = name.hasPrefix("__C.") ? NSClassFromString(String(name.dropFirst(4))) : nil
+                guard let expected = try importedClass ?? types(constraint).first as? AnyClass else {
                     throw ABIResolutionError.metadataUnavailable("The superclass constraint does not identify a class: " + constraint.spelling)
                 }
                 for type in try types(subject) {
-                    var current = type as? AnyClass
-                    while let value = current, value !== expected { current = class_getSuperclass(value) }
-                    guard current != nil else {
+                    guard SwiftObjectType(type)?.isSubclass(of: expected) == true else {
                         throw ABIResolutionError.signatureMismatch(.init(expected: constraint.spelling, found: [String(reflecting: type)]))
                     }
                 }
@@ -216,7 +218,7 @@ struct SwiftGenericBinding: Sendable {
                         found: types.map { String(reflecting: $0) }))
                 }
             } else if conformance.name.hasSuffix("AnyObject") {
-                guard types.allSatisfy({ $0 is AnyClass }) else {
+                guard types.allSatisfy({ SwiftObjectType($0) != nil }) else {
                     throw ABIResolutionError.signatureMismatch(.init(expected: "A class type", found: types.map { String(reflecting: $0) }))
                 }
             }

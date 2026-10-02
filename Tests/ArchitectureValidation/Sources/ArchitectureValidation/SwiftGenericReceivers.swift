@@ -82,6 +82,29 @@ private struct BindingBoolAdapter: ABIBridgeValue {
                 "Declared generic witnesses preserve typed-error output: \(importsConformance)")
         }
     }
+    let object: AnyObject = NSObject()
+    let objectType = try await runtime.swiftType(named: "SwiftValueFixtures.BindingObjectBox", genericArguments: [.type(AnyObject.self)])
+    let objectInit = try await objectType.initializer(named: "init(_:)", as: ((AnyObject) -> AnyObject).self)
+    let boxedObject = try unsafe objectInit.unsafeInvoke(object)
+    let objectProject = try await runtime.object(boxedObject).method(named: "project()", as: (() -> AnyObject).self)
+    try check(unsafe objectProject.unsafeInvoke() === object, "AnyObject satisfies nominal generic class constraints")
+    let objectIdentity = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.bindingObjectIdentity<A where A: AnyObject>(A) -> A",
+        as: ((AnyObject) -> AnyObject).self, genericArguments: [.type(AnyObject.self)])
+    try check(unsafe objectIdentity.unsafeInvoke(object) === object, "AnyObject satisfies free-function generic class constraints")
+    let protocolObject: any NSObjectProtocol = NSObject()
+    let protocolIdentity = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.bindingProtocolIdentity<A where A: __C.NSObject>(A) -> A",
+        as: ((any NSObjectProtocol) -> any NSObjectProtocol).self, genericArguments: [.type((any NSObjectProtocol).self)])
+    try check(unsafe protocolIdentity.unsafeInvoke(protocolObject) === protocolObject,
+        "Objective-C existential generic arguments satisfy their protocol constraints")
+    let superclassObject: any NSCopying & NSObject = NSString(string: "superclass existential")
+    let superclassIdentity = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.bindingSuperclassIdentity<A where A: __C.NSObject>(A, __C.NSObject) -> A",
+        as: ((any NSCopying & NSObject, any NSObjectProtocol) -> any NSCopying & NSObject).self,
+        genericArguments: [.type((any NSCopying & NSObject).self)])
+    try check(unsafe superclassIdentity.unsafeInvoke(superclassObject, protocolObject) === superclassObject,
+        "Objective-C compositions preserve superclass constraints and shared class/protocol names")
     let adapterType = try await runtime.swiftType(named: "SwiftValueFixtures.BindingGetter",
         genericArguments: [.type(String.self), .type(SmallError.self)])
     let adapterInit = try await adapterType.initializer(

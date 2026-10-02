@@ -36,7 +36,7 @@ let select = try await runtime.swiftFunction(
 let selected = try unsafe select.unsafeInvoke("fallback", ["first"])
 ```
 
-The supplied arguments must satisfy the declaration's conformance, same-type, superclass, and pack-shape requirements. Binding uses Swift's existing metadata and conformances; it does not create new conformances. Unsatisfied arguments fail preparation before native invocation.
+The supplied arguments must satisfy the declaration's conformance, same-type, superclass, and pack-shape requirements. Class constraints include `AnyObject` and Objective-C-compatible existential compositions, following Swift's self-conformance rules. Binding uses Swift's existing metadata and conformances; it does not create new conformances. Unsatisfied arguments fail preparation before native invocation.
 
 ## Parameter packs
 
@@ -125,7 +125,7 @@ Concrete argument and result positions retain the ordinary Swift adapter contrac
 
 ## Validation and value boundaries
 
-The macOS runtime tests compare these bindings with separately compiled Swift implementations. They cover dependent values, associated types, conditional conformances, inherited members, packs, ownership, metatypes, callbacks, async calls, and typed errors. The external consumer exercises public APIs without importing the provider module. The `swift-generic-bindings` device mode passed 46 checks on iPhone Air / iOS 27.0.1 (24A446), built with Xcode 27.0 / Swift 6.4 in Release for arm64e with pointer authentication enabled. Sixteen related modes also passed on the same build, for 273 checks across 17 modes. The [architecture validation guide](https://github.com/lynnswap/ABIBridge/blob/main/Tests/ArchitectureValidation/README.md#generic-declaration-bindings) records the covered operations.
+The macOS runtime tests compare these bindings with separately compiled Swift implementations. They cover dependent values, associated types, conditional conformances, inherited members, packs, ownership, metatypes, callbacks, async calls, and typed errors. The external consumer exercises public APIs without importing the provider module. The `swift-generic-bindings` device mode passed 50 checks on iPhone Air / iOS 27.0.1 (24A446), built with Xcode 27.0 / Swift 6.4 in Release for arm64e with pointer authentication enabled. Sixteen related modes also passed on the same build, for 277 checks across 17 modes. The [architecture validation guide](https://github.com/lynnswap/ABIBridge/blob/main/Tests/ArchitectureValidation/README.md#generic-declaration-bindings) records the covered operations.
 
 Compiler probes check formal argument/result conventions, hidden metadata and witness arguments, and pointer-authentication discriminators for arm64, x86_64, arm64e, and arm64_32. Compilation evidence does not establish runtime execution on the other architectures.
 

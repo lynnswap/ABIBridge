@@ -168,3 +168,14 @@ public final class BindingClosureOwner<Value> {
     if shouldThrow { throw error }
     return body()
 }
+
+public final class BindingObjectBox<Value: AnyObject> {
+    private let value: Value
+    public init(_ value: Value) { self.value = value }
+    @inline(never) public func project() -> Value { value }
+}
+@inline(never) public func bindingObjectIdentity<Value: AnyObject>(_ value: Value) -> Value { value }
+@inline(never) public func bindingProtocolIdentity<Value: NSObjectProtocol>(_ value: Value) -> Value { value }
+@inline(never) public func bindingSuperclassIdentity<Value: NSObject>(
+    _ value: Value, _ protocolValue: any NSObjectProtocol
+) -> Value { value }

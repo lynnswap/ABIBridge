@@ -15,8 +15,11 @@ func swiftFunctionTypeName(_ type: Any.Type) throws -> String {
 func swiftNativeTypeName(_ type: Any.Type) throws -> String {
     // Objective-C metatypes can print an unqualified runtime name (NSString),
     // while Swift declarations use their imported identity (__C.NSString).
-    guard let mangled = _mangledTypeName(type),
-          let name = DeclarationKey.demangle("$s" + mangled, language: .swift) else {
+    // The runtime mangler has no spelling for Objective-C superclass
+    // existentials or containers containing them; their qualified runtime
+    // descriptions still name the valid Swift types.
+    guard let mangled = _mangledTypeName(type) else { return String(reflecting: type) }
+    guard let name = DeclarationKey.demangle("$s" + mangled, language: .swift) else {
         throw ABIResolutionError.metadataUnavailable("No canonical Swift name for \(String(reflecting: type)).")
     }
     return name
