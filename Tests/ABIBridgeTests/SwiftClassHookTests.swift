@@ -6,6 +6,24 @@ import Testing
 
 @Suite(.serialized)
 struct SwiftClassHookTests {
+    @Test @MainActor func sendableImportedMemberHooksKeepTheMainActorContract() async throws {
+        let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
+        let type = try await fixture.runtime.swiftType(named: fixture.module + ".ReplacementValue", as: Int64.self, in: fixture.providerScope)
+        let method = try await type.method(named: "scalar(_:)", as: (@Sendable (Int64) -> Int64).self)
+        let oracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".importedValueMethod(_:)", as: ((Int64) -> Int64).self, in: fixture.callerScope)
+        let state = SwiftClassActorState()
+        let failures = Mutex<[String]>([])
+        let hook = try await unsafe method.hookMainActorImportedCalls(in: fixture.callerScope,
+            onFailure: { error in failures.withLock { $0.append(String(describing: error)) } }) { call, value in
+                state.calls += 1
+                return try call.proceed(value + 1)
+            }
+        defer { hook.invalidate() }
+        #expect(try unsafe oracle.unsafeInvoke(2) == 43)
+        #expect(try await Task.detached { try unsafe oracle.unsafeInvoke(2) }.value == 42)
+        #expect(state.calls == 1 && failures.withLock { $0 } == ["wrongThread"])
+    }
+
     @Test func inheritedAndOverriddenMetadataKeepIndependentReceiverScopes() async throws {
         let fixture = try CompiledSwiftReplacementFixture(writable: false); defer { fixture.cleanup() }
         let baseName = fixture.module + ".ReplacementRenderer"
@@ -45,7 +63,7 @@ struct SwiftClassHookTests {
         let identity = ObjectIdentifier(object)
         let oracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".classScalar(\(name), Swift.Int64) -> Swift.Int64",
             as: ((AnyObject, Int64) -> Int64).self, in: fixture.callerScope)
-        let method = try await type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
+        let method = try await type.method(named: "scalar(_:)", as: (@Sendable (Int64) -> Int64).self)
         let first = try await unsafe method.hookVirtualCalls(onFailure: { Issue.record("Unexpected: \($0)") }) { call, value in
             let receiver = try call.receiver(as: AnyObject.self)
             #expect(ObjectIdentifier(receiver) == identity)
@@ -85,7 +103,7 @@ struct SwiftClassHookTests {
         let object = try #require(try unsafe make.unsafeInvoke() as? NSObject)
         let oracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".callEditable(\(name), Swift.Int64) -> Swift.Int64",
             as: ((AnyObject, Int64) -> Int64).self, in: fixture.callerScope)
-        let method = try await type.method(named: "adding(_:)", as: ((Int64) -> Int64).self)
+        let method = try await type.method(named: "adding(_:)", as: (@Sendable (Int64) -> Int64).self)
         let hook = try await unsafe method.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
             onFailure: { Issue.record("Unexpected: \($0)") }) { call, value in
                 let receiver = try call.receiver(as: NSObject.self)
@@ -176,7 +194,7 @@ struct SwiftClassHookTests {
         let object = SwiftClassObject(try unsafe make.unsafeInvoke())
         let oracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".classScalar(\(name), Swift.Int64) -> Swift.Int64",
             as: ((AnyObject, Int64) -> Int64).self, in: fixture.callerScope)
-        let method = try await type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
+        let method = try await type.method(named: "scalar(_:)", as: (@Sendable (Int64) -> Int64).self)
         let failures = Mutex<[String]>([])
         let state = SwiftClassActorState()
         let hook = try await unsafe method.hookMainActorVirtualCalls(onFailure: { error in failures.withLock { $0.append(String(describing: error)) } }) { call, value in

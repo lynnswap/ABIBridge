@@ -110,6 +110,30 @@ extension NativeSwiftFunction {
         try await _prepareImportedReplacement(with: replacement, in: importer, from: provider, using: runtime, retaining: owner)
     }
 
+    @_transparent
+    @unsafe public nonisolated(nonsending) func prepareImportedReplacement<Result, Failure: Error, ReplacementFailure: Error, each Argument>(
+        with replacement: NativeSwiftFunction<(repeat each Argument) throws(ReplacementFailure) -> Result>, in importer: ImageSelector,
+        from provider: ImageSelector? = nil, using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil
+    ) async throws -> NativeSwiftImportedReplacement<NativeSwiftFunctionImplementation<Signature>> where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
+        try await _prepareImportedReplacement(with: replacement, in: importer, from: provider, using: runtime, retaining: owner)
+    }
+
+    @_transparent
+    @unsafe public nonisolated(nonsending) func prepareImportedReplacement<Result, Failure: Error, ReplacementFailure: Error, each Argument>(
+        with replacement: NativeSwiftFunction<@Sendable (repeat each Argument) throws(ReplacementFailure) -> Result>, in importer: ImageSelector,
+        from provider: ImageSelector? = nil, using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil
+    ) async throws -> NativeSwiftImportedReplacement<NativeSwiftFunctionImplementation<Signature>> where Signature == (repeat each Argument) throws(Failure) -> Result {
+        try await _prepareImportedReplacement(with: replacement, in: importer, from: provider, using: runtime, retaining: owner)
+    }
+
+    @_transparent
+    @unsafe public nonisolated(nonsending) func prepareImportedReplacement<Result, Failure: Error, ReplacementFailure: Error, each Argument>(
+        with replacement: NativeSwiftFunction<@Sendable (repeat each Argument) throws(ReplacementFailure) -> Result>, in importer: ImageSelector,
+        from provider: ImageSelector? = nil, using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil
+    ) async throws -> NativeSwiftImportedReplacement<NativeSwiftFunctionImplementation<Signature>> where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
+        try await _prepareImportedReplacement(with: replacement, in: importer, from: provider, using: runtime, retaining: owner)
+    }
+
     @usableFromInline nonisolated(nonsending) func _prepareImportedReplacement<ReplacementSignature>(
         with replacement: NativeSwiftFunction<ReplacementSignature>, in importer: ImageSelector,
         from provider: ImageSelector? = nil, using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil
@@ -137,6 +161,30 @@ extension NativeSwiftMethod {
         with replacement: NativeSwiftMethod<(repeat each Argument) throws(ReplacementFailure) -> Result>, in importer: ImageSelector,
         from provider: ImageSelector? = nil, using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil
     ) async throws -> NativeSwiftImportedReplacement<NativeSwiftMethodImplementation<Signature>> where Signature == (repeat each Argument) throws(Failure) -> Result {
+        try await _prepareImportedReplacement(with: replacement, in: importer, from: provider, using: runtime, retaining: owner)
+    }
+
+    @_transparent
+    @unsafe public nonisolated(nonsending) func prepareImportedReplacement<Result, Failure: Error, ReplacementFailure: Error, each Argument>(
+        with replacement: NativeSwiftMethod<(repeat each Argument) throws(ReplacementFailure) -> Result>, in importer: ImageSelector,
+        from provider: ImageSelector? = nil, using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil
+    ) async throws -> NativeSwiftImportedReplacement<NativeSwiftMethodImplementation<Signature>> where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
+        try await _prepareImportedReplacement(with: replacement, in: importer, from: provider, using: runtime, retaining: owner)
+    }
+
+    @_transparent
+    @unsafe public nonisolated(nonsending) func prepareImportedReplacement<Result, Failure: Error, ReplacementFailure: Error, each Argument>(
+        with replacement: NativeSwiftMethod<@Sendable (repeat each Argument) throws(ReplacementFailure) -> Result>, in importer: ImageSelector,
+        from provider: ImageSelector? = nil, using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil
+    ) async throws -> NativeSwiftImportedReplacement<NativeSwiftMethodImplementation<Signature>> where Signature == (repeat each Argument) throws(Failure) -> Result {
+        try await _prepareImportedReplacement(with: replacement, in: importer, from: provider, using: runtime, retaining: owner)
+    }
+
+    @_transparent
+    @unsafe public nonisolated(nonsending) func prepareImportedReplacement<Result, Failure: Error, ReplacementFailure: Error, each Argument>(
+        with replacement: NativeSwiftMethod<@Sendable (repeat each Argument) throws(ReplacementFailure) -> Result>, in importer: ImageSelector,
+        from provider: ImageSelector? = nil, using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil
+    ) async throws -> NativeSwiftImportedReplacement<NativeSwiftMethodImplementation<Signature>> where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
         try await _prepareImportedReplacement(with: replacement, in: importer, from: provider, using: runtime, retaining: owner)
     }
 

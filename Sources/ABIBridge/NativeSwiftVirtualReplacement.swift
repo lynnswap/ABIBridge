@@ -58,6 +58,30 @@ extension NativeSwiftMethod {
     @unsafe public func prepareVirtualReplacement<Result, Failure: Error, ReplacementFailure: Error, each Argument>(
         with replacement: NativeSwiftMethod<(repeat each Argument) throws(ReplacementFailure) -> Result>, retaining owner: (any Sendable)? = nil
     ) throws -> NativeSwiftVirtualReplacement<NativeSwiftMethodImplementation<Signature>> where Signature == (repeat each Argument) throws(Failure) -> Result {
+        try unsafe _prepareVirtualReplacement(with: replacement, retaining: owner)
+    }
+
+    @unsafe public func prepareVirtualReplacement<Result, Failure: Error, ReplacementFailure: Error, each Argument>(
+        with replacement: NativeSwiftMethod<(repeat each Argument) throws(ReplacementFailure) -> Result>, retaining owner: (any Sendable)? = nil
+    ) throws -> NativeSwiftVirtualReplacement<NativeSwiftMethodImplementation<Signature>> where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
+        try unsafe _prepareVirtualReplacement(with: replacement, retaining: owner)
+    }
+
+    @unsafe public func prepareVirtualReplacement<Result, Failure: Error, ReplacementFailure: Error, each Argument>(
+        with replacement: NativeSwiftMethod<@Sendable (repeat each Argument) throws(ReplacementFailure) -> Result>, retaining owner: (any Sendable)? = nil
+    ) throws -> NativeSwiftVirtualReplacement<NativeSwiftMethodImplementation<Signature>> where Signature == (repeat each Argument) throws(Failure) -> Result {
+        try unsafe _prepareVirtualReplacement(with: replacement, retaining: owner)
+    }
+
+    @unsafe public func prepareVirtualReplacement<Result, Failure: Error, ReplacementFailure: Error, each Argument>(
+        with replacement: NativeSwiftMethod<@Sendable (repeat each Argument) throws(ReplacementFailure) -> Result>, retaining owner: (any Sendable)? = nil
+    ) throws -> NativeSwiftVirtualReplacement<NativeSwiftMethodImplementation<Signature>> where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
+        try unsafe _prepareVirtualReplacement(with: replacement, retaining: owner)
+    }
+
+    @unsafe private func _prepareVirtualReplacement<ReplacementSignature>(
+        with replacement: NativeSwiftMethod<ReplacementSignature>, retaining owner: (any Sendable)? = nil
+    ) throws -> NativeSwiftVirtualReplacement<NativeSwiftMethodImplementation<Signature>> {
         try SwiftErrorPlan.validateReplacement(replacement.errorPlan, for: errorPlan)
         guard receiver.mode == .object, replacement.receiver.mode == .object else {
             throw ABIResolutionError.unsupportedDeclaration("Virtual replacement requires Swift class instance methods.")

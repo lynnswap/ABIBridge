@@ -10,7 +10,7 @@ import Testing
 struct SwiftImportedFunctionHookTests {
     @Test func chainsTypedArgumentsResultsAndIndependentInvalidation() async throws {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
-        let target = try await fixture.runtime.swiftFunction(named: fixture.module + ".scalar(_:)", as: ((Int64) -> Int64).self, in: fixture.providerScope)
+        let target = try await fixture.runtime.swiftFunction(named: fixture.module + ".scalar(_:)", as: (@Sendable (Int64) -> Int64).self, in: fixture.providerScope)
         let oracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".importedScalar(_:)", as: ((Int64) -> Int64).self, in: fixture.callerScope)
         let failures = Mutex<[String]>([])
         let first = try await unsafe target.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
@@ -92,7 +92,7 @@ struct SwiftImportedFunctionHookTests {
 
     @Test @MainActor func mainActorCallbacksBypassBackgroundEntry() async throws {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
-        let target = try await fixture.runtime.swiftFunction(named: fixture.module + ".scalar(_:)", as: ((Int64) -> Int64).self, in: fixture.providerScope)
+        let target = try await fixture.runtime.swiftFunction(named: fixture.module + ".scalar(_:)", as: (@Sendable (Int64) -> Int64).self, in: fixture.providerScope)
         let oracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".importedScalar(_:)", as: ((Int64) -> Int64).self, in: fixture.callerScope)
         let state = SwiftHookMainActorState()
         let failures = Mutex<[String]>([])

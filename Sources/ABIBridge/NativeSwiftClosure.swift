@@ -89,6 +89,14 @@ public struct NativeSwiftClosure<Signature> {
         try withoutActuallyEscaping(body) { escaped in try use(Self(scopedBody: escaped)) }
     }
 
+    /// Borrows a Sendable body while preserving that attribute in the native signature.
+    /// The callback remains nonescaping and synchronous on the caller's executor.
+    @unsafe public static func withUnsafeNonescaping<Output, Result, each Argument>(
+        _ body: @Sendable (repeat each Argument) -> Result, _ use: (Self) throws -> Output
+    ) throws -> Output where Signature == @Sendable (repeat each Argument) -> Result {
+        try withoutActuallyEscaping(body) { escaped in try use(Self(scopedBody: escaped)) }
+    }
+
     private init<Result, Failure: Error, each Argument>(
         scopedBody body: @escaping (repeat each Argument) throws(Failure) -> Result
     ) throws {

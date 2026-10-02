@@ -46,7 +46,7 @@ Getter lookup now takes a complete zero-argument function type: replace `getter(
 | Bool, signed/unsigned 8–64-bit integers, Int, UInt, Float, Double, CGFloat | Native Swift scalar arguments and results |
 | Class references, AnyObject, and their optional forms | Guaranteed arguments and owned results |
 | String, Array<Element>, and their single-level optional forms | Stable Swift storage with Swift ownership, including array element lifetimes |
-| NativeSwiftClosure<Signature> | Owned callbacks and returned closures; the function signature carries native errors, async effects, and the caller-isolated or concurrent convention |
+| `NativeSwiftClosure<Signature>` | Owned callbacks and returned closures; the function signature carries native errors, async effects, and the caller-isolated or concurrent convention |
 | Unsafe pointers, OpaquePointer, Selector, and optional pointers | Borrowed pointer values |
 | CGPoint, CGSize, CGRect, NSRange | Known fixed value layouts lowered with the Swift ABI |
 | Any, simple protocol existentials, and their single-level optional forms | Compiler-managed containers with the native existential calling convention; see <doc:SwiftExistentialValues> |

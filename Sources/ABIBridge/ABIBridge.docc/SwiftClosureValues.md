@@ -139,4 +139,4 @@ Compiler fixtures compare both reabstraction directions and the native result re
 
 See <doc:SwiftFunctionInvocation>, <doc:SwiftMemberInvocation>, and <doc:ManagedSwiftValues> for the surrounding call and storage contracts.
 
-For a caller-isolated body passed to a native nonescaping parameter, use ``NativeSwiftClosure/withUnsafeNonescaping(_:_:)``. The body and native invocation stay synchronous on the current executor, and neither the native callee nor the use body may save the callback.
+For a caller-isolated body passed to a native nonescaping parameter, use ``NativeSwiftClosure/withUnsafeNonescaping(_:_:)-4ragm``. The body and native invocation stay synchronous on the current executor, and neither the native callee nor the use body may save the callback.

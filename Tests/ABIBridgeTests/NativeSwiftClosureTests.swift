@@ -44,6 +44,13 @@ private final class ReentrantClosureCapture: Sendable {
 }
 
 struct NativeSwiftClosureTests {
+    @Test func sendableNonescapingSignaturePreservesItsTypedBody() throws {
+        let result = try unsafe NativeSwiftClosure<@Sendable (Int64) -> Int64>.withUnsafeNonescaping({ $0 + 7 }) {
+            try unsafe $0.unsafeInvoke(35)
+        }
+        #expect(result == 42)
+    }
+
     @Test func callbackPageReuseReleasesCapturesAndPermitsDestructionReentry() throws {
         let destroyed = ClosureCounter()
         for expected in 1...128 {

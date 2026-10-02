@@ -66,6 +66,15 @@ extension NativeSwiftMethod {
         try await _hookVirtualCalls(retaining: owner, onFailure: onFailure, body: body)
     }
 
+    @_transparent
+    @unsafe public nonisolated(nonsending) func hookVirtualCalls<Result, Failure: Error, each Argument>(
+        retaining owner: (any Sendable)? = nil,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        body: @escaping @Sendable (NativeSwiftMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+    ) async throws -> NativeSwiftVirtualHook where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
+        try await _hookVirtualCalls(retaining: owner, onFailure: onFailure, body: body)
+    }
+
     /// Installs a virtual callback for a method with a caller-supplied MainActor contract.
     ///
     /// Background calls report `wrongThread` and bypass this callback before
@@ -78,6 +87,15 @@ extension NativeSwiftMethod {
         onFailure: @escaping @Sendable (any Error) -> Void,
         body: @escaping @MainActor @Sendable (NativeSwiftMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
     ) async throws -> NativeSwiftVirtualHook where Signature == (repeat each Argument) throws(Failure) -> Result {
+        try await _hookMainActorVirtualCalls(retaining: owner, onFailure: onFailure, body: body)
+    }
+
+    @_transparent
+    @unsafe @MainActor public func hookMainActorVirtualCalls<Result, Failure: Error, each Argument>(
+        retaining owner: (any Sendable)? = nil,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        body: @escaping @MainActor @Sendable (NativeSwiftMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+    ) async throws -> NativeSwiftVirtualHook where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
         try await _hookMainActorVirtualCalls(retaining: owner, onFailure: onFailure, body: body)
     }
 

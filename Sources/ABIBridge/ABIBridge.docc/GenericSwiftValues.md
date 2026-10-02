@@ -23,7 +23,7 @@ The declaration controls physical lowering. `Bool` and `String` both use indirec
 
 The initial direct subset supports synchronous, nonthrowing free functions with one unconstrained `<A>`. `A` can occur directly in arguments/results or as the result of `() -> A`; other positions use the existing concrete representations. Direct `A` arguments/results use the substituted type's actual Swift storage and compiler-generated value operations. `ABIBridgeValue` conversions and argument convention markers are not applied at those positions: explicitly substituting a wrapper type means `A` is the wrapper itself. A `() -> A` callback additionally requires `NativeSwiftClosure`'s supported concrete result representation for reabstraction. Constraints, dependent composites such as `Array<A>`, multiple parameters, generic members, packs, async/throwing effects, and imported hooks/replacements need additional contracts. Nongeneric nominal types containing concrete substitutions remain covered by <doc:ExplicitSwiftValues>.
 
-For a native nonescaping `apply`, use ``NativeSwiftClosure/withUnsafeNonescaping(_:_:)`` to keep a caller-isolated body within its synchronous call. Neither the callee nor the use body may retain that callback:
+For a native nonescaping `apply`, use ``NativeSwiftClosure/withUnsafeNonescaping(_:_:)-4ragm`` to keep a caller-isolated body within its synchronous call. Neither the callee nor the use body may retain that callback:
 
 ```swift
 let run = try await ABIRuntime.shared.swiftFunction(

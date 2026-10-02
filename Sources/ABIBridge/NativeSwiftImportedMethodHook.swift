@@ -60,6 +60,16 @@ extension NativeSwiftMethod {
         try await _hookImportedCalls(in: importer, from: provider, using: runtime, retaining: owner, onFailure: onFailure, body: body)
     }
 
+    @_transparent
+    @unsafe public nonisolated(nonsending) func hookImportedCalls<Result, Failure: Error, each Argument>(
+        in importer: ImageSelector, from provider: ImageSelector? = nil,
+        using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        body: @escaping @Sendable (NativeSwiftMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+    ) async throws -> NativeSwiftImportedFunctionHook where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
+        try await _hookImportedCalls(in: importer, from: provider, using: runtime, retaining: owner, onFailure: onFailure, body: body)
+    }
+
     /// Installs an imported-member callback for a caller-supplied MainActor method contract.
     ///
     /// Background entry reports `wrongThread` and bypasses this callback before
@@ -72,6 +82,16 @@ extension NativeSwiftMethod {
         onFailure: @escaping @Sendable (any Error) -> Void,
         body: @escaping @MainActor @Sendable (NativeSwiftMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
     ) async throws -> NativeSwiftImportedFunctionHook where Signature == (repeat each Argument) throws(Failure) -> Result {
+        try await _hookMainActorImportedCalls(in: importer, from: provider, using: runtime, retaining: owner, onFailure: onFailure, body: body)
+    }
+
+    @_transparent
+    @unsafe @MainActor public func hookMainActorImportedCalls<Result, Failure: Error, each Argument>(
+        in importer: ImageSelector, from provider: ImageSelector? = nil,
+        using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        body: @escaping @MainActor @Sendable (NativeSwiftMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+    ) async throws -> NativeSwiftImportedFunctionHook where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
         try await _hookMainActorImportedCalls(in: importer, from: provider, using: runtime, retaining: owner, onFailure: onFailure, body: body)
     }
 
