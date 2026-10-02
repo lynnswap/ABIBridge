@@ -189,7 +189,7 @@ extension NativeSwiftInout: SwiftConventionArgument {
             return SwiftConventionCodec(type: try CValueType(scalar: ABIValuePointer), consumes: false) { value, _ in
                 let access = try plan.encode((value as! Self).value, convention: .inoutValue, asynchronous: asynchronous)
                 let pointer = NativeValueStorage(size: MemoryLayout<UnsafeRawPointer>.size,
-                    alignment: MemoryLayout<UnsafeRawPointer>.alignment, owner: access)
+                    alignment: MemoryLayout<UnsafeRawPointer>.alignment, owner: access, codeLifetime: access.codeLifetime)
                 pointer.store(UnsafeRawPointer(access.address))
                 return pointer
             }

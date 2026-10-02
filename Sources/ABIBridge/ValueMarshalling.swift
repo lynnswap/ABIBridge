@@ -61,41 +61,35 @@ final class NativeValueStorage {
     private var destroyValue: ((UnsafeMutableRawPointer) -> Void)?
     private let ownsAllocation: Bool
     private let resultStorage: NativeValueStorage?
-    private let resultType: NativeSwiftType?
+    let codeLifetime: SwiftValueCodeLifetime?
     var ownerForResult: NativeValueStorage { resultStorage ?? self }
-    var swiftTypeForResult: NativeSwiftType? {
-        if let resultType { return resultType }
-        if let resultStorage { return resultStorage.swiftTypeForResult }
-        if let storage = owner as? NativeValueStorage { return storage.swiftTypeForResult }
-        return owner as? NativeSwiftType
-    }
     private var didRelinquish: (() -> Void)?
     var transfersOwnership: Bool { didRelinquish != nil }
 
     init(borrowing address: UnsafeMutableRawPointer, owner: AnyObject,
-         retainingResourcesOf storage: NativeValueStorage? = nil, typeForResult: NativeSwiftType? = nil,
+         retainingResourcesOf storage: NativeValueStorage? = nil, codeLifetime: SwiftValueCodeLifetime? = nil,
          didRelinquish: (() -> Void)? = nil) {
         self.address = address
         self.owner = owner
         self.didRelinquish = didRelinquish
         // Escaping results retain the value's resources, not its active access.
         resultStorage = storage?.ownerForResult
-        resultType = typeForResult
+        self.codeLifetime = codeLifetime ?? storage?.codeLifetime
         ownsAllocation = false
     }
 
-    init(size: Int, alignment: Int, owner: AnyObject? = nil,
+    init(size: Int, alignment: Int, owner: AnyObject? = nil, codeLifetime: SwiftValueCodeLifetime? = nil,
          destroyingWith destroy: ((UnsafeMutableRawPointer) -> Void)? = nil) {
         address = .allocate(byteCount: max(size, 1), alignment: max(alignment, 1))
         address.initializeMemory(as: UInt8.self, repeating: 0, count: max(size, 1))
         self.owner = owner
         destroyValue = destroy
         resultStorage = nil
-        resultType = nil
+        self.codeLifetime = codeLifetime
         ownsAllocation = true
     }
     deinit {
-        withExtendedLifetime(owner) { destroyValue?(address) }
+        withExtendedLifetime((owner, codeLifetime)) { destroyValue?(address) }
         if ownsAllocation { address.deallocate() }
     }
 

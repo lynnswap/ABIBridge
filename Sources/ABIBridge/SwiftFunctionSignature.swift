@@ -122,7 +122,7 @@ struct SwiftCallValues: Sendable {
     struct Result: Sendable {
         let type: CValueType
         let makeStorage: @Sendable () -> NativeValueStorage
-        let initialize: @Sendable (NativeValueStorage, Any?, Any?, [NativeSwiftType], UnsafeMutableRawPointer) throws -> Void
+        let initialize: @Sendable (NativeValueStorage, Any?, Any?, UnsafeMutableRawPointer) throws -> Void
     }
     let arguments: [Argument]
     let result: Result
@@ -141,8 +141,8 @@ struct SwiftCallValues: Sendable {
         func prepareResult<Value>(_ type: Value.Type) throws -> Result {
             let codec = try SwiftResultCodec<Value>(opaque: opaqueResult, generic: generic?.result ?? .concrete)
             return Result(type: codec.type, makeStorage: { codec.makeStorage() },
-                initialize: { storage, owner, codeOwner, types, output in
-                    let value = try codec.decode(storage, retaining: owner, retainingCode: codeOwner, retainingTypes: types)
+                initialize: { storage, owner, codeOwner, output in
+                    let value = try codec.decode(storage, retaining: owner, retainingCode: codeOwner)
                     output.initializeMemory(as: Value.self, repeating: value, count: 1)
                 })
         }
@@ -160,10 +160,9 @@ struct SwiftCallValues: Sendable {
         return storage
     }
 
-    func decode<Output>(_ storage: NativeValueStorage, retaining owner: Any?, retainingCode codeOwner: Any?,
-                        retainingTypes types: [NativeSwiftType] = []) throws -> Output {
+    func decode<Output>(_ storage: NativeValueStorage, retaining owner: Any?, retainingCode codeOwner: Any?) throws -> Output {
         try withUnsafeTemporaryAllocation(of: Output.self, capacity: 1) { buffer in
-            try result.initialize(storage, owner, codeOwner, types, buffer.baseAddress!)
+            try result.initialize(storage, owner, codeOwner, buffer.baseAddress!)
             return buffer.baseAddress!.move()
         }
     }

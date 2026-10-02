@@ -5,6 +5,7 @@ import Synchronization
 final class SwiftImplementation: @unchecked Sendable {
     let handle: OpaquePointer
     let owner: (any Sendable)?
+    let image: NativeImage?
     var function: ABIUnmanagedFunction { ABIVirtualCallTargetFunction(handle)! }
     var generation: UInt64 { ABIVirtualCallTargetGeneration(handle) }
 
@@ -18,12 +19,16 @@ final class SwiftImplementation: @unchecked Sendable {
         }
         self.handle = handle
         self.owner = owner
+        do { image = try NativeImage.retaining(generation: ABIVirtualCallTargetGeneration(handle)) }
+        catch { ABIReleaseVirtualCallTarget(handle); throw error }
     }
     init(function: ABIUnmanagedFunction, retaining owner: (any Sendable)?) throws {
         var error: OpaquePointer?
         guard let handle = ABICopyFunctionTarget(function, &error) else { throw consumeNativeCallFailure(error) }
         self.handle = handle
         self.owner = owner
+        do { image = try NativeImage.retaining(generation: ABIVirtualCallTargetGeneration(handle)) }
+        catch { ABIReleaseVirtualCallTarget(handle); throw error }
     }
     deinit { ABIReleaseVirtualCallTarget(handle) }
 }

@@ -68,6 +68,13 @@ public struct NativeImage: Hashable, Sendable {
         return try Self.acquired(handle, failure: failure, target: path)
     }
 
+    static func retaining(generation: UInt64) throws -> Self? {
+        guard generation != 0 else { return nil }
+        guard let handle = ABIRetainLoadedImage(generation) else { throw ABIResolutionError.imageUnavailable }
+        let snapshot = ImageSnapshot(ABIImageLeaseGet(handle))
+        return Self(identity: snapshot.identity, path: snapshot.path, lease: ImageLease(handle))
+    }
+
     private static func acquired(_ handle: OpaquePointer?, failure: OpaquePointer?, target: String) throws -> Self {
         guard let handle else {
             guard let failure else { throw ABIResolutionError.imageUnavailable }

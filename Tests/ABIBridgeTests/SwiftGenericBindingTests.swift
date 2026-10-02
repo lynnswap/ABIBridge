@@ -13,13 +13,40 @@ private struct GenericOrderingValue: GenericOrderingA, GenericOrderingZ {}
 private struct GenericOrderingOwner<Value: GenericOrderingZ> {}
 
 struct SwiftGenericBindingTests {
-    @Test(arguments: [false, true]) func runtimeResultsRetainBoundAndArgumentCodeDependencies(_ consuming: Bool) async throws {
+    enum RuntimeDependencyOperation: CaseIterable {
+        case copiedResult, asyncMovedResult, receiverResult, asyncReceiverResult
+        case addressReceiverResult, asyncAddressReceiverResult
+        case replacedInout, throwingInout, copiedAlias, nativeCopiedAlias
+        case calleeMutation, throwingCalleeMutation
+    }
+
+    @Test(.serialized, arguments: RuntimeDependencyOperation.allCases)
+    func runtimeValuesShareCodeDependenciesAcrossNativeOperations(_ operation: RuntimeDependencyOperation) async throws {
         let module = "RuntimeOwner_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
         let provider = try FixtureLibrary(load: false, swiftModule: module, swiftSource: """
             public final class Box {
+                private var body: () -> Int64
+                public init(_ body: @escaping () -> Int64) { self.body = body }
+                public func read() -> Int64 { body() }
+                public consuming func opaqueSelf() -> some AnyObject { self }
+                public nonisolated(nonsending) consuming func opaqueSelfAsync() async -> some AnyObject { self }
+                public func update(from other: Box) { body = other.body }
+            }
+            public protocol Reader { func read() -> Int64 }
+            public struct Record: Reader {
                 private let body: () -> Int64
                 public init(_ body: @escaping () -> Int64) { self.body = body }
                 public func read() -> Int64 { body() }
+                public consuming func opaqueSelf() -> some Reader { self }
+                public nonisolated(nonsending) consuming func opaqueSelfAsync() async -> some Reader { self }
+            }
+            public struct Failure: Error { public init() {} }
+            public func replaceAndThrow<T: ~Copyable>(_ value: inout T, _ replacement: consuming T) throws {
+                value = replacement
+                throw Failure()
+            }
+            public func update<T>(_ value: T, _ other: T) {
+                (value as AnyObject as! Box).update(from: other as AnyObject as! Box)
             }
             """, linkArguments: ["-swift-version", "6", "-emit-module", "-enable-library-evolution"])
         defer { provider.cleanup() }
@@ -28,6 +55,14 @@ struct SwiftGenericBindingTests {
                 import \(module)
                 @inline(never) private func number() -> Int64 { \(value) }
                 public func make() -> some AnyObject { Box { number() } }
+                public func makeRecord() -> some Reader { Record { number() } }
+                public func update<T>(_ value: T) {
+                    (value as AnyObject as! Box).update(from: Box { number() })
+                }
+                public func updateAndThrow<T>(_ value: T) throws {
+                    update(value)
+                    throw Failure()
+                }
                 """, linkArguments: ["-swift-version", "6", "-I", provider.directory.path, provider.libraryURL.path])
         }
         let first = try factory("First", 41), second = try factory("Second", 42)
@@ -35,23 +70,87 @@ struct SwiftGenericBindingTests {
         try first.load(); try second.load()
         weak var argumentLease: ImageLease?
         let runtime = ABIRuntime()
+        var preparedCopy: NativeSwiftFunction<(NativeSwiftValue) -> NativeSwiftValue>?
         func produce() async throws -> NativeSwiftValue {
-            let makeFirst = try await runtime.swiftFunction(named: module + "First.make()", as: (() -> NativeSwiftValue).self,
+            let factoryName = operation == .addressReceiverResult || operation == .asyncAddressReceiverResult ? "makeRecord()" : "make()"
+            let makeFirst = try await runtime.swiftFunction(named: module + "First." + factoryName, as: (() -> NativeSwiftValue).self,
                 in: .path(first.libraryURL))
-            let makeSecond = try await runtime.swiftFunction(named: module + "Second.make()", as: (() -> NativeSwiftValue).self,
+            let makeSecond = try await runtime.swiftFunction(named: module + "Second." + factoryName, as: (() -> NativeSwiftValue).self,
                 in: .path(second.libraryURL))
             let binding = try unsafe makeFirst.unsafeInvoke()
             let argument = try unsafe makeSecond.unsafeInvoke()
-            let images = await argument.type.genericMetadata?.images
-            argumentLease = try #require(images?.first { $0.identity == makeSecond.symbol.image.identity }?.lease)
-            if consuming {
+            let images = argument.type.codeImages
+            argumentLease = try #require(images.first { $0.identity == makeSecond.symbol.image.identity }?.lease)
+            if operation == .asyncMovedResult {
                 let move = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.moveRuntimeValueAsync<A where A: ~Swift.Copyable>(__owned A) async -> A",
                     as: ((NativeSwiftConsuming<NativeSwiftValue>) async -> NativeSwiftValue).self, genericArguments: [.type(binding.type)])
                 return try unsafe await move.unsafeInvoke(NativeSwiftConsuming(argument))
             }
-            let copy = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
-                as: ((NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: [.type(binding.type)])
-            return try unsafe copy.unsafeInvoke(argument)
+            let receiverABI: NativeType? = factoryName == "makeRecord()" ? try .opaque(named: argument.type.name) : nil
+            switch operation {
+            case .receiverResult, .addressReceiverResult:
+                let method = try await argument.type.method(named: "opaqueSelf()", as: (() -> NativeSwiftValue).self, receiverABI: receiverABI, consuming: true)
+                return try unsafe method.unsafeInvoke(on: argument)
+            case .asyncReceiverResult, .asyncAddressReceiverResult:
+                let method = try await argument.type.method(named: "opaqueSelfAsync()", as: (() async -> NativeSwiftValue).self, receiverABI: receiverABI, consuming: true)
+                return try unsafe await method.unsafeInvoke(on: argument)
+            case .replacedInout, .throwingInout:
+                let buffer = try NativeSwiftInout(binding)
+                if operation == .throwingInout {
+                    let replace = try await runtime.swiftFunction(named: module + ".replaceAndThrow<A where A: ~Swift.Copyable>(inout A, __owned A) throws -> ()",
+                        as: ((NativeSwiftInout<NativeSwiftValue>, NativeSwiftConsuming<NativeSwiftValue>) throws -> Void).self,
+                        genericArguments: [.type(binding.type)], in: .path(provider.libraryURL))
+                    do {
+                        try unsafe replace.unsafeInvoke(buffer, NativeSwiftConsuming(argument))
+                        Issue.record("The replacement must report its native error")
+                    } catch is NativeSwiftError {}
+                } else {
+                    let replace = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.replaceRuntimeValue<A where A: ~Swift.Copyable>(inout A, __owned A) -> ()",
+                        as: ((NativeSwiftInout<NativeSwiftValue>, NativeSwiftConsuming<NativeSwiftValue>) -> Void).self,
+                        genericArguments: [.type(binding.type)])
+                    try unsafe replace.unsafeInvoke(buffer, NativeSwiftConsuming(argument))
+                }
+                return binding
+            case .calleeMutation, .throwingCalleeMutation:
+                if operation == .throwingCalleeMutation {
+                    let update = try await runtime.swiftFunction(named: module + "Second.updateAndThrow<A>(A) throws -> ()",
+                        as: ((NativeSwiftValue) throws -> Void).self,
+                        genericArguments: [.type(binding.type)], in: .path(second.libraryURL))
+                    argumentLease = update.symbol.image.lease
+                    do {
+                        try unsafe update.unsafeInvoke(binding)
+                        Issue.record("The update must report its native error")
+                    } catch is NativeSwiftError {}
+                } else {
+                    let update = try await runtime.swiftFunction(named: module + "Second.update<A>(A) -> ()",
+                        as: ((NativeSwiftValue) -> Void).self,
+                        genericArguments: [.type(binding.type)], in: .path(second.libraryURL))
+                    argumentLease = update.symbol.image.lease
+                    try unsafe update.unsafeInvoke(binding)
+                }
+                return binding
+            case .copiedAlias, .nativeCopiedAlias:
+                let alias: NativeSwiftValue
+                if operation == .copiedAlias { alias = try binding.copy() }
+                else {
+                    let copy = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+                        as: ((NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: [.type(binding.type)])
+                    alias = try unsafe copy.unsafeInvoke(binding)
+                }
+                let update = try await runtime.swiftFunction(named: module + ".update<A>(A, A) -> ()",
+                    as: ((NativeSwiftValue, NativeSwiftValue) -> Void).self,
+                    genericArguments: [.type(binding.type)], in: .path(provider.libraryURL))
+                try unsafe update.unsafeInvoke(binding, argument)
+                // Connect the same families in both directions; dropping all
+                // native handles must still release the image leases.
+                try unsafe update.unsafeInvoke(argument, binding)
+                return alias
+            case .copiedResult, .asyncMovedResult:
+                let copy = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+                    as: ((NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: [.type(binding.type)])
+                preparedCopy = copy
+                return try unsafe copy.unsafeInvoke(argument)
+            }
         }
         var result: NativeSwiftValue? = try await produce()
         await runtime.removeCachedResults()
@@ -62,13 +161,15 @@ struct SwiftGenericBindingTests {
             return
         }
         func inspect() async throws {
-            let read = try await result!.type.method(named: "read()", as: (() -> Int64).self)
+            let receiverABI: NativeType? = operation == .addressReceiverResult || operation == .asyncAddressReceiverResult
+                ? try .opaque(named: result!.type.name) : nil
+            let read = try await result!.type.method(named: "read()", as: (() -> Int64).self, receiverABI: receiverABI)
             #expect(try unsafe read.unsafeInvoke(on: result!) == 42)
         }
         try await inspect()
         result = nil
         await runtime.removeCachedResults()
-        #expect(argumentLease == nil)
+        withExtendedLifetime(preparedCopy) { #expect(argumentLease == nil) }
     }
     @Test func objectConstraintMetadataFollowsSwiftSelfConformanceRules() throws {
         #expect(SwiftObjectType(AnyObject.self) != nil)

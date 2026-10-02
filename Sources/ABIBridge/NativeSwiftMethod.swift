@@ -115,7 +115,7 @@ public struct NativeSwiftMethod<Signature>: Sendable {
         defer { if !invoked { consumedObject?.release() } }
         return try unsafe call.unsafeInvoke(
             symbol: symbol, context: context,
-            trailingValue: receiver.mode == .value ? storage : nil,
+            trailingValue: receiver.mode == .value ? storage : nil, receiverStorage: storage,
             retaining: (symbol, type, storage.ownerForResult), retainingCode: type.image, didInvoke: {
                 invoked = true
                 if receiver.isConsuming && (receiver.mode != .object || storage.transfersOwnership) { storage.relinquishValue() }
@@ -260,7 +260,7 @@ extension NativeSwiftMethod {
         var invoked = false
         defer { if !invoked { consumedObject?.release() } }
         return try unsafe await call.unsafeInvoke(implementation: implementation, context: context,
-            trailingValue: receiver.mode == .value ? storage : nil, retaining: (implementation, type, storage.ownerForResult),
+            trailingValue: receiver.mode == .value ? storage : nil, receiverStorage: storage, retaining: (implementation, type, storage.ownerForResult),
             retainingCode: type.image, didInvoke: {
                 invoked = true
                 if receiver.isConsuming && (receiver.mode != .object || storage.transfersOwnership) { storage.relinquishValue() }

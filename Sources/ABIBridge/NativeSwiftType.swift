@@ -21,7 +21,7 @@ struct SwiftMetadataResponse: BitwiseCopyable, ABIBridgeValue {
     }
 }
 
-/// A cached concrete Swift type and its retained implementation image.
+/// A concrete Swift type and its retained implementation images.
 ///
 /// Type lookup requests complete metadata without constructing an instance.
 /// Generic arguments are validated by the Swift runtime. Member lookups reuse
@@ -36,19 +36,26 @@ public actor NativeSwiftType {
     let representation: Any.Type?
     let resolver: SymbolResolver
     let genericMetadata: SwiftGenericTypeMetadata?
-    nonisolated var codeImages: [NativeImage] { [image] + (genericMetadata?.images ?? []) }
+    nonisolated let codeLifetime: SwiftValueCodeLifetime
+    nonisolated var codeImages: [NativeImage] { codeLifetime.images }
     var genericArguments: [NativeSwiftGenericArgument] { genericMetadata?.arguments ?? [] }
     private var cachedReceiver: SwiftReceiverCodec?
 
     init(name: String, image: NativeImage, metadata: Any.Type,
          representation: Any.Type?, resolver: SymbolResolver,
-         genericMetadata: SwiftGenericTypeMetadata? = nil) {
+         genericMetadata: SwiftGenericTypeMetadata? = nil, codeLifetime: SwiftValueCodeLifetime? = nil) {
         self.name = name
         self.image = image
         self.metadata = metadata
         self.representation = representation
         self.resolver = resolver
         self.genericMetadata = genericMetadata
+        self.codeLifetime = codeLifetime ?? SwiftValueCodeLifetime([image] + (genericMetadata?.images ?? []))
+    }
+
+    nonisolated func retainingCode(_ lifetime: SwiftValueCodeLifetime) -> NativeSwiftType {
+        NativeSwiftType(name: name, image: image, metadata: metadata, representation: representation,
+                       resolver: resolver, genericMetadata: genericMetadata, codeLifetime: lifetime)
     }
 
     func receiverPlan(mutating isMutating: Bool, consuming isConsuming: Bool = false,

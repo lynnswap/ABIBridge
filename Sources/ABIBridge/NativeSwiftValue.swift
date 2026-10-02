@@ -98,7 +98,8 @@ public final class NativeSwiftValue {
     static func copy(from source: UnsafeRawPointer, type: NativeSwiftType) throws -> NativeSwiftValue {
         let metadata = unsafeBitCast(type.metadata, to: UnsafeRawPointer.self)
         let layout = ABISwiftGetValueLayout(metadata)
-        let destination = NativeValueStorage(size: layout.stride, alignment: layout.alignment, owner: type)
+        let destination = NativeValueStorage(size: layout.stride, alignment: layout.alignment, owner: type,
+                                            codeLifetime: type.codeLifetime)
         guard SwiftCopyability.accepts(type.metadata) else {
             throw NativeSwiftValueError.noncopyableType
         }
@@ -199,17 +200,15 @@ struct SwiftRuntimeValuePlan: Sendable {
     }
 
     func makeStorage() -> NativeValueStorage {
-        NativeValueStorage(size: size, alignment: alignment, owner: valueType)
+        NativeValueStorage(size: size, alignment: alignment, owner: valueType,
+                           codeLifetime: SwiftValueCodeLifetime(valueType.codeImages))
     }
 
-    func decode(_ storage: NativeValueStorage, retaining types: [NativeSwiftType] = []) throws -> NativeSwiftValue {
+    func decode(_ storage: NativeValueStorage) throws -> NativeSwiftValue {
         if valueType.metadata is AnyClass, storage.address.load(as: UnsafeRawPointer?.self) == nil {
             throw ABIInvocationError.unexpectedNilResult(expected: valueType.name)
         }
-        let metadata = valueType.genericMetadata!.retaining(types.flatMap(\.codeImages))
-        let retainedType = metadata.images.count == valueType.genericMetadata!.images.count ? valueType
-            : NativeSwiftType(name: valueType.name, image: valueType.image, metadata: valueType.metadata,
-                representation: valueType.representation, resolver: valueType.resolver, genericMetadata: metadata)
+        let retainedType = valueType.retainingCode(storage.codeLifetime!)
         constants.initialize(at: storage.address)
         storage.assumeInitialized(retaining: retainedType) {
             ABISwiftDestroyValue(unsafeBitCast(retainedType.metadata, to: UnsafeRawPointer.self), $0)
