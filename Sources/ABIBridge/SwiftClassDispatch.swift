@@ -25,7 +25,7 @@ struct SwiftClassDispatch {
         while let type = current {
             let runtimeName = try swiftFunctionTypeName(type)
             let image = try swiftClassImage(type, named: runtimeName, resolver: resolver)
-            let name = try swiftClassDeclarationName(type, in: image, suggestedName: runtimeName, resolver: resolver)
+            let name = try swiftTypeDeclarationName(type, in: image, suggestedName: runtimeName, resolver: resolver)
             let isDeclarationOwner = member == nil && declaration.name.hasPrefix(name + ".")
             if isDeclarationOwner {
                 member = String(declaration.name.dropFirst(name.count + 1))

@@ -1,3 +1,4 @@
+import ABIBridgeCore
 import Foundation
 import ObjectiveC
 
@@ -165,7 +166,7 @@ public actor NativeSwiftType {
             let runtimeName = try swiftFunctionTypeName(parent)
             ownerClass = parent
             ownerImage = try swiftClassImage(parent, named: runtimeName, resolver: resolver)
-            ownerName = try swiftClassDeclarationName(parent, in: ownerImage, suggestedName: runtimeName, resolver: resolver)
+            ownerName = try swiftTypeDeclarationName(parent, in: ownerImage, suggestedName: runtimeName, resolver: resolver)
         }
     }
 
@@ -392,11 +393,12 @@ func swiftClassImage(_ type: AnyClass, named name: String, resolver: SymbolResol
     }
 }
 
-func swiftClassDeclarationName(
-    _ type: AnyClass, in image: NativeImage, suggestedName: String, resolver: SymbolResolver
+func swiftTypeDeclarationName(
+    _ type: Any.Type, in image: NativeImage, suggestedName: String, resolver: SymbolResolver
 ) throws -> String {
-    guard let descriptor = try SwiftClassDispatch.nominalDescriptor(of: type) else { return suggestedName }
-    return try resolver.swiftNominalTypeName(at: UInt64(descriptor), in: image, suggestedName: suggestedName) ?? suggestedName
+    guard let descriptor = ABISwiftTypeDescriptor(unsafeBitCast(type, to: UnsafeRawPointer.self)) else { return suggestedName }
+    return try resolver.swiftNominalTypeName(at: UInt64(UInt(bitPattern: descriptor)),
+        in: image, suggestedName: suggestedName) ?? suggestedName
 }
 
 extension ABIRuntime {
@@ -405,7 +407,7 @@ extension ABIRuntime {
         let image = try swiftClassImage(objectType, named: runtimeName, resolver: resolver)
         let key = SwiftTypeCacheKey.metadata(ObjectIdentifier(objectType), image: image.identity)
         if let cached = swiftTypes[key] { return cached }
-        let name = try swiftClassDeclarationName(objectType, in: image, suggestedName: runtimeName, resolver: resolver)
+        let name = try swiftTypeDeclarationName(objectType, in: image, suggestedName: runtimeName, resolver: resolver)
         let type = NativeSwiftType(
             name: name, image: image, metadata: objectType, representation: nil, resolver: resolver,
             genericMetadata: try SwiftGenericTypeMetadata(metadata: objectType))

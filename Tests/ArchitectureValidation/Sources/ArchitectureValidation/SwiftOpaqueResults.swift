@@ -23,9 +23,10 @@ import Foundation
     try stored!.withCopy {
         try check(($0 as? any ExistentialValue)?.number == 42 && ($0 as? any ExistentialLabel)?.label.count == 600,
                   "Opaque metadata supports an aligned hidden managed value and existing protocol witnesses")
-        try check(String(reflecting: Swift.type(of: $0)) == stored!.type.name,
-                  "Opaque handle exposes the actual underlying runtime type")
     }
+    let underlyingType = try await runtime.swiftType(named: stored!.type.name, in: stored!.type.image)
+    try check(underlyingType.image.identity == stored!.type.image.identity,
+              "Opaque values expose the underlying declaration name for type lookup")
     var copy = stored
     stored = nil
     await runtime.removeCachedResults()

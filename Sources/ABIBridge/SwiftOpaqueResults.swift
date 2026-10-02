@@ -32,7 +32,8 @@ final class SwiftOpaqueResultPlan: Sendable {
         } else {
             image = owners[0].image
         }
-        valueType = NativeSwiftType(name: name, image: image,
+        let declarationName = try swiftTypeDeclarationName(metadata, in: image, suggestedName: name, resolver: resolver)
+        valueType = NativeSwiftType(name: declarationName, image: image,
             metadata: metadata, representation: nil, resolver: resolver,
             genericMetadata: try SwiftGenericTypeMetadata(metadata: metadata, retaining: owners.map(\.image)))
     }

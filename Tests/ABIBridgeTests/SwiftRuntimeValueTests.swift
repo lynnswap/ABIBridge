@@ -32,29 +32,38 @@ private struct RuntimeMoveOnlyPayload: ~Copyable {
                 public init(_ body: @escaping () -> Int64) { self.body = body }
                 public var value: Int64 { body() }
             }
+            private final class HiddenBox {
+                private let body: () -> Int64
+                init(_ body: @escaping () -> Int64) { self.body = body }
+                var value: Int64 { body() }
+            }
+            public func hidden(_ body: @escaping () -> Int64) -> some AnyObject { HiddenBox(body) }
             """, linkArguments: ["-swift-version", "6", "-emit-module", "-enable-library-evolution"])
         defer { provider.cleanup() }
         let factory = try FixtureLibrary(load: false, swiftModule: module + "Factory", swiftSource: """
             import \(module)
             public func make() -> some AnyObject { Box { 42 } }
+            public func makeHidden() -> some AnyObject { hidden { 43 } }
             """, linkArguments: ["-swift-version", "6", "-I", provider.directory.path, provider.libraryURL.path])
         defer { factory.cleanup() }
         try factory.load()
         let runtime = ABIRuntime()
-        let value: NativeSwiftValue
-        do {
-            let make = try await runtime.swiftFunction(named: module + "Factory.make()",
-                as: (() -> NativeSwiftValue).self, in: .path(factory.libraryURL))
-            value = try unsafe make.unsafeInvoke().copy()
-        }
-        await runtime.removeCachedResults()
-        factory.close()
-        let expected = try #require(try await runtime.images(matching: .path(provider.libraryURL)).first)
-        #expect(value.type.image.identity == expected.identity)
-        let getter = try await value.type.getter(named: "value", as: (() -> Int64).self)
-        try value.withCopy { object in
-            let result = try unsafe getter.unsafeInvoke(on: object as AnyObject)
-            #expect(result == 42)
+        for (name, number) in [("make", Int64(42)), ("makeHidden", Int64(43))] {
+            let value: NativeSwiftValue
+            do {
+                let make = try await runtime.swiftFunction(named: module + "Factory." + name + "()",
+                    as: (() -> NativeSwiftValue).self, in: .path(factory.libraryURL))
+                value = try unsafe make.unsafeInvoke().copy()
+            }
+            await runtime.removeCachedResults()
+            factory.close()
+            let expected = try #require(try await runtime.images(matching: .path(provider.libraryURL)).first)
+            #expect(value.type.image.identity == expected.identity)
+            let getter = try await value.type.getter(named: "value", as: (() -> Int64).self)
+            try value.withCopy { object in
+                let result = try unsafe getter.unsafeInvoke(on: object as AnyObject)
+                #expect(result == number)
+            }
         }
     }
     #endif
