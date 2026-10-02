@@ -3,6 +3,7 @@ import Foundation
 @inline(never) public func borrowRuntimeValue<T: ~Copyable>(_ value: borrowing T) -> Int64 { Int64(MemoryLayout<T>.size) }
 @inline(never) public func moveRuntimeValue<T: ~Copyable>(_ value: consuming T) -> T { value }
 @inline(never) public func copyRuntimeValue<T>(_ value: T) -> T { value }
+@inline(never) public func runtimeValueMetatype<T>(_ value: T) -> (Int64.Type, T) { (Int64.self, value) }
 @inline(never) public func replaceRuntimeValue<T: ~Copyable>(_ target: inout T, _ value: consuming T) {
     target = consume value
 }

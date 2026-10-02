@@ -57,21 +57,30 @@ extension Selector: NativePointerValue {
 
 final class NativeValueStorage {
     let address: UnsafeMutableRawPointer
-    let owner: AnyObject?
+    private(set) var owner: AnyObject?
     private var destroyValue: ((UnsafeMutableRawPointer) -> Void)?
     private let ownsAllocation: Bool
     private let resultStorage: NativeValueStorage?
+    private let resultType: NativeSwiftType?
     var ownerForResult: NativeValueStorage { resultStorage ?? self }
+    var swiftTypeForResult: NativeSwiftType? {
+        if let resultType { return resultType }
+        if let resultStorage { return resultStorage.swiftTypeForResult }
+        if let storage = owner as? NativeValueStorage { return storage.swiftTypeForResult }
+        return owner as? NativeSwiftType
+    }
     private var didRelinquish: (() -> Void)?
     var transfersOwnership: Bool { didRelinquish != nil }
 
     init(borrowing address: UnsafeMutableRawPointer, owner: AnyObject,
-         retainingResourcesOf storage: NativeValueStorage? = nil, didRelinquish: (() -> Void)? = nil) {
+         retainingResourcesOf storage: NativeValueStorage? = nil, typeForResult: NativeSwiftType? = nil,
+         didRelinquish: (() -> Void)? = nil) {
         self.address = address
         self.owner = owner
         self.didRelinquish = didRelinquish
         // Escaping results retain the value's resources, not its active access.
         resultStorage = storage?.ownerForResult
+        resultType = typeForResult
         ownsAllocation = false
     }
 
@@ -82,6 +91,7 @@ final class NativeValueStorage {
         self.owner = owner
         destroyValue = destroy
         resultStorage = nil
+        resultType = nil
         ownsAllocation = true
     }
     deinit {
@@ -99,7 +109,8 @@ final class NativeValueStorage {
         destroyValue = { $0.assumingMemoryBound(to: type).deinitialize(count: 1) }
     }
 
-    func assumeInitialized(destroyingWith destroy: @escaping (UnsafeMutableRawPointer) -> Void) {
+    func assumeInitialized(retaining owner: AnyObject? = nil, destroyingWith destroy: @escaping (UnsafeMutableRawPointer) -> Void) {
+        if let owner { self.owner = owner }
         destroyValue = destroy
     }
 

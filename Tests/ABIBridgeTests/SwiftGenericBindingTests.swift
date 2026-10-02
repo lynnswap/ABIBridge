@@ -13,6 +13,63 @@ private struct GenericOrderingValue: GenericOrderingA, GenericOrderingZ {}
 private struct GenericOrderingOwner<Value: GenericOrderingZ> {}
 
 struct SwiftGenericBindingTests {
+    @Test(arguments: [false, true]) func runtimeResultsRetainBoundAndArgumentCodeDependencies(_ consuming: Bool) async throws {
+        let module = "RuntimeOwner_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let provider = try FixtureLibrary(load: false, swiftModule: module, swiftSource: """
+            public final class Box {
+                private let body: () -> Int64
+                public init(_ body: @escaping () -> Int64) { self.body = body }
+                public func read() -> Int64 { body() }
+            }
+            """, linkArguments: ["-swift-version", "6", "-emit-module", "-enable-library-evolution"])
+        defer { provider.cleanup() }
+        func factory(_ suffix: String, _ value: Int64) throws -> FixtureLibrary {
+            try FixtureLibrary(load: false, swiftModule: module + suffix, swiftSource: """
+                import \(module)
+                @inline(never) private func number() -> Int64 { \(value) }
+                public func make() -> some AnyObject { Box { number() } }
+                """, linkArguments: ["-swift-version", "6", "-I", provider.directory.path, provider.libraryURL.path])
+        }
+        let first = try factory("First", 41), second = try factory("Second", 42)
+        defer { first.cleanup(); second.cleanup() }
+        try first.load(); try second.load()
+        weak var argumentLease: ImageLease?
+        let runtime = ABIRuntime()
+        func produce() async throws -> NativeSwiftValue {
+            let makeFirst = try await runtime.swiftFunction(named: module + "First.make()", as: (() -> NativeSwiftValue).self,
+                in: .path(first.libraryURL))
+            let makeSecond = try await runtime.swiftFunction(named: module + "Second.make()", as: (() -> NativeSwiftValue).self,
+                in: .path(second.libraryURL))
+            let binding = try unsafe makeFirst.unsafeInvoke()
+            let argument = try unsafe makeSecond.unsafeInvoke()
+            let images = await argument.type.genericMetadata?.images
+            argumentLease = try #require(images?.first { $0.identity == makeSecond.symbol.image.identity }?.lease)
+            if consuming {
+                let move = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.moveRuntimeValueAsync<A where A: ~Swift.Copyable>(__owned A) async -> A",
+                    as: ((NativeSwiftConsuming<NativeSwiftValue>) async -> NativeSwiftValue).self, genericArguments: [.type(binding.type)])
+                return try unsafe await move.unsafeInvoke(NativeSwiftConsuming(argument))
+            }
+            let copy = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+                as: ((NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: [.type(binding.type)])
+            return try unsafe copy.unsafeInvoke(argument)
+        }
+        var result: NativeSwiftValue? = try await produce()
+        await runtime.removeCachedResults()
+        first.close(); second.close()
+        // Check the actual image lease before invoking code that would be unloaded.
+        guard argumentLease != nil else {
+            Issue.record("The runtime result discarded its argument's closure implementation image")
+            return
+        }
+        func inspect() async throws {
+            let read = try await result!.type.method(named: "read()", as: (() -> Int64).self)
+            #expect(try unsafe read.unsafeInvoke(on: result!) == 42)
+        }
+        try await inspect()
+        result = nil
+        await runtime.removeCachedResults()
+        #expect(argumentLease == nil)
+    }
     @Test func objectConstraintMetadataFollowsSwiftSelfConformanceRules() throws {
         #expect(SwiftObjectType(AnyObject.self) != nil)
         #expect(SwiftObjectType((any NSObjectProtocol).self) != nil)

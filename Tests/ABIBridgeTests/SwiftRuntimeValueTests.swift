@@ -39,6 +39,16 @@ private struct RuntimeRejectedArgument: ABIBridgeValue {
 }
 
 @Suite struct SwiftRuntimeValueTests {
+    @Test func runtimeResultsRestoreElidedSingletonMetatypes() async throws {
+        let function = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.valueMetatypeGeneric<A>(ManagedSwiftFixtures.GenericMetatypeValue<A>.Type, Swift.Int64) -> (ManagedSwiftFixtures.GenericMetatypeValue<A>.Type, Swift.Int64)",
+            as: ((GenericMetatypeValue<String>.Type, Int64) -> NativeSwiftValue).self,
+            genericArguments: [.type(String.self)])
+        let result = try unsafe function.unsafeInvoke(GenericMetatypeValue<String>.self, Int64(40))
+        let value = try result.take(as: (GenericMetatypeValue<String>.Type, Int64).self)
+        #expect(unsafeBitCast(value.0, to: UInt.self) == unsafeBitCast(GenericMetatypeValue<String>.self, to: UInt.self))
+        #expect(value.1 == 41)
+    }
     @Test func genericRuntimeArgumentsAndResultsPreserveNativeOwnership() async throws {
         let runtime = ABIRuntime.shared
         let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",

@@ -11,7 +11,15 @@ func swiftImplementationImage(containing address: UnsafeRawPointer) throws -> Na
 struct SwiftGenericTypeMetadata: Sendable {
     let value: Any.Type
     let arguments: [NativeSwiftGenericArgument]
-    let images: [NativeImage]
+    private(set) var images: [NativeImage]
+
+    func retaining(_ images: [NativeImage]) -> Self {
+        var result = self
+        for image in images where !result.images.contains(where: { $0.identity == image.identity }) {
+            result.images.append(image)
+        }
+        return result
+    }
 
     init(descriptor: ResolvedSymbol, arguments: [NativeSwiftGenericArgument]) throws {
         try self.init(descriptor: SwiftNominalDescriptor(descriptor), arguments: arguments)

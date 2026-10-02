@@ -102,7 +102,9 @@ final class SwiftOpaqueResultPlan: Sendable {
     }
 
     func makeStorage() -> NativeValueStorage { value.makeStorage() }
-    func decode(_ storage: NativeValueStorage) throws -> NativeSwiftValue { try value.decode(storage) }
+    func decode(_ storage: NativeValueStorage, retaining types: [NativeSwiftType]) throws -> NativeSwiftValue {
+        try value.decode(storage, retaining: types)
+    }
 
 }
 
@@ -150,14 +152,15 @@ struct SwiftResultCodec<Value>: Sendable {
         return ordinary!.makeStorage()
     }
 
-    func decode(_ storage: NativeValueStorage, retaining owner: Any?, retainingCode codeOwner: Any?) throws -> Value {
-        if let runtimeValue { return try runtimeValue.decode(storage) as! Value }
+    func decode(_ storage: NativeValueStorage, retaining owner: Any?, retainingCode codeOwner: Any?,
+                retainingTypes types: [NativeSwiftType] = []) throws -> Value {
+        if let runtimeValue { return try runtimeValue.decode(storage, retaining: types) as! Value }
         if let closure { return try closure.makeValue(storage.address.load(as: ABISwiftClosureValue.self), codeOwner, true) as! Value }
         if genericValue {
             constants.initialize(at: storage.address)
             return storage.take(as: Value.self)
         }
-        if let opaque { return try opaque.decode(storage) as! Value }
+        if let opaque { return try opaque.decode(storage, retaining: types) as! Value }
         return try ordinary!.decode(storage, retaining: owner, retainingCode: codeOwner)
     }
 }

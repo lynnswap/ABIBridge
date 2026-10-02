@@ -342,5 +342,10 @@ private struct OpaqueWordResult: ABIBridgeValue {
         as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self)
     let noncopyable = try unsafe makeNoncopyable.unsafeInvoke(NativeSwiftConsuming(ticket))
     try check(!noncopyable.isCopyable, "Conditional Copyable conformance checks the actual noncopyable type argument")
+    let metatype = try await runtime.swiftFunction(named: "SwiftValueFixtures.runtimeValueMetatype<A>(A) -> (Swift.Int64.Type, A)",
+        as: ((String) -> NativeSwiftValue).self, genericArguments: [.type(String.self)])
+    let metatypeResult = try unsafe metatype.unsafeInvoke("retained").take(as: (Int64.Type, String).self)
+    try check(unsafeBitCast(metatypeResult.0, to: UInt.self) == unsafeBitCast(Int64.self, to: UInt.self) && metatypeResult.1 == "retained",
+              "Runtime result storage restores elided singleton metatypes alongside managed generic fields")
     return checks
 }

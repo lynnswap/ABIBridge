@@ -49,6 +49,8 @@ struct SwiftCall: Sendable {
     ) throws -> Result {
         precondition(hasTrailingValue == (trailingValue != nil))
         let logicalStorage = try self.values.encode(repeat each values, retainingCode: (codeOwner, generic))
+        let valueTypes = (logicalStorage + [trailingValue].compactMap { $0 }).compactMap(\.swiftTypeForResult)
+        let codeOwners: Any = (codeOwner, generic, valueTypes)
         let logicalAddresses: [UnsafeMutableRawPointer?] = logicalStorage.map(\.address)
         let encoded = generic?.parameters.encode(logicalAddresses)
         var addresses = encoded?.addresses ?? logicalAddresses
@@ -76,9 +78,9 @@ struct SwiftCall: Sendable {
             self.values.relinquishConsumed(logicalStorage)
             didInvoke?()
             if didThrow, let errorPlan, let nativeError {
-                throw NativeSwiftError(try errorPlan.decode(nativeError), retainingCode: (codeOwner, generic))
+                throw NativeSwiftError(try errorPlan.decode(nativeError), retainingCode: codeOwners)
             }
-            return try self.values.decode(output, retaining: owner, retainingCode: (codeOwner, generic))
+            return try self.values.decode(output, retaining: owner, retainingCode: codeOwners, retainingTypes: valueTypes)
         }
     }
 }

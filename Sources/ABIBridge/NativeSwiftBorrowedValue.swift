@@ -40,13 +40,13 @@ final class SwiftValueBorrow {
         return try withExtendedLifetime(owner) { try body(address, owner) }
     }
 
-    func access(asynchronous: Bool) throws -> NativeValueStorage {
+    func access(asynchronous: Bool, type: NativeSwiftType) throws -> NativeValueStorage {
         try withStorage { address, owner in
             // An owned-value borrow can keep its read access through suspension.
             // A synchronous native callback gives us no way to extend its storage.
             guard !asynchronous || owner != nil else { throw NativeSwiftBorrowError.synchronousBorrow }
             return NativeValueStorage(borrowing: UnsafeMutableRawPointer(mutating: address), owner: owner ?? self,
-                                      retainingResourcesOf: owner)
+                                      retainingResourcesOf: owner, typeForResult: type)
         }
     }
 

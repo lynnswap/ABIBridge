@@ -758,7 +758,7 @@ struct SwiftGenericBinding: Sendable {
 
     func runtimeValuePlan(metadata: Any.Type, type: CValueType) throws -> SwiftRuntimeValuePlan {
         try SwiftRuntimeValuePlan(metadata: metadata, type: type, resolver: resolver,
-            retaining: images + typeOwners.map(\.image))
+            retaining: images + typeOwners.flatMap(\.codeImages))
     }
 
     func validateArgument(_ actual: Any.Type, for formal: SwiftFormalType) throws {

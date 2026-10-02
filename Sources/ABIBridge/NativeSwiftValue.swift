@@ -171,9 +171,11 @@ struct SwiftRuntimeValuePlan: Sendable {
     let type: CValueType
     private let size: Int
     private let alignment: Int
+    private let constants: SwiftValueConstants
 
     init(metadata: Any.Type, type: CValueType, resolver: SymbolResolver, retaining images: [NativeImage]) throws {
         self.type = type
+        constants = SwiftValueConstants(metadata)
         let pointer = unsafeBitCast(metadata, to: UnsafeRawPointer.self)
         let layout = ABISwiftGetValueLayout(pointer)
         size = layout.stride
@@ -200,14 +202,19 @@ struct SwiftRuntimeValuePlan: Sendable {
         NativeValueStorage(size: size, alignment: alignment, owner: valueType)
     }
 
-    func decode(_ storage: NativeValueStorage) throws -> NativeSwiftValue {
+    func decode(_ storage: NativeValueStorage, retaining types: [NativeSwiftType] = []) throws -> NativeSwiftValue {
         if valueType.metadata is AnyClass, storage.address.load(as: UnsafeRawPointer?.self) == nil {
             throw ABIInvocationError.unexpectedNilResult(expected: valueType.name)
         }
-        storage.assumeInitialized {
-            ABISwiftDestroyValue(unsafeBitCast(valueType.metadata, to: UnsafeRawPointer.self), $0)
+        let metadata = valueType.genericMetadata!.retaining(types.flatMap(\.codeImages))
+        let retainedType = metadata.images.count == valueType.genericMetadata!.images.count ? valueType
+            : NativeSwiftType(name: valueType.name, image: valueType.image, metadata: valueType.metadata,
+                representation: valueType.representation, resolver: valueType.resolver, genericMetadata: metadata)
+        constants.initialize(at: storage.address)
+        storage.assumeInitialized(retaining: retainedType) {
+            ABISwiftDestroyValue(unsafeBitCast(retainedType.metadata, to: UnsafeRawPointer.self), $0)
         }
-        return NativeSwiftValue(storage: storage, type: valueType)
+        return NativeSwiftValue(storage: storage, type: retainedType)
     }
 
     func encode(_ value: Any, convention: SwiftArgumentConvention, asynchronous: Bool) throws -> NativeValueStorage {
@@ -221,6 +228,6 @@ struct SwiftRuntimeValuePlan: Sendable {
         guard convention == .borrowing else {
             throw ABIResolutionError.unsupportedDeclaration("A borrowed runtime value cannot be mutated or consumed.")
         }
-        return try (value as! NativeSwiftBorrowedValue).borrow.access(asynchronous: asynchronous)
+        return try (value as! NativeSwiftBorrowedValue).borrow.access(asynchronous: asynchronous, type: actual)
     }
 }

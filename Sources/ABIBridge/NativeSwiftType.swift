@@ -36,6 +36,7 @@ public actor NativeSwiftType {
     let representation: Any.Type?
     let resolver: SymbolResolver
     let genericMetadata: SwiftGenericTypeMetadata?
+    nonisolated var codeImages: [NativeImage] { [image] + (genericMetadata?.images ?? []) }
     var genericArguments: [NativeSwiftGenericArgument] { genericMetadata?.arguments ?? [] }
     private var cachedReceiver: SwiftReceiverCodec?
 

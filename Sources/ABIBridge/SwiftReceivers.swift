@@ -129,7 +129,7 @@ struct SwiftReceiverPlan: Sendable {
         guard !isConsuming && (!isMutating || mode == .object) else {
             throw NativeSwiftValueError.valueInUse
         }
-        return try value.borrow.access(asynchronous: asynchronous)
+            return try value.borrow.access(asynchronous: asynchronous, type: value.type)
     }
 
     func finishInvocation<Result, Receiver>(
