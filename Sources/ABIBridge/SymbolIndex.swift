@@ -52,6 +52,54 @@ enum DeclarationKey {
         return hasher.finalize()
     }
 
+    static func make(_ declaration: String, language: NativeLanguage) -> [UInt8] {
+        make(language == .swift ? canonicalCollections(declaration) : declaration)
+    }
+
+    private static let collectionSpelling = try! NSRegularExpression(
+        pattern: #"(?<![A-Za-z0-9_.])Swift\.(Array|Dictionary|Optional)\s*<"#)
+
+    // Swift runtime and toolchain demanglers use both nominal and sugared
+    // spellings. Normalize only Swift's three language-defined type sugars.
+    private static func canonicalCollections(_ source: String) -> String {
+        guard source.contains("Swift.") else { return source }
+        var remaining = source
+        var result = ""
+        while let match = collectionSpelling.firstMatch(in: remaining, range: NSRange(remaining.startIndex..., in: remaining)),
+              let range = Range(match.range, in: remaining),
+              let kindRange = Range(match.range(at: 1), in: remaining) {
+            let opening = remaining.index(before: range.upperBound)
+            var depth = 0
+            var previous: Character?
+            var closing: String.Index?
+            for index in remaining[opening...].indices {
+                let character = remaining[index]
+                if character == "<" { depth += 1 }
+                else if character == ">", previous != "-" {
+                    depth -= 1
+                    if depth == 0 { closing = index; break }
+                }
+                previous = character
+            }
+            guard let closing else { break }
+            let fields = SwiftGenericSyntax.split(remaining[range.upperBound..<closing]).map {
+                canonicalCollections($0.trimmingCharacters(in: .whitespaces))
+            }
+            let replacement: String
+            switch remaining[kindRange] {
+            case "Array" where fields.count == 1: replacement = "[" + fields[0] + "]"
+            case "Dictionary" where fields.count == 2: replacement = "[" + fields[0] + ": " + fields[1] + "]"
+            case "Optional" where fields.count == 1:
+                let wrapped = fields[0]
+                replacement = (SwiftFormalSyntax.topLevelArrow(in: wrapped) == nil ? wrapped : "(" + wrapped + ")") + "?"
+            default: return result + remaining
+            }
+            result += remaining[..<range.lowerBound] + replacement
+            remaining = String(remaining[remaining.index(after: closing)...])
+        }
+        return result + remaining
+    }
+
     static func make(_ declaration: String) -> [UInt8] {
         var key: [UInt8] = []
         key.reserveCapacity(declaration.utf8.count * 2)
@@ -122,7 +170,7 @@ struct SymbolQuery {
             exactNeedle = key.contains(0) ? [] : Array(name.utf8CString)
         } else {
             exactName = nil
-            key = DeclarationKey.make(declaration.name)
+            key = DeclarationKey.make(declaration.name, language: declaration.language)
             fingerprint = DeclarationKey.fingerprint(key)
             filter = declaration.language == .cxx ? CXXSymbolFilter(declaration.name) : nil
             if let module = swiftModule?.module { candidateScope = .swiftModule(module) }
@@ -533,12 +581,12 @@ final class SymbolIndex {
                 if declaration.language == .swift, let alias = Self.operatorAlias(name) { names.append(alias) }
                 for name in names {
                     if !extensionsOnly {
-                        index[DeclarationKey.fingerprint(DeclarationKey.make(name)), default: []].append(symbol)
+                        index[DeclarationKey.fingerprint(DeclarationKey.make(name, language: declaration.language)), default: []].append(symbol)
                     }
                     if declaration.language == .swift, let unqualified = Self.extensionMemberName(name) {
-                        extensions[DeclarationKey.fingerprint(DeclarationKey.make(unqualified)), default: []].append(symbol)
+                        extensions[DeclarationKey.fingerprint(DeclarationKey.make(unqualified, language: .swift)), default: []].append(symbol)
                         if let constrained = SwiftConstrainedExtension(unqualified) {
-                            extensions[DeclarationKey.fingerprint(DeclarationKey.make(constrained.memberName)), default: []].append(symbol)
+                            extensions[DeclarationKey.fingerprint(DeclarationKey.make(constrained.memberName, language: .swift)), default: []].append(symbol)
                         }
                     }
                 }
@@ -561,9 +609,9 @@ final class SymbolIndex {
             return names.contains { name in
                 if extensionsOnly {
                     guard let unqualified = extensionMemberName(name) else { return false }
-                    if DeclarationKey.make(unqualified) == query.key { return true }
+                    if DeclarationKey.make(unqualified, language: .swift) == query.key { return true }
                     guard let constrained = SwiftConstrainedExtension(unqualified),
-                          DeclarationKey.make(constrained.memberName) == query.key else { return false }
+                          DeclarationKey.make(constrained.memberName, language: .swift) == query.key else { return false }
                     guard let genericContext else {
                         unsupported = .unsupportedDeclaration("No generic receiver context establishes \(unqualified).")
                         return false
@@ -575,7 +623,7 @@ final class SymbolIndex {
                     }
                     catch { unsupported = error; return false }
                 }
-                return DeclarationKey.make(name) == query.key
+                return DeclarationKey.make(name, language: query.declaration.language) == query.key
             }
         }
     }

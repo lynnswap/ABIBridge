@@ -1,8 +1,17 @@
+#if DEBUG
 @testable import ABIBridge
 import ABIBridgeCore
 import Testing
 
 struct SwiftGenericBindingTests {
+    @Test func collectionSugarMatchesRuntimeAndToolchainDemanglers() {
+        let nominal = "Example.map<A, B>(Swift.Array<A>, (A) -> B) -> Swift.Dictionary<Swift.String, Swift.Optional<B>>"
+        let sugared = "Example.map<A, B>([A], (A) -> B) -> [Swift.String: B?]"
+        #expect(DeclarationKey.make(nominal, language: .swift) == DeclarationKey.make(sugared, language: .swift))
+        #expect(DeclarationKey.make(nominal, language: .cxx) != DeclarationKey.make(sugared, language: .cxx))
+        #expect(DeclarationKey.make("Example.Swift.Array<A>", language: .swift) != DeclarationKey.make("Example.[A]", language: .swift))
+    }
+
     @Test func multipleParametersAndConditionalConformancesBindWithoutAdapters() throws {
         let declaration = try SwiftGenericDeclaration(
             "Example.select<A, B where A: Swift.Equatable, B: Swift.Collection, B.Element == A>(A, B) -> A")
@@ -94,3 +103,5 @@ struct SwiftGenericBindingTests {
         #expect(missing == nil)
     }
 }
+
+#endif

@@ -28,3 +28,27 @@ public func storeGeneric<Value>(_ apply: @escaping () -> Value) -> Value {
 public func fireGeneric() { savedGenericAction?() }
 public func clearGeneric() { savedGenericAction = nil }
 public func genericCallbackThenArgument<Value>(_ apply: () -> Value, _ argument: Int64) -> Value { apply() }
+
+@inline(never) public func equalGeneric<Value: Equatable>(_ left: Value, _ right: Value) -> Bool { left == right }
+@inline(never) public func selectGeneric<Value, Values: Collection>(_ fallback: Value, _ values: Values) -> Value where Values.Element == Value {
+    values.first ?? fallback
+}
+@inline(never) public func transformGeneric<Input, Output>(_ values: [Input], _ transform: (Input) throws -> Output) rethrows -> [Output] {
+    try values.map(transform)
+}
+@inline(never) public func optionalGeneric<Value>(_ value: Value?) -> Value? { value }
+@inline(never) public func genericFailure<Value, Failure: Error>(_ value: Value, _ failure: Failure, _ shouldThrow: Bool) throws(Failure) -> Value {
+    if shouldThrow { throw failure }
+    return value
+}
+@inline(never) public nonisolated(nonsending) func suspendedGeneric<Value>(_ value: Value) async -> Value {
+    await Task.yield()
+    return value
+}
+@inline(never) public nonisolated(nonsending) func suspendedGenericFailure<Value, Failure: Error>(
+    _ value: Value, _ failure: Failure, _ shouldThrow: Bool
+) async throws(Failure) -> Value {
+    await Task.yield()
+    if shouldThrow { throw failure }
+    return value
+}

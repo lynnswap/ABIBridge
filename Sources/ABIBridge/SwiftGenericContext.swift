@@ -56,7 +56,7 @@ struct SwiftGenericContext: Hashable, Sendable {
                 }
                 expected = terms[1]
             }
-            if DeclarationKey.make(actual) != DeclarationKey.make(expected) { return false }
+            if DeclarationKey.make(actual, language: .swift) != DeclarationKey.make(expected, language: .swift) { return false }
         }
         if let unsupported {
             throw ABIResolutionError.unsupportedDeclaration(

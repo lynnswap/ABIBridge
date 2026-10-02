@@ -10,7 +10,7 @@ For a provider declaring `func run<T>(_ apply: () -> T) -> T`, supply its comple
 let run = try await ABIRuntime.shared.swiftFunction(
     named: "Example.run<A>(() -> A) -> A",
     as: ((NativeSwiftClosure<() -> String>) -> String).self,
-    substituting: String.self
+    genericArguments: [.type(String.self)]
 )
 let suffix = "!"
 let apply = try NativeSwiftClosure { "Hello" + suffix }
@@ -29,7 +29,7 @@ For a native nonescaping `apply`, use ``NativeSwiftClosure/withUnsafeNonescaping
 let run = try await ABIRuntime.shared.swiftFunction(
     named: "Example.run<A>(() -> A) -> A",
     as: ((NativeSwiftClosure<() -> Bool>) -> Bool).self,
-    substituting: Bool.self
+    genericArguments: [.type(Bool.self)]
 )
 var calls = 0
 let result = try unsafe NativeSwiftClosure<() -> Bool>.withUnsafeNonescaping({

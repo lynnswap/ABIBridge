@@ -184,30 +184,27 @@ extension NativeSwiftClosure: SwiftClosureValue {
     }
 }
 
-extension NativeSwiftClosure: SwiftGenericResultClosure {
-    static func genericResultSignature() throws -> SwiftFunctionSignature { try SwiftFunctionSignature(Signature.self) }
-
-    static func genericResultInterface() throws -> SwiftCallInterface {
-        let signature = try SwiftFunctionSignature(Signature.self)
-        func prepare<Result>(_ type: Result.Type) throws -> SwiftCallInterface {
-            let result = try CValueType(indirectSwiftSize: MemoryLayout<Result>.size, alignment: MemoryLayout<Result>.alignment)
-            return try SwiftCallInterface.cached(result: result, parameters: [])
+extension NativeSwiftClosure: SwiftGenericClosureValue {
+    func encodeGenericClosure(plan: SwiftGenericClosurePlan, retainingCode owner: Any?) throws -> NativeValueStorage {
+        guard case .synchronous(let original, let prepared) = call else {
+            throw ABIResolutionError.unsupportedDeclaration("A synchronous generic callback requires a synchronous closure.")
         }
-        return try _openExistential(signature.result, do: prepare)
-    }
-
-    func encodeGenericResultClosure(interface: SwiftCallInterface, retainingCode owner: Any?) throws -> NativeValueStorage {
-        guard case .synchronous(let original, let prepared) = call else { preconditionFailure("Generic result adaptation requires its prepared synchronous signature.") }
-        let concrete = prepared.interface
-        let callback = try SwiftClosureCallbackOwner(interface: interface, body: SwiftClosureBody(retainingCode: (original.codeOwner, owner)) { arguments, output in
-            let success = ABIUnsafeInvokeSwiftCallInterface(concrete.handle, original.implementation.function,
-                output, arguments, original.value.context, nil)
+        let callback = try throwingClosureOwner(plan.interface, body: SwiftThrowingClosureBody(retainingCode: (original.codeOwner, owner)) { arguments, output, error in
+            var didThrow = false
+            let success: Bool
+            if prepared.errorPlan != nil {
+                success = ABIUnsafeInvokeSwiftThrowingCallInterface(prepared.interface.handle,
+                    original.implementation.function, output, arguments, original.value.context, error, &didThrow, nil)
+            } else {
+                success = ABIUnsafeInvokeSwiftCallInterface(prepared.interface.handle, original.implementation.function,
+                    output, arguments, original.value.context, nil)
+            }
             precondition(success, "A prepared closure reabstraction must have a valid call frame.")
+            return didThrow
         })
-        let discriminator = swiftClosureDiscriminator(parameters: [], result: "-indirect")
-        let value = ABISwiftClosureValue(function: ABISignSwiftClosureFunction(callback.function, discriminator),
+        let value = ABISwiftClosureValue(function: ABISignSwiftClosureFunction(callback.function, plan.discriminator),
             context: Unmanaged.passRetained(callback).toOpaque())
-        let adapted = try SwiftClosureStorage(adopting: value, discriminator: discriminator, retaining: original)
+        let adapted = try SwiftClosureStorage(adopting: value, discriminator: plan.discriminator, retaining: original)
         return adapted.encoded()
     }
 }

@@ -4,8 +4,13 @@ import Darwin
 /// Immutable metadata/witness words. Native calls only borrow this buffer.
 final class SwiftGenericArgumentBuffer: @unchecked Sendable {
     private let storage: NativeValueStorage
+    private let count: Int
     var address: UInt { UInt(bitPattern: storage.address) }
+    var addresses: [UnsafeMutableRawPointer?] {
+        (0..<count).map { storage.address.advanced(by: $0 * MemoryLayout<UInt>.stride) }
+    }
     init(_ words: [UInt]) {
+        count = words.count
         storage = NativeValueStorage(size: max(1, words.count) * MemoryLayout<UInt>.stride,
                                      alignment: MemoryLayout<UInt>.alignment)
         for (index, word) in words.enumerated() {

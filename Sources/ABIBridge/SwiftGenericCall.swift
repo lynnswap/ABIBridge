@@ -1,117 +1,161 @@
 import ABIBridgeCore
-import Foundation
 
-enum SwiftGenericArgument: Sendable { case concrete, parameter, closureResult }
+enum SwiftGenericArgument: Sendable {
+    case concrete
+    case value(CValueType, consuming: Bool)
+    case closure(SwiftGenericClosurePlan)
+}
 
-protocol SwiftGenericResultClosure: SwiftClosureValue {
-    static func genericResultSignature() throws -> SwiftFunctionSignature
-    static func genericResultInterface() throws -> SwiftCallInterface
-    func encodeGenericResultClosure(interface: SwiftCallInterface, retainingCode owner: Any?) throws -> NativeValueStorage
+protocol SwiftGenericClosureValue: SwiftClosureValue {
+    func encodeGenericClosure(plan: SwiftGenericClosurePlan, retainingCode owner: Any?) throws -> NativeValueStorage
+}
+
+struct SwiftGenericClosurePlan: Sendable {
+    let interface: SwiftCallInterface
+    let discriminator: UInt16
 }
 
 struct SwiftGenericCallPlan: Sendable {
-    let metadata: UInt
+    let binding: SwiftGenericBinding
+    let metadata: SwiftGenericArgumentBuffer
     let arguments: [SwiftGenericArgument]
-    let indirectResult: Bool
+    let resultType: CValueType?
+    let errorType: CValueType?
 
-    init(name: String, substitution: Any.Type, parameters: [Any.Type], result: Any.Type) throws {
-        func unsupported() -> ABIResolutionError {
-            .unsupportedDeclaration("Generic calls require a complete synchronous free-function declaration with one unconstrained <A>; A may occur as an argument, result, or () -> A callback.")
+    init(declaration: String, genericArguments: [NativeSwiftGenericArgument],
+         signature: SwiftFunctionSignature, resolver: SymbolResolver) throws {
+        let declaration = try SwiftGenericDeclaration(declaration)
+        let binding = try SwiftGenericBinding(declaration: declaration, arguments: genericArguments,
+                                              signature: signature, resolver: resolver)
+        guard declaration.arguments.count == signature.parameters.count else {
+            throw ABIResolutionError.signatureMismatch(.init(
+                expected: "\(declaration.arguments.count) arguments", found: ["\(signature.parameters.count) arguments"]))
         }
-        guard let opening = name.firstIndex(of: "(") else { throw unsupported() }
-        let head = String(name[..<opening]).trimmingCharacters(in: .whitespaces)
-        guard head.hasSuffix("<A>"), head.dropLast(3).split(separator: ".").count == 2,
-              !head.contains(where: \.isWhitespace), SwiftGenericSyntax.groups(in: head).count == 1 else { throw unsupported() }
-        var depth = 0
-        var closing: String.Index?
-        for index in name[opening...].indices {
-            if name[index] == "(" { depth += 1 }
-            if name[index] == ")" { depth -= 1; if depth == 0 { closing = index; break } }
+        guard declaration.isAsync == signature.isAsync,
+              (declaration.failure == nil) == (signature.failure == Never.self) else {
+            throw ABIResolutionError.signatureMismatch(.init(
+                expected: "The declaration's async and error effects", found: []))
         }
-        guard let closing else { throw unsupported() }
-        let tail = name[name.index(after: closing)...].trimmingCharacters(in: .whitespaces)
-        guard tail.hasPrefix("->") else { throw unsupported() }
-        let formalResult = tail.dropFirst(2).trimmingCharacters(in: .whitespaces)
-        let contents = name[name.index(after: opening)..<closing]
-        let fields = contents.trimmingCharacters(in: .whitespaces).isEmpty ? [] : SwiftGenericSyntax.split(contents)
-        guard fields.count == parameters.count else {
-            throw ABIResolutionError.signatureMismatch(.init(expected: "\(fields.count) generic arguments", found: ["\(parameters.count) typed arguments"]))
-        }
-        func mentionsParameter(_ text: String) -> Bool {
-            SwiftGenericSyntax.names(in: text).contains { $0 == "A" || $0.hasPrefix("A.") }
-        }
-        func requireSubstitution(_ actual: Any.Type) throws {
-            guard actual == substitution else {
-                throw ABIResolutionError.signatureMismatch(.init(expected: String(reflecting: substitution), found: [String(reflecting: actual)]))
+        self.binding = binding
+        metadata = SwiftGenericArgumentBuffer(binding.metadataArguments)
+        arguments = try zip(declaration.arguments, signature.parameters).map { formal, actual in
+            if case .function = formal, binding.dependsOnParameters(formal) {
+                guard let closure = actual as? any SwiftGenericClosureValue.Type else {
+                    throw ABIResolutionError.signatureMismatch(.init(expected: "NativeSwiftClosure for " + formal.spelling, found: [String(reflecting: actual)]))
+                }
+                let signature = try SwiftFunctionSignature(closure.swiftFunctionType)
+                return .closure(try Self.closure(formal, signature: signature, binding: binding))
             }
+            guard binding.dependsOnParameters(formal) else { return .concrete }
+            try binding.validate(actual, for: formal)
+            return .value(try Self.layout(formal, actual: actual, binding: binding), consuming: false)
         }
-        arguments = try zip(fields, parameters).map { field, actual in
-            var formal = field.trimmingCharacters(in: .whitespaces)
-            // A label's colon precedes any type group; dictionary/tuple colons do not.
-            if let colon = formal.firstIndex(of: ":"), !formal[..<colon].contains(where: { "(<[".contains($0) }) {
-                formal = formal[formal.index(after: colon)...].trimmingCharacters(in: .whitespaces)
-            }
-            if formal == "A" { try requireSubstitution(actual); return .parameter }
-            if mentionsParameter(formal) {
-                guard formal.filter({ !$0.isWhitespace }) == "()->A",
-                      let closure = actual as? any SwiftGenericResultClosure.Type else { throw unsupported() }
-                let signature = try closure.genericResultSignature()
-                guard signature.parameters.isEmpty, !signature.isAsync, signature.failure == Never.self else { throw unsupported() }
-                try requireSubstitution(signature.result)
-                return .closureResult
-            }
-            return .concrete
-        }
-        if formalResult == "A" {
-            try requireSubstitution(result)
-            indirectResult = true
+        if binding.dependsOnParameters(declaration.result) {
+            try binding.validate(signature.result, for: declaration.result)
+            resultType = try Self.layout(declaration.result, actual: signature.result, binding: binding)
         } else {
-            guard !mentionsParameter(formalResult) else { throw unsupported() }
-            indirectResult = false
+            resultType = nil
         }
-        metadata = unsafeBitCast(substitution, to: UInt.self)
+        if let failure = declaration.failure, binding.dependsOnParameters(failure) {
+            try binding.validate(signature.failure, for: failure)
+            errorType = try Self.layout(failure, actual: signature.failure, binding: binding)
+        } else {
+            errorType = nil
+        }
+    }
+
+    private static func closure(_ formal: SwiftFormalType, signature: SwiftFunctionSignature,
+                                binding: SwiftGenericBinding) throws -> SwiftGenericClosurePlan {
+        guard case .function(let parameters, let result, let failure, let isAsync) = formal else {
+            preconditionFailure("A closure plan requires a function type.")
+        }
+        guard parameters.count == signature.parameters.count, isAsync == signature.isAsync,
+              (failure == nil) == (signature.failure == Never.self) else {
+            throw ABIResolutionError.signatureMismatch(.init(expected: formal.spelling, found: []))
+        }
+        guard !isAsync else {
+            throw ABIResolutionError.unsupportedDeclaration("Generic async callbacks require async reabstraction.")
+        }
+        var types: [CValueType] = []
+        var authentication: [String] = []
+        for (formal, actual) in zip(parameters, signature.parameters) {
+            try binding.validate(actual, for: formal)
+            let type = try layout(formal, actual: actual, binding: binding)
+            types.append(type)
+            authentication.append(try authType(actual, layout: type))
+        }
+        try binding.validate(signature.result, for: result)
+        let resultType = try layout(result, actual: signature.result, binding: binding)
+        let errorType = try failure.flatMap {
+            binding.dependsOnParameters($0) ? try layout($0, actual: signature.failure, binding: binding) : nil
+        }
+        return try SwiftGenericClosurePlan(interface: SwiftCallInterface.cached(result: resultType,
+            parameters: types, errorPlan: signature.makeErrorPlan(genericType: errorType)),
+            discriminator: swiftClosureDiscriminator(parameters: authentication,
+                result: result == .tuple([]) ? nil : authType(signature.result, layout: resultType)))
+    }
+
+    private static func authType(_ type: Any.Type, layout: CValueType) throws -> String {
+        if ABISwiftValueIsIndirect(layout.handle) { return "-indirect" }
+        return try swiftClosureAuthType(type)
+    }
+
+    private static func layout(_ formal: SwiftFormalType, actual: Any.Type,
+                               binding: SwiftGenericBinding) throws -> CValueType {
+        func prepare<Value>(_ type: Value.Type) throws -> CValueType {
+            if !binding.dependsOnParameters(formal) { return try SwiftValueCodec<Value>().type }
+            if binding.isClassBound(formal) { return try CValueType(scalar: ABIValuePointer) }
+            switch formal {
+            case .named(let name, let arguments):
+                if ["Swift.Array", "Swift.Dictionary", "Swift.Set"].contains(name) {
+                    return try CValueType(scalar: ABIValuePointer)
+                }
+                if name == "Swift.Optional", let wrapped = arguments.first,
+                   binding.isClassBound(wrapped) {
+                    return try CValueType(scalar: ABIValuePointer)
+                }
+                return try CValueType(indirectSwiftSize: MemoryLayout<Value>.size,
+                                      alignment: MemoryLayout<Value>.alignment)
+            case .metatype:
+                return try CValueType(scalar: ABIValuePointer)
+            case .tuple:
+                throw ABIResolutionError.unsupportedDeclaration("Generic tuple values require declaration-level element lowering.")
+            case .pack:
+                throw ABIResolutionError.unsupportedDeclaration("Generic pack values require their element buffers.")
+            case .function:
+                let pointer = try CValueType(scalar: ABIValuePointer)
+                return try CValueType(fields: [pointer, pointer])
+            case .borrowing, .consuming, .inoutValue:
+                throw ABIResolutionError.unsupportedDeclaration("Generic ownership arguments require their underlying value convention.")
+            }
+        }
+        return try _openExistential(actual, do: prepare)
+    }
+}
+
+extension SwiftGenericBinding {
+    func dependsOnParameters(_ type: SwiftFormalType) -> Bool {
+        switch type {
+        case .named(let name, let parameters):
+            arguments[String(name.prefix { $0 != "." })] != nil || parameters.contains(where: dependsOnParameters)
+        case .tuple(let fields): fields.contains(where: dependsOnParameters)
+        case .function(let parameters, let result, let failure, _):
+            parameters.contains(where: dependsOnParameters) || dependsOnParameters(result) || (failure.map(dependsOnParameters) ?? false)
+        case .pack(let type), .borrowing(let type), .consuming(let type), .inoutValue(let type), .metatype(let type):
+            dependsOnParameters(type)
+        }
     }
 }
 
 extension ABIRuntime {
-    /// Resolves a synchronous, nonthrowing free function with one unconstrained type parameter.
-    ///
-    /// Supply a complete source declaration using the demangler's parameter A,
-    /// such as `Example.run<A>(() -> A) -> A`. A may occur directly as an
-    /// argument/result or as the result of a zero-argument NativeSwiftClosure.
-    /// Other positions use the existing concrete Swift representations. The
-    /// concrete function-type metatype must agree with the explicit substitution.
-    /// Protocol constraints, composed dependent types and additional effects are
-    /// outside this subset. Use the retained-type overload for dynamically loaded
-    /// substitution types whose implementation image needs an explicit owner.
-    public func swiftFunction<Result, each Argument>(
-        named name: String, as signature: ((repeat each Argument) -> Result).Type,
-        substituting substitution: Any.Type,
-        in scope: ImageSelector = .automatic, loading: ImageLoadingPolicy = .ifNeeded
-    ) throws -> NativeSwiftFunction<(repeat each Argument) -> Result> {
-        try genericSwiftFunction(named: name, as: signature, substitution: substitution, owner: nil, in: scope, loading: loading)
-    }
-
-    /// Resolves a generic free function while retaining the substitution's type image.
-    ///
-    /// The supplied handle's actual metatype must match the typed signature at
-    /// every occurrence of A. Calling conventions match the metatype overload.
-    public func swiftFunction<Result, each Argument>(
-        named name: String, as signature: ((repeat each Argument) -> Result).Type,
-        substituting substitution: NativeSwiftType,
-        in scope: ImageSelector = .automatic, loading: ImageLoadingPolicy = .ifNeeded
-    ) throws -> NativeSwiftFunction<(repeat each Argument) -> Result> {
-        try genericSwiftFunction(named: name, as: signature, substitution: substitution.metadata, owner: substitution, in: scope, loading: loading)
-    }
-
-    private func genericSwiftFunction<Result, each Argument>(
-        named name: String, as signature: ((repeat each Argument) -> Result).Type,
-        substitution: Any.Type, owner: NativeSwiftType?, in scope: ImageSelector, loading: ImageLoadingPolicy
-    ) throws -> NativeSwiftFunction<(repeat each Argument) -> Result> {
-        var parameters: [Any.Type] = []
-        for type in repeat (each Argument).self { parameters.append(type) }
-        let plan = try SwiftGenericCallPlan(name: name, substitution: substitution, parameters: parameters, result: Result.self)
-        return try NativeSwiftFunction(symbol: resolve(.init(name: name, language: .swift), in: scope, loading: loading),
-            owner: owner, resolver: resolver, generic: plan)
+    func preparedGenericFunction<Signature>(
+        symbol: ResolvedSymbol, signature: Signature.Type, genericArguments: [NativeSwiftGenericArgument]
+    ) throws -> NativeSwiftFunction<Signature> {
+        guard let declaration = DeclarationKey.demangle(symbol.linkageName, language: .swift) else {
+            throw ABIResolutionError.metadataUnavailable("The Swift declaration cannot be demangled.")
+        }
+        let plan = try SwiftGenericCallPlan(declaration: declaration, genericArguments: genericArguments,
+                                            signature: SwiftFunctionSignature(signature), resolver: resolver)
+        return try NativeSwiftFunction(symbol: symbol, resolver: resolver, generic: plan)
     }
 }

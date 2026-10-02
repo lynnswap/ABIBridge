@@ -58,13 +58,18 @@ struct SwiftAsyncCall: Sendable {
     private let values: SwiftCallValues
     let errorPlan: SwiftErrorPlan?
     private let hasTrailingValue: Bool
+    private let generic: SwiftGenericCallPlan?
 
     init(signature: Any.Type, trailingType: CValueType? = nil, consumesArguments: Bool = false,
-         errorPlan: SwiftErrorPlan? = nil, inheritsCallerIsolation: Bool, opaqueResult: SwiftOpaqueResultPlan? = nil) throws {
+         errorPlan: SwiftErrorPlan? = nil, inheritsCallerIsolation: Bool, opaqueResult: SwiftOpaqueResultPlan? = nil, generic: SwiftGenericCallPlan? = nil) throws {
         values = try SwiftCallValues(signature: SwiftFunctionSignature(signature), consumesArguments: consumesArguments,
-            opaqueResult: opaqueResult)
+            opaqueResult: opaqueResult, generic: generic)
         var types = values.arguments.map(\.type)
         if let trailingType { types.append(trailingType) }
+        if let generic {
+            types += Array(repeating: try CValueType(scalar: ABIValuePointer), count: generic.binding.metadataArguments.count)
+        }
+        self.generic = generic
         interface = try SwiftAsyncCallInterface(result: values.result.type, parameters: types,
             errorPlan: errorPlan, inheritsCallerIsolation: inheritsCallerIsolation)
         self.errorPlan = errorPlan
@@ -90,9 +95,10 @@ struct SwiftAsyncCall: Sendable {
         _ values: repeat each Argument
     ) async throws -> Result {
         precondition(hasTrailingValue == (trailingValue != nil))
-        let storage = try self.values.encode(repeat each values, retainingCode: codeOwner)
+        let storage = try self.values.encode(repeat each values, retainingCode: (codeOwner, generic))
         var addresses: [UnsafeMutableRawPointer?] = storage.map(\.address)
         if let trailingValue { addresses.append(trailingValue.address) }
+        if let generic { addresses.append(contentsOf: generic.metadata.addresses) }
         let output = self.values.result.makeStorage()
         let nativeError = errorPlan?.makeStorage()
         let codeOwners: Any = (entry, codeOwner)

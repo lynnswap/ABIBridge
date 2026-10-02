@@ -310,13 +310,17 @@ extension ABIRuntime {
     public func swiftFunction<Signature>(
         named name: String,
         as signature: Signature.Type,
+        genericArguments: [NativeSwiftGenericArgument] = [],
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftFunction<Signature> {
-        return try NativeSwiftFunction(
-            symbol: resolve(swiftFunctionDeclaration(named: name, as: signature), in: scope, loading: loading),
-            resolver: resolver
-        )
+        let declaration = try genericArguments.isEmpty ? swiftFunctionDeclaration(named: name, as: signature)
+            : NativeDeclaration(name: name, language: .swift)
+        let symbol = try resolve(declaration, in: scope, loading: loading)
+        if !genericArguments.isEmpty {
+            return try preparedGenericFunction(symbol: symbol, signature: signature, genericArguments: genericArguments)
+        }
+        return try NativeSwiftFunction(symbol: symbol, resolver: resolver)
     }
 
     /// Resolves a concrete Swift free function in an already retained image.
@@ -331,12 +335,16 @@ extension ABIRuntime {
     public func swiftFunction<Signature>(
         named name: String,
         as signature: Signature.Type,
+        genericArguments: [NativeSwiftGenericArgument] = [],
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftFunction<Signature> {
-        return try NativeSwiftFunction(
-            symbol: resolve(swiftFunctionDeclaration(named: name, as: signature), in: image, loading: loading),
-            resolver: resolver
-        )
+        let declaration = try genericArguments.isEmpty ? swiftFunctionDeclaration(named: name, as: signature)
+            : NativeDeclaration(name: name, language: .swift)
+        let symbol = try resolve(declaration, in: image, loading: loading)
+        if !genericArguments.isEmpty {
+            return try preparedGenericFunction(symbol: symbol, signature: signature, genericArguments: genericArguments)
+        }
+        return try NativeSwiftFunction(symbol: symbol, resolver: resolver)
     }
 }

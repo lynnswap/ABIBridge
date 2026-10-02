@@ -161,10 +161,10 @@ struct SwiftResultCodec<Value>: Sendable {
     private let opaque: SwiftOpaqueResultPlan?
     private let genericValue: Bool
 
-    init(opaque: SwiftOpaqueResultPlan? = nil, genericValue: Bool = false) throws {
-        self.genericValue = genericValue
-        if genericValue {
-            type = try CValueType(indirectSwiftSize: MemoryLayout<Value>.size, alignment: MemoryLayout<Value>.alignment)
+    init(opaque: SwiftOpaqueResultPlan? = nil, genericType: CValueType? = nil) throws {
+        self.genericValue = genericType != nil
+        if let genericType {
+            type = genericType
             ordinary = nil; self.opaque = nil
             return
         }
