@@ -152,7 +152,9 @@ extension SwiftFormalType {
             var context = children[0]
             if context.kind == "Extension" { context = context.children()[1] }
             if context.kind == "Module" {
-                self = .nominal(try context.requiredText() + "." + name, [])
+                let module = try context.requiredText()
+                self = node.kind == "Class" && module == "__C"
+                    ? .objectiveCClass(module + "." + name) : .nominal(module + "." + name, [])
             } else {
                 self = .nested(try Self(context), name, [])
             }
@@ -171,7 +173,8 @@ extension SwiftFormalType {
             let descriptor = try SwiftProtocolDescriptor(address: UnsafeRawPointer(bitPattern: UInt(node.index!))!)
             self = .nominal(try descriptor.name(), [])
         case "Tuple":
-            self = .tuple(try children.map(Self.init))
+            let labels = children.map { $0.child(kind: "TupleElementName")?.text() ?? "" }
+            self = .tuple(try children.map(Self.init), labels: labels.contains(where: { !$0.isEmpty }) ? labels : nil)
         case "PackExpansion":
             self = .pack(try Self(children[0]), shape: try Self(children[1]))
         case "Pack":
@@ -183,10 +186,16 @@ extension SwiftFormalType {
         case "InOut": self = .inoutValue(try Self(node.requiredChild()))
         case "Shared": self = .borrowing(try Self(node.requiredChild()))
         case "Owned": self = .consuming(try Self(node.requiredChild()))
-        case "FunctionType", "NoEscapeFunctionType", "UncurriedFunctionType", "CFunctionPointer", "ObjCBlock":
+        case "CFunctionPointer", "ObjCBlock", "EscapingObjCBlock":
             let input = try Self(node.requiredChild(kind: "ArgumentTuple"))
             let arguments: [Self]
-            if case .tuple(let elements) = input { arguments = elements } else { arguments = [input] }
+            if case .tuple(let elements, _) = input { arguments = elements } else { arguments = [input] }
+            self = .foreignFunction(node.kind == "CFunctionPointer" ? .c : .block,
+                arguments, try Self(node.requiredChild(kind: "ReturnType")))
+        case "FunctionType", "NoEscapeFunctionType", "UncurriedFunctionType":
+            let input = try Self(node.requiredChild(kind: "ArgumentTuple"))
+            let arguments: [Self]
+            if case .tuple(let elements, _) = input { arguments = elements } else { arguments = [input] }
             let failure: Self?
             if let typed = node.child(kind: "TypedThrowsAnnotation") {
                 failure = try Self(typed.requiredChild())
@@ -208,6 +217,7 @@ extension SwiftFormalType {
     var nominalDeclaration: (name: String, arguments: [Self])? {
         switch self {
         case .nominal(let name, let arguments): return (name, arguments)
+        case .objectiveCClass(let name): return (name, [])
         case .nested(let parent, let name, let arguments):
             guard let context = parent.nominalDeclaration else { return nil }
             return (context.name + "." + name, context.arguments + arguments)

@@ -19,6 +19,17 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
     }
     defer { dlclose(original) }
     let runtime = ABIRuntime()
+    let callbackType = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericCallbackConventions",
+        genericArguments: [.type(Int64.self)])
+    let makeCallbackOwner = try await callbackType.initializer(named: "init()", as: (() -> AnyObject).self)
+    let callbacks = runtime.object(try unsafe makeCallbackOwner.unsafeInvoke())
+    let selectedCallback = try await callbacks.method(named: "callback(_:)", as: ((NativeSwiftClosure<(Int64) -> Int64>) -> Int64).self)
+    let callbackValue = try unsafe selectedCallback.unsafeInvoke(NativeSwiftClosure<(Int64) -> Int64> { $0 + 2 })
+    precondition(callbackValue == 42)
+    let returnedCallback = try await callbacks.method(named: "returnedCallback()", as: (() -> NativeSwiftClosure<(Int64) -> Int64>).self)
+    let returnedBody = try unsafe returnedCallback.unsafeInvoke()
+    let returnedValue = try unsafe returnedBody.unsafeInvoke(40)
+    precondition(returnedValue == 42)
     let objectIdentity = try await runtime.swiftFunction(
         named: "ManagedSwiftFixtures.objectConstraintGeneric<A where A: AnyObject>(A) -> A",
         as: ((AnyObject) -> AnyObject).self, genericArguments: [.type(AnyObject.self)])

@@ -59,6 +59,32 @@ private final class InheritedGenericReceiver: GenericReceiver<ReceiverNumber> {}
 private enum ReceiverFailure: Error { case rejected }
 
 struct SwiftGenericReceiverTests {
+    @Test func callbackConventionsStayDistinctDuringMemberLookup() async throws {
+        let object = ABIRuntime().object(GenericCallbackConventions<Int64>())
+        let call = try await object.method(named: "callback(_:)", as: ((NativeSwiftClosure<(Int64) -> Int64>) -> Int64).self)
+        let body = try NativeSwiftClosure<(Int64) -> Int64> { $0 + 2 }
+        #expect(try unsafe call.unsafeInvoke(body) == 42)
+        let returned = try await object.method(named: "returnedCallback()", as: (() -> NativeSwiftClosure<(Int64) -> Int64>).self)
+        let returnedBody = try unsafe returned.unsafeInvoke()
+        #expect(try unsafe returnedBody.unsafeInvoke(40) == 42)
+        for name in ["foreignC(_:)", "foreignBlock(_:)"] {
+            do {
+                _ = try await object.method(named: name, as: ((NativeSwiftClosure<(Int64) -> Int64>) -> Int64).self)
+                Issue.record("A Swift closure must not match a foreign function convention")
+            } catch ABIResolutionError.declarationNotFound {}
+        }
+        let cBody: @convention(c) (Int64) -> Int64 = { $0 + 2 }
+        let cCall = try await object.method(
+            named: "foreignC(@convention(c) (Swift.Int64) -> Swift.Int64) -> Swift.Int64",
+            as: ((UnsafeRawPointer) -> Int64).self)
+        #expect(try unsafe cCall.unsafeInvoke(unsafeBitCast(cBody, to: UnsafeRawPointer.self)) == 42)
+        let block: @convention(block) (Int64) -> Int64 = { $0 + 2 }
+        let blockCall = try await object.method(
+            named: "foreignBlock(@convention(block) (Swift.Int64) -> Swift.Int64) -> Swift.Int64",
+            as: ((AnyObject) -> Int64).self)
+        #expect(try unsafe blockCall.unsafeInvoke(unsafeBitCast(block, to: AnyObject.self)) == 42)
+    }
+
     @MainActor @Test func unsupportedOverloadsDoNotHideUsableMembers() async throws {
         let runtime = ABIRuntime()
         for receiver in [GenericReceiver(ReceiverNumber(number: 42)),

@@ -110,11 +110,21 @@ struct SwiftGenericBindingTests {
         #expect(arrays.count == 2 && arrays[0] == [Int].self && arrays[1] == [String].self)
         let tuples = try binding.types(.pack(.tuple([element, .nominal("Swift.Int64", [])]), shape: element))
         #expect(tuples.count == 2 && tuples[0] == (Int, Int64).self && tuples[1] == (String, Int64).self)
+        let labeled = try binding.types(.tuple([
+            .nominal("Swift.Int64", []), .pack(element, shape: element), .nominal("Swift.Bool", [])
+        ], labels: ["head", "", "tail"]))
+        #expect(labeled.count == 1 && labeled[0] == (head: Int64, Int, String, tail: Bool).self)
         let metatype = try binding.types(.metatype(.tuple([.pack(element, shape: element)])))
         #expect(metatype.count == 1 && metatype[0] == (Int, String).Type.self)
         let pack = try binding.types(.nominal("ManagedSwiftFixtures.GenericTypePack", [
             .packValue([.nominal("Swift.Int64", []), .pack(element, shape: element)])]))
         #expect(pack.count == 1 && pack[0] == GenericTypePack<Int64, Int, String>.self)
+        let empty = try SwiftGenericBinding(declaration: SwiftGenericDeclaration(linkageName:
+            "$s20ManagedSwiftFixtures22constrainedPackGenericyxxQp_txxQpRvzSQRzlF"),
+            arguments: [.pack([])], signature: SwiftFunctionSignature((() -> Void).self), resolver: .shared)
+        let singleton = try empty.types(.tuple([.nominal("Swift.Int64", []), .pack(element, shape: element)],
+            labels: ["head", ""]))
+        #expect(singleton.count == 1 && singleton[0] == Int64.self)
     }
 
     @Test func explicitNominalSourcesRemoveOnlyFulfilledMetadataWords() throws {

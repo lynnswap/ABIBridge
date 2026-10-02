@@ -1,5 +1,20 @@
 @inline(never) public func runGeneric<Value>(_ apply: () -> Value) -> Value { apply() }
 
+public final class GenericCallbackConventions<Value> {
+    public init() {}
+    @inline(never) public func callback(_ body: (Int64) -> Int64) -> Int64 { body(40) }
+    @inline(never) public func callback(_ body: @convention(c) (Int64) -> Int64) -> Int64 { body(41) }
+    @inline(never) public func callback(_ body: @convention(block) (Int64) -> Int64) -> Int64 { body(43) }
+    @inline(never) public func foreignC(_ body: @convention(c) (Int64) -> Int64) -> Int64 { body(40) }
+    @inline(never) public func foreignBlock(_ body: @convention(block) (Int64) -> Int64) -> Int64 { body(40) }
+    @inline(never) public func returnedCallback() -> (Int64) -> Int64 { { $0 + 2 } }
+    @inline(never) public func returnedCallback() -> @convention(c) (Int64) -> Int64 { { $0 + 1 } }
+    @inline(never) public func returnedCallback() -> @convention(block) (Int64) -> Int64 { { $0 + 3 } }
+}
+
+@inline(never) public func associatedConstraintGeneric<Value: Collection>(_ value: Value) -> Int
+    where Value.Element == Int { value.count }
+
 public protocol GenericNotAnyObject {}
 @inline(never) public func similarlyNamedConstraintGeneric<Value: GenericNotAnyObject>(_ value: Value) -> Value { value }
 

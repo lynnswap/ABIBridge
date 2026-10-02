@@ -87,6 +87,61 @@ private struct BindingBoolAdapter: ABIBridgeValue {
                 "Declared generic witnesses preserve typed-error output: \(importsConformance)")
         }
     }
+    let candidates = runtime.object(BindingCandidateBox<Bool>())
+    let namedTuple = try await runtime.object(BindingCandidateBox<(first: Int64, second: String)>()).method(
+        named: "tupleIdentity()", as: (() -> Int64).self)
+    try check(unsafe namedTuple.unsafeInvoke() == 42, "Tuple labels remain part of same-type requirements")
+    do {
+        _ = try await runtime.object(BindingCandidateBox<(different: Int64, labels: String)>()).method(
+            named: "tupleIdentity()", as: (() -> Int64).self)
+        throw ArchitectureValidationFailure(description: "Different tuple labels matched a same-type requirement")
+    } catch ABIResolutionError.declarationNotFound {
+        try check(true, "Different tuple labels do not satisfy a same-type requirement")
+    }
+    let concreteClass = try await runtime.object(BindingCandidateBox<NSObject>()).method(
+        named: "classIdentity()", as: (() -> Int64).self)
+    try check(unsafe concreteClass.unsafeInvoke() == 42, "Concrete Objective-C classes satisfy their same-type requirements")
+    do {
+        _ = try await runtime.object(BindingCandidateBox<any NSObjectProtocol>()).method(
+            named: "classIdentity()", as: (() -> Int64).self)
+        throw ArchitectureValidationFailure(description: "An Objective-C protocol matched its same-named class")
+    } catch ABIResolutionError.declarationNotFound {
+        try check(true, "Objective-C protocol existentials do not satisfy same-named class identities")
+    }
+    let applicable = try await candidates.method(named: "constraintChoice()", as: (() -> Int64).self)
+    try check(unsafe applicable.unsafeInvoke() == 42,
+        "An inapplicable associated-type requirement does not hide another overload")
+    let inherited = try await candidates.method(named: "inheritedChoice()", as: (() -> Int64).self)
+    try check(unsafe inherited.unsafeInvoke() == 42,
+        "An inapplicable associated-type requirement does not hide a superclass member")
+    let callbacks = runtime.object(BindingCallbackConventions<Int64>())
+    let selectedCallback = try await callbacks.method(named: "callback(_:)", as: ((NativeSwiftClosure<(Int64) -> Int64>) -> Int64).self)
+    try check(unsafe selectedCallback.unsafeInvoke(NativeSwiftClosure<(Int64) -> Int64> { $0 + 2 }) == 42,
+        "Swift callback arguments select their own convention beside C and block overloads")
+    let returnedCallback = try await callbacks.method(named: "returnedCallback()", as: (() -> NativeSwiftClosure<(Int64) -> Int64>).self)
+    let returnedBody = try unsafe returnedCallback.unsafeInvoke()
+    try check(unsafe returnedBody.unsafeInvoke(40) == 42,
+        "Swift callback results select their own convention beside C and block overloads")
+    for name in ["foreignC(_:)", "foreignBlock(_:)"] {
+        do {
+            _ = try await callbacks.method(named: name, as: ((NativeSwiftClosure<(Int64) -> Int64>) -> Int64).self)
+            throw ArchitectureValidationFailure(description: "A Swift closure matched a foreign convention")
+        } catch ABIResolutionError.declarationNotFound {
+            try check(true, "Swift closures do not match foreign callback declarations: \(name)")
+        }
+    }
+    let cBody: @convention(c) (Int64) -> Int64 = { $0 + 2 }
+    let cCallback = try await callbacks.method(
+        named: "foreignC(@convention(c) (Swift.Int64) -> Swift.Int64) -> Swift.Int64",
+        as: ((UnsafeRawPointer) -> Int64).self)
+    try check(unsafe cCallback.unsafeInvoke(unsafeBitCast(cBody, to: UnsafeRawPointer.self)) == 42,
+        "A complete C callback declaration preserves its explicit pointer representation")
+    let block: @convention(block) (Int64) -> Int64 = { $0 + 2 }
+    let blockCallback = try await callbacks.method(
+        named: "foreignBlock(@convention(block) (Swift.Int64) -> Swift.Int64) -> Swift.Int64",
+        as: ((AnyObject) -> Int64).self)
+    try check(unsafe blockCallback.unsafeInvoke(unsafeBitCast(block, to: AnyObject.self)) == 42,
+        "A complete block callback declaration preserves its explicit object representation")
     let similarConstraint = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.bindingSimilarConstraint<A where A: SwiftValueFixtures.BindingNotAnyObject>(A) -> A",
         as: ((BindingConstraintValue) -> BindingConstraintValue).self, genericArguments: [.type(BindingConstraintValue.self)])

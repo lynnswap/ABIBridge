@@ -86,23 +86,26 @@ struct SwiftDeclaredSignature {
             let constraint = try type(String(field[field.index(after: colon)...]))
             // Superclass requirements are encoded in the declaration. Reuse
             // that classification rather than infer it from current conformances.
-            if declaration.requirements.contains(where: {
+            if let requirement = declaration.requirements.first(where: {
                 guard case .superclass(_, let known) = $0 else { return false }
                 return DeclarationKey.make(known.spelling, language: .swift) == DeclarationKey.make(constraint.spelling, language: .swift)
-            }) { return .superclass(subject, constraint) }
+            }), case .superclass(_, let known) = requirement { return .superclass(subject, known) }
             return .conformance(subject, constraint.spelling)
         }
     }
 }
 
 indirect enum SwiftFormalType: Sendable, Equatable {
+    enum ForeignConvention: String, Sendable { case c, block }
     case named(String, [SwiftFormalType])
     case nominal(String, [SwiftFormalType])
+    case objectiveCClass(String)
     case nested(SwiftFormalType, String, [SwiftFormalType])
     case reference(SwiftNominalDescriptor, [SwiftFormalType])
     case associated(SwiftFormalType, String, protocolName: String? = nil)
-    case tuple([SwiftFormalType])
+    case tuple([SwiftFormalType], labels: [String]? = nil)
     case function([SwiftFormalType], SwiftFormalType, failure: SwiftFormalType?, isAsync: Bool)
+    case foreignFunction(ForeignConvention, [SwiftFormalType], SwiftFormalType)
     case pack(SwiftFormalType, shape: SwiftFormalType? = nil)
     case packValue([SwiftFormalType])
     case inoutValue(SwiftFormalType)
@@ -138,6 +141,16 @@ indirect enum SwiftFormalType: Sendable, Equatable {
         let qualifiers = ["@escaping ", "@noescape ", "@Sendable ", "@concurrent ", "nonisolated(nonsending) "]
         while let prefix = qualifiers.first(where: { text.hasPrefix($0) }) {
             text = String(text.dropFirst(prefix.count))
+        }
+        for convention in [ForeignConvention.c, .block] {
+            let prefix = "@convention(" + convention.rawValue + ") "
+            if text.hasPrefix(prefix) {
+                guard case .function(let arguments, let result, nil, false) = try Self(String(text.dropFirst(prefix.count))) else {
+                    throw ABIResolutionError.unsupportedDeclaration("A C or block function requires a synchronous nonthrowing signature.")
+                }
+                self = .foreignFunction(convention, arguments, result)
+                return
+            }
         }
         if let arrow = SwiftFormalSyntax.topLevelArrow(in: text) {
             let input = String(text[..<arrow.lowerBound])
@@ -178,12 +191,16 @@ indirect enum SwiftFormalType: Sendable, Equatable {
            closing == text.index(before: text.endIndex) {
             let fields = SwiftFormalSyntax.fields(text.dropFirst().dropLast())
             let values = try fields.map { try Self($0) }
+            let names = fields.map { field in
+                SwiftFormalSyntax.topLevelColon(in: field).map { field[..<$0].trimmingCharacters(in: .whitespaces) } ?? ""
+            }
+            let labels = names.contains(where: { !$0.isEmpty }) ? names : nil
             if values.count == 1, case .pack = values[0] {
-                self = .tuple(values)
+                self = .tuple(values, labels: labels)
             } else if values.count == 1 {
                 self = values[0]
             } else {
-                self = .tuple(values)
+                self = .tuple(values, labels: labels)
             }
             return
         }
@@ -202,18 +219,24 @@ indirect enum SwiftFormalType: Sendable, Equatable {
         switch self {
         case .named(let name, let arguments), .nominal(let name, let arguments):
             name + (arguments.isEmpty ? "" : "<" + arguments.map(\.spelling).joined(separator: ", ") + ">")
+        case .objectiveCClass(let name): name
         case .reference(let descriptor, let arguments):
             descriptor.name + (arguments.isEmpty ? "" : "<" + arguments.map(\.spelling).joined(separator: ", ") + ">")
         case .nested(let parent, let name, let arguments):
             parent.spelling + "." + name + (arguments.isEmpty ? "" : "<" + arguments.map(\.spelling).joined(separator: ", ") + ">")
         case .associated(let base, let name, let protocolName):
             base.spelling + "." + (protocolName.map { $0 + "." } ?? "") + name
-        case .tuple(let values): "(" + values.map(\.spelling).joined(separator: ", ") + ")"
+        case .tuple(let values, let labels):
+            "(" + values.enumerated().map { index, value in
+                (labels?[index].isEmpty == false ? labels![index] + ": " : "") + value.spelling
+            }.joined(separator: ", ") + ")"
         case .function(let arguments, let result, let failure, let isAsync):
             "(" + arguments.map(\.spelling).joined(separator: ", ") + ")"
                 + (isAsync ? " async" : "")
                 + (failure.map { $0.spelling == "Swift.Error" ? " throws" : " throws(" + $0.spelling + ")" } ?? "")
                 + " -> " + result.spelling
+        case .foreignFunction(let convention, let arguments, let result):
+            "@convention(" + convention.rawValue + ") (" + arguments.map(\.spelling).joined(separator: ", ") + ") -> " + result.spelling
         case .pack(let value, _): "repeat " + value.spelling
         case .packValue(let elements): "Pack{" + elements.map(\.spelling).joined(separator: ", ") + "}"
         case .inoutValue(let value): "inout " + value.spelling

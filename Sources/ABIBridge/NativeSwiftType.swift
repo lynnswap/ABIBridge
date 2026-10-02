@@ -99,7 +99,7 @@ public actor NativeSwiftType {
         var ownerImage = image
         var ownerName = name
         var hasUnavailableExtensions = false
-        var unsupported: ABIResolutionError?
+        var preparationFailure: (any Error)?
         while true {
             let owner: Any.Type = ownerClass ?? metadata
             let enclosing = try owner == metadata ? genericMetadata : SwiftGenericTypeMetadata(metadata: owner)
@@ -116,7 +116,7 @@ public actor NativeSwiftType {
                     return (symbol, owner)
                 } catch ABIResolutionError.declarationNotFound {
                 } catch ABIResolutionError.unsupportedDeclaration(let reason) {
-                    unsupported = .unsupportedDeclaration(reason)
+                    preparationFailure = ABIResolutionError.unsupportedDeclaration(reason)
                 } catch ABIResolutionError.imageUnavailable {
                     hasUnavailableExtensions = true
                 }
@@ -126,7 +126,7 @@ public actor NativeSwiftType {
                     for extensionsOnly in [false, true] {
                         let candidates = try resolver.swiftMemberCandidates(request,
                             in: extensionsOnly ? nil : ownerImage, extensionsOnly: extensionsOnly)
-                        let matches = try candidates.filter { symbol in
+                        let matches = candidates.filter { symbol in
                             if explicitSignature,
                                SwiftMemberLookup.signatureKey(symbol.declaration.name) != SwiftMemberLookup.signatureKey(request.name) {
                                 return false
@@ -136,8 +136,8 @@ public actor NativeSwiftType {
                                     arguments: genericArguments, declaredSignature: declaredSignature) else { return false }
                                 return try explicitSignature || plan.matches(SwiftFunctionSignature(signature))
                             } catch ABIResolutionError.signatureMismatch { return false }
-                            catch ABIResolutionError.unsupportedDeclaration(let reason) {
-                                unsupported = .unsupportedDeclaration(reason)
+                            catch {
+                                preparationFailure = error
                                 return false
                             }
                         }
@@ -149,12 +149,12 @@ public actor NativeSwiftType {
                 } catch ABIResolutionError.imageUnavailable {
                     hasUnavailableExtensions = true
                 } catch ABIResolutionError.unsupportedDeclaration(let reason) {
-                    unsupported = .unsupportedDeclaration(reason)
+                    preparationFailure = ABIResolutionError.unsupportedDeclaration(reason)
                 }
             }
             guard inherited, let current = ownerClass, let parent = class_getSuperclass(current) else {
                 if hasUnavailableExtensions { throw ABIResolutionError.imageUnavailable }
-                if let unsupported { throw unsupported }
+                if let preparationFailure { throw preparationFailure }
                 throw ABIResolutionError.declarationNotFound(originalRequest)
             }
             let runtimeName = try swiftFunctionTypeName(parent)

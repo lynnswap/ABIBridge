@@ -223,7 +223,7 @@ struct SwiftGenericCallPlan: Sendable {
 
     private static func authTypes(_ formal: SwiftFormalType, actual: Any.Type,
                                   binding: SwiftGenericBinding, isResult: Bool = false) throws -> [String] {
-        if case .tuple(let fields) = formal {
+        if case .tuple(let fields, _) = formal {
             let elements = try tupleElements(fields, actual: actual, binding: binding)
             var index = 0
             return try fields.flatMap { field -> [String] in
@@ -310,7 +310,7 @@ struct SwiftGenericCallPlan: Sendable {
                 return try metatype.valueType(for: Value.self, thin: !metatype.isExistential && singletonMetatype(instance, binding: binding))
             case .existentialMetatype:
                 return try SwiftValueCodec<Value>().type
-            case .tuple(let fields):
+            case .tuple(let fields, _):
                 let elements = try tupleElements(fields, actual: actual, binding: binding)
                 var types: [CValueType] = [], offsets: [Int] = []
                 var index = 0
@@ -338,6 +338,8 @@ struct SwiftGenericCallPlan: Sendable {
             case .function:
                 let pointer = try CValueType(scalar: ABIValuePointer)
                 return try CValueType(fields: [pointer, pointer])
+            case .foreignFunction, .objectiveCClass:
+                return try CValueType(scalar: ABIValuePointer)
             case .borrowing, .consuming, .inoutValue:
                 throw ABIResolutionError.unsupportedDeclaration("Generic ownership arguments require their underlying value convention.")
             }
@@ -389,14 +391,17 @@ extension SwiftGenericBinding {
 
     func dependsOnParameters(_ type: SwiftFormalType) -> Bool {
         return switch type {
+        case .objectiveCClass: false
         case .named(let name, let parameters):
             (parameters.isEmpty && arguments[String(name.prefix { $0 != "." })] != nil) || parameters.contains(where: dependsOnParameters)
         case .nominal(_, let parameters), .reference(_, let parameters): parameters.contains(where: dependsOnParameters)
         case .nested(let parent, _, let parameters): dependsOnParameters(parent) || parameters.contains(where: dependsOnParameters)
         case .associated(let base, _, _): dependsOnParameters(base)
-        case .tuple(let fields), .packValue(let fields): fields.contains(where: dependsOnParameters)
+        case .tuple(let fields, _), .packValue(let fields): fields.contains(where: dependsOnParameters)
         case .function(let parameters, let result, let failure, _):
             parameters.contains(where: dependsOnParameters) || dependsOnParameters(result) || (failure.map(dependsOnParameters) ?? false)
+        case .foreignFunction(_, let parameters, let result):
+            parameters.contains(where: dependsOnParameters) || dependsOnParameters(result)
         case .pack(let type, let shape): dependsOnParameters(type) || (shape.map(dependsOnParameters) ?? false)
         case .borrowing(let type), .consuming(let type), .inoutValue(let type), .metatype(let type), .existentialMetatype(let type):
             dependsOnParameters(type)

@@ -34,7 +34,7 @@ enum SwiftGenericValueLayout {
                 let metadata = try binding.types(type)[0]
                 if metadata is AnyClass { return false }
                 return try isIndirect(metadata, arguments: declaration.arguments, binding: binding)
-            case .tuple(let elements): return try elements.contains(where: hasUnboundStorage)
+            case .tuple(let elements, _): return try elements.contains(where: hasUnboundStorage)
             case .pack: return true
             default: return false
             }
@@ -55,6 +55,7 @@ extension SwiftFormalType {
     func qualifyingAssociatedTypes(using conformances: [SwiftGenericBinding.Conformance]) throws -> Self {
         func qualify(_ type: Self) throws -> Self { try type.qualifyingAssociatedTypes(using: conformances) }
         switch self {
+        case .objectiveCClass: return self
         case .associated(let base, let member, let protocolName):
             var names: Set<String> = []
             if let protocolName { names.insert(protocolName) }
@@ -73,7 +74,7 @@ extension SwiftFormalType {
         case .nominal(let name, let values): return .nominal(name, try values.map(qualify))
         case .reference(let descriptor, let values): return .reference(descriptor, try values.map(qualify))
         case .nested(let parent, let name, let values): return .nested(try qualify(parent), name, try values.map(qualify))
-        case .tuple(let values): return .tuple(try values.map(qualify))
+        case .tuple(let values, let labels): return .tuple(try values.map(qualify), labels: labels)
         case .packValue(let values): return .packValue(try values.map(qualify))
         case .pack(let value, let shape): return .pack(try qualify(value), shape: try shape.map(qualify))
         case .metatype(let value): return .metatype(try qualify(value))
@@ -83,6 +84,8 @@ extension SwiftFormalType {
         case .inoutValue(let value): return .inoutValue(try qualify(value))
         case .function(let values, let result, let failure, let isAsync):
             return .function(try values.map(qualify), try qualify(result), failure: try failure.map(qualify), isAsync: isAsync)
+        case .foreignFunction(let convention, let values, let result):
+            return .foreignFunction(convention, try values.map(qualify), try qualify(result))
         }
     }
 }

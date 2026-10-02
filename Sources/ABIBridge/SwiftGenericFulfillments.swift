@@ -71,7 +71,7 @@ extension SwiftGenericBinding {
             switch type {
             case .inoutValue, .pack: return
             case .borrowing(let value), .consuming(let value): try consider(value)
-            case .tuple(let fields): try fields.forEach(consider)
+            case .tuple(let fields, _): try fields.forEach(consider)
             case .metatype(let instance):
                 // A nominal value metatype is thin even when it contains
                 // archetypes. A class metatype can supply nominal metadata.
@@ -94,6 +94,7 @@ extension SwiftGenericBinding {
 extension SwiftFormalType {
     func substituting(_ substitutions: [String: Self]) -> Self {
         switch self {
+        case .objectiveCClass: return self
         case .named(let name, let arguments):
             if arguments.isEmpty {
                 if let value = substitutions[name] { return value }
@@ -110,7 +111,7 @@ extension SwiftFormalType {
             return .nested(parent.substituting(substitutions), name, arguments.map { $0.substituting(substitutions) })
         case .associated(let base, let name, let protocolName):
             return .associated(base.substituting(substitutions), name, protocolName: protocolName)
-        case .tuple(let elements): return .tuple(elements.map { $0.substituting(substitutions) })
+        case .tuple(let elements, let labels): return .tuple(elements.map { $0.substituting(substitutions) }, labels: labels)
         case .pack(let value, let shape): return .pack(value.substituting(substitutions), shape: shape?.substituting(substitutions))
         case .packValue(let elements): return .packValue(elements.map { $0.substituting(substitutions) })
         case .borrowing(let value): return .borrowing(value.substituting(substitutions))
@@ -121,6 +122,8 @@ extension SwiftFormalType {
         case .function(let parameters, let result, let failure, let isAsync):
             return .function(parameters.map { $0.substituting(substitutions) }, result.substituting(substitutions),
                 failure: failure?.substituting(substitutions), isAsync: isAsync)
+        case .foreignFunction(let convention, let parameters, let result):
+            return .foreignFunction(convention, parameters.map { $0.substituting(substitutions) }, result.substituting(substitutions))
         }
     }
 }

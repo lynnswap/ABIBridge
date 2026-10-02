@@ -131,6 +131,37 @@ struct SwiftGenericBinding: Sendable {
                 in: .automatic, loading: .loadedOnly))))
         }
         self.conformances = conformances
+        var witnessesByConformance: [Int: [UInt]] = [:]
+        for (index, conformance) in conformances.enumerated() {
+            let types = try types(conformance.subject)
+            if let descriptor = conformance.descriptor {
+                if let image = descriptor.image { images.append(image) }
+                var witnesses: [UInt] = []
+                for type in types {
+                    let pointer = unsafeBitCast(type, to: UnsafeRawPointer.self)
+                    let witness = unsafe descriptor.withUnsafeAddress { ABISwiftConformance(pointer, $0) }
+                    guard let witness else {
+                        throw ABIResolutionError.signatureMismatch(.init(
+                            expected: conformance.subject.spelling + ": " + conformance.name,
+                            found: [String(reflecting: type)]))
+                    }
+                    witnesses.append(UInt(bitPattern: witness))
+                    if let address = ABISwiftConformanceDescriptor(witness),
+                       let image = try swiftImplementationImage(containing: address) { images.append(image) }
+                }
+                witnessesByConformance[index] = witnesses
+            } else if let objectiveC = conformance.objectiveC {
+                if let image = objectiveC.image { images.append(image) }
+                guard types.allSatisfy(objectiveC.accepts) else {
+                    throw ABIResolutionError.signatureMismatch(.init(expected: conformance.name,
+                        found: types.map { String(reflecting: $0) }))
+                }
+            } else if ["AnyObject", "Swift.AnyObject"].contains(conformance.name) {
+                guard types.allSatisfy({ SwiftObjectType($0) != nil }) else {
+                    throw ABIResolutionError.signatureMismatch(.init(expected: "A class type", found: types.map { String(reflecting: $0) }))
+                }
+            }
+        }
         for requirement in declaration.requirements {
             switch requirement {
             case .sameType(let left, let right):
@@ -144,11 +175,7 @@ struct SwiftGenericBinding: Sendable {
                     throw ABIResolutionError.signatureMismatch(.init(expected: "Equal type pack lengths", found: [left.spelling, right.spelling]))
                 }
             case .superclass(let subject, let constraint):
-                // Objective-C classes and protocols can share a demangled name.
-                // A superclass requirement identifies the class namespace.
-                let name = constraint.spelling
-                let importedClass = name.hasPrefix("__C.") ? NSClassFromString(String(name.dropFirst(4))) : nil
-                guard let expected = try importedClass ?? types(constraint).first as? AnyClass else {
+                guard let expected = try types(constraint).first as? AnyClass else {
                     throw ABIResolutionError.metadataUnavailable("The superclass constraint does not identify a class: " + constraint.spelling)
                 }
                 for type in try types(subject) {
@@ -191,37 +218,6 @@ struct SwiftGenericBinding: Sendable {
                 metadataWords.append((.parameter(parameter.name), appendPack(metadata)))
             } else {
                 metadataWords.append((.parameter(parameter.name), metadata[0]))
-            }
-        }
-        var witnessesByConformance: [Int: [UInt]] = [:]
-        for (index, conformance) in conformances.enumerated() {
-            let types = try types(conformance.subject)
-            if let descriptor = conformance.descriptor {
-                if let image = descriptor.image { images.append(image) }
-                var witnesses: [UInt] = []
-                for type in types {
-                    let pointer = unsafeBitCast(type, to: UnsafeRawPointer.self)
-                    let witness = unsafe descriptor.withUnsafeAddress { ABISwiftConformance(pointer, $0) }
-                    guard let witness else {
-                        throw ABIResolutionError.signatureMismatch(.init(
-                            expected: conformance.subject.spelling + ": " + conformance.name,
-                            found: [String(reflecting: type)]))
-                    }
-                    witnesses.append(UInt(bitPattern: witness))
-                    if let address = ABISwiftConformanceDescriptor(witness),
-                       let image = try swiftImplementationImage(containing: address) { images.append(image) }
-                }
-                witnessesByConformance[index] = witnesses
-            } else if let objectiveC = conformance.objectiveC {
-                if let image = objectiveC.image { images.append(image) }
-                guard types.allSatisfy(objectiveC.accepts) else {
-                    throw ABIResolutionError.signatureMismatch(.init(expected: conformance.name,
-                        found: types.map { String(reflecting: $0) }))
-                }
-            } else if ["AnyObject", "Swift.AnyObject"].contains(conformance.name) {
-                guard types.allSatisfy({ SwiftObjectType($0) != nil }) else {
-                    throw ABIResolutionError.signatureMismatch(.init(expected: "A class type", found: types.map { String(reflecting: $0) }))
-                }
             }
         }
         for index in try canonicalWitnessIndices() {
@@ -507,6 +503,12 @@ struct SwiftGenericBinding: Sendable {
     }
 
     func types(_ type: SwiftFormalType, packIndex: Int? = nil) throws -> [Any.Type] {
+        if case .objectiveCClass(let name) = type {
+            guard let type = NSClassFromString(String(name.dropFirst(4))) else {
+                throw ABIResolutionError.metadataUnavailable("The Objective-C class is unavailable: " + name)
+            }
+            return [type]
+        }
         if case .pack(let pattern, let shape) = type {
             return try (0..<packCount(in: shape ?? pattern)).flatMap { try types(pattern, packIndex: $0) }
         }
@@ -564,10 +566,20 @@ struct SwiftGenericBinding: Sendable {
             let name = try spelling(type, packIndex: packIndex)
             if let known = knownTypes[try Self.key(name)] { return [known] }
         }
-        if case .tuple(let fields) = type {
-            let elements = try fields.flatMap { try types($0, packIndex: packIndex) }
+        if case .tuple(let fields, let labels) = type {
+            let groups = try fields.map { try types($0, packIndex: packIndex) }
+            let elements = groups.flatMap { $0 }
+            let names = groups.enumerated().flatMap { index, types in
+                Array(repeating: labels?[index] ?? "", count: types.count)
+            }
             let pointers = elements.map { Optional(unsafeBitCast($0, to: UnsafeRawPointer.self)) }
-            guard let metadata = pointers.withUnsafeBufferPointer({ ABISwiftTupleTypeMetadata($0.baseAddress, $0.count) }) else {
+            let metadata = pointers.withUnsafeBufferPointer { pointers in
+                if names.allSatisfy(\.isEmpty) { return ABISwiftTupleTypeMetadata(pointers.baseAddress, pointers.count, nil) }
+                return (names.joined(separator: " ") + " ").withCString {
+                    ABISwiftTupleTypeMetadata(pointers.baseAddress, pointers.count, $0)
+                }
+            }
+            guard let metadata else {
                 throw ABIResolutionError.metadataUnavailable("The tuple exceeds Swift's metadata element count.")
             }
             return [unsafeBitCast(metadata, to: Any.Type.self)]
@@ -611,6 +623,7 @@ struct SwiftGenericBinding: Sendable {
         var counts: [Int] = []
         func visit(_ type: SwiftFormalType) {
             switch type {
+            case .objectiveCClass: break
             case .named(let name, let parameters):
                 if let argument = arguments[String(name.prefix { $0 != "." })], argument.isPack {
                     counts.append(argument.types.count)
@@ -619,9 +632,11 @@ struct SwiftGenericBinding: Sendable {
             case .nominal(_, let parameters), .reference(_, let parameters): parameters.forEach(visit)
             case .nested(let parent, _, let parameters): visit(parent); parameters.forEach(visit)
             case .associated(let base, _, _): visit(base)
-            case .tuple(let fields), .packValue(let fields): fields.forEach(visit)
+            case .tuple(let fields, _), .packValue(let fields): fields.forEach(visit)
             case .function(let parameters, let result, let failure, _):
                 parameters.forEach(visit); visit(result); if let failure { visit(failure) }
+            case .foreignFunction(_, let parameters, let result):
+                parameters.forEach(visit); visit(result)
             case .pack(let value, let shape): visit(shape ?? value)
             case .borrowing(let value), .consuming(let value), .inoutValue(let value), .metatype(let value), .existentialMetatype(let value): visit(value)
             }
@@ -635,6 +650,7 @@ struct SwiftGenericBinding: Sendable {
 
     func spelling(_ type: SwiftFormalType, packIndex: Int? = nil) throws -> String {
         switch type {
+        case .objectiveCClass(let name): return name
         case .named(let name, let parameters):
             if parameters.isEmpty && arguments[String(name.prefix { $0 != "." })] != nil {
                 let resolved = try types(type, packIndex: packIndex)
@@ -650,7 +666,13 @@ struct SwiftGenericBinding: Sendable {
         case .nested(let parent, let name, let parameters):
             return try spelling(parent, packIndex: packIndex) + "." + name
                 + (parameters.isEmpty ? "" : "<" + parameters.map { try spelling($0, packIndex: packIndex) }.joined(separator: ", ") + ">")
-        case .tuple(let values): return "(" + (try values.map { try spelling($0, packIndex: packIndex) }).filter { !$0.isEmpty }.joined(separator: ", ") + ")"
+        case .tuple(let values, let labels):
+            let fields = try values.enumerated().map { index, value in
+                let type = try spelling(value, packIndex: packIndex)
+                if type.isEmpty { return "" }
+                return (labels?[index].isEmpty == false ? labels![index] + ": " : "") + type
+            }
+            return "(" + fields.filter { !$0.isEmpty }.joined(separator: ", ") + ")"
         case .pack(let value, let shape):
             return try (0..<packCount(in: shape ?? value)).map { try spelling(value, packIndex: $0) }.joined(separator: ", ")
         case .packValue(let elements):
@@ -663,6 +685,10 @@ struct SwiftGenericBinding: Sendable {
             return "(" + (try values.map { try spelling($0, packIndex: packIndex) }).joined(separator: ", ") + ")" + (isAsync ? " async" : "")
                 + (error.map { $0 == "Swift.Never" ? "" : $0 == "Swift.Error" ? " throws" : " throws(" + $0 + ")" } ?? "")
                 + " -> " + (try spelling(result, packIndex: packIndex))
+        case .foreignFunction(let convention, let values, let result):
+            return "@convention(" + convention.rawValue + ") ("
+                + (try values.map { try spelling($0, packIndex: packIndex) }).joined(separator: ", ")
+                + ") -> " + (try spelling(result, packIndex: packIndex))
         }
     }
 
@@ -679,6 +705,12 @@ struct SwiftGenericBinding: Sendable {
     }
 
     func validate(_ type: Any.Type, for formal: SwiftFormalType, packIndex: Int? = nil) throws {
+        if case .objectiveCClass = formal {
+            guard try type == types(formal)[0] else {
+                throw ABIResolutionError.signatureMismatch(.init(expected: formal.spelling, found: [String(reflecting: type)]))
+            }
+            return
+        }
         if let convention = formal.argumentConvention {
             guard let argument = type as? any SwiftConventionArgument.Type, argument.convention == convention.convention else {
                 throw ABIResolutionError.signatureMismatch(.init(expected: formal.spelling + " with its Swift argument wrapper",

@@ -112,11 +112,12 @@ const void *ABISwiftExistentialMetatypeMetadata(const void *instance) {
     return swift_getExistentialMetatypeMetadata(instance);
 }
 
-const void *ABISwiftTupleTypeMetadata(const void *const *elements, size_t count) {
+const void *ABISwiftTupleTypeMetadata(const void *const *elements, size_t count, const char *labels) {
     // TupleTypeFlags reserves sixteen bits for the number of elements.
     if (count > 0xffff) return nullptr;
     if (count == 1) return elements[0];
-    return swift_getTupleTypeMetadata(0, count, elements, nullptr, nullptr).value;
+    // NonConstantLabels asks the runtime to retain its own copy of the labels.
+    return swift_getTupleTypeMetadata(0, count | (labels ? 0x10000 : 0), elements, labels, nullptr).value;
 }
 
 const void *ABISwiftProtocolTypeMetadata(const void *protocol) {

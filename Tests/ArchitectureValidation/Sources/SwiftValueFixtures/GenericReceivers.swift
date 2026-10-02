@@ -1,5 +1,35 @@
 import Foundation
 
+public class BindingCandidateBase {
+    public init() {}
+    @inline(never) public func inheritedChoice() -> Int64 { 42 }
+}
+public final class BindingCandidateBox<Value>: BindingCandidateBase {}
+extension BindingCandidateBox where Value: Collection, Value.Element == Int {
+    @inline(never) public func inheritedChoice() -> Int64 { 41 }
+    @inline(never) public func constraintChoice() -> Int64 { 43 }
+}
+extension BindingCandidateBox where Value == Bool {
+    @inline(never) public func constraintChoice() -> Int64 { 42 }
+}
+extension BindingCandidateBox where Value == NSObject {
+    @inline(never) public func classIdentity() -> Int64 { 42 }
+}
+extension BindingCandidateBox where Value == (first: Int64, second: String) {
+    @inline(never) public func tupleIdentity() -> Int64 { 42 }
+}
+public final class BindingCallbackConventions<Value> {
+    public init() {}
+    @inline(never) public func callback(_ body: (Int64) -> Int64) -> Int64 { body(40) }
+    @inline(never) public func callback(_ body: @convention(c) (Int64) -> Int64) -> Int64 { body(41) }
+    @inline(never) public func callback(_ body: @convention(block) (Int64) -> Int64) -> Int64 { body(43) }
+    @inline(never) public func foreignC(_ body: @convention(c) (Int64) -> Int64) -> Int64 { body(40) }
+    @inline(never) public func foreignBlock(_ body: @convention(block) (Int64) -> Int64) -> Int64 { body(40) }
+    @inline(never) public func returnedCallback() -> (Int64) -> Int64 { { $0 + 2 } }
+    @inline(never) public func returnedCallback() -> @convention(c) (Int64) -> Int64 { { $0 + 1 } }
+    @inline(never) public func returnedCallback() -> @convention(block) (Int64) -> Int64 { { $0 + 3 } }
+}
+
 public protocol GenericReceiverMetric { var text: String { get } }
 public protocol BindingNotAnyObject {}
 @inline(never) public func bindingSimilarConstraint<Value: BindingNotAnyObject>(_ value: Value) -> Value { value }

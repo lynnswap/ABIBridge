@@ -7,6 +7,9 @@ private class ConstrainedBox<Value>: NSObject {
     init(_ value: Value) { self.value = value }
 }
 private final class ConstrainedChild: ConstrainedBox<Int> {}
+extension ConstrainedBox where Value == NSObject {
+    @inline(never) @_optimize(none) func classIdentity() -> String { "class" }
+}
 
 // Preserve private entry points for lookup in optimized fixtures.
 extension ConstrainedBox where Value == Int {
@@ -41,6 +44,12 @@ extension ConstrainedPair where First == (Int) -> String, Second == (Int, String
 extension ConstrainedPair where Second: CustomStringConvertible {
     @inline(never) @_optimize(none) func choice() -> String { "requires witness" }
 }
+extension ConstrainedPair where First: Collection, First.Element == Int {
+    @inline(never) @_optimize(none) func associatedChoice() -> String { "collection" }
+}
+extension ConstrainedPair where Second == String {
+    @inline(never) @_optimize(none) func associatedChoice() -> String { "string" }
+}
 extension ConstrainedPair where First: Sequence, First.Element == Int {
     @inline(never) @_optimize(none) func associated() -> String { "associated" }
 }
@@ -61,6 +70,10 @@ private class ConstraintParent: NSObject {
     @inline(never) @_optimize(none) func inheritedChoice() -> String { "parent" }
 }
 private final class ConstraintChild<Value>: ConstraintParent {}
+private struct ConstraintPlainValue {}
+extension ConstraintChild where Value: Collection, Value.Element == Int {
+    @inline(never) @_optimize(none) func inheritedChoice() -> String { "collection" }
+}
 extension ConstraintChild where Value: CustomStringConvertible {
     @inline(never) @_optimize(none) func inheritedChoice() -> String { "requires witness" }
 }
@@ -73,6 +86,39 @@ extension ConstrainedOuter.Inner where First == Int, Second == String {
 }
 
 struct SwiftConstrainedExtensionTests {
+    @Test func objectiveCClassesAndProtocolsKeepDistinctSameTypeIdentities() async throws {
+        let runtime = ABIRuntime()
+        let concrete = try await runtime.object(ConstrainedBox<NSObject>(NSObject())).method(
+            named: "classIdentity()", as: (() -> String).self)
+        #expect(try unsafe concrete.unsafeInvoke() == "class")
+        let existential = runtime.object(ConstrainedBox<any NSObjectProtocol>(NSObject()))
+        do {
+            _ = try await existential.method(named: "classIdentity()", as: (() -> String).self)
+            Issue.record("An Objective-C protocol existential is not its same-named class")
+        } catch ABIResolutionError.declarationNotFound {}
+    }
+
+    @Test func inapplicableAssociatedRequirementsDoNotHideOtherCandidates() async throws {
+        let runtime = ABIRuntime()
+        let method = try await runtime.object(ConstrainedPair<Bool, String>()).method(
+            named: "associatedChoice()", as: (() -> String).self)
+        #expect(try unsafe method.unsafeInvoke() == "string")
+        let inherited = try await runtime.object(ConstraintChild<Bool>()).method(
+            named: "inheritedChoice()", as: (() -> String).self)
+        #expect(try unsafe inherited.unsafeInvoke() == "requires witness")
+        let noWitness = try await runtime.object(ConstraintChild<ConstraintPlainValue>()).method(
+            named: "inheritedChoice()", as: (() -> String).self)
+        #expect(try unsafe noWitness.unsafeInvoke() == "parent")
+        do {
+            _ = try await runtime.swiftFunction(
+                named: "ManagedSwiftFixtures.associatedConstraintGeneric<A where A: Swift.Collection, A.Element == Swift.Int>(A) -> Swift.Int",
+                as: ((Bool) -> Int).self, genericArguments: [.type(Bool.self)])
+            Issue.record("An invalid generic constraint must report its missing conformance")
+        } catch ABIResolutionError.signatureMismatch(let mismatch) {
+            #expect(mismatch.expected.contains("Collection"))
+        }
+    }
+
     private struct DeclaredFailure: Error, Equatable { let value: Int }
 
     @Test func canonicalDeclarationsPreserveProviderImportBoundaries() async throws {
@@ -243,6 +289,7 @@ struct SwiftConstrainedExtensionTests {
             (ConstrainedOuter<String>.Inner<Int>(), "nested()"),
             (ConstrainedPair<String, String>(), "mixed()"),
             (ConstrainedPair<(A: Double, other: String), Bool>(), "tupleLabels()"),
+            (ConstrainedPair<(different: Int, labels: String), Bool>(), "tupleLabels()"),
         ]
         for (receiver, member) in inputs {
             do {
