@@ -114,6 +114,9 @@ struct SwiftGenericBindingTests {
             .nominal("Swift.Int64", []), .pack(element, shape: element), .nominal("Swift.Bool", [])
         ], labels: ["head", "", "tail"]))
         #expect(labeled.count == 1 && labeled[0] == (head: Int64, Int, String, tail: Bool).self)
+        let selected = binding.selectingPackElement(at: 1)
+        #expect(try selected.types(element).first == String.self)
+        #expect(try selected.types(.tuple([.pack(element, shape: element)])).first == (Int, String).self)
         let metatype = try binding.types(.metatype(.tuple([.pack(element, shape: element)])))
         #expect(metatype.count == 1 && metatype[0] == (Int, String).Type.self)
         let pack = try binding.types(.nominal("ManagedSwiftFixtures.GenericTypePack", [

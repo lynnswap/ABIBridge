@@ -25,8 +25,9 @@ struct SwiftGenericParameters: Sendable {
                 guard index + count <= actual.count else { throw Self.mismatch(actual.count) }
                 let range = index..<(index + count)
                 for (packIndex, position) in range.enumerated() {
-                    try binding.validate(actual[position], for: pattern, packIndex: packIndex)
-                    arguments.append(.value(try Self.storageType(actual[position]), consuming: false))
+                    let element = binding.selectingPackElement(at: packIndex)
+                    arguments.append(try SwiftGenericCallPlan.argument(pattern, actual: actual[position], binding: element,
+                        defaultConsuming: defaultConsuming))
                 }
                 groups.append(.pack(range, try CValueType(indirectSwiftSize: count * MemoryLayout<UInt>.size,
                                                            alignment: MemoryLayout<UInt>.alignment)))

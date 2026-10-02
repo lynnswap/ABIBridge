@@ -88,6 +88,73 @@ private struct BindingBoolAdapter: ABIBridgeValue {
         }
     }
     let candidates = runtime.object(BindingCandidateBox<Bool>())
+    typealias PackTextBody = NativeSwiftClosure<() -> String>
+    typealias PackNumberBody = NativeSwiftClosure<() -> Int64>
+    let packClosures = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.bindingClosurePack<each A>(repeat () -> A) -> (repeat A)",
+        as: ((PackTextBody, PackNumberBody) -> (String, Int64)).self,
+        genericArguments: [.pack([.type(String.self), .type(Int64.self)])])
+    try check(unsafe packClosures.unsafeInvoke(PackTextBody { "pack" }, PackNumberBody { 42 }) == ("pack", 42),
+        "Closure pack elements use native closure storage and per-element reabstraction")
+    let emptyClosures = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.bindingClosurePack<each A>(repeat () -> A) -> (repeat A)",
+        as: (() -> Void).self, genericArguments: [.pack([])])
+    try unsafe emptyClosures.unsafeInvoke()
+    try check(true, "Empty closure packs preserve their native argument and result convention")
+    let wrapperPack = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.bindingIdentityPack<each A>(repeat A) -> (repeat A)",
+        as: ((PackTextBody) -> PackTextBody).self, genericArguments: [.pack([.type(PackTextBody.self)])])
+    let wrapperBody = try unsafe wrapperPack.unsafeInvoke(PackTextBody { "wrapper" })
+    try check(unsafe wrapperBody.unsafeInvoke() == "wrapper", "An actual generic wrapper pack keeps the wrapper's native Swift storage")
+    let packOwnerType = try await runtime.swiftType(named: "SwiftValueFixtures.BindingClosurePackOwner",
+        genericArguments: [.pack([.type(String.self), .type(Int64.self)])])
+    let makePackOwner = try await packOwnerType.initializer(named: "init(_:)",
+        as: ((NativeSwiftConsuming<PackTextBody>, PackNumberBody) -> BindingClosurePackOwner<String, Int64>).self)
+    let callPackOwner = try await packOwnerType.method(named: "call()", as: (() -> (String, Int64)).self)
+    let applyPack = try await packOwnerType.method(named: "apply(_:)",
+        as: ((NativeSwiftBorrowing<PackTextBody>, PackNumberBody) -> (String, Int64)).self)
+    let packDeaths = Mutex(0)
+    var packOwner: BindingClosurePackOwner<String, Int64>?
+    do {
+        let token = ErrorToken { packDeaths.withLock { $0 += 1 } }
+        packOwner = try unsafe makePackOwner.unsafeInvoke(.init(PackTextBody { withExtendedLifetime(token) { "owned pack" } }),
+            PackNumberBody { withExtendedLifetime(token) { 43 } })
+    }
+    try check(packDeaths.withLock { $0 } == 0, "Owned pack closure captures survive the initializer arguments")
+    try check(unsafe callPackOwner.unsafeInvoke(on: packOwner!) == ("owned pack", 43), "An owned closure pack remains callable after wrapper release")
+    try check(unsafe applyPack.unsafeInvoke(on: packOwner!, .init(PackTextBody { "borrowed pack" }), PackNumberBody { 44 }) == ("borrowed pack", 44),
+        "Short member names preserve pack labels and borrowing markers")
+    packOwner = nil
+    try check(packDeaths.withLock { $0 } == 1, "Owned pack closure captures release exactly once")
+    typealias AsyncPackTextBody = NativeSwiftClosure<nonisolated(nonsending) () async -> String>
+    typealias AsyncPackNumberBody = NativeSwiftClosure<nonisolated(nonsending) () async -> Int64>
+    let asyncPack = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.bindingAsyncClosurePack<each A>(repeat nonisolated(nonsending) () async -> A) async -> (repeat A)",
+        as: (nonisolated(nonsending) (AsyncPackTextBody, AsyncPackNumberBody) async -> (String, Int64)).self,
+        genericArguments: [.pack([.type(String.self), .type(Int64.self)])])
+    let asyncPackText: nonisolated(nonsending) @Sendable () async -> String = { await Task.yield(); return "async pack" }
+    let asyncPackNumber: nonisolated(nonsending) @Sendable () async -> Int64 = { await Task.yield(); return 45 }
+    let asyncPackResult = try unsafe await asyncPack.unsafeInvoke(AsyncPackTextBody(asyncPackText), AsyncPackNumberBody(asyncPackNumber))
+    try check(asyncPackResult == ("async pack", 45), "Closure pack elements preserve async suspension and isolation")
+    typealias PackObjectBody = NativeSwiftClosure<() throws(SmallError) -> ErrorToken>
+    typealias PackFailingBody = NativeSwiftClosure<() throws(SmallError) -> Int64>
+    let throwingPack = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.bindingThrowingClosurePack<A, B where A: Swift.Error>(repeat () throws(A) -> B) throws(A) -> (repeat B)",
+        as: ((PackObjectBody, PackFailingBody) throws(SmallError) -> (ErrorToken, Int64)).self,
+        genericArguments: [.type(SmallError.self), .pack([.type(ErrorToken.self), .type(Int64.self)])])
+    let failedPackDeaths = Mutex(0)
+    do {
+        let token = ErrorToken { failedPackDeaths.withLock { $0 += 1 } }
+        let first = try PackObjectBody { token }
+        let second = try PackFailingBody { () throws(SmallError) in throw SmallError(46) }
+        do {
+            _ = try unsafe throwingPack.unsafeInvoke(first, second)
+            throw ArchitectureValidationFailure(description: "Expected the second pack closure's native error")
+        } catch let error as NativeSwiftError {
+            try check(error.withUnderlyingError { ($0 as? SmallError)?.code == 46 }, "Closure pack elements preserve typed error outputs")
+        }
+    }
+    try check(failedPackDeaths.withLock { $0 } == 1, "A failed closure pack releases its partially initialized result")
     typealias OperatorBox = BindingOperatorBox<Int64>
     let operators = try await runtime.swiftType(named: "SwiftValueFixtures.BindingOperatorBox", genericArguments: [.type(Int64.self)])
     let left = OperatorBox(42), right = OperatorBox(1)

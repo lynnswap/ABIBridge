@@ -136,20 +136,23 @@ struct SwiftGenericCallPlan: Sendable {
     }
 
     func matches(_ signature: SwiftFunctionSignature) throws -> Bool {
+        func validate(_ actual: Any.Type, for formal: SwiftFormalType, using binding: SwiftGenericBinding) throws {
+            if let argument = try binding.conventionArgument(actual, for: formal,
+                defaultConsuming: binding.declaration.consumesArguments) {
+                try binding.validate(argument.wrapper.wrappedType, for: argument.value)
+            } else {
+                try binding.validate(actual, for: formal)
+            }
+        }
         do {
             for (formal, group) in zip(binding.declaration.arguments, parameters.groups) {
                 switch group {
                 case .value(let index):
-                    if let argument = try binding.conventionArgument(signature.parameters[index], for: formal,
-                        defaultConsuming: binding.declaration.consumesArguments) {
-                        try binding.validate(argument.wrapper.wrappedType, for: argument.value)
-                    } else {
-                        try binding.validate(signature.parameters[index], for: formal)
-                    }
+                    try validate(signature.parameters[index], for: formal, using: binding)
                 case .pack(let range, _):
                     guard case .pack(let pattern, _) = formal else { preconditionFailure("A pack group has a pack formal type.") }
                     for (packIndex, index) in range.enumerated() {
-                        try binding.validate(signature.parameters[index], for: pattern, packIndex: packIndex)
+                        try validate(signature.parameters[index], for: pattern, using: binding.selectingPackElement(at: packIndex))
                     }
                 }
             }

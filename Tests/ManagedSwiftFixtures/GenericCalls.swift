@@ -1,5 +1,24 @@
 @inline(never) public func runGeneric<Value>(_ apply: () -> Value) -> Value { apply() }
 
+@inline(never) public func closurePackGeneric<each Value>(_ bodies: repeat () -> each Value) -> (repeat each Value) {
+    (repeat (each bodies)())
+}
+@inline(never) public func closurePackThenArgumentGeneric<each Value>(
+    _ bodies: repeat () -> each Value, after: Int64
+) -> (repeat each Value) { (repeat (each bodies)()) }
+@inline(never) public func throwingClosurePackGeneric<Failure: Error, each Value>(
+    _ bodies: repeat () throws(Failure) -> each Value
+) throws(Failure) -> (repeat each Value) { (repeat try (each bodies)()) }
+@inline(never) public nonisolated(nonsending) func asyncClosurePackGeneric<each Value>(
+    _ bodies: repeat (nonisolated(nonsending) () async -> each Value)
+) async -> (repeat each Value) { (repeat await (each bodies)()) }
+public final class GenericClosurePackOwner<each Value> {
+    private let bodies: (repeat () -> each Value)
+    public init(_ bodies: repeat @escaping () -> each Value) { self.bodies = (repeat each bodies) }
+    @inline(never) public func call() -> (repeat each Value) { (repeat (each bodies)()) }
+    @inline(never) public func apply(_ bodies: repeat () -> each Value) -> (repeat each Value) { (repeat (each bodies)()) }
+}
+
 infix operator <>
 infix operator <≪
 infix operator ≪<

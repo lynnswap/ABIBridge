@@ -45,6 +45,13 @@ struct SwiftGenericBinding: Sendable {
     private let boundTypes = SwiftBoundTypeStorage()
     private let knownTypes: [[UInt8]: Any.Type]
     private let resolver: SymbolResolver
+    private var packElementIndex: Int?
+
+    func selectingPackElement(at index: Int) -> Self {
+        var binding = self
+        binding.packElementIndex = index
+        return binding
+    }
     enum MetadataSource: Sendable {
         case shape(Set<String>)
         case parameter(String)
@@ -503,6 +510,7 @@ struct SwiftGenericBinding: Sendable {
     }
 
     func types(_ type: SwiftFormalType, packIndex: Int? = nil) throws -> [Any.Type] {
+        let packIndex = packIndex ?? packElementIndex
         if case .objectiveCClass(let name) = type {
             guard let type = NSClassFromString(String(name.dropFirst(4))) else {
                 throw ABIResolutionError.metadataUnavailable("The Objective-C class is unavailable: " + name)
@@ -649,6 +657,7 @@ struct SwiftGenericBinding: Sendable {
     }
 
     func spelling(_ type: SwiftFormalType, packIndex: Int? = nil) throws -> String {
+        let packIndex = packIndex ?? packElementIndex
         switch type {
         case .objectiveCClass(let name): return name
         case .named(let name, let parameters):

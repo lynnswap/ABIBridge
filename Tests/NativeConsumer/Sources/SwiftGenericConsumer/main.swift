@@ -19,6 +19,21 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
     }
     defer { dlclose(original) }
     let runtime = ABIRuntime()
+    typealias TextBody = NativeSwiftClosure<() -> String>
+    typealias NumberBody = NativeSwiftClosure<() -> Int64>
+    let closurePack = try await runtime.swiftFunction(
+        named: "ManagedSwiftFixtures.closurePackGeneric<each A>(repeat () -> A) -> (repeat A)",
+        as: ((TextBody, NumberBody) -> (String, Int64)).self,
+        genericArguments: [.pack([.type(String.self), .type(Int64.self)])])
+    let packValues = try unsafe closurePack.unsafeInvoke(TextBody { "pack" }, NumberBody { 42 })
+    precondition(packValues == ("pack", 42))
+    let packOwnerType = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericClosurePackOwner",
+        genericArguments: [.pack([.type(String.self), .type(Int64.self)])])
+    let makePackOwner = try await packOwnerType.initializer(named: "init(_:)", as: ((TextBody, NumberBody) -> AnyObject).self)
+    let packOwner = try unsafe makePackOwner.unsafeInvoke(TextBody { "owned pack" }, NumberBody { 43 })
+    let callPackOwner = try await runtime.object(packOwner).method(named: "call()", as: (() -> (String, Int64)).self)
+    let ownedPackValues = try unsafe callPackOwner.unsafeInvoke()
+    precondition(ownedPackValues == ("owned pack", 43))
     let callbackType = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericCallbackConventions",
         genericArguments: [.type(Int64.self)])
     let makeCallbackOwner = try await callbackType.initializer(named: "init()", as: (() -> AnyObject).self)
