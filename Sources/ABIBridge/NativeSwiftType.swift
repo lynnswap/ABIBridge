@@ -72,11 +72,11 @@ public actor NativeSwiftType {
         do { return try resolver.resolve(declaration, in: image, loading: .loadedOnly) }
         catch ABIResolutionError.declarationNotFound {
             if exact {
-                let key = DeclarationKey.make(declaration.name)
+                let key = DeclarationKey.make(declaration.name, language: .swift)
                 let matches = try resolver.swiftMemberCandidates(declaration, in: nil, extensionsOnly: true).filter {
                     let name = $0.declaration.name
-                    return DeclarationKey.make(name) == key
-                        || SymbolIndex.extensionMemberName(name).map { DeclarationKey.make($0) == key } == true
+                    return DeclarationKey.make(name, language: .swift) == key
+                        || SymbolIndex.extensionMemberName(name).map { DeclarationKey.make($0, language: .swift) == key } == true
                 }
                 guard matches.count == 1 else {
                     if matches.isEmpty { throw ABIResolutionError.declarationNotFound(declaration) }
@@ -213,8 +213,11 @@ public actor NativeSwiftType {
     public func borrowedMethod<Result, each Argument>(
         named name: String, as signature: ((repeat each Argument) -> Result).Type
     ) throws -> NativeSwiftBorrowedMethod<Result, repeat each Argument> {
-        let symbol = try resolveMember { try swiftFunctionDeclaration(named: $0 + "." + name, as: signature) }
-        return try NativeSwiftBorrowedMethod(symbol: symbol.symbol, type: self)
+        let symbol = try resolveMember(signature: signature, exact: SwiftMemberLookup.isQualified(name)) {
+            try swiftFunctionDeclaration(named: SwiftMemberLookup.qualifiedName(name, owner: $0), as: signature)
+        }
+        return try NativeSwiftBorrowedMethod(symbol: symbol.symbol, type: self,
+            generic: genericPlan(symbol, signature: signature, receiver: .address))
     }
 
     /// Resolves a nonmutating getter with formally indirect borrowed self.
@@ -222,10 +225,12 @@ public actor NativeSwiftType {
     /// The getter must be synchronous, nonthrowing and nonconsuming. Its value
     /// uses the supported concrete Swift result representations.
     public func borrowedGetter<Value>(named name: String, as value: Value.Type) throws -> NativeSwiftBorrowedMethod<Value> {
-        let symbol = try resolveMember {
+        let signature = (() -> Value).self
+        let symbol = try resolveMember(signature: signature, exact: SwiftMemberLookup.isQualified(name)) {
             try accessorDeclaration(named: name, ownerName: $0, valueType: value, setter: false, isStatic: false)
         }
-        return try NativeSwiftBorrowedMethod(symbol: symbol.symbol, type: self)
+        return try NativeSwiftBorrowedMethod(symbol: symbol.symbol, type: self,
+            generic: genericPlan(symbol, signature: signature, receiver: .address))
     }
 
     /// Resolves a concrete allocating initializer.

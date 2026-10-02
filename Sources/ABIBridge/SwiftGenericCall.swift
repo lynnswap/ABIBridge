@@ -74,7 +74,7 @@ struct SwiftGenericCallPlan: Sendable {
         enclosingMetadata = enclosing?.value
         if let context, let receiver, receiver != .value {
             let prefix: [UInt] = receiver == .address ? [unsafeBitCast(enclosing!.value, to: UInt.self)] : []
-            metadata = SwiftGenericArgumentBuffer(prefix + binding.metadataArguments(fulfilledBy: context))
+            metadata = try SwiftGenericArgumentBuffer(prefix + binding.metadataArguments(fulfilledBy: context))
         } else {
             metadata = SwiftGenericArgumentBuffer(binding.metadataArguments)
         }
@@ -103,11 +103,11 @@ struct SwiftGenericCallPlan: Sendable {
         }
     }
 
-    func includingReceiver(_ receiver: SwiftReceiverMode) -> Self {
+    func includingReceiver(_ receiver: SwiftReceiverMode) throws -> Self {
         var result = self
         if let context, let enclosingMetadata, receiver != .value {
             let prefix: [UInt] = receiver == .address ? [unsafeBitCast(enclosingMetadata, to: UInt.self)] : []
-            result.metadata = SwiftGenericArgumentBuffer(prefix + binding.metadataArguments(fulfilledBy: context))
+            result.metadata = try SwiftGenericArgumentBuffer(prefix + binding.metadataArguments(fulfilledBy: context))
         }
         return result
     }

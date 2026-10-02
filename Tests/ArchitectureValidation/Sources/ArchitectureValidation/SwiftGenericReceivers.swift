@@ -1,5 +1,6 @@
 import ABIBridge
 import Foundation
+import Synchronization
 import SwiftValueFixtures
 
 @MainActor func validateSwiftGenericReceivers() async throws -> [String] {
@@ -53,6 +54,34 @@ import SwiftValueFixtures
         guard condition else { throw ArchitectureValidationFailure(description: message) }
         checks.append(message)
     }
+    let refined = try await runtime.swiftType(named: "SwiftValueFixtures.BindingHashOwner", genericArguments: [.type(String.self)])
+    let hash = try await refined.staticMethod(named: "refinedWitness(_:)", as: ((String) -> Int).self)
+    try check(unsafe hash.unsafeInvoke("hash") == BindingHashOwner<String>.refinedWitness("hash"),
+        "Refined member constraints replace their nominal base witnesses")
+    let concrete = try await runtime.swiftType(named: "SwiftValueFixtures.BindingHashOwner", genericArguments: [.type(Int.self)])
+    let other = try await concrete.staticMethod(named: "concreteWitness(_:)", as: ((String) -> Int).self,
+        genericArguments: [.type(String.self)])
+    try check(unsafe other.unsafeInvoke("concrete") == BindingHashOwner<Int>.concreteWitness("concrete"),
+        "Concrete enclosing constraints do not add witnesses before member arguments")
+    let ordered = try await runtime.swiftType(named: "SwiftValueFixtures.BindingWitnessOwner", genericArguments: [.type(BindingWitnessValue.self)])
+    let both = try await ordered.staticMethod(named: "orderedWitnesses()", as: (() -> Int64).self)
+    try check(unsafe both.unsafeInvoke() == 42, "Independent nominal and member witnesses follow canonical order")
+    let argument = try await runtime.swiftType(named: "SwiftValueFixtures.GenericReceiverNumber")
+    let borrowedType = try await runtime.swiftType(named: "SwiftValueFixtures.BindingBorrowedRecord", genericArguments: [.type(argument)])
+    let measure = try await borrowedType.borrowedMethod(named: "measure()", as: (() -> Int64).self)
+    let measured = try await borrowedType.borrowedGetter(named: "measured", as: Int64.self)
+    let callbackFailure = Mutex<(any Error)?>(nil)
+    let callback = try NativeSwiftBorrowingClosure<(Int64, Int64)>(borrowing: borrowedType) { value in
+        do { return try unsafe (measure.unsafeInvoke(on: value), measured.unsafeInvoke(on: value)) }
+        catch { callbackFailure.withLock { $0 = error }; return (-1, -1) }
+    }
+    let visit = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.visitBindingBorrowedRecord(Swift.Int64, (SwiftValueFixtures.BindingBorrowedRecord<SwiftValueFixtures.GenericReceiverNumber>) -> (Swift.Int64, Swift.Int64)) -> (Swift.Int64, Swift.Int64)",
+        as: ((Int64, NativeSwiftBorrowingClosure<(Int64, Int64)>) -> (Int64, Int64)).self)
+    let borrowedResult = try unsafe visit.unsafeInvoke(42, callback)
+    if let error = callbackFailure.withLock({ $0 }) { throw error }
+    try check(borrowedResult == (2, 2),
+        "Borrowed generic methods and getters receive metadata and tuple callbacks authenticate")
     let string = try await runtime.swiftType(named: "Swift.String")
     let boxType = try await runtime.swiftType(named: "SwiftValueFixtures.BindingBox",
         genericArguments: [.type(string)])

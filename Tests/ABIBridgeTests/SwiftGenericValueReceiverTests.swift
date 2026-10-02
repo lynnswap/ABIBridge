@@ -24,6 +24,35 @@ extension GenericValueBox: ABIBridgeSwiftValue {
 
 @Suite(.serialized)
 struct SwiftGenericValueReceiverTests {
+    @Test func memberWitnessesUseTheCanonicalRefinedSignature() async throws {
+        let runtime = ABIRuntime()
+        let associatedType = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericAssociatedOwner",
+            genericArguments: [.type(GenericAssociatedValue.self)])
+        let associated = try await associatedType.staticMethod(named: "associatedWitness(_:_:_:)",
+            as: ((String, GenericGetterFailure, Bool) throws(GenericGetterFailure) -> Int).self,
+            genericArguments: [.type(GenericGetterFailure.self)])
+        #expect(try unsafe associated.unsafeInvoke("associated", GenericGetterFailure(42), false) == "associated".hashValue)
+        do {
+            _ = try unsafe associated.unsafeInvoke("associated", GenericGetterFailure(42), true)
+            Issue.record("Expected the member's typed error.")
+        } catch let error as NativeSwiftError {
+            #expect(error.withUnderlyingError { ($0 as? GenericGetterFailure)?.code == 42 })
+        }
+        let refined = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericHashOwner",
+            genericArguments: [.type(String.self)])
+        let hash = try await refined.staticMethod(named: "refinedWitness(_:)", as: ((String) -> Int).self)
+        #expect(try unsafe hash.unsafeInvoke("hash") == GenericHashOwner<String>.refinedWitness("hash"))
+        let concrete = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericHashOwner",
+            genericArguments: [.type(Int.self)])
+        let additional = try await concrete.staticMethod(named: "concreteWitness(_:)", as: ((String) -> Int).self,
+            genericArguments: [.type(String.self)])
+        #expect(try unsafe additional.unsafeInvoke("concrete") == GenericHashOwner<Int>.concreteWitness("concrete"))
+        let ordered = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericWitnessOwner",
+            genericArguments: [.type(GenericWitnessValue.self)])
+        let both = try await ordered.staticMethod(named: "orderedWitnesses()", as: (() -> Int64).self)
+        #expect(try unsafe both.unsafeInvoke() == GenericWitnessOwner<GenericWitnessValue>.orderedWitnesses())
+    }
+
     @MainActor @Test func qualifiedMembersSelectTheRequestedConstraint() async throws {
         let runtime = ABIRuntime()
         let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericValueBox",

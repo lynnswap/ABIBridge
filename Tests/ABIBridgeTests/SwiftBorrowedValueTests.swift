@@ -28,6 +28,25 @@ private final class BorrowCapture: Sendable {
 
 @Suite(.serialized)
 struct SwiftBorrowedValueTests {
+    @Test func borrowedGenericMembersSupplyTheirEnclosingMetadata() async throws {
+        let runtime = ABIRuntime()
+        let argument = try await runtime.swiftType(named: "ManagedSwiftFixtures.ResilientRecord")
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericRecord", genericArguments: [.type(argument)])
+        let method = try await type.borrowedMethod(named: "measure()", as: (() -> Int64).self)
+        let getter = try await type.borrowedGetter(named: "measured", as: Int64.self)
+        let errors = BorrowResults()
+        let callback = try NativeSwiftBorrowingClosure<(Int64, Int64)>(borrowing: type) { value in
+            do { return try unsafe (method.unsafeInvoke(on: value), getter.unsafeInvoke(on: value)) }
+            catch { errors.record { throw error }; return (-1, -1) }
+        }
+        let visit = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitBorrowedGenericRecord(Swift.Int64, (ManagedSwiftFixtures.GenericRecord<ManagedSwiftFixtures.ResilientRecord>) -> (Swift.Int64, Swift.Int64)) -> (Swift.Int64, Swift.Int64)",
+            as: ((Int64, NativeSwiftBorrowingClosure<(Int64, Int64)>) -> (Int64, Int64)).self)
+        let result = try unsafe visit.unsafeInvoke(42, callback)
+        #expect(result == (42, 42))
+        #expect(errors.errors.isEmpty)
+    }
+
     @Test func runtimeOnlyValuesUseScopedSelfAndOwnedResults() async throws {
         let runtime = ABIRuntime.shared
         let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeRecord")

@@ -1,5 +1,35 @@
 import Foundation
 
+public protocol GenericWitnessA { static func first() -> Int64 }
+public protocol GenericWitnessZ { static func last() -> Int64 }
+public struct GenericWitnessValue: GenericWitnessA, GenericWitnessZ {
+    public static func first() -> Int64 { 4 }
+    public static func last() -> Int64 { 2 }
+}
+public struct GenericWitnessOwner<Value: GenericWitnessZ> {}
+extension GenericWitnessOwner where Value: GenericWitnessA {
+    @inline(never) public static func orderedWitnesses() -> Int64 { Value.first() * 10 + Value.last() }
+}
+public struct GenericHashOwner<Value: Equatable> {}
+public protocol GenericAssociatedBase { associatedtype Item }
+public protocol GenericAssociatedRefined: GenericAssociatedBase where Item: Hashable {}
+public struct GenericAssociatedValue: GenericAssociatedRefined { public typealias Item = String }
+public struct GenericAssociatedOwner<Value: GenericAssociatedBase> where Value.Item: Equatable {}
+extension GenericAssociatedOwner where Value: GenericAssociatedRefined {
+    @inline(never) public static func associatedWitness<Failure: Error>(
+        _ value: Value.Item, _ failure: Failure, _ fail: Bool
+    ) throws(Failure) -> Int {
+        if fail { throw failure }
+        return value.hashValue
+    }
+}
+extension GenericHashOwner where Value: Hashable {
+    @inline(never) public static func refinedWitness(_ value: Value) -> Int { value.hashValue }
+}
+extension GenericHashOwner where Value == Int {
+    @inline(never) public static func concreteWitness<Other: Hashable>(_ value: Other) -> Int { value.hashValue }
+}
+
 @frozen public struct GenericGetterFailure: Error {
     public let code: Int64
     public init(_ code: Int64) { self.code = code }
@@ -258,7 +288,12 @@ extension ResilientRecord: GenericMetric { public var metric: Int64 { number } }
     public init(_ value: Value) { self.value = value }
     @inline(never) public func project() -> Value { value }
     @inline(never) public func measure() -> Int64 { value.metric }
+    public var measured: Int64 { value.metric }
 }
+
+@inline(never) public func visitBorrowedGenericRecord(
+    _ number: Int64, _ body: (GenericRecord<ResilientRecord>) -> (Int64, Int64)
+) -> (Int64, Int64) { body(GenericRecord(ResilientRecord(token: LifetimeToken(), number: number))) }
 
 @frozen public struct ConditionalMetric<Value> {
     public let value: Value

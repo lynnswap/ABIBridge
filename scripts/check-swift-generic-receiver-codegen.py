@@ -16,7 +16,7 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     fixture = root / 'Tests/ArchitectureValidation/Sources/SwiftValueFixtures/GenericReceivers.swift'
     source = output / 'Probe.swift'
-    source.write_text(fixture.read_text() + '''
+    source.write_text(fixture.with_name('Errors.swift').read_text() + fixture.read_text() + '''
 public final class ConcreteControl {
     @inline(never) public func concrete(_ prefix: String) -> String { prefix }
     public var valueText: String { @inline(never) get { "control" } }

@@ -26,6 +26,32 @@ struct SwiftProtocolDescriptor: Sendable {
         return try swiftNativeTypeName(unsafeBitCast(metadata, to: Any.Type.self))
     }
 
+    /// Declaration ordering ignores private-name discriminators, which are
+    /// identity information rather than identifier names in TypeDecl::compare.
+    func orderingPath() throws -> [String] {
+        let metadata = unsafe withUnsafeAddress { ABISwiftProtocolTypeMetadata($0)! }
+        guard let mangled = _mangledTypeName(unsafeBitCast(metadata, to: Any.Type.self)) else {
+            throw ABIResolutionError.metadataUnavailable("The protocol's declaration identity is unavailable.")
+        }
+        let syntax = try mangled.utf8CString.withUnsafeBufferPointer {
+            try unsafe SwiftSyntax(typeReference: $0.baseAddress!, length: $0.count - 1)
+        }
+        var node = syntax.root
+        while node.kind != "Protocol" { node = try node.requiredChild() }
+        func path(_ node: SwiftSyntax.Node) throws -> [String] {
+            if node.kind == "Module" { return [try node.requiredText()] }
+            if node.kind == "Extension" || node.kind == "AnonymousContext" { return try path(node.children()[1]) }
+            if node.kind == "Type" { return try path(node.requiredChild()) }
+            let children = node.children()
+            let name = children[1]
+            guard let identifier = name.kind == "Identifier" ? name : name.children().last(where: { $0.kind == "Identifier" }) else {
+                throw ABIResolutionError.metadataUnavailable("The protocol context has no declaration name.")
+            }
+            return try path(children[0]) + [identifier.requiredText()]
+        }
+        return try path(node)
+    }
+
     func associatedConformances(of member: String) throws -> [SwiftProtocolDescriptor] {
         try associatedRequirements(of: member).compactMap(\.descriptor)
     }

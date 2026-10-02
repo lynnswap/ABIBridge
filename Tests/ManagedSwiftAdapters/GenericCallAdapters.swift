@@ -1,5 +1,9 @@
 import ManagedSwiftFixtures
 
+@inline(never) public func probeBorrowedTupleCallback(
+    _ body: (RuntimeRecord) -> (Int64, Int64), _ value: RuntimeRecord
+) -> (Int64, Int64) { body(value) }
+
 @inline(never) public func probeNeverError() -> Int64 { genericErrorType(Never.self) }
 @inline(never) public func probeExistentialError() throws -> Int64 { try genericErrorType((any Error).self) }
 @inline(never) public func probeNeverErrorCallback(_ body: () -> Int64) -> Int64 { genericErrorCallback(body) }

@@ -190,6 +190,7 @@ struct SwiftGenericBinding: Sendable {
                 metadataWords.append((.parameter(parameter.name), metadata[0]))
             }
         }
+        var witnessesByConformance: [Int: [UInt]] = [:]
         for (index, conformance) in conformances.enumerated() {
             let types = try types(conformance.subject)
             if let descriptor = conformance.descriptor {
@@ -207,8 +208,7 @@ struct SwiftGenericBinding: Sendable {
                     if let address = ABISwiftConformanceDescriptor(witness),
                        let image = try swiftImplementationImage(containing: address) { images.append(image) }
                 }
-                if isPack(conformance.subject) { metadataWords.append((.conformance(index), appendPack(witnesses))) }
-                else { metadataWords.append(contentsOf: witnesses.map { (.conformance(index), $0) }) }
+                witnessesByConformance[index] = witnesses
             } else if let objectiveC = conformance.objectiveC {
                 if let image = objectiveC.image { images.append(image) }
                 guard types.allSatisfy(objectiveC.accepts) else {
@@ -220,6 +220,11 @@ struct SwiftGenericBinding: Sendable {
                     throw ABIResolutionError.signatureMismatch(.init(expected: "A class type", found: types.map { String(reflecting: $0) }))
                 }
             }
+        }
+        for index in try canonicalWitnessIndices() {
+            let witnesses = witnessesByConformance[index]!
+            if isPack(conformances[index].subject) { metadataWords.append((.conformance(index), appendPack(witnesses))) }
+            else { metadataWords.append(contentsOf: witnesses.map { (.conformance(index), $0) }) }
         }
         let fulfilled = try argumentFulfillments()
         func isFulfilled(_ source: MetadataSource) throws -> Bool {
@@ -237,19 +242,71 @@ struct SwiftGenericBinding: Sendable {
         metadataWords = try metadataWords.filter { try !isFulfilled($0.source) }
     }
 
-    func metadataArguments(fulfilledBy context: SwiftGenericTypeContext) -> [UInt] {
+    func metadataArguments(fulfilledBy context: SwiftGenericTypeContext) throws -> [UInt] {
         let parameters = Set(context.parameters.map(\.name))
-        return metadataWords.compactMap { source, value in
+        return try metadataWords.compactMap { source, value in
             switch source {
             case .shape(let names): return names.isSubset(of: parameters) ? nil : value
             case .parameter(let name): return parameters.contains(name) ? nil : value
             case .conformance(let index):
                 let conformance = conformances[index]
-                return context.conformances.contains {
-                    $0.subject == conformance.subject && $0.name == conformance.name
+                return try context.conformances.contains { source in
+                    guard try equivalentTypes(of: conformance.subject).contains(where: { try sameFormalType($0, source.subject) }) else {
+                        return false
+                    }
+                    return try source.descriptor?.qualifiedNames().contains(conformance.name) ?? (source.name == conformance.name)
                 } ? nil : value
             }
         }
+    }
+
+    /// Swift's canonical generic signature orders dependent subjects, removes
+    /// refined protocols, and then orders protocol declarations by context/name.
+    /// See Swift 6.3 GenericSignature.cpp, Requirement.cpp, and TypeDecl::compare.
+    private func canonicalWitnessIndices() throws -> [Int] {
+        func protocolLess(_ left: String, _ right: String) -> Bool {
+            let lhs = left.split(separator: "."), rhs = right.split(separator: ".")
+            if lhs.count != rhs.count { return lhs.count < rhs.count }
+            return left.utf8.lexicographicallyPrecedes(right.utf8)
+        }
+        func subjectLess(_ left: SwiftFormalType, _ right: SwiftFormalType) -> Bool {
+            switch (left, right) {
+            case (.named(let lhs, []), .named(let rhs, [])):
+                return declaration.parameters.firstIndex { $0.name == lhs }! < declaration.parameters.firstIndex { $0.name == rhs }!
+            case (.named, .associated): return true
+            case (.associated, .named): return false
+            case (.associated(let lhs, let leftName, let leftProtocol), .associated(let rhs, let rightName, let rightProtocol)):
+                if lhs != rhs { return subjectLess(lhs, rhs) }
+                if leftName != rightName { return leftName.utf8.lexicographicallyPrecedes(rightName.utf8) }
+                return protocolLess(leftProtocol ?? "", rightProtocol ?? "")
+            default: return false
+            }
+        }
+        var sources: [(index: Int, subject: SwiftFormalType, name: String, inherited: Set<String>, path: [String])] = []
+        for (index, conformance) in conformances.enumerated() {
+            guard let descriptor = conformance.descriptor else { continue }
+            let subject = try canonicalType(of: conformance.subject)
+            guard isArchetype(subject) else { continue }
+            let name = try descriptor.name()
+            if try associatedConformances(for: subject).contains(where: {
+                try $0.descriptor!.qualifiedNames().contains(name)
+            }) { continue }
+            let representative = try equivalentTypes(of: subject).min(by: subjectLess) ?? subject
+            sources.append((index, representative, name, try descriptor.qualifiedNames(), try descriptor.orderingPath()))
+        }
+        let required = try sources.filter { source in
+            try !sources.contains { other in
+                guard source.index != other.index,
+                      try sameFormalType(source.subject, other.subject),
+                      other.inherited.contains(source.name) else { return false }
+                return source.name != other.name || other.index < source.index
+            }
+        }
+        return try required.sorted { left, right in
+            if try !sameFormalType(left.subject, right.subject) { return subjectLess(left.subject, right.subject) }
+            if left.path.count != right.path.count { return left.path.count < right.path.count }
+            return left.path.lexicographicallyPrecedes(right.path) { $0.utf8.lexicographicallyPrecedes($1.utf8) }
+        }.map(\.index)
     }
 
     private static func key(_ name: String) throws -> [UInt8] {
@@ -367,8 +424,8 @@ struct SwiftGenericBinding: Sendable {
         return false
     }
 
-    private func conformances(for subject: SwiftFormalType, qualifiedBy protocolName: String? = nil) throws -> [Conformance] {
-        var result = try conformances.filter { try $0.descriptor != nil && sameFormalType($0.subject, subject) }
+    private func associatedConformances(for subject: SwiftFormalType) throws -> [Conformance] {
+        var result: [Conformance] = []
         if case .associated(let parent, let member, let qualifier) = subject {
             for conformance in try conformances(for: parent, qualifiedBy: qualifier) {
                 for descriptor in try conformance.descriptor!.associatedConformances(of: member) {
@@ -376,6 +433,12 @@ struct SwiftGenericBinding: Sendable {
                 }
             }
         }
+        return result
+    }
+
+    private func conformances(for subject: SwiftFormalType, qualifiedBy protocolName: String? = nil) throws -> [Conformance] {
+        var result = try conformances.filter { try $0.descriptor != nil && sameFormalType($0.subject, subject) }
+            + associatedConformances(for: subject)
         if let protocolName {
             result = try result.filter { try $0.descriptor!.qualifiedNames().contains(protocolName) }
             if result.isEmpty && !isArchetype(subject) {

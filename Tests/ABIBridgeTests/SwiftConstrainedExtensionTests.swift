@@ -73,6 +73,38 @@ extension ConstrainedOuter.Inner where First == Int, Second == String {
 }
 
 struct SwiftConstrainedExtensionTests {
+    @Test func qualifiedExternalExtensionsNormalizeCollectionSpellings() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let module = "QualifiedCollectionProvider"
+        let provider = try FixtureLibrary(swiftModule: module, swiftSource: """
+            public final class Box<Value> { public init() {} }
+            @_cdecl("ABIQualifiedCollectionBox") public func make() -> UnsafeMutableRawPointer {
+                Unmanaged.passRetained(Box<String>()).toOpaque()
+            }
+            """, linkArguments: ["-emit-module", "-emit-module-path", directory.appendingPathComponent(module + ".swiftmodule").path])
+        defer { provider.cleanup() }
+        let extensionImage = try FixtureLibrary(swiftModule: "QualifiedCollectionExtension", swiftSource: """
+            import \(module)
+            extension Box {
+                public func echo(_ values: [Value]) -> [Value] { values }
+                public var empty: [Value] { [] }
+            }
+            """, linkArguments: ["-I", directory.path, provider.libraryURL.path])
+        defer { extensionImage.cleanup() }
+        let runtime = ABIRuntime()
+        let make = try await runtime.cFunction(named: "ABIQualifiedCollectionBox", as: (() -> UnsafeMutableRawPointer).self,
+            in: .path(provider.libraryURL), loading: .loadedOnly)
+        let object = runtime.object(Unmanaged<AnyObject>.fromOpaque(try unsafe make.unsafeInvoke()).takeRetainedValue())
+        let method = try await object.method(named: module + ".Box.echo(Swift.Array<A>) -> Swift.Array<A>",
+            as: (([String]) -> [String]).self)
+        #expect(try unsafe method.unsafeInvoke(["external"]) == ["external"])
+        let getter = try await object.getter(named: module + ".Box.empty.getter : Swift.Array<A>",
+            as: (() -> [String]).self)
+        #expect(try unsafe getter.unsafeInvoke().isEmpty)
+    }
+
     @MainActor @Test(arguments: [false, true])
     func selectsConstraintUsingLiveReceiverAndSuperclass(_ inherited: Bool) async throws {
         let runtime = ABIRuntime()

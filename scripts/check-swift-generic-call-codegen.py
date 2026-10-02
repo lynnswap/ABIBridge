@@ -74,6 +74,10 @@ def main():
                         if "call swiftcc" in line and "swiftself" in line)
         require("call swiftcc void" in borrowed and "sret(" not in borrowed and "ptr noalias" in borrowed,
                 f"{target}: resilient callback must borrow one indirect input and return Void")
+        borrowed_tuple = next(line.strip() for line in body(ir, "probeBorrowedTupleCallback").splitlines()
+                              if "call swiftcc" in line and "swiftself" in line)
+        require("{ i64, i64 }" in borrowed_tuple and "ptr noalias" in borrowed_tuple,
+                f"{target}: a borrowed callback expands its tuple result")
         tuple_callback = next(line.strip() for line in body(ir, "probeGenericTupleCallback").splitlines()
                               if "call swiftcc" in line and "swiftself" in line)
         require("call swiftcc i16" in tuple_callback and "sret(" not in tuple_callback,
@@ -108,6 +112,18 @@ def main():
             str(provider / "GenericCalls.swift"), str(provider / "RuntimeValues.swift"),
             str(provider / "ExplicitValues.swift"), "-o", str(value_ir_path))
         value_ir = value_ir_path.read_text()
+        witness_entries = {name: body(value_ir, name).splitlines()[0] for name in [
+            "refinedWitness", "orderedWitnesses", "concreteWitness"]}
+        require("Value.Hashable" in witness_entries["refinedWitness"]
+                and "Equatable" not in witness_entries["refinedWitness"],
+                f"{target}: a refined protocol replaces the nominal base witness")
+        require(witness_entries["orderedWitnesses"].index("Value.GenericWitnessA")
+                < witness_entries["orderedWitnesses"].index("Value.GenericWitnessZ"),
+                f"{target}: extension and nominal witnesses follow canonical protocol order")
+        require("Other.Hashable" in witness_entries["concreteWitness"]
+                and "Equatable" not in witness_entries["concreteWitness"]
+                and "ptr %Value" not in witness_entries["concreteWitness"],
+                f"{target}: a concrete nominal parameter does not add metadata or witnesses")
         getter_errors = {name: body(value_ir, name).splitlines()[0] for name in [
             "checkedNumber", "fixedNumber", "delayedNumber", "delayedFixedNumber"]}
         for name in ["checkedNumber", "delayedNumber"]:
@@ -192,6 +208,7 @@ def main():
             require('"ptrauth"(i32 0, i64 3335)' in concrete_tuple, "Concrete tuple callback authentication changed")
             require('"ptrauth"(i32 0, i64 29199)' in callback, "Generic result callback authentication changed")
             require('"ptrauth"(i32 0, i64 18589)' in borrowed, "Borrowed value callback authentication changed")
+            require('"ptrauth"(i32 0, i64 42045)' in borrowed_tuple, "Borrowed tuple callback authentication changed")
         metadata_ir_path = directory / "metadata.ll"
         run("xcrun", "clang++", "-std=c++20", "-O2", "-target", target, "-isysroot", sdk,
             "-I", str(root / "Sources/ABIBridgeCore/include"), "-S", "-emit-llvm",
@@ -206,7 +223,8 @@ def main():
                               body(metadata_ir, "ABICopySwiftTypeMetadata")),
                     "The runtime TypeContextDescriptor return must use its C++ struct authentication")
         targets.append({"target": target, "genericCall": generic, "genericCallback": callback,
-                        "borrowedCallback": borrowed, "tupleCallback": tuple_callback, "concreteTupleCallback": concrete_tuple,
+                        "borrowedCallback": borrowed, "borrowedTupleCallback": borrowed_tuple,
+                        "tupleCallback": tuple_callback, "concreteTupleCallback": concrete_tuple,
                         "packCallback": pack_callback, "largeFixedCallback": large_callback,
                         "indirectReceiver": receiver, "concreteReceiver": concrete,
                         "referenceReceiver": reference, "phantomReceiver": phantom,
@@ -217,7 +235,7 @@ def main():
                         "nestedSource": nested_source, "superclassSource": superclass_source,
                         "metatypeCallbacks": metatypes, "packSources": pack_sources,
                         "associatedStorage": associated_storage, "getterErrors": getter_errors,
-                        "errorSubstitutions": error_substitutions})
+                        "errorSubstitutions": error_substitutions, "witnessEntries": witness_entries})
     report = {"compiler": run("xcrun", "swiftc", "--version").strip(), "runtimeTested": False,
               "demanglerRevision": upstream["revision"], "targets": targets}
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")

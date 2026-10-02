@@ -4,7 +4,33 @@ import ABIBridgeCore
 import ManagedSwiftFixtures
 import Testing
 
+protocol GenericOrderingA {}
+private protocol GenericOrderingZ {}
+private struct GenericOrderingValue: GenericOrderingA, GenericOrderingZ {}
+private struct GenericOrderingOwner<Value: GenericOrderingZ> {}
+
 struct SwiftGenericBindingTests {
+    @Test func privateProtocolIdentityDoesNotChangeWitnessOrdering() throws {
+        let name = try swiftNativeTypeName((any GenericOrderingA).self)
+        let context = try SwiftGenericTypeContext(metadata: GenericOrderingOwner<GenericOrderingValue>.self)
+        let parameter = SwiftFormalType.named("A", [])
+        let declaration = SwiftGenericDeclaration(parameters: context.parameters,
+            requirements: context.requirements + [.conformance(parameter, name)],
+            arguments: [], result: .tuple([]), failure: nil, isAsync: false, consumesArguments: false)
+        let binding = try SwiftGenericBinding(declaration: declaration, arguments: [.type(GenericOrderingValue.self)],
+            signature: SwiftFunctionSignature((() -> Void).self), resolver: .shared, enclosing: context)
+        let first = SwiftProtocolDescriptor(try SymbolResolver.shared.resolve(
+            .init(name: "protocol descriptor for " + name, language: .swift, kind: .data), in: .automatic, loading: .loadedOnly))
+        let second = try #require(context.conformances.first?.descriptor)
+        let witnesses = try [first, second].map { descriptor in
+            let witness = unsafe descriptor.withUnsafeAddress {
+                ABISwiftConformance(unsafeBitCast(GenericOrderingValue.self, to: UnsafeRawPointer.self), $0)
+            }
+            return UInt(bitPattern: try #require(witness))
+        }
+        #expect(binding.metadataArguments == [unsafeBitCast(GenericOrderingValue.self, to: UInt.self)] + witnesses)
+    }
+
     @Test func existentialMetatypesKeepTheirRuntimeRepresentation() throws {
         let binding = try SwiftGenericBinding(declaration: SwiftGenericDeclaration(linkageName:
             "$s20ManagedSwiftFixtures10runGenericyxyxXElF"),
@@ -320,6 +346,8 @@ struct SwiftGenericBindingTests {
         #expect(swiftClosureDiscriminator(parameters: ["-indirect", "$ss4Int8V"],
             results: ["-indirect", "$ss4Int8V", "$ss4Int8V"]) == 8528)
         #expect(swiftClosureDiscriminator(parameters: ["-"], results: ["-indirect"]) == 47754)
+        #expect(try swiftClosureDiscriminator(parameters: ["-indirect"],
+            results: swiftClosureAuthTypes((Int64, Int64).self)) == 42045)
         let metatypes: [Any.Type] = [Int64.Type.self, Int64.Type?.self, (any CustomStringConvertible.Type).self]
         for type in metatypes {
             let auth = try swiftClosureAuthType(type)

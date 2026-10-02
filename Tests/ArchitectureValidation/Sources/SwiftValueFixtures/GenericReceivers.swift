@@ -34,6 +34,34 @@ extension GenericMemberReceiver where Value: CustomStringConvertible {
     @inline(never) public func witnessText() -> String { value.description }
 }
 
+public struct BindingBorrowedRecord<Value: GenericReceiverMetric> {
+    public let value: Value
+    public init(_ value: Value) { self.value = value }
+    @inline(never) public func measure() -> Int64 { Int64(value.text.count) }
+    public var measured: Int64 { Int64(value.text.count) }
+}
+@inline(never) public func visitBindingBorrowedRecord(
+    _ number: Int64, _ body: (BindingBorrowedRecord<GenericReceiverNumber>) -> (Int64, Int64)
+) -> (Int64, Int64) { body(BindingBorrowedRecord(GenericReceiverNumber(Int(number)))) }
+
+public protocol BindingWitnessA { static func first() -> Int64 }
+public protocol BindingWitnessZ { static func last() -> Int64 }
+public struct BindingWitnessValue: BindingWitnessA, BindingWitnessZ {
+    public static func first() -> Int64 { 4 }
+    public static func last() -> Int64 { 2 }
+}
+public struct BindingWitnessOwner<Value: BindingWitnessZ> {}
+extension BindingWitnessOwner where Value: BindingWitnessA {
+    @inline(never) public static func orderedWitnesses() -> Int64 { Value.first() * 10 + Value.last() }
+}
+public struct BindingHashOwner<Value: Equatable> {}
+extension BindingHashOwner where Value: Hashable {
+    @inline(never) public static func refinedWitness(_ value: Value) -> Int { value.hashValue }
+}
+extension BindingHashOwner where Value == Int {
+    @inline(never) public static func concreteWitness<Other: Hashable>(_ value: Other) -> Int { value.hashValue }
+}
+
 public final class BindingBox<Value: Equatable> {
     public var value: Value
     public init(_ value: Value) { self.value = value }

@@ -74,8 +74,7 @@ public struct NativeSwiftBorrowingClosure<Result> {
         }
         let argument = try _openExistential(type.metadata, do: layout)
         let result = try SwiftValueCodec<Result>()
-        let resultName = Result.self == Void.self ? nil : try swiftClosureAuthType(Result.self)
-        let discriminator = swiftClosureDiscriminator(parameters: ["-indirect"], result: resultName)
+        let discriminator = swiftClosureDiscriminator(parameters: ["-indirect"], results: try swiftClosureAuthTypes(Result.self))
         let interface = try SwiftCallInterface.cached(result: result.type, parameters: [argument])
         let callback = try SwiftClosureCallbackOwner(interface: interface, body: SwiftClosureBody(retainingCode: type) { arguments, output in
             let borrow = SwiftValueBorrow(UnsafeRawPointer(arguments![0]!))
@@ -115,13 +114,13 @@ public struct NativeSwiftBorrowedMethod<Result, each Argument>: Sendable {
     private let type: NativeSwiftType
     private let call: SwiftCall
 
-    init(symbol: ResolvedSymbol, type: NativeSwiftType) throws {
+    init(symbol: ResolvedSymbol, type: NativeSwiftType, generic: SwiftGenericCallPlan? = nil) throws {
         guard !(type.metadata is AnyClass) else {
             throw ABIResolutionError.unsupportedDeclaration("Borrowed indirect self requires a Swift value type.")
         }
         self.symbol = symbol
         self.type = type
-        call = try SwiftCall(signature: ((repeat each Argument) -> Result).self)
+        call = try SwiftCall(signature: ((repeat each Argument) -> Result).self, generic: generic)
     }
 
     /// Calls a compatible member while the receiver's borrow is active.
