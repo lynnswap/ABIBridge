@@ -73,7 +73,8 @@ private struct RuntimeRejectedArgument: ABIBridgeValue {
             #expect(detail.expected == "A: Swift.Copyable")
         }
         let move = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.moveRuntimeValue<A where A: ~Swift.Copyable>(__owned A) -> A",
-            as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self, genericArguments: arguments)
+            as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self, genericArguments: arguments,
+            declaredAs: "<A where A: ~Swift.Copyable>(__owned A) -> A")
         let moved = try unsafe move.unsafeInvoke(NativeSwiftConsuming(original))
         #expect(original.isConsumed && !moved.isConsumed && !moved.isCopyable)
         #expect(counts.destructions == 0)
