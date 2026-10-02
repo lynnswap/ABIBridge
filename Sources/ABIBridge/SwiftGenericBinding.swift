@@ -53,6 +53,9 @@ struct SwiftGenericBinding: Sendable {
         var known: [[UInt8]: Any.Type] = [:]
         func remember(_ type: Any.Type) throws {
             known[try Self.key(swiftNativeTypeName(type))] = type
+            if let tuple = SwiftTupleMetadata(type) {
+                for element in tuple.elements { try remember(element.type) }
+            }
             if let optional = type as? any NativeOptionalValue.Type { try remember(optional.wrappedType) }
             if let closure = type as? any SwiftClosureValue.Type {
                 let function = try SwiftFunctionSignature(closure.swiftFunctionType)
@@ -115,7 +118,24 @@ struct SwiftGenericBinding: Sendable {
             case .conformance: break
             }
         }
+        var shapeClasses: [Set<String>] = []
         for parameter in declaration.parameters where parameter.isPack {
+            var shape: Set<String> = [parameter.name]
+            for requirement in declaration.requirements {
+                guard case .sameShape(let left, let right) = requirement else { continue }
+                if left.spelling == parameter.name { shape.insert(right.spelling) }
+                if right.spelling == parameter.name { shape.insert(left.spelling) }
+            }
+            let overlapping = shapeClasses.indices.filter { !shapeClasses[$0].isDisjoint(with: shape) }
+            if let first = overlapping.first {
+                shapeClasses[first].formUnion(shape)
+                for index in overlapping.dropFirst().reversed() {
+                    shapeClasses[first].formUnion(shapeClasses.remove(at: index))
+                }
+            } else { shapeClasses.append(shape) }
+        }
+        for shape in shapeClasses {
+            let parameter = declaration.parameters.first { shape.contains($0.name) }!
             metadataArguments.append(UInt(bound[parameter.name]!.types.count))
         }
         for parameter in declaration.parameters {
@@ -247,27 +267,53 @@ struct SwiftGenericBinding: Sendable {
         return [unsafeBitCast(response.address, to: Any.Type.self)]
     }
 
-    func spelling(_ type: SwiftFormalType) throws -> String {
+    func packCount(in type: SwiftFormalType) throws -> Int {
+        var counts: [Int] = []
+        func visit(_ type: SwiftFormalType) {
+            switch type {
+            case .named(let name, let parameters):
+                if let argument = arguments[String(name.prefix { $0 != "." })], argument.isPack {
+                    counts.append(argument.types.count)
+                }
+                parameters.forEach(visit)
+            case .tuple(let fields): fields.forEach(visit)
+            case .function(let parameters, let result, let failure, _):
+                parameters.forEach(visit); visit(result); if let failure { visit(failure) }
+            case .pack(let value), .borrowing(let value), .consuming(let value), .inoutValue(let value), .metatype(let value): visit(value)
+            }
+        }
+        visit(type)
+        guard let count = counts.first, counts.allSatisfy({ $0 == count }) else {
+            throw ABIResolutionError.signatureMismatch(.init(expected: "Equal lengths for the packs in " + type.spelling, found: counts.map(String.init)))
+        }
+        return count
+    }
+
+    func spelling(_ type: SwiftFormalType, packIndex: Int? = nil) throws -> String {
         switch type {
         case .named(let name, let parameters):
             if arguments[String(name.prefix { $0 != "." })] != nil {
                 let resolved = try types(type)
+                if let packIndex, arguments[String(name.prefix { $0 != "." })]!.isPack {
+                    return try swiftNativeTypeName(resolved[packIndex])
+                }
                 return try resolved.map(swiftNativeTypeName).joined(separator: ", ")
             }
-            return name + (parameters.isEmpty ? "" : "<" + (try parameters.map(spelling)).joined(separator: ", ") + ">")
-        case .tuple(let values): return "(" + (try values.map(spelling)).joined(separator: ", ") + ")"
-        case .pack(let value): return try spelling(value)
-        case .inoutValue(let value), .borrowing(let value), .consuming(let value): return try spelling(value)
-        case .metatype(let value): return try spelling(value) + ".Type"
+            return name + (parameters.isEmpty ? "" : "<" + (try parameters.map { try spelling($0, packIndex: packIndex) }).joined(separator: ", ") + ">")
+        case .tuple(let values): return "(" + (try values.map { try spelling($0, packIndex: packIndex) }).filter { !$0.isEmpty }.joined(separator: ", ") + ")"
+        case .pack(let value):
+            return try (0..<packCount(in: value)).map { try spelling(value, packIndex: $0) }.joined(separator: ", ")
+        case .inoutValue(let value), .borrowing(let value), .consuming(let value): return try spelling(value, packIndex: packIndex)
+        case .metatype(let value): return try spelling(value, packIndex: packIndex) + ".Type"
         case .function(let values, let result, let failure, let isAsync):
-            return "(" + (try values.map(spelling)).joined(separator: ", ") + ")" + (isAsync ? " async" : "")
-                + (try failure.map { $0.spelling == "Swift.Error" ? " throws" : " throws(" + (try spelling($0)) + ")" } ?? "")
-                + " -> " + (try spelling(result))
+            return "(" + (try values.map { try spelling($0, packIndex: packIndex) }).joined(separator: ", ") + ")" + (isAsync ? " async" : "")
+                + (try failure.map { $0.spelling == "Swift.Error" ? " throws" : " throws(" + (try spelling($0, packIndex: packIndex)) + ")" } ?? "")
+                + " -> " + (try spelling(result, packIndex: packIndex))
         }
     }
 
-    func validate(_ type: Any.Type, for formal: SwiftFormalType) throws {
-        let expected = try spelling(formal)
+    func validate(_ type: Any.Type, for formal: SwiftFormalType, packIndex: Int? = nil) throws {
+        let expected = try spelling(formal, packIndex: packIndex)
         let actual: String
         if case .function = formal { actual = try swiftFunctionTypeName(type) }
         else { actual = try swiftNativeTypeName(type) }

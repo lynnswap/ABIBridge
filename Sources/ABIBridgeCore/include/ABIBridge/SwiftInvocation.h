@@ -64,6 +64,10 @@ ABIValueType *ABICreateSwiftIndirectStorageType(
 ABIValueType *ABICreateSwiftTupleStorageType(
     const ABIValueType *const *fields, const size_t *offsets, size_t count,
     size_t size, size_t alignment, ABIResolutionFailure **error);
+/// A formal pack passes an address vector for these concrete elements.
+ABIValueType *ABICreateSwiftPackStorageType(
+    const ABIValueType *const *fields, const size_t *offsets, size_t count,
+    size_t size, size_t alignment, ABIResolutionFailure **error);
 
 /// Prepares a concrete synchronous, nonthrowing Swift call from fixed value
 /// layouts. These are storage descriptions, not a C calling convention.

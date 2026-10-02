@@ -61,14 +61,19 @@ final class CValueType: @unchecked Sendable {
         self.alignment = alignment
     }
 
-    init(swiftTuple fields: [CValueType], offsets: [Int], size: Int, alignment: Int) throws {
+    init(swiftTuple fields: [CValueType], offsets: [Int], size: Int, alignment: Int, isPack: Bool = false) throws {
         let handles: [OpaquePointer?] = fields.map(\.handle)
         var failure: OpaquePointer?
         let handle = withExtendedLifetime(fields) {
             handles.withUnsafeBufferPointer { handles in
                 offsets.withUnsafeBufferPointer { offsets in
-                    ABICreateSwiftTupleStorageType(handles.baseAddress, offsets.baseAddress,
-                        fields.count, size, alignment, &failure)
+                    if isPack {
+                        ABICreateSwiftPackStorageType(handles.baseAddress, offsets.baseAddress,
+                            fields.count, size, alignment, &failure)
+                    } else {
+                        ABICreateSwiftTupleStorageType(handles.baseAddress, offsets.baseAddress,
+                            fields.count, size, alignment, &failure)
+                    }
                 }
             }
         }

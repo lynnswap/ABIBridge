@@ -12,3 +12,9 @@ import ManagedSwiftFixtures
 @inline(never) public func probeConcreteTupleCallback(
     _ body: ((String, Int8)) -> (String, Int8, Int8), _ value: (String, Int8)
 ) -> (String, Int8, Int8) { body(value) }
+@inline(never) public func probeGenericPackCallback<each Value>(
+    _ body: (repeat each Value) -> (repeat each Value), _ values: repeat each Value
+) -> (repeat each Value) { body(repeat each values) }
+@inline(never) public func probeLargeFixedCallback(
+    _ body: (LargeManagedValue) -> LargeManagedValue, _ value: LargeManagedValue
+) -> LargeManagedValue { body(value) }

@@ -139,7 +139,7 @@ struct SwiftCallValues: Sendable {
             return try _openExistential(type, do: prepare)
         }
         func prepareResult<Value>(_ type: Value.Type) throws -> Result {
-            let codec = try SwiftResultCodec<Value>(opaque: opaqueResult, genericType: generic?.resultType)
+            let codec = try SwiftResultCodec<Value>(opaque: opaqueResult, generic: generic?.result ?? .concrete)
             return Result(type: codec.type, makeStorage: { codec.makeStorage() },
                 initialize: { storage, owner, codeOwner, output in
                     let value = try codec.decode(storage, retaining: owner, retainingCode: codeOwner)

@@ -1,0 +1,108 @@
+import ABIBridgeCore
+
+/// Maps source-level parameters to the original declaration's SIL parameters.
+/// A variadic pack is one native address vector even after substitution makes
+/// its elements separate parameters in the caller's function type.
+struct SwiftGenericParameters: Sendable {
+    enum Group: Sendable {
+        case value(Int)
+        case pack(Range<Int>, CValueType)
+    }
+    let arguments: [SwiftGenericArgument]
+    let groups: [Group]
+    let hasPacks: Bool
+
+    init(formal: [SwiftFormalType], actual: [Any.Type], binding: SwiftGenericBinding) throws {
+        var arguments: [SwiftGenericArgument] = []
+        var groups: [Group] = []
+        var index = 0
+        var hasPacks = false
+        for parameter in formal {
+            if case .pack(let pattern) = parameter {
+                let count = try binding.packCount(in: pattern)
+                guard index + count <= actual.count else { throw Self.mismatch(actual.count) }
+                let range = index..<(index + count)
+                for (packIndex, position) in range.enumerated() {
+                    try binding.validate(actual[position], for: pattern, packIndex: packIndex)
+                    arguments.append(.value(try Self.storageType(actual[position]), consuming: false))
+                }
+                groups.append(.pack(range, try CValueType(indirectSwiftSize: count * MemoryLayout<UInt>.size,
+                                                           alignment: MemoryLayout<UInt>.alignment)))
+                hasPacks = true
+                index += count
+            } else {
+                guard index < actual.count else { throw Self.mismatch(actual.count) }
+                groups.append(.value(index))
+                arguments.append(try SwiftGenericCallPlan.argument(parameter, actual: actual[index], binding: binding))
+                index += 1
+            }
+        }
+        guard index == actual.count else { throw Self.mismatch(actual.count) }
+        self.arguments = arguments
+        self.groups = groups
+        self.hasPacks = hasPacks
+    }
+
+    static func storageType(_ type: Any.Type) throws -> CValueType {
+        func prepare<Value>(_ type: Value.Type) throws -> CValueType {
+            try CValueType(indirectSwiftSize: MemoryLayout<Value>.size, alignment: MemoryLayout<Value>.alignment)
+        }
+        return try _openExistential(type, do: prepare)
+    }
+
+    private static func mismatch(_ count: Int) -> ABIResolutionError {
+        .signatureMismatch(.init(expected: "The instantiated declaration's argument count", found: ["\(count) arguments"]))
+    }
+
+    func types(from logical: [CValueType]) -> [CValueType] {
+        groups.map {
+            switch $0 {
+            case .value(let index): logical[index]
+            case .pack(_, let type): type
+            }
+        }
+    }
+
+    struct Encoded {
+        let addresses: [UnsafeMutableRawPointer?]
+        let packs: [NativeValueStorage]
+    }
+
+    func encode(_ logical: [UnsafeMutableRawPointer?]) -> Encoded {
+        guard hasPacks else { return Encoded(addresses: logical, packs: []) }
+        var packs: [NativeValueStorage] = []
+        let addresses = groups.map { group -> UnsafeMutableRawPointer? in
+            switch group {
+            case .value(let index): return logical[index]
+            case .pack(let range, let type):
+                let storage = NativeValueStorage(size: type.size, alignment: type.alignment)
+                for (element, index) in range.enumerated() {
+                    storage.address.storeBytes(of: logical[index],
+                        toByteOffset: element * MemoryLayout<UInt>.size, as: UnsafeMutableRawPointer?.self)
+                }
+                packs.append(storage)
+                return storage.address
+            }
+        }
+        return Encoded(addresses: addresses, packs: packs)
+    }
+
+    func encode(_ logical: UnsafePointer<UnsafeMutableRawPointer?>?) -> Encoded {
+        encode(Array(UnsafeBufferPointer(start: logical, count: arguments.count)))
+    }
+
+    func unpack(_ native: UnsafePointer<UnsafeMutableRawPointer?>?) -> [UnsafeMutableRawPointer?] {
+        var arguments: [UnsafeMutableRawPointer?] = []
+        for (index, group) in groups.enumerated() {
+            switch group {
+            case .value: arguments.append(native![index])
+            case .pack(let range, _):
+                for element in 0..<range.count {
+                    arguments.append(native![index]!.load(fromByteOffset: element * MemoryLayout<UInt>.size,
+                                                          as: UnsafeMutableRawPointer?.self))
+                }
+            }
+        }
+        return arguments
+    }
+}

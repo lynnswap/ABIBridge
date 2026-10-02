@@ -7,7 +7,7 @@ struct SwiftGenericDeclaration: Sendable {
         let name: String
         let isPack: Bool
     }
-    enum Requirement: Sendable {
+    enum Requirement: Sendable, Equatable {
         case conformance(SwiftFormalType, String)
         case sameType(SwiftFormalType, SwiftFormalType)
         case sameShape(SwiftFormalType, SwiftFormalType)
@@ -19,6 +19,71 @@ struct SwiftGenericDeclaration: Sendable {
     let failure: SwiftFormalType?
     let isAsync: Bool
     let head: String
+
+    init(_ declaration: String, linkageName: String) throws {
+        let parsed = try Self(declaration)
+        let packs = try parsed.packParameters(in: linkageName)
+        parameters = parsed.parameters.map { Parameter(name: $0.name, isPack: packs.contains($0.name)) }
+        requirements = parsed.requirements
+        arguments = parsed.arguments
+        result = parsed.result
+        failure = parsed.failure
+        isAsync = parsed.isAsync
+        head = parsed.head
+    }
+
+    private func packParameters(in linkageName: String) throws -> Set<String> {
+        // Swift 6.3's NodePrinter swaps depth/index when printing `each`, so the
+        // displayed signature can omit or misplace it. Read the ABI marker's
+        // depth/index, then vary only that index to distinguish the operator
+        // from identical bytes in an identifier. The native demangler must
+        // preserve the entire declaration apart from pack annotations.
+        // Demangler.cpp: demangleGenericRequirement / demangleGenericParamIndex.
+        let expression = try NSRegularExpression(pattern: #"Rv(z|d(?:_|[0-9]+_)(?:_|[0-9]+_)|_|[0-9]+_)"#)
+        func context(_ head: String) -> String {
+            var value = head
+            for group in SwiftGenericSyntax.groups(in: head).reversed() { value.removeSubrange(group.range) }
+            return value
+        }
+        var packs: Set<String> = []
+        for match in expression.matches(in: linkageName, range: NSRange(linkageName.startIndex..., in: linkageName)) {
+            guard let range = Range(match.range, in: linkageName) else { continue }
+            let marker = linkageName[range].dropFirst(2)
+            let probe = linkageName.replacingCharacters(in: range, with: marker == "d__" ? "Rvz" : "Rvd__")
+            guard let name = DeclarationKey.demangle(probe, language: .swift), let candidate = try? Self(name),
+                  context(candidate.head) == context(head), candidate.parameters.map(\.name) == parameters.map(\.name),
+                  candidate.arguments == arguments, candidate.result == result,
+                  candidate.failure == failure, candidate.isAsync == isAsync,
+                  candidate.requirements == requirements else { continue }
+            var remainder = marker[...]
+            func encodedIndex() -> Int? {
+                guard let separator = remainder.firstIndex(of: "_") else { return nil }
+                let value = remainder[..<separator]
+                remainder = remainder[remainder.index(after: separator)...]
+                if value.isEmpty { return 0 }
+                guard let index = Int(value), index < Int.max - 1 else { return nil }
+                return index + 1
+            }
+            let depth: Int, index: Int
+            if remainder == "z" { depth = 0; index = 0 }
+            else if remainder.first == "d" {
+                remainder = remainder.dropFirst()
+                guard let context = encodedIndex(), let position = encodedIndex() else { continue }
+                depth = context + 1; index = position
+            } else {
+                guard let position = encodedIndex() else { continue }
+                depth = 0; index = position + 1
+            }
+            var position = index, parameter = ""
+            repeat {
+                parameter.append(Character(UnicodeScalar(65 + position % 26)!))
+                position /= 26
+            } while position != 0
+            if depth != 0 { parameter += String(depth) }
+            if parameters.contains(where: { $0.name == parameter }) { packs.insert(parameter) }
+        }
+        return packs
+    }
 
     init(_ declaration: String) throws {
         let text = declaration.trimmingCharacters(in: .whitespaces)
@@ -43,8 +108,14 @@ struct SwiftGenericDeclaration: Sendable {
             if pieces.count > 1 {
                 for raw in SwiftGenericSyntax.split(Substring(pieces[1])) {
                     if let equality = raw.range(of: "==") {
-                        requirements.append(.sameType(try SwiftFormalType(String(raw[..<equality.lowerBound])),
-                            try SwiftFormalType(String(raw[equality.upperBound...]))))
+                        let left = raw[..<equality.lowerBound].trimmingCharacters(in: .whitespaces)
+                        let right = raw[equality.upperBound...].trimmingCharacters(in: .whitespaces)
+                        if left.hasSuffix(".shape"), right.hasSuffix(".shape") {
+                            requirements.append(.sameShape(try SwiftFormalType(String(left.dropLast(6))),
+                                try SwiftFormalType(String(right.dropLast(6)))))
+                        } else {
+                            requirements.append(.sameType(try SwiftFormalType(left), try SwiftFormalType(right)))
+                        }
                     } else if let shape = raw.range(of: " ~ ") {
                         requirements.append(.sameShape(try SwiftFormalType(String(raw[..<shape.lowerBound])),
                             try SwiftFormalType(String(raw[shape.upperBound...]))))
@@ -60,7 +131,13 @@ struct SwiftGenericDeclaration: Sendable {
                 }
             }
         }
-        self.parameters = parameters
+        let shapeParameters = Set(requirements.flatMap { requirement -> [String] in
+            if case .sameShape(let left, let right) = requirement { return [left.spelling, right.spelling] }
+            return []
+        })
+        self.parameters = parameters.map {
+            Parameter(name: $0.name, isPack: $0.isPack || shapeParameters.contains($0.name))
+        }
         self.requirements = requirements
         let fields = input[input.index(after: opening)..<closing]
         arguments = try SwiftFormalSyntax.fields(fields).map { try SwiftFormalType($0) }

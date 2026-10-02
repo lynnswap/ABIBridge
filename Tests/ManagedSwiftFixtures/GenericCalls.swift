@@ -37,6 +37,43 @@ public func genericCallbackThenArgument<Value>(_ apply: () -> Value, _ argument:
     try values.map(transform)
 }
 @inline(never) public func optionalGeneric<Value>(_ value: Value?) -> Value? { value }
+@inline(never) public func makeClosureGeneric<Value>(_ value: Value) -> (Value) -> Value { { _ in value } }
+@inline(never) public func makeOwnedClosureGeneric<Value>(_ value: Value) -> () -> Value { { value } }
+@inline(never) public func makeThrowingClosureGeneric<Value, Failure: Error>(
+    _ value: Value, _ failure: Failure
+) -> (Bool) throws(Failure) -> Value {
+    { shouldThrow throws(Failure) in if shouldThrow { throw failure }; return value }
+}
+@inline(never) public func makeAsyncClosureGeneric<Value: Sendable>(
+    _ value: Value
+) -> (nonisolated(nonsending) @Sendable (Value) async -> Value) {
+    { _ in await Task.yield(); return value }
+}
+@inline(never) public func makePackClosureGeneric<each Value>() -> (repeat each Value) -> (repeat each Value) {
+    { (values: repeat each Value) in (repeat each values) }
+}
+@inline(never) public func packGeneric<each Value>(_ values: repeat each Value) -> (repeat each Value) { (repeat each values) }
+@inline(never) public func Rvz<Value, each Element>(_ value: Value, _ elements: repeat each Element) -> (Value, repeat each Element) {
+    (value, repeat each elements)
+}
+@inline(never) public func constrainedPackGeneric<each Value: Equatable>(_ values: repeat each Value) -> (repeat each Value) {
+    (repeat each values)
+}
+@inline(never) public func mixedPackGeneric<Value, each Element>(
+    _ value: Value, _ elements: repeat each Element
+) -> (Int8, Value, repeat each Element, Int8) { (1, value, repeat each elements, 2) }
+@inline(never) public func nestedPackGeneric<each Value>(
+    _ values: (Int8, repeat each Value, Int8)
+) -> (Int8, repeat each Value, Int8) { values }
+@inline(never) public func pairedPackGeneric<each First, each Second>(
+    _ values: repeat (each First, each Second)
+) -> (repeat (each Second, each First)) { (repeat ((each values).1, (each values).0)) }
+@inline(never) public nonisolated(nonsending) func suspendedPackGeneric<each Value>(
+    _ values: repeat each Value
+) async -> (repeat each Value) { await Task.yield(); return (repeat each values) }
+@inline(never) public func callbackPackGeneric<each Value>(
+    _ body: (repeat each Value) -> (repeat each Value), _ values: repeat each Value
+) -> (repeat each Value) { body(repeat each values) }
 @inline(never) public func tupleGeneric<Value>(_ value: (Value, Int8, Int8)) -> (Value, Int8, Int8) { value }
 @inline(never) public func pairGeneric<First, Second>(_ value: (First, Second)) -> (Second, First) { (value.1, value.0) }
 @inline(never) public func largeTupleGeneric<Value>(_ value: (Value, LargeManagedValue, Int64)) -> (Value, LargeManagedValue, Int64) { value }

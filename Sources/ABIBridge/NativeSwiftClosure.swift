@@ -153,28 +153,43 @@ extension NativeSwiftClosure: SwiftClosureValue {
     static var swiftFunctionType: Any.Type { Signature.self }
 
     static func makeClosureCodec() throws -> SwiftClosureCodec {
+        try makeClosureCodec(generic: nil)
+    }
+
+    static func makeClosureCodec(generic: SwiftGenericClosurePlan?) throws -> SwiftClosureCodec {
         let signature = try SwiftFunctionSignature(Signature.self)
-        if signature.isAsync { return try makeAsyncClosureCodec(signature: signature) }
+        if signature.isAsync { return try makeAsyncClosureCodec(signature: signature, generic: generic) }
         let discriminator = try signature.closureDiscriminator()
         let prepared = try SwiftCall(signature: Signature.self, errorPlan: signature.makeErrorPlan())
+        let interface: SwiftCallInterface
+        if let generic {
+            guard case .synchronous(let original) = generic.transport else {
+                preconditionFailure("The prepared closure effects must agree.")
+            }
+            interface = original
+        } else { interface = prepared.interface }
         let pointer = try CValueType(scalar: ABIValuePointer)
         return SwiftClosureCodec(type: try CValueType(fields: [pointer, pointer])) { value, owner, taking in
             if !taking { ABIRetainSwiftClosureContext(value.context) }
-            let original = try SwiftClosureStorage(adopting: value, discriminator: discriminator, retaining: owner)
-            if ABIIsSwiftClosureCallbackFunction(original.implementation.function) {
+            let original = try SwiftClosureStorage(adopting: value, discriminator: generic?.discriminator ?? discriminator, retaining: owner)
+            if generic == nil && ABIIsSwiftClosureCallbackFunction(original.implementation.function) {
                 return Self(call: .synchronous(original, prepared))
             }
             // Native copies retain only the closure's heap context. Forwarding keeps
             // implementation images alive until the final native copy is destroyed.
             let callback = try throwingClosureOwner(prepared.interface, body: SwiftThrowingClosureBody(retainingCode: original.codeOwner) { arguments, result, failure in
                 var didThrow = false
-                let succeeded: Bool
-                if prepared.errorPlan != nil {
-                    succeeded = ABIUnsafeInvokeSwiftThrowingCallInterface(prepared.interface.handle,
-                        original.implementation.function, result, arguments, original.value.context, failure, &didThrow, nil)
-                } else {
-                    succeeded = ABIUnsafeInvokeSwiftCallInterface(prepared.interface.handle,
-                        original.implementation.function, result, arguments, original.value.context, nil)
+                let encoded = generic?.parameters.hasPacks == true ? generic!.parameters.encode(arguments) : nil
+                func invoke(_ arguments: UnsafePointer<UnsafeMutableRawPointer?>?) -> Bool {
+                    if prepared.errorPlan != nil {
+                        return ABIUnsafeInvokeSwiftThrowingCallInterface(interface.handle,
+                            original.implementation.function, result, arguments, original.value.context, failure, &didThrow, nil)
+                    }
+                    return ABIUnsafeInvokeSwiftCallInterface(interface.handle,
+                            original.implementation.function, result, arguments, original.value.context, nil)
+                }
+                let succeeded = withExtendedLifetime(encoded) {
+                    encoded.map { $0.addresses.withUnsafeBufferPointer { invoke($0.baseAddress) } } ?? invoke(arguments)
                 }
                 precondition(succeeded, "The prepared Swift closure forwarding call must be valid.")
                 return didThrow
@@ -185,6 +200,10 @@ extension NativeSwiftClosure: SwiftClosureValue {
 }
 
 extension NativeSwiftClosure: SwiftGenericClosureValue {
+    static func makeGenericClosureCodec(plan: SwiftGenericClosurePlan) throws -> SwiftClosureCodec {
+        try makeClosureCodec(generic: plan)
+    }
+
     func encodeGenericClosure(plan: SwiftGenericClosurePlan, retainingCode owner: Any?) throws -> NativeValueStorage {
         if case .asynchronous = plan.transport {
             return try encodeGenericAsyncClosure(plan: plan, retainingCode: owner)
@@ -195,14 +214,17 @@ extension NativeSwiftClosure: SwiftGenericClosureValue {
         }
         let callback = try throwingClosureOwner(interface, body: SwiftThrowingClosureBody(retainingCode: (original.codeOwner, owner)) { arguments, output, error in
             var didThrow = false
-            let success: Bool
-            if prepared.errorPlan != nil {
-                success = ABIUnsafeInvokeSwiftThrowingCallInterface(prepared.interface.handle,
-                    original.implementation.function, output, arguments, original.value.context, error, &didThrow, nil)
-            } else {
-                success = ABIUnsafeInvokeSwiftCallInterface(prepared.interface.handle, original.implementation.function,
-                    output, arguments, original.value.context, nil)
+            func invoke(_ arguments: UnsafePointer<UnsafeMutableRawPointer?>?) -> Bool {
+                if prepared.errorPlan != nil {
+                    return ABIUnsafeInvokeSwiftThrowingCallInterface(prepared.interface.handle,
+                        original.implementation.function, output, arguments, original.value.context, error, &didThrow, nil)
+                }
+                return ABIUnsafeInvokeSwiftCallInterface(prepared.interface.handle, original.implementation.function,
+                        output, arguments, original.value.context, nil)
             }
+            let success = plan.parameters.hasPacks
+                ? plan.parameters.unpack(arguments).withUnsafeBufferPointer { invoke($0.baseAddress) }
+                : invoke(arguments)
             precondition(success, "A prepared closure reabstraction must have a valid call frame.")
             return didThrow
         })

@@ -34,6 +34,136 @@ private final class GenericCaptureState: Sendable {
 
 @Suite(.serialized)
 struct SwiftGenericCallTests {
+    @Test func returnedGenericClosuresPreserveCapturedValuesAndTypedErrors() async throws {
+        let runtime = ABIRuntime.shared
+        let factory = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeClosureGeneric<A>(A) -> (A) -> A",
+            as: ((String) -> NativeSwiftClosure<(String) -> String>).self,
+            genericArguments: [.type(String.self)])
+        let text = String(repeating: "captured", count: 100)
+        let closure = try unsafe factory.unsafeInvoke(text)
+        #expect(try unsafe closure.unsafeInvoke("argument") == text)
+        let throwing = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeThrowingClosureGeneric<A, B where B: Swift.Error>(A, B) -> (Swift.Bool) throws(B) -> A",
+            as: ((String, ScalarFailure) -> NativeSwiftClosure<(Bool) throws(ScalarFailure) -> String>).self,
+            genericArguments: [.type(String.self), .type(ScalarFailure.self)])
+        let operation = try unsafe throwing.unsafeInvoke(text, ScalarFailure(77))
+        #expect(try unsafe operation.unsafeInvoke(false) == text)
+        do {
+            _ = try unsafe operation.unsafeInvoke(true)
+            Issue.record("Expected the captured typed error")
+        } catch let error as NativeSwiftError {
+            #expect(error.withUnderlyingError { ($0 as? ScalarFailure)?.code } == 77)
+        }
+    }
+
+    @MainActor @Test func returnedGenericClosuresComposeWithAsyncAndPacks() async throws {
+        let runtime = ABIRuntime.shared
+        let asynchronous = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeAsyncClosureGeneric<A where A: Swift.Sendable>(A) -> nonisolated(nonsending) @Sendable (A) async -> A",
+            as: ((String) -> NativeSwiftClosure<@Sendable (String) async -> String>).self,
+            genericArguments: [.type(String.self)])
+        let text = String(repeating: "asynchronous", count: 50)
+        let operation = try unsafe asynchronous.unsafeInvoke(text)
+        #expect(try unsafe await operation.unsafeInvoke("ignored") == text)
+        let pack = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makePackClosureGeneric<each A>() -> (repeat A) -> (repeat A)",
+            as: (() -> NativeSwiftClosure<(String, Int64) -> (String, Int64)>).self,
+            genericArguments: [.pack([.type(String.self), .type(Int64.self)])])
+        let returned = try unsafe pack.unsafeInvoke()
+        let output = try unsafe returned.unsafeInvoke(text, Int64(61))
+        #expect(output.0 == text && output.1 == 61)
+    }
+
+    @Test func returnedGenericClosureReleasesItsCapturedValueAfterTheLastCopy() async throws {
+        let state = GenericCaptureState()
+        let factory = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.makeOwnedClosureGeneric<A>(A) -> () -> A",
+            as: ((GenericCapture) -> NativeSwiftClosure<() -> GenericCapture>).self,
+            genericArguments: [.type(GenericCapture.self)])
+        var saved: NativeSwiftClosure<() -> GenericCapture>?
+        do {
+            let capture = GenericCapture(state)
+            let original = try unsafe factory.unsafeInvoke(capture)
+            saved = original
+            #expect(try unsafe original.unsafeInvoke() === capture)
+        }
+        #expect(state.deaths.withLock { $0 } == 0)
+        withExtendedLifetime(saved) { #expect(state.deaths.withLock { $0 } == 0) }
+        saved = nil
+        #expect(state.deaths.withLock { $0 } == 1)
+    }
+
+    @Test func parameterPacksIncludeEmptySingletonAndConstrainedBindings() async throws {
+        let runtime = ABIRuntime.shared
+        let name = "ManagedSwiftFixtures.packGeneric<each A>(repeat A) -> (repeat A)"
+        let empty = try await runtime.swiftFunction(named: name, as: (() -> Void).self,
+            genericArguments: [.pack([])])
+        try unsafe empty.unsafeInvoke()
+        let single = try await runtime.swiftFunction(named: name, as: ((String) -> String).self,
+            genericArguments: [.pack([.type(String.self)])])
+        let text = String(repeating: "pack", count: 100)
+        #expect(try unsafe single.unsafeInvoke(text) == text)
+        let values = try await runtime.swiftFunction(named: name,
+            as: ((String, Int64, Bool) -> (String, Int64, Bool)).self,
+            genericArguments: [.pack([.type(String.self), .type(Int64.self), .type(Bool.self)])])
+        let output = try unsafe values.unsafeInvoke(text, Int64(42), true)
+        let control = packGeneric(text, Int64(42), true)
+        #expect(output.0 == control.0 && output.1 == control.1 && output.2 == control.2)
+        let constrained = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.constrainedPackGeneric<each A where A: Swift.Equatable>(repeat A) -> (repeat A)",
+            as: ((String, [Int64]) -> (String, [Int64])).self,
+            genericArguments: [.pack([.type(String.self), .type([Int64].self)])])
+        let paired = try unsafe constrained.unsafeInvoke(text, [Int64(1), 2])
+        #expect(paired.0 == text && paired.1 == [1, 2])
+    }
+
+    @MainActor @Test func mixedAndNestedPacksPreserveTupleStorageAndSuspension() async throws {
+        let runtime = ABIRuntime.shared
+        let text = String(repeating: "nested pack", count: 50)
+        let mixed = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.mixedPackGeneric<A, B>(A, repeat B) -> (Swift.Int8, A, repeat B, Swift.Int8)",
+            as: ((String, Int64, Bool) -> (Int8, String, Int64, Bool, Int8)).self,
+            genericArguments: [.type(String.self), .pack([.type(Int64.self), .type(Bool.self)])])
+        let result = try unsafe mixed.unsafeInvoke(text, Int64(37), true)
+        #expect(result.0 == 1 && result.1 == text && result.2 == 37 && result.3 && result.4 == 2)
+        let nested = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.nestedPackGeneric<each A>((Swift.Int8, repeat A, Swift.Int8)) -> (Swift.Int8, repeat A, Swift.Int8)",
+            as: (((Int8, String, Int64, Int8)) -> (Int8, String, Int64, Int8)).self,
+            genericArguments: [.pack([.type(String.self), .type(Int64.self)])])
+        let tuple = try unsafe nested.unsafeInvoke((Int8(12), text, Int64(93), Int8(-8)))
+        #expect(tuple.0 == 12 && tuple.1 == text && tuple.2 == 93 && tuple.3 == -8)
+        let suspended = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.suspendedPackGeneric<each A>(repeat A) async -> (repeat A)",
+            as: ((String, Int64) async -> (String, Int64)).self,
+            genericArguments: [.pack([.type(String.self), .type(Int64.self)])])
+        let output = try unsafe await suspended.unsafeInvoke(text, Int64(57))
+        #expect(output.0 == text && output.1 == 57)
+    }
+
+    @Test func packShapeClassesAndCallbacksUseOneNativePackPerExpansion() async throws {
+        let runtime = ABIRuntime.shared
+        let markerInName = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.Rvz<A, B>(A, repeat B) -> (A, repeat B)",
+            as: ((String, Int64) -> (String, Int64)).self,
+            genericArguments: [.type(String.self), .pack([.type(Int64.self)])])
+        let namedResult = try unsafe markerInName.unsafeInvoke("name", Int64(22))
+        #expect(namedResult.0 == "name" && namedResult.1 == 22)
+        let pair = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.pairedPackGeneric<each A, B where A.shape == B.shape>(repeat (A, B)) -> (repeat (B, A))",
+            as: (((Int64, String), (Bool, Double)) -> ((String, Int64), (Double, Bool))).self,
+            genericArguments: [.pack([.type(Int64.self), .type(Bool.self)]), .pack([.type(String.self), .type(Double.self)])])
+        let output = try unsafe pair.unsafeInvoke((Int64(34), "value"), (true, 2.5))
+        #expect(output.0.0 == "value" && output.0.1 == 34 && output.1.0 == 2.5 && output.1.1)
+        let function = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.callbackPackGeneric<each A>((repeat A) -> (repeat A), repeat A) -> (repeat A)",
+            as: ((NativeSwiftClosure<(String, Int64) -> (String, Int64)>, String, Int64) -> (String, Int64)).self,
+            genericArguments: [.pack([.type(String.self), .type(Int64.self)])])
+        let body: NativeSwiftClosure<(String, Int64) -> (String, Int64)> = try NativeSwiftClosure { ($0 + "!", $1 + 1) }
+        let called = try unsafe function.unsafeInvoke(body, "callback", Int64(17))
+        #expect(called.0 == "callback!" && called.1 == 18)
+    }
+
     @Test func genericTupleElementsUseTheirDeclaredConventions() async throws {
         let runtime = ABIRuntime.shared
         let tuple = try await runtime.swiftFunction(

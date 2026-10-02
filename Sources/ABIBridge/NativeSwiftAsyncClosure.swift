@@ -102,10 +102,15 @@ extension NativeSwiftClosure {
         let callback = try SwiftAsyncClosureCallbackOwner(interface: interface,
             body: SwiftAsyncClosureBody(inheritsCallerIsolation: isolation,
                 retainingCode: (original.codeOwner, owner)) { arguments, result, error in
+                let unpacked = plan.parameters.hasPacks ? SwiftGenericArgumentBuffer(
+                    plan.parameters.unpack(arguments).map { UInt(bitPattern: $0) }) : nil
+                let forwarded: UnsafePointer<UnsafeMutableRawPointer?>? = unpacked.map {
+                    UnsafeRawPointer(bitPattern: $0.address)!.assumingMemoryBound(to: UnsafeMutableRawPointer?.self)
+                } ?? arguments
                 let invocation = ABICreateSwiftAsyncInvocation(prepared.interface.handle, original.entry.function,
-                    original.entry.contextSize, result, arguments, original.value.context, error, nil)
+                    original.entry.contextSize, result, forwarded, original.value.context, error, nil)
                 precondition(invocation != nil, "The prepared async closure reabstraction must be valid.")
-                defer { withExtendedLifetime(original) { ABIReleaseSwiftAsyncInvocation(invocation!) } }
+                defer { withExtendedLifetime((original, unpacked)) { ABIReleaseSwiftAsyncInvocation(invocation!) } }
                 await invokeSwiftAsync(invocation!)
                 return ABISwiftAsyncInvocationDidThrow(invocation!)
             })
@@ -175,23 +180,34 @@ extension NativeSwiftClosure {
             context: Unmanaged.passRetained(callback).toOpaque()), discriminator: discriminator, retaining: nil)
     }
 
-    static func makeAsyncClosureCodec(signature: SwiftFunctionSignature) throws -> SwiftClosureCodec {
+    static func makeAsyncClosureCodec(signature: SwiftFunctionSignature, generic: SwiftGenericClosurePlan? = nil) throws -> SwiftClosureCodec {
         let discriminator = try signature.closureDiscriminator()
         let prepared = try SwiftAsyncCall(signature: Signature.self, errorPlan: signature.makeErrorPlan(),
             inheritsCallerIsolation: signature.inheritsCallerIsolation)
+        let interface: SwiftAsyncCallInterface
+        if let generic {
+            guard case .asynchronous(let original, _) = generic.transport else {
+                preconditionFailure("The prepared closure effects must agree.")
+            }
+            interface = original
+        } else { interface = prepared.interface }
         let pointer = try CValueType(scalar: ABIValuePointer)
         return SwiftClosureCodec(type: try CValueType(fields: [pointer, pointer])) { value, owner, taking in
             if !taking { ABIRetainSwiftClosureContext(value.context) }
-            let original = try SwiftAsyncClosureStorage(adopting: value, discriminator: discriminator, retaining: owner)
-            if ABIIsSwiftAsyncClosureCallbackFunction(original.entry.function) {
+            let original = try SwiftAsyncClosureStorage(adopting: value, discriminator: generic?.discriminator ?? discriminator, retaining: owner)
+            if generic == nil && ABIIsSwiftAsyncClosureCallbackFunction(original.entry.function) {
                 return Self(call: .asynchronous(original, prepared))
             }
             let callback = try SwiftAsyncClosureCallbackOwner(interface: prepared.interface,
                 body: SwiftAsyncClosureBody(inheritsCallerIsolation: signature.inheritsCallerIsolation, retainingCode: original.codeOwner) { arguments, result, error in
-                    let invocation = ABICreateSwiftAsyncInvocation(prepared.interface.handle, original.entry.function,
-                        original.entry.contextSize, result, arguments, original.value.context, error, nil)
+                    let encoded = generic?.parameters.hasPacks == true ? generic!.parameters.encode(arguments) : nil
+                    func prepare(_ arguments: UnsafePointer<UnsafeMutableRawPointer?>?) -> OpaquePointer? {
+                        ABICreateSwiftAsyncInvocation(interface.handle, original.entry.function,
+                            original.entry.contextSize, result, arguments, original.value.context, error, nil)
+                    }
+                    let invocation = encoded.map { $0.addresses.withUnsafeBufferPointer { prepare($0.baseAddress) } } ?? prepare(arguments)
                     precondition(invocation != nil, "The prepared async closure forwarding call must be valid.")
-                    defer { withExtendedLifetime(original) { ABIReleaseSwiftAsyncInvocation(invocation!) } }
+                    defer { withExtendedLifetime((original, encoded)) { ABIReleaseSwiftAsyncInvocation(invocation!) } }
                     await invokeSwiftAsync(invocation!)
                     return ABISwiftAsyncInvocationDidThrow(invocation!)
                 })

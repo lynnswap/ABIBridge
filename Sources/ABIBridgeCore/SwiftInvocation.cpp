@@ -93,6 +93,7 @@ struct ArgumentMove {
     bool indirect;
     size_t extent = 0;
     ArgumentSource source = ArgumentSource::parameter;
+    TypeStorage *pack = nullptr;
 };
 
 void flatten(TypeStorage &type, size_t offset, std::vector<Component> &components) {
@@ -236,6 +237,25 @@ ABIValueType *ABICreateSwiftTupleStorageType(
     return new ABIValueType{std::move(storage)};
 }
 
+ABIValueType *ABICreateSwiftPackStorageType(
+    const ABIValueType *const *fields, const size_t *offsets, size_t count,
+    size_t size, size_t alignment, ABIResolutionFailure **error) {
+    auto type = ABICreateSwiftTupleStorageType(fields, offsets, count, size, alignment, error);
+    if (type) {
+        type->storage->swiftTuple = false;
+        type->storage->swiftPack = true;
+        type->storage->swiftIndirect = true;
+    }
+    return type;
+}
+
+static std::vector<void *> swiftPackElements(TypeStorage &type, void *value) {
+    std::vector<void *> elements;
+    elements.reserve(type.fields.size());
+    for (const auto offset : type.offsets) elements.push_back(static_cast<uint8_t *>(value) + offset);
+    return elements;
+}
+
 struct ABISwiftCallInterface {
     std::shared_ptr<TypeStorage> result;
     std::shared_ptr<TypeStorage> directResult;
@@ -287,9 +307,14 @@ static void prepareSwiftResult(ABISwiftCallInterface &interface) {
 
 struct SwiftResultStorage {
     std::optional<AlignedValue> temporary;
+    std::vector<void *> pack;
     void *direct;
     explicit SwiftResultStorage(const ABISwiftCallInterface &interface, void *logical) : direct(logical) {
-        if (interface.resultCopies.size() == 1 && interface.resultCopies[0].direct == 0 &&
+        if (interface.directResult->swiftPack) {
+            const auto offset = interface.resultCopies.empty() ? 0 : interface.resultCopies[0].logical;
+            pack = swiftPackElements(*interface.directResult, static_cast<uint8_t *>(logical) + offset);
+            direct = pack.data();
+        } else if (interface.resultCopies.size() == 1 && interface.resultCopies[0].direct == 0 &&
             interface.resultCopies[0].size == interface.directResult->size()) {
             direct = static_cast<uint8_t *>(logical) + interface.resultCopies[0].logical;
         } else if (!interface.resultCopies.empty()) {
@@ -368,7 +393,7 @@ static ABISwiftCallInterface *createSwiftCallInterface(
     for (size_t index = 0; index < interface->indirectResults.size(); ++index) {
         const auto &field = interface->indirectResults[index];
         append({index, {field.offset, sizeof(void *), false}, Bank::stack, 0, true,
-                field.type->size(), ArgumentSource::result});
+                field.type->size(), ArgumentSource::result, field.type->swiftPack ? field.type.get() : nullptr});
     }
     for (size_t index = 0; index < count; ++index) {
         if (!parameters[index]) {
@@ -384,7 +409,8 @@ static ABISwiftCallInterface *createSwiftCallInterface(
             for (auto component : layout.components) {
                 const auto available = field.type->size() - component.offset;
                 component.offset += field.offset;
-                append({index, component, Bank::stack, 0, layout.indirect, available});
+                append({index, component, Bank::stack, 0, layout.indirect, available, ArgumentSource::parameter,
+                        field.type->swiftPack ? field.type.get() : nullptr});
             }
         }
     }
@@ -422,7 +448,7 @@ bool ABISwiftValueIsIndirect(const ABIValueType *type) { return lower(*type->sto
 
 static void marshalSwiftArguments(
     ABISwiftCallInterface *interface, void *const *arguments, void *result, void *errorResult,
-    CallFrame &frame, std::vector<uint8_t> &stack) {
+    CallFrame &frame, std::vector<uint8_t> &stack, std::vector<std::vector<void *>> &packs) {
     uintptr_t errorAddress = reinterpret_cast<uintptr_t>(errorResult);
     for (const auto &move : interface->moves) {
         const bool errorArgument = move.source == ArgumentSource::error;
@@ -436,7 +462,12 @@ static void marshalSwiftArguments(
             case Bank::stack: destination = stack.data() + move.destination; break;
         }
         if (move.indirect) {
-            const uintptr_t address = reinterpret_cast<uintptr_t>(source);
+            const void *value = source;
+            if (move.pack) {
+                packs.push_back(swiftPackElements(*move.pack, const_cast<uint8_t *>(source)));
+                value = packs.back().data();
+            }
+            const uintptr_t address = reinterpret_cast<uintptr_t>(value);
             std::memcpy(destination, &address, sizeof(address));
         } else {
             const auto available = errorArgument ? sizeof(errorAddress) : move.extent;
@@ -500,9 +531,10 @@ static bool invokeSwiftCallInterface(
     frame.stackSize = stack.size();
     frame.context = reinterpret_cast<uintptr_t>(context);
     SwiftResultStorage resultStorage(*interface, result);
+    std::vector<std::vector<void *>> packs;
     if (interface->resultLayout.indirect)
         frame.indirectResult = reinterpret_cast<uintptr_t>(resultStorage.direct);
-    marshalSwiftArguments(interface, arguments, result, errorResult, frame, stack);
+    marshalSwiftArguments(interface, arguments, result, errorResult, frame, stack, packs);
     uint64_t discriminator = 0;
 #if __has_feature(ptrauth_calls)
     discriminator = ptrauth_function_pointer_type_discriminator(void(void));
@@ -575,6 +607,7 @@ struct ABISwiftAsyncInvocation {
     std::vector<uint8_t> stack;
     std::vector<void *> arguments;
     std::vector<void *> outputs;
+    std::vector<std::vector<void *>> packs;
     std::optional<SwiftResultStorage> resultStorage;
     uintptr_t isolation[2]{};
     uint32_t contextSize;
@@ -649,8 +682,14 @@ ABISwiftAsyncInvocation *ABICreateSwiftAsyncInvocation(
 #endif
     auto &inputs = invocation->arguments;
     if (interface->completion->resultLayout.indirect) inputs.push_back(&invocation->resultStorage->direct);
-    for (const auto &field : interface->completion->indirectResults)
-        invocation->outputs.push_back(static_cast<uint8_t *>(result) + field.offset);
+    for (const auto &field : interface->completion->indirectResults) {
+        void *output = static_cast<uint8_t *>(result) + field.offset;
+        if (field.type->swiftPack) {
+            invocation->packs.push_back(swiftPackElements(*field.type, output));
+            output = invocation->packs.back().data();
+        }
+        invocation->outputs.push_back(output);
+    }
     for (auto &output : invocation->outputs) inputs.push_back(&output);
     if (interface->inheritsCallerIsolation) {
         inputs.push_back(&invocation->isolation[0]);
@@ -678,7 +717,7 @@ extern "C" SwiftAsyncTransfer *ABIPrepareSwiftAsyncEntry(
     invocation->isolation[0] = actor;
     invocation->isolation[1] = witness;
     marshalSwiftArguments(invocation->entry.get(), invocation->arguments.data(), nullptr, nullptr,
-                          invocation->transfer.values, invocation->stack);
+                          invocation->transfer.values, invocation->stack, invocation->packs);
     bridge->callee = static_cast<SwiftAsyncHeader *>(swift_task_alloc(invocation->contextSize));
     bridge->callee->parent = reinterpret_cast<swift::AsyncContext *>(bridge);
     bridge->callee->resume = ABISwiftAsyncResume;
@@ -879,7 +918,7 @@ void unpackArguments(const ABISwiftCallInterface &interface, CallFrame &frame,
     storage.reserve(interface.parameters.size());
     arguments.reserve(interface.parameters.size());
     for (const auto &type : interface.parameters) {
-        if (borrowIndirect && !type->swiftTuple && lower(*type).indirect) {
+        if (borrowIndirect && !type->swiftTuple && !type->swiftPack && lower(*type).indirect) {
             arguments.push_back(nullptr);
             continue;
         }
@@ -903,7 +942,12 @@ void unpackArguments(const ABISwiftCallInterface &interface, CallFrame &frame,
         if (move.indirect) {
             uintptr_t pointer = 0;
             std::memcpy(&pointer, source, sizeof(pointer));
-            if (borrowIndirect && !interface.parameters[move.argument]->swiftTuple)
+            if (move.pack) {
+                auto **elements = reinterpret_cast<void **>(pointer);
+                for (size_t index = 0; index < move.pack->fields.size(); ++index)
+                    std::memcpy(destination + move.component.offset + move.pack->offsets[index],
+                                elements[index], move.pack->fields[index]->size());
+            } else if (borrowIndirect && !interface.parameters[move.argument]->swiftTuple)
                 arguments[move.argument] = reinterpret_cast<void *>(pointer);
             else std::memcpy(destination + move.component.offset, reinterpret_cast<const void *>(pointer), move.extent);
         } else {
@@ -926,6 +970,12 @@ void packRegisters(const Layout &layout, TypeStorage &type, CallFrame &frame, co
 }
 void packResult(const ABISwiftCallInterface &interface, CallFrame &frame, const void *value,
                 void *const *outputs = nullptr) {
+    auto copyOutput = [](TypeStorage &type, void *destination, const void *source) {
+        if (!type.swiftPack) { std::memcpy(destination, source, type.size()); return; }
+        auto **elements = static_cast<void **>(destination);
+        for (size_t index = 0; index < type.fields.size(); ++index)
+            std::memcpy(elements[index], static_cast<const uint8_t *>(source) + type.offsets[index], type.fields[index]->size());
+    };
     for (size_t index = 0; index < interface.indirectResults.size(); ++index) {
         void *destination = nullptr;
         if (outputs) destination = outputs[index];
@@ -936,7 +986,13 @@ void packResult(const ABISwiftCallInterface &interface, CallFrame &frame, const 
             std::memcpy(&destination, source, sizeof(destination));
         }
         const auto &field = interface.indirectResults[index];
-        std::memcpy(destination, static_cast<const uint8_t *>(value) + field.offset, field.type->size());
+        copyOutput(*field.type, destination, static_cast<const uint8_t *>(value) + field.offset);
+    }
+    if (interface.directResult->swiftPack) {
+        const auto offset = interface.resultCopies.empty() ? 0 : interface.resultCopies[0].logical;
+        copyOutput(*interface.directResult, reinterpret_cast<void *>(frame.indirectResult),
+                   static_cast<const uint8_t *>(value) + offset);
+        return;
     }
     SwiftResultStorage storage(interface, const_cast<void *>(value));
     if (storage.temporary) for (const auto &copy : interface.resultCopies)
@@ -1218,7 +1274,7 @@ namespace {
 bool swiftStorageTypesEqual(const std::shared_ptr<TypeStorage> &first, const std::shared_ptr<TypeStorage> &second) {
     if (first->native()->type != second->native()->type || first->size() != second->size()
         || first->native()->alignment != second->native()->alignment || first->fields.size() != second->fields.size()
-        || first->swiftIndirect != second->swiftIndirect || first->swiftTuple != second->swiftTuple
+        || first->swiftIndirect != second->swiftIndirect || first->swiftTuple != second->swiftTuple || first->swiftPack != second->swiftPack
         || first->offsets != second->offsets) return false;
     for (size_t index = 0; index < first->fields.size(); ++index)
         if (!swiftStorageTypesEqual(first->fields[index], second->fields[index])) return false;

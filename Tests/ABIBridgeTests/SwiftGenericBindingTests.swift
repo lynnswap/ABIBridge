@@ -1,6 +1,7 @@
 #if DEBUG
 @testable import ABIBridge
 import ABIBridgeCore
+import ManagedSwiftFixtures
 import Testing
 
 struct SwiftGenericBindingTests {
@@ -9,6 +10,8 @@ struct SwiftGenericBindingTests {
         #expect(try signature.closureDiscriminator() == 3335)
         #expect(swiftClosureDiscriminator(parameters: ["-indirect", "$ss4Int8V"],
             results: ["-indirect", "$ss4Int8V", "$ss4Int8V"]) == 8528)
+        #expect(swiftClosureDiscriminator(parameters: ["-"], results: ["-indirect"]) == 47754)
+        #expect(try SwiftFunctionSignature(((LargeManagedValue) -> LargeManagedValue).self).closureDiscriminator() == 55683)
     }
 
     @Test func collectionSugarMatchesRuntimeAndToolchainDemanglers() {
