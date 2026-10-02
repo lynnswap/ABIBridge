@@ -12,6 +12,15 @@ typedef struct ABISwiftCallInterface ABISwiftCallInterface;
 /// Reads a valid compiler-emitted generic protocol-requirement reference.
 /// Authenticates indirect Swift descriptor pointers before reading their flags.
 bool ABISwiftProtocolRequirementIsClassBound(const void *reference);
+/// Runtime metadata operations over valid compiler-emitted Swift descriptors.
+/// Type construction requires an already validated metadata/witness argument list.
+const void *ABISwiftProtocolRequirementDescriptor(const void *reference);
+const void *ABISwiftConformance(const void *metadata, const void *protocol);
+const void *ABISwiftConformanceDescriptor(const void *witnessTable);
+const void *ABISwiftAssociatedType(const void *metadata, const void *protocol, const char *name);
+const void *ABISwiftGenericTypeMetadata(const void *descriptor, const void *const *arguments);
+const void *ABISwiftTypeForMangledName(const char *name, size_t length,
+                                    const void *context, const void *const *arguments);
 
 /// A concrete thick Swift closure. Its context is a Swift heap reference,
 /// including closure capture contexts that are not ordinary class instances.

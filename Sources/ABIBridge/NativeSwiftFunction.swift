@@ -9,6 +9,10 @@ func swiftFunctionTypeName(_ type: Any.Type) throws -> String {
         }
         return try swiftFunctionTypeName(closure.swiftFunctionType)
     }
+    return try swiftNativeTypeName(type)
+}
+
+func swiftNativeTypeName(_ type: Any.Type) throws -> String {
     // Objective-C metatypes can print an unqualified runtime name (NSString),
     // while Swift declarations use their imported identity (__C.NSString).
     guard let mangled = _mangledTypeName(type),
