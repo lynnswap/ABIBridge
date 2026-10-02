@@ -614,9 +614,11 @@ final class SymbolIndex {
             if swiftMembers[scope] == nil {
                 var members: [Int: [IndexedSymbol]] = [:]
                 for symbol in self.symbols(for: query, swiftBucket: bucket) {
-                    guard let name = DeclarationKey.demangle(symbol.name, language: .swift),
-                          let key = SwiftMemberLookup.key(name) else { continue }
-                    members[DeclarationKey.fingerprint(key), default: []].append(symbol)
+                    guard let name = DeclarationKey.demangle(symbol.name, language: .swift) else { continue }
+                    for name in [name, Self.operatorAlias(name)].compactMap({ $0 }) {
+                        guard let key = SwiftMemberLookup.key(name) else { continue }
+                        members[DeclarationKey.fingerprint(key), default: []].append(symbol)
+                    }
                 }
                 swiftMembers[scope] = members
             }
@@ -627,7 +629,7 @@ final class SymbolIndex {
             guard symbol.source == source,
                   let name = DeclarationKey.demangle(symbol.name, language: .swift),
                   extensionsOnly == (Self.extensionMemberName(name) != nil),
-                  SwiftMemberLookup.key(name) == key,
+                  [name, Self.operatorAlias(name)].compactMap({ $0 }).contains(where: { SwiftMemberLookup.key($0) == key }),
                   let section = sections.first(where: { $0.range.contains(symbol.address) }),
                   section.accepts(query.declaration.kind), addresses.insert(symbol.address).inserted else { return nil }
             return ResolvedSymbol(declaration: .init(name: name, language: .swift), image: image,
@@ -753,10 +755,12 @@ final class SymbolIndex {
     }
 
     static func operatorAlias(_ name: String) -> String? {
-        for token in [" infix(", " prefix(", " postfix("] {
-            guard let offset = byteOffset(of: token, in: name) else { continue }
-            return String(decoding: name.utf8.prefix(offset), as: UTF8.self) + "("
-                + String(decoding: name.utf8.dropFirst(offset + token.utf8.count), as: UTF8.self)
+        for fixity in [" infix", " prefix", " postfix"] {
+            for suffix in ["(", "<"] {
+                guard let offset = byteOffset(of: fixity + suffix, in: name) else { continue }
+                return String(decoding: name.utf8.prefix(offset), as: UTF8.self)
+                    + String(decoding: name.utf8.dropFirst(offset + fixity.utf8.count), as: UTF8.self)
+            }
         }
         return nil
     }

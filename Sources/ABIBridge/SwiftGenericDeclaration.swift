@@ -253,11 +253,17 @@ indirect enum SwiftFormalType: Sendable, Equatable {
 enum SwiftMemberLookup {
     private static func owner(of declaration: String) -> String? {
         var text = SymbolIndex.extensionMemberName(declaration) ?? declaration
+        text = SymbolIndex.operatorAlias(text) ?? text
         if text.hasPrefix("static ") { text = String(text.dropFirst(7)) }
         let accessor = [".getter : ", ".setter : "].compactMap { text.range(of: $0)?.lowerBound }.first
         let opening = accessor ?? SwiftFormalSyntax.parameterOpening(in: text) ?? text.endIndex
         var head = String(text[..<opening])
         for group in SwiftGenericSyntax.groups(in: head).reversed() { head.removeSubrange(group.range) }
+        let operation = head.reversed().prefix(while: SwiftGenericSyntax.isOperatorHead)
+        if !operation.isEmpty {
+            let owner = head.dropLast(operation.count)
+            return owner.isEmpty ? nil : String(owner)
+        }
         return head.lastIndex(of: ".").map { String(head[..<$0]) }
     }
 
@@ -337,7 +343,7 @@ enum SwiftFormalSyntax {
         var previous: Character?
         for index in text.indices {
             let character = text[index]
-            if character == "<" { generics += 1 }
+            if character == "<", SwiftGenericSyntax.opensGeneric(in: text, at: index) { generics += 1 }
             else if character == ">", previous != "-", generics > 0 { generics -= 1 }
             else if character == "(", generics == 0 {
                 if let closing = matchingClose(in: text, opening: index),
@@ -370,7 +376,7 @@ enum SwiftFormalSyntax {
             else if character == ")", generics == 0 { parentheses -= 1 }
             else if character == "[" { brackets += 1 }
             else if character == "]" { brackets -= 1 }
-            else if character == "<" { generics += 1 }
+            else if character == "<", SwiftGenericSyntax.opensGeneric(in: text, at: index) { generics += 1 }
             else if character == ">", previous == "-", parentheses == 0, generics == 0, brackets == 0 {
                 return text.index(before: index)..<text.index(after: index)
             } else if character == ">", previous != "-", generics > 0 { generics -= 1 }

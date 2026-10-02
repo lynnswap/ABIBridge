@@ -88,6 +88,20 @@ private struct BindingBoolAdapter: ABIBridgeValue {
         }
     }
     let candidates = runtime.object(BindingCandidateBox<Bool>())
+    typealias OperatorBox = BindingOperatorBox<Int64>
+    let operators = try await runtime.swiftType(named: "SwiftValueFixtures.BindingOperatorBox", genericArguments: [.type(Int64.self)])
+    let left = OperatorBox(42), right = OperatorBox(1)
+    let greater = try await operators.staticMethod(named: ">(_:_:)", as: ((OperatorBox, OperatorBox) -> Bool).self)
+    try check(unsafe greater.unsafeInvoke(left, right) == (left > right), "Generic operator lookup uses existing fixity aliases")
+    let less = try await operators.staticMethod(
+        named: "<(SwiftValueFixtures.BindingOperatorBox<A>, SwiftValueFixtures.BindingOperatorBox<A>) -> Swift.Bool",
+        as: ((OperatorBox, OperatorBox) -> BindingBoolAdapter).self)
+    try check(unsafe less.unsafeInvoke(left, right).value == (left < right), "Complete generic operator declarations preserve concrete adapters")
+    let prefix = try await operators.staticMethod(named: "^^^ prefix(_:)", as: ((OperatorBox) -> Int64).self)
+    try check(unsafe prefix.unsafeInvoke(left) == ^^^left, "Explicit generic operator fixity remains selectable")
+    let member = try await operators.staticMethod(named: "+(_:_:)", as: ((OperatorBox, String) -> String).self,
+        genericArguments: [.type(String.self)])
+    try check(unsafe member.unsafeInvoke(left, "member") == (left + "member"), "Generic operator aliases preserve independent member type arguments")
     let namedTuple = try await runtime.object(BindingCandidateBox<(first: Int64, second: String)>()).method(
         named: "tupleIdentity()", as: (() -> Int64).self)
     try check(unsafe namedTuple.unsafeInvoke() == 42, "Tuple labels remain part of same-type requirements")

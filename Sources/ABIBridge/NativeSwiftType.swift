@@ -128,7 +128,9 @@ public actor NativeSwiftType {
                             in: extensionsOnly ? nil : ownerImage, extensionsOnly: extensionsOnly)
                         let matches = candidates.filter { symbol in
                             if explicitSignature,
-                               SwiftMemberLookup.signatureKey(symbol.declaration.name) != SwiftMemberLookup.signatureKey(request.name) {
+                               ![symbol.declaration.name, SymbolIndex.operatorAlias(symbol.declaration.name)].compactMap({ $0 }).contains(where: {
+                                   SwiftMemberLookup.signatureKey($0) == SwiftMemberLookup.signatureKey(request.name)
+                               }) {
                                 return false
                             }
                             do {

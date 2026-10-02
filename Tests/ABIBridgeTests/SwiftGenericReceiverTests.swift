@@ -59,6 +59,39 @@ private final class InheritedGenericReceiver: GenericReceiver<ReceiverNumber> {}
 private enum ReceiverFailure: Error { case rejected }
 
 struct SwiftGenericReceiverTests {
+    @Test func genericOperatorsPreserveAliasesAndExplicitFixity() async throws {
+        typealias Box = GenericOperatorBox<Int64>
+        let type = try await ABIRuntime().swiftType(named: "ManagedSwiftFixtures.GenericOperatorBox",
+            genericArguments: [.type(Int64.self)])
+        let lhs = Box(42), rhs = Box(1)
+        for (name, expected) in [(">", lhs > rhs), ("<", lhs < rhs), ("<<", lhs << rhs), ("<>", lhs <> rhs),
+                                 ("<≪", lhs <≪ rhs), ("≪<", lhs ≪< rhs), (".<>", lhs .<> rhs)] {
+            let method = try await type.staticMethod(named: name + "(_:_:)", as: ((Box, Box) -> Bool).self)
+            #expect(try unsafe method.unsafeInvoke(lhs, rhs) == expected)
+            let complete = try await type.staticMethod(
+                named: name + "(ManagedSwiftFixtures.GenericOperatorBox<A>, ManagedSwiftFixtures.GenericOperatorBox<A>) -> Swift.Bool",
+                as: ((Box, Box) -> ReceiverBoolAdapter).self)
+            #expect(try unsafe complete.unsafeInvoke(lhs, rhs).value == expected)
+        }
+        do {
+            _ = try await type.staticMethod(named: "^^^(_:)", as: ((Box) -> Int64).self)
+            Issue.record("Prefix and postfix implementations must remain ambiguous without fixity")
+        } catch ABIResolutionError.ambiguousDeclaration(_, let candidates) {
+            #expect(candidates.count == 2)
+        }
+        let prefix = try await type.staticMethod(named: "^^^ prefix(_:)", as: ((Box) -> Int64).self)
+        let postfix = try await type.staticMethod(named: "^^^ postfix(_:)", as: ((Box) -> Int64).self)
+        #expect(try unsafe prefix.unsafeInvoke(lhs) == ^^^lhs)
+        #expect(try unsafe postfix.unsafeInvoke(lhs) == lhs^^^)
+        let generic = try await type.staticMethod(named: "+(_:_:)", as: ((Box, String) -> String).self,
+            genericArguments: [.type(String.self)])
+        #expect(try unsafe generic.unsafeInvoke(lhs, "member") == lhs + "member")
+        let qualifiedAlias = generic.symbol.declaration.name.replacingOccurrences(of: " infix", with: "")
+        let qualified = try await type.staticMethod(named: qualifiedAlias, as: ((Box, String) -> String).self,
+            genericArguments: [.type(String.self)])
+        #expect(try unsafe qualified.unsafeInvoke(lhs, "qualified") == "qualified")
+    }
+
     @Test func callbackConventionsStayDistinctDuringMemberLookup() async throws {
         let object = ABIRuntime().object(GenericCallbackConventions<Int64>())
         let call = try await object.method(named: "callback(_:)", as: ((NativeSwiftClosure<(Int64) -> Int64>) -> Int64).self)

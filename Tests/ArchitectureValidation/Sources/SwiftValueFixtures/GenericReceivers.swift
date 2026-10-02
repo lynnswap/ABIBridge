@@ -1,5 +1,17 @@
 import Foundation
 
+prefix operator ^^^
+postfix operator ^^^
+public final class BindingOperatorBox<Value> {
+    public let value: Int64
+    public init(_ value: Int64) { self.value = value }
+    @inline(never) public static func >(lhs: BindingOperatorBox, rhs: BindingOperatorBox) -> Bool { lhs.value > rhs.value }
+    @inline(never) public static func <(lhs: BindingOperatorBox, rhs: BindingOperatorBox) -> Bool { lhs.value < rhs.value }
+    @inline(never) public static prefix func ^^^(value: BindingOperatorBox) -> Int64 { value.value + 1 }
+    @inline(never) public static postfix func ^^^(value: BindingOperatorBox) -> Int64 { value.value - 1 }
+    @inline(never) public static func +<Other>(lhs: BindingOperatorBox, rhs: Other) -> Other { rhs }
+}
+
 public class BindingCandidateBase {
     public init() {}
     @inline(never) public func inheritedChoice() -> Int64 { 42 }
