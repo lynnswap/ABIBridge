@@ -30,7 +30,7 @@ let make = try await runtime.swiftFunction(
 let result = try unsafe make.unsafeInvoke("Title")
 ```
 
-Opaque descriptors receive the enclosing type and function bindings, including existing protocol witnesses. Generic instance members combine their owner's arguments with method arguments. Tuples can contain multiple independent opaque results, and returned NativeSwiftClosure values can return an opaque value through the same declaration plan.
+Opaque descriptors receive the enclosing type and function bindings, including existing protocol witnesses. Generic instance members combine their owner's arguments with method arguments. Tuples and Optional containers preserve the opaque declaration's storage convention. A tuple can contain multiple independent opaque results, and returned NativeSwiftClosure values use the same declaration plan, including throwing and async signatures.
 
 ## Values and lifetime
 
