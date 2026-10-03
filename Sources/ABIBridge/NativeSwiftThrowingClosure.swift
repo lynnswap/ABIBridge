@@ -5,8 +5,10 @@ final class SwiftThrowingClosureBody {
     let invoke: (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer, UnsafeMutableRawPointer?) -> Bool
     init(retainingCode codeOwner: Any? = nil, codeLifetime: SwiftValueCodeLifetime? = nil,
          _ invoke: @escaping (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer, UnsafeMutableRawPointer?) -> Bool) {
-        self.codeOwner = codeOwner.map { SwiftClosureCodeOwner($0, codeLifetime: codeLifetime) }
-        self.invoke = invoke
+        self.codeOwner = SwiftClosureCodeOwner(codeOwner, codeLifetime: codeLifetime)
+        self.invoke = { arguments, result, error in
+            SwiftValueCodeLifetime.withCurrent(codeLifetime) { invoke(arguments, result, error) }
+        }
     }
 }
 func throwingClosureOwner(_ interface: SwiftCallInterface, body: SwiftThrowingClosureBody) throws -> SwiftClosureCallbackOwner {

@@ -42,9 +42,11 @@ private final class SwiftAsyncClosureBody: @unchecked Sendable {
     let invoke: (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer, UnsafeMutableRawPointer?) async -> Bool
     init(inheritsCallerIsolation: Bool, retainingCode codeOwner: Any? = nil, codeLifetime: SwiftValueCodeLifetime? = nil,
          _ invoke: @escaping (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer, UnsafeMutableRawPointer?) async -> Bool) {
-        self.codeOwner = codeOwner.map { SwiftClosureCodeOwner($0, codeLifetime: codeLifetime) }
+        self.codeOwner = SwiftClosureCodeOwner(codeOwner, codeLifetime: codeLifetime)
         self.inheritsCallerIsolation = inheritsCallerIsolation
-        self.invoke = invoke
+        self.invoke = { arguments, result, error in
+            await SwiftValueCodeLifetime.withCurrent(codeLifetime) { await invoke(arguments, result, error) }
+        }
     }
 }
 
@@ -165,8 +167,10 @@ extension NativeSwiftClosure {
         let prepared = try SwiftAsyncCall(signature: Signature.self, errorPlan: signature.makeErrorPlan(),
             inheritsCallerIsolation: signature.inheritsCallerIsolation)
         let constants = signature.parameters.map(SwiftValueConstants.init)
+        let codeLifetime = SwiftValueCodeLifetime([])
         let callback = try SwiftAsyncClosureCallbackOwner(interface: prepared.interface,
-            body: SwiftAsyncClosureBody(inheritsCallerIsolation: signature.inheritsCallerIsolation) { arguments, result, errorOutput in
+            body: SwiftAsyncClosureBody(inheritsCallerIsolation: signature.inheritsCallerIsolation,
+                codeLifetime: codeLifetime) { arguments, result, errorOutput in
                 var index = 0
                 func decode<Value>(_ type: Value.Type) -> Value {
                     defer { index += 1 }

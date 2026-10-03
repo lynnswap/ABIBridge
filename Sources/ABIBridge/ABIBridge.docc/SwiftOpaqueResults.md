@@ -27,6 +27,8 @@ The type property exposes a retained NativeSwiftType, including the underlying t
 
 Native copies follow Swift's normal copy semantics, including shared references inside a value. Runtime values that interact in a call share their retained code dependencies so later reference or inout updates remain usable, even when the native operation throws. Those images can remain loaded until all related value and type handles are released; this retention does not extend a borrowed view's scope or keep a consumed payload alive.
 
+Callbacks passed alongside runtime values share those code dependencies. A callback restores that relationship when native code invokes it later, including across async suspension. Native calls made from its body contribute their implementation images even when their arguments use ordinary Swift types.
+
 The withCopy body receives an ordinary Any copy and retains its implementation images throughout the body. Copying a noncopyable value throws NativeSwiftValueError.noncopyableType. Standard casts can open existing protocol conformances or recognize a known underlying type. The hidden payload needs no ABIBridgeSwiftValue conformance or caller-invented fixed layout. The handle is deliberately not Sendable because its hidden value may carry actor or thread requirements.
 
 Keep the handle alive if a value or metatype escapes withCopy and will later execute native code, including during destruction. Indirect native resources and code dependencies retain their original lifetime requirements. A scoped body that extracts an independent String or number is a convenient consumption path.

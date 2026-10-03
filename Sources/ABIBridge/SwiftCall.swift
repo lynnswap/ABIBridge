@@ -56,6 +56,7 @@ struct SwiftCall: Sendable {
         if let generic { addresses.append(contentsOf: generic.metadata.addresses) }
         let output = self.values.result.makeStorage()
         let lifetimes = (logicalStorage + [trailingValue, receiverStorage, output].compactMap { $0 }).compactMap(\.codeLifetime)
+            + [SwiftValueCodeLifetime.current].compactMap { $0 }
         let lifetime = SwiftValueCodeLifetime.connect(lifetimes,
             retaining: images + (generic?.binding.images ?? []) + (generic?.binding.typeOwners.flatMap(\.codeImages) ?? []))
         let codeOwners: Any = (codeOwner, generic, lifetime)
@@ -63,16 +64,18 @@ struct SwiftCall: Sendable {
         var didThrow = false
         return try withExtendedLifetime((logicalStorage, encoded, trailingValue, receiverStorage, owner, generic)) {
             var failure: OpaquePointer?
-            let success = addresses.withUnsafeBufferPointer { addresses in
-                if let nativeError {
-                    return ABIUnsafeInvokeSwiftThrowingCallInterface(
-                        interface.handle, function, output.address, addresses.baseAddress, context,
-                        nativeError.address, &didThrow, &failure
+            let success = SwiftValueCodeLifetime.withCurrent(lifetime) {
+                addresses.withUnsafeBufferPointer { addresses in
+                    if let nativeError {
+                        return ABIUnsafeInvokeSwiftThrowingCallInterface(
+                            interface.handle, function, output.address, addresses.baseAddress, context,
+                            nativeError.address, &didThrow, &failure
+                        )
+                    }
+                    return ABIUnsafeInvokeSwiftCallInterface(
+                        interface.handle, function, output.address, addresses.baseAddress, context, &failure
                     )
                 }
-                return ABIUnsafeInvokeSwiftCallInterface(
-                    interface.handle, function, output.address, addresses.baseAddress, context, &failure
-                )
             }
             guard success else {
                 throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftInvocation")

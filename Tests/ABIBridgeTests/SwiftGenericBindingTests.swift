@@ -62,6 +62,7 @@ struct SwiftGenericBindingTests {
         case addressReceiverResult, asyncAddressReceiverResult
         case replacedInout, throwingInout, copiedAlias, nativeCopiedAlias
         case calleeMutation, throwingCalleeMutation, borrowedCallback, callbackMutation, asyncCallbackMutation
+        case hostCallbackMutation, hostAsyncCallbackMutation, storedHostCallbackMutation, scopedCopyMutation
     }
 
     @Test(.serialized, arguments: RuntimeDependencyOperation.allCases)
@@ -70,6 +71,7 @@ struct SwiftGenericBindingTests {
         let provider = try FixtureLibrary(load: false, swiftModule: module, swiftSource: """
             public final class Box {
                 private var body: () -> Int64
+                private var saved: ((AnyObject) throws -> Void)?
                 public init(_ body: @escaping () -> Int64) { self.body = body }
                 public func read() -> Int64 { body() }
                 public consuming func opaqueSelf() -> some AnyObject { self }
@@ -77,7 +79,13 @@ struct SwiftGenericBindingTests {
                 public func update(from other: Box) { body = other.body }
                 public func apply(_ callback: (AnyObject) -> Void) { callback(self) }
                 public nonisolated(nonsending) func applyAsync(_ callback: nonisolated(nonsending) (AnyObject) async -> Void) async { await callback(self) }
+                public func applyThrowing(_ callback: (AnyObject) throws -> Void) rethrows { try callback(self) }
+                public nonisolated(nonsending) func applyAsyncThrowing(_ callback: nonisolated(nonsending) (AnyObject) async throws -> Void) async rethrows { try await callback(self) }
+                public func store(_ callback: @escaping (AnyObject) throws -> Void) { saved = callback }
+                public func clear() { saved = nil }
+                public func fire() throws { try saved?(self) }
             }
+            public func fire(_ object: AnyObject) throws { try (object as! Box).fire() }
             public protocol Reader { func read() -> Int64 }
             public struct Record: Reader {
                 private let body: () -> Int64
@@ -139,6 +147,43 @@ struct SwiftGenericBindingTests {
             }
             let receiverABI: NativeType? = factoryName == "makeRecord()" ? try .opaque(named: argument.type.name) : nil
             switch operation {
+            case .hostCallbackMutation, .hostAsyncCallbackMutation, .storedHostCallbackMutation, .scopedCopyMutation:
+                let update = try await runtime.swiftFunction(named: module + "Second.update<A>(A) -> ()",
+                    as: ((AnyObject) -> Void).self, genericArguments: [.type(AnyObject.self)], in: .path(second.libraryURL))
+                argumentLease = update.symbol.image.lease
+                if operation == .scopedCopyMutation {
+                    try binding.withCopy { try unsafe update.unsafeInvoke($0 as AnyObject) }
+                } else if operation == .hostAsyncCallbackMutation {
+                    let body: nonisolated(nonsending) @Sendable (AnyObject) async throws -> Void = { object in
+                        await Task.yield()
+                        try unsafe update.unsafeInvoke(object)
+                    }
+                    let callback = try NativeSwiftClosure<nonisolated(nonsending) (AnyObject) async throws -> Void>(body)
+                    let apply = try await binding.type.method(named: "applyAsyncThrowing(_:)",
+                        as: (nonisolated(nonsending) (NativeSwiftClosure<nonisolated(nonsending) (AnyObject) async throws -> Void>) async throws -> Void).self)
+                    try unsafe await apply.unsafeInvoke(on: binding, callback)
+                } else {
+                    let body: @Sendable (AnyObject) throws -> Void = { object in
+                        try unsafe update.unsafeInvoke(object)
+                    }
+                    let callback = try NativeSwiftClosure<(AnyObject) throws -> Void>(body)
+                    if operation == .storedHostCallbackMutation {
+                        let store = try await binding.type.method(named: "store(_:)",
+                            as: ((NativeSwiftClosure<(AnyObject) throws -> Void>) -> Void).self)
+                        try unsafe store.unsafeInvoke(on: binding, callback)
+                        let fire = try await runtime.swiftFunction(named: module + ".fire(_:)",
+                            as: ((AnyObject) throws -> Void).self, in: .path(provider.libraryURL))
+                        let object = try binding.withCopy { $0 as AnyObject }
+                        try unsafe fire.unsafeInvoke(object)
+                        let clear = try await binding.type.method(named: "clear()", as: (() -> Void).self)
+                        try unsafe clear.unsafeInvoke(on: binding)
+                    } else {
+                        let apply = try await binding.type.method(named: "applyThrowing(_:)",
+                            as: ((NativeSwiftClosure<(AnyObject) throws -> Void>) throws -> Void).self)
+                        try unsafe apply.unsafeInvoke(on: binding, callback)
+                    }
+                }
+                return binding
             case .callbackMutation:
                 let make = try await runtime.swiftFunction(named: module + "Second.callback()",
                     as: (() -> NativeSwiftClosure<(AnyObject) -> Void>).self, in: .path(second.libraryURL))

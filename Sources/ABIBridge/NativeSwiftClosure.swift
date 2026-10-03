@@ -1,9 +1,10 @@
 import ABIBridgeCore
 
 final class SwiftClosureCodeOwner {
-    let value: Any
+    let value: Any?
     let codeLifetime: SwiftValueCodeLifetime?
-    init(_ value: Any, codeLifetime: SwiftValueCodeLifetime? = nil) {
+    init?(_ value: Any?, codeLifetime: SwiftValueCodeLifetime? = nil) {
+        guard value != nil || codeLifetime != nil else { return nil }
         self.value = value
         self.codeLifetime = codeLifetime
     }
@@ -14,8 +15,10 @@ final class SwiftClosureBody {
     let invoke: (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer) -> Void
     init(retainingCode codeOwner: Any? = nil, codeLifetime: SwiftValueCodeLifetime? = nil,
          _ invoke: @escaping (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer) -> Void) {
-        self.codeOwner = codeOwner.map { SwiftClosureCodeOwner($0, codeLifetime: codeLifetime) }
-        self.invoke = invoke
+        self.codeOwner = SwiftClosureCodeOwner(codeOwner, codeLifetime: codeLifetime)
+        self.invoke = { arguments, result in
+            SwiftValueCodeLifetime.withCurrent(codeLifetime) { invoke(arguments, result) }
+        }
     }
 }
 
@@ -110,7 +113,8 @@ public struct NativeSwiftClosure<Signature> {
         let discriminator = try signature.closureDiscriminator()
         let prepared = try SwiftCall(signature: Signature.self, errorPlan: signature.makeErrorPlan())
         let constants = signature.parameters.map(SwiftValueConstants.init)
-        let callback = try throwingClosureOwner(prepared.interface, body: SwiftThrowingClosureBody { arguments, output, errorOutput in
+        let codeLifetime = SwiftValueCodeLifetime([])
+        let callback = try throwingClosureOwner(prepared.interface, body: SwiftThrowingClosureBody(codeLifetime: codeLifetime) { arguments, output, errorOutput in
             var index = 0
             func decode<Value>(_ type: Value.Type) -> Value {
                 defer { index += 1 }

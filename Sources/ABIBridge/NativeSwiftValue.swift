@@ -59,7 +59,9 @@ public final class NativeSwiftValue {
             source.address.load(as: Concrete.self)
         }
         return try withExtendedLifetime(source) {
-            try body(_openExistential(type.metadata, do: read))
+            try SwiftValueCodeLifetime.withCurrent(type.codeLifetime) {
+                try body(_openExistential(type.metadata, do: read))
+            }
         }
     }
 

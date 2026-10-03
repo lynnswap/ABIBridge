@@ -105,6 +105,7 @@ struct SwiftAsyncCall: Sendable {
         if let generic { addresses.append(contentsOf: generic.metadata.addresses) }
         let output = self.values.result.makeStorage()
         let lifetimes = (logicalStorage + [trailingValue, receiverStorage, output].compactMap { $0 }).compactMap(\.codeLifetime)
+            + [SwiftValueCodeLifetime.current].compactMap { $0 }
         let lifetime = SwiftValueCodeLifetime.connect(lifetimes,
             retaining: images + (generic?.binding.images ?? []) + (generic?.binding.typeOwners.flatMap(\.codeImages) ?? []))
         let codeOwners: Any = (codeOwner, generic, lifetime)
@@ -122,7 +123,7 @@ struct SwiftAsyncCall: Sendable {
                 ABIReleaseSwiftAsyncInvocation(invocation)
             }
         }
-        await invokeSwiftAsync(invocation)
+        await SwiftValueCodeLifetime.withCurrent(lifetime) { await invokeSwiftAsync(invocation) }
         self.values.relinquishConsumed(logicalStorage)
         didInvoke?()
         if ABISwiftAsyncInvocationDidThrow(invocation), let errorPlan, let nativeError {

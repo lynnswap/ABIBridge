@@ -4,6 +4,7 @@ import Foundation
 // values through any alias. Their code dependencies must therefore grow together.
 // Only image leases live here: payloads and access leases keep their own lifetimes.
 final class SwiftValueCodeLifetime: @unchecked Sendable {
+    @TaskLocal static var current: SwiftValueCodeLifetime?
     private static let lock = NSLock()
     private var parent: SwiftValueCodeLifetime?
     private var rank = 0
@@ -17,6 +18,30 @@ final class SwiftValueCodeLifetime: @unchecked Sendable {
         Self.lock.lock()
         defer { Self.lock.unlock() }
         return Array(root.retainedImages.values)
+    }
+
+    // A host callback can pass an ordinary Swift reference into another native
+    // call. Carry its code dependencies across that call and async suspension.
+    static func withCurrent<Result>(_ lifetime: SwiftValueCodeLifetime?,
+                                    _ operation: () throws -> Result) rethrows -> Result {
+        let previous = current
+        guard let lifetime, lifetime !== previous else { return try operation() }
+        let connected = previous.map { connect([lifetime, $0], retaining: [])! } ?? lifetime
+        return try $current.withValue(connected, operation: operation)
+    }
+
+    static func withCurrent<Result>(_ lifetime: SwiftValueCodeLifetime?,
+                                    isolation: isolated (any Actor)? = #isolation,
+                                    _ operation: nonisolated(nonsending) () async throws -> Result) async rethrows -> Result {
+        let previous = current
+        guard let lifetime, lifetime !== previous else { return try await operation() }
+        let connected = previous.map { connect([lifetime, $0], retaining: [])! } ?? lifetime
+        return try await $current.withValue(connected) {
+            // Explicitly capture the isolated parameter so the closure keeps
+            // the native caller's actor when converted to TaskLocal's body type.
+            _ = isolation
+            return try await operation()
+        }
     }
 
     // Called only with the shared lock held. Union by rank bounds both lookup
