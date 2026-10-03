@@ -13,7 +13,34 @@ private struct BadArgumentEncoding: ABIBridgeValue {
     init() {}
 }
 
+private final class ForeignTupleWord: ABIBridgeValue {
+    static let abiType = NativeType.int64
+    let value: Int64
+    init(_ value: Int64) { self.value = value }
+    init(nativeValue: NativeValue) throws { value = try unsafe nativeValue.read(as: Int64.self) }
+    static func nativeValue(from value: ForeignTupleWord) throws -> NativeValue {
+        try NativeValue(copying: value.value, as: abiType)
+    }
+}
+
 struct SwiftArgumentConventionTests {
+    @Test func tupleInoutRequiresNativeStorageButGenericTupleDataKeepsItsObjects() async throws {
+        typealias Value = (ForeignTupleWord, Int64)
+        let runtime = ABIRuntime.shared
+        await #expect(throws: ABIResolutionError.self) {
+            _ = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.replaceArgumentTuple(inout (Swift.Int64, Swift.Int64)) -> ()",
+                as: ((NativeSwiftInout<Value>) -> Void).self)
+        }
+        let replace = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.replaceRuntimeValue<A where A: ~Swift.Copyable>(inout A, __owned A) -> ()",
+            as: ((NativeSwiftInout<Value>, NativeSwiftConsuming<Value>) -> Void).self,
+            genericArguments: [.type(Value.self)])
+        let original = ForeignTupleWord(41), replacement = ForeignTupleWord(42)
+        let slot = NativeSwiftInout((original, Int64(1)))
+        try unsafe replace.unsafeInvoke(slot, NativeSwiftConsuming((replacement, Int64(2))))
+        #expect(slot.value.0 === replacement && slot.value.1 == 2 && original.value == 41)
+    }
+
     @Test func asyncEntriesAndCallbacksHandleOddStackSlotCounts() async throws {
         let runtime = ABIRuntime.shared
         let seven = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.asyncSeven(_:_:_:_:_:_:_:)",

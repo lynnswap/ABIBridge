@@ -1,5 +1,7 @@
 import Synchronization
 
+@inline(never) public func replaceArgumentTuple(_ value: inout (Int64, Int64)) { value = (1, 2) }
+
 @inline(never) @concurrent public func asyncSeven(_ a: Int64, _ b: Int64, _ c: Int64, _ d: Int64, _ e: Int64, _ f: Int64, _ g: Int64) async -> Int64 {
     await Task.yield()
     return a + b + c + d + e + f + g

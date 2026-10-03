@@ -437,7 +437,10 @@ struct SwiftCallbackResult<Value>: Sendable {
         else { tuple = nil }
         try tuple?.validateOwnedResult()
         initializeNativeResult = swiftResultInitializer(nativeMetadata: Value.self, generic: generic, tuple: tuple)
-        if case .runtimeValue(let plan) = generic { runtimeValue = plan } else { runtimeValue = nil }
+        if case .runtimeValue(let plan) = generic {
+            try plan.requireOwnedValue(as: Value.self)
+            runtimeValue = plan
+        } else { runtimeValue = nil }
         if case .closure(let codec) = generic { encode = codec.encodeValue } else { encode = nil }
         if case .value = generic { closure = false }
         else { closure = Value.self is any SwiftClosureValue.Type }
