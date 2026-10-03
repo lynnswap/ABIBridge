@@ -9,6 +9,59 @@ import Testing
 @Suite(.serialized)
 struct SwiftImportedFunctionHookTests {
 
+    @Test func tuplePackClassArgumentsUseTheirPhysicalNativePositions() async throws {
+        let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
+        @inline(never) public func hookPlainTuplePack<each Value>(_ values: (repeat each Value, object: NSObject)) -> NSObject {
+            values.object
+        }
+        @inline(never) public func hookTuplePack<each Value, Object: AnyObject>(_ values: (repeat each Value, object: Object)) -> Object {
+            values.object
+        }
+        """, callerExtra: """
+        @inline(never) public func plainTuplePackObject(_ object: NSObject) -> NSObject {
+            hookPlainTuplePack((Int64(4), "plain", object: object))
+        }
+        @inline(never) public func tuplePackObject(_ object: NSObject) -> NSObject {
+            hookTuplePack((Int64(4), "bound", object: object))
+        }
+        @inline(never) public func tuplePackOther(_ object: NSObject) -> NSObject {
+            hookTuplePack((true, object: object))
+        }
+        """)
+        defer { fixture.cleanup() }
+        typealias Values = (Int64, String, object: NSObject)
+        let plain = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookPlainTuplePack(_:)",
+            as: ((Values) -> NSObject).self,
+            genericArguments: [.pack([.type(Int64.self), .type(String.self)])], in: fixture.providerScope)
+        let bound = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookTuplePack(_:)",
+            as: ((Values) -> NSObject).self,
+            genericArguments: [.pack([.type(Int64.self), .type(String.self)]), .type(NSObject.self)], in: fixture.providerScope)
+        let plainCaller = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".plainTuplePackObject(_:)",
+            as: ((NSObject) -> NSObject).self, in: fixture.callerScope)
+        let boundCaller = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".tuplePackObject(_:)",
+            as: ((NSObject) -> NSObject).self, in: fixture.callerScope)
+        let otherCaller = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".tuplePackOther(_:)",
+            as: ((NSObject) -> NSObject).self, in: fixture.callerScope)
+        let calls = Mutex(0)
+        let first = try unsafe await plain.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { Issue.record($0) }) { call, value in
+                calls.withLock { $0 += 1 }
+                return try call.proceed(value)
+            }
+        defer { first.invalidate() }
+        let second = try unsafe await bound.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { Issue.record($0) }) { call, value in
+                calls.withLock { $0 += 1 }
+                return try call.proceed((value.0 + 1, value.1, object: value.object))
+            }
+        defer { second.invalidate() }
+        let object = NSObject()
+        #expect(try unsafe plainCaller.unsafeInvoke(object) === object)
+        #expect(try unsafe boundCaller.unsafeInvoke(object) === object)
+        #expect(try unsafe otherCaller.unsafeInvoke(object) === object)
+        #expect(calls.withLock { $0 } == 2)
+    }
+
     @Test func returnedClosuresTransferOneOwnedContextThroughProceed() async throws {
         let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
         @inline(never) public func hookFactory(_ value: AnyObject) -> () -> AnyObject { { value } }
