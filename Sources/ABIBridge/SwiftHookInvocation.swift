@@ -1,6 +1,7 @@
 import ABIBridgeCore
 import Foundation
 import Darwin
+import ObjectiveC
 
 /// A Swift hook continuation was used outside its synchronous invocation.
 public enum NativeSwiftHookInvocationError: Error, Sendable {
@@ -52,13 +53,13 @@ final class SwiftHookFrame {
 /// calls the captured predecessor with the incoming Swift context. It does not
 /// resolve the source declaration again. Saving this value preserves diagnostics,
 /// but does not extend its call frame or retain callback captures after return.
-public struct NativeSwiftFunctionInvocation<Result, each Argument>: CustomStringConvertible {
+public struct NativeSwiftFunctionInvocation<Signature>: CustomStringConvertible {
     let frame: SwiftHookFrame
-    let prepared: SwiftHookCallbackSignature<Result, repeat each Argument>
+    let prepared: SwiftCallValues
     /// The declaration used for registration, not an inferred predecessor name.
     public let declaration: NativeDeclaration
-    /// The caller-supplied explicit argument and result types.
-    public var signature: ((repeat each Argument) -> Result).Type { ((repeat each Argument) -> Result).self }
+    /// The caller-supplied argument, result, and effect signature.
+    public var signature: Signature.Type { Signature.self }
     /// A cached description that does not read native state or format argument objects.
     public let description: String
 
@@ -66,31 +67,46 @@ public struct NativeSwiftFunctionInvocation<Result, each Argument>: CustomString
     /// Reference arguments retain their ordinary identity, so edits to their
     /// properties are visible to subsequent callbacks and native code.
     /// - Throws: Scope, argument/result conversion, or continuation errors.
-    public func proceed(_ values: repeat each Argument) throws -> Result {
-        try frame.use { operation in
-            let storage = try prepared.encodeArguments(repeat each values)
-            let result = try operation(storage)
-            return try prepared.result.copy(from: result, retaining: result)
-        }
+    public func proceed<Result, Failure: Error, each Argument>(_ values: repeat each Argument) throws -> Result
+    where Signature == (repeat each Argument) throws(Failure) -> Result {
+        try invoke(repeat each values)
+    }
+
+    public func proceed<Result, Failure: Error, each Argument>(_ values: repeat each Argument) throws -> Result
+    where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
+        try invoke(repeat each values)
+    }
+
+    private func invoke<Result, each Argument>(_ values: repeat each Argument) throws -> Result {
+        do {
+            return try frame.use { operation in
+                let storage = try prepared.encode(repeat each values, retainingCode: nil)
+                let result = try operation(storage)
+                return try prepared.decode(result, retaining: result, retainingCode: nil)
+            }
+        } catch let error as SwiftHookCompletedResultError { throw error.underlying }
     }
 }
 
 struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
     let result: SwiftValueCodec<Result>
     private let resultType: CValueType
+    private let initializeResult: SwiftResultInitializer
     let arguments: (repeat SwiftValueCodec<each Argument>)
-    init(declaration: SwiftGenericCallPlan? = nil) throws {
+    let call: SwiftCall
+    init(call: SwiftCall? = nil) throws {
+        let call = try call ?? SwiftCall(signature: ((repeat each Argument) -> Result).self)
+        self.call = call
+        let declaration = call.generic
         if let declaration {
-            guard declaration.binding.declaration.parameters.isEmpty else {
-                throw ABIResolutionError.unsupportedDeclaration("Generic hooks require polymorphic incoming arguments and metadata; use direct invocation.")
-            }
             let convertsResult: Bool
             switch declaration.result {
             case .runtimeValue: convertsResult = true
             case .closure(let codec): convertsResult = codec.nativePlan?.convertsValues == true
+            case .tuple(let tuple): convertsResult = tuple.needsConversion
             default: convertsResult = false
             }
-            guard !convertsResult, !declaration.arguments.contains(where: { $0.runtimeValue != nil }) else {
+            guard !convertsResult, !declaration.arguments.contains(where: { $0.runtimeValue != nil || $0.tuple?.needsConversion == true }) else {
                 throw ABIResolutionError.unsupportedDeclaration("Managed hooks require declaration-based runtime value conversion; use direct invocation.")
             }
         }
@@ -103,40 +119,60 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
                 )
             }
         }
-        result = try SwiftValueCodec()
+        switch declaration?.result {
+        case .value, .tuple: result = SwiftValueCodec(nativeStorage: call.values.result.type)
+        default: result = try SwiftValueCodec()
+        }
+        initializeResult = result.initializeNativeResult
         // An opaque result can use indirect native return storage even when its
         // known payload has an ordinary scalar or reference representation.
-        resultType = declaration?.result.type ?? result.type
-        arguments = (repeat try SwiftValueCodec<each Argument>())
-    }
-    func encodeArguments(_ values: repeat each Argument) throws -> [NativeValueStorage] {
-        var storage: [NativeValueStorage] = []
-        for (codec, value) in repeat (each arguments, each values) { storage.append(try codec.encode(value)) }
-        return storage
+        resultType = call.values.result.type
+        var index = 0
+        func codec<Value>(_ type: Value.Type) throws -> SwiftValueCodec<Value> {
+            defer { index += 1 }
+            switch call.parameters.arguments[index] {
+            case .value, .tuple: return SwiftValueCodec(nativeStorage: call.values.arguments[index].type)
+            default: return try SwiftValueCodec()
+            }
+        }
+        arguments = (repeat try codec((each Argument).self))
     }
     func decodeArguments(_ storage: [NativeValueStorage]) throws -> (repeat each Argument) {
         var index = 0
         func decode<T>(_ codec: SwiftValueCodec<T>) throws -> T {
             defer { index += 1 }
+            if let tuple = SwiftGenericParameters.expandedTuple(call.parameters.arguments[index]) {
+                let materialized = tuple.materializeArgument(from: storage[index].address, consuming: false)
+                return try codec.copy(from: materialized, retaining: materialized)
+            }
             return try codec.copy(from: storage[index], retaining: storage[index])
         }
         return (repeat try decode(each arguments))
     }
-    func erased(consumingArguments: Bool, receiver: SwiftReceiverPlan? = nil, retaining owner: any Sendable) throws -> SwiftHookSignature {
+    func erased(consumingArguments: Bool, receiver: SwiftReceiverPlan? = nil, errorPlan: SwiftErrorPlan? = nil,
+                retaining owner: any Sendable) throws -> SwiftHookSignature {
         var types: [CValueType] = [], identities: [ObjectIdentifier] = [ObjectIdentifier(Result.self)]
-        for codec in repeat each arguments { types.append(codec.type) }
+        types = call.values.arguments.map(\.type)
         for type in repeat (each Argument).self { identities.append(ObjectIdentifier(type)) }
         return try SwiftHookSignature(result: resultType, arguments: types, identities: identities,
-            consumesArguments: consumingArguments, receiver: receiver, owner: owner, cloneArguments: { storage in
-                var index = 0, result: [NativeValueStorage] = []
-                for codec in repeat each arguments {
-                    result.append(try codec.copyNativeStorage(storage[index])); index += 1
-                }
-                return result
+            consumesArguments: consumingArguments, receiver: receiver, errorPlan: errorPlan,
+            parameters: call.parameters, generic: call.generic, interface: call.interface,
+            owner: owner, cloneArguments: { storage in
+                let values = try decodeArguments(storage)
+                return try call.values.encode(repeat each values, retainingCode: call.generic)
             }, cloneResult: { try result.copyNativeStorage($0) }, destroyResult: { result.destroyNativeValue(at: $0) },
+            initializeResult: initializeResult,
             destroyArguments: { addresses in
                 var index = 0
-                for codec in repeat each arguments { codec.destroyNativeValue(at: addresses[index]!); index += 1 }
+                for codec in repeat each arguments {
+                    if let tuple = SwiftGenericParameters.expandedTuple(call.parameters.arguments[index]) {
+                        let vector = addresses[index]!.assumingMemoryBound(to: UnsafeMutableRawPointer?.self)
+                        for (leaf, address) in zip(tuple.leaves, UnsafeBufferPointer(start: vector, count: tuple.leaves.count)) {
+                            ABISwiftDestroyValue(unsafeBitCast(leaf.nativeType, to: UnsafeRawPointer.self), address!)
+                        }
+                    } else { codec.destroyNativeValue(at: addresses[index]!) }
+                    index += 1
+                }
             })
     }
 }
@@ -148,29 +184,51 @@ final class SwiftHookSignature: @unchecked Sendable {
     let consumesArguments: Bool
     let explicitArgumentCount: Int
     let receiver: SwiftReceiverPlan?
+    let errorPlan: SwiftErrorPlan?
     let owner: any Sendable
     let interface: SwiftCallInterface
+    let parameters: SwiftGenericParameters?
+    let generic: SwiftGenericCallPlan?
+    let nativeExplicitCount: Int
+    private let metadataMatches: [SwiftGenericBinding.HookMetadataArgument]
+    private let classMatches: [SwiftGenericCallPlan.HookClassArgument]
     let cloneArguments: ([NativeValueStorage]) throws -> [NativeValueStorage]
     let cloneResult: (NativeValueStorage) throws -> NativeValueStorage
     let destroyResult: (UnsafeMutableRawPointer) -> Void
+    let initializeResult: SwiftResultInitializer?
     let destroyArguments: (UnsafeBufferPointer<UnsafeMutableRawPointer?>) -> Void
     init(result: CValueType, arguments: [CValueType], identities: [ObjectIdentifier], consumesArguments: Bool,
-         receiver: SwiftReceiverPlan?,
+         receiver: SwiftReceiverPlan?, errorPlan: SwiftErrorPlan? = nil,
+         parameters: SwiftGenericParameters? = nil, generic: SwiftGenericCallPlan? = nil, interface: SwiftCallInterface? = nil,
          owner: any Sendable, cloneArguments: @escaping ([NativeValueStorage]) throws -> [NativeValueStorage],
          cloneResult: @escaping (NativeValueStorage) throws -> NativeValueStorage,
          destroyResult: @escaping (UnsafeMutableRawPointer) -> Void,
+         initializeResult: SwiftResultInitializer? = nil,
          destroyArguments: @escaping (UnsafeBufferPointer<UnsafeMutableRawPointer?>) -> Void) throws {
         self.result = result; self.identities = identities
         explicitArgumentCount = arguments.count
-        self.arguments = arguments + (receiver?.trailingType.map { [$0] } ?? [])
+        let native = parameters?.types(from: arguments) ?? arguments
+        nativeExplicitCount = native.count
+        self.arguments = native + (receiver?.trailingType.map { [$0] } ?? [])
+            + (try generic.map { Array(repeating: try CValueType(scalar: ABIValuePointer), count: $0.metadata.count) } ?? [])
+        self.parameters = parameters; self.generic = generic
+        metadataMatches = try generic?.hookMetadataArguments() ?? []
+        classMatches = try generic?.hookClassArguments() ?? []
         self.consumesArguments = consumesArguments; self.owner = owner
         self.receiver = receiver
+        self.errorPlan = errorPlan
         self.cloneArguments = cloneArguments; self.cloneResult = cloneResult
         self.destroyResult = destroyResult; self.destroyArguments = destroyArguments
-        interface = try SwiftCallInterface(result: result, parameters: self.arguments)
+        self.initializeResult = initializeResult
+        self.interface = try interface ?? SwiftCallInterface(result: result, parameters: self.arguments, errorPlan: errorPlan)
     }
     func matches(_ other: SwiftHookSignature) -> Bool {
-        identities == other.identities && consumesArguments == other.consumesArguments && matchesReceiver(other.receiver)
+        if let first = generic, let second = other.generic, !first.binding.declaration.parameters.isEmpty {
+            return first.binding.declaration == second.binding.declaration
+                && receiver?.mode == other.receiver?.mode && receiver?.isConsuming == other.receiver?.isConsuming
+        }
+        return identities == other.identities && consumesArguments == other.consumesArguments && matchesReceiver(other.receiver)
+            && errorPlan?.identity == other.errorPlan?.identity
             && ABIValueTypesEqual(result.handle, other.result.handle) && arguments.count == other.arguments.count
             && zip(arguments, other.arguments).allSatisfy { ABIValueTypesEqual($0.handle, $1.handle) }
     }
@@ -186,16 +244,66 @@ final class SwiftHookSignature: @unchecked Sendable {
         }
     }
 
+    func matchesIncoming(_ call: OpaquePointer) throws -> Bool {
+        guard generic != nil else { return true }
+        func pointer(at index: Int) throws -> UInt {
+            var value: UInt = 0, error: OpaquePointer?
+            guard ABISwiftIncomingReadPointer(call, interface.handle, index, &value, &error) else {
+                throw consumeNativeCallFailure(error)
+            }
+            return value
+        }
+        let metadataStart = nativeExplicitCount + (receiver?.trailingType == nil ? 0 : 1)
+        let words = try metadataMatches.indices.map { try pointer(at: metadataStart + $0) }
+        for (match, actual) in zip(metadataMatches, words) {
+            if case .value(let expected) = match, expected != actual { return false }
+        }
+        func matchesClass(_ actual: AnyClass?, _ expected: AnyClass) -> Bool {
+            var current: AnyClass? = actual
+            while let type = current {
+                if type === expected { return true }
+                current = class_getSuperclass(type)
+            }
+            return false
+        }
+        if let expected = generic?.hookEnclosingClass {
+            guard let context = ABISwiftIncomingContext(call),
+                  matchesClass(object_getClass(Unmanaged<AnyObject>.fromOpaque(context).takeUnretainedValue()), expected) else { return false }
+        }
+        for source in classMatches {
+            guard let value = UnsafeRawPointer(bitPattern: try pointer(at: source.index)) else { return false }
+            let actual: AnyClass? = source.isMetatype ? unsafeBitCast(value, to: AnyClass.self)
+                : object_getClass(Unmanaged<AnyObject>.fromOpaque(value).takeUnretainedValue())
+            if !matchesClass(actual, source.expected) { return false }
+        }
+        for (match, actual) in zip(metadataMatches, words) {
+            if case .pack(let expected) = match {
+                guard let vector = UnsafeRawPointer(bitPattern: actual) else {
+                    if expected.isEmpty { continue }
+                    return false
+                }
+                for (index, word) in expected.enumerated() where vector.load(fromByteOffset: index * MemoryLayout<UInt>.size, as: UInt.self) != word {
+                    return false
+                }
+            }
+        }
+        return true
+    }
+
     func preservingReceiver(_ explicit: [NativeValueStorage], from incoming: [NativeValueStorage]) -> [NativeValueStorage] {
         receiver?.mode == .value ? explicit + [incoming[explicitArgumentCount]] : explicit
     }
     func readArguments(_ call: OpaquePointer) throws -> [NativeValueStorage] {
-        try arguments.enumerated().map { index, type in
-            let storage = NativeValueStorage(size: type.size, alignment: type.alignment)
-            var error: OpaquePointer?
-            guard ABISwiftIncomingReadArgument(call, index, storage.address, type.size, &error) else { throw consumeNativeCallFailure(error) }
-            return storage
+        let native = arguments.indices.map { ABISwiftIncomingArgumentAddress(call, $0) }
+        let logical = native.withUnsafeBufferPointer { parameters?.unpack($0.baseAddress) }
+        let owner = SwiftHookArgumentOwner(logical?.storage ?? [])
+        var values = (logical?.addresses ?? Array(native.prefix(explicitArgumentCount))).map {
+            NativeValueStorage(borrowing: $0!, owner: owner)
         }
+        if receiver?.mode == .value {
+            values.append(NativeValueStorage(borrowing: native[nativeExplicitCount]!, owner: owner))
+        }
+        return values
     }
     func proceed(_ call: OpaquePointer, arguments: [NativeValueStorage]) throws -> NativeValueStorage {
         var values = consumesArguments ? try cloneArguments(arguments) : Array(arguments.prefix(explicitArgumentCount))
@@ -216,20 +324,31 @@ final class SwiftHookSignature: @unchecked Sendable {
             }
         }
         if let consumedValue { context = UnsafeRawPointer(consumedValue.address) }
-        let addresses: [UnsafeMutableRawPointer?] = values.map(\.address)
+        let logical: [UnsafeMutableRawPointer?] = values.prefix(explicitArgumentCount).map(\.address)
+        let encoded = parameters?.encode(logical, retaining: Array(values.prefix(explicitArgumentCount)))
+        var addresses = encoded?.addresses ?? logical
+        if receiver?.mode == .value { addresses.append(values[explicitArgumentCount].address) }
+        if let generic {
+            let start = nativeExplicitCount + (receiver?.trailingType == nil ? 0 : 1)
+            addresses += (0..<generic.metadata.count).map { ABISwiftIncomingArgumentAddress(call, start + $0) }
+        }
         var invoked = false
         defer { if !invoked { consumedObject?.release() } }
-        let ok = withExtendedLifetime((values, consumedValue)) { addresses.withUnsafeBufferPointer {
+        let ok = withExtendedLifetime((values, consumedValue, encoded)) { addresses.withUnsafeBufferPointer {
             ABISwiftIncomingProceed(call, $0.baseAddress, $0.count, context, &error)
         } }
         guard ok else { throw consumeNativeCallFailure(error) }
         invoked = true
+        encoded?.finishInvocation()
         if consumesArguments { for value in values.prefix(explicitArgumentCount) { value.relinquishValue() } }
         if receiver?.isConsuming == true && receiver?.mode == .value { values[explicitArgumentCount].relinquishValue() }
         consumedValue?.relinquishValue()
-        let bytes = NativeValueStorage(size: result.size, alignment: result.alignment)
+        let bytes = NativeValueStorage(borrowing: ABISwiftIncomingResultAddress(call)!, owner: self)
+        if ABISwiftIncomingDidThrow(call), let errorPlan {
+            let native = NativeSwiftError(try errorPlan.decode(errorPlan.copy(bytes)), retainingCode: owner)
+            throw SwiftHookCompletedResultError(underlying: native, nativeError: errorPlan.copy(bytes))
+        }
         do {
-            guard ABISwiftIncomingCopyResult(call, bytes.address, result.size, &error) else { throw consumeNativeCallFailure(error) }
             return try cloneResult(bytes)
         } catch { throw SwiftHookCompletedResultError(underlying: error) }
     }
@@ -249,7 +368,11 @@ final class SwiftHookSignature: @unchecked Sendable {
     }
 
     func destroyConsumedInputs(context: UnsafeRawPointer?, arguments: UnsafeBufferPointer<UnsafeMutableRawPointer?>) {
-        if consumesArguments { destroyArguments(arguments) }
+        if consumesArguments {
+            let logical = parameters?.unpack(arguments.baseAddress)
+            if let logical { logical.addresses.withUnsafeBufferPointer(destroyArguments) }
+            else { destroyArguments(arguments) }
+        }
         guard let receiver, receiver.isConsuming else { return }
         switch receiver.mode {
         case .object:
@@ -257,11 +380,21 @@ final class SwiftHookSignature: @unchecked Sendable {
         case .address:
             if let context { receiver.codec.destroy(UnsafeMutableRawPointer(mutating: context)) }
         case .value:
-            receiver.codec.destroy(arguments[explicitArgumentCount]!)
+            receiver.codec.destroy(arguments[nativeExplicitCount]!)
         }
     }
 }
 
+private final class SwiftHookArgumentOwner {
+    let storage: [NativeValueStorage]
+    init(_ storage: [NativeValueStorage]) { self.storage = storage }
+}
+
 // A native call already ran, but its result cannot be represented by the
 // supplied Swift codec. The C entry still owns the raw result for pass-through.
-struct SwiftHookCompletedResultError: Error { let underlying: any Error }
+// This internal carrier stays inside the active hook frame; public continuations
+// expose only its underlying error, never its owned native storage.
+struct SwiftHookCompletedResultError: Error, @unchecked Sendable {
+    let underlying: any Error
+    var nativeError: NativeValueStorage? = nil
+}

@@ -1,6 +1,72 @@
 import ABIBridge
 import Darwin
 import Foundation
+import Synchronization
+
+private enum ConsumerHookFailure: Error { case unrepresentable }
+
+@MainActor
+func validateHooks(providerPath: String, callerPath: String) async throws {
+    func check(_ condition: Bool) { precondition(condition) }
+    guard let caller = dlopen(callerPath, RTLD_NOW | RTLD_LOCAL) else { fatalError(String(cString: dlerror())) }
+    defer { dlclose(caller) }
+    let runtime = ABIRuntime()
+    let provider = ImageSelector.path(URL(fileURLWithPath: providerPath))
+    let importer = ImageSelector.path(URL(fileURLWithPath: callerPath))
+    let integer = try await runtime.swiftFunction(named: "SwiftFunctionFixture.hookEcho(_:)",
+        as: ((Int64) -> Int64).self, genericArguments: [.type(Int64.self)], in: provider)
+    let text = try await runtime.swiftFunction(named: "SwiftFunctionFixture.hookEcho(_:)",
+        as: ((String) -> String).self, genericArguments: [.type(String.self)], in: provider)
+    let intCaller = try await runtime.swiftFunction(named: "SwiftExtensionFixture.importedHookInteger(_:)",
+        as: ((Int64) -> Int64).self, in: importer)
+    let textCaller = try await runtime.swiftFunction(named: "SwiftExtensionFixture.importedHookString(_:)",
+        as: ((String) -> String).self, in: importer)
+    let arrayCaller = try await runtime.swiftFunction(named: "SwiftExtensionFixture.importedHookArray(_:)",
+        as: (([String]) -> [String]).self, in: importer)
+    check(try unsafe intCaller.unsafeInvoke(40) == 40)
+    let failures = Mutex(0)
+    let failure: @Sendable (any Error) -> Void = { _ in failures.withLock { $0 += 1 } }
+    let intHook = try unsafe await integer.hookImportedCalls(in: importer, using: runtime, onFailure: failure) {
+        (call: NativeSwiftFunctionInvocation<(Int64) -> Int64>, value) in
+        try call.proceed(value + 1) + 10
+    }
+    defer { intHook.invalidate() }
+    let textHook = try unsafe await text.hookImportedCalls(in: importer, using: runtime, onFailure: failure) {
+        (call: NativeSwiftFunctionInvocation<(String) -> String>, value) in
+        try call.proceed(value + " hook")
+    }
+    defer { textHook.invalidate() }
+    check(try unsafe intCaller.unsafeInvoke(40) == 51)
+    check(try unsafe textCaller.unsafeInvoke("value") == "value hook")
+    check(try unsafe arrayCaller.unsafeInvoke(["untouched"]) == ["untouched"])
+    intHook.invalidate(); textHook.invalidate()
+    check(try unsafe textCaller.unsafeInvoke("value") == "value")
+
+    let throwing = try await runtime.swiftFunction(named: "SwiftFunctionFixture.hookThrowing(_:)",
+        as: ((Int64) throws(NSError) -> Int64).self, in: provider)
+    let throwingCaller = try await runtime.swiftFunction(named: "SwiftExtensionFixture.importedHookThrowing(_:)",
+        as: ((Int64) throws(NSError) -> Int64).self, in: importer)
+    check(try unsafe throwingCaller.unsafeInvoke(1) == 2)
+    let errorHook = try unsafe await throwing.hookImportedCalls(in: importer, using: runtime, onFailure: failure) {
+        (call: NativeSwiftFunctionInvocation<(Int64) throws(NSError) -> Int64>, value) in
+        if value == 99 { throw NSError(domain: "hook-consumer", code: 99) }
+        let result = try call.proceed(value)
+        if value == 98 { throw ConsumerHookFailure.unrepresentable }
+        return result + 5
+    }
+    defer { errorHook.invalidate() }
+    check(try unsafe throwingCaller.unsafeInvoke(1) == 7)
+    check(try unsafe throwingCaller.unsafeInvoke(98) == 99)
+    for (value, domain) in [(Int64(-1), "native-hook-consumer"), (Int64(99), "hook-consumer")] {
+        do { _ = try unsafe throwingCaller.unsafeInvoke(value); fatalError("Expected a native error") }
+        catch let error as NativeSwiftError {
+            error.withUnderlyingError { check(($0 as NSError).domain == domain && ($0 as NSError).code == Int(value)) }
+        }
+    }
+    check(failures.withLock { $0 } == 1)
+    errorHook.invalidate()
+    check(try unsafe throwingCaller.unsafeInvoke(1) == 2)
+}
 
 @MainActor
 func prepareGenericGetters(type: NativeSwiftType, object: NativeObject) async throws {
@@ -102,3 +168,7 @@ dlclose(retained)
 // Swift's runtime may itself keep an image loaded after its last explicit
 // loader reference. This fixture only asserts the invocation lifetime.
 print("Swift function consumer passed")
+if CommandLine.arguments.count > 2 {
+    try await validateHooks(providerPath: path, callerPath: CommandLine.arguments[2])
+    print("Swift generic and throwing hook consumer passed")
+}

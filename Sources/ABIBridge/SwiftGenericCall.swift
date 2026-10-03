@@ -555,6 +555,49 @@ struct SwiftGenericCallPlan: Sendable {
         try binding.validateMetadataArguments(fulfilledBy: receiver == .object || receiver == .address ? context : nil)
     }
 
+    var hookEnclosingClass: AnyClass? {
+        context != nil && receiver == .object ? enclosingMetadata as? AnyClass : nil
+    }
+
+    func hookMetadataArguments() throws -> [SwiftGenericBinding.HookMetadataArgument] {
+        let fulfilled = receiver == .object || receiver == .address ? context : nil
+        let prefix: [SwiftGenericBinding.HookMetadataArgument] = context != nil && receiver == .address
+            ? [.value(unsafeBitCast(enclosingMetadata!, to: UInt.self))] : []
+        return try prefix + binding.hookMetadataArguments(fulfilledBy: fulfilled)
+    }
+
+    struct HookClassArgument: Sendable {
+        let index: Int
+        let expected: AnyClass
+        let isMetatype: Bool
+    }
+
+    func hookClassArguments() throws -> [HookClassArgument] {
+        var sources: [HookClassArgument] = []
+        var nativeIndex = 0
+        func add(_ type: Any.Type, at index: Int) {
+            if let instance = SwiftMetatypeMetadata(type)?.instance as? AnyClass {
+                sources.append(.init(index: index, expected: instance, isMetatype: true))
+            } else if let expected = type as? AnyClass {
+                sources.append(.init(index: index, expected: expected, isMetatype: false))
+            }
+        }
+        for (formal, group) in zip(binding.declaration.arguments, parameters.groups) {
+            switch group {
+            case .pack: nativeIndex += 1
+            case .value(let logical):
+                let argument = parameters.arguments[logical]
+                let tuple = SwiftGenericParameters.expandedTuple(argument)
+                defer { nativeIndex += tuple?.argumentTypes.count ?? 1 }
+                guard argument.convention != .inoutValue, binding.dependsOnParameters(formal) else { continue }
+                if let tuple {
+                    for (index, leaf) in tuple.leaves.enumerated() { add(leaf.nativeType, at: nativeIndex + index) }
+                } else { add(try binding.types(formal)[0], at: nativeIndex) }
+            }
+        }
+        return sources
+    }
+
     func receiverType() throws -> CValueType? {
         guard let context, let enclosingMetadata, !(enclosingMetadata is AnyClass) else { return nil }
         let arguments = context.parameters.map { SwiftFormalType.named($0.name, []) }
