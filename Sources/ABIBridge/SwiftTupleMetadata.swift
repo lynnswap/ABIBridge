@@ -333,6 +333,15 @@ struct SwiftTupleValuePlan: Sendable {
         let storage = NativeValueStorage(size: leaves.count * MemoryLayout<UnsafeMutableRawPointer?>.stride,
             alignment: MemoryLayout<UnsafeMutableRawPointer?>.alignment, owner: owner, codeLifetime: lifetime,
             didRelinquish: consuming ? { owner.relinquish() } : nil)
+        if consuming {
+            storage.destroyTransferredCopy = { [leaves] in
+                for (leaf, value) in zip(leaves, values) {
+                    leaf.constants.initialize(at: value.address)
+                    ABISwiftDestroyValue(unsafeBitCast(leaf.nativeType, to: UnsafeRawPointer.self), value.address)
+                    value.relinquishValue()
+                }
+            }
+        }
         for (index, value) in values.enumerated() {
             storage.address.storeBytes(of: Optional(value.address),
                 toByteOffset: index * MemoryLayout<UnsafeMutableRawPointer?>.stride, as: UnsafeMutableRawPointer?.self)

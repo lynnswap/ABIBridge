@@ -60,3 +60,62 @@ open class CallerOverridingRenderer: ReplacementRenderer {
 @inline(never) public nonisolated(nonsending) func importedAsyncHookThrowing(_ value: Int64) async throws(NSError) -> String { try await asyncHookThrowing(value) }
 @inline(never) @MainActor public func importedAsyncHookActor(_ value: Int64) async -> Int64 { await asyncHookActor(value) }
 @inline(never) public nonisolated(nonsending) func importedAsyncHookMethod(_ object: AsyncHookRenderer, _ value: String) async throws(NSError) -> String { try await object.render(value) }
+
+
+@inline(never) public func callConsumeTicket(_ number: Int64) -> Int64 { consumeHookTicket(HookTicket(number)) }
+@inline(never) public func callMoveTicket(_ number: Int64) -> Int64 {
+    let value = moveHookTicket(HookTicket(number))
+    return value.read()
+}
+
+@inline(never) public func callVirtualMoveTicket(_ number: Int64) -> Int64 {
+    let value = makeHookTicketRenderer().move(HookTicket(number))
+    return value.read()
+}
+
+@inline(never) @concurrent public func callAsyncMoveTicket(_ number: Int64) async -> Int64 {
+    let value = await moveAsyncHookTicket(HookTicket(number))
+    return value.read()
+}
+
+@inline(never) public func callConsumeAnyErrorTicket(_ number: Int64) throws -> Int64 {
+    try consumeAnyErrorHookTicket(HookTicket(number))
+}
+
+@inline(never) public func callOptionalHookPointer(_ value: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? { hookOptionalPointer(value) }
+@inline(never) public func callConsumeHookObject(_ value: consuming NSObject) -> Int64 { consumeHookObject(value) }
+
+@inline(never) public func callBorrowedHookPointer(_ value: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? { hookBorrowedPointer(value) }
+@inline(never) public func callMoveTicketWithBody(_ number: Int64) -> (Int64, Int64) {
+    var body = { Int64(42) }
+    let value = moveHookTicketWithBody(HookTicket(number), &body, { 99 })
+    return (value.read(), body())
+}
+@inline(never) @concurrent public func callAsyncMoveTicketWithBody(_ number: Int64) async -> (Int64, Int64) {
+    var body = { Int64(42) }
+    let value = await moveAsyncHookTicketWithBody(HookTicket(number), &body, { 99 })
+    return (value.read(), body())
+}
+
+@inline(never) public func callHookPointerAndBorrow(_ value: UnsafeMutableRawPointer?, _ text: String) -> UnsafeMutableRawPointer? {
+    hookPointerAndBorrow(value, { text })
+}
+@inline(never) public func callConsumeHookTuple(_ value: NSObject) -> Int64 { consumeHookTuple((value, 42)) }
+
+@inline(never) public func callAdapterWriteback(_ value: UnsafeMutableRawPointer?) -> Int64 {
+    var body = { Int64(0) }
+    hookAdapterWriteback(value, &body)
+    return body()
+}
+
+@inline(never) public func callDiscardTicket(_ pointer: UnsafeMutableRawPointer?) -> Int64 { hookDiscardTicket(HookTicket(42), pointer) }
+
+@inline(never) public func callConsumeHookClosure(_ object: NSObject) -> Int64 {
+    consumeHookClosure { withExtendedLifetime(object) { 42 } }
+}
+@concurrent @inline(never) public func callConsumeAsyncHookClosure(_ object: NSObject) async -> Int64 {
+    await consumeAsyncHookClosure { withExtendedLifetime(object) { 42 } }
+}
+@inline(never) public func callBorrowedTupleAndAdapter(_ object: NSObject, _ pointer: UnsafeMutableRawPointer?) -> Int64 {
+    hookBorrowedTupleAndAdapter((object, 42), pointer)
+}

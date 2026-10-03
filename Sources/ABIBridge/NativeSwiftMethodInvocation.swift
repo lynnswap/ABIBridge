@@ -106,23 +106,11 @@ public struct NativeSwiftMethodInvocation<Signature>: CustomStringConvertible {
     }
 
     @usableFromInline nonisolated(nonsending) func invokeAsync<Result, each Argument>(_ values: repeat each Argument) async throws -> Result {
-        do {
-            return try await frame.useAsync { operation in
-                let storage = try prepared.encode(repeat each values, retainingCode: nil)
-                let result = try await operation(storage)
-                return try prepared.decode(result, retaining: result, retainingCode: nil)
-            }
-        } catch let error as SwiftHookCompletedResultError { throw error.underlying }
+        try await frame.invokeAsync(prepared: prepared, repeat each values)
     }
 
     private func invoke<Result, each Argument>(_ values: repeat each Argument) throws -> Result {
-        do {
-            return try frame.use { operation in
-                let storage = try prepared.encode(repeat each values, retainingCode: nil)
-                let result = try operation(storage)
-                return try prepared.decode(result, retaining: result, retainingCode: nil)
-            }
-        } catch let error as SwiftHookCompletedResultError { throw error.underlying }
+        try frame.invoke(prepared: prepared, repeat each values)
     }
 }
 
@@ -137,10 +125,11 @@ func prepareSwiftMethodHandler<Signature, Result, each Argument>(
     let description = hookDescription(declaration: declaration,
         signature: Signature.self, unnamed: "<Swift method>")
     return SwiftHookHandler(requiresMainActor: requiresMainActor, retaining: method, failure: onFailure) { frame, storage in
-        let values = try prepared.decodeArguments(storage)
         let call = NativeSwiftMethodInvocation<Signature>(frame: frame, prepared: prepared.values, receiverView: receiver,
             declaration: declaration, description: description)
-        return try prepared.result.encode(body(call, repeat each values))
+        return try prepared.invoke(storage, recovery: frame.recovery) { (values: repeat each Argument) in
+            try body(call, repeat each values)
+        }
     }
 }
 
@@ -178,10 +167,9 @@ extension NativeSwiftMethod {
         let description = hookDescription(declaration: declaration, signature: Signature.self, unnamed: "<Swift method>")
         let handler = SwiftHookHandler(requiresMainActor: requiresMainActor, retaining: self, failure: onFailure,
             invokeAsync: { frame, storage in
-                let values = try prepared.decodeArguments(storage)
-                let invocation = NativeSwiftMethodInvocation<Signature>(frame: frame, prepared: prepared.values,
+                    let invocation = NativeSwiftMethodInvocation<Signature>(frame: frame, prepared: prepared.values,
                     receiverView: receiverView, declaration: declaration, description: description)
-                return try prepared.result.encode(await body(invocation, repeat each values))
+                return try await prepared.invokeAsync(storage, recovery: frame.recovery, invocation: invocation, body: body)
             })
         return (signature, handler)
     }

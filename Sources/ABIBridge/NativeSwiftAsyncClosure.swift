@@ -292,7 +292,7 @@ extension NativeSwiftClosure {
                     UnsafeRawPointer(bitPattern: $0.address)!.assumingMemoryBound(to: UnsafeMutableRawPointer?.self)
                 } ?? native
                 let scope = inputs.makeScope(asynchronous: true, arguments: arguments)
-                defer { withExtendedLifetime((scope, unpacked, vector)) {} }
+                defer { scope?.expire(); withExtendedLifetime((scope, unpacked, vector)) {} }
                 var index = 0
                 func decode<Value>(_ type: Value.Type) throws -> Value {
                     defer { index += 1 }

@@ -22,13 +22,11 @@ public final class NativeSwiftValue {
     /// Whether the actual native type conforms to Copyable.
     public let isCopyable: Bool
 
-    private let lock = NSLock()
-    private var storage: NativeValueStorage?
-    private var readers = 0
-    private var exclusive = false
+    let valueOwner: SwiftRuntimeValueOwner
 
     init(storage: NativeValueStorage, type: NativeSwiftType) {
-        self.storage = storage
+        valueOwner = storage.runtimeValueOwner ?? SwiftRuntimeValueOwner(storage: storage)
+        storage.runtimeValueOwner = valueOwner
         self.type = type
         isCopyable = SwiftCopyability.accepts(type.metadata)
     }
@@ -36,8 +34,7 @@ public final class NativeSwiftValue {
     /// Whether this handle has transferred its value to native code or take(as:).
     /// The type and copyability remain available after consumption.
     public var isConsumed: Bool {
-        lock.lock(); defer { lock.unlock() }
-        return storage == nil
+        valueOwner.isConsumed
     }
 
     /// Creates an independent native copy, retaining its implementation images.
@@ -116,25 +113,72 @@ public final class NativeSwiftValue {
     }
 
     func access(_ convention: SwiftArgumentConvention) throws -> NativeValueStorage {
+        try valueOwner.access(convention)
+    }
+}
+
+// Native storage and all public aliases share a single ownership state.
+final class SwiftRuntimeValueOwner {
+    private let lock = NSLock()
+    private var storage: NativeValueStorage?
+    private var readers = 0
+    private var exclusive = false
+    private var reservations = 0
+    init(storage: NativeValueStorage) { self.storage = storage }
+    var isConsumed: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return storage == nil
+    }
+    func ownedStorage() throws -> NativeValueStorage {
+        lock.lock(); defer { lock.unlock() }
+        guard let storage else { throw NativeSwiftValueError.consumedValue }
+        return storage
+    }
+    func transferStorage() throws -> NativeValueStorage {
+        lock.lock(); defer { lock.unlock() }
+        guard let storage else { throw NativeSwiftValueError.consumedValue }
+        guard !exclusive, readers == 0 else { throw NativeSwiftValueError.valueInUse }
+        self.storage = nil
+        storage.runtimeValueOwner = nil
+        return storage
+    }
+    func reserve() { lock.lock(); reservations += 1; lock.unlock() }
+    func releaseReservation() { lock.lock(); reservations -= 1; lock.unlock() }
+    func access(_ convention: SwiftArgumentConvention) throws -> NativeValueStorage {
         lock.lock()
         guard let storage else { lock.unlock(); throw NativeSwiftValueError.consumedValue }
         let writes = convention != .borrowing
-        guard !exclusive, !writes || readers == 0 else {
+        guard !exclusive, !writes || readers == 0,
+              convention != .consuming || reservations == 0 || SwiftHookRecoveryScope.authorizes(self) else {
             lock.unlock(); throw NativeSwiftValueError.valueInUse
         }
         if writes { exclusive = true } else { readers += 1 }
         lock.unlock()
-        let access = SwiftRuntimeValueAccess(storage: storage) { consumed in
+        let access = SwiftRuntimeValueAccess(storage: storage, resume: {
+            self.lock.lock(); defer { self.lock.unlock() }
+            guard self.storage != nil else { throw NativeSwiftValueError.consumedValue }
+            guard !self.exclusive, !writes || self.readers == 0 else { throw NativeSwiftValueError.valueInUse }
+            if writes { self.exclusive = true } else { self.readers += 1 }
+        }, release: {
             self.lock.lock()
-            if consumed {
+            if writes { self.exclusive = false } else { self.readers -= 1 }
+            self.lock.unlock()
+        }, consume: {
+            self.lock.lock()
+            if self.storage === storage {
                 storage.relinquishValue()
                 self.storage = nil
             }
-            if writes { self.exclusive = false } else { self.readers -= 1 }
             self.lock.unlock()
-        }
-        return NativeValueStorage(borrowing: storage.address, owner: access, retainingResourcesOf: storage,
+        })
+        let result = NativeValueStorage(borrowing: storage.address, owner: access, retainingResourcesOf: storage,
                                   didRelinquish: convention == .consuming ? { access.consume() } : nil)
+        if convention == .consuming {
+            result.suspendHookAccess = { access.suspend() }
+            result.resumeHookAccess = { try access.resume() }
+            result.transferHookOwnership = { try self.transferStorage() }
+        }
+        return result
     }
 }
 
@@ -175,14 +219,34 @@ enum SwiftEscapability {
 
 private final class SwiftRuntimeValueAccess {
     let storage: NativeValueStorage
-    private let finish: (Bool) -> Void
+    private let resumeAccess: () throws -> Void
+    private let releaseAccess: () -> Void
+    private let consumeValue: () -> Void
+    private var active = true
     private var consumed = false
-    init(storage: NativeValueStorage, finish: @escaping (Bool) -> Void) {
-        self.storage = storage
-        self.finish = finish
+    init(storage: NativeValueStorage, resume: @escaping () throws -> Void,
+         release: @escaping () -> Void, consume: @escaping () -> Void) {
+        self.storage = storage; resumeAccess = resume; releaseAccess = release; consumeValue = consume
     }
-    func consume() { consumed = true }
-    deinit { finish(consumed) }
+    // A downstream hook runs before native execution. Its canonical owner may
+    // be inspected while this forwarding lease retains storage for a later call.
+    func suspend() {
+        guard active else { return }
+        active = false
+        releaseAccess()
+    }
+    func resume() throws {
+        guard !active else { return }
+        try resumeAccess()
+        active = true
+    }
+    func consume() {
+        guard !consumed else { return }
+        consumed = true
+        consumeValue()
+        suspend()
+    }
+    deinit { if active { releaseAccess() } }
 }
 
 /// Native metadata owns value operations; the formal declaration owns ABI placement.
@@ -302,11 +366,12 @@ struct SwiftRuntimeValuePlan: Sendable {
         }
     }
 
-    private func initializeResult(_ storage: NativeValueStorage) throws -> NativeSwiftType {
+    func initializeResult(_ storage: NativeValueStorage) throws -> NativeSwiftType {
         if valueType.metadata is AnyClass, storage.address.load(as: UnsafeRawPointer?.self) == nil {
             throw ABIInvocationError.unexpectedNilResult(expected: valueType.name)
         }
         let retainedType = valueType.retainingCode(storage.codeLifetime!)
+        guard storage.runtimeValueOwner == nil else { return retainedType }
         constants.initialize(at: storage.address)
         storage.assumeInitialized(retaining: retainedType) {
             ABISwiftDestroyValue(unsafeBitCast(retainedType.metadata, to: UnsafeRawPointer.self), $0)
@@ -370,6 +435,10 @@ struct SwiftRuntimeValuePlan: Sendable {
             } : nil)
         closureConversions.apply(to: native, native: true, retainingCode: valueType,
                                  codeLifetime: native.codeLifetime)
+        if convention == .consuming {
+            let address = native.address
+            native.destroyTransferredCopy = { ABISwiftDestroyValue(metadata, address) }
+        }
         if convention == .inoutValue {
             let address = native.address
             let lifetime = native.codeLifetime
@@ -389,6 +458,11 @@ struct SwiftRuntimeValuePlan: Sendable {
         let vector = NativeValueStorage(size: addresses.count * MemoryLayout<UnsafeMutableRawPointer?>.stride,
             alignment: MemoryLayout<UnsafeMutableRawPointer?>.alignment, owner: access, codeLifetime: access.codeLifetime,
             didRelinquish: convention == .consuming ? { access.relinquishValue() } : nil)
+        if convention == .consuming {
+            vector.destroyTransferredCopy = {
+                ABISwiftDestroyValue(unsafeBitCast(valueType.metadata, to: UnsafeRawPointer.self), access.address)
+            }
+        }
         for (index, address) in addresses.enumerated() {
             vector.address.storeBytes(of: address,
                 toByteOffset: index * MemoryLayout<UnsafeMutableRawPointer?>.stride, as: UnsafeMutableRawPointer?.self)

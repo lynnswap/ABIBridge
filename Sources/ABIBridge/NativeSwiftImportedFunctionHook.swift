@@ -10,10 +10,11 @@ private func prepareSwiftImportedHandler<Signature, Result, each Argument>(
     let description = hookDescription(declaration: declaration,
         signature: Signature.self, unnamed: "<Swift function>")
     return SwiftHookHandler(requiresMainActor: requiresMainActor, failure: onFailure) { frame, storage in
-        let values = try prepared.decodeArguments(storage)
         let call = NativeSwiftFunctionInvocation<Signature>(frame: frame, prepared: prepared.values,
             declaration: declaration, description: description)
-        return try prepared.result.encode(body(call, repeat each values))
+        return try prepared.invoke(storage, recovery: frame.recovery) { (values: repeat each Argument) in
+            try body(call, repeat each values)
+        }
     }
 }
 
@@ -290,10 +291,9 @@ extension NativeSwiftFunction {
         let declaration = symbol.declaration
         let description = hookDescription(declaration: declaration, signature: Signature.self, unnamed: "<Swift function>")
         let handler = SwiftHookHandler(requiresMainActor: requiresMainActor, failure: onFailure, invokeAsync: { frame, storage in
-            let values = try prepared.decodeArguments(storage)
             let invocation = NativeSwiftFunctionInvocation<Signature>(frame: frame, prepared: prepared.values,
                 declaration: declaration, description: description)
-            return try prepared.result.encode(await body(invocation, repeat each values))
+            return try await prepared.invokeAsync(storage, recovery: frame.recovery, invocation: invocation, body: body)
         })
         return (signature, handler)
     }

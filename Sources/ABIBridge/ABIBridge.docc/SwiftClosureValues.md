@@ -223,7 +223,7 @@ An array's element type can itself be a managed struct, enum, optional, or anoth
 
 Custom `ABIBridgeValue` conversions describe foreign representations rather than the callback's actual Swift value types, so they remain outside this callback path. Value Optionals without an established direct representation, generic shapes outside <doc:GenericSwiftValues>, require a compiler adapter. <doc:BorrowedSwiftValues> shows how `valueABIs` supplies a runtime-only nominal argument's formal ABI for this same closure API.
 
-Incoming closure-valued hook arguments are outside this subset: a native nonescaping callback can carry a stack context that cannot be retained as an owned wrapper. Hook preparation rejects that representation before installing an entry.
+Incoming closure-valued hook arguments use the same scoped borrow as ordinary callback inputs. A nonescaping input remains usable during the hook body and expires afterward. Copying an input requires the native declaration to grant escaping ownership. See <doc:SwiftFunctionHooks> and <doc:SwiftMethodHooks> for continuation and failure recovery.
 
 Label-only lookup uses the wrapper's complete function type. Use the source declaration's callback attributes and establish its isolation and Sendable contract separately. Neither a source name nor a function pointer establishes that contract.
 

@@ -39,8 +39,11 @@ xcrun swiftc -parse-as-library -emit-library -emit-module -enable-library-evolut
     "$task_root/Tests/ManagedSwiftFixtures/RuntimeValues.swift" "$task_root/Tests/ManagedSwiftFixtures/GenericCalls.swift" \
     "$task_root/Tests/ManagedSwiftFixtures/ExplicitValues.swift" "$task_root/Tests/ManagedSwiftFixtures/ClosureValues.swift" \
     -o "$task_fixture/libManagedSwiftFixtures.dylib"
+python3 "$task_root/scripts/build-swift-import-fixtures.py" --sdk macosx --architecture "$(uname -m)" \
+    --output "$task_fixture/SwiftImportFixtures"
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
-    --scratch-path "$task_root/.build/native-consumer" SwiftRuntimeValueConsumer "$task_fixture/libManagedSwiftFixtures.dylib"
+    --scratch-path "$task_root/.build/native-consumer" SwiftRuntimeValueConsumer \
+    "$task_fixture/libManagedSwiftFixtures.dylib" "$task_fixture/SwiftImportFixtures"
 xcrun swiftc -parse-as-library -emit-library -module-name ManagedSwiftAdapters \
     -I "$task_fixture" -L "$task_fixture" -lManagedSwiftFixtures -Xlinker -rpath -Xlinker "$task_fixture" \
     "$task_root/Tests/ManagedSwiftAdapters/Adapters.swift" "$task_root/Tests/ManagedSwiftAdapters/GenericAdapters.swift" \
