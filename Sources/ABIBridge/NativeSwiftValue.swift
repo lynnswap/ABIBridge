@@ -286,9 +286,7 @@ struct SwiftRuntimeValuePlan: Sendable {
             throw ABIInvocationError.incompatibleValue(expected: valueType.name, actual: actual.name)
         }
         if let owned = value as? NativeSwiftValue { return try owned.access(convention) }
-        guard convention == .borrowing else {
-            throw ABIResolutionError.unsupportedDeclaration("A borrowed runtime value cannot be mutated or consumed.")
-        }
-        return try (value as! NativeSwiftBorrowedValue).borrow.access(asynchronous: asynchronous, type: actual)
+        return try (value as! NativeSwiftBorrowedValue).borrow.access(
+            asynchronous: asynchronous, type: actual, convention: convention)
     }
 }

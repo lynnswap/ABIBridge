@@ -59,7 +59,8 @@ public struct NativeSwiftMethod<Signature>: Sendable {
     /// Typed receivers transfer an independent copy to consuming members.
     /// NativeSwiftValue accesses its owned storage directly: mutating members
     /// update that value and consuming members leave its handle consumed.
-    /// NativeSwiftBorrowedValue permits nonmutating, nonconsuming scoped access.
+    /// NativeSwiftBorrowedValue permits mutation when supplied by a native inout
+    /// callback; other borrows are read-only. Borrowed storage cannot be consumed.
     /// The lookup's ownership options must match the actual native declaration.
     ///
     /// - Parameters:
@@ -312,7 +313,7 @@ extension NativeSwiftMethod {
     @unsafe private func invoke<Receiver, Result, each Argument>(
         on receiver: Receiver, _ values: repeat each Argument
     ) throws -> Result {
-        guard !self.receiver.isMutating || self.receiver.mode == .object || receiver is NativeSwiftValue else {
+        guard !self.receiver.isMutating || self.receiver.mode == .object || receiver is NativeSwiftValue || receiver is NativeSwiftBorrowedValue else {
             throw ABIResolutionError.unsupportedDeclaration("A mutating Swift value member requires an inout receiver.")
         }
         let storage = try self.receiver.encode(receiver)
@@ -334,7 +335,7 @@ extension NativeSwiftMethod {
     @unsafe @usableFromInline nonisolated(nonsending) func invokeAsync<Receiver, Result, each Argument>(
         on receiver: Receiver, _ values: repeat each Argument
     ) async throws -> Result {
-        guard !self.receiver.isMutating || self.receiver.mode == .object || receiver is NativeSwiftValue else {
+        guard !self.receiver.isMutating || self.receiver.mode == .object || receiver is NativeSwiftValue || receiver is NativeSwiftBorrowedValue else {
             throw ABIResolutionError.unsupportedDeclaration("A mutating Swift value member requires an inout receiver.")
         }
         let storage = try self.receiver.encode(receiver, asynchronous: true)

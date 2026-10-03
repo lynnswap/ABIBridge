@@ -123,17 +123,15 @@ struct SwiftReceiverPlan: Sendable {
             return try value.access(isConsuming ? .consuming : isMutating && mode != .object ? .inoutValue : .borrowing)
         }
         let value = receiver as! NativeSwiftBorrowedValue
-        guard !isConsuming && (!isMutating || mode == .object) else {
-            throw NativeSwiftValueError.valueInUse
-        }
-        return try value.borrow.access(asynchronous: asynchronous, type: value.type)
+        return try value.borrow.access(asynchronous: asynchronous, type: value.type,
+            convention: isConsuming ? .consuming : isMutating && mode != .object ? .inoutValue : .borrowing)
     }
 
     func finishInvocation<Result, Receiver>(
         _ outcome: Swift.Result<Result, any Error>, storage: NativeValueStorage, invoked: Bool,
         receiver: inout Receiver, retaining owner: Any?
     ) throws -> Result {
-        if invoked && isMutating && mode != .object && !(receiver is NativeSwiftValue) {
+        if invoked && isMutating && mode != .object && !(receiver is NativeSwiftValue) && !(receiver is NativeSwiftBorrowedValue) {
             do {
                 let value = try codec.decode(storage, owner)
                 guard let updated = value as? Receiver else {

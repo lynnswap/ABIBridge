@@ -239,3 +239,21 @@ guard try unsafe consumeInput.unsafeInvoke(NativeSwiftConsuming(consumedInputTic
       consumedInputTicket.isConsumed, let received = state.owned,
       try unsafe readTicket.unsafeInvoke(on: received) == 42 else { throw ConsumerError.wrongResult }
 print("Consuming callback inputs transfer noncopyable native ownership into retained runtime handles")
+
+
+typealias InoutInput = NativeSwiftClosure<(NativeSwiftBorrowedValue) throws -> Void>
+let mutateInput = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.visitRuntimeInout<A where A: ~Swift.Copyable>(inout A, (inout A) throws -> ()) throws -> ()",
+    as: ((NativeSwiftInout<NativeSwiftValue>, InoutInput) throws -> Void).self,
+    genericArguments: [.type(received.type)], in: source)
+let addTicket = try await received.type.method(named: "add(_:)", as: ((Int64) -> Void).self,
+    receiverABI: .opaque(named: received.type.name), mutating: true)
+let mutateBody = try InoutInput { view in
+    state.borrow = view
+    try unsafe addTicket.unsafeInvoke(on: view, Int64(8))
+}
+try unsafe mutateInput.unsafeInvoke(NativeSwiftInout(received), mutateBody)
+guard try unsafe readTicket.unsafeInvoke(on: received) == 50 else { throw ConsumerError.wrongResult }
+do { try unsafe addTicket.unsafeInvoke(on: state.borrow!, Int64(1)); throw ConsumerError.wrongResult }
+catch NativeSwiftBorrowError.expiredBorrow { }
+print("Runtime inout callback views mutate noncopyable values and expire after native completion")

@@ -87,8 +87,20 @@ def main():
             if len(candidates) != 1 or convention not in candidates[0]:
                 raise RuntimeError(f'{target}: consuming callback ownership changed for {name}: {candidates}')
             consuming_callbacks[name] = candidates[0]
+        inout_callbacks = {}
+        for name, convention in {
+            'visitRuntimeInout': '(@inout τ_0_0) -> @error any Error',
+            'visitRuntimeInoutAsync': '@guaranteed Builtin.ImplicitActor, @inout τ_0_0) -> @error any Error',
+            'makeRuntimeSwap': '(@inout τ_0_0, @inout τ_0_1) -> ()',
+            'visitStringInout': '(@inout String) -> ()',
+        }.items():
+            identifier = str(len(name)) + name
+            candidates = [line for line in sil.splitlines() if line.startswith('sil [noinline]') and identifier in line]
+            if len(candidates) != 1 or convention not in candidates[0]:
+                raise RuntimeError(f'{target}: inout callback ownership changed for {name}: {candidates}')
+            inout_callbacks[name] = candidates[0]
         reports.append({'target':target, 'signatures':signatures, 'initializers':initializers, 'ownedGenericClosures':owned_closures,
-                        'closurePacks':pack_closures, 'closurePackInitializers':pack_initializers, 'runtimeValues':runtime_values, 'consumingCallbacks':consuming_callbacks})
+                        'closurePacks':pack_closures, 'closurePackInitializers':pack_initializers, 'runtimeValues':runtime_values, 'consumingCallbacks':consuming_callbacks, 'inoutCallbacks':inout_callbacks})
     report = {'compiler':run('xcrun','swiftc','--version').strip(), 'runtimeTested':False, 'targets':reports}
     (output/'report.json').write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps(report,indent=2))

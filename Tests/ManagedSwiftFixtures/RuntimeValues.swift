@@ -317,3 +317,23 @@ private func makeNestedPackAnswer<each Value>(_ values: repeat each Value) -> (r
 @inline(never) public func visitNonthrowingConsumingRuntimeValue<T: ~Copyable>(
     _ value: consuming T, _ body: (consuming T) -> Int64
 ) -> Int64 { body(consume value) }
+
+@inline(never) public func visitRuntimeInout<T: ~Copyable>(
+    _ value: inout T, _ body: (inout T) throws -> Void
+) rethrows { try body(&value) }
+
+@inline(never) public nonisolated(nonsending) func visitRuntimeInoutAsync<T: ~Copyable>(
+    _ value: inout T, _ body: nonisolated(nonsending) (inout T) async throws -> Void
+) async rethrows { try await body(&value) }
+
+@inline(never) public func holdRuntimeInout<T: ~Copyable>(_ value: inout T, _ body: () -> Bool) -> Bool { body() }
+
+@inline(never) public func makeRuntimeSwap<T: ~Copyable>(_ type: T.Type) -> (inout T, inout T) -> Void {
+    { first, second in swap(&first, &second) }
+}
+
+@inline(never) public func visitStringInout(_ value: inout String, _ body: (inout String) -> Void) { body(&value) }
+
+@inline(never) public func makeRuntimeInoutReader<T: ~Copyable>(_ type: T.Type) -> (inout T) -> Int64 {
+    { value in Int64(MemoryLayout<T>.size) }
+}

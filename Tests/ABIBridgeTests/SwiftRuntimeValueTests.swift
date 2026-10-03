@@ -17,6 +17,7 @@ private final class RuntimeCallbackValues: @unchecked Sendable {
     var borrowed: NativeSwiftBorrowedValue?
     var owned: NativeSwiftValue?
     var nested: NativeSwiftClosure<(NativeSwiftValue) -> NativeSwiftValue>?
+    var predicate: NativeSwiftClosure<() -> Bool>?
 }
 
 private struct RuntimeCopyablePayload {
@@ -50,6 +51,152 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 }
 
 @Suite struct SwiftRuntimeValueTests {
+    @Test func runtimeInoutCallbacksMutateNoncopyableNativeStorageAndExpire() async throws {
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self)
+        let counts = ArgumentCounts()
+        let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
+        let read = try await value.type.method(named: "read()", as: (() -> Int64).self,
+            receiverABI: .opaque(named: value.type.name))
+        let add = try await value.type.method(named: "add(_:)", as: ((Int64) -> Void).self,
+            receiverABI: .opaque(named: value.type.name), mutating: true)
+        typealias Body = NativeSwiftClosure<(NativeSwiftBorrowedValue) throws -> Void>
+        let visit = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitRuntimeInout<A where A: ~Swift.Copyable>(inout A, (inout A) throws -> ()) throws -> ()",
+            as: ((NativeSwiftInout<NativeSwiftValue>, Body) throws -> Void).self, genericArguments: [.type(value.type)])
+        let captured = RuntimeCallbackValues()
+        let body = try Body { view in
+            captured.borrowed = view
+            try unsafe add.unsafeInvoke(on: view, Int64(8))
+            #expect(try unsafe read.unsafeInvoke(on: view) == 50)
+            throw RuntimeTicketFailure.rejected
+        }
+        do {
+            try unsafe visit.unsafeInvoke(NativeSwiftInout(value), body)
+            Issue.record("The inout callback must preserve its failure")
+        } catch let error as NativeSwiftError { #expect(error.withUnderlyingError { $0 is RuntimeTicketFailure }) }
+        #expect(try unsafe read.unsafeInvoke(on: value) == 50)
+        #expect(!value.isConsumed && counts.destructions == 0)
+        #expect(throws: NativeSwiftBorrowError.expiredBorrow) { try unsafe add.unsafeInvoke(on: captured.borrowed!, Int64(1)) }
+        try value.withBorrowedValue { readonly in
+            #expect(throws: NativeSwiftValueError.valueInUse) { try unsafe add.unsafeInvoke(on: readonly, Int64(1)) }
+        }
+    }
+
+    @Test func runtimeInoutCallbacksEnforceAccessDuringNestedNativeCalls() async throws {
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)", as: ((Int64) -> NativeSwiftValue).self)
+        let value = try unsafe make.unsafeInvoke(42)
+        typealias Body = NativeSwiftClosure<(NativeSwiftBorrowedValue) throws -> Void>
+        let visit = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitRuntimeInout<A where A: ~Swift.Copyable>(inout A, (inout A) throws -> ()) throws -> ()",
+            as: ((NativeSwiftInout<NativeSwiftValue>, Body) throws -> Void).self, genericArguments: [.type(Int64.self)])
+        let hold = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.holdRuntimeInout<A where A: ~Swift.Copyable>(inout A, () -> Swift.Bool) -> Swift.Bool",
+            as: ((NativeSwiftInout<NativeSwiftBorrowedValue>, NativeSwiftClosure<() -> Bool>) -> Bool).self,
+            genericArguments: [.type(Int64.self)])
+        let replace = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.replaceRuntimeValue<A where A: ~Swift.Copyable>(inout A, __owned A) -> ()",
+            as: ((NativeSwiftInout<NativeSwiftBorrowedValue>, NativeSwiftConsuming<NativeSwiftValue>) -> Void).self,
+            genericArguments: [.type(Int64.self)])
+        let replacement = try unsafe make.unsafeInvoke(7)
+        let captured = RuntimeCallbackValues()
+        captured.owned = replacement
+        captured.predicate = try NativeSwiftClosure<() -> Bool> {
+            do { _ = try captured.borrowed!.copy(); return false }
+            catch NativeSwiftValueError.valueInUse { return true }
+            catch { return false }
+        }
+        defer { captured.predicate = nil }
+        let body = try Body { view in
+            captured.borrowed = view
+            #expect(try unsafe hold.unsafeInvoke(NativeSwiftInout(view), captured.predicate!))
+            try unsafe replace.unsafeInvoke(NativeSwiftInout(view), NativeSwiftConsuming(captured.owned!))
+            #expect(try view.copy().take(as: Int64.self) == 7)
+        }
+        try unsafe visit.unsafeInvoke(NativeSwiftInout(value), body)
+        #expect(try value.take(as: Int64.self) == 7 && replacement.isConsumed)
+    }
+
+    @Test func typedInoutCallbacksWriteBackOnErrorAndReturnedClosuresSwapOwners() async throws {
+        let runtime = ABIRuntime.shared
+        typealias TextBody = NativeSwiftClosure<(NativeSwiftInout<String>) throws -> Void>
+        let visit = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitRuntimeInout<A where A: ~Swift.Copyable>(inout A, (inout A) throws -> ()) throws -> ()",
+            as: ((NativeSwiftInout<String>, TextBody) throws -> Void).self, genericArguments: [.type(String.self)])
+        let buffer = NativeSwiftInout("before")
+        let body = try TextBody { value in value.value += " after"; throw RuntimeTicketFailure.rejected }
+        do { try unsafe visit.unsafeInvoke(buffer, body); Issue.record("Missing callback error") }
+        catch is NativeSwiftError { }
+        #expect(buffer.value == "before after")
+        typealias Swap = NativeSwiftClosure<(NativeSwiftInout<NativeSwiftValue>, NativeSwiftInout<NativeSwiftValue>) -> Void>
+        let factory = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeSwap<A where A: ~Swift.Copyable>(A.Type) -> (inout A, inout A) -> ()",
+            as: ((Int64.Type) -> Swap).self, genericArguments: [.type(Int64.self)])
+        let swap = try unsafe factory.unsafeInvoke(Int64.self)
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)", as: ((Int64) -> NativeSwiftValue).self)
+        let first = try unsafe make.unsafeInvoke(42), second = try unsafe make.unsafeInvoke(7)
+        try unsafe swap.unsafeInvoke(NativeSwiftInout(first), NativeSwiftInout(second))
+        #expect(try first.take(as: Int64.self) == 7 && second.take(as: Int64.self) == 42)
+    }
+
+    @Test func typedAsyncInoutCallbacksWriteBackAndNativeBorrowingCannotGrantMutation() async throws {
+        let runtime = ABIRuntime.shared
+        typealias TextBody = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftInout<String>) async throws -> Void>
+        let visit = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitRuntimeInoutAsync<A where A: ~Swift.Copyable>(inout A, nonisolated(nonsending) (inout A) async throws -> ()) async throws -> ()",
+            as: (nonisolated(nonsending) (NativeSwiftInout<String>, TextBody) async throws -> Void).self,
+            genericArguments: [.type(String.self)])
+        let buffer = NativeSwiftInout("before")
+        let operation: nonisolated(nonsending) @Sendable (NativeSwiftInout<String>) async throws -> Void = { value in
+            await Task.yield()
+            value.value += " after"
+            throw RuntimeTicketFailure.rejected
+        }
+        do { try unsafe await visit.unsafeInvoke(buffer, TextBody(operation)); Issue.record("Missing async error") }
+        catch is NativeSwiftError { }
+        #expect(buffer.value == "before after")
+        typealias SyncBody = NativeSwiftClosure<(NativeSwiftInout<String>) -> Void>
+        let concrete = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.visitStringInout(_:_:)",
+            as: ((NativeSwiftInout<String>, SyncBody) -> Void).self)
+        try unsafe concrete.unsafeInvoke(buffer, SyncBody { $0.value += "!" })
+        #expect(buffer.value == "before after!")
+        typealias Reader = NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Int64>
+        let factory = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeInoutReader<A where A: ~Swift.Copyable>(A.Type) -> (inout A) -> Swift.Int64",
+            as: ((Int64.Type) -> Reader).self, genericArguments: [.type(Int64.self)])
+        let reader = try unsafe factory.unsafeInvoke(Int64.self)
+        let inspect = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.inspectRuntimeReader<A where A: ~Swift.Copyable>(A, (A) -> Swift.Int64) -> Swift.Int64",
+            as: ((Int64, Reader) -> Int64).self, genericArguments: [.type(Int64.self)])
+        #expect(throws: ABIResolutionError.self) { try unsafe inspect.unsafeInvoke(Int64(42), reader) }
+    }
+
+    @Test func runtimeAsyncInoutCallbacksPreserveMutationAfterSuspensionAndFailure() async throws {
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)", as: ((ErrorLifetimeToken) -> NativeSwiftValue).self)
+        let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken {})
+        let add = try await value.type.method(named: "addThenThrow(_:)", as: (nonisolated(nonsending) (Int64) async throws -> Void).self,
+            receiverABI: .opaque(named: value.type.name), mutating: true)
+        let read = try await value.type.method(named: "read()", as: (() -> Int64).self, receiverABI: .opaque(named: value.type.name))
+        typealias Body = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftBorrowedValue) async throws -> Void>
+        let visit = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitRuntimeInoutAsync<A where A: ~Swift.Copyable>(inout A, nonisolated(nonsending) (inout A) async throws -> ()) async throws -> ()",
+            as: (nonisolated(nonsending) (NativeSwiftInout<NativeSwiftValue>, Body) async throws -> Void).self,
+            genericArguments: [.type(value.type)])
+        let captured = RuntimeCallbackValues()
+        let operation: nonisolated(nonsending) @Sendable (NativeSwiftBorrowedValue) async throws -> Void = { view in
+            captured.borrowed = view
+            await Task.yield()
+            try unsafe await add.unsafeInvoke(on: view, Int64(8))
+        }
+        do { try unsafe await visit.unsafeInvoke(NativeSwiftInout(value), Body(operation)); Issue.record("Missing native error") }
+        catch is NativeSwiftError { }
+        #expect(try unsafe read.unsafeInvoke(on: value) == 50)
+        #expect(throws: NativeSwiftBorrowError.expiredBorrow) { try captured.borrowed!.copy() }
+    }
+
     @Test func consumingCallbackInputsTransferNoncopyableOwnership() async throws {
         let runtime = ABIRuntime.shared
         let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",

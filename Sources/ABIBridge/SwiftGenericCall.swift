@@ -14,6 +14,15 @@ enum SwiftGenericArgument: Sendable {
         default: nil
         }
     }
+
+    var convention: SwiftArgumentConvention {
+        switch self {
+        case .convention(let codec): codec.convention
+        case .runtimeValue(_, let convention, _): convention
+        case .value(_, let consuming): consuming ? .consuming : .borrowing
+        default: .borrowing
+        }
+    }
 }
 
 protocol SwiftGenericClosureValue: SwiftClosureValue {
@@ -58,6 +67,7 @@ struct SwiftCallbackRuntimeArgument: Sendable {
     let plan: SwiftRuntimeValuePlan
     let borrowed: Bool
     let asynchronous: Bool
+    let convention: SwiftArgumentConvention
 }
 
 final class SwiftGenericClosurePlan: Sendable {
@@ -217,6 +227,9 @@ final class SwiftGenericClosurePlan: Sendable {
         guard nativeValueTypes == other.nativeValueTypes else {
             throw ABIResolutionError.signatureMismatch(.init(expected: "The closure's native argument and result types", found: []))
         }
+        guard parameters.arguments.map(\.convention) == other.parameters.arguments.map(\.convention) else {
+            throw ABIResolutionError.signatureMismatch(.init(expected: "The closure's native argument ownership", found: []))
+        }
         for (first, second) in zip(parameters.arguments, other.parameters.arguments) {
             if case .closure(let expected) = first, case .closure(let incoming) = second {
                 guard !expected.isEscaping || incoming.isEscaping else {
@@ -239,7 +252,9 @@ final class SwiftGenericClosurePlan: Sendable {
         for (index, conversion) in runtimeArguments.enumerated() {
             guard let conversion else { continue }
             let plan = conversion.plan
-            if let restored = plan.restoredCallbackArgument(from: addresses[index]!) {
+            if conversion.convention == .inoutValue {
+                addresses[index] = addresses[index]!.load(as: UnsafeMutableRawPointer.self)
+            } else if let restored = plan.restoredCallbackArgument(from: addresses[index]!) {
                 storage.append(restored)
                 addresses[index] = restored.address
             }
@@ -248,7 +263,8 @@ final class SwiftGenericClosurePlan: Sendable {
             let type = plan.valueType.retainingCode(lifetime)
             let value: NativeValueStorage
             if conversion.borrowed {
-                let borrow = SwiftValueBorrow(UnsafeRawPointer(addresses[index]!), allowsSuspension: conversion.asynchronous)
+                let borrow = SwiftValueBorrow(UnsafeRawPointer(addresses[index]!), allowsSuspension: conversion.asynchronous,
+                    allowsMutation: conversion.convention == .inoutValue)
                 borrows.append(borrow)
                 value = NativeValueStorage(size: MemoryLayout<NativeSwiftBorrowedValue>.stride,
                     alignment: MemoryLayout<NativeSwiftBorrowedValue>.alignment, codeLifetime: lifetime)
@@ -388,7 +404,14 @@ struct SwiftGenericCallPlan: Sendable {
     }
 
     static func argument(_ formal: SwiftFormalType, actual: Any.Type,
-                         binding: SwiftGenericBinding, defaultConsuming: Bool = false, asynchronous: Bool? = nil) throws -> SwiftGenericArgument {
+                         binding: SwiftGenericBinding, defaultConsuming: Bool = false, asynchronous: Bool? = nil,
+                         callback: Bool = false) throws -> SwiftGenericArgument {
+        if callback, case .inoutValue(let pointee) = formal, actual == NativeSwiftBorrowedValue.self {
+            let metadata = try binding.types(pointee)[0]
+            return .runtimeValue(try binding.runtimeValuePlan(metadata: metadata,
+                type: Self.layout(pointee, actual: metadata, binding: binding)),
+                convention: .inoutValue, asynchronous: asynchronous ?? binding.declaration.isAsync)
+        }
         if let argument = try binding.conventionArgument(actual, for: formal, defaultConsuming: defaultConsuming) {
             let value = try Self.argument(argument.value, actual: argument.wrapper.wrappedType, binding: binding,
                                           defaultConsuming: argument.wrapper.convention == .consuming, asynchronous: asynchronous)
@@ -423,12 +446,13 @@ struct SwiftGenericCallPlan: Sendable {
               failure != nil || signature.failure == Never.self else {
             throw ABIResolutionError.signatureMismatch(.init(expected: formal.spelling, found: []))
         }
-        let parameterPlan = try SwiftGenericParameters(formal: parameters, actual: signature.parameters, binding: binding, asynchronous: isAsync)
+        let parameterPlan = try SwiftGenericParameters(formal: parameters, actual: signature.parameters, binding: binding,
+            asynchronous: isAsync, callback: true)
         if let failure { try binding.validate(signature.failure, for: failure) }
         let runtimeArguments: [SwiftCallbackRuntimeArgument?] = parameterPlan.arguments.enumerated().map { index, argument in
-            guard case .runtimeValue(let plan, _, _) = argument else { return nil }
+            guard case .runtimeValue(let plan, let convention, _) = argument else { return nil }
             let borrowed = signature.parameters[index] == NativeSwiftBorrowedValue.self
-            return SwiftCallbackRuntimeArgument(plan: plan, borrowed: borrowed, asynchronous: isAsync)
+            return SwiftCallbackRuntimeArgument(plan: plan, borrowed: borrowed, asynchronous: isAsync, convention: convention)
         }
         var logicalTypes: [CValueType] = []
         var authentication = isAsync && signature.inheritsCallerIsolation ? ["-class"] : []
@@ -456,8 +480,13 @@ struct SwiftGenericCallPlan: Sendable {
                     logicalTypes.append(codec.type)
                     let underlying = formal.argumentConvention?.value ?? formal
                     let wrapper = signature.parameters[index] as! any SwiftConventionArgument.Type
-                    authentication.append(contentsOf: try authTypes(underlying,
+                    authentication.append(contentsOf: wrapper.convention == .inoutValue ? ["-indirect"] : try authTypes(underlying,
                         actual: argument.runtimeValue?.valueType.metadata ?? wrapper.wrappedType, binding: binding))
+                    continue
+                }
+                if runtimeArguments[index]?.convention == .inoutValue {
+                    logicalTypes.append(try CValueType(scalar: ABIValuePointer))
+                    authentication.append("-indirect")
                     continue
                 }
                 if runtimeArguments[index] == nil { try binding.validateArgument(actual, for: formal) }

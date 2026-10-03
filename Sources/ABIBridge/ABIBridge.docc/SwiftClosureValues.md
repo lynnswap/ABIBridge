@@ -96,6 +96,10 @@ let count = try NativeSwiftClosure<(NativeSwiftConsuming<String>) -> Int> { inco
 
 Explicit `NativeSwiftBorrowing<NativeSwiftBorrowedValue>` inputs keep the same scoped lifetime as an ordinary borrowed input; adding an ownership marker does not extend a borrow across callback return. `NativeSwiftConsuming` also works when invoking a returned native closure.
 
+For a known `inout Value` input, use `NativeSwiftInout<Value>`. The body receives an owned local buffer. Its current value is written back before the callback completes, including throwing or async completion. A saved buffer remains independent after that writeback.
+
+For a runtime-only `inout T`, use `NativeSwiftBorrowedValue` as the callback input. The containing native declaration grants exclusive mutable access to the caller's payload, including noncopyable values. Invoke ordinary mutating member handles on the view, or pass `NativeSwiftInout(view)` to a prepared inout function. The view cannot be consumed, ordinary borrowed inputs remain read-only, and overlapping access fails with `NativeSwiftValueError.valueInUse`. A mutation already performed remains visible when the body throws. Mutable views expire when their callback completes, just like read-only views.
+
 A host callback can return `NativeSwiftValue` to a native caller whose callback type uses `throws(any Error)`. Successful conversion moves the native payload out of the returned handle, including noncopyable values. Return `try value.copy()` when the handle must remain usable. A wrong type, consumed handle, or conflicting access throws through the native error channel; a failed transfer leaves the value in its existing owner. The same contract applies after an async body suspends. Native code can catch the conversion error directly; a subsequent bridge invocation surfaces it in `NativeSwiftError`.
 
 For `func produce<Value: ~Copyable>(_ body: () throws -> Value) rethrows -> Value`, a runtime-only value uses the ordinary closure type:
@@ -185,7 +189,7 @@ An array's element type can itself be a managed struct, enum, optional, or anoth
 
 `ABIBridgeSwiftValue` conformances use compiler-owned value operations and can therefore pass actual managed Swift values without custom conversion callbacks; see <doc:ExplicitSwiftValues>.
 
-Custom `ABIBridgeValue` conversions describe foreign representations rather than the callback's actual Swift value types, so they remain outside this callback path. Value Optionals without an established direct representation, generic shapes outside <doc:GenericSwiftValues>, and explicit inout callback conventions or consuming nested closure inputs require a compiler adapter. <doc:BorrowedSwiftValues> provides a separate scoped callback for a runtime-only resilient argument.
+Custom `ABIBridgeValue` conversions describe foreign representations rather than the callback's actual Swift value types, so they remain outside this callback path. Value Optionals without an established direct representation, generic shapes outside <doc:GenericSwiftValues>, and consuming nested closure inputs require a compiler adapter. <doc:BorrowedSwiftValues> provides a separate scoped callback for a runtime-only resilient argument.
 
 Incoming closure-valued hook arguments are outside this subset: a native nonescaping callback can carry a stack context that cannot be retained as an owned wrapper. Hook preparation rejects that representation before installing an entry.
 

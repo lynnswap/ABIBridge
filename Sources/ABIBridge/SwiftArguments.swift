@@ -7,6 +7,7 @@ enum SwiftArgumentConvention: Sendable, Equatable {
 struct SwiftConventionCodec: Sendable {
     let type: CValueType
     let consumes: Bool
+    let convention: SwiftArgumentConvention
     let argument: SwiftGenericArgument
     let prepareCallback: @Sendable () throws -> SwiftCallbackDecoder
     let encode: @Sendable (Any, Any?) throws -> NativeValueStorage
@@ -55,7 +56,7 @@ struct SwiftArgumentCodec<Value>: Sendable {
             consumes = defaultConsuming
             encoding = .genericClosure(plan)
         case .runtimeValue(let plan, let convention, let asynchronous):
-            type = plan.type
+            type = convention == .inoutValue ? try CValueType(scalar: ABIValuePointer) : plan.type
             consumes = convention == .consuming
             encoding = .runtimeValue(plan, convention, asynchronous: asynchronous)
         case .concrete:
@@ -78,7 +79,12 @@ struct SwiftArgumentCodec<Value>: Sendable {
         case .genericClosure(let plan):
             return try (value as! any SwiftGenericClosureValue).encodeGenericClosure(plan: plan, retainingCode: owner)
         case .runtimeValue(let plan, let convention, let asynchronous):
-            return try plan.encode(value, convention: convention, asynchronous: asynchronous)
+            let access = try plan.encode(value, convention: convention, asynchronous: asynchronous)
+            guard convention == .inoutValue else { return access }
+            let pointer = NativeValueStorage(size: MemoryLayout<UnsafeRawPointer>.size,
+                alignment: MemoryLayout<UnsafeRawPointer>.alignment, owner: access, codeLifetime: access.codeLifetime)
+            pointer.store(UnsafeRawPointer(access.address))
+            return pointer
         case .genericValue:
             // The callee receives Value's metadata and operates on Value itself,
             // even when Value also provides a different foreign representation.
@@ -93,7 +99,8 @@ private func swiftConventionCodec<Value>(for type: Value.Type, generic: SwiftGen
                                         wrap: @escaping @Sendable (Value) -> Any,
                                         unwrap: @escaping @Sendable (Any) -> Value) throws -> SwiftConventionCodec {
     let codec = try SwiftArgumentCodec<Value>(defaultConsuming: consumes, generic: generic)
-    return SwiftConventionCodec(type: codec.type, consumes: consumes, argument: generic, prepareCallback: {
+    return SwiftConventionCodec(type: codec.type, consumes: consumes, convention: consumes ? .consuming : .borrowing,
+        argument: generic, prepareCallback: {
         let decode = try SwiftCallbackValues.decoder(for: Value.self, generic: generic, consuming: consumes)
         return { wrap(decode($0, $1) as! Value) }
     }) { value, owner in
@@ -153,6 +160,9 @@ extension NativeSwiftConsuming: Sendable where Value: Sendable {}
 /// exclusive access to its native payload instead of copying it.
 /// The caller gives native code exclusive access for the entire invocation,
 /// including suspension: do not read, write, or alias this buffer during it.
+/// A callback with a known Swift pointee receives a local buffer whose value is
+/// written back before callback completion, even on error. Runtime-only inout
+/// callback inputs use NativeSwiftBorrowedValue to access the original payload.
 /// This buffer is deliberately not Sendable.
 public final class NativeSwiftInout<Value> {
     private let storage: NativeValueStorage
@@ -183,6 +193,16 @@ public final class NativeSwiftInout<Value> {
         result.store(UnsafeRawPointer(storage.address))
         return result
     }
+
+    private static func callbackDecoder() -> SwiftCallbackDecoder {
+        let constants = SwiftValueConstants(Value.self)
+        return { argument, scope in
+            let address = argument.load(as: UnsafeMutableRawPointer.self)
+            let buffer = Self(constants.load(from: address, as: Value.self))
+            scope.writeback { address.assumingMemoryBound(to: Value.self).pointee = buffer.value }
+            return buffer
+        }
+    }
 }
 extension NativeSwiftInout: SwiftConventionArgument {
     static var wrappedType: Any.Type { Value.self }
@@ -191,11 +211,11 @@ extension NativeSwiftInout: SwiftConventionArgument {
         // Preparing a signature must establish the pointee contract even before
         // an actual buffer is supplied.
         if case .runtimeValue(let plan, _, let asynchronous) = generic {
-            guard Value.self == NativeSwiftValue.self else {
-                throw ABIResolutionError.unsupportedDeclaration("Inout runtime arguments require an owned NativeSwiftValue.")
+            guard Value.self == NativeSwiftValue.self || Value.self == NativeSwiftBorrowedValue.self else {
+                throw ABIResolutionError.unsupportedDeclaration("Inout runtime arguments require a runtime value handle.")
             }
-            return SwiftConventionCodec(type: try CValueType(scalar: ABIValuePointer), consumes: false, argument: generic,
-                prepareCallback: { throw ABIResolutionError.unsupportedDeclaration("Inout callback arguments require scoped writeback.") }) { value, _ in
+            return SwiftConventionCodec(type: try CValueType(scalar: ABIValuePointer), consumes: false, convention: .inoutValue, argument: generic,
+                prepareCallback: { throw ABIResolutionError.unsupportedDeclaration("Use NativeSwiftBorrowedValue for a runtime inout callback input.") }) { value, _ in
                 let access = try plan.encode((value as! Self).value, convention: .inoutValue, asynchronous: asynchronous)
                 let pointer = NativeValueStorage(size: MemoryLayout<UnsafeRawPointer>.size,
                     alignment: MemoryLayout<UnsafeRawPointer>.alignment, owner: access, codeLifetime: access.codeLifetime)
@@ -204,7 +224,7 @@ extension NativeSwiftInout: SwiftConventionArgument {
             }
         }
         if case .value = generic {} else { try Self.validatePointee() }
-        return SwiftConventionCodec(type: try CValueType(scalar: ABIValuePointer), consumes: false, argument: generic,
-            prepareCallback: { throw ABIResolutionError.unsupportedDeclaration("Inout callback arguments require scoped writeback.") }) { value, _ in (value as! Self).encoded() }
+        return SwiftConventionCodec(type: try CValueType(scalar: ABIValuePointer), consumes: false, convention: .inoutValue, argument: generic,
+            prepareCallback: { callbackDecoder() }) { value, _ in (value as! Self).encoded() }
     }
 }

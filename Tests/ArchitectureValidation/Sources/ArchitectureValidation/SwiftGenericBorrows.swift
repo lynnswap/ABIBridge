@@ -287,5 +287,30 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
         && suspendedInput.isConsumed, "Async consuming input stays owned across suspension")
     try check(state.owned!.take(as: String.self) == "suspended",
         "Async consuming input retains its payload beyond callback completion")
+    typealias MutableInput = NativeSwiftClosure<(NativeSwiftBorrowedValue) throws -> Void>
+    let mutateInput = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.visitRuntimeInout<A where A: ~Swift.Copyable>(inout A, (inout A) throws -> ()) throws -> ()",
+        as: ((NativeSwiftInout<NativeSwiftValue>, MutableInput) throws -> Void).self, genericArguments: [.type(String.self)])
+    let replaceInput = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.replaceRuntimeValue<A where A: ~Swift.Copyable>(inout A, __owned A) -> ()",
+        as: ((NativeSwiftInout<NativeSwiftBorrowedValue>, NativeSwiftConsuming<NativeSwiftValue>) -> Void).self,
+        genericArguments: [.type(String.self)])
+    let mutable = try unsafe copyValue.unsafeInvoke("before")
+    state.owned = try unsafe copyValue.unsafeInvoke("after")
+    let mutateBody = try MutableInput { view in
+        state.borrow = view
+        try unsafe replaceInput.unsafeInvoke(NativeSwiftInout(view), NativeSwiftConsuming(state.owned!))
+    }
+    try unsafe mutateInput.unsafeInvoke(NativeSwiftInout(mutable), mutateBody)
+    try check(mutable.take(as: String.self) == "after" && state.owned!.isConsumed,
+        "Runtime inout callback authenticates and mutates native storage through its borrowed view")
+    do { _ = try state.borrow!.copy(); throw ArchitectureValidationFailure(description: "Mutable borrow escaped") }
+    catch NativeSwiftBorrowError.expiredBorrow { checks.append("Mutable callback borrow expires after native completion") }
+    typealias TypedInout = NativeSwiftClosure<(NativeSwiftInout<String>) -> Void>
+    let typedInout = try await runtime.swiftFunction(named: "SwiftValueFixtures.visitStringInout(_:_:)",
+        as: ((NativeSwiftInout<String>, TypedInout) -> Void).self)
+    let typedBuffer = NativeSwiftInout("before")
+    try unsafe typedInout.unsafeInvoke(typedBuffer, TypedInout { $0.value += " after" })
+    try check(typedBuffer.value == "before after", "Known inout callback type authenticates and writes its buffer back")
     return checks
 }

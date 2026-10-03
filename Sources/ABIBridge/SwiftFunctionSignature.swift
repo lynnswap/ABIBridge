@@ -197,8 +197,10 @@ struct SwiftCallValues: Sendable {
 final class SwiftCallbackScope {
     private var borrows: [SwiftValueBorrow] = []
     private var storage: [NativeValueStorage] = []
+    private var writebacks: [() -> Void] = []
     private let asynchronous: Bool
     init(asynchronous: Bool) { self.asynchronous = asynchronous }
+    func writeback(_ body: @escaping () -> Void) { writebacks.append(body) }
     func borrow(_ address: UnsafeRawPointer, retaining storage: NativeValueStorage? = nil,
                 allowsSuspension: Bool? = nil) -> SwiftValueBorrow {
         if let storage { self.storage.append(storage) }
@@ -207,6 +209,7 @@ final class SwiftCallbackScope {
         return borrow
     }
     deinit {
+        for writeback in writebacks { writeback() }
         for borrow in borrows { borrow.expire() }
         withExtendedLifetime(storage) {}
     }
