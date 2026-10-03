@@ -69,6 +69,71 @@ func validateHooks(providerPath: String, callerPath: String) async throws {
 }
 
 @MainActor
+func validateAsyncHooks(providerPath: String, callerPath: String) async throws {
+    func check(_ condition: Bool) { precondition(condition) }
+    guard let caller = dlopen(callerPath, RTLD_NOW | RTLD_LOCAL) else { fatalError(String(cString: dlerror())) }
+    defer { dlclose(caller) }
+    let runtime = ABIRuntime()
+    let provider = ImageSelector.path(URL(fileURLWithPath: providerPath))
+    let importer = ImageSelector.path(URL(fileURLWithPath: callerPath))
+    let failures = Mutex(0)
+    let failure: @Sendable (any Error) -> Void = { _ in failures.withLock { $0 += 1 } }
+    typealias Echo = nonisolated(nonsending) (Int64) async -> Int64
+    let integer = try await runtime.swiftFunction(named: "SwiftFunctionFixture.hookAsyncEcho(_:)",
+        as: Echo.self, genericArguments: [.type(Int64.self)], in: provider)
+    let integerCaller = try await runtime.swiftFunction(named: "SwiftExtensionFixture.importedAsyncHookInteger(_:)", as: Echo.self, in: importer)
+    let textCaller = try await runtime.swiftFunction(named: "SwiftExtensionFixture.importedAsyncHookString(_:)",
+        as: (nonisolated(nonsending) (String) async -> String).self, in: importer)
+    check(try unsafe await integerCaller.unsafeInvoke(1) == 1)
+    let integerHook = try unsafe await integer.hookImportedCalls(in: importer, using: runtime, onFailure: failure) {
+        (call: NativeSwiftFunctionInvocation<Echo>, value) in
+        await Task.yield()
+        return try await call.proceed(value + 10) + 100
+    }
+    defer { integerHook.invalidate() }
+    check(try unsafe await integerCaller.unsafeInvoke(1) == 111)
+    check(try unsafe await textCaller.unsafeInvoke("unmatched") == "unmatched")
+    integerHook.invalidate()
+    check(try unsafe await integerCaller.unsafeInvoke(1) == 1)
+    typealias Throwing = nonisolated(nonsending) (Int64) async throws(NSError) -> String
+    let throwing = try await runtime.swiftFunction(named: "SwiftFunctionFixture.hookAsyncThrowing(_:)", as: Throwing.self, in: provider)
+    let throwingCaller = try await runtime.swiftFunction(named: "SwiftExtensionFixture.importedAsyncHookThrowing(_:)", as: Throwing.self, in: importer)
+    _ = try unsafe await throwingCaller.unsafeInvoke(1)
+    let errorHook = try unsafe await throwing.hookImportedCalls(in: importer, using: runtime, onFailure: failure) { call, value in
+        let result = try await call.proceed(value)
+        if value == 98 { throw ConsumerHookFailure.unrepresentable }
+        return result + "-hook"
+    }
+    defer { errorHook.invalidate() }
+    check(try unsafe await throwingCaller.unsafeInvoke(1) == String(repeating: "value:1", count: 100) + "-hook")
+    check(try unsafe await throwingCaller.unsafeInvoke(98) == String(repeating: "value:98", count: 100))
+    do { _ = try unsafe await throwingCaller.unsafeInvoke(-1); fatalError("Expected a native async failure") }
+    catch let error as NativeSwiftError {
+        error.withUnderlyingError { check(($0 as NSError).domain == "native-async-hook-consumer") }
+    }
+    errorHook.invalidate()
+    let type = try await runtime.swiftType(named: "SwiftFunctionFixture.AsyncHookRenderer", in: provider)
+    let method = try await type.method(named: "render(_:)", as: (nonisolated(nonsending) (String) async -> String).self)
+    let make = try await runtime.swiftFunction(named: "SwiftFunctionFixture.makeAsyncHookRenderer() -> SwiftFunctionFixture.AsyncHookRenderer",
+        as: (() -> AnyObject).self, in: provider)
+    let object = try unsafe make.unsafeInvoke()
+    let methodCaller = try await runtime.swiftFunction(
+        named: "SwiftExtensionFixture.importedAsyncHookMethod(SwiftFunctionFixture.AsyncHookRenderer, Swift.String) async -> Swift.String",
+        as: (nonisolated(nonsending) (AnyObject, String) async -> String).self, in: importer)
+    let identity = ObjectIdentifier(object)
+    let methodHook = try unsafe await method.hookVirtualCalls(onFailure: failure) { call, value in
+        let receiver = try call.receiver(as: AnyObject.self)
+        precondition(ObjectIdentifier(receiver) == identity)
+        return try await call.proceed(value + "-hook")
+    }
+    defer { methodHook.invalidate() }
+    check(try unsafe await methodCaller.unsafeInvoke(object, "value") == "value-hook-native")
+    methodHook.invalidate()
+    check(try unsafe await methodCaller.unsafeInvoke(object, "value") == "value-native")
+    check(failures.withLock { $0 } == 1)
+}
+
+@MainActor
 func prepareGenericGetters(type: NativeSwiftType, object: NativeObject) async throws {
     _ = try await type.getter(named: "checked", as: (() throws -> String).self,
                        declaredAs: "() throws(B) -> A")
@@ -171,4 +236,6 @@ print("Swift function consumer passed")
 if CommandLine.arguments.count > 2 {
     try await validateHooks(providerPath: path, callerPath: CommandLine.arguments[2])
     print("Swift generic and throwing hook consumer passed")
+    try await validateAsyncHooks(providerPath: path, callerPath: CommandLine.arguments[2])
+    print("Swift async hook consumer passed")
 }

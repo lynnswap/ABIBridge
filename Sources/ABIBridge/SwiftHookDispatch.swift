@@ -3,14 +3,21 @@ import Foundation
 import Synchronization
 
 final class SwiftHookHandler: @unchecked Sendable {
-    let invoke: (SwiftHookFrame, [NativeValueStorage]) throws -> NativeValueStorage
+    let invoke: ((SwiftHookFrame, [NativeValueStorage]) throws -> NativeValueStorage)?
+    let invokeAsync: ((SwiftHookFrame, [NativeValueStorage]) async throws -> NativeValueStorage)?
     let failure: @Sendable (any Error) -> Void
     let requiresMainActor: Bool
     let owner: (any Sendable)?
     init(requiresMainActor: Bool = false, retaining owner: (any Sendable)? = nil, failure: @escaping @Sendable (any Error) -> Void,
          invoke: @escaping (SwiftHookFrame, [NativeValueStorage]) throws -> NativeValueStorage) {
-        self.requiresMainActor = requiresMainActor; self.owner = owner; self.failure = failure; self.invoke = invoke
+        self.requiresMainActor = requiresMainActor; self.owner = owner; self.failure = failure; self.invoke = invoke; self.invokeAsync = nil
     }
+    init(requiresMainActor: Bool = false, retaining owner: (any Sendable)? = nil, failure: @escaping @Sendable (any Error) -> Void,
+         invokeAsync: @escaping (SwiftHookFrame, [NativeValueStorage]) async throws -> NativeValueStorage) {
+        self.requiresMainActor = requiresMainActor; self.owner = owner; self.failure = failure
+        invoke = nil; self.invokeAsync = invokeAsync
+    }
+
 }
 
 final class SwiftHookNode: Sendable {
@@ -37,7 +44,9 @@ private final class SwiftHookStep {
     }
 }
 
-private final class SwiftHookExecution {
+// Each call owns its execution buffers; async continuations verify the entering
+// task before reaching them, even if a consumer transfers the public view.
+private final class SwiftHookExecution: @unchecked Sendable {
     let call: OpaquePointer
     let handlers: [SwiftHookHandler]
     let signature: SwiftHookSignature
@@ -64,7 +73,7 @@ private final class SwiftHookExecution {
             catch { throw SwiftHookCompletedResultError(underlying: error) }
         }
         do {
-            let result = try handler.invoke(frame, arguments)
+            let result = try handler.invoke!(frame, arguments)
             frame.expire()
             return result
         } catch {
@@ -77,6 +86,36 @@ private final class SwiftHookExecution {
             if let last = step.last { return try last.get() }
             if let completed = error as? SwiftHookCompletedResultError { throw completed }
             return try invoke(count - 1, arguments: arguments)
+        }
+    }
+    nonisolated(nonsending) func invokeAsync(_ count: Int, arguments: [NativeValueStorage]) async throws -> NativeValueStorage {
+        guard count != 0 else { return try await signature.proceedAsync(call, arguments: arguments) }
+        let handler = handlers[count - 1]
+        let step = SwiftHookStep()
+        let readReceiver: (() throws -> NativeValueStorage)? = signature.receiver == nil ? nil : { [self] in try signature.readReceiver(call, arguments: arguments) }
+        let frame = SwiftHookFrame(receiver: readReceiver, asynchronous: { [self] values in
+            do {
+                let result = try await invokeAsync(count - 1, arguments: signature.preservingReceiver(values, from: arguments))
+                step.record(.success(result))
+                return try signature.cloneResult(result)
+            } catch let error as SwiftHookCompletedResultError {
+                step.record(.failure(error)); throw error
+            }
+        })
+        do {
+            let result = try await handler.invokeAsync!(frame, arguments)
+            frame.expire()
+            return result
+        } catch {
+            frame.expire()
+            let underlying = (error as? SwiftHookCompletedResultError)?.underlying ?? error
+            if let nativeError = signature.errorPlan?.encode(underlying) {
+                throw SwiftHookCompletedResultError(underlying: underlying, nativeError: nativeError)
+            }
+            handler.failure(underlying)
+            if let last = step.last { return try last.get() }
+            if let completed = error as? SwiftHookCompletedResultError { throw completed }
+            return try await invokeAsync(count - 1, arguments: arguments)
         }
     }
 }
@@ -124,12 +163,98 @@ final class SwiftHookDispatcher: Sendable {
             (snapshot.last ?? nodes.last?.1)?.failure(error)
         }
     }
+    func makeAsyncBody(_ call: OpaquePointer) -> ABISwiftClosureValue {
+        let nodes = nodes.withLock { $0.compactMap { node in node.snapshot().map { (node.signature, $0) } } }
+        var snapshot: [SwiftHookHandler] = []
+        var selected = signature
+        do {
+            for (signature, handler) in nodes where try signature.matchesIncoming(call) {
+                if handler.requiresMainActor && !Thread.isMainThread {
+                    handler.failure(NativeSwiftHookInvocationError.wrongThread)
+                    continue
+                }
+                selected = signature; snapshot.append(handler)
+            }
+            guard !snapshot.isEmpty else { return ABISwiftClosureValue() }
+            try selected.prepareIncoming(call)
+            let arguments = try selected.readArguments(call)
+            let execution = SwiftHookAsyncBody(call: call, handlers: snapshot, signature: selected, arguments: arguments)
+            if selected.asyncInterface!.inheritsCallerIsolation {
+                let body: nonisolated(nonsending) @Sendable () async -> Void = { await execution.run() }
+                return retainedValue(body)
+            }
+            let body: @Sendable @concurrent () async -> Void = { await execution.run() }
+            return retainedValue(body)
+        } catch {
+            (snapshot.last ?? nodes.last?.1)?.failure(error)
+            return ABISwiftClosureValue()
+        }
+    }
+
+}
+
+private final class SwiftHookAsyncBody: @unchecked Sendable {
+    let call: OpaquePointer
+    let handlers: [SwiftHookHandler]
+    let signature: SwiftHookSignature
+    let arguments: [NativeValueStorage]
+    init(call: OpaquePointer, handlers: [SwiftHookHandler], signature: SwiftHookSignature, arguments: [NativeValueStorage]) {
+        self.call = call; self.handlers = handlers; self.signature = signature; self.arguments = arguments
+    }
+    nonisolated(nonsending) func run() async {
+        do {
+            let execution = SwiftHookExecution(call: call, handlers: handlers, signature: signature)
+            let value = try await execution.invokeAsync(handlers.count, arguments: arguments)
+            var failure: OpaquePointer?
+            guard ABISwiftIncomingSetResult(call, value.address, signature.result.size, &failure) else {
+                throw consumeNativeCallFailure(failure)
+            }
+            value.relinquishValue()
+            return
+        } catch let completed as SwiftHookCompletedResultError {
+            if let nativeError = completed.nativeError, let errorPlan = signature.errorPlan {
+                var failure: OpaquePointer?
+                if ABISwiftIncomingSetError(call, nativeError.address, errorPlan.type.size, &failure) {
+                    nativeError.relinquishValue()
+                    return
+                }
+                handlers.last?.failure(consumeNativeCallFailure(failure))
+            }
+        } catch { handlers.last?.failure(error) }
+        if ABISwiftIncomingResultAddress(call) == nil {
+            // Prepared arguments are the unchanged native storage. This path
+            // transfers original consumed ownership exactly once.
+            let invocation = ABISwiftIncomingCreateAsyncProceed(call, nil, 0, nil, true, nil)!
+            await invokeSwiftAsync(invocation)
+            ABISwiftIncomingCompleteAsyncProceed(call, invocation)
+            ABIReleaseSwiftAsyncInvocation(invocation)
+        }
+    }
 }
 
 final class SwiftGeneratedCallback: @unchecked Sendable {
     let handle: OpaquePointer
-    var function: ABIUnmanagedFunction { ABISwiftCallbackFunction(handle)! }
-    init(dispatcher: SwiftHookDispatcher, original: SwiftImplementation) throws {
+    private let asynchronous: Bool
+    private let original: SwiftImplementation
+    var function: ABIUnmanagedFunction {
+        asynchronous ? ABISwiftAsyncHookCallbackFunction(handle)! : ABISwiftCallbackFunction(handle)!
+    }
+    var descriptor: UnsafeRawPointer? { asynchronous ? ABISwiftAsyncClosureCallbackDescriptor(handle) : nil }
+    init(dispatcher: SwiftHookDispatcher, original: SwiftImplementation, contextSize: UInt32? = nil) throws {
+        self.original = original
+        asynchronous = dispatcher.signature.asyncInterface != nil
+        if let interface = dispatcher.signature.asyncInterface {
+            let context = Unmanaged.passRetained(dispatcher)
+            var failure: OpaquePointer?
+            guard let handle = ABICreateSwiftAsyncHookCallback(interface.handle, original.function,
+                contextSize ?? dispatcher.signature.contextSize!, { context, call in
+                    Unmanaged<SwiftHookDispatcher>.fromOpaque(context!).takeUnretainedValue().makeAsyncBody(call!)
+                }, context.toOpaque(), { Unmanaged<SwiftHookDispatcher>.fromOpaque($0!).release() }, &failure) else {
+                context.release(); throw consumeNativeCallFailure(failure)
+            }
+            self.handle = handle
+            return
+        }
         var functions = ABISwiftCallbackFunctions()
         functions.invoke = { context, call in
             Unmanaged<SwiftHookDispatcher>.fromOpaque(context!).takeUnretainedValue().invoke(call!)
@@ -144,7 +269,10 @@ final class SwiftGeneratedCallback: @unchecked Sendable {
         }
         self.handle = handle
     }
-    deinit { ABIReleaseSwiftCallback(handle) }
+    deinit {
+        if asynchronous { ABIReleaseSwiftAsyncClosureCallback(handle) }
+        else { ABIReleaseSwiftCallback(handle) }
+    }
 }
 
 extension SwiftHookSignature {
@@ -172,7 +300,10 @@ extension SwiftHookSignature {
         }
         let context = Unmanaged.passRetained(self)
         var error: OpaquePointer?
-        guard ABISwiftIncomingPrepare(call, interface.handle, functions, context.toOpaque(), &error) else {
+        let success = if let asyncInterface {
+            ABISwiftAsyncIncomingPrepare(call, asyncInterface.handle, functions, context.toOpaque(), &error)
+        } else { ABISwiftIncomingPrepare(call, interface.handle, functions, context.toOpaque(), &error) }
+        guard success else {
             context.release(); throw consumeNativeCallFailure(error)
         }
     }

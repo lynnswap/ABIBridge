@@ -92,5 +92,64 @@ import SwiftValueFixtures
     }
     try check(try unsafe applyExtended.unsafeInvoke(callback, 42) == 42,
         "Runtime-only class-constrained existential callbacks preserve their authenticated convention")
+    let superclassName = "any SwiftValueFixtures.RuntimeExtendedSuperclass<A> & SwiftValueFixtures.RuntimeExtendedObject<Self.Element == A>"
+    let makeSuperclass = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.makeRuntimeExtendedSuperclass<A>(A) -> " + superclassName,
+        as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+    let superclassValue = try unsafe makeSuperclass.unsafeInvoke(42)
+    try check(try superclassValue.withCopy { ($0 as? any CustomStringConvertible)?.description } == "42",
+        "Runtime-only superclass existential retains superclass arguments and protocol witnesses")
+    let applySuperclass = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.applyRuntimeExtendedSuperclass<A>((" + superclassName + ") -> Swift.Int, A) -> Swift.Int",
+        as: ((ExtendedCallback, Int) -> Int).self, genericArguments: [.type(Int.self)])
+    try check(try unsafe applySuperclass.unsafeInvoke(callback, 42) == 42,
+        "Generic superclass callback authenticates the native class and witness container")
+    let superclassClosure = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.makeRuntimeExtendedSuperclassClosure<A>(A) -> () -> " + superclassName,
+        as: ((Int) -> NativeSwiftClosure<() -> NativeSwiftValue>).self, genericArguments: [.type(Int.self)])
+    try check(try unsafe superclassClosure.unsafeInvoke(43).unsafeInvoke().withCopy { ($0 as? any CustomStringConvertible)?.description } == "43",
+        "Returned generic superclass closure keeps the native existential representation")
+    typealias SuperclassValue = any RuntimeExtendedSuperclass<Int> & RuntimeExtendedObject<Int>
+    let typedSuperclass = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.makeRuntimeExtendedSuperclass<A>(A) -> " + superclassName,
+        as: ((Int) -> SuperclassValue).self, genericArguments: [.type(Int.self)])
+    try check(try unsafe typedSuperclass.unsafeInvoke(44).value == 44,
+        "Typed generic superclass existential binds exact superclass metadata")
+    let leftComposition = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.makeLeftConstrainedComposition() -> any SwiftValueFixtures.RuntimeExtendedLeft & SwiftValueFixtures.RuntimeExtendedRight<Self.SwiftValueFixtures.RuntimeExtendedLeft.Element == Swift.Int>",
+        as: (() -> NativeSwiftValue).self)
+    let rightComposition = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.makeRightConstrainedComposition() -> any SwiftValueFixtures.RuntimeExtendedLeft & SwiftValueFixtures.RuntimeExtendedRight<Self.SwiftValueFixtures.RuntimeExtendedRight.Element == Swift.Int>",
+        as: (() -> NativeSwiftValue).self)
+    let leftValue = try unsafe leftComposition.unsafeInvoke()
+    let rightValue = try unsafe rightComposition.unsafeInvoke()
+    try check(leftValue.type != rightValue.type,
+        "Parameterized compositions retain the declaring protocol of same-named associated types")
+    typealias ClassComposition = any RuntimeClassFirst<Int> & RuntimeClassSecond<Int>
+    let makeComposition = try await runtime.swiftFunction(named: "SwiftValueFixtures.makeRuntimeDistinctClassComposition(_:)",
+        as: ((Int) -> ClassComposition).self, genericArguments: [.type(Int.self)])
+    let classValue = try unsafe makeComposition.unsafeInvoke(42)
+    let echoComposition = try await runtime.swiftFunction(named: "SwiftValueFixtures.echoRuntimeDistinctClassComposition(_:)",
+        as: ((ClassComposition) -> ClassComposition).self, genericArguments: [.type(Int.self)])
+    try check(try unsafe echoComposition.unsafeInvoke(classValue) === classValue && (classValue as? RuntimeClassBoth<Int>)?.value == 42,
+        "Parameterized class compositions keep both object protocol witnesses")
+    let shared = try await runtime.swiftFunction(named: "SwiftValueFixtures.makeRuntimeSharedComposition(_:)",
+        as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+    try check(try unsafe shared.unsafeInvoke(42).withCopy { ($0 as? any RuntimeSharedBase<Int>)?.value } == 42,
+        "Shared inherited associated types resolve one declaring protocol")
+    typealias Metatype = any RuntimeClassLeft<Int>.Type
+    let metatypeEcho = try await runtime.swiftFunction(named: "SwiftValueFixtures.echoRuntimeParameterizedMetatype(_:)",
+        as: ((Metatype) -> Metatype).self, genericArguments: [.type(Int.self)])
+    try check(ObjectIdentifier(try unsafe metatypeEcho.unsafeInvoke(RuntimeClassBoth<Int>.self)) == ObjectIdentifier(RuntimeClassBoth<Int>.self),
+        "Parameterized existential metatypes preserve their type and witness")
+    let metatypeFactory = try await runtime.swiftFunction(named: "SwiftValueFixtures.makeRuntimeParameterizedMetatype(_:)",
+        as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+    let erasedMetatype = try unsafe metatypeFactory.unsafeInvoke(42)
+    try check(try erasedMetatype.withCopy { ($0 as? Metatype).map(ObjectIdentifier.init) } == ObjectIdentifier(RuntimeClassBoth<Int>.self),
+        "Runtime-only metatype results retain their extended shape")
+    let metatypeApply = try await runtime.swiftFunction(named: "SwiftValueFixtures.applyRuntimeParameterizedMetatype(_:_:)",
+        as: ((NativeSwiftClosure<(Metatype) -> Metatype>, Int) -> Metatype).self, genericArguments: [.type(Int.self)])
+    try check(ObjectIdentifier(try unsafe metatypeApply.unsafeInvoke(.init { $0 }, 42)) == ObjectIdentifier(RuntimeClassBoth<Int>.self),
+        "Parameterized metatype callbacks authenticate their native entry")
     return checks
 }

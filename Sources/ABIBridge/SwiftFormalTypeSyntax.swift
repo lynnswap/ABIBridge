@@ -149,14 +149,26 @@ extension SwiftFormalType {
         case "Type", "ArgumentTuple", "ReturnType", "TupleElement", "PackElement", "DynamicSelf":
             self = try Self(node.requiredChild(kind: "Type", fallingBackToFirst: true))
         case "ConstrainedExistential":
-            let base = try children[0].name()
+            let composition = try children[0].requiredChild()
+            let superclass: Self?
+            let base: String
+            if composition.kind == "ProtocolListWithClass" {
+                superclass = try Self(composition.requiredChild(kind: "Type"))
+                base = try composition.requiredChild(kind: "ProtocolList").name()
+            } else {
+                superclass = nil
+                base = try children[0].name()
+            }
             let requirements = try children[1].children().map { requirement -> ExistentialConstraint in
                 guard requirement.kind == "DependentGenericSameTypeRequirement" else {
                     throw ABIResolutionError.unsupportedDeclaration("Unknown constrained existential requirement: " + requirement.kind)
                 }
                 let parts = requirement.children()
                 func subject(_ part: SwiftSyntax.Node) throws -> String {
-                    if part.kind == "ConstrainedExistentialSelf" { return "Self" }
+                    // A substituted associated-type path can reuse an outer
+                    // parameter node. This requirement's subject still names
+                    // the existential's Self, not that outer generic argument.
+                    if part.kind == "ConstrainedExistentialSelf" || part.kind == "DependentGenericParamType" { return "Self" }
                     if part.kind == "DependentMemberType" {
                         let nodes = part.children()
                         let reference = nodes[1]
@@ -167,7 +179,7 @@ extension SwiftFormalType {
                 }
                 return .init(subject: try subject(parts[0]), value: try Self(parts[1]))
             }
-            self = .constrainedExistential(base: "any " + base, constraints: requirements, shape: try node.constrainedExistentialShapeName())
+            self = .constrainedExistential(base: "any " + base, superclass: superclass, constraints: requirements, shape: try node.constrainedExistentialShapeName())
         case "OpaqueReturnType":
             self = .opaqueResult(index: node.child(kind: "OpaqueReturnTypeIndex")?.index.map { Int($0) + 1 } ?? 0)
         case "DependentGenericParamType":
