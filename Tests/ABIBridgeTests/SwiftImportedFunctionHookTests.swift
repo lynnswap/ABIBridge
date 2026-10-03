@@ -403,6 +403,29 @@ struct SwiftImportedFunctionHookTests {
         #expect(observed == nil)
     }
 
+    @Test func adapterCapturedByWritebackReleasesItsCallbackScope() async throws {
+        let fixture = try CompiledSwiftReplacementFixture()
+        defer { fixture.cleanup() }
+        typealias Body = NativeSwiftClosure<() -> Int64>
+        let target = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookAdapterWriteback(Swift.UnsafeMutableRawPointer?, inout () -> Swift.Int64) -> ()",
+            as: ((OptionalHookPointer?, NativeSwiftInout<Body>) -> Void).self, in: fixture.providerScope)
+        let caller = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".callAdapterWriteback(_:)",
+            as: ((UnsafeMutableRawPointer?) -> Int64).self, in: fixture.callerScope)
+        let observed = WeakHookCapture()
+        let hook = try unsafe await target.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { Issue.record($0) }) { _, value, body in
+                let token = NSObject()
+                observed.value = token
+                let capture = AdapterWritebackCapture(value: value!, token: token)
+                body.value = try Body { withExtendedLifetime(capture.token) { capture.value.marker } }
+            }
+        defer { hook.invalidate() }
+        let pointer = UnsafeMutableRawPointer.allocate(byteCount: 1, alignment: 1)
+        defer { pointer.deallocate() }
+        #expect(try unsafe caller.unsafeInvoke(pointer) == 42)
+        #expect(observed.value == nil)
+    }
+
     @Test func runtimeValuesNestedClosuresAndInoutComposeThroughHooks() async throws {
         let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
         @inline(never) public func runtimeHookEcho<Value>(_ value: Value) -> Value { value }
@@ -1261,6 +1284,14 @@ private struct OptionalHookPointer: ABIBridgeValue {
     let marker: Int64
     init(nativeValue: NativeValue) { native = nativeValue; marker = 42 }
     static func nativeValue(from value: Self) -> NativeValue { value.native }
+}
+
+private final class WeakHookCapture: @unchecked Sendable { weak var value: NSObject? }
+
+private final class AdapterWritebackCapture: @unchecked Sendable {
+    let value: OptionalHookPointer
+    let token: NSObject
+    init(value: OptionalHookPointer, token: NSObject) { self.value = value; self.token = token }
 }
 
 #endif

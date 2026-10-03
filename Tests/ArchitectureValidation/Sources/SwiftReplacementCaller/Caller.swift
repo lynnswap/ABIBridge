@@ -101,3 +101,9 @@ open class CallerOverridingRenderer: ReplacementRenderer {
     hookPointerAndBorrow(value, { text })
 }
 @inline(never) public func callConsumeHookTuple(_ value: NSObject) -> Int64 { consumeHookTuple((value, 42)) }
+
+@inline(never) public func callAdapterWriteback(_ value: UnsafeMutableRawPointer?) -> Int64 {
+    var body = { Int64(0) }
+    hookAdapterWriteback(value, &body)
+    return body()
+}

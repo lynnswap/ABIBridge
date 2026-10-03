@@ -303,6 +303,7 @@ final class SwiftCallbackScope {
         for cleanup in pending.values { cleanup() }
         for borrow in borrows { borrow.expire() }
         borrows.removeAll()
+        writebacks.removeAll()
     }
     deinit { expire(); withExtendedLifetime(storage) {} }
 }
