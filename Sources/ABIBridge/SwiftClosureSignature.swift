@@ -151,20 +151,18 @@ extension SwiftClosureValue {
 
 struct SwiftClosureCodec: Sendable {
     let type: CValueType
-    let nativeValueTypes: [ObjectIdentifier]
     let nativePlan: SwiftGenericClosurePlan?
     let encodeValue: (@Sendable (Any, Any?) throws -> NativeValueStorage)?
     let borrowValue: (@Sendable (SwiftValueBorrow, SwiftValueCodeLifetime?) -> Any)?
     let takeValue: (@Sendable (ABISwiftClosureValue, SwiftValueCodeLifetime?) -> Any)?
     let makeValue: @Sendable (ABISwiftClosureValue, Any?, Bool, SwiftValueCodeLifetime?) throws -> Any
 
-    init(type: CValueType, nativeValueTypes: [ObjectIdentifier] = [], nativePlan: SwiftGenericClosurePlan? = nil,
+    init(type: CValueType, nativePlan: SwiftGenericClosurePlan? = nil,
          encoding encodeValue: (@Sendable (Any, Any?) throws -> NativeValueStorage)? = nil,
          borrowing borrowValue: (@Sendable (SwiftValueBorrow, SwiftValueCodeLifetime?) -> Any)? = nil,
          taking takeValue: (@Sendable (ABISwiftClosureValue, SwiftValueCodeLifetime?) -> Any)? = nil,
          makeValue: @escaping @Sendable (ABISwiftClosureValue, Any?, Bool, SwiftValueCodeLifetime?) throws -> Any) {
         self.type = type
-        self.nativeValueTypes = nativeValueTypes
         self.nativePlan = nativePlan
         self.encodeValue = encodeValue
         self.borrowValue = borrowValue

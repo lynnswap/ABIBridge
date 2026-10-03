@@ -245,7 +245,7 @@ extension NativeSwiftClosure: SwiftClosureValue {
                 codeLifetime: original.codeLifetime), prepared))
         }
         let pointer = try CValueType(scalar: ABIValuePointer)
-        return SwiftClosureCodec(type: try CValueType(fields: [pointer, pointer]), nativeValueTypes: generic?.nativeValueTypes ?? [], nativePlan: generic,
+        return SwiftClosureCodec(type: try CValueType(fields: [pointer, pointer]), nativePlan: generic,
             encoding: { value, owner in try (value as! Self).encodeClosureResult(generic: generic, retainingCode: owner) }, borrowing: { borrow, lifetime in
             Self(call: .borrowed(resolve: { asynchronous in
                 let access = try borrow.access(asynchronous: asynchronous, codeLifetime: lifetime)

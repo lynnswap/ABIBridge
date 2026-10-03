@@ -89,14 +89,19 @@ final class SwiftGenericClosurePlan: Sendable {
     let runtimeArguments: [SwiftCallbackRuntimeArgument?]
     let result: SwiftGenericResult
     let nativeResult: Any.Type
+    let nativeParameterTypes: [ObjectIdentifier]
 
     init(transport: Transport, parameters: SwiftGenericParameters, discriminator: UInt16,
          authentication: String, isEscaping: Bool, resultConstants: SwiftValueConstants,
          errorPlan: SwiftErrorPlan?, runtimeArguments: [SwiftCallbackRuntimeArgument?],
-         result: SwiftGenericResult, nativeResult: Any.Type) {
+         result: SwiftGenericResult, nativeResult: Any.Type, hostParameters: [Any.Type]) {
         self.transport = transport; self.parameters = parameters; self.discriminator = discriminator
         self.authentication = authentication; self.isEscaping = isEscaping; self.resultConstants = resultConstants
         self.errorPlan = errorPlan; self.runtimeArguments = runtimeArguments; self.result = result; self.nativeResult = nativeResult
+        nativeParameterTypes = zip(hostParameters, parameters.arguments).map { host, argument in
+            ObjectIdentifier(argument.runtimeValue?.valueType.metadata
+                ?? (host as? any SwiftConventionArgument.Type)?.wrappedType ?? host)
+        }
     }
 
     var hasNestedClosures: Bool {
@@ -134,7 +139,7 @@ final class SwiftGenericClosurePlan: Sendable {
             parameters: SwiftGenericParameters(actual: signature.parameters, arguments: arguments),
             discriminator: try signature.closureDiscriminator(), authentication: try signature.closureAuthDescription(),
             isEscaping: false, resultConstants: SwiftValueConstants(signature.result), errorPlan: errorPlan,
-            runtimeArguments: Array(repeating: nil, count: types.count), result: result, nativeResult: signature.result)
+            runtimeArguments: Array(repeating: nil, count: types.count), result: result, nativeResult: signature.result, hostParameters: signature.parameters)
     }
 
     var convertsArguments: Bool {
@@ -190,17 +195,6 @@ final class SwiftGenericClosurePlan: Sendable {
         }
     }
 
-    var nativeValueTypes: [ObjectIdentifier] {
-        var result: [ObjectIdentifier] = []
-        for argument in parameters.arguments {
-            if let plan = argument.closure { result += plan.nativeValueTypes }
-            else if let runtime = argument.runtimeValue { result.append(ObjectIdentifier(runtime.valueType.metadata)) }
-        }
-        if case .closure(let codec) = self.result { result += codec.nativeValueTypes }
-        result.append(ObjectIdentifier(nativeResult))
-        return result
-    }
-
     // Compare the native calling convention, including nested functions and
     // formal error storage. Escape permission is checked separately from ABI.
     func hasSameNativeABI(as other: SwiftGenericClosurePlan) -> Bool {
@@ -235,23 +229,31 @@ final class SwiftGenericClosurePlan: Sendable {
     }
 
     func validateNativeValues(for other: SwiftGenericClosurePlan) throws {
-        guard nativeValueTypes == other.nativeValueTypes else {
+        guard nativeParameterTypes == other.nativeParameterTypes, nativeResult == other.nativeResult else {
             throw ABIResolutionError.signatureMismatch(.init(expected: "The closure's native argument and result types", found: []))
         }
         guard parameters.arguments.map(\.convention) == other.parameters.arguments.map(\.convention) else {
             throw ABIResolutionError.signatureMismatch(.init(expected: "The closure's native argument ownership", found: []))
         }
         for (first, second) in zip(parameters.arguments, other.parameters.arguments) {
-            if let expected = first.closure, let incoming = second.closure {
+            switch (first.closure, second.closure) {
+            case (.some(let expected), .some(let incoming)):
                 guard !expected.isEscaping || incoming.isEscaping else {
                     throw ABIResolutionError.signatureMismatch(.init(
                         expected: "An escaping nested closure accepted by the original native caller", found: ["A nonescaping input"]))
                 }
                 try incoming.validateNativeValues(for: expected)
+            case (.none, .none): break
+            default:
+                throw ABIResolutionError.signatureMismatch(.init(expected: "A native closure at the same argument position", found: []))
             }
         }
-        if case .closure(let produced) = result, case .closure(let expected) = other.result {
+        switch (result, other.result) {
+        case (.closure(let produced), .closure(let expected)):
             try produced.nativePlan!.validateNativeValues(for: expected.nativePlan!)
+        case (.closure, _), (_, .closure):
+            throw ABIResolutionError.signatureMismatch(.init(expected: "The closure's native result representation", found: []))
+        default: break
         }
     }
 
@@ -536,7 +538,7 @@ struct SwiftGenericCallPlan: Sendable {
             discriminator: swiftClosureDiscriminator(parameters: authentication, results: resultAuthentication),
             authentication: swiftClosureAuthDescription(parameters: authentication, results: resultAuthentication), isEscaping: isEscaping,
             resultConstants: SwiftValueConstants(nativeResult), errorPlan: errorPlan,
-            runtimeArguments: runtimeArguments, result: resultPlan, nativeResult: nativeResult)
+            runtimeArguments: runtimeArguments, result: resultPlan, nativeResult: nativeResult, hostParameters: signature.parameters)
     }
 
     private static func authTypes(_ formal: SwiftFormalType, actual: Any.Type,

@@ -332,3 +332,43 @@ let readClosureBody: nonisolated(nonsending) @Sendable (NativeSwiftBorrowing<Clo
 }
 guard try unsafe await readClosureData.unsafeInvoke(closureData, AsyncClosureDataReader(readClosureBody)) == 42 else { throw ConsumerError.wrongResult }
 print("Callbacks copy and return closure wrappers bound as native generic data, including after suspension")
+
+
+do {
+        typealias Reader = NativeSwiftClosure<(NativeSwiftValue, NativeSwiftValue) -> Int64>
+        typealias AsyncReader = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftValue, NativeSwiftValue) async -> Int64>
+        let factory = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeMixedRuntimeReader<A, B>(A.Type, B.Type) -> (A, B) -> Swift.Int64",
+            as: ((Int64.Type, NativeSwiftValue.Type) -> Reader).self,
+            genericArguments: [.type(Int64.self), .type(NativeSwiftValue.self)])
+        let reader = try unsafe factory.unsafeInvoke(Int64.self, NativeSwiftValue.self)
+        let correct = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.callMixedRuntimeReader<A, B>((A, B) -> Swift.Int64, A, B) -> Swift.Int64",
+            as: ((Reader, Int64, NativeSwiftValue) -> Int64).self,
+            genericArguments: [.type(Int64.self), .type(NativeSwiftValue.self)])
+        guard try unsafe correct.unsafeInvoke(reader, 35, pair) == 42 else { throw ConsumerError.wrongResult }
+        let swapped = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.callMixedRuntimeReader<A, B>((A, B) -> Swift.Int64, A, B) -> Swift.Int64",
+            as: ((Reader, NativeSwiftValue, Int64) -> Int64).self,
+            genericArguments: [.type(NativeSwiftValue.self), .type(Int64.self)])
+        do { _ = try unsafe swapped.unsafeInvoke(reader, pair, 35) as Int64; throw ConsumerError.wrongResult }
+        catch ABIResolutionError.signatureMismatch { }
+
+        let asyncFactory = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeMixedRuntimeAsyncReader<A, B>(A.Type, B.Type) -> nonisolated(nonsending) (A, B) async -> Swift.Int64",
+            as: ((Int64.Type, NativeSwiftValue.Type) -> AsyncReader).self,
+            genericArguments: [.type(Int64.self), .type(NativeSwiftValue.self)])
+        let asyncReader = try unsafe asyncFactory.unsafeInvoke(Int64.self, NativeSwiftValue.self)
+        let asyncCorrect = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.callMixedRuntimeAsyncReader<A, B>(nonisolated(nonsending) (A, B) async -> Swift.Int64, A, B) async -> Swift.Int64",
+            as: (nonisolated(nonsending) (AsyncReader, Int64, NativeSwiftValue) async -> Int64).self,
+            genericArguments: [.type(Int64.self), .type(NativeSwiftValue.self)])
+        guard try unsafe await asyncCorrect.unsafeInvoke(asyncReader, 35, pair) == 42 else { throw ConsumerError.wrongResult }
+        let asyncSwapped = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.callMixedRuntimeAsyncReader<A, B>(nonisolated(nonsending) (A, B) async -> Swift.Int64, A, B) async -> Swift.Int64",
+            as: (nonisolated(nonsending) (AsyncReader, NativeSwiftValue, Int64) async -> Int64).self,
+            genericArguments: [.type(NativeSwiftValue.self), .type(Int64.self)])
+        do { _ = try unsafe await asyncSwapped.unsafeInvoke(asyncReader, pair, 35) as Int64; throw ConsumerError.wrongResult }
+        catch ABIResolutionError.signatureMismatch { }
+}
+print("Native closure compatibility preserves every mixed runtime-value argument position")

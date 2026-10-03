@@ -419,3 +419,17 @@ public final class RuntimeFixedPairStore {
     let lifetime = RuntimeNestedClosureLifetime(onDestroy)
     return await body({ _ in await Task.yield(); return withExtendedLifetime(lifetime) { value } }, value)
 }
+
+@inline(never) public func makeMixedRuntimeReader<A, B>(_ first: A.Type, _ second: B.Type) -> (A, B) -> Int64 {
+    { _, _ in 42 }
+}
+@inline(never) public func callMixedRuntimeReader<A, B>(_ body: (A, B) -> Int64, _ first: A, _ second: B) -> Int64 {
+    body(first, second)
+}
+@inline(never) public func makeMixedRuntimeAsyncReader<A, B>(_ first: A.Type, _ second: B.Type)
+    -> nonisolated(nonsending) (A, B) async -> Int64 {
+    { _, _ in await Task.yield(); return 42 }
+}
+@inline(never) public nonisolated(nonsending) func callMixedRuntimeAsyncReader<A, B>(
+    _ body: nonisolated(nonsending) (A, B) async -> Int64, _ first: A, _ second: B
+) async -> Int64 { await body(first, second) }

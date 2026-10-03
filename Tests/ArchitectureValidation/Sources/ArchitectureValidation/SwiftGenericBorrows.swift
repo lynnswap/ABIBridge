@@ -179,6 +179,57 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     let copyValue = try await runtime.swiftFunction(named: "SwiftValueFixtures.copyRuntimeValue<A>(A) -> A",
         as: ((String) -> NativeSwiftValue).self, genericArguments: [.type(String.self)])
     let value = try unsafe copyValue.unsafeInvoke("runtime")
+    do {
+        typealias Reader = NativeSwiftClosure<(NativeSwiftValue, NativeSwiftValue) -> Int64>
+        typealias AsyncReader = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftValue, NativeSwiftValue) async -> Int64>
+        let factory = try await runtime.swiftFunction(
+            named: "SwiftValueFixtures.makeMixedRuntimeReader<A, B>(A.Type, B.Type) -> (A, B) -> Swift.Int64",
+            as: ((Int64.Type, NativeSwiftValue.Type) -> Reader).self,
+            genericArguments: [.type(Int64.self), .type(NativeSwiftValue.self)])
+        let reader = try unsafe factory.unsafeInvoke(Int64.self, NativeSwiftValue.self)
+        let correct = try await runtime.swiftFunction(
+            named: "SwiftValueFixtures.callMixedRuntimeReader<A, B>((A, B) -> Swift.Int64, A, B) -> Swift.Int64",
+            as: ((Reader, Int64, NativeSwiftValue) -> Int64).self,
+            genericArguments: [.type(Int64.self), .type(NativeSwiftValue.self)])
+        try check(try unsafe correct.unsafeInvoke(reader, 35, value) == 42, "Mixed runtime payload and ordinary handle inputs preserve their native positions")
+        let swapped = try await runtime.swiftFunction(
+            named: "SwiftValueFixtures.callMixedRuntimeReader<A, B>((A, B) -> Swift.Int64, A, B) -> Swift.Int64",
+            as: ((Reader, NativeSwiftValue, Int64) -> Int64).self,
+            genericArguments: [.type(NativeSwiftValue.self), .type(Int64.self)])
+        do { _ = try unsafe swapped.unsafeInvoke(reader, value, 35) as Int64; throw ArchitectureValidationFailure(description: "Swapped runtime arguments were accepted") }
+        catch ABIResolutionError.signatureMismatch { checks.append("Swapped runtime payload and ordinary handle inputs fail before native invocation") }
+
+        let asyncFactory = try await runtime.swiftFunction(
+            named: "SwiftValueFixtures.makeMixedRuntimeAsyncReader<A, B>(A.Type, B.Type) -> nonisolated(nonsending) (A, B) async -> Swift.Int64",
+            as: ((Int64.Type, NativeSwiftValue.Type) -> AsyncReader).self,
+            genericArguments: [.type(Int64.self), .type(NativeSwiftValue.self)])
+        let asyncReader = try unsafe asyncFactory.unsafeInvoke(Int64.self, NativeSwiftValue.self)
+        let asyncCorrect = try await runtime.swiftFunction(
+            named: "SwiftValueFixtures.callMixedRuntimeAsyncReader<A, B>(nonisolated(nonsending) (A, B) async -> Swift.Int64, A, B) async -> Swift.Int64",
+            as: (nonisolated(nonsending) (AsyncReader, Int64, NativeSwiftValue) async -> Int64).self,
+            genericArguments: [.type(Int64.self), .type(NativeSwiftValue.self)])
+        try check(try unsafe await asyncCorrect.unsafeInvoke(asyncReader, 35, value) == 42, "Mixed async closure inputs preserve their native positions across suspension")
+        let asyncSwapped = try await runtime.swiftFunction(
+            named: "SwiftValueFixtures.callMixedRuntimeAsyncReader<A, B>(nonisolated(nonsending) (A, B) async -> Swift.Int64, A, B) async -> Swift.Int64",
+            as: (nonisolated(nonsending) (AsyncReader, NativeSwiftValue, Int64) async -> Int64).self,
+            genericArguments: [.type(NativeSwiftValue.self), .type(Int64.self)])
+        do { _ = try unsafe await asyncSwapped.unsafeInvoke(asyncReader, value, 35) as Int64; throw ArchitectureValidationFailure(description: "Swapped async runtime arguments were accepted") }
+        catch ABIResolutionError.signatureMismatch { checks.append("Swapped async runtime inputs fail before native invocation") }
+    }
+    do {
+        typealias Inner = NativeSwiftClosure<(Int64) -> Int64>
+        typealias Producer = NativeSwiftClosure<() -> Inner>
+        let factory = try await runtime.swiftFunction(
+            named: "SwiftValueFixtures.makeRawRuntimeProducer<A>(A) -> () -> A",
+            as: ((Inner) -> Producer).self, genericArguments: [.type(Inner.self)])
+        let producer = try unsafe factory.unsafeInvoke(Inner { $0 + 7 })
+        try check(try unsafe producer.unsafeInvoke().unsafeInvoke(35) == 42, "Native generic closure data results retain the ordinary Swift wrapper")
+        let call = try await runtime.swiftFunction(
+            named: "SwiftValueFixtures.callNonthrowingNestedRuntimeProducer<A>(() -> (A) -> A, A) -> A",
+            as: ((Producer, Int64) -> Int64).self, genericArguments: [.type(Int64.self)])
+        do { _ = try unsafe call.unsafeInvoke(producer, 35) as Int64; throw ArchitectureValidationFailure(description: "Raw closure data was treated as a native function result") }
+        catch ABIResolutionError.signatureMismatch { checks.append("Raw generic closure data cannot be reinterpreted as a native function result") }
+    }
     let visit = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.visitRuntimeCallback<A where A: ~Swift.Copyable>(A, (A) throws -> Swift.Int64) throws -> Swift.Int64",
         as: ((NativeSwiftValue, NativeSwiftClosure<(NativeSwiftBorrowedValue) throws -> Int64>) throws -> Int64).self,
