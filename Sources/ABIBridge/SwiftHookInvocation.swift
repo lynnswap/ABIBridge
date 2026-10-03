@@ -119,18 +119,32 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
                 )
             }
         }
-        result = try SwiftValueCodec()
-        initializeResult = swiftResultInitializer(nativeMetadata: Result.self,
-            generic: declaration?.result ?? .concrete)
+        switch declaration?.result {
+        case .value, .tuple: result = SwiftValueCodec(nativeStorage: call.values.result.type)
+        default: result = try SwiftValueCodec()
+        }
+        initializeResult = result.initializeNativeResult
         // An opaque result can use indirect native return storage even when its
         // known payload has an ordinary scalar or reference representation.
         resultType = call.values.result.type
-        arguments = (repeat try SwiftValueCodec<each Argument>())
+        var index = 0
+        func codec<Value>(_ type: Value.Type) throws -> SwiftValueCodec<Value> {
+            defer { index += 1 }
+            switch call.parameters.arguments[index] {
+            case .value, .tuple: return SwiftValueCodec(nativeStorage: call.values.arguments[index].type)
+            default: return try SwiftValueCodec()
+            }
+        }
+        arguments = (repeat try codec((each Argument).self))
     }
     func decodeArguments(_ storage: [NativeValueStorage]) throws -> (repeat each Argument) {
         var index = 0
         func decode<T>(_ codec: SwiftValueCodec<T>) throws -> T {
             defer { index += 1 }
+            if let tuple = SwiftGenericParameters.expandedTuple(call.parameters.arguments[index]) {
+                let materialized = tuple.materializeArgument(from: storage[index].address, consuming: false)
+                return try codec.copy(from: materialized, retaining: materialized)
+            }
             return try codec.copy(from: storage[index], retaining: storage[index])
         }
         return (repeat try decode(each arguments))
@@ -144,16 +158,21 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
             consumesArguments: consumingArguments, receiver: receiver, errorPlan: errorPlan,
             parameters: call.parameters, generic: call.generic, interface: call.interface,
             owner: owner, cloneArguments: { storage in
-                var index = 0, result: [NativeValueStorage] = []
-                for codec in repeat each arguments {
-                    result.append(try codec.copyNativeStorage(storage[index])); index += 1
-                }
-                return result
+                let values = try decodeArguments(storage)
+                return try call.values.encode(repeat each values, retainingCode: call.generic)
             }, cloneResult: { try result.copyNativeStorage($0) }, destroyResult: { result.destroyNativeValue(at: $0) },
             initializeResult: initializeResult,
             destroyArguments: { addresses in
                 var index = 0
-                for codec in repeat each arguments { codec.destroyNativeValue(at: addresses[index]!); index += 1 }
+                for codec in repeat each arguments {
+                    if let tuple = SwiftGenericParameters.expandedTuple(call.parameters.arguments[index]) {
+                        let vector = addresses[index]!.assumingMemoryBound(to: UnsafeMutableRawPointer?.self)
+                        for (leaf, address) in zip(tuple.leaves, UnsafeBufferPointer(start: vector, count: tuple.leaves.count)) {
+                            ABISwiftDestroyValue(unsafeBitCast(leaf.nativeType, to: UnsafeRawPointer.self), address!)
+                        }
+                    } else { codec.destroyNativeValue(at: addresses[index]!) }
+                    index += 1
+                }
             })
     }
 }

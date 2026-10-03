@@ -23,6 +23,20 @@ struct SwiftValueCodec<Value>: Sendable {
     private let tuple: SwiftTupleValuePlan?
     private let constants = SwiftValueConstants(Value.self)
 
+    init(nativeStorage type: CValueType) {
+        self.type = type
+        cValue = nil; closure = nil; tuple = nil
+        let base = (Value.self as? any NativeOptionalValue.Type)?.wrappedType ?? Value.self
+        objectResult = base is AnyClass || base == AnyObject.self
+    }
+
+    var initializeNativeResult: SwiftResultInitializer {
+        if cValue != nil {
+            return { _, size, destination, source in destination.copyMemory(from: source, byteCount: size) }
+        }
+        return swiftResultInitializer(nativeMetadata: Value.self, tuple: tuple)
+    }
+
     init() throws {
         guard !(Value.self is any SwiftConventionArgument.Type) else {
             throw ABIResolutionError.unsupportedDeclaration("Swift argument convention markers require the invocation argument path; results and managed callbacks cannot use them.")
