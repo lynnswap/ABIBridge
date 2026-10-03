@@ -1,4 +1,5 @@
 import ABIBridge
+import ArchitectureFixtures
 import CoreGraphics
 import Foundation
 import Synchronization
@@ -36,6 +37,42 @@ import UIKit
         guard condition else { throw ArchitectureValidationFailure(description: message) }
         checks.append(message)
     }
+    let ownership = ABIValidationOwnershipFixture()
+    let options = NativeMethodOptions(consumedArguments: [0])
+    let consume = try runtime.object(ownership).method(selector: "consume:",
+        as: ((NSObject?) -> Int).self, options: options)
+    let consumeMessage = try runtime.objcMethod(on: ABIValidationOwnershipFixture.self,
+        selector: "consume:", as: ((NSObject?) -> Int).self, options: options)
+    let consumeCaptured = try runtime.objcImplementation(on: ABIValidationOwnershipFixture.self,
+        selector: "consume:", as: ((NSObject?) -> Int).self, options: options)
+    typealias Block = @convention(block) (Int) -> Int
+    let consumeBlock = try runtime.object(ownership).method(selector: "consumeBlock:value:",
+        as: ((Block?, Int) -> Int).self, options: options)
+    let echoCF = try runtime.object(ownership).method(selector: "echoCFValue:",
+        as: ((Unmanaged<NSObject>?) -> Unmanaged<NSObject>?).self)
+    weak var observedValue: NSObject?
+    try autoreleasepool {
+        let value = ownership.copyValue()
+        observedValue = value
+        try check(ownership.consume(value) == 1, "Compiler caller supplies consumed object ownership")
+        try check(try unsafe consume.unsafeInvoke(value) == 1, "Bound message supplies an independent consumed argument")
+        try check(try unsafe consumeMessage.unsafeInvoke(on: ownership, value) == 1, "Receiver-independent message preserves consumed ownership")
+        try check(try unsafe consumeCaptured.unsafeInvoke(on: ownership, value) == 1, "Captured IMP preserves consumed ownership with PAC")
+        let block: Block = { [value] number in withExtendedLifetime(value) { number + 1 } }
+        try check(try unsafe consumeBlock.unsafeInvoke(block, 41) == 42, "Consumed object-encoded block preserves caller captures")
+        try check(try unsafe echoCF.unsafeInvoke(.passUnretained(value))?.takeUnretainedValue() === value,
+            "Unmanaged Core Foundation references use their native pointer representation")
+        let failures = AggregateHookFailures()
+        let hook = try unsafe runtime.hookMethod(on: ABIValidationOwnershipFixture.self, selector: "consume:",
+            as: ((NSObject?) -> Int).self, options: options, onFailure: { failures.append($0) }) { call, input in
+                try call.proceed(input) + call.proceed(input)
+            }
+        defer { hook.invalidate() }
+        try check(ownership.consume(value) == 2 && failures.isEmpty,
+            "Repeated hook continuations each transfer independent consumed ownership")
+    }
+    try check(observedValue == nil && ownership.liveValues == 0 && ownership.calls == 6,
+        "Consumed arguments and hook captures release after their final caller ownership")
     let receiver = TransformReceiver()
     let input = CGAffineTransform(a: 1, b: 2, c: 3, d: 4, tx: 5, ty: 6)
     let method = try runtime.object(receiver).method(selector: "transform:",

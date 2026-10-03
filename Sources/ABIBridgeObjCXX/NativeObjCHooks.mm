@@ -8,6 +8,7 @@
 #include <optional>
 #include <pthread.h>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -114,6 +115,7 @@ struct State {
     bool mainThread;
     bool retained = false;
     bool consumed = false;
+    std::vector<bool> consumedParameters;
     ValueInfo result{};
     std::vector<ValueInfo> parameters;
     State(void *context, ABIObjCHookContextRelease release, ABIObjCHookFailureHandler failure,
@@ -294,7 +296,8 @@ bool prepare(Class type, const char *name, const ABIObjCHookSignature *signature
     SEL selector = sel_registerName(name);
     NSError *failure = nil;
     binding.reset(ABICopyObjCImplementation(type, selector, options.classMethod,
-        options.resultOwnership - 1, options.receiverOwnership - 1, &failure));
+        options.resultOwnership - 1, options.receiverOwnership - 1,
+        options.consumedParameters, options.consumedParameterCount, &failure));
     if (!binding) {
         if (ABIObjCMethodHookIsDisplaced(type, selector, options.classMethod))
             fail(error, ABIFailureHookDisplaced, "Another writer displaced the managed entry.");
@@ -326,6 +329,9 @@ bool prepare(Class type, const char *name, const ABIObjCHookSignature *signature
         binding.get(), (__bridge id)options.object, &failure)) return fail(error, failure);
     state.retained = ABIObjCInvocationReturnsRetained(binding.get());
     state.consumed = ABIObjCInvocationConsumesReceiver(binding.get());
+    state.consumedParameters.clear();
+    for (size_t index = 0; index < signature->parameterCount; ++index)
+        state.consumedParameters.push_back(ABIObjCInvocationConsumesParameter(binding.get(), index));
     return true;
 }
 
@@ -410,7 +416,7 @@ ABIObjCHookInstallation *ABIInstallObjCHooks(const ABIObjCHookRequest *requests,
         state->method = request.callback; state->before = request.before; state->after = request.after;
         prepared.push_back(Prepared{std::move(state)});
     }
-    std::map<std::pair<uintptr_t, std::string>, std::pair<bool, bool>> contracts;
+    std::map<std::pair<uintptr_t, std::string>, std::tuple<bool, bool, std::vector<bool>>> contracts;
     for (size_t index = 0; index < count; ++index) {
         const auto& request = requests[index];
         auto& value = prepared[index];
@@ -423,7 +429,7 @@ ABIObjCHookInstallation *ABIInstallObjCHooks(const ABIObjCHookRequest *requests,
         }
         Class type = request.options.classMethod ? object_getClass(request.type) : request.type;
         auto key = std::make_pair(reinterpret_cast<uintptr_t>((__bridge void *)type), std::string(request.selector));
-        const auto ownership = std::make_pair(value.state->retained, value.state->consumed);
+        const auto ownership = std::make_tuple(value.state->retained, value.state->consumed, value.state->consumedParameters);
         auto previous = contracts.find(key);
         if (previous != contracts.end() && previous->second != ownership) {
             failed(index, ABIObjCHookPreparation, ABICreateResolutionFailure(ABIFailureSignatureMismatch, "Requests for one method disagree on ownership."));

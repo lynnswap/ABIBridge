@@ -29,6 +29,10 @@ typedef union ABIUnionFixture { NSInteger integer; double real; } ABIUnionFixtur
 @interface ABIOwnershipFixture : NSObject
 @property(nonatomic, readonly) NSInteger liveResults;
 @property(nonatomic, readonly) NSInteger classCalls;
+@property(nonatomic, readonly) NSInteger consumedCalls;
+- (NSInteger)consume:(nullable NSObject * NS_RELEASES_ARGUMENT)value;
+- (NSInteger)consume:(nullable NSObject * NS_RELEASES_ARGUMENT)value withClass:(Class)type;
+- (nullable CFTypeRef)echoCFValue:(nullable CFTypeRef)value CF_RETURNS_NOT_RETAINED;
 - (NSObject *)object;
 - (NSObject *)copyObject;
 - (NSObject *)retainedObject __attribute__((ns_returns_retained));
@@ -40,9 +44,16 @@ typedef union ABIUnionFixture { NSInteger integer; double real; } ABIUnionFixtur
 - (ABIUnionFixture *)unionPointer:(ABIUnionFixture *)value;
 @end
 
+@interface ABIConsumedHookFixture : ABIOwnershipFixture
+@end
+
 @interface ABIInitializerFixture : NSObject
 - (instancetype)initWithReplacement;
+- (instancetype)initConsuming:(nullable NSObject * NS_RELEASES_ARGUMENT)value;
 - (nullable instancetype)initReturningNil;
+@end
+
+@interface ABIConsumedInitializerFixture : ABIInitializerFixture
 @end
 
 /// A forwarding-only receiver with no concrete implementation of answer.
@@ -62,6 +73,7 @@ typedef void (^ABIArrayProvider)(ABIArrayCompletion);
 @interface ABIBlockFixture : NSObject
 @property(nonatomic, copy, nullable) ABIIntegerBlock handler;
 - (int32_t)apply:(int32_t)value using:(nullable ABIIntegerBlock)block;
+- (int32_t)consumeBlock:(nullable id NS_RELEASES_ARGUMENT)block value:(int32_t)value;
 - (ABIObjectBlock)blockHolding:(id)object;
 - (ABIObjectBlock)copyBlockHolding:(id)object;
 - (ABIObjectBlock)retainedBlockHolding:(id)object __attribute__((ns_returns_retained));

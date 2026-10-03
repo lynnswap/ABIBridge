@@ -4,6 +4,31 @@
 #include "ArchitectureFixtures.h"
 #include <memory>
 
+@interface ABIValidationOwnershipFixture ()
+@property(nonatomic) NSInteger liveValues;
+@property(nonatomic) NSInteger calls;
+@end
+@interface ABIValidationCountedValue : NSObject
+@property(nonatomic, strong) ABIValidationOwnershipFixture *owner;
+@end
+@implementation ABIValidationCountedValue
+- (void)dealloc { _owner.liveValues--; }
+@end
+@implementation ABIValidationOwnershipFixture
+- (NSObject *)copyValue {
+    ABIValidationCountedValue *value = [ABIValidationCountedValue new];
+    value.owner = self;
+    self.liveValues++;
+    return value;
+}
+- (NSInteger)consume:(NSObject *)value { self.calls++; return value ? 1 : 0; }
+- (NSInteger)consumeBlock:(id)block value:(NSInteger)value {
+    NSInteger (^typed)(NSInteger) = block;
+    return typed ? typed(value) : -1;
+}
+- (CFTypeRef)echoCFValue:(CFTypeRef)value { return value; }
+@end
+
 @interface ABIReplacementArchitectureReceiver : NSObject
 @property(nonatomic) int32_t calls;
 - (int32_t)add:(int32_t)a to:(int32_t)b;
@@ -24,7 +49,7 @@ using Entry = std::unique_ptr<ABIObjCReplacement, decltype(&ABIReleaseObjCReplac
 
 Entry prepare(SEL selector, State& state) {
     NSError *error = nil;
-    auto *binding = ABICopyObjCImplementation(ABIReplacementArchitectureReceiver.class, selector, NO, -1, -1, &error);
+    auto *binding = ABICopyObjCImplementation(ABIReplacementArchitectureReceiver.class, selector, NO, -1, -1, nullptr, 0, &error);
     if (!binding) return {nullptr, ABIReleaseObjCReplacement};
     auto *pointer = ABICreateScalarType(ABIValuePointer, nullptr);
     auto *integer = ABICreateScalarType(ABIValueInt32, nullptr);
