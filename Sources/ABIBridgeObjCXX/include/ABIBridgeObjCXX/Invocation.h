@@ -14,18 +14,21 @@ typedef struct ABIObjCInvocation ABIObjCInvocation;
 /// retained results or consumed self. The plan retains its receiver/signature.
 FOUNDATION_EXPORT ABIObjCInvocation * _Nullable ABICopyObjCInvocation(
     id receiver, SEL selector, int32_t returnsRetained, int32_t consumesReceiver,
+    const size_t * _Nullable consumedParameters, size_t consumedParameterCount,
     NSError * _Nullable * _Nullable error);
 /// Captures a concrete IMP and signature without retaining an instance.
 /// The class and selector must remain valid during lookup. Generated classes
 /// must remain registered and generated IMPs must remain callable for its lifetime.
 FOUNDATION_EXPORT ABIObjCInvocation * _Nullable ABICopyObjCImplementation(
     Class type, SEL selector, BOOL classMethod, int32_t returnsRetained,
-    int32_t consumesReceiver, NSError * _Nullable * _Nullable error);
+    int32_t consumesReceiver, const size_t * _Nullable consumedParameters, size_t consumedParameterCount,
+    NSError * _Nullable * _Nullable error);
 /// Prepares a class-declared signature without retaining an instance or IMP.
 /// Each invocation follows ordinary message dispatch on a compatible receiver.
 FOUNDATION_EXPORT ABIObjCInvocation * _Nullable ABICopyObjCDispatch(
     Class type, SEL selector, BOOL classMethod, int32_t returnsRetained,
-    int32_t consumesReceiver, NSError * _Nullable * _Nullable error);
+    int32_t consumesReceiver, const size_t * _Nullable consumedParameters, size_t consumedParameterCount,
+    NSError * _Nullable * _Nullable error);
 /// Retains a receiver after validating its signature against an unbound plan.
 /// The result retains the prepared plan until after releasing its receiver.
 FOUNDATION_EXPORT ABIObjCInvocation * _Nullable ABICopyBoundObjCInvocation(
@@ -38,6 +41,7 @@ FOUNDATION_EXPORT void ABIRetainObjCInvocation(ABIObjCInvocation *invocation);
 FOUNDATION_EXPORT IMP _Nullable ABIObjCInvocationImplementation(const ABIObjCInvocation *invocation);
 FOUNDATION_EXPORT BOOL ABIObjCInvocationReturnsRetained(const ABIObjCInvocation *invocation);
 FOUNDATION_EXPORT BOOL ABIObjCInvocationConsumesReceiver(const ABIObjCInvocation *invocation);
+FOUNDATION_EXPORT BOOL ABIObjCInvocationConsumesParameter(const ABIObjCInvocation *invocation, size_t index);
 FOUNDATION_EXPORT size_t ABIObjCInvocationParameterCount(const ABIObjCInvocation *invocation);
 /// Encodings are borrowed for the plan's lifetime. Index excludes self/_cmd.
 FOUNDATION_EXPORT const char *ABIObjCInvocationParameterType(const ABIObjCInvocation *invocation, size_t index);
@@ -83,4 +87,31 @@ NS_ASSUME_NONNULL_END
 /// Internal encoding-to-C-layout bridge, implemented by the existing Swift
 /// Objective-C decoder. The returned type is owned; failure is owned.
 FOUNDATION_EXPORT ABIValueType * _Nullable ABICopyObjCHookValueType(
-    const char *encoding, ABIResolutionFailure * _Nullable * _Nullable error);
+    const char * _Nonnull encoding, ABIResolutionFailure * _Nullable * _Nullable error);
+
+#ifdef __cplusplus
+#include <vector>
+NS_ASSUME_NONNULL_BEGIN
+
+// The incoming hook owns native +1 arguments. Outgoing calls retain a separate
+// reference, which transfers only at native entry and is reclaimed on rejection.
+class ABIObjCArgumentOwnership {
+public:
+    explicit ABIObjCArgumentOwnership(const ABIObjCInvocation *plan) : plan_(plan) {}
+    ~ABIObjCArgumentOwnership();
+    ABIObjCArgumentOwnership(const ABIObjCArgumentOwnership&) = delete;
+    ABIObjCArgumentOwnership& operator=(const ABIObjCArgumentOwnership&) = delete;
+    bool retain(const void * _Nonnull const * _Nullable arguments, NSError * _Nullable * _Nullable error);
+    void adopt(const void * _Nonnull const * _Nullable arguments);
+    const void * _Nonnull const * _Nullable arguments() const { return replacements_.empty() ? incoming_ : replacements_.data(); }
+    void transfer() { owned_ = false; }
+    void reclaim() { owned_ = true; }
+private:
+    const ABIObjCInvocation *plan_;
+    const void * _Nonnull const * _Nullable incoming_ = nullptr;
+    std::vector<CFTypeRef> references_;
+    std::vector<const void *> replacements_;
+    bool owned_ = true;
+};
+NS_ASSUME_NONNULL_END
+#endif

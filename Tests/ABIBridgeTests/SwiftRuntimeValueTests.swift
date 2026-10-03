@@ -53,6 +53,19 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
 @Suite struct SwiftRuntimeValueTests {
 
+    @Test func ordinaryRuntimeResultsRequireAnOwnedRepresentation() async throws {
+        let runtime = ABIRuntime.shared
+        await #expect(throws: ABIResolutionError.self) {
+            _ = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+                as: ((Int64) -> NativeSwiftBorrowedValue).self, genericArguments: [.type(Int64.self)])
+        }
+        typealias Producer = NativeSwiftClosure<() -> NativeSwiftBorrowedValue>
+        await #expect(throws: ABIResolutionError.self) {
+            _ = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeProducer<A>(A) -> () -> A",
+                as: ((Int64) -> Producer).self, genericArguments: [.type(Int64.self)])
+        }
+    }
+
     @Test func composedTuplesUseNativeFieldLayoutsAndOwnership() async throws {
         typealias Callback = NativeSwiftClosure<(Int64) -> Int64>
         typealias Snapshot = (

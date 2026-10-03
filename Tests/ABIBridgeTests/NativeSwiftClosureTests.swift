@@ -566,6 +566,10 @@ struct NativeSwiftClosureTests {
             (UnsafePointer<Int64>.self, "UnsafePointer<Int64>"),
             (UnsafeMutablePointer<UInt8>?.self, "UnsafeMutablePointer<UInt8>?"),
             (OpaquePointer?.self, "OpaquePointer?"),
+            (Unmanaged<NSObject>.self, "Unmanaged<NSObject>"),
+            (Unmanaged<NSString>.self, "Unmanaged<NSString>"),
+            (Unmanaged<NSObject>?.self, "Unmanaged<NSObject>?"),
+            (Unmanaged<CFString>?.self, "Unmanaged<CFString>?"),
             ([String].self, "[String]"), ([Int].self, "[Int]"),
             ([[String?]].self, "[[String?]]"), ([String]?.self, "[String]?"),
             (String?.self, "String?")

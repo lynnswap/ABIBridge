@@ -7,6 +7,7 @@ struct ObjCHookValidation {
     let key: Key
     let retained: Bool
     let consumed: Bool
+    let consumedArguments: Set<Int>
     let binding: ObjCInvocationBinding
     let interface: CCallInterface
 }
@@ -22,9 +23,12 @@ extension NativeObjCMethodHook {
         let declaration = objcMethodDeclaration(on: type, selector: selector, classMethod: classMethod)
         let sel = NSSelectorFromString(selector)
         var error: NSError?
-        guard let raw = ABICopyObjCImplementation(type, sel, classMethod,
-            options.returnsRetainedObject.map { $0 ? 1 : 0 } ?? -1,
-            options.consumesReceiver.map { $0 ? 1 : 0 } ?? -1, &error) else {
+        let raw = options.withConsumedArguments { consumed in
+            ABICopyObjCImplementation(type, sel, classMethod,
+                options.returnsRetainedObject.map { $0 ? 1 : 0 } ?? -1,
+                options.consumesReceiver.map { $0 ? 1 : 0 } ?? -1, consumed.baseAddress, consumed.count, &error)
+        }
+        guard let raw else {
             if ABIObjCMethodHookIsDisplaced(type, sel, classMethod) { throw NativeObjCMethodHookError.displaced }
             throw objcResolutionError(error, declaration: declaration)
         }
@@ -40,7 +44,8 @@ extension NativeObjCMethodHook {
             }
         }
         return ObjCHookValidation(key: .init(type: ObjectIdentifier(classMethod ? object_getClass(type)! : type), selector: selector),
-            retained: ABIObjCInvocationReturnsRetained(raw), consumed: ABIObjCInvocationConsumesReceiver(raw), binding: binding, interface: interface)
+            retained: ABIObjCInvocationReturnsRetained(raw), consumed: ABIObjCInvocationConsumesReceiver(raw),
+            consumedArguments: options.consumedArguments, binding: binding, interface: interface)
     }
 }
 
@@ -195,14 +200,16 @@ extension ABIRuntime {
     /// coordination still apply. See <doc:CoordinatedObjectiveCHooks>.
     @unsafe public nonisolated func installHooks(_ requests: [NativeObjCHookRequest]) throws -> [NativeObjCMethodHook] {
         var validations: [ObjCHookValidation] = []
-        var contracts: [ObjCHookValidation.Key: (retained: Bool, consumed: Bool)] = [:]
+        var contracts: [ObjCHookValidation.Key: (retained: Bool, consumed: Bool, arguments: Set<Int>)] = [:]
         for (index, request) in requests.enumerated() {
             do {
                 let value = try request.validate()
-                if let previous = contracts[value.key], previous.retained != value.retained || previous.consumed != value.consumed {
+                if let previous = contracts[value.key],
+                   previous.retained != value.retained || previous.consumed != value.consumed
+                    || previous.arguments != value.consumedArguments {
                     throw NativeObjCMethodHookError.incompatibleContract
                 }
-                contracts[value.key] = (value.retained, value.consumed)
+                contracts[value.key] = (value.retained, value.consumed, value.consumedArguments)
                 validations.append(value)
             } catch {
                 throw NativeObjCHookInstallationError(failedIndex: index, phase: .preparation, underlyingError: error, invalidatedHooks: [])

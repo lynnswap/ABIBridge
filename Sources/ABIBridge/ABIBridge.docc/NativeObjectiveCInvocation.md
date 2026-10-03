@@ -51,7 +51,18 @@ auto create = abi_bridge::bound_objc_implementation<id()>(
 id result = create.unsafe_invoke();
 ```
 
-`objc_method_options` also supports `consumes_receiver`. Consumption transfers an additional receiver reference for the call, preserving the binding's retained receiver. Consumed arguments other than `self` require a caller-specific adapter. Runtime encodings cannot prove these ownership contracts, so invocation is explicitly unsafe.
+`objc_method_options` also supports `consumes_receiver`. Consumption transfers an additional receiver reference for the call, preserving the binding's retained receiver. Use `consumed_parameters` for zero-based explicit arguments annotated `ns_consumed`:
+
+```objc
+auto consume = abi_bridge::bound_objc_implementation<void(NSObject *)>(
+    renderer, "consumeObject:", {.consumed_parameters = {0}}
+);
+consume.unsafe_invoke(value);
+```
+
+The wrapper supplies a separate owned reference for each selected object or block input, preserving the caller's ARC or MRC ownership. Bound and receiver-independent calls share this contract. Runtime encodings cannot prove these ownership annotations, so invocation is explicitly unsafe.
+
+The C constructor `ABICopyObjCMethod` accepts an index array and count after the receiver/result ownership overrides; use `nullptr, 0` when there are no consumed parameters. The constructor copies this metadata. `ABIObjCMethodConsumesParameter` and `ABIObjCImplementationConsumesParameter` expose the prepared contract. Calling the raw IMP still requires the caller to provide the declared ownership.
 
 ## Handle binding failures
 

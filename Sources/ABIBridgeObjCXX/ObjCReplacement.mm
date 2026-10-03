@@ -103,6 +103,8 @@ ABIObjCReplacement *ABICreateObjCReplacement(ABIObjCInvocation *binding,
             auto& entry = *static_cast<ABIObjCReplacement *>(context);
             std::shared_ptr<Callback> callback;
             { std::lock_guard lock(entry.mutex); callback = entry.callback; }
+            ABIObjCArgumentOwnership incoming(entry.binding);
+            incoming.adopt(arguments + 2);
             ABIObjCReplacementCall call(entry, arguments);
             if (callback) callback->handler(callback->context, &call);
             // A callback failure before proceed bypasses it with native storage.
@@ -179,15 +181,21 @@ BOOL ABIObjCReplacementProceed(ABIObjCReplacementCall *call, const void *const *
         return YES;
     }
     std::vector<std::max_align_t> result(call->result.size());
+    ABIObjCArgumentOwnership ownership(call->entry.binding);
+    if (!ownership.retain(const_cast<const void *const *>(values.data() + 2), error)) return NO;
+    for (size_t index = 0; index < count; ++index)
+        values[index + 2] = const_cast<void *>(ownership.arguments()[index]);
     ABIResolutionFailure *failure = nullptr;
     // A subclass-local inherited entry follows later superclass replacements.
     const IMP implementation = call->entry.inheritedFrom
         ? class_getMethodImplementation(call->entry.inheritedFrom, call->entry.selector)
         : ABIObjCInvocationImplementation(call->entry.binding);
+    ownership.transfer();
     const bool success = ABIUnsafeInvokeCCallInterface(call->entry.interface,
         reinterpret_cast<ABIUnmanagedFunction>(implementation),
         result.data(), values.data(), &failure);
     if (!success) {
+        ownership.reclaim();
         if (error) *error = [NSError errorWithDomain:ABIObjCInvocationErrorDomain
             code:failure ? ABIResolutionFailureCode(failure) : ABIFailureInvalidRequest
             userInfo:@{NSLocalizedDescriptionKey: failure ? @(ABIResolutionFailureMessage(failure)) : @"Invalid continuation storage."}];
@@ -295,8 +303,10 @@ std::vector<std::string> hookContract(const ABIObjCInvocation *binding) {
     std::vector<std::string> contract{ABIObjCInvocationReturnsRetained(binding) ? "retained" : "borrowed",
         ABIObjCInvocationConsumesReceiver(binding) ? "consumed" : "borrowed-self",
         ABIObjCInvocationResultType(binding)};
-    for (size_t index = 0; index < ABIObjCInvocationParameterCount(binding); ++index)
+    for (size_t index = 0; index < ABIObjCInvocationParameterCount(binding); ++index) {
         contract.emplace_back(ABIObjCInvocationParameterType(binding, index));
+        contract.emplace_back(ABIObjCInvocationConsumesParameter(binding, index) ? "consumed" : "borrowed");
+    }
     return contract;
 }
 Method concreteMethod(Class type, SEL selector) {

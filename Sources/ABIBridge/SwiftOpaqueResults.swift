@@ -239,7 +239,7 @@ struct SwiftResultCodec<Value>: Sendable {
             tuple = plan
         } else { tuple = nil }
         if case .runtimeValue(let plan) = generic {
-            try plan.requireOwnedValue()
+            try plan.requireOwnedValue(as: Value.self)
             runtimeValue = plan
         } else { runtimeValue = nil }
         if case .closure(let codec) = generic { closure = codec } else { closure = nil }

@@ -126,6 +126,12 @@ struct SwiftTupleValuePlan: Sendable {
         fileprivate init<Value>(hostType: Value.Type, nativeType: Any.Type, hostOffset: Int, nativeOffset: Int,
                                 argument: SwiftGenericArgument, result: SwiftGenericResult,
                                 nativeClosure: SwiftGenericClosurePlan?) throws {
+            if case .concrete = argument {
+                let base = (Value.self as? any NativeOptionalValue.Type)?.wrappedType ?? Value.self
+                guard !(base is any ABIBridgeValue.Type) || base is any ABIBridgeSwiftValue.Type else {
+                    throw ABIResolutionError.unsupportedDeclaration("Tuple elements require native Swift storage; foreign value conversions need a compiled adapter.")
+                }
+            }
             self.hostType = hostType; self.nativeType = nativeType
             self.hostOffset = hostOffset; self.nativeOffset = nativeOffset
             self.argument = argument; self.result = result; self.nativeClosure = nativeClosure
@@ -186,10 +192,7 @@ struct SwiftTupleValuePlan: Sendable {
             }
             validateOwnedResult = {
                 if let outputRuntime {
-                    guard Value.self != NativeSwiftBorrowedValue.self else {
-                        throw ABIResolutionError.unsupportedDeclaration("A scoped runtime tuple field requires its callback borrow scope.")
-                    }
-                    try outputRuntime.requireOwnedValue()
+                    try outputRuntime.requireOwnedValue(as: Value.self)
                 }
             }
             let decode: @Sendable (NativeValueStorage, Any?, Any?, UnsafeMutableRawPointer) throws -> Void = { storage, owner, codeOwner, output in
