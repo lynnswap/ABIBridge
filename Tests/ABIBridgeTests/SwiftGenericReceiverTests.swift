@@ -132,6 +132,9 @@ struct SwiftGenericReceiverTests {
                 Issue.record("Expected the unsupported candidate's preparation error")
             } catch ABIResolutionError.unsupportedDeclaration(let reason) {
                 #expect(reason.contains("Generic opaque results require enclosing metadata"))
+            } catch ABIResolutionError.declarationNotFound(let declaration) {
+                #expect(declaration.kind == .data)
+                #expect(declaration.name.hasPrefix("opaque type descriptor for <<opaque return type of "))
             }
         }
     }

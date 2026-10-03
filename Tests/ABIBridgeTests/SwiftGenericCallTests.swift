@@ -807,6 +807,17 @@ struct SwiftGenericCallTests {
             genericArguments: [.pack([.type(String.self), .type(Int64.self)])])
         let tuple = try unsafe nested.unsafeInvoke((Int8(12), text, Int64(93), Int8(-8)))
         #expect(tuple.0 == 12 && tuple.1 == text && tuple.2 == 93 && tuple.3 == -8)
+        let emptyNested = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.nestedPackGeneric<each A>((Swift.Int8, repeat A, Swift.Int8)) -> (Swift.Int8, repeat A, Swift.Int8)",
+            as: (((Int8, Int8)) -> (Int8, Int8)).self, genericArguments: [.pack([])])
+        let emptyTuple = try unsafe emptyNested.unsafeInvoke((Int8(12), Int8(-8)))
+        #expect(emptyTuple.0 == 12 && emptyTuple.1 == -8)
+        let singletonNested = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.nestedPackGeneric<each A>((Swift.Int8, repeat A, Swift.Int8)) -> (Swift.Int8, repeat A, Swift.Int8)",
+            as: (((Int8, (Int64, String), Int8)) -> (Int8, (Int64, String), Int8)).self,
+            genericArguments: [.pack([.type((Int64, String).self)])])
+        let singletonTuple = try unsafe singletonNested.unsafeInvoke((Int8(12), (Int64(93), text), Int8(-8)))
+        #expect(singletonTuple.0 == 12 && singletonTuple.1.0 == 93 && singletonTuple.1.1 == text && singletonTuple.2 == -8)
         let suspended = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.suspendedPackGeneric<each A>(repeat A) async -> (repeat A)",
             as: ((String, Int64) async -> (String, Int64)).self,
