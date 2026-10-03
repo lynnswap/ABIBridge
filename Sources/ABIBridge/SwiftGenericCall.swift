@@ -540,6 +540,8 @@ struct SwiftGenericCallPlan: Sendable {
 
     private static func authTypes(_ formal: SwiftFormalType, actual: Any.Type,
                                   binding: SwiftGenericBinding, isResult: Bool = false) throws -> [String] {
+        let canonical = try binding.canonicalType(of: formal)
+        if canonical != formal { return try authTypes(canonical, actual: actual, binding: binding, isResult: isResult) }
         if case .tuple(let fields, _) = formal {
             let elements = try tupleElements(fields, actual: actual, binding: binding)
             var index = 0
@@ -555,6 +557,14 @@ struct SwiftGenericCallPlan: Sendable {
         if case .function = formal, let closure = actual as? any SwiftClosureValue.Type {
             let plan = try Self.closure(formal, signature: SwiftFunctionSignature(closure.swiftFunctionType), binding: binding)
             return ["(" + plan.authentication + ")"]
+        }
+        if !binding.dependsOnParameters(formal), formal != .opaqueResult {
+            let explicit = formal.nominalDeclaration == nil ? nil : try binding.explicitValueType(actual)
+            if explicit == nil {
+                // Concrete class existentials and metatypes keep their formal
+                // identity even when their physical storage is indirect.
+                return [try swiftClosureAuthType(actual)]
+            }
         }
         let layout = try layout(formal, actual: actual, binding: binding)
         if ABISwiftValueIsIndirect(layout.handle) { return ["-indirect"] }

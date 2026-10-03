@@ -19,11 +19,11 @@ struct SwiftThrowingClosureTests {
 #if DEBUG
     @Test func nonthrowingCallbacksPreserveTheCallersErrorRegister() throws {
         let normal = try NativeSwiftClosure<(Int64) -> Int64> { $0 + 7 }
-        guard case .synchronous(let normalStorage, _) = normal.call else { Issue.record("Expected a synchronous closure"); return }
+        guard case .synchronous(let normalStorage, _) = try normal.call.resolved() else { Issue.record("Expected a synchronous closure"); return }
         #expect(ABIProbeSwiftErrorRegister(normalStorage.implementation.function,
                                            normalStorage.value.context) == 1)
         let never = try NativeSwiftClosure<(Int64) -> Int64> { $0 + 7 }
-        guard case .synchronous(let neverStorage, _) = never.call else { Issue.record("Expected a synchronous closure"); return }
+        guard case .synchronous(let neverStorage, _) = try never.call.resolved() else { Issue.record("Expected a synchronous closure"); return }
         #expect(ABIProbeSwiftErrorRegister(neverStorage.implementation.function,
                                            neverStorage.value.context) == 1)
     }
