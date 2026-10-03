@@ -513,6 +513,31 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     }
     try check(try unsafe inspect.unsafeInvoke(echoed, inspectBody) == 84,
         "Tuple callback inputs borrow native fields and authenticate their nested closure")
+    let makeWhole = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.makeCompositionSnapshot(Swift.AnyObject, Swift.Int64, Swift.Int64, Swift.String) -> " + nativeSnapshot,
+        as: ((AnyObject, Int64, Int64, String) -> NativeSwiftValue).self, valueABIs: abis)
+    let echoWhole = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.echoCompositionSnapshot(" + nativeSnapshot + ") -> " + nativeSnapshot,
+        as: ((NativeSwiftValue) -> NativeSwiftValue).self, valueABIs: abis)
+    let whole = try unsafe makeWhole.unsafeInvoke(NSObject(), 35, 7, text)
+    let copiedWhole = try unsafe echoWhole.unsafeInvoke(whole)
+    try copiedWhole.withCopy { value in
+        guard let native = value as? CompositionSnapshot else {
+            throw ArchitectureValidationFailure(description: "Runtime tuple copy changed its native type")
+        }
+        try check(native.nested.callback(3) == 45 && native.record.sum() == 42,
+            "Whole runtime tuple copies normalize native closure fields for standard Swift invocation")
+    }
+    let takenWhole = try whole.take(as: CompositionSnapshot.self)
+    try check(takenWhole.nested.callback(3) == 45 && takenWhole.nested.text == text,
+        "Taking a runtime tuple preserves its authenticated closure field")
+    let makeStoredProducer = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.makeConcreteNestedProducer() -> () -> (Swift.Int64) -> Swift.Int64",
+        as: (() -> NativeSwiftValue).self)
+    let storedProducer = try unsafe makeStoredProducer.unsafeInvoke()
+    let takenProducer = try storedProducer.take(as: (() -> (Int64) -> Int64).self)
+    try check(takenProducer()(35) == 42,
+        "A runtime function value preserves authenticated nested returned functions after a typed move")
     let moved = try unsafe consume.unsafeInvoke(NativeSwiftConsuming(snapshot))
     try check(snapshot.record.isConsumed && !echoed.record.isConsumed
         && (try unsafe sum.unsafeInvoke(on: moved.record)) == 42
@@ -592,7 +617,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
         let invalid = try EditPair { first, second in
             let lifetime = GenericBorrowCapture(deaths)
             first.value = try Callback { value in withExtendedLifetime(lifetime) { value + 100 } }
-            second.value = expired
+            second.value = state.closure!
             if bodyFails { throw GenericBorrowConversionError.converted }
             return 99
         }

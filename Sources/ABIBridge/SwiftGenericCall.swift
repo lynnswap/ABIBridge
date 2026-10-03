@@ -204,6 +204,13 @@ final class SwiftGenericClosurePlan: Sendable {
             nativeResult: nativeResult, hostParameters: signature.parameters, nativeParameters: nativeParameters)
     }
 
+    // Copying opaque generic data does not require the bridge to invoke it.
+    // A callable plan is optional until a function boundary needs reabstraction.
+    static func closureInStoredValue(_ type: Any.Type) -> SwiftGenericClosurePlan? {
+        guard unsafeBitCast(type, to: UnsafeRawPointer.self).load(as: UInt.self) == 0x302 else { return nil }
+        return try? nativeValue(type)
+    }
+
     // A function stored inside an erased native value has the maximally
     // abstracted Swift convention: each value, including a tuple or Void
     // result, occupies one indirect slot. Nested functions retain that same
@@ -229,12 +236,10 @@ final class SwiftGenericClosurePlan: Sendable {
                 types.append(layout)
             }
             arguments.append(argument)
-            let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
-            nativeClosures.append(try metadata.load(as: UInt.self) == 0x302 ? nativeValue(type) : nil)
+            nativeClosures.append(closureInStoredValue(type))
         }
         let resultType = try SwiftGenericParameters.storageType(signature.result)
-        let resultMetadata = unsafeBitCast(signature.result, to: UnsafeRawPointer.self)
-        let resultClosure = try resultMetadata.load(as: UInt.self) == 0x302 ? nativeValue(signature.result) : nil
+        let resultClosure = closureInStoredValue(signature.result)
         let errorType = try signature.failure == Never.self || signature.failure == (any Error).self
             ? nil : SwiftGenericParameters.storageType(signature.failure)
         let errorPlan = try signature.makeErrorPlan(genericType: errorType)
@@ -391,7 +396,15 @@ final class SwiftGenericClosurePlan: Sendable {
     }
 
     func validateNativeValues(for other: SwiftGenericClosurePlan) throws {
-        guard nativeParameterTypes == other.nativeParameterTypes, nativeResult == other.nativeResult else {
+        // Function values compare their prepared signature and escape permission
+        // below; their metadata also encodes those differing escape permissions.
+        let sameParameters = nativeParameterTypes.count == other.nativeParameterTypes.count
+            && nativeParameterTypes.indices.allSatisfy { index in
+                (nativeArgumentClosures[index] != nil && other.nativeArgumentClosures[index] != nil)
+                    || nativeParameterTypes[index] == other.nativeParameterTypes[index]
+            }
+        let sameResult = (nativeResultClosure != nil && other.nativeResultClosure != nil) || nativeResult == other.nativeResult
+        guard sameParameters, sameResult else {
             throw ABIResolutionError.signatureMismatch(.init(expected: "The closure's native argument and result types", found: []))
         }
         guard parameters.arguments.map(\.convention) == other.parameters.arguments.map(\.convention) else {
@@ -672,8 +685,8 @@ struct SwiftGenericCallPlan: Sendable {
             let plan = try Self.closure(canonical, signature: SwiftFunctionSignature(closure.swiftFunctionType), binding: binding)
             return .closure(try closure.makeGenericClosureCodec(plan: plan))
         }
-        let native = try binding.resultType(actual, for: formal)
         if binding.dependsOnParameters(formal) || formal == .opaqueResult {
+            let native = try binding.resultType(actual, for: formal)
             return .value(try layout(formal, actual: native, binding: binding))
         }
         return .concrete
@@ -691,9 +704,8 @@ struct SwiftGenericCallPlan: Sendable {
         if case .function = canonical {
             nativeClosure = try Self.closure(canonical,
                 signature: SwiftFunctionSignature(nativeClosureSignature(canonical, binding: binding)), binding: binding)
-        } else if nativeTuple == nil,
-                  unsafeBitCast(metadata, to: UnsafeRawPointer.self).load(as: UInt.self) == 0x302 {
-            nativeClosure = try SwiftGenericClosurePlan.nativeValue(metadata)
+        } else if nativeTuple == nil {
+            nativeClosure = SwiftGenericClosurePlan.closureInStoredValue(metadata)
         } else { nativeClosure = nil }
         return try binding.runtimeValuePlan(metadata: metadata,
             type: layout(formal, actual: metadata, binding: binding),
@@ -1005,14 +1017,12 @@ struct SwiftGenericCallPlan: Sendable {
                 inheritsCallerIsolation: signature.inheritsCallerIsolation)
             : .synchronous(try SwiftCallInterface.cached(result: resultType, parameters: types, errorPlan: errorPlan))
         let resultAuthentication = try authTypes(result, actual: nativeResult, binding: binding, isResult: true)
-        let nativeArgumentClosures = try zip(parameterPlan.arguments, nativeParameters).map { argument, metadata -> SwiftGenericClosurePlan? in
+        let nativeArgumentClosures = zip(parameterPlan.arguments, nativeParameters).map { argument, metadata -> SwiftGenericClosurePlan? in
             if let closure = argument.closure { return closure }
-            return try argument.tuple == nil && unsafeBitCast(metadata, to: UnsafeRawPointer.self).load(as: UInt.self) == 0x302
-                ? SwiftGenericClosurePlan.nativeValue(metadata) : nil
+            return argument.tuple == nil ? SwiftGenericClosurePlan.closureInStoredValue(metadata) : nil
         }
-        let nativeResultClosure = try resultPlan.closure
-            ?? (resultPlan.tuple == nil && unsafeBitCast(nativeResult, to: UnsafeRawPointer.self).load(as: UInt.self) == 0x302
-                ? SwiftGenericClosurePlan.nativeValue(nativeResult) : nil)
+        let nativeResultClosure = resultPlan.closure
+            ?? (resultPlan.tuple == nil ? SwiftGenericClosurePlan.closureInStoredValue(nativeResult) : nil)
         return SwiftGenericClosurePlan(transport: transport, parameters: parameterPlan,
             discriminator: swiftClosureDiscriminator(parameters: authentication, results: resultAuthentication),
             authentication: swiftClosureAuthDescription(parameters: authentication, results: resultAuthentication), isEscaping: attributes.isEscaping,

@@ -163,6 +163,25 @@ guard try unsafe concrete.unsafeInvoke(produced).take(as: String.self) == "retur
 }
 print("Nongeneric returned closures use their native value declaration without generic arguments")
 
+let makeStoredFunction = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.makeConcreteRuntimeCopy() -> (Swift.String) -> Swift.String",
+    as: (() -> NativeSwiftValue).self, in: source)
+let storedFunction = try unsafe makeStoredFunction.unsafeInvoke()
+try storedFunction.withCopy { value in
+    guard let function = value as? (String) -> String, function("copied") == "copied!" else {
+        throw ConsumerError.wrongResult
+    }
+}
+let takenFunction = try storedFunction.take(as: ((String) -> String).self)
+guard takenFunction("taken") == "taken!" else { throw ConsumerError.wrongResult }
+let makeStoredProducer = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.makeConcreteNestedProducer() -> () -> (Swift.Int64) -> Swift.Int64",
+    as: (() -> NativeSwiftValue).self, in: source)
+let storedProducer = try unsafe makeStoredProducer.unsafeInvoke()
+let takenProducer = try storedProducer.take(as: (() -> (Int64) -> Int64).self)
+guard takenProducer()(35) == 42 else { throw ConsumerError.wrongResult }
+print("Runtime function values support standard Swift copies, typed moves, and nested returned functions")
+
 let nestedVisit = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.visitNestedClosure(_:)",
     as: ((NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>) throws -> Int64>) throws -> Int64).self, in: source)
 let nestedBody = try NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>) throws -> Int64> { value in
@@ -471,7 +490,7 @@ do {
     for bodyFails in [false, true] {
         let invalid = try EditPair { first, second in
             first.value = try Callback { $0 + 100 }
-            second.value = expired
+            second.value = state.closure!
             if bodyFails { throw ConsumerError.callback("body") }
             return 99
         }
