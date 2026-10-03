@@ -78,6 +78,23 @@ bool ABIEncodePointerSlotFunction(ABIUnmanagedFunction function, const void *sto
     return true;
 }
 
+bool ABIEncodePointerSlotData(const void *pointer, const void *storage,
+    int32_t key, uintptr_t discriminator, bool addressDiversity, uintptr_t *bits) {
+    if (!storage || !bits || key < ABIAuthenticationUnsigned || key > ABIAuthenticationDataB) return false;
+    if (!pointer) { *bits = 0; return true; }
+#if __has_feature(ptrauth_calls)
+    const auto target = addressDiversity ? ptrauth_blend_discriminator(storage, discriminator) : discriminator;
+    switch (key) {
+        case ABIAuthenticationInstructionA: pointer = ptrauth_sign_unauthenticated(pointer, ptrauth_key_asia, target); break;
+        case ABIAuthenticationInstructionB: pointer = ptrauth_sign_unauthenticated(pointer, ptrauth_key_asib, target); break;
+        case ABIAuthenticationDataA: pointer = ptrauth_sign_unauthenticated(pointer, ptrauth_key_asda, target); break;
+        case ABIAuthenticationDataB: pointer = ptrauth_sign_unauthenticated(pointer, ptrauth_key_asdb, target); break;
+    }
+#endif
+    std::memcpy(bits, &pointer, sizeof(pointer));
+    return true;
+}
+
 ABIPointerSlotResult ABIRestorePointerSlotProtection(void *storage, uintptr_t expected,
     int32_t protection, int32_t maximum, bool restoreCurrent, bool restoreMaximum) {
     std::lock_guard lock(slotWriter);

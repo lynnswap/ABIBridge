@@ -44,7 +44,13 @@ _ABISwiftAsyncCallbackAssembly:
     ldr x22, [x9, #240]
     ldr x20, [x9, #200]
     ldp x0, x1, [x9]
-    ldr x2, [x9, #16]
+    ldp x2, x3, [x9, #16]
+    ldp x4, x5, [x9, #32]
+    ldp x6, x7, [x9, #48]
+    ldp d0, d1, [x9, #64]
+    ldp d2, d3, [x9, #80]
+    ldp d4, d5, [x9, #96]
+    ldp d6, d7, [x9, #112]
 #if __has_feature(ptrauth_calls)
     braa x16, x17
 #else
@@ -91,6 +97,17 @@ _ABISwiftAsyncCallbackAssembly:
     movq 0(%r10), %rdi
     movq 8(%r10), %rsi
     movq 16(%r10), %rdx
+    movq 24(%r10), %rcx
+    movq 32(%r10), %r8
+    movq 40(%r10), %r9
+    movq 64(%r10), %xmm0
+    movq 72(%r10), %xmm1
+    movq 80(%r10), %xmm2
+    movq 88(%r10), %xmm3
+    movq 96(%r10), %xmm4
+    movq 104(%r10), %xmm5
+    movq 112(%r10), %xmm6
+    movq 120(%r10), %xmm7
     jmpq *%r11
 #else
 #error Unsupported Swift async callback architecture

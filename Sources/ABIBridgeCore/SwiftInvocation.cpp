@@ -601,6 +601,8 @@ struct SwiftExecutorRef { uintptr_t identity, implementation; };
 extern "C" __attribute__((swiftcall)) void *swift_task_alloc(size_t);
 extern "C" __attribute__((swiftcall)) void swift_task_dealloc(void *);
 extern "C" __attribute__((swiftcall)) SwiftExecutorRef swift_task_getCurrentExecutor();
+extern "C" __attribute__((swiftcall)) void *swift_task_getCurrent();
+const void *ABISwiftCurrentTask(void) { return swift_task_getCurrent(); }
 
 #if __has_feature(ptrauth_calls)
 #define ABI_ASYNC_PARENT __ptrauth(ptrauth_key_process_independent_data, 1, 0xbda2)
@@ -892,10 +894,17 @@ void *ABICopySwiftClosureCallbackBodyOwner(ABIUnmanagedFunction function, void *
 }
 
 struct ABISwiftIncomingCall {
-    ABISwiftCallback &callback;
+    ABIUnmanagedFunction fallback;
     CallFrame &frame;
+    std::optional<ABISwiftAsyncCallInterface> asynchronous;
+    uint32_t contextSize = 0;
+    const void *task = nullptr;
+    std::vector<void *> outputs;
+    void *indirectResult = nullptr;
+    uintptr_t isolation[2]{};
     ABISwiftCallInterface interface;
     std::shared_ptr<SwiftHandler> handler;
+    std::unique_ptr<SwiftOwnedResult> pendingResult, pendingError;
     std::vector<AlignedValue> storage;
     std::vector<void *> arguments;
     const void *receiver;
@@ -909,8 +918,12 @@ struct ABISwiftIncomingCall {
 
     ABISwiftIncomingCall(ABISwiftCallback &callback, std::shared_ptr<SwiftHandler> handler,
                         CallFrame &frame)
-        : callback(callback), frame(frame), interface(callback.interface), handler(std::move(handler)),
+        : fallback(callback.fallback), frame(frame), interface(callback.interface), handler(std::move(handler)),
           receiver(reinterpret_cast<const void *>(frame.context)) {}
+    ABISwiftIncomingCall(const ABISwiftAsyncCallInterface &interface, ABIUnmanagedFunction fallback,
+                        uint32_t contextSize, CallFrame &frame)
+        : fallback(fallback), frame(frame), asynchronous(interface), contextSize(contextSize), task(swift_task_getCurrent()),
+          interface(*interface.completion), receiver(reinterpret_cast<const void *>(frame.context)) {}
     ~ABISwiftIncomingCall() {
         if (prepared && !untouchedFallback && handler->functions.destroyConsumedArguments)
             handler->functions.destroyConsumedArguments(handler->context, receiver, arguments.data(), arguments.size());
@@ -953,8 +966,11 @@ namespace {
 bool checkIncoming(ABISwiftIncomingCall *call, ABIResolutionFailure **error) {
     if (error) *error = nullptr;
     if (!call) { fail(error, ABIFailureInvalidRequest, "A live Swift callback invocation is required."); return false; }
-    if (!pthread_equal(call->thread, pthread_self())) {
+    if (!call->asynchronous && !pthread_equal(call->thread, pthread_self())) {
         fail(error, ABIFailureWrongThread, "A Swift callback invocation stays on its entering thread."); return false;
+    }
+    if (call->asynchronous && call->task != swift_task_getCurrent()) {
+        fail(error, ABIFailureInvalidRequest, "An asynchronous Swift hook stays on its entering task."); return false;
     }
     if (!call->active) { fail(error, ABIFailureInvalidRequest, "The Swift callback invocation has expired."); return false; }
     return true;
@@ -1097,11 +1113,16 @@ struct ABISwiftAsyncClosureCallback {
     std::unique_ptr<abibridge::SwiftCallbackCode> code;
     ABISwiftAsyncClosureCallbackFunctions functions{};
     void *context = nullptr;
+    ABIUnmanagedFunction fallback = nullptr;
+    uint32_t contextSize = 0;
+    ABISwiftClosureValue (*createHookBody)(void *, ABISwiftIncomingCall *) = nullptr;
     explicit ABISwiftAsyncClosureCallback(const ABISwiftAsyncCallInterface &interface) : interface(interface) {}
     ~ABISwiftAsyncClosureCallback() { if (functions.releaseContext) functions.releaseContext(context); }
 };
 struct SwiftAsyncCallbackInvocation {
     ABISwiftAsyncClosureCallback &callback;
+    std::unique_ptr<ABISwiftIncomingCall> hook;
+    SwiftAsyncHeader *caller = nullptr;
     std::vector<AlignedValue> storage;
     std::vector<void *> arguments;
     AlignedValue result, error;
@@ -1142,6 +1163,30 @@ ABISwiftAsyncClosureCallback *ABICreateSwiftAsyncClosureCallback(ABISwiftAsyncCa
     callback->context = context;
     return callback.release();
 }
+ABISwiftAsyncClosureCallback *ABICreateSwiftAsyncHookCallback(ABISwiftAsyncCallInterface *interface,
+    ABIUnmanagedFunction fallback, uint32_t contextSize,
+    ABISwiftClosureValue (*createBody)(void *, ABISwiftIncomingCall *),
+    void *context, void (*releaseContext)(void *), ABIResolutionFailure **error) {
+    if (error) *error = nullptr;
+    if (!interface || !fallback || contextSize < sizeof(SwiftAsyncHeader) || !createBody) {
+        fail(error, ABIFailureInvalidRequest, "An async interface, predecessor and body factory are required."); return nullptr;
+    }
+    auto callback = std::make_unique<ABISwiftAsyncClosureCallback>(*interface);
+    // A virtual caller allocates the size advertised by this descriptor.
+    // Raw pass-through reuses that context for the captured native entry.
+    callback->code = std::make_unique<abibridge::SwiftCallbackCode>(callback.get(), error, false, contextSize);
+    if (!callback->code->function()) return nullptr;
+    callback->fallback = fallback;
+    callback->contextSize = contextSize;
+    callback->createHookBody = createBody;
+    callback->context = context;
+    callback->functions.releaseContext = releaseContext;
+    return callback.release();
+}
+ABIUnmanagedFunction ABISwiftAsyncHookCallbackFunction(const ABISwiftAsyncClosureCallback *callback) {
+    return callback->code->function();
+}
+
 const void *ABISwiftAsyncClosureCallbackDescriptor(const ABISwiftAsyncClosureCallback *callback) {
     return callback->code->asyncDescriptor();
 }
@@ -1163,9 +1208,33 @@ void *ABICopySwiftAsyncClosureCallbackBodyOwner(ABIUnmanagedFunction function, v
 extern "C" SwiftAsyncTransfer *ABIPrepareSwiftAsyncCallback(
     ABISwiftAsyncClosureCallback *callback, CallFrame *incoming, SwiftAsyncCallbackContext *bridge) {
     auto *invocation = new SwiftAsyncCallbackInvocation(*callback);
-    bridge->invocation = invocation;
-    bridge->executor = swift_task_getCurrentExecutor();
     invocation->nativeContext = incoming->context;
+    uintptr_t actor = 0, witness = 0;
+    size_t incomingStackSize = callback->interface.entry->stackSize;
+    if (callback->createHookBody) {
+        invocation->hook = std::make_unique<ABISwiftIncomingCall>(callback->interface,
+            callback->fallback, callback->contextSize, *incoming);
+        invocation->body = callback->createHookBody(callback->context, invocation->hook.get());
+        if (!invocation->body.function) {
+            invocation->hook->untouchedFallback = true;
+            delete invocation;
+            // The prologue reserved an entire transfer record. Preserve every
+            // incoming register and stack word for a raw generic mismatch.
+            auto *transfer = reinterpret_cast<SwiftAsyncTransfer *>(incoming);
+            std::memcpy(&transfer->function, &callback->fallback, sizeof(callback->fallback));
+            transfer->asyncContext = reinterpret_cast<uintptr_t>(bridge);
+            transfer->values.stackSize = 0;
+#if __has_feature(ptrauth_calls)
+            transfer->discriminator = ptrauth_function_pointer_type_discriminator(void(void));
+#endif
+            return transfer;
+        }
+        auto &call = *invocation->hook;
+        incomingStackSize = call.asynchronous->entry->stackSize;
+        actor = call.isolation[0]; witness = call.isolation[1];
+        invocation->caller = reinterpret_cast<SwiftAsyncHeader *>(bridge);
+        bridge = static_cast<SwiftAsyncCallbackContext *>(swift_task_alloc(sizeof(SwiftAsyncCallbackContext)));
+    } else {
     // The native caller's async argument borrows end at completion, not at this
     // entry prologue. Preserve indirect addresses through the suspended body.
     unpackArguments(*callback->interface.entry, *incoming, invocation->storage, invocation->arguments, nullptr, true);
@@ -1179,7 +1248,6 @@ extern "C" SwiftAsyncTransfer *ABIPrepareSwiftAsyncCallback(
         invocation->indirectResult = reinterpret_cast<void *>(pointer());
     for (size_t output = 0; output < callback->interface.completion->indirectResults.size(); ++output)
         invocation->outputs.push_back(reinterpret_cast<void *>(pointer()));
-    uintptr_t actor = 0, witness = 0;
     if (callback->interface.inheritsCallerIsolation) { actor = pointer(); witness = pointer(); }
     auto *arguments = invocation->arguments.empty() ? nullptr : invocation->arguments.data() + index;
     index += callback->interface.argumentCount;
@@ -1188,6 +1256,9 @@ extern "C" SwiftAsyncTransfer *ABIPrepareSwiftAsyncCallback(
     invocation->body = callback->functions.createBody(callback->functions.usesNativeContext
         ? reinterpret_cast<void *>(incoming->context) : callback->context, arguments, invocation->result.data(),
         callback->interface.completion->errorResult ? invocation->error.data() : nullptr, &invocation->didThrow);
+    }
+    bridge->invocation = invocation;
+    bridge->executor = swift_task_getCurrentExecutor();
 
     // The body factory supplies a live compiler-generated stored Void closure,
     // whose empty result remains formally indirect in generic function storage.
@@ -1210,7 +1281,7 @@ extern "C" SwiftAsyncTransfer *ABIPrepareSwiftAsyncCallback(
     transfer.values.integers[1] = actor;
     transfer.values.integers[2] = witness;
     transfer.values.context = reinterpret_cast<uintptr_t>(invocation->body.context);
-    transfer.values.stackSize = callback->interface.entry->stackSize;
+    transfer.values.stackSize = incomingStackSize;
     return &transfer;
 }
 
@@ -1235,6 +1306,29 @@ extern "C" SwiftAsyncTransfer *ABICompleteSwiftAsyncCallback(SwiftAsyncHeader *b
 extern "C" void ABIFinishSwiftAsyncCallback(SwiftAsyncCallbackContext *bridge, SwiftAsyncTransfer *transfer) {
     std::unique_ptr<SwiftAsyncCallbackInvocation> invocation(bridge->invocation);
     *transfer = {};
+    if (invocation->hook) {
+        auto &call = *invocation->hook;
+        call.active = false;
+        auto &result = call.assigned ? call.assigned : call.completed;
+        // The Swift execution body guarantees a completed native outcome,
+        // including unchanged fallback after an unrepresentable failure.
+        if (!result) std::abort();
+        transfer->values.indirectResult = reinterpret_cast<uintptr_t>(call.indirectResult);
+        transfer->values.error = call.interface.errorResult ? 0 : invocation->nativeContext;
+        if (result->isError) packError(call.interface, transfer->values, result->value.data(), call.indirectError,
+            call.handler->functions.initializeError, call.handler->context);
+        else packResult(call.interface, transfer->values, result->value.data(), call.outputs.data(),
+            call.handler->functions.initializeResult, call.handler->context);
+        result->initialized = false;
+        auto resume = reinterpret_cast<ABIUnmanagedFunction>(invocation->caller->resume);
+        std::memcpy(&transfer->function, &resume, sizeof(resume));
+        transfer->asyncContext = reinterpret_cast<uintptr_t>(invocation->caller);
+#if __has_feature(ptrauth_calls)
+        transfer->discriminator = ptrauth_function_pointer_type_discriminator(void(void));
+#endif
+        swift_task_dealloc(bridge);
+        return;
+    }
     auto &completion = *invocation->callback.interface.completion;
     transfer->values.indirectResult = reinterpret_cast<uintptr_t>(invocation->indirectResult);
     transfer->values.error = completion.errorResult ? 0 : invocation->nativeContext;
@@ -1276,6 +1370,61 @@ bool ABISwiftIncomingReadPointer(ABISwiftIncomingCall *call, const ABISwiftCallI
     fail(error, ABIFailureInvalidRequest, "The selected Swift argument is not a directly passed pointer word.");
     return false;
 }
+bool ABISwiftAsyncIncomingReadPointer(ABISwiftIncomingCall *call, const ABISwiftAsyncCallInterface *interface,
+    size_t index, uintptr_t *value, ABIResolutionFailure **error) {
+    const size_t prefix = interface->completion->resultLayout.indirect + interface->completion->indirectResults.size()
+        + (interface->inheritsCallerIsolation ? 2 : 0);
+    return ABISwiftIncomingReadPointer(call, interface->entry.get(), prefix + index, value, error);
+}
+bool ABISwiftAsyncIncomingPrepare(ABISwiftIncomingCall *call, const ABISwiftAsyncCallInterface *interface,
+    ABISwiftCallbackFunctions functions, void *context, ABIResolutionFailure **error) {
+    if (!checkIncoming(call, error)) return false;
+    if (!interface || call->prepared || !call->asynchronous) {
+        fail(error, ABIFailureInvalidRequest, "An unprepared async hook and its bound interface are required."); return false;
+    }
+    auto handler = std::make_shared<SwiftHandler>();
+    handler->functions = functions; handler->context = context;
+    call->handler = std::move(handler);
+    call->asynchronous = *interface; call->interface = *interface->completion;
+    unpackArguments(*interface->entry, call->frame, call->storage, call->arguments, nullptr, true);
+    size_t prefix = 0;
+    auto pointer = [&]() { uintptr_t value; std::memcpy(&value, call->arguments[prefix++], sizeof(value)); return value; };
+    if (call->interface.resultLayout.indirect) call->indirectResult = reinterpret_cast<void *>(pointer());
+    for (size_t index = 0; index < call->interface.indirectResults.size(); ++index)
+        call->outputs.push_back(reinterpret_cast<void *>(pointer()));
+    if (interface->inheritsCallerIsolation) { call->isolation[0] = pointer(); call->isolation[1] = pointer(); }
+    if (call->interface.indirectError) {
+        uintptr_t value; std::memcpy(&value, call->arguments[prefix + interface->argumentCount], sizeof(value));
+        call->indirectError = reinterpret_cast<void *>(value);
+    }
+    call->arguments.erase(call->arguments.begin(), call->arguments.begin() + prefix);
+    call->arguments.resize(interface->argumentCount);
+    call->prepared = true;
+    return true;
+}
+ABISwiftAsyncInvocation *ABISwiftIncomingCreateAsyncProceed(ABISwiftIncomingCall *call,
+    void *const *arguments, size_t count, const void *receiver, bool untouched, ABIResolutionFailure **error) {
+    if (!checkIncoming(call, error)) return nullptr;
+    auto &interface = *call->asynchronous;
+    if (!untouched && count != interface.argumentCount) {
+        fail(error, ABIFailureInvalidRequest, "Arguments must match the selected async hook interface."); return nullptr;
+    }
+    call->pendingResult = std::make_unique<SwiftOwnedResult>(*interface.completion->result, *call->handler);
+    call->pendingError = interface.completion->errorResult
+        ? std::make_unique<SwiftOwnedResult>(*interface.completion->errorResult, *call->handler, true) : nullptr;
+    auto *invocation = ABICreateSwiftAsyncInvocation(&interface, call->fallback, call->contextSize,
+        call->pendingResult->value.data(), untouched ? call->arguments.data() : arguments,
+        untouched ? call->receiver : receiver, call->pendingError ? call->pendingError->value.data() : nullptr, error);
+    if (invocation && untouched) call->untouchedFallback = true;
+    return invocation;
+}
+void ABISwiftIncomingCompleteAsyncProceed(ABISwiftIncomingCall *call, ABISwiftAsyncInvocation *invocation) {
+    auto result = invocation->didThrow ? std::move(call->pendingError) : std::move(call->pendingResult);
+    result->initialized = true;
+    auto previous = std::move(call->completed);
+    call->completed = std::move(result);
+}
+
 bool ABISwiftIncomingPrepare(ABISwiftIncomingCall *call, const ABISwiftCallInterface *interface,
     ABISwiftCallbackFunctions functions, void *context, ABIResolutionFailure **error) {
     if (!checkIncoming(call, error)) return false;
@@ -1297,7 +1446,16 @@ void *ABISwiftIncomingArgumentAddress(ABISwiftIncomingCall *call, size_t index) 
 bool ABISwiftIncomingReadArgument(ABISwiftIncomingCall *call, size_t index,
     void *output, size_t size, ABIResolutionFailure **error) {
     if (!checkIncoming(call, error)) return false;
-    if (index >= call->arguments.size() || size != call->interface.parameters[index]->size() || (size && !output)) {
+    const auto *interface = &call->interface;
+    size_t parameter = index;
+    if (call->asynchronous) {
+        const auto &async = *call->asynchronous;
+        interface = async.entry.get();
+        parameter += async.completion->resultLayout.indirect + async.completion->indirectResults.size()
+            + (async.inheritsCallerIsolation ? 2 : 0);
+    }
+    if (index >= call->arguments.size() || parameter >= interface->parameters.size()
+        || size != interface->parameters[parameter]->size() || (size && !output)) {
         fail(error, ABIFailureInvalidRequest, "The destination must match the selected Swift argument storage."); return false;
     }
     if (size) std::memcpy(output, call->arguments[index], size);
@@ -1314,7 +1472,7 @@ bool ABISwiftIncomingProceed(ABISwiftIncomingCall *call, void *const *arguments,
     auto nativeError = interface.errorResult
         ? std::make_unique<SwiftOwnedResult>(*interface.errorResult, *call->handler, true) : nullptr;
     bool didThrow = false;
-    if (!invokeSwiftCallInterface(&interface, call->callback.fallback, result->value.data(), arguments, receiver,
+    if (!invokeSwiftCallInterface(&interface, call->fallback, result->value.data(), arguments, receiver,
         nativeError ? nativeError->value.data() : nullptr, &didThrow, error)) return false;
     if (didThrow) result = std::move(nativeError);
     result->initialized = true;

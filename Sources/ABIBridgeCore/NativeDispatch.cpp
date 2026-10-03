@@ -64,8 +64,14 @@ const void *ABIUnsafeReadAuthenticatedPointer(
     const void *storage, int32_t key, uintptr_t discriminator, bool addressDiversity)
 {
     if (!storage || !validKey(key)) return nullptr;
-    const void *pointer;
-    std::memcpy(&pointer, storage, sizeof(pointer));
+    uintptr_t bits;
+    std::memcpy(&bits, storage, sizeof(bits));
+    return ABIUnsafeAuthenticatePointerSlot(bits, storage, key, discriminator, addressDiversity);
+}
+const void *ABIUnsafeAuthenticatePointerSlot(uintptr_t bits,
+    const void *storage, int32_t key, uintptr_t discriminator, bool addressDiversity) {
+    if (!storage || !validKey(key)) return nullptr;
+    const void *pointer = reinterpret_cast<const void *>(bits);
     if (!pointer || key == ABIAuthenticationUnsigned) return pointer;
 #if __has_feature(ptrauth_calls)
     const auto extra = modifier(storage, discriminator, addressDiversity);

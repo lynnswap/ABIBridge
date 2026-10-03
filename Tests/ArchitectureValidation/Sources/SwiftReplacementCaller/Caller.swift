@@ -54,3 +54,9 @@ open class CallerOverridingRenderer: ReplacementRenderer {
 }
 @inline(never) public func hookWideValueSum(_ seed: Int64, _ delta: Int64) -> Int64 { HookWideValue(seed).sum(delta) }
 @inline(never) public func hookWideValueConsume(_ seed: Int64, _ delta: Int64) -> Int64 { HookWideValue(seed).consume(delta) }
+
+@inline(never) public nonisolated(nonsending) func importedAsyncHookInteger(_ value: Int64) async -> Int64 { await asyncHookEcho(value) }
+@inline(never) public nonisolated(nonsending) func importedAsyncHookString(_ value: String) async -> String { await asyncHookEcho(value) }
+@inline(never) public nonisolated(nonsending) func importedAsyncHookThrowing(_ value: Int64) async throws(NSError) -> String { try await asyncHookThrowing(value) }
+@inline(never) @MainActor public func importedAsyncHookActor(_ value: Int64) async -> Int64 { await asyncHookActor(value) }
+@inline(never) public nonisolated(nonsending) func importedAsyncHookMethod(_ object: AsyncHookRenderer, _ value: String) async throws(NSError) -> String { try await object.render(value) }
