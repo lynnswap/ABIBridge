@@ -118,7 +118,7 @@ struct SwiftGenericReceiverTests {
         #expect(try unsafe blockCall.unsafeInvoke(unsafeBitCast(block, to: AnyObject.self)) == 42)
     }
 
-    @MainActor @Test func unsupportedOverloadsDoNotHideUsableMembers() async throws {
+    @MainActor @Test func inapplicableOverloadsDoNotHideUsableMembers() async throws {
         let runtime = ABIRuntime()
         for receiver in [GenericReceiver(ReceiverNumber(number: 42)),
                          InheritedGenericReceiver(ReceiverNumber(number: 43))] {
@@ -127,14 +127,8 @@ struct SwiftGenericReceiverTests {
             #expect(try unsafe read.unsafeInvoke(41) == receiver.read(Int64(41)))
             let extensionRead = try await object.method(named: "read(_:)", as: ((Double) -> Double).self)
             #expect(try unsafe extensionRead.unsafeInvoke(40) == receiver.read(Double(40)))
-            do {
-                _ = try await object.method(named: "unsupportedRead(_:)", as: ((String) -> String).self)
-                Issue.record("Expected the unsupported candidate's preparation error")
-            } catch ABIResolutionError.unsupportedDeclaration(let reason) {
-                #expect(reason.contains("Generic opaque results require enclosing metadata"))
-            } catch ABIResolutionError.declarationNotFound(let declaration) {
-                #expect(declaration.kind == .data)
-                #expect(declaration.name.hasPrefix("opaque type descriptor for <<opaque return type of "))
+            await #expect(throws: ABIResolutionError.self) {
+                _ = try await object.method(named: "unsupportedRead(_:)", as: ((String) -> Int64).self)
             }
         }
     }

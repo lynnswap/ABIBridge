@@ -73,6 +73,51 @@ final class SwiftSyntax: @unchecked Sendable {
             }
         }
 
+        func constrainedExistentialShapeName() throws -> String {
+            try withExtendedLifetime(owner) {
+                guard let name = ABICopySwiftConstrainedExistentialShapeName(pointer) else {
+                    throw ABIResolutionError.unsupportedDeclaration("Cannot generalize the constrained existential requirements.")
+                }
+                defer { ABIFreeString(name) }
+                return String(cString: name)
+            }
+        }
+
+        func makeExtendedExistentialShape(protocols: [UnsafeRawPointer?], written: [String],
+                                           declaring: [String], classBound: Bool) throws -> UnsafeMutableRawPointer {
+            let writtenStrings = written.map { Array($0.utf8CString) }
+            let declaringStrings = declaring.map { Array($0.utf8CString) }
+            func pointers<Result>(_ strings: [[CChar]], _ body: ([UnsafePointer<CChar>?]) throws -> Result) rethrows -> Result {
+                var values: [UnsafePointer<CChar>?] = []
+                func append(_ index: Int) throws -> Result {
+                    if index == strings.count { return try body(values) }
+                    return try strings[index].withUnsafeBufferPointer {
+                        values.append($0.baseAddress)
+                        defer { values.removeLast() }
+                        return try append(index + 1)
+                    }
+                }
+                return try append(0)
+            }
+            return try withExtendedLifetime(owner) {
+                try pointers(writtenStrings) { written in
+                    try pointers(declaringStrings) { declaring in
+                        try protocols.withUnsafeBufferPointer { protocols in
+                            try written.withUnsafeBufferPointer { written in
+                                try declaring.withUnsafeBufferPointer { declaring in
+                                    guard let value = ABICreateSwiftExtendedExistentialShape(pointer, protocols.baseAddress,
+                                        protocols.count, written.baseAddress, declaring.baseAddress, written.count, classBound) else {
+                                        throw ABIResolutionError.metadataUnavailable("Cannot form the extended existential shape.")
+                                    }
+                                    return value
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         func name() throws -> String {
             let mangled = try mangledName()
             guard let name = DeclarationKey.demangle(mangled.hasPrefix("$s") ? mangled : "$s" + mangled, language: .swift) else {

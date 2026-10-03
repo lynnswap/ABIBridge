@@ -512,3 +512,45 @@ public struct RuntimeResilientWeakRecord {
 @inline(never) public nonisolated(nonsending) func callMixedRuntimeAsyncReader<A, B>(
     _ body: nonisolated(nonsending) (A, B) async -> Int64, _ first: A, _ second: B
 ) async -> Int64 { await body(first, second) }
+
+@inline(never) public func makeRuntimeOpaque<Value>(_ value: Value) -> some Any { value }
+@inline(never) public func makeRuntimeOpaquePair<First, Second>(_ first: First, _ second: Second) -> (some Any, some Any) { (first, second) }
+@inline(never) public func makeRuntimeOpaqueClosure<Value>(_ value: Value) -> () -> some Any {
+    let body: () -> Value = { value }
+    return body
+}
+public final class RuntimeOpaqueOwner<Value> {
+    let value: Value
+    public init(_ value: Value) { self.value = value }
+    public var opaque: some Any { value }
+    @inline(never) public func make<Other>(_ other: Other) -> some Any { (value, other) }
+}
+public protocol RuntimeExtendedSource<Element> { associatedtype Element }
+private struct RuntimeExtendedValue<Element>: RuntimeExtendedSource, CustomStringConvertible {
+    let value: Element
+    var description: String { String(describing: value) }
+}
+@inline(never) public func makeRuntimeExtended<Value>(_ value: Value) -> any RuntimeExtendedSource<Value> {
+    RuntimeExtendedValue(value: value)
+}
+public protocol RuntimeExtendedObject<Element>: AnyObject { associatedtype Element }
+private final class RuntimeExtendedObjectValue<Element>: RuntimeExtendedObject, CustomStringConvertible {
+    let value: Element
+    init(_ value: Element) { self.value = value }
+    var description: String { String(describing: value) }
+}
+@inline(never) public func makeRuntimeExtendedObject<Value>(_ value: Value) -> any RuntimeExtendedObject<Value> {
+    RuntimeExtendedObjectValue(value)
+}
+@inline(never) public func applyRuntimeExtendedObject<Value>(_ body: (any RuntimeExtendedObject<Value>) -> Int, _ value: Value) -> Int {
+    body(RuntimeExtendedObjectValue(value))
+}
+
+public protocol RuntimeExtendedLeft<Element> { associatedtype Element }
+public protocol RuntimeExtendedRight<Element> { associatedtype Element }
+private struct RuntimeExtendedBoth: RuntimeExtendedLeft, RuntimeExtendedRight, CustomStringConvertible {
+    typealias Element = Int
+    var description: String { "both" }
+}
+@inline(never) public func makeLeftConstrainedComposition() -> any RuntimeExtendedLeft<Int> & RuntimeExtendedRight { RuntimeExtendedBoth() }
+@inline(never) public func makeRightConstrainedComposition() -> any RuntimeExtendedLeft & RuntimeExtendedRight<Int> { RuntimeExtendedBoth() }

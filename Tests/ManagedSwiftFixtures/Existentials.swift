@@ -66,3 +66,46 @@ public typealias ManyObjectProtocols = any ExistentialObjectValue & ExistentialO
 @inline(never) @concurrent public func applyAsyncExistentialClosure(_ body: @concurrent @Sendable (any ExistentialValue) async -> any ExistentialValue, _ value: any ExistentialValue) async -> any ExistentialValue {
     await body(value)
 }
+
+public protocol ExistentialSource<Element>: AnyObject {
+    associatedtype Element
+    var element: Element { get }
+}
+public final class ExistentialIntSource: ExistentialSource {
+    public let element: Int
+    public init(_ element: Int) { self.element = element }
+}
+@inline(never) public func echoExtendedCollection(_ value: any Collection<Int>) -> any Collection<Int> { value }
+@inline(never) public func echoExtendedSource(_ value: any ExistentialSource<Int>) -> any ExistentialSource<Int> { value }
+@inline(never) public func echoGenericExtendedCollection<T>(_ value: any Collection<T>) -> any Collection<T> { value }
+@inline(never) public func makeGenericExtendedCollection<T>(_ value: T) -> any Collection<T> { [value] }
+@inline(never) public func applyExtendedSource(_ body: (any ExistentialSource<Int>) -> any ExistentialSource<Int>, _ value: any ExistentialSource<Int>) -> any ExistentialSource<Int> { body(value) }
+@inline(never) public func applyExtendedCollection(_ body: (any Collection<Int>) -> any Collection<Int>, _ value: any Collection<Int>) -> any Collection<Int> { body(value) }
+
+public protocol FreshExistentialSource<Element> { associatedtype Element; var element: Element { get } }
+public struct FreshExistentialValue<Element>: FreshExistentialSource, CustomStringConvertible {
+    public let element: Element
+    public var description: String { String(describing: element) }
+}
+@inline(never) public func makeFreshExistential<Element>(_ value: Element) -> any FreshExistentialSource<Element> {
+    FreshExistentialValue(element: value)
+}
+
+public protocol FreshExistentialPair<First, Second> { associatedtype First; associatedtype Second }
+public struct FreshExistentialPairValue<First, Second>: FreshExistentialPair, CustomStringConvertible {
+    let first: First
+    let second: Second
+    public var description: String { "\(first):\(second)" }
+}
+@inline(never) public func makeFreshExistentialPair<First, Second>(_ first: First, _ second: Second) -> any FreshExistentialPair<First, Second> {
+    FreshExistentialPairValue(first: first, second: second)
+}
+public protocol FreshExistentialClass<Element>: AnyObject { associatedtype Element }
+public final class FreshExistentialClassValue<Element>: FreshExistentialClass, CustomStringConvertible {
+    let element: Element
+    init(_ element: Element) { self.element = element }
+    public var description: String { String(describing: element) }
+}
+@inline(never) public func makeFreshExistentialClass<Element>(_ value: Element) -> any FreshExistentialClass<Element> {
+    FreshExistentialClassValue(value)
+}
