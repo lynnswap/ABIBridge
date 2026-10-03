@@ -902,9 +902,9 @@ struct ABISwiftIncomingCall {
     std::vector<void *> outputs;
     void *indirectResult = nullptr;
     uintptr_t isolation[2]{};
-    std::unique_ptr<SwiftOwnedResult> pendingResult, pendingError;
     ABISwiftCallInterface interface;
     std::shared_ptr<SwiftHandler> handler;
+    std::unique_ptr<SwiftOwnedResult> pendingResult, pendingError;
     std::vector<AlignedValue> storage;
     std::vector<void *> arguments;
     const void *receiver;
