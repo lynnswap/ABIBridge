@@ -391,6 +391,47 @@ private struct RuntimeHookProbeError: Error {}
         throw ArchitectureValidationFailure(description: "Async inout failure did not preserve the completed result or exact cleanup")
     }
     checks.append("Async result ownership transfers only after inout writeback succeeds")
+    let closureTarget = try await runtime.swiftFunction(named: "SwiftImportProvider.consumeHookClosure(_:)",
+        as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self, in: provider)
+    let closureCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.callConsumeHookClosure(_:)",
+        as: ((NSObject) -> Int64).self, in: caller)
+    let closureHook = try unsafe await closureTarget.hookImportedCalls(in: caller, using: runtime,
+        onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value in
+            state.input = value.value
+            return try call.proceed(value)
+        }
+    defer { closureHook.invalidate() }
+    do {
+        let object = NSObject()
+        observedObject = object
+        guard try unsafe closureCaller.unsafeInvoke(object) == 42, state.input!.isConsumed else {
+            throw ArchitectureValidationFailure(description: "A converted runtime closure did not complete its consuming transfer")
+        }
+    }
+    guard observedObject == nil else { throw ArchitectureValidationFailure(description: "A consumed runtime closure retained its capture") }
+    checks.append("Runtime closure conversion consumes saved aliases and releases authenticated captures")
+    closureHook.invalidate()
+    let asyncClosureTarget = try await runtime.swiftFunction(named: "SwiftImportProvider.consumeAsyncHookClosure(_:)",
+        as: (@concurrent (NativeSwiftConsuming<NativeSwiftValue>) async -> Int64).self, in: provider)
+    let asyncClosureCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.callConsumeAsyncHookClosure(_:)",
+        as: (@concurrent (NSObject) async -> Int64).self, in: caller)
+    let asyncClosureHook = try unsafe await asyncClosureTarget.hookImportedCalls(in: caller, using: runtime,
+        onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value in
+            state.input = value.value
+            return try await call.proceed(value)
+        }
+    defer { asyncClosureHook.invalidate() }
+    do {
+        let object = NSObject()
+        observedObject = object
+        guard try unsafe await asyncClosureCaller.unsafeInvoke(object) == 42, state.input!.isConsumed else {
+            throw ArchitectureValidationFailure(description: "An async converted runtime closure did not complete its consuming transfer")
+        }
+    }
+    guard observedObject == nil, failures.withLock({ $0 }) == 5 else {
+        throw ArchitectureValidationFailure(description: "Async runtime closure transfer leaked its capture or reported a failure")
+    }
+    checks.append("Async runtime closure conversion preserves authenticated dispatch and releases transferred ownership")
     return checks
 }
 

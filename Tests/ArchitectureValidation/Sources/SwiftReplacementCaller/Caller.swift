@@ -109,3 +109,13 @@ open class CallerOverridingRenderer: ReplacementRenderer {
 }
 
 @inline(never) public func callDiscardTicket(_ pointer: UnsafeMutableRawPointer?) -> Int64 { hookDiscardTicket(HookTicket(42), pointer) }
+
+@inline(never) public func callConsumeHookClosure(_ object: NSObject) -> Int64 {
+    consumeHookClosure { withExtendedLifetime(object) { 42 } }
+}
+@concurrent @inline(never) public func callConsumeAsyncHookClosure(_ object: NSObject) async -> Int64 {
+    await consumeAsyncHookClosure { withExtendedLifetime(object) { 42 } }
+}
+@inline(never) public func callBorrowedTupleAndAdapter(_ object: NSObject, _ pointer: UnsafeMutableRawPointer?) -> Int64 {
+    hookBorrowedTupleAndAdapter((object, 42), pointer)
+}

@@ -221,3 +221,10 @@ open class HookTicketRenderer {
 @inline(never) public func hookAdapterWriteback(_ value: UnsafeMutableRawPointer?, _ body: inout () -> Int64) {}
 
 @inline(never) public func hookDiscardTicket<Value: ~Copyable>(_ value: consuming Value, _ pointer: UnsafeMutableRawPointer?) -> Int64 { 0 }
+
+@inline(never) public func consumeHookClosure(_ value: consuming @escaping () -> Int64) -> Int64 { value() }
+@concurrent @inline(never) public func consumeAsyncHookClosure(_ value: consuming @escaping () -> Int64) async -> Int64 {
+    await Task.yield()
+    return value()
+}
+@inline(never) public func hookBorrowedTupleAndAdapter<Value>(_ value: (Value, Int64), _ pointer: UnsafeMutableRawPointer?) -> Int64 { value.1 }

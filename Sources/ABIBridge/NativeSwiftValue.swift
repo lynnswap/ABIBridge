@@ -435,6 +435,10 @@ struct SwiftRuntimeValuePlan: Sendable {
             } : nil)
         closureConversions.apply(to: native, native: true, retainingCode: valueType,
                                  codeLifetime: native.codeLifetime)
+        if convention == .consuming {
+            let address = native.address
+            native.destroyTransferredCopy = { ABISwiftDestroyValue(metadata, address) }
+        }
         if convention == .inoutValue {
             let address = native.address
             let lifetime = native.codeLifetime

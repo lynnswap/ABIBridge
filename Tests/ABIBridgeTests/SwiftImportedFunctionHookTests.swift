@@ -448,6 +448,66 @@ struct SwiftImportedFunctionHookTests {
         #expect(try unsafe counts.unsafeInvoke() == (0, 1))
     }
 
+    @Test func consumingRuntimeClosuresCompleteConvertedTransfers() async throws {
+        let fixture = try CompiledSwiftReplacementFixture()
+        defer { fixture.cleanup() }
+        let target = try await fixture.runtime.swiftFunction(named: fixture.module + ".consumeHookClosure(_:)",
+            as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self, in: fixture.providerScope)
+        let caller = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".callConsumeHookClosure(_:)",
+            as: ((NSObject) -> Int64).self, in: fixture.callerScope)
+        let asyncTarget = try await fixture.runtime.swiftFunction(named: fixture.module + ".consumeAsyncHookClosure(_:)",
+            as: (@concurrent (NativeSwiftConsuming<NativeSwiftValue>) async -> Int64).self, in: fixture.providerScope)
+        let asyncCaller = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".callConsumeAsyncHookClosure(_:)",
+            as: (@concurrent (NSObject) async -> Int64).self, in: fixture.callerScope)
+        let saved = SavedRuntimeHookValues()
+        let hook = try unsafe await target.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { Issue.record($0) }) { call, value in
+                saved.input = value.value
+                return try call.proceed(value)
+            }
+        let asyncHook = try unsafe await asyncTarget.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { Issue.record($0) }) { call, value in
+                saved.input = value.value
+                return try await call.proceed(value)
+            }
+        defer { hook.invalidate(); asyncHook.invalidate() }
+        weak var observed: NSObject?
+        do {
+            let object = NSObject()
+            observed = object
+            #expect(try unsafe caller.unsafeInvoke(object) == 42)
+            #expect(saved.input!.isConsumed)
+            #expect(try unsafe await asyncCaller.unsafeInvoke(object) == 42)
+            #expect(saved.input!.isConsumed)
+        }
+        #expect(observed == nil)
+    }
+
+    @Test func savedAdaptersDoNotRetainBorrowedTupleCopies() async throws {
+        let fixture = try CompiledSwiftReplacementFixture()
+        defer { fixture.cleanup() }
+        let target = try await fixture.runtime.swiftFunction(
+            named: fixture.module + ".hookBorrowedTupleAndAdapter<A>((A, Swift.Int64), Swift.UnsafeMutableRawPointer?) -> Swift.Int64",
+            as: ((NativeSwiftBorrowedValue, OptionalHookPointer?) -> Int64).self,
+            genericArguments: [.type(NSObject.self)], in: fixture.providerScope)
+        let caller = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".callBorrowedTupleAndAdapter(_:_:)",
+            as: ((NSObject, UnsafeMutableRawPointer?) -> Int64).self, in: fixture.callerScope)
+        let saved = SavedRuntimeHookValues()
+        let hook = try unsafe await target.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { Issue.record($0) }) { _, _, value in saved.adapter = value; return 100 }
+        defer { hook.invalidate() }
+        let pointer = UnsafeMutableRawPointer.allocate(byteCount: 1, alignment: 1)
+        defer { pointer.deallocate() }
+        weak var observed: NSObject?
+        do {
+            let object = NSObject()
+            observed = object
+            #expect(try unsafe caller.unsafeInvoke(object, pointer) == 100)
+        }
+        #expect(saved.adapter!.marker == 42)
+        #expect(observed == nil)
+    }
+
     @Test func runtimeValuesNestedClosuresAndInoutComposeThroughHooks() async throws {
         let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
         @inline(never) public func runtimeHookEcho<Value>(_ value: Value) -> Value { value }

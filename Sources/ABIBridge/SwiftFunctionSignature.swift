@@ -305,6 +305,7 @@ final class SwiftCallbackScope {
         borrows.removeAll()
         writebacks.removeAll()
         runtimeInputs.removeAll()
+        storage.removeAll()
     }
     deinit { expire(); withExtendedLifetime(storage) {} }
 }
