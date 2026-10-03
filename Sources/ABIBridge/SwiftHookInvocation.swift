@@ -9,31 +9,48 @@ public enum NativeSwiftHookInvocationError: Error, Sendable {
     case expiredInvocation
     /// The continuation or MainActor callback was entered from another thread.
     case wrongThread
+    /// An asynchronous continuation was used by another Swift task.
+    case wrongTask
 }
 
 // Only the scoped operation owns the execution snapshot. Expiry drops it even
 // when a consumer saves the public invocation for later diagnostics.
 final class SwiftHookFrame {
     typealias Operation = ([NativeValueStorage]) throws -> NativeValueStorage
+    typealias AsyncOperation = ([NativeValueStorage]) async throws -> NativeValueStorage
     struct Operations {
-        let invoke: Operation
+        let invoke: Operation?
+        let invokeAsync: AsyncOperation?
         let receiver: (() throws -> NativeValueStorage)?
     }
     private let lock = NSLock()
     private let thread = pthread_self()
+    private let task: UnsafeRawPointer?
     private var operations: Operations?
     init(receiver: (() throws -> NativeValueStorage)? = nil, _ operation: @escaping Operation) {
-        operations = Operations(invoke: operation, receiver: receiver)
+        task = nil
+        operations = Operations(invoke: operation, invokeAsync: nil, receiver: receiver)
+    }
+    init(receiver: (() throws -> NativeValueStorage)? = nil, asynchronous operation: @escaping AsyncOperation) {
+        task = ABISwiftCurrentTask()
+        operations = Operations(invoke: nil, invokeAsync: operation, receiver: receiver)
     }
     private func current() throws -> Operations {
         lock.lock()
         guard let operations else { lock.unlock(); throw NativeSwiftHookInvocationError.expiredInvocation }
-        guard pthread_equal(thread, pthread_self()) != 0 else { lock.unlock(); throw NativeSwiftHookInvocationError.wrongThread }
+        if operations.invokeAsync != nil {
+            guard task == ABISwiftCurrentTask() else { lock.unlock(); throw NativeSwiftHookInvocationError.wrongTask }
+        } else {
+            guard pthread_equal(thread, pthread_self()) != 0 else { lock.unlock(); throw NativeSwiftHookInvocationError.wrongThread }
+        }
         lock.unlock()
         return operations
     }
     func use<T>(_ body: (Operation) throws -> T) throws -> T {
-        try body(current().invoke)
+        try body(current().invoke!)
+    }
+    nonisolated(nonsending) func useAsync<T>(_ body: (AsyncOperation) async throws -> T) async throws -> T {
+        try await body(current().invokeAsync!)
     }
     func receiver<T>(_ body: (NativeValueStorage) throws -> T) throws -> T {
         guard let read = try current().receiver else {
@@ -77,6 +94,42 @@ public struct NativeSwiftFunctionInvocation<Signature>: CustomStringConvertible 
         try invoke(repeat each values)
     }
 
+    /// Awaits the captured predecessor on this callback's native task.
+    /// The continuation remains usable across suspension until the callback returns.
+    @_transparent
+    public nonisolated(nonsending) func proceed<Result, Failure: Error, each Argument>(_ values: repeat each Argument) async throws -> Result
+    where Signature == (repeat each Argument) async throws(Failure) -> Result {
+        try await invokeAsync(repeat each values)
+    }
+
+    @_transparent
+    public nonisolated(nonsending) func proceed<Result, Failure: Error, each Argument>(_ values: repeat each Argument) async throws -> Result
+    where Signature == @Sendable (repeat each Argument) async throws(Failure) -> Result {
+        try await invokeAsync(repeat each values)
+    }
+
+    @_transparent
+    public nonisolated(nonsending) func proceed<Result, Failure: Error, each Argument>(_ values: repeat each Argument) async throws -> Result
+    where Signature == @concurrent (repeat each Argument) async throws(Failure) -> Result {
+        try await invokeAsync(repeat each values)
+    }
+
+    @_transparent
+    public nonisolated(nonsending) func proceed<Result, Failure: Error, each Argument>(_ values: repeat each Argument) async throws -> Result
+    where Signature == @Sendable @concurrent (repeat each Argument) async throws(Failure) -> Result {
+        try await invokeAsync(repeat each values)
+    }
+
+    @usableFromInline nonisolated(nonsending) func invokeAsync<Result, each Argument>(_ values: repeat each Argument) async throws -> Result {
+        do {
+            return try await frame.useAsync { operation in
+                let storage = try prepared.encode(repeat each values, retainingCode: nil)
+                let result = try await operation(storage)
+                return try prepared.decode(result, retaining: result, retainingCode: nil)
+            }
+        } catch let error as SwiftHookCompletedResultError { throw error.underlying }
+    }
+
     private func invoke<Result, each Argument>(_ values: repeat each Argument) throws -> Result {
         do {
             return try frame.use { operation in
@@ -93,11 +146,26 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
     private let resultType: CValueType
     private let initializeResult: SwiftResultInitializer
     let arguments: (repeat SwiftValueCodec<each Argument>)
-    let call: SwiftCall
+    let values: SwiftCallValues
+    let parameters: SwiftGenericParameters
+    let generic: SwiftGenericCallPlan?
+    let interface: SwiftCallInterface?
+    let asyncInterface: SwiftAsyncCallInterface?
+    let contextSize: UInt32?
     init(call: SwiftCall? = nil) throws {
         let call = try call ?? SwiftCall(signature: ((repeat each Argument) -> Result).self)
-        self.call = call
-        let declaration = call.generic
+        try self.init(values: call.values, parameters: call.parameters, generic: call.generic,
+            interface: call.interface, asyncInterface: nil, contextSize: nil)
+    }
+    init(call: SwiftAsyncCall, contextSize: UInt32) throws {
+        try self.init(values: call.values, parameters: call.parameters, generic: call.generic,
+            interface: nil, asyncInterface: call.interface, contextSize: contextSize)
+    }
+    private init(values: SwiftCallValues, parameters: SwiftGenericParameters, generic: SwiftGenericCallPlan?,
+                 interface: SwiftCallInterface?, asyncInterface: SwiftAsyncCallInterface?, contextSize: UInt32?) throws {
+        self.values = values; self.parameters = parameters; self.generic = generic
+        self.interface = interface; self.asyncInterface = asyncInterface; self.contextSize = contextSize
+        let declaration = generic
         if let declaration {
             let convertsResult: Bool
             switch declaration.result {
@@ -120,18 +188,18 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
             }
         }
         switch declaration?.result {
-        case .value, .tuple: result = SwiftValueCodec(nativeStorage: call.values.result.type)
+        case .value, .tuple: result = SwiftValueCodec(nativeStorage: values.result.type)
         default: result = try SwiftValueCodec()
         }
         initializeResult = result.initializeNativeResult
         // An opaque result can use indirect native return storage even when its
         // known payload has an ordinary scalar or reference representation.
-        resultType = call.values.result.type
+        resultType = values.result.type
         var index = 0
         func codec<Value>(_ type: Value.Type) throws -> SwiftValueCodec<Value> {
             defer { index += 1 }
-            switch call.parameters.arguments[index] {
-            case .value, .tuple: return SwiftValueCodec(nativeStorage: call.values.arguments[index].type)
+            switch parameters.arguments[index] {
+            case .value, .tuple: return SwiftValueCodec(nativeStorage: values.arguments[index].type)
             default: return try SwiftValueCodec()
             }
         }
@@ -141,7 +209,7 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
         var index = 0
         func decode<T>(_ codec: SwiftValueCodec<T>) throws -> T {
             defer { index += 1 }
-            if let tuple = SwiftGenericParameters.expandedTuple(call.parameters.arguments[index]) {
+            if let tuple = SwiftGenericParameters.expandedTuple(parameters.arguments[index]) {
                 let materialized = tuple.materializeArgument(from: storage[index].address, consuming: false)
                 return try codec.copy(from: materialized, retaining: materialized)
             }
@@ -152,20 +220,21 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
     func erased(consumingArguments: Bool, receiver: SwiftReceiverPlan? = nil, errorPlan: SwiftErrorPlan? = nil,
                 retaining owner: any Sendable) throws -> SwiftHookSignature {
         var types: [CValueType] = [], identities: [ObjectIdentifier] = [ObjectIdentifier(Result.self)]
-        types = call.values.arguments.map(\.type)
+        types = values.arguments.map(\.type)
         for type in repeat (each Argument).self { identities.append(ObjectIdentifier(type)) }
         return try SwiftHookSignature(result: resultType, arguments: types, identities: identities,
             consumesArguments: consumingArguments, receiver: receiver, errorPlan: errorPlan,
-            parameters: call.parameters, generic: call.generic, interface: call.interface,
+            parameters: parameters, generic: generic, interface: interface,
+            asyncInterface: asyncInterface, contextSize: contextSize,
             owner: owner, cloneArguments: { storage in
-                let values = try decodeArguments(storage)
-                return try call.values.encode(repeat each values, retainingCode: call.generic)
+                let decoded = try decodeArguments(storage)
+                return try values.encode(repeat each decoded, retainingCode: generic)
             }, cloneResult: { try result.copyNativeStorage($0) }, destroyResult: { result.destroyNativeValue(at: $0) },
             initializeResult: initializeResult,
             destroyArguments: { addresses in
                 var index = 0
                 for codec in repeat each arguments {
-                    if let tuple = SwiftGenericParameters.expandedTuple(call.parameters.arguments[index]) {
+                    if let tuple = SwiftGenericParameters.expandedTuple(parameters.arguments[index]) {
                         let vector = addresses[index]!.assumingMemoryBound(to: UnsafeMutableRawPointer?.self)
                         for (leaf, address) in zip(tuple.leaves, UnsafeBufferPointer(start: vector, count: tuple.leaves.count)) {
                             ABISwiftDestroyValue(unsafeBitCast(leaf.nativeType, to: UnsafeRawPointer.self), address!)
@@ -187,6 +256,8 @@ final class SwiftHookSignature: @unchecked Sendable {
     let errorPlan: SwiftErrorPlan?
     let owner: any Sendable
     let interface: SwiftCallInterface
+    let asyncInterface: SwiftAsyncCallInterface?
+    let contextSize: UInt32?
     let parameters: SwiftGenericParameters?
     let generic: SwiftGenericCallPlan?
     let nativeExplicitCount: Int
@@ -200,6 +271,7 @@ final class SwiftHookSignature: @unchecked Sendable {
     init(result: CValueType, arguments: [CValueType], identities: [ObjectIdentifier], consumesArguments: Bool,
          receiver: SwiftReceiverPlan?, errorPlan: SwiftErrorPlan? = nil,
          parameters: SwiftGenericParameters? = nil, generic: SwiftGenericCallPlan? = nil, interface: SwiftCallInterface? = nil,
+         asyncInterface: SwiftAsyncCallInterface? = nil, contextSize: UInt32? = nil,
          owner: any Sendable, cloneArguments: @escaping ([NativeValueStorage]) throws -> [NativeValueStorage],
          cloneResult: @escaping (NativeValueStorage) throws -> NativeValueStorage,
          destroyResult: @escaping (UnsafeMutableRawPointer) -> Void,
@@ -212,6 +284,7 @@ final class SwiftHookSignature: @unchecked Sendable {
         self.arguments = native + (receiver?.trailingType.map { [$0] } ?? [])
             + (try generic.map { Array(repeating: try CValueType(scalar: ABIValuePointer), count: $0.metadata.count) } ?? [])
         self.parameters = parameters; self.generic = generic
+        self.asyncInterface = asyncInterface; self.contextSize = contextSize
         metadataMatches = try generic?.hookMetadataArguments() ?? []
         classMatches = try generic?.hookClassArguments() ?? []
         self.consumesArguments = consumesArguments; self.owner = owner
@@ -223,6 +296,7 @@ final class SwiftHookSignature: @unchecked Sendable {
         self.interface = try interface ?? SwiftCallInterface(result: result, parameters: self.arguments, errorPlan: errorPlan)
     }
     func matches(_ other: SwiftHookSignature) -> Bool {
+        guard asyncInterface?.inheritsCallerIsolation == other.asyncInterface?.inheritsCallerIsolation else { return false }
         if let first = generic, let second = other.generic, !first.binding.declaration.parameters.isEmpty {
             return first.binding.declaration == second.binding.declaration
                 && receiver?.mode == other.receiver?.mode && receiver?.isConsuming == other.receiver?.isConsuming
@@ -248,7 +322,10 @@ final class SwiftHookSignature: @unchecked Sendable {
         guard generic != nil else { return true }
         func pointer(at index: Int) throws -> UInt {
             var value: UInt = 0, error: OpaquePointer?
-            guard ABISwiftIncomingReadPointer(call, interface.handle, index, &value, &error) else {
+            let success = if let asyncInterface {
+                ABISwiftAsyncIncomingReadPointer(call, asyncInterface.handle, index, &value, &error)
+            } else { ABISwiftIncomingReadPointer(call, interface.handle, index, &value, &error) }
+            guard success else {
                 throw consumeNativeCallFailure(error)
             }
             return value
@@ -338,6 +415,57 @@ final class SwiftHookSignature: @unchecked Sendable {
             ABISwiftIncomingProceed(call, $0.baseAddress, $0.count, context, &error)
         } }
         guard ok else { throw consumeNativeCallFailure(error) }
+        invoked = true
+        encoded?.finishInvocation()
+        if consumesArguments { for value in values.prefix(explicitArgumentCount) { value.relinquishValue() } }
+        if receiver?.isConsuming == true && receiver?.mode == .value { values[explicitArgumentCount].relinquishValue() }
+        consumedValue?.relinquishValue()
+        let bytes = NativeValueStorage(borrowing: ABISwiftIncomingResultAddress(call)!, owner: self)
+        if ABISwiftIncomingDidThrow(call), let errorPlan {
+            let native = NativeSwiftError(try errorPlan.decode(errorPlan.copy(bytes)), retainingCode: owner)
+            throw SwiftHookCompletedResultError(underlying: native, nativeError: errorPlan.copy(bytes))
+        }
+        do {
+            return try cloneResult(bytes)
+        } catch { throw SwiftHookCompletedResultError(underlying: error) }
+    }
+
+    nonisolated(nonsending) func proceedAsync(_ call: OpaquePointer, arguments: [NativeValueStorage]) async throws -> NativeValueStorage {
+        var values = consumesArguments ? try cloneArguments(arguments) : Array(arguments.prefix(explicitArgumentCount))
+        if let receiver, receiver.mode == .value {
+            let value = arguments[explicitArgumentCount]
+            values.append(receiver.isConsuming ? try receiver.codec.clone(value) : value)
+        }
+        var error: OpaquePointer?
+        var context = ABISwiftIncomingContext(call)
+        var consumedObject: Unmanaged<AnyObject>?
+        var consumedValue: NativeValueStorage?
+        if let receiver, receiver.isConsuming && receiver.mode != .value {
+            guard let context else { throw ABIInvocationError.incompatibleValue(expected: "a live Swift receiver", actual: "nil") }
+            if receiver.mode == .object {
+                consumedObject = Unmanaged<AnyObject>.fromOpaque(context).retain()
+            } else {
+                consumedValue = try receiver.codec.clone(readReceiver(call, arguments: arguments))
+            }
+        }
+        if let consumedValue { context = UnsafeRawPointer(consumedValue.address) }
+        let logical: [UnsafeMutableRawPointer?] = values.prefix(explicitArgumentCount).map(\.address)
+        let encoded = parameters?.encode(logical, retaining: Array(values.prefix(explicitArgumentCount)))
+        var addresses = encoded?.addresses ?? logical
+        if receiver?.mode == .value { addresses.append(values[explicitArgumentCount].address) }
+        if let generic {
+            let start = nativeExplicitCount + (receiver?.trailingType == nil ? 0 : 1)
+            addresses += (0..<generic.metadata.count).map { ABISwiftIncomingArgumentAddress(call, start + $0) }
+        }
+        var invoked = false
+        defer { if !invoked { consumedObject?.release() } }
+        let invocation = addresses.withUnsafeBufferPointer {
+            ABISwiftIncomingCreateAsyncProceed(call, $0.baseAddress, $0.count, context, &error)
+        }
+        guard let invocation else { throw consumeNativeCallFailure(error) }
+        defer { withExtendedLifetime((values, consumedValue, encoded)) { ABIReleaseSwiftAsyncInvocation(invocation) } }
+        await invokeSwiftAsync(invocation)
+        ABISwiftIncomingCompleteAsyncProceed(call, invocation)
         invoked = true
         encoded?.finishInvocation()
         if consumesArguments { for value in values.prefix(explicitArgumentCount) { value.relinquishValue() } }

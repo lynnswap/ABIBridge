@@ -25,6 +25,10 @@ bool ABIUsesPointerAuthentication(void);
 const void *ABIUnsafeReadAuthenticatedPointer(
     const void *storage, int32_t key, uintptr_t discriminator, bool addressDiversity);
 
+/// Authenticates an already-read data representation using its original slot.
+const void *ABIUnsafeAuthenticatePointerSlot(uintptr_t bits,
+    const void *storage, int32_t key, uintptr_t discriminator, bool addressDiversity);
+
 /// Captures an absolute function-pointer slot, authenticates/resigns it for the
 /// generic C call ABI, and retains its containing image when loader metadata is
 /// available. The caller keeps table/code storage alive during lookup and owns

@@ -5,6 +5,7 @@ struct SwiftHookSlotKey: Hashable, Sendable { let address: UInt; let generation:
 struct SwiftHookReference: Sendable {
     let key: SwiftHookSlotKey
     let authentication: NativePointerAuthentication
+    var asyncDescriptor = false
 }
 
 final class SwiftHookGroup: @unchecked Sendable {
@@ -15,16 +16,16 @@ final class SwiftHookGroup: @unchecked Sendable {
     let storage: SwiftReplacementStorage
     private let additionalOwners = Mutex<[any Sendable]>([])
     init(key: SwiftHookSlotKey, authentication: NativePointerAuthentication, signature: SwiftHookSignature,
-         retaining owner: Any, codeOwner: (any Sendable)?, transport: SwiftReplacementTransport) throws {
+         retaining owner: Any, codeOwner: (any Sendable)?, transport: SwiftReplacementTransport, asyncDescriptor: Bool = false) throws {
         self.key = key; self.authentication = authentication; self.signature = signature
-        let captured = try SwiftReplacementStorage.capture([(key.address, authentication)], retaining: codeOwner)
+        let captured = try SwiftReplacementStorage.capture([(key.address, authentication)], retaining: codeOwner, asyncDescriptors: asyncDescriptor)
         guard let original = captured[0].original else {
             throw ABIResolutionError.unsupportedDeclaration("A managed Swift hook requires a nonnull predecessor for native fallback.")
         }
         dispatcher = SwiftHookDispatcher(signature: signature)
-        let callback = try SwiftGeneratedCallback(dispatcher: dispatcher, original: original)
+        let callback = try SwiftGeneratedCallback(dispatcher: dispatcher, original: original, contextSize: captured[0].asyncEntry?.contextSize)
         let code = try SwiftImplementation(function: callback.function, retaining: callback)
-        storage = try SwiftReplacementStorage(captured: captured, replacement: code, retaining: owner, transport: transport)
+        storage = try SwiftReplacementStorage(captured: captured, replacement: code, retaining: owner, replacementDescriptor: asyncDescriptor ? callback.descriptor : nil, transport: transport)
     }
     func bits() -> UInt? {
         var bits: UInt = 0
@@ -160,7 +161,7 @@ actor SwiftHookRegistry {
                 install.append(current != snapshot.after)
             } else {
                 group = try SwiftHookGroup(key: key, authentication: authentication, signature: signature,
-                    retaining: owner, codeOwner: codeOwner, transport: transport)
+                    retaining: owner, codeOwner: codeOwner, transport: transport, asyncDescriptor: reference.asyncDescriptor)
                 install.append(true)
             }
             records.append(SwiftHookSlotRecord(group))

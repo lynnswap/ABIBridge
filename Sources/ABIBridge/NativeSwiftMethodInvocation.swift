@@ -78,6 +78,42 @@ public struct NativeSwiftMethodInvocation<Signature>: CustomStringConvertible {
         try invoke(repeat each values)
     }
 
+    /// Awaits the captured predecessor on this callback's native task.
+    /// The continuation remains usable across suspension until the callback returns.
+    @_transparent
+    public nonisolated(nonsending) func proceed<Result, Failure: Error, each Argument>(_ values: repeat each Argument) async throws -> Result
+    where Signature == (repeat each Argument) async throws(Failure) -> Result {
+        try await invokeAsync(repeat each values)
+    }
+
+    @_transparent
+    public nonisolated(nonsending) func proceed<Result, Failure: Error, each Argument>(_ values: repeat each Argument) async throws -> Result
+    where Signature == @Sendable (repeat each Argument) async throws(Failure) -> Result {
+        try await invokeAsync(repeat each values)
+    }
+
+    @_transparent
+    public nonisolated(nonsending) func proceed<Result, Failure: Error, each Argument>(_ values: repeat each Argument) async throws -> Result
+    where Signature == @concurrent (repeat each Argument) async throws(Failure) -> Result {
+        try await invokeAsync(repeat each values)
+    }
+
+    @_transparent
+    public nonisolated(nonsending) func proceed<Result, Failure: Error, each Argument>(_ values: repeat each Argument) async throws -> Result
+    where Signature == @Sendable @concurrent (repeat each Argument) async throws(Failure) -> Result {
+        try await invokeAsync(repeat each values)
+    }
+
+    @usableFromInline nonisolated(nonsending) func invokeAsync<Result, each Argument>(_ values: repeat each Argument) async throws -> Result {
+        do {
+            return try await frame.useAsync { operation in
+                let storage = try prepared.encode(repeat each values, retainingCode: nil)
+                let result = try await operation(storage)
+                return try prepared.decode(result, retaining: result, retainingCode: nil)
+            }
+        } catch let error as SwiftHookCompletedResultError { throw error.underlying }
+    }
+
     private func invoke<Result, each Argument>(_ values: repeat each Argument) throws -> Result {
         do {
             return try frame.use { operation in
@@ -101,7 +137,7 @@ func prepareSwiftMethodHandler<Signature, Result, each Argument>(
         signature: Signature.self, unnamed: "<Swift method>")
     return SwiftHookHandler(requiresMainActor: requiresMainActor, retaining: method, failure: onFailure) { frame, storage in
         let values = try prepared.decodeArguments(storage)
-        let call = NativeSwiftMethodInvocation<Signature>(frame: frame, prepared: prepared.call.values, receiverView: receiver,
+        let call = NativeSwiftMethodInvocation<Signature>(frame: frame, prepared: prepared.values, receiverView: receiver,
             declaration: declaration, description: description)
         return try prepared.result.encode(body(call, repeat each values))
     }
@@ -121,6 +157,31 @@ extension NativeSwiftMethod {
             errorPlan: errorPlan, retaining: self)
         let handler = prepareSwiftMethodHandler(method: self, prepared: prepared, receiver: receiverView,
             requiresMainActor: requiresMainActor, onFailure: onFailure, body: body)
+        return (signature, handler)
+    }
+}
+
+extension NativeSwiftMethod {
+    func prepareAsyncHook<Result, each Argument>(
+        requiresMainActor: Bool, onFailure: @escaping @Sendable (any Error) -> Void,
+        body: @escaping @Sendable (NativeSwiftMethodInvocation<Signature>, repeat each Argument) async throws -> Result
+    ) throws -> (signature: SwiftHookSignature, handler: SwiftHookHandler) {
+        guard case .asynchronous(let call, let implementation) = call else {
+            preconditionFailure("An async hook has an async callable plan.")
+        }
+        let prepared = try SwiftHookCallbackSignature<Result, repeat each Argument>(call: call, contextSize: implementation.entry.contextSize)
+        let signature = try prepared.erased(consumingArguments: consumesArguments, receiver: receiver,
+            errorPlan: errorPlan, retaining: self)
+        let receiverView = SwiftHookReceiverView(self)
+        let declaration = symbol.declaration
+        let description = hookDescription(declaration: declaration, signature: Signature.self, unnamed: "<Swift method>")
+        let handler = SwiftHookHandler(requiresMainActor: requiresMainActor, retaining: self, failure: onFailure,
+            invokeAsync: { frame, storage in
+                let values = try prepared.decodeArguments(storage)
+                let invocation = NativeSwiftMethodInvocation<Signature>(frame: frame, prepared: prepared.values,
+                    receiverView: receiverView, declaration: declaration, description: description)
+                return try prepared.result.encode(await body(invocation, repeat each values))
+            })
         return (signature, handler)
     }
 }
