@@ -121,5 +121,71 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     try check(state.texts.last == "later" && cancellations.pointee == 4, "Retained native callback creates a fresh valid borrow")
     try unsafe clear.unsafeInvoke()
     try check(captureDeaths.count == 1, "Final native callback release destroys captures once")
+    checks += try await validateCommonRuntimeCallbacks()
+    return checks
+}
+
+@MainActor private func validateCommonRuntimeCallbacks() async throws -> [String] {
+    let runtime = ABIRuntime()
+    var checks: [String] = []
+    func check(_ condition: Bool, _ message: String) throws {
+        guard condition else { throw ArchitectureValidationFailure(description: message) }
+        checks.append(message)
+    }
+    let copyValue = try await runtime.swiftFunction(named: "SwiftValueFixtures.copyRuntimeValue<A>(A) -> A",
+        as: ((String) -> NativeSwiftValue).self, genericArguments: [.type(String.self)])
+    let value = try unsafe copyValue.unsafeInvoke("runtime")
+    let visit = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.visitRuntimeCallback<A where A: ~Swift.Copyable>(A, (A) throws -> Swift.Int64) throws -> Swift.Int64",
+        as: ((NativeSwiftValue, NativeSwiftClosure<(NativeSwiftBorrowedValue) throws -> Int64>) throws -> Int64).self,
+        genericArguments: [.type(value.type)])
+    let state = GenericBorrowState()
+    let body = try NativeSwiftClosure<(NativeSwiftBorrowedValue) throws -> Int64> { borrowed in
+        state.borrow = borrowed
+        return Int64(try borrowed.copy().take(as: String.self).count)
+    }
+    try check(unsafe visit.unsafeInvoke(value, body) == 7, "Common callback input authenticates and exposes a scoped runtime borrow")
+    do {
+        _ = try state.borrow!.copy()
+        throw ArchitectureValidationFailure(description: "Expired common callback borrow remained usable")
+    } catch NativeSwiftBorrowError.expiredBorrow {
+        checks.append("Common callback borrow expires after native completion")
+    }
+    let copyInput = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.visitRuntimeCallback<A where A: ~Swift.Copyable>(A, (A) throws -> Swift.Int64) throws -> Swift.Int64",
+        as: ((NativeSwiftValue, NativeSwiftClosure<(NativeSwiftValue) throws -> Int64>) throws -> Int64).self,
+        genericArguments: [.type(value.type)])
+    let owned = try NativeSwiftClosure<(NativeSwiftValue) throws -> Int64> { Int64(try $0.take(as: String.self).count) }
+    try check(unsafe copyInput.unsafeInvoke(value, owned) == 7 && !value.isConsumed,
+        "Common callback input can take an independent copy without consuming its native caller's value")
+    typealias AsyncBody = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftBorrowedValue) async throws -> Int64>
+    let visitAsync = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.visitRuntimeCallbackAsync<A where A: ~Swift.Copyable>(A, nonisolated(nonsending) (A) async throws -> Swift.Int64) async throws -> Swift.Int64",
+        as: (nonisolated(nonsending) (NativeSwiftValue, AsyncBody) async throws -> Int64).self,
+        genericArguments: [.type(value.type)])
+    let operation: nonisolated(nonsending) @Sendable (NativeSwiftBorrowedValue) async throws -> Int64 = { borrowed in
+        await Task.yield()
+        return Int64(try borrowed.copy().take(as: String.self).count)
+    }
+    try check(unsafe await visitAsync.unsafeInvoke(value, AsyncBody(operation)) == 7,
+        "Common async callback input preserves its native borrow across suspension")
+    typealias Copy = NativeSwiftClosure<(NativeSwiftValue) -> NativeSwiftValue>
+    let make = try await runtime.swiftFunction(named: "SwiftValueFixtures.bindingClosure<A>(A) -> (A) -> A",
+        as: ((String) -> Copy).self, genericArguments: [.type(String.self)])
+    let copy = try unsafe make.unsafeInvoke("returned")
+    let result = try unsafe copy.unsafeInvoke(value)
+    try check(result.take(as: String.self) == "returned", "Returned runtime closure authenticates native arguments and owned results")
+    let apply = try await runtime.swiftFunction(named: "SwiftValueFixtures.callRuntimeCallbackCopy<A>((A) -> A, A) -> A",
+        as: ((Copy, NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: [.type(value.type)])
+    let passedBack = try unsafe apply.unsafeInvoke(copy, value)
+    try check(passedBack.take(as: String.self) == "returned" && !value.isConsumed,
+        "Returned runtime closure can be passed back through its native value declaration")
+    typealias AsyncCopy = NativeSwiftClosure<nonisolated(nonsending) @Sendable (NativeSwiftValue) async -> NativeSwiftValue>
+    let makeAsync = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.bindingAsyncClosure<A where A: Swift.Sendable>(A) -> nonisolated(nonsending) @Sendable (A) async -> A",
+        as: ((String) -> AsyncCopy).self, genericArguments: [.type(String.self)])
+    let asyncCopy = try unsafe makeAsync.unsafeInvoke("async returned")
+    let asyncResult = try unsafe await asyncCopy.unsafeInvoke(value)
+    try check(asyncResult.take(as: String.self) == "async returned", "Returned async runtime closure authenticates after native suspension")
     return checks
 }

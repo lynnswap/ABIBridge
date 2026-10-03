@@ -119,3 +119,19 @@ let readBorrow: nonisolated(nonsending) @Sendable (NativeSwiftBorrowedValue) asy
 guard try unsafe await visitTicketAsync.unsafeInvoke(moved, AsyncTicketBody(readBorrow)) == 42,
       !moved.isConsumed else { throw ConsumerError.wrongResult }
 print("Common Swift callbacks preserve runtime borrows through synchronous and async calls")
+
+let makeProducer = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeProducer<A>(A) -> () -> A",
+    as: ((String) -> NativeSwiftClosure<() -> NativeSwiftValue>).self,
+    genericArguments: [.type(String.self)], in: source)
+let produce = try unsafe makeProducer.unsafeInvoke("returned closure")
+let produced = try unsafe produce.unsafeInvoke()
+typealias RuntimeCopy = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftValue) async -> NativeSwiftValue>
+let makeCopy = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.makeRuntimeAsyncCopy<A>(A.Type) -> nonisolated(nonsending) (A) async -> A",
+    as: ((String.Type) -> RuntimeCopy).self, genericArguments: [.type(String.self)], in: source)
+let copy = try unsafe makeCopy.unsafeInvoke(String.self)
+let copied = try unsafe await copy.unsafeInvoke(produced)
+guard try copied.take(as: String.self) == "returned closure", !produced.isConsumed else {
+    throw ConsumerError.wrongResult
+}
+print("Returned Swift closures share runtime value conversion across sync and async invocation")

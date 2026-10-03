@@ -161,7 +161,18 @@ public struct NativeSwiftClosure<Signature> {
 }
 
 extension NativeSwiftClosure: SwiftClosureValue {
-    func encodeClosure() -> NativeValueStorage { call.encoded() }
+    func encodeClosure() throws -> NativeValueStorage {
+        let native: SwiftGenericClosurePlan?
+        switch call {
+        case .synchronous(_, let prepared): native = prepared.closure
+        case .asynchronous(_, let prepared): native = prepared.closure
+        }
+        guard native == nil else {
+            throw ABIResolutionError.signatureMismatch(.init(
+                expected: "The runtime closure's native value declaration", found: [String(reflecting: Signature.self)]))
+        }
+        return call.encoded()
+    }
     static var swiftFunctionType: Any.Type { Signature.self }
 
     static func makeClosureCodec() throws -> SwiftClosureCodec {
@@ -172,7 +183,8 @@ extension NativeSwiftClosure: SwiftClosureValue {
         let signature = try SwiftFunctionSignature(Signature.self)
         if signature.isAsync { return try makeAsyncClosureCodec(signature: signature, generic: generic) }
         let discriminator = try signature.closureDiscriminator()
-        let prepared = try SwiftCall(signature: Signature.self, errorPlan: signature.makeErrorPlan())
+        let prepared = try SwiftCall(signature: Signature.self,
+            errorPlan: generic?.convertsValues == true ? generic?.errorPlan : signature.makeErrorPlan(), closure: generic?.convertsValues == true ? generic : nil)
         let interface: SwiftCallInterface
         if let generic {
             guard case .synchronous(let original) = generic.transport else {
@@ -193,7 +205,8 @@ extension NativeSwiftClosure: SwiftClosureValue {
             let callback = try throwingClosureOwner(prepared.interface, body: SwiftThrowingClosureBody(
                 retainingCode: original.codeOwner, codeLifetime: original.codeLifetime) { arguments, result, failure in
                 var didThrow = false
-                let encoded = generic?.parameters.needsEncoding == true ? generic!.parameters.encode(arguments) : nil
+                let encoded = prepared.closure == nil && generic?.parameters.needsEncoding == true
+                    ? generic!.parameters.encode(arguments) : nil
                 // throws(E) keeps its error output when E is bound to Never.
                 let unusedError = prepared.errorPlan == nil ? generic?.errorPlan?.makeStorage() : nil
                 func invoke(_ arguments: UnsafePointer<UnsafeMutableRawPointer?>?) -> Bool {
@@ -211,7 +224,7 @@ extension NativeSwiftClosure: SwiftClosureValue {
                 precondition(succeeded, "The prepared Swift closure forwarding call must be valid.")
                 return didThrow
             })
-            return Self(call: .synchronous(try storage(callback, discriminator: discriminator,
+            return Self(call: .synchronous(try storage(callback, discriminator: prepared.closure?.discriminator ?? discriminator,
                 codeLifetime: original.codeLifetime), prepared))
         }
     }
@@ -219,10 +232,7 @@ extension NativeSwiftClosure: SwiftClosureValue {
 
 extension NativeSwiftClosure: SwiftGenericClosureValue {
     static func makeGenericClosureCodec(plan: SwiftGenericClosurePlan) throws -> SwiftClosureCodec {
-        guard !plan.convertsArguments else {
-            throw ABIResolutionError.unsupportedDeclaration("Returned runtime callbacks require invocation argument conversion.")
-        }
-        return try makeClosureCodec(generic: plan)
+        try makeClosureCodec(generic: plan)
     }
 
     func encodeGenericClosure(plan: SwiftGenericClosurePlan, retainingCode owner: Any?) throws -> NativeValueStorage {
@@ -233,21 +243,31 @@ extension NativeSwiftClosure: SwiftGenericClosureValue {
               case .synchronous(let original, let prepared) = call else {
             preconditionFailure("The prepared callback and its formal transport must agree.")
         }
+        if let native = prepared.closure { try native.validateNativeValues(for: plan) }
+        else { try plan.validateCallbackInputs() }
         let callback = try throwingClosureOwner(interface, body: SwiftThrowingClosureBody(
             retainingCode: (original.codeOwner, owner), codeLifetime: original.codeLifetime) { arguments, output, error in
             var didThrow = false
+            // A Never-bound generic source still has its formal error output.
+            let unusedError = plan.errorPlan == nil ? prepared.errorPlan?.makeStorage() : nil
+            defer { withExtendedLifetime(unusedError) {} }
             func invoke(_ arguments: UnsafePointer<UnsafeMutableRawPointer?>?) -> Bool {
                 if prepared.errorPlan != nil {
                     return ABIUnsafeInvokeSwiftThrowingCallInterface(prepared.interface.handle,
-                        original.implementation.function, output, arguments, original.value.context, error, &didThrow, nil)
+                        original.implementation.function, output, arguments, original.value.context,
+                        error ?? unusedError?.address, &didThrow, nil)
                 }
                 return ABIUnsafeInvokeSwiftCallInterface(prepared.interface.handle, original.implementation.function,
                         output, arguments, original.value.context, nil)
             }
-            let decoded = plan.decodeArguments(arguments)
-            let success = decoded.map { values in
-                withExtendedLifetime(values) { values.addresses.withUnsafeBufferPointer { invoke($0.baseAddress) } }
-            } ?? invoke(arguments)
+            let decoded = prepared.closure == nil ? plan.decodeArguments(arguments) : nil
+            let native = prepared.closure.map { $0.parameters.encode(plan.parameters.unpack(arguments)) }
+            let success: Bool
+            if let native {
+                success = withExtendedLifetime(native) { native.addresses.withUnsafeBufferPointer { invoke($0.baseAddress) } }
+            } else if let decoded {
+                success = withExtendedLifetime(decoded) { decoded.addresses.withUnsafeBufferPointer { invoke($0.baseAddress) } }
+            } else { success = invoke(arguments) }
             precondition(success, "A prepared closure reabstraction must have a valid call frame.")
             if !didThrow { plan.resultConstants.initialize(at: output) }
             return didThrow

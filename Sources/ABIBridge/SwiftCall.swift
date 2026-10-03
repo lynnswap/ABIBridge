@@ -6,15 +6,19 @@ struct SwiftCall: Sendable {
     private let values: SwiftCallValues
     private let hasTrailingValue: Bool
     private let generic: SwiftGenericCallPlan?
+    let closure: SwiftGenericClosurePlan?
+    private var parameters: SwiftGenericParameters? { generic?.parameters ?? closure?.parameters }
 
-    init(signature: Any.Type, trailingType: CValueType? = nil, consumesArguments: Bool = false, errorPlan: SwiftErrorPlan? = nil, opaqueResult: SwiftOpaqueResultPlan? = nil, generic: SwiftGenericCallPlan? = nil) throws {
+    init(signature: Any.Type, trailingType: CValueType? = nil, consumesArguments: Bool = false, errorPlan: SwiftErrorPlan? = nil, opaqueResult: SwiftOpaqueResultPlan? = nil, generic: SwiftGenericCallPlan? = nil, closure: SwiftGenericClosurePlan? = nil) throws {
         try generic?.validateMetadataArguments()
         self.errorPlan = errorPlan
         self.generic = generic
+        self.closure = closure
         values = try SwiftCallValues(signature: SwiftFunctionSignature(signature), consumesArguments: consumesArguments,
-            opaqueResult: opaqueResult, generic: generic)
+            opaqueResult: opaqueResult, arguments: generic?.arguments ?? closure?.parameters.arguments ?? [],
+            result: generic?.result ?? closure?.result ?? .concrete)
         let logical = values.arguments.map(\.type)
-        var parameters = generic?.parameters.types(from: logical) ?? logical
+        var parameters = (generic?.parameters ?? closure?.parameters)?.types(from: logical) ?? logical
         if let trailingType { parameters.append(trailingType) }
         if let generic {
             parameters += Array(repeating: try CValueType(scalar: ABIValuePointer), count: generic.metadata.count)
@@ -48,9 +52,9 @@ struct SwiftCall: Sendable {
         didInvoke: (() -> Void)? = nil, _ values: repeat each Argument
     ) throws -> Result {
         precondition(hasTrailingValue == (trailingValue != nil))
-        let logicalStorage = try self.values.encode(repeat each values, retainingCode: (codeOwner, generic))
+        let logicalStorage = try self.values.encode(repeat each values, retainingCode: (codeOwner, generic, closure))
         let logicalAddresses: [UnsafeMutableRawPointer?] = logicalStorage.map(\.address)
-        let encoded = generic?.parameters.encode(logicalAddresses)
+        let encoded = parameters?.encode(logicalAddresses)
         var addresses = encoded?.addresses ?? logicalAddresses
         if let trailingValue { addresses.append(trailingValue.address) }
         if let generic { addresses.append(contentsOf: generic.metadata.addresses) }
@@ -59,7 +63,7 @@ struct SwiftCall: Sendable {
             + [SwiftValueCodeLifetime.current].compactMap { $0 }
         let lifetime = SwiftValueCodeLifetime.connect(lifetimes,
             retaining: images + (generic?.binding.images ?? []) + (generic?.binding.typeOwners.flatMap(\.codeImages) ?? []))
-        let codeOwners: Any = (codeOwner, generic, lifetime)
+        let codeOwners: Any = (codeOwner, generic, closure, lifetime)
         let nativeError = errorPlan?.makeStorage()
         var didThrow = false
         return try withExtendedLifetime((logicalStorage, encoded, trailingValue, receiverStorage, owner, generic)) {

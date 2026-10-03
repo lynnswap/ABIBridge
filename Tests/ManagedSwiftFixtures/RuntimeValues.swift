@@ -123,3 +123,54 @@ public func referenceRuntimeRecord(_ object: AnyObject, _ text: String, _ cancel
     }
     return result
 }
+
+@inline(never) public func makeRuntimeReader<T: ~Copyable>(_ type: T.Type) -> (borrowing T) -> Int64 {
+    { _ in Int64(MemoryLayout<T>.size) }
+}
+
+@inline(never) public func makeRuntimeCopy<T>(_ type: T.Type) -> (T) -> T { { $0 } }
+
+@inline(never) public func makeRuntimeProducer<T>(_ value: T) -> () -> T { { value } }
+
+@inline(never) public func makeRuntimeAsyncCopy<T>(_ type: T.Type)
+    -> nonisolated(nonsending) (T) async -> T {
+    { value in await Task.yield(); return value }
+}
+
+@inline(never) public func makeRuntimePackReader<each T>(_ values: repeat each T) -> (repeat each T) -> Int64 {
+    { (_: repeat each T) in 42 }
+}
+
+@inline(never) public func inspectRuntimeReader<T: ~Copyable>(_ value: borrowing T, _ body: (borrowing T) -> Int64) -> Int64 {
+    body(value)
+}
+
+@inline(never) public func inspectRuntimePackReader<each T>(_ body: (repeat each T) -> Int64, _ values: repeat each T) -> Int64 {
+    body(repeat each values)
+}
+
+@inline(never) public func callRuntimeCopy<T>(_ body: (T) -> T, _ value: T) -> T { body(value) }
+
+@inline(never) public func makeRuntimeThrowingCopy<T, Failure: Error>(_ type: T.Type, _ failure: Failure, _ fail: Bool) -> (T) throws(Failure) -> T {
+    { value throws(Failure) in
+        if fail { throw failure }
+        return value
+    }
+}
+
+@inline(never) public func makeConcreteRuntimeReader<Tag>(_ tag: Tag) -> (Int64, String) -> Int64 {
+    { number, text in number + Int64(text.count) }
+}
+
+@inline(never) public func makeRuntimeNeverCopy<Value, Failure: Error>(_ value: Value.Type, _ failure: Failure.Type) -> (Value) throws(Failure) -> Value {
+    { value throws(Failure) in value }
+}
+
+@inline(never) public func makeRuntimeNeverAsyncCopy<Value, Failure: Error>(_ value: Value.Type, _ failure: Failure.Type)
+    -> nonisolated(nonsending) (Value) async throws(Failure) -> Value {
+    { value async throws(Failure) in await Task.yield(); return value }
+}
+
+@inline(never) public nonisolated(nonsending) func callRuntimeAsyncCopy<Value>(
+    _ body: nonisolated(nonsending) (Value) async -> Value, _ value: Value
+) async -> Value { await body(value) }

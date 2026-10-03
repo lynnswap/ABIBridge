@@ -130,7 +130,7 @@ protocol SwiftClosureValue: SendableMetatype {
     static var requiresExplicitDeclaration: Bool { get }
     static var supportsResult: Bool { get }
     static func makeClosureCodec() throws -> SwiftClosureCodec
-    func encodeClosure() -> NativeValueStorage
+    func encodeClosure() throws -> NativeValueStorage
 }
 
 extension SwiftClosureValue {

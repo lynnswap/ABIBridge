@@ -40,6 +40,27 @@ The returned wrapper adopts the native closure's owned context and retains the d
 
 Calling stays on the caller's executor. The caller must satisfy the returned closure's actor, thread, and argument requirements. The wrapper is not Sendable: an arbitrary returned context may contain isolated or otherwise non-Sendable state.
 
+## Runtime value arguments and returned closures
+
+When the resolved declaration identifies a native argument type, use `NativeSwiftBorrowedValue` in the callback signature to inspect it during the body. The view expires when the body finishes. An async body may suspend while the native caller preserves that borrow, and must finish every operation using the view before returning. Use `NativeSwiftValue` when the body needs an independent owned copy of a Copyable, Escapable input. A noncopyable input can still use the borrowed view.
+
+A returned closure can accept and return `NativeSwiftValue` through the same argument and result conversion as an ordinary native function. Borrowing an owned noncopyable argument does not copy or consume it. Each owned result has its own value-witness destruction and code-image lifetime. Type mismatches and consumed arguments throw before native entry, including when the native closure itself is nonthrowing.
+
+For `func makeProducer<Value>(_ value: Value) -> () -> Value`:
+
+```swift
+let factory = try await ABIRuntime.shared.swiftFunction(
+    named: "Example.makeProducer<A>(A) -> () -> A",
+    as: ((String) -> NativeSwiftClosure<() -> NativeSwiftValue>).self,
+    genericArguments: [.type(String.self)]
+)
+let produce = try unsafe factory.unsafeInvoke("captured")
+let value = try unsafe produce.unsafeInvoke()
+let text = try value.take(as: String.self)
+```
+
+The returned closure can be passed back through a resolved callback declaration with matching native value types. Its original native parameter layout is retained, including parameter packs; a new caller's lowering is adapted before forwarding. `NativeSwiftValue` bound as the actual native generic type remains an ordinary class reference, distinct from a handle used to represent another native type.
+
 ## Throwing callbacks and returned closures
 
 Include `throws` or `throws(Failure)` in the ``NativeSwiftClosure`` signature. `Failure` can be a concrete Swift error, `any Error`, or `Never`; `throws(Never)` is equivalent to a nonthrowing signature.

@@ -63,8 +63,38 @@ struct SwiftGenericClosurePlan: Sendable {
     let resultConstants: SwiftValueConstants
     let errorPlan: SwiftErrorPlan?
     let runtimeArguments: [SwiftCallbackRuntimeArgument?]
+    let result: SwiftGenericResult
+    let nativeResult: Any.Type
 
     var convertsArguments: Bool { runtimeArguments.contains { $0 != nil } }
+    var convertsValues: Bool {
+        if case .runtimeValue = result { return true }
+        return convertsArguments
+    }
+
+    func validateCallbackInputs() throws {
+        for conversion in runtimeArguments.compactMap({ $0 }) where !conversion.borrowed {
+            try conversion.plan.requireOwnedValue()
+            guard SwiftCopyability.accepts(conversion.plan.valueType.metadata) else {
+                throw NativeSwiftValueError.noncopyableType
+            }
+        }
+        if case .runtimeValue = result {
+            throw ABIResolutionError.unsupportedDeclaration("Runtime value callback results require native value conversion at callback entry.")
+        }
+    }
+
+    func validateNativeValues(for other: Self) throws {
+        for (lhs, rhs) in zip(runtimeArguments, other.runtimeArguments) {
+            guard lhs?.plan.valueType.metadata == rhs?.plan.valueType.metadata else {
+                throw ABIResolutionError.signatureMismatch(.init(expected: "The native callback argument type", found: []))
+            }
+        }
+        guard nativeResult == other.nativeResult else {
+            throw ABIResolutionError.signatureMismatch(.init(expected: String(reflecting: nativeResult),
+                found: [String(reflecting: other.nativeResult)]))
+        }
+    }
 
     func decodeArguments(_ native: UnsafePointer<UnsafeMutableRawPointer?>?) -> SwiftCallbackArguments? {
         guard parameters.hasPacks || convertsArguments else { return nil }
@@ -158,19 +188,13 @@ struct SwiftGenericCallPlan: Sendable {
             let metadata = try binding.types(declaration.result)[0]
             result = .runtimeValue(try binding.runtimeValuePlan(metadata: metadata,
                 type: Self.layout(declaration.result, actual: metadata, binding: binding)))
+        } else if case .function = declaration.result, let closure = signature.result as? any SwiftGenericClosureValue.Type {
+            let plan = try Self.closure(declaration.result,
+                signature: SwiftFunctionSignature(closure.swiftFunctionType), binding: binding)
+            result = .closure(try closure.makeGenericClosureCodec(plan: plan))
         } else if binding.dependsOnParameters(declaration.result) {
             let nativeResult = try binding.resultType(signature.result, for: declaration.result)
-            if case .function = declaration.result {
-                guard let closure = signature.result as? any SwiftGenericClosureValue.Type else {
-                    throw ABIResolutionError.signatureMismatch(.init(expected: "NativeSwiftClosure for " + declaration.result.spelling,
-                        found: [String(reflecting: signature.result)]))
-                }
-                let plan = try Self.closure(declaration.result,
-                    signature: SwiftFunctionSignature(closure.swiftFunctionType), binding: binding)
-                result = .closure(try closure.makeGenericClosureCodec(plan: plan))
-            } else {
-                result = .value(try Self.layout(declaration.result, actual: nativeResult, binding: binding))
-            }
+            result = .value(try Self.layout(declaration.result, actual: nativeResult, binding: binding))
         } else {
             result = .concrete
         }
@@ -264,17 +288,11 @@ struct SwiftGenericCallPlan: Sendable {
               failure != nil || signature.failure == Never.self else {
             throw ABIResolutionError.signatureMismatch(.init(expected: formal.spelling, found: []))
         }
-        let parameterPlan = try SwiftGenericParameters(formal: parameters, actual: signature.parameters, binding: binding)
+        let parameterPlan = try SwiftGenericParameters(formal: parameters, actual: signature.parameters, binding: binding, asynchronous: isAsync)
         if let failure { try binding.validate(signature.failure, for: failure) }
-        let runtimeArguments: [SwiftCallbackRuntimeArgument?] = try parameterPlan.arguments.enumerated().map { index, argument in
+        let runtimeArguments: [SwiftCallbackRuntimeArgument?] = parameterPlan.arguments.enumerated().map { index, argument in
             guard case .runtimeValue(let plan, _, _) = argument else { return nil }
             let borrowed = signature.parameters[index] == NativeSwiftBorrowedValue.self
-            if !borrowed {
-                try plan.requireOwnedValue()
-                guard SwiftCopyability.accepts(plan.valueType.metadata) else {
-                    throw NativeSwiftValueError.noncopyableType
-                }
-            }
             return SwiftCallbackRuntimeArgument(plan: plan, borrowed: borrowed, asynchronous: isAsync)
         }
         var logicalTypes: [CValueType] = []
@@ -305,10 +323,9 @@ struct SwiftGenericCallPlan: Sendable {
         }
         let types = parameterPlan.types(from: logicalTypes)
         let nativeResult = try binding.resultType(signature.result, for: result)
-        if signature.result == NativeSwiftValue.self && nativeResult != signature.result {
-            throw ABIResolutionError.unsupportedDeclaration("Runtime value callback results require native value conversion at callback entry.")
-        }
         let resultType = try layout(result, actual: nativeResult, binding: binding)
+        let resultPlan: SwiftGenericResult = signature.result == NativeSwiftValue.self && nativeResult != signature.result
+            ? .runtimeValue(try binding.runtimeValuePlan(metadata: nativeResult, type: resultType)) : .value(resultType)
         let errorType = try failure.flatMap {
             binding.dependsOnParameters($0) ? try layout($0, actual: signature.failure, binding: binding) : nil
         }
@@ -321,8 +338,8 @@ struct SwiftGenericCallPlan: Sendable {
         return try SwiftGenericClosurePlan(transport: transport, parameters: parameterPlan,
             discriminator: swiftClosureDiscriminator(parameters: authentication,
                 results: authTypes(result, actual: nativeResult, binding: binding, isResult: true)),
-            resultConstants: SwiftValueConstants(signature.result), errorPlan: errorPlan,
-            runtimeArguments: runtimeArguments)
+            resultConstants: SwiftValueConstants(nativeResult), errorPlan: errorPlan,
+            runtimeArguments: runtimeArguments, result: resultPlan, nativeResult: nativeResult)
     }
 
     private static func authTypes(_ formal: SwiftFormalType, actual: Any.Type,

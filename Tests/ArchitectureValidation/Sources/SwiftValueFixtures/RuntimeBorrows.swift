@@ -30,3 +30,13 @@ public func fireBorrowedRecord(_ text: String, _ object: AnyObject, _ cancellati
 }
 public func clearBorrowedRecord() { savedBorrowedCallback = nil }
 public func referenceProducedString(_ value: String) -> String { produceGeneric { value + "!" } }
+
+@inline(never) public func visitRuntimeCallback<Value: ~Copyable>(
+    _ value: borrowing Value, _ body: (borrowing Value) throws -> Int64
+) rethrows -> Int64 { try body(value) }
+
+@inline(never) public nonisolated(nonsending) func visitRuntimeCallbackAsync<Value: ~Copyable>(
+    _ value: borrowing Value, _ body: nonisolated(nonsending) (borrowing Value) async throws -> Int64
+) async rethrows -> Int64 { try await body(value) }
+
+@inline(never) public func callRuntimeCallbackCopy<Value>(_ body: (Value) -> Value, _ value: Value) -> Value { body(value) }

@@ -128,18 +128,19 @@ struct SwiftCallValues: Sendable {
     let result: Result
 
     init(signature: SwiftFunctionSignature, consumesArguments: Bool,
-         opaqueResult: SwiftOpaqueResultPlan?, generic: SwiftGenericCallPlan? = nil) throws {
+         opaqueResult: SwiftOpaqueResultPlan?, arguments argumentPlans: [SwiftGenericArgument] = [],
+         result resultPlan: SwiftGenericResult = .concrete) throws {
         arguments = try signature.parameters.enumerated().map { index, type in
             func prepare<Value>(_ type: Value.Type) throws -> Argument {
                 let codec = try SwiftArgumentCodec<Value>(defaultConsuming: consumesArguments,
-                    generic: generic?.arguments[index] ?? .concrete)
+                    generic: argumentPlans.isEmpty ? .concrete : argumentPlans[index])
                 return Argument(type: codec.type, consumes: codec.consumes,
                     encode: { try codec.encode($0.load(as: Value.self), retainingCode: $1) })
             }
             return try _openExistential(type, do: prepare)
         }
         func prepareResult<Value>(_ type: Value.Type) throws -> Result {
-            let codec = try SwiftResultCodec<Value>(opaque: opaqueResult, generic: generic?.result ?? .concrete)
+            let codec = try SwiftResultCodec<Value>(opaque: opaqueResult, generic: resultPlan)
             return Result(type: codec.type, makeStorage: { codec.makeStorage() },
                 initialize: { storage, owner, codeOwner, output in
                     let value = try codec.decode(storage, retaining: owner, retainingCode: codeOwner)

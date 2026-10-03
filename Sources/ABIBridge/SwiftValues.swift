@@ -93,7 +93,7 @@ struct SwiftValueCodec<Value>: Sendable {
     }
 
     func encode(_ value: Value) throws -> NativeValueStorage {
-        if closure != nil { return (value as! any SwiftClosureValue).encodeClosure() }
+        if closure != nil { return try (value as! any SwiftClosureValue).encodeClosure() }
         if Value.self == Void.self { return NativeValueStorage(size: 0, alignment: 1) }
         if let cValue { return try cValue.encode(value) }
         let storage = makeStorage()

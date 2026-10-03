@@ -14,7 +14,7 @@ struct SwiftGenericParameters: Sendable {
     private let constants: [SwiftValueConstants]
     var needsEncoding: Bool { hasPacks || constants.contains { !$0.isEmpty } }
 
-    init(formal: [SwiftFormalType], actual: [Any.Type], binding: SwiftGenericBinding, defaultConsuming: Bool = false) throws {
+    init(formal: [SwiftFormalType], actual: [Any.Type], binding: SwiftGenericBinding, defaultConsuming: Bool = false, asynchronous: Bool? = nil) throws {
         var arguments: [SwiftGenericArgument] = []
         var groups: [Group] = []
         var index = 0
@@ -42,10 +42,16 @@ struct SwiftGenericParameters: Sendable {
             }
         }
         guard index == actual.count else { throw Self.mismatch(actual.count) }
-        self.arguments = arguments
+        self.arguments = arguments.map {
+            guard let asynchronous, case .runtimeValue(let plan, let convention, _) = $0 else { return $0 }
+            return .runtimeValue(plan, convention: convention, asynchronous: asynchronous)
+        }
         self.groups = groups
         self.hasPacks = hasPacks
-        constants = actual.map(SwiftValueConstants.init)
+        constants = zip(actual, arguments).map { type, argument in
+            if case .runtimeValue(let plan, _, _) = argument { return SwiftValueConstants(plan.valueType.metadata) }
+            return SwiftValueConstants(type)
+        }
     }
 
     static func storageType(_ type: Any.Type) throws -> CValueType {

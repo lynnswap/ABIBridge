@@ -109,18 +109,24 @@ extension NativeSwiftClosure {
               case .asynchronous(let original, let prepared) = call else {
             preconditionFailure("The prepared callback and its formal transport must agree.")
         }
+        if let native = prepared.closure { try native.validateNativeValues(for: plan) }
+        else { try plan.validateCallbackInputs() }
         let callback = try SwiftAsyncClosureCallbackOwner(interface: interface,
             body: SwiftAsyncClosureBody(inheritsCallerIsolation: isolation,
                 retainingCode: (original.codeOwner, owner), codeLifetime: original.codeLifetime) { arguments, result, error in
-                let decoded = plan.decodeArguments(arguments)
-                let unpacked = decoded.map { SwiftGenericArgumentBuffer($0.addresses.map { UInt(bitPattern: $0) }) }
+                let decoded = prepared.closure == nil ? plan.decodeArguments(arguments) : nil
+                let native = prepared.closure.map { $0.parameters.encode(plan.parameters.unpack(arguments)) }
+                let unpacked = (native?.addresses ?? decoded?.addresses).map {
+                    SwiftGenericArgumentBuffer($0.map { UInt(bitPattern: $0) })
+                }
                 let forwarded: UnsafePointer<UnsafeMutableRawPointer?>? = unpacked.map {
                     UnsafeRawPointer(bitPattern: $0.address)!.assumingMemoryBound(to: UnsafeMutableRawPointer?.self)
                 } ?? arguments
+                let unusedError = plan.errorPlan == nil ? prepared.errorPlan?.makeStorage() : nil
                 let invocation = ABICreateSwiftAsyncInvocation(prepared.interface.handle, original.entry.function,
-                    original.entry.contextSize, result, forwarded, original.value.context, error, nil)
+                    original.entry.contextSize, result, forwarded, original.value.context, error ?? unusedError?.address, nil)
                 precondition(invocation != nil, "The prepared async closure reabstraction must be valid.")
-                defer { withExtendedLifetime((original, decoded, unpacked)) { ABIReleaseSwiftAsyncInvocation(invocation!) } }
+                defer { withExtendedLifetime((original, decoded, native, unpacked, unusedError)) { ABIReleaseSwiftAsyncInvocation(invocation!) } }
                 await invokeSwiftAsync(invocation!)
                 let didThrow = ABISwiftAsyncInvocationDidThrow(invocation!)
                 if !didThrow { plan.resultConstants.initialize(at: result) }
@@ -199,8 +205,9 @@ extension NativeSwiftClosure {
 
     static func makeAsyncClosureCodec(signature: SwiftFunctionSignature, generic: SwiftGenericClosurePlan? = nil) throws -> SwiftClosureCodec {
         let discriminator = try signature.closureDiscriminator()
-        let prepared = try SwiftAsyncCall(signature: Signature.self, errorPlan: signature.makeErrorPlan(),
-            inheritsCallerIsolation: signature.inheritsCallerIsolation)
+        let prepared = try SwiftAsyncCall(signature: Signature.self,
+            errorPlan: generic?.convertsValues == true ? generic?.errorPlan : signature.makeErrorPlan(),
+            inheritsCallerIsolation: signature.inheritsCallerIsolation, closure: generic?.convertsValues == true ? generic : nil)
         let interface: SwiftAsyncCallInterface
         if let generic {
             guard case .asynchronous(let original, _) = generic.transport else {
@@ -219,7 +226,8 @@ extension NativeSwiftClosure {
             let callback = try SwiftAsyncClosureCallbackOwner(interface: prepared.interface,
                 body: SwiftAsyncClosureBody(inheritsCallerIsolation: signature.inheritsCallerIsolation,
                     retainingCode: original.codeOwner, codeLifetime: original.codeLifetime) { arguments, result, error in
-                    let encoded = generic?.parameters.needsEncoding == true ? generic!.parameters.encode(arguments) : nil
+                    let encoded = prepared.closure == nil && generic?.parameters.needsEncoding == true
+                    ? generic!.parameters.encode(arguments) : nil
                     let unusedError = prepared.errorPlan == nil ? generic?.errorPlan?.makeStorage() : nil
                     func prepare(_ arguments: UnsafePointer<UnsafeMutableRawPointer?>?) -> OpaquePointer? {
                         ABICreateSwiftAsyncInvocation(interface.handle, original.entry.function,
@@ -231,7 +239,7 @@ extension NativeSwiftClosure {
                     await invokeSwiftAsync(invocation!)
                     return ABISwiftAsyncInvocationDidThrow(invocation!)
                 })
-            return Self(call: .asynchronous(try asyncStorage(callback, discriminator: discriminator,
+            return Self(call: .asynchronous(try asyncStorage(callback, discriminator: prepared.closure?.discriminator ?? discriminator,
                 codeLifetime: original.codeLifetime), prepared))
         }
     }

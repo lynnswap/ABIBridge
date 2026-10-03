@@ -732,6 +732,10 @@ struct SwiftGenericBinding: Sendable {
 
     func resultType(_ actual: Any.Type, for formal: SwiftFormalType) throws -> Any.Type {
         if actual == NativeSwiftValue.self { return try types(formal)[0] }
+        if case .function = formal, actual is any SwiftGenericClosureValue.Type {
+            try validateArgument(actual, for: formal)
+            return actual
+        }
         let optional = actual as? any NativeOptionalValue.Type
         if (optional?.wrappedType ?? actual) == AnyObject.self {
             let native = try types(formal)[0]
