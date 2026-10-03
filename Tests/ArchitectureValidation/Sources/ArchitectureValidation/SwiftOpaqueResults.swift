@@ -11,6 +11,8 @@ private struct OpaqueWordResult: ABIBridgeValue {
     func read() throws -> Int64 { try unsafe storage.read(as: Int64.self) }
 }
 
+private struct ScopedNumber: ~Copyable { let value: Int64 }
+
 @MainActor func validateSwiftOpaqueResults() async throws -> [String] {
     let runtime = ABIRuntime()
     var checks: [String] = []
@@ -451,6 +453,73 @@ private struct OpaqueWordResult: ABIBridgeValue {
     let metatypeResult = try unsafe metatype.unsafeInvoke("retained").take(as: (Int64.Type, String).self)
     try check(unsafeBitCast(metatypeResult.0, to: UInt.self) == unsafeBitCast(Int64.self, to: UInt.self) && metatypeResult.1 == "retained",
               "Runtime result storage restores elided singleton metatypes alongside managed generic fields")
+    let scopedCounts = ArgumentCounts()
+    let scopedOwner = RuntimeScopedOwner(42, scopedCounts)
+    let scopedType = try await runtime.swiftType(named: "SwiftValueFixtures.RuntimeScopedResult")
+    let scopedRead = try await scopedType.method(named: "read()", as: (() -> Int64).self,
+        receiverABI: .opaque(named: scopedType.name))
+    let scopedMake = try await runtime.swiftFunction(named: "SwiftValueFixtures.makeRuntimeScoped(_:_:)",
+        as: ((RuntimeScopedOwner, Bool) throws -> NativeSwiftBorrowedValue).self)
+    var escapedResult: NativeSwiftBorrowedValue?
+    let scopedNumber = try unsafe scopedMake.unsafeInvoke(scopedOwner, false, withResult: { value in
+        escapedResult = value
+        return try unsafe scopedRead.unsafeInvoke(on: value)
+    })
+    try check(scopedNumber == 42 && scopedCounts.destructions == 1,
+        "Scoped nonescapable results remain readable in the body and are destroyed afterward")
+    do {
+        _ = try unsafe scopedRead.unsafeInvoke(on: escapedResult!)
+        throw ArchitectureValidationFailure(description: "An escaped result view remained active")
+    } catch NativeSwiftBorrowError.expiredBorrow {
+        checks.append("Escaped nonescapable result views reject access after the body")
+    }
+    do {
+        _ = try unsafe scopedMake.unsafeInvoke(scopedOwner, false, withResult: { _ -> Int in throw RuntimeTicketFailure.rejected })
+        throw ArchitectureValidationFailure(description: "A scoped body error was lost")
+    } catch RuntimeTicketFailure.rejected {
+        try check(scopedCounts.destructions == 2, "A throwing result body destroys native storage exactly once")
+    }
+    let scopedOwnerType = try await runtime.swiftType(named: "SwiftValueFixtures.RuntimeScopedOwner")
+    let scopedMethod = try await scopedOwnerType.method(named: "scoped()", as: (() -> NativeSwiftBorrowedValue).self)
+    let scopedBound = try scopedMethod.bind(to: scopedOwner)
+    try check(try unsafe scopedBound.unsafeInvoke(withResult: { try unsafe scopedRead.unsafeInvoke(on: $0) }) == 42,
+        "Bound methods preserve the receiver while a nonescapable result body runs")
+    let scopedAsync = try await scopedOwnerType.method(named: "scopedAsync()", as: (() async -> NativeSwiftBorrowedValue).self)
+    let scopedAsyncNumber = try unsafe await scopedAsync.unsafeInvoke(on: scopedOwner, withResult: { value in
+        await Task.yield()
+        return try unsafe scopedRead.unsafeInvoke(on: value)
+    })
+    try check(scopedAsyncNumber == 42 && scopedCounts.destructions == 4,
+        "Async scoped member results remain active through body suspension and then release storage")
+    do {
+        _ = try unsafe scopedMake.unsafeInvoke(scopedOwner, true, withResult: { _ -> Int in
+            throw ArchitectureValidationFailure(description: "A native failure ran the result body")
+        })
+        throw ArchitectureValidationFailure(description: "A native scoped failure was lost")
+    } catch is NativeSwiftError {
+        try check(scopedCounts.destructions == 4, "Native scoped failure leaves uninitialized result storage untouched")
+    }
+    let scopedAsyncMake = try await runtime.swiftFunction(named: "SwiftValueFixtures.makeRuntimeScopedAsync(_:_:)",
+        as: (nonisolated(nonsending) (RuntimeScopedOwner, Bool) async throws -> NativeSwiftBorrowedValue).self)
+    let asyncScopedCounts = ArgumentCounts()
+    var asyncScopedOwner: RuntimeScopedOwner? = RuntimeScopedOwner(42, asyncScopedCounts)
+    weak var observedScopedOwner = asyncScopedOwner
+    let scopedOutput = try unsafe await scopedAsyncMake.unsafeInvoke(asyncScopedOwner!, false, withResult: { value in
+        asyncScopedOwner = nil
+        await Task.yield()
+        try check(observedScopedOwner != nil, "Async result bodies retain borrowed native inputs through suspension")
+        return ScopedNumber(value: try unsafe scopedRead.unsafeInvoke(on: value))
+    })
+    try check(scopedOutput.value == 42 && observedScopedOwner == nil && asyncScopedCounts.destructions == 1,
+        "An async body returns a noncopyable value and releases its input and native result afterward")
+    do {
+        _ = try unsafe await scopedAsyncMake.unsafeInvoke(scopedOwner, true, withResult: { _ -> Int in
+            throw ArchitectureValidationFailure(description: "An async native failure ran the result body")
+        })
+        throw ArchitectureValidationFailure(description: "An async native scoped failure was lost")
+    } catch is NativeSwiftError {
+        try check(scopedCounts.destructions == 4, "Async native scoped failure does not destroy an uninitialized result")
+    }
     return checks
 }
 

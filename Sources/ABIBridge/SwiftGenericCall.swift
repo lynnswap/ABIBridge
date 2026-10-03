@@ -531,7 +531,7 @@ struct SwiftGenericCallPlan: Sendable {
         }
         parameters = try SwiftGenericParameters(formal: declaration.arguments, actual: signature.parameters, binding: binding,
             defaultConsuming: declaration.consumesArguments)
-        if let opaque, signature.result != NativeSwiftValue.self {
+        if let opaque, signature.result != NativeSwiftValue.self && signature.result != NativeSwiftBorrowedValue.self {
             _ = try binding.resultType(signature.result, for: declaration.result)
             result = .value(opaque.type)
         } else {

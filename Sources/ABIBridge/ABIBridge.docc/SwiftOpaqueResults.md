@@ -97,8 +97,28 @@ A function returning `some P` does not directly initialize an `any P` or Any con
 
 ## Scope
 
-Owned opaque results must be Escapable. Their generic bindings and nested tuple or closure positions are resolved from the matched declaration. Copyability comes from the concrete metadata; `some ~Copyable` results use the same owned storage and can be moved without Any erasure. Nonescapable result scopes, opaque callback results, and managed hook bodies require separate contracts; this owned-result API does not extend their lifetime.
+Owned opaque results must be Escapable. Their generic bindings and nested tuple or closure positions are resolved from the matched declaration. Copyability comes from the concrete metadata; `some ~Copyable` results use the same owned storage and can be moved without Any erasure. Nonescapable results use the scoped body described below. Opaque callback results and managed hook bodies require separate contracts; this owned-result API does not extend their lifetime.
 
 This does not synthesize protocol witnesses. Existing View conformance can be opened and erased with AnyView while retaining the result owner; see <doc:SwiftUIInteroperability>. Use the native protocol API or an explicitly compiled adapter for other operations.
 
 Compiler controls compare provider descriptors and independently compiled caller signatures on arm64, x86_64, arm64e, and arm64_32. The runtime operation follows Swift's [opaque descriptor layout](https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/ABI/Metadata.h), [generic requirements](https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/ABI/GenericContext.h), and [opaque metadata accessor ABI](https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/Runtime/RuntimeFunctions.def). Runtime execution is verified separately from cross-compilation.
+
+## Scoped nonescapable results
+
+Use `NativeSwiftBorrowedValue` as the result marker and `unsafeInvoke(..., withResult:)` when a native result must stay within its valid lifetime:
+
+```swift
+let make = try await runtime.swiftFunction(
+    named: "Example.makeView(_:)",
+    as: ((Owner) -> NativeSwiftBorrowedValue).self
+)
+let number = try unsafe make.unsafeInvoke(owner, withResult: { view in
+    try unsafe read.unsafeInvoke(on: view)
+})
+```
+
+Prepare member handles such as `read` before entering a synchronous body. They use the existing receiver ABI contract; a resilient value receiver can require an explicit opaque `receiverABI`. The same `withResult:` form is available on member and bound-method handles. Async signatures accept an async body and keep the result valid through its suspension.
+
+The invocation retains argument and receiver access through the body. When the body returns or throws, the borrowed view expires, the native result is destroyed, and argument/receiver writeback completes. Saving the handle preserves readable type information but does not preserve access to its former storage. The body can return a noncopyable Escapable value; it cannot return the native nonescapable payload as an owned handle or `Any`. Calling the ordinary result-returning overload with this marker fails before native invocation.
+
+Native and body errors remain available. If writeback also fails, `NativeSwiftWritebackError` includes the invocation/body error and the writeback error. Native failure does not run the result body or adopt uninitialized result storage.

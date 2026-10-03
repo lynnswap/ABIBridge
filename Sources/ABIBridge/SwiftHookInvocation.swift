@@ -411,7 +411,7 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
                     guard ABISwiftIncomingTakeResult(call, storage.address, values.result.type.size, &error) else {
                         throw consumeNativeCallFailure(error)
                     }
-                    plan.initializeHookResult(storage)
+                    _ = try plan.initializeResult(storage)
                     return storage
                 }
             }(),

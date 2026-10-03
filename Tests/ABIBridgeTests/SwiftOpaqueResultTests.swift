@@ -8,7 +8,141 @@ import ManagedSwiftAdapters
 import Testing
 import Foundation
 
+private struct ScopedBodyOutput: ~Copyable { let number: Int64 }
+private enum ScopedWritebackFailure: Error { case rejected }
+private struct RejectingScopedCounter: ABIBridgeValue {
+    static let abiType = NativeType.int64
+    var number: Int64
+    init(_ number: Int64) { self.number = number }
+    init(nativeValue: NativeValue) throws { throw ScopedWritebackFailure.rejected }
+    static func nativeValue(from value: Self) throws -> NativeValue { try .init(copying: value.number, as: abiType) }
+}
+
 struct SwiftOpaqueResultTests {
+    @MainActor @Test func scopedNonescapableResultsExpireAndDestroyAfterTheBody() async throws {
+        let runtime = ABIRuntime.shared
+        let counts = ArgumentCounts()
+        let owner = RuntimeScopedOwner(42, counts)
+        let resultType = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeScopedResult")
+        let read = try await resultType.method(named: "read()", as: (() -> Int64).self, receiverABI: .opaque(named: resultType.name))
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeScoped(_:_:)",
+            as: ((RuntimeScopedOwner, Bool) throws -> NativeSwiftBorrowedValue).self)
+        var saved: NativeSwiftBorrowedValue?
+        let value = try unsafe make.unsafeInvoke(owner, false, withResult: { result in
+            saved = result
+            #expect(counts.destructions == 0)
+            #expect(throws: ABIResolutionError.self) { _ = try result.copy() }
+            return try unsafe read.unsafeInvoke(on: result)
+        })
+        #expect(value == 42)
+        #expect(counts.destructions == 1)
+        let escaped = try #require(saved)
+        #expect(throws: NativeSwiftBorrowError.expiredBorrow) { _ = try unsafe read.unsafeInvoke(on: escaped) }
+        #expect(throws: ABIResolutionError.self) { _ = try unsafe make.unsafeInvoke(owner, false) }
+        #expect(counts.destructions == 1)
+        #expect(throws: RuntimeTicketFailure.self) {
+            try unsafe make.unsafeInvoke(owner, false, withResult: { _ -> Int in throw RuntimeTicketFailure.rejected })
+        }
+        #expect(counts.destructions == 2)
+        #expect(throws: NativeSwiftError.self) {
+            try unsafe make.unsafeInvoke(owner, true, withResult: { _ in Issue.record("Native failure must not call body"); return 0 })
+        }
+        #expect(counts.destructions == 2)
+    }
+
+    @MainActor @Test func scopedResultsComposeWithMembersAndAsyncBodies() async throws {
+        let counts = ArgumentCounts()
+        let owner = RuntimeScopedOwner(42, counts)
+        let runtime = ABIRuntime.shared
+        let resultType = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeScopedResult")
+        let read = try await resultType.method(named: "read()", as: (() -> Int64).self, receiverABI: .opaque(named: resultType.name))
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeScopedOwner")
+        let method = try await type.method(named: "scoped()", as: (() -> NativeSwiftBorrowedValue).self)
+        let bound = try method.bind(to: owner)
+        #expect(try unsafe bound.unsafeInvoke(withResult: { result in
+            return try unsafe read.unsafeInvoke(on: result)
+        }) == 42)
+        #expect(counts.destructions == 1)
+        let async = try await type.method(named: "scopedAsync()", as: (() async -> NativeSwiftBorrowedValue).self)
+        var saved: NativeSwiftBorrowedValue?
+        let number = try unsafe await async.unsafeInvoke(on: owner, withResult: { result in
+            saved = result
+            await Task.yield()
+            return try unsafe read.unsafeInvoke(on: result)
+        })
+        #expect(number == 42)
+        #expect(counts.destructions == 2)
+        #expect(throws: NativeSwiftBorrowError.expiredBorrow) { _ = try saved?.copy() }
+    }
+
+    @MainActor @Test func scopedBodiesReturnNoncopyableValuesAndPreserveWritebackFailures() async throws {
+        let runtime = ABIRuntime.shared
+        let counts = ArgumentCounts()
+        let owner = RuntimeScopedOwner(42, counts)
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeScoped(_:_:)",
+            as: ((RuntimeScopedOwner, Bool) throws -> NativeSwiftBorrowedValue).self)
+        let output = try unsafe make.unsafeInvoke(owner, false, withResult: { _ in ScopedBodyOutput(number: 42) })
+        #expect(output.number == 42)
+        #expect(counts.destructions == 1)
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeScopedCounter", as: RejectingScopedCounter.self)
+        let sync = try await type.method(named: "scoped(_:_:)",
+            as: ((RuntimeScopedOwner, Bool) throws -> NativeSwiftBorrowedValue).self, mutating: true)
+        var receiver = RejectingScopedCounter(41)
+        do {
+            _ = try unsafe sync.unsafeInvoke(on: &receiver, owner, false, withResult: { _ -> Int in throw RuntimeTicketFailure.rejected })
+            Issue.record("Expected body and receiver writeback failures")
+        } catch let error as NativeSwiftWritebackError {
+            #expect(error.invocationError is RuntimeTicketFailure)
+            #expect(error.writebackError is ScopedWritebackFailure)
+        }
+        #expect(counts.destructions == 2)
+        let async = try await type.method(named: "scopedAsync(_:_:)",
+            as: ((RuntimeScopedOwner, Bool) async throws -> NativeSwiftBorrowedValue).self, mutating: true)
+        do {
+            _ = try unsafe await async.unsafeInvoke(on: &receiver, owner, false, withResult: { _ -> Int in
+                await Task.yield()
+                throw RuntimeTicketFailure.rejected
+            })
+            Issue.record("Expected async body and receiver writeback failures")
+        } catch let error as NativeSwiftWritebackError {
+            #expect(error.invocationError is RuntimeTicketFailure)
+            #expect(error.writebackError is ScopedWritebackFailure)
+        }
+        #expect(counts.destructions == 3)
+    }
+
+    @MainActor @Test func asyncScopedFunctionsKeepInputsAndCleanUpFailurePaths() async throws {
+        let runtime = ABIRuntime.shared
+        let counts = ArgumentCounts()
+        var owner: RuntimeScopedOwner? = RuntimeScopedOwner(42, counts)
+        weak var observed = owner
+        let resultType = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeScopedResult")
+        let read = try await resultType.method(named: "read()", as: (() -> Int64).self, receiverABI: .opaque(named: resultType.name))
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeScopedAsync(_:_:)",
+            as: ((RuntimeScopedOwner, Bool) async throws -> NativeSwiftBorrowedValue).self)
+        let output = try unsafe await make.unsafeInvoke(owner!, false, withResult: { value in
+            owner = nil
+            await Task.yield()
+            #expect(observed != nil && counts.destructions == 0)
+            return ScopedBodyOutput(number: try unsafe read.unsafeInvoke(on: value))
+        })
+        #expect(output.number == 42)
+        #expect(counts.destructions == 1)
+        #expect(observed == nil)
+        let second = RuntimeScopedOwner(43, counts)
+        await #expect(throws: RuntimeTicketFailure.self) {
+            try unsafe await make.unsafeInvoke(second, false, withResult: { _ -> Int in
+                await Task.yield()
+                throw RuntimeTicketFailure.rejected
+            })
+        }
+        #expect(counts.destructions == 2)
+        await #expect(throws: NativeSwiftError.self) {
+            try unsafe await make.unsafeInvoke(second, true, withResult: { _ in Issue.record("Native failure called body"); return 0 })
+        }
+        #expect(counts.destructions == 2)
+    }
+
     @Test func genericOpaqueResultsBindCapturedTypesAndConformances() async throws {
         let runtime = ABIRuntime.shared
         let make = try await runtime.swiftFunction(

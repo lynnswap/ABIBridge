@@ -112,9 +112,25 @@ final class SwiftAsyncCall: Sendable {
         retainingCode codeOwner: Any? = nil, didInvoke: (() -> Void)? = nil,
         _ values: repeat each Argument
     ) async throws -> Result {
-        try unsafe await unsafeInvoke(entry: implementation.entry, context: context,
-            trailingValue: trailingValue, receiverStorage: receiverStorage, retaining: (implementation, owner),
-            retainingCode: (implementation, codeOwner), images: [implementation.symbol.image, implementation.descriptor.image], didInvoke: didInvoke, repeat each values)
+        try self.values.requireIndependentResult()
+        return try unsafe await invoke(implementation: implementation, context: context, trailingValue: trailingValue, receiverStorage: receiverStorage,
+            retaining: owner, retainingCode: codeOwner, didInvoke: didInvoke, repeat each values) { output, owner, codeOwner in
+            try self.values.decode(output, retaining: owner, retainingCode: codeOwner)
+        }
+    }
+
+    @unsafe nonisolated(nonsending) func unsafeInvoke<Result: ~Copyable, each Argument>(
+        implementation: SwiftAsyncImplementation, context: UnsafeRawPointer? = nil,
+        trailingValue: NativeValueStorage? = nil, receiverStorage: NativeValueStorage? = nil, retaining owner: Any? = nil,
+        retainingCode codeOwner: Any? = nil, didInvoke: (() -> Void)? = nil,
+        _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) async throws -> Result
+    ) async throws -> Result {
+        let result = try self.values.scopedResult()
+        return try unsafe await invoke(implementation: implementation, context: context, trailingValue: trailingValue, receiverStorage: receiverStorage,
+            retaining: owner, retainingCode: codeOwner, didInvoke: didInvoke, repeat each values) { output, _, _ in
+            try await result.withBorrowedResult(output, body)
+        }
     }
 
     @unsafe nonisolated(nonsending) func unsafeInvoke<Result, each Argument>(
@@ -122,6 +138,46 @@ final class SwiftAsyncCall: Sendable {
         trailingValue: NativeValueStorage? = nil, receiverStorage: NativeValueStorage? = nil, retaining owner: Any? = nil,
         retainingCode codeOwner: Any? = nil, images: [NativeImage] = [], didInvoke: (() -> Void)? = nil,
         _ values: repeat each Argument
+    ) async throws -> Result {
+        try self.values.requireIndependentResult()
+        return try unsafe await invoke(entry: entry, context: context, trailingValue: trailingValue, receiverStorage: receiverStorage,
+            retaining: owner, retainingCode: codeOwner, images: images, didInvoke: didInvoke, repeat each values) { output, owner, codeOwner in
+            try self.values.decode(output, retaining: owner, retainingCode: codeOwner)
+        }
+    }
+
+    @unsafe nonisolated(nonsending) func unsafeInvoke<Result: ~Copyable, each Argument>(
+        entry: SwiftAsyncEntry, context: UnsafeRawPointer? = nil,
+        trailingValue: NativeValueStorage? = nil, receiverStorage: NativeValueStorage? = nil, retaining owner: Any? = nil,
+        retainingCode codeOwner: Any? = nil, images: [NativeImage] = [], didInvoke: (() -> Void)? = nil,
+        _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) async throws -> Result
+    ) async throws -> Result {
+        let result = try self.values.scopedResult()
+        return try unsafe await invoke(entry: entry, context: context, trailingValue: trailingValue, receiverStorage: receiverStorage,
+            retaining: owner, retainingCode: codeOwner, images: images, didInvoke: didInvoke, repeat each values) { output, _, _ in
+            try await result.withBorrowedResult(output, body)
+        }
+    }
+
+    @unsafe nonisolated(nonsending) func invoke<Result: ~Copyable, each Argument>(
+        implementation: SwiftAsyncImplementation, context: UnsafeRawPointer? = nil,
+        trailingValue: NativeValueStorage? = nil, receiverStorage: NativeValueStorage? = nil, retaining owner: Any? = nil,
+        retainingCode codeOwner: Any? = nil, didInvoke: (() -> Void)? = nil,
+        _ values: repeat each Argument,
+        processingResult: (NativeValueStorage, Any?, Any?) async throws -> Result
+    ) async throws -> Result {
+        try unsafe await invoke(entry: implementation.entry, context: context,
+            trailingValue: trailingValue, receiverStorage: receiverStorage, retaining: (implementation, owner),
+            retainingCode: (implementation, codeOwner), images: [implementation.symbol.image, implementation.descriptor.image], didInvoke: didInvoke, repeat each values, processingResult: processingResult)
+    }
+
+    @unsafe nonisolated(nonsending) func invoke<Result: ~Copyable, each Argument>(
+        entry: SwiftAsyncEntry, context: UnsafeRawPointer? = nil,
+        trailingValue: NativeValueStorage? = nil, receiverStorage: NativeValueStorage? = nil, retaining owner: Any? = nil,
+        retainingCode codeOwner: Any? = nil, images: [NativeImage] = [], didInvoke: (() -> Void)? = nil,
+        _ values: repeat each Argument,
+        processingResult: (NativeValueStorage, Any?, Any?) async throws -> Result
     ) async throws -> Result {
         precondition(hasTrailingValue == (trailingValue != nil))
         let logicalStorage = try self.values.encode(repeat each values, retainingCode: (codeOwner, generic, closure))
@@ -154,12 +210,13 @@ final class SwiftAsyncCall: Sendable {
         encoded.finishInvocation()
         self.values.relinquishConsumed(logicalStorage)
         didInvoke?()
-        let outcome = Swift.Result<Result, any Error> {
+        let outcome: Swift.Result<Result, any Error>
+        do {
             if ABISwiftAsyncInvocationDidThrow(invocation), let errorPlan, let nativeError {
                 throw NativeSwiftError(try errorPlan.decode(nativeError), retainingCode: codeOwners)
             }
-            return try self.values.decode(output, retaining: owner, retainingCode: codeOwners)
-        }
+            outcome = .success(try await processingResult(output, owner, codeOwners))
+        } catch { outcome = .failure(error) }
         return try self.values.finishInvocation(outcome, storage: logicalStorage)
     }
 }

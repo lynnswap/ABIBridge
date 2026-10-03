@@ -943,7 +943,7 @@ struct SwiftGenericBinding: Sendable {
     }
 
     func resultType(_ actual: Any.Type, for formal: SwiftFormalType) throws -> Any.Type {
-        if actual == NativeSwiftValue.self { return try types(formal)[0] }
+        if actual == NativeSwiftValue.self || actual == NativeSwiftBorrowedValue.self { return try types(formal)[0] }
         let canonical = try canonicalType(of: formal)
         if case .tuple = canonical {
             let plan = try SwiftGenericCallPlan.tuple(canonical, actual: actual, binding: self)

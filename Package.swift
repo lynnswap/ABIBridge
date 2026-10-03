@@ -69,7 +69,7 @@ let package = Package(
         .target(
             name: "ManagedSwiftFixtures",
             path: "Tests/ManagedSwiftFixtures",
-            swiftSettings: [.unsafeFlags(["-enable-library-evolution"])]
+            swiftSettings: [.unsafeFlags(["-enable-library-evolution"]), .enableExperimentalFeature("Lifetimes")]
         ),
         .target(
             name: "ManagedSwiftAdapters",

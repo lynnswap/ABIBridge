@@ -23,7 +23,7 @@ let package = Package(
         .target(name: "SwiftReplacementFixtures"),
         .target(name: "SwiftUIFixtures", swiftSettings: [.unsafeFlags(["-enable-library-evolution"])]),
         .target(name: "SwiftOpaqueExtensions", dependencies: ["SwiftValueFixtures"]),
-        .target(name: "SwiftValueFixtures", swiftSettings: [.unsafeFlags(["-enable-library-evolution"])]),
+        .target(name: "SwiftValueFixtures", swiftSettings: [.unsafeFlags(["-enable-library-evolution"]), .enableExperimentalFeature("Lifetimes")]),
         .target(name: "SwiftReplacementCaller", dependencies: ["SwiftReplacementFixtures"]),
         .target(name: "ArchitectureValidation", dependencies: ["ArchitectureFixtures", "SwiftReplacementFixtures", "SwiftReplacementCaller", "SwiftValueFixtures", "SwiftOpaqueExtensions", "SwiftUIFixtures", .product(name: "ABIBridge", package: "ABIBridge"), .product(name: "ABIBridgeSwiftUI", package: "ABIBridge"), .product(name: "MachOKit", package: "MachOKit")]),
         .executableTarget(name: "ArchitectureProbe", dependencies: ["ArchitectureValidation"]),

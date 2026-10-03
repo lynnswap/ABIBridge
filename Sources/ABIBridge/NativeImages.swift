@@ -232,7 +232,7 @@ public struct ResolvedSymbol: Sendable {
     /// - Parameter body: A synchronous operation using the borrowed address.
     /// - Returns: The result produced by the closure.
     /// - Throws: Any error thrown by the closure.
-    @unsafe public func withUnsafeAddress<Result>(
+    @unsafe public func withUnsafeAddress<Result: ~Copyable>(
         _ body: (UnsafeRawPointer) throws -> Result
     ) rethrows -> Result {
         try withExtendedLifetime(image) {
