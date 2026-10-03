@@ -11,7 +11,8 @@ def run(*args):
 
 
 def function(ir, name):
-    match = re.search(r'^define[^\n]*' + name + r'[^\n]*\{.*?^}', ir, re.M | re.S)
+    symbol = r'@"\$s20ManagedSwiftFixtures' + str(len(name)) + re.escape(name)
+    match = re.search(r'^define[^\n]*' + symbol + r'[^\n]*\{.*?^}', ir, re.M | re.S)
     if not match:
         raise RuntimeError('Missing function: ' + name)
     return match[0]

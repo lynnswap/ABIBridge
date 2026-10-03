@@ -206,9 +206,13 @@ struct SwiftOpaqueResultTests {
             _ = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.makeGenericOpaque<A>(A) -> some",
                 as: ((Int64) -> NativeSwiftValue).self)
         }
-        await #expect(throws: ABIResolutionError.self) {
-            _ = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoAny(Any) -> Any",
-                as: ((Any) -> NativeSwiftValue).self)
-        }
+    }
+
+    @Test func runtimeValueResultsPreserveNativeExistentials() async throws {
+        let echo = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoAny(Any) -> Any",
+            as: ((Any) -> NativeSwiftValue).self)
+        let value = try unsafe echo.unsafeInvoke("runtime existential" as Any)
+        let result = try value.take(as: Any.self)
+        #expect(result as? String == "runtime existential")
     }
 }

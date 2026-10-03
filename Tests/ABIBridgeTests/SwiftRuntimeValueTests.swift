@@ -164,6 +164,24 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         #expect(deaths.count.withLock { $0 } == 1)
     }
 
+    @MainActor @Test func genericFunctionDataDoesNotRequireCallablePreparation() async throws {
+        typealias Value = @MainActor (Int64) -> Int64
+        let runtime = ABIRuntime.shared
+        let copy = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+            as: ((@escaping Value) -> NativeSwiftValue).self, genericArguments: [.type(Value.self)])
+        let first: Value = { $0 + 7 }
+        let value = try unsafe copy.unsafeInvoke(first)
+        let callable = try value.take(as: Value.self)
+        #expect(callable(35) == 42)
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeProducer<A>(A) -> () -> A",
+            as: ((@escaping Value) -> NativeSwiftClosure<() -> NativeSwiftValue>).self,
+            genericArguments: [.type(Value.self)])
+        let second: Value = { $0 + 9 }
+        let producer = try unsafe make.unsafeInvoke(second)
+        let returned = try unsafe producer.unsafeInvoke().take(as: Value.self)
+        #expect(returned(33) == 42)
+    }
+
     @Test func nonescapingRuntimeClosureViewsUseScopedAdapters() async throws {
         let runtime = ABIRuntime.shared
         typealias Callback = NativeSwiftClosure<(Int64) -> Int64>

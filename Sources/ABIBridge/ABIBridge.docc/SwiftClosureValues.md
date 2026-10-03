@@ -120,6 +120,8 @@ Prepare a Sendable body that obtains an owned value and returns it, then pass th
 
 Use an ordinary Swift tuple for a native tuple argument or result. Its elements can include `NativeSwiftValue`, `NativeSwiftBorrowedValue` in a callback scope, and `NativeSwiftClosure<Signature>`, including inside nested tuples. Each element follows the same ownership contract as a standalone value.
 
+A single `NativeSwiftValue` can also carry the whole native tuple. Its copies preserve ordinary Swift value semantics, including stored functions. Use `take(as:)` when the exact native tuple type is available to your code, retaining its type handle as described in <doc:BorrowedSwiftValues>.
+
 For a provider with a resilient `Record` and `func makeSnapshot() -> (record: Record, callback: (Int64) -> Int64)`:
 
 ```swift

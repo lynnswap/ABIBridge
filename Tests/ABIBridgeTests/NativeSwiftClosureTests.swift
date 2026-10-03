@@ -219,7 +219,7 @@ struct NativeSwiftClosureTests {
         #expect(destroyed.count == 1)
     }
 
-    @Test func nativeNestedAsyncResultsAndPackInputsUsePreparedAdapters() async throws {
+    @Test func nativeNestedAsyncResultsUsePreparedAdapters() async throws {
         let runtime = ABIRuntime.shared
         typealias Inner = NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>
         typealias Producer = NativeSwiftClosure<nonisolated(nonsending) () async -> Inner>
@@ -230,6 +230,10 @@ struct NativeSwiftClosureTests {
             as: (nonisolated(nonsending) (Producer, Int64) async -> Int64).self, genericArguments: [.type(Int64.self)])
         let producer = try unsafe factory.unsafeInvoke()
         #expect(try unsafe await call.unsafeInvoke(producer, 35) == 42)
+    }
+
+    @Test func nativeNestedPackInputsUsePreparedAdapters() async throws {
+        let runtime = ABIRuntime.shared
         typealias PackInner = NativeSwiftClosure<(Int64, String) -> Int64>
         typealias Caller = NativeSwiftClosure<(PackInner, Int64, String) -> Int64>
         let packFactory = try await runtime.swiftFunction(
