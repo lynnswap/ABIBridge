@@ -215,6 +215,13 @@ struct SwiftGenericCallPlan: Sendable {
         for (formal, group) in zip(parameters, parameterPlan.groups) {
             switch group {
             case .pack(let range, _):
+                guard case .pack(let pattern, _) = formal else {
+                    preconditionFailure("A pack group has a pack formal type.")
+                }
+                // The callback forwarder passes element storage through unchanged.
+                for (packIndex, index) in range.enumerated() {
+                    try binding.selectingPackElement(at: packIndex).validate(signature.parameters[index], for: pattern)
+                }
                 logicalTypes.append(contentsOf: try range.map { try SwiftGenericParameters.storageType(signature.parameters[$0]) })
                 // SIL pack values have an opaque type hash, distinct from an
                 // ordinary formally indirect scalar (GenPointerAuth.cpp).

@@ -798,6 +798,29 @@ struct SwiftGenericCallTests {
         #expect(output.0 == text && output.1 == 57)
     }
 
+    @Test func packCallbacksRequireMatchingNativeValueRepresentations() async throws {
+        let runtime = ABIRuntime()
+        let name = "ManagedSwiftFixtures.callbackPackGeneric<each A>((repeat A) -> (repeat A), repeat A) -> (repeat A)"
+        do {
+            _ = try await runtime.swiftFunction(named: name,
+                as: ((NativeSwiftClosure<(NativeSwiftValue, String) -> (Int64, String)>, Int64, String) -> (Int64, String)).self,
+                genericArguments: [.pack([.type(Int64.self), .type(String.self)])])
+            Issue.record("A native integer cannot be forwarded as a runtime-value handle without conversion")
+        } catch ABIResolutionError.signatureMismatch { }
+
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
+            as: ((Int64) -> NativeSwiftValue).self)
+        let value = try unsafe make.unsafeInvoke(Int64(42))
+        typealias Body = NativeSwiftClosure<(NativeSwiftValue, String) -> (NativeSwiftValue, String)>
+        let call = try await runtime.swiftFunction(named: name,
+            as: ((Body, NativeSwiftValue, String) -> (NativeSwiftValue, String)).self,
+            genericArguments: [.pack([.type(NativeSwiftValue.self), .type(String.self)])])
+        let body = try Body { ($0, $1) }
+        let result = try unsafe call.unsafeInvoke(body, value, "handle")
+        #expect(result.0 === value && result.1 == "handle")
+        #expect(!value.isConsumed)
+    }
+
     @Test func packShapeClassesAndCallbacksUseOneNativePackPerExpansion() async throws {
         let runtime = ABIRuntime.shared
         let markerInName = try await runtime.swiftFunction(
