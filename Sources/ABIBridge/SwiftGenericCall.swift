@@ -4,12 +4,12 @@ enum SwiftGenericArgument: Sendable {
     case concrete
     indirect case convention(SwiftConventionCodec)
     case value(CValueType, consuming: Bool)
-    case closure(SwiftGenericClosurePlan)
+    case closure(SwiftGenericClosurePlan, asynchronous: Bool = false)
     case runtimeValue(SwiftRuntimeValuePlan, convention: SwiftArgumentConvention, asynchronous: Bool)
 
     var closure: SwiftGenericClosurePlan? {
         switch self {
-        case .closure(let plan): plan
+        case .closure(let plan, _): plan
         case .convention(let codec): codec.argument.closure
         default: nil
         }
@@ -112,12 +112,12 @@ final class SwiftGenericClosurePlan: Sendable {
             if let convention = type as? any SwiftConventionArgument.Type {
                 let nested: SwiftGenericArgument
                 if let closure = convention.wrappedType as? any SwiftClosureValue.Type {
-                    nested = .closure(try concrete(closure.swiftFunctionType))
+                    nested = .closure(try concrete(closure.swiftFunctionType), asynchronous: signature.isAsync)
                 } else { nested = .concrete }
                 return .convention(try convention.makeArgumentCodec(generic: nested))
             }
             guard let closure = type as? any SwiftClosureValue.Type else { return .concrete }
-            return .closure(try concrete(closure.swiftFunctionType))
+            return .closure(try concrete(closure.swiftFunctionType), asynchronous: signature.isAsync)
         }
         let resultType = try _openExistential(signature.result, do: layout)
         let result: SwiftGenericResult
@@ -447,7 +447,8 @@ struct SwiftGenericCallPlan: Sendable {
             }
         }
         if case .function = formal, let closure = actual as? any SwiftClosureValue.Type {
-            return .closure(try Self.closure(formal, signature: SwiftFunctionSignature(closure.swiftFunctionType), binding: binding))
+            return .closure(try Self.closure(formal, signature: SwiftFunctionSignature(closure.swiftFunctionType), binding: binding),
+                asynchronous: asynchronous ?? binding.declaration.isAsync)
         }
         guard binding.dependsOnParameters(formal) else { return .concrete }
         try binding.validate(actual, for: formal)

@@ -235,6 +235,55 @@ struct NativeSwiftClosureTests {
         await #expect(throws: NativeSwiftBorrowError.expiredBorrow) { try unsafe await saved.asyncValue!.unsafeInvoke(1) }
     }
 
+    @Test @MainActor func forwardingBorrowedClosuresUsesTheReceivingCallsSuspensionContract() async throws {
+        guard #available(macOS 26, iOS 26, tvOS 26, watchOS 26, visionOS 26, *) else { return }
+        typealias Sync = NativeSwiftClosure<(Int64) -> Int64>
+        typealias Async = NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>
+        let runtime = ABIRuntime.shared
+        let visitSync = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.visitClosureSynchronously(_:)",
+            as: ((NativeSwiftClosure<(Sync) -> Void>) -> Void).self)
+        let visitAsync = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.visitAsyncClosureSynchronously(_:)",
+            as: ((NativeSwiftClosure<(Async) -> Void>) -> Void).self)
+        let forwardSync = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.applyBorrowedClosureAsync(_:_:)",
+            as: (nonisolated(nonsending) (Sync, Int64) async -> Int64).self)
+        let forwardAsync = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.applyBorrowedAsyncClosure(_:_:)",
+            as: (nonisolated(nonsending) (Async, Int64) async -> Int64).self)
+        let inspect = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.inspectAsyncClosureSynchronously(_:)",
+            as: ((Async) -> Int64).self)
+        var syncTask: Task<Int64, any Error>?
+        try unsafe NativeSwiftClosure<(Sync) -> Void>.withUnsafeNonescaping({ value in
+            syncTask = Task.immediate { @MainActor in try unsafe await forwardSync.unsafeInvoke(value, 20) }
+        }) { try unsafe visitSync.unsafeInvoke($0) }
+        await #expect(throws: NativeSwiftBorrowError.synchronousBorrow) { try await syncTask!.value }
+        var asyncTask: Task<Int64, any Error>?
+        var directTask: Task<Int64, any Error>?
+        let directBody: nonisolated(nonsending) @Sendable (Async, Int64) async throws -> Int64 = { value, number in
+            try unsafe await value.unsafeInvoke(number)
+        }
+        let direct = try NativeSwiftClosure<nonisolated(nonsending) (Async, Int64) async throws -> Int64>(directBody)
+        try unsafe NativeSwiftClosure<(Async) -> Void>.withUnsafeNonescaping({ value in
+            do { #expect(try unsafe inspect.unsafeInvoke(value) == 42) }
+            catch { Issue.record(error) }
+            asyncTask = Task.immediate { @MainActor in try unsafe await forwardAsync.unsafeInvoke(value, 20) }
+            directTask = Task.immediate { @MainActor in try unsafe await direct.unsafeInvoke(value, 20) }
+        }) { try unsafe visitAsync.unsafeInvoke($0) }
+        await #expect(throws: NativeSwiftBorrowError.synchronousBorrow) { try await asyncTask!.value }
+        await #expect(throws: NativeSwiftBorrowError.synchronousBorrow) { try await directTask!.value }
+
+        typealias Callback = NativeSwiftClosure<nonisolated(nonsending) (Async) async throws -> Int64>
+        let visitSuspending = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.visitNestedAsyncClosure(_:)",
+            as: (nonisolated(nonsending) (Callback) async throws -> Int64).self)
+        let body: nonisolated(nonsending) @Sendable (Async) async throws -> Int64 = { value in
+            try unsafe await forwardAsync.unsafeInvoke(value, 20)
+        }
+        #expect(try unsafe await visitSuspending.unsafeInvoke(Callback(body)) == 42)
+        let forwardSyncBody: nonisolated(nonsending) @Sendable (Sync) async throws -> Int64 = { value in
+            try unsafe await forwardSync.unsafeInvoke(value, 20)
+        }
+        let receiveSync = try NativeSwiftClosure<nonisolated(nonsending) (Sync) async throws -> Int64>(forwardSyncBody)
+        #expect(try unsafe await receiveSync.unsafeInvoke(Sync { $0 + 22 }) == 42)
+    }
+
     @Test func nestedResultsTransferOwnedContextsToTheNativeCaller() async throws {
         let call = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.callClosureProducer(_:)",

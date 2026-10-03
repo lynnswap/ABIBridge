@@ -274,18 +274,18 @@ extension NativeSwiftClosure {
         try makeClosureCodec(generic: plan)
     }
 
-    func encodeGenericClosure(plan: SwiftGenericClosurePlan, retainingCode owner: Any?) throws -> NativeValueStorage {
+    func encodeGenericClosure(plan: SwiftGenericClosurePlan, retainingCode owner: Any?, asynchronous: Bool = false) throws -> NativeValueStorage {
         if plan.isEscaping, case .borrowed = call {
-            return try copy().encodeGenericClosure(plan: plan, retainingCode: owner)
+            return try copy().encodeGenericClosure(plan: plan, retainingCode: owner, asynchronous: asynchronous)
         }
         if case .asynchronous = plan.transport {
-            return try encodeGenericAsyncClosure(plan: plan, retainingCode: owner)
+            return try encodeGenericAsyncClosure(plan: plan, retainingCode: owner, asynchronous: asynchronous)
         }
         if case .host(let host) = call {
             return try host.factory.encode(plan: plan, retainingCode: owner, codeLifetime: host.codeLifetime)
         }
         guard case .synchronous(let interface) = plan.transport,
-              case .synchronous(let original, let prepared) = try call.resolved() else {
+              case .synchronous(let original, let prepared) = try call.resolved(asynchronous: asynchronous) else {
             preconditionFailure("The prepared callback and its formal transport must agree.")
         }
         if let native = prepared.closure {

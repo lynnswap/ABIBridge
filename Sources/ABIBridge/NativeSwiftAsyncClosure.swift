@@ -150,15 +150,15 @@ final class SwiftAsyncClosureCallbackOwner: @unchecked Sendable {
 }
 
 extension NativeSwiftClosure {
-    func encodeGenericAsyncClosure(plan: SwiftGenericClosurePlan, retainingCode owner: Any?) throws -> NativeValueStorage {
+    func encodeGenericAsyncClosure(plan: SwiftGenericClosurePlan, retainingCode owner: Any?, asynchronous: Bool) throws -> NativeValueStorage {
         if plan.isEscaping, case .borrowed = call {
-            return try copy().encodeGenericClosure(plan: plan, retainingCode: owner)
+            return try copy().encodeGenericClosure(plan: plan, retainingCode: owner, asynchronous: asynchronous)
         }
         if case .host(let host) = call {
             return try host.factory.encode(plan: plan, retainingCode: owner, codeLifetime: host.codeLifetime)
         }
         guard case .asynchronous(let interface, let isolation) = plan.transport,
-              case .asynchronous(let original, let prepared) = try call.resolved() else {
+              case .asynchronous(let original, let prepared) = try call.resolved(asynchronous: asynchronous) else {
             preconditionFailure("The prepared callback and its formal transport must agree.")
         }
         if let native = prepared.closure {

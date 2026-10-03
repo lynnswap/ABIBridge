@@ -55,6 +55,61 @@ private final class NestedClosureProbeCapture: @unchecked Sendable {
         guard value else { throw ArchitectureValidationFailure(description: message) }
         checks.append(message)
     }
+    if #available(macOS 26, iOS 26, tvOS 26, watchOS 26, visionOS 26, *) {
+        typealias Sync = NativeSwiftClosure<(Int64) -> Int64>
+        typealias Async = NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>
+        let visitSync = try await runtime.swiftFunction(named: "SwiftReplacementFixtures.visitClosureSynchronously(_:)",
+            as: ((NativeSwiftClosure<(Sync) -> Void>) -> Void).self)
+        let visitAsync = try await runtime.swiftFunction(named: "SwiftReplacementFixtures.visitAsyncClosureSynchronously(_:)",
+            as: ((NativeSwiftClosure<(Async) -> Void>) -> Void).self)
+        let forwardSync = try await runtime.swiftFunction(named: "SwiftReplacementFixtures.applyBorrowedClosureAsync(_:_:)",
+            as: (nonisolated(nonsending) (Sync, Int64) async -> Int64).self)
+        let forwardAsync = try await runtime.swiftFunction(named: "SwiftReplacementFixtures.applyBorrowedAsyncClosure(_:_:)",
+            as: (nonisolated(nonsending) (Async, Int64) async -> Int64).self)
+        let inspect = try await runtime.swiftFunction(named: "SwiftReplacementFixtures.inspectAsyncClosureSynchronously(_:)",
+            as: ((Async) -> Int64).self)
+        var syncTask: Task<Int64, any Error>?
+        try unsafe NativeSwiftClosure<(Sync) -> Void>.withUnsafeNonescaping({ value in
+            syncTask = Task.immediate { @MainActor in try unsafe await forwardSync.unsafeInvoke(value, 20) }
+        }) { try unsafe visitSync.unsafeInvoke($0) }
+        do { _ = try await syncTask!.value; throw ArchitectureValidationFailure(description: "A synchronous closure borrow crossed suspension") }
+        catch NativeSwiftBorrowError.synchronousBorrow { checks.append("Synchronous closure forwarding rejects a synchronous source borrow before async native entry") }
+        var asyncTask: Task<Int64, any Error>?
+        var directTask: Task<Int64, any Error>?
+        let directBody: nonisolated(nonsending) @Sendable (Async, Int64) async throws -> Int64 = { value, number in
+            try unsafe await value.unsafeInvoke(number)
+        }
+        let direct = try NativeSwiftClosure<nonisolated(nonsending) (Async, Int64) async throws -> Int64>(directBody)
+        var inspectionResult: Int64?
+        var inspectionError: (any Error)?
+        try unsafe NativeSwiftClosure<(Async) -> Void>.withUnsafeNonescaping({ value in
+            do { inspectionResult = try unsafe inspect.unsafeInvoke(value) }
+            catch { inspectionError = error }
+            asyncTask = Task.immediate { @MainActor in try unsafe await forwardAsync.unsafeInvoke(value, 20) }
+            directTask = Task.immediate { @MainActor in try unsafe await direct.unsafeInvoke(value, 20) }
+        }) { try unsafe visitAsync.unsafeInvoke($0) }
+        if let inspectionError { throw inspectionError }
+        try check(inspectionResult == 42, "A synchronous native call can receive an async closure borrowed from a synchronous scope")
+        do { _ = try await asyncTask!.value; throw ArchitectureValidationFailure(description: "An async closure borrow crossed its synchronous source scope") }
+        catch NativeSwiftBorrowError.synchronousBorrow { checks.append("Async closure forwarding rejects a synchronous source borrow before async native entry") }
+        do { _ = try await directTask!.value; throw ArchitectureValidationFailure(description: "A direct async call accepted a synchronous source borrow") }
+        catch NativeSwiftBorrowError.synchronousBorrow { checks.append("Direct async closure invocation checks the lifetime of closure inputs") }
+
+        typealias Callback = NativeSwiftClosure<nonisolated(nonsending) (Async) async throws -> Int64>
+        let visitSuspending = try await runtime.swiftFunction(named: "SwiftReplacementFixtures.visitNestedAsyncClosure(_:)",
+            as: (nonisolated(nonsending) (Callback) async throws -> Int64).self)
+        let body: nonisolated(nonsending) @Sendable (Async) async throws -> Int64 = { value in
+            try unsafe await forwardAsync.unsafeInvoke(value, 20)
+        }
+        try check(try unsafe await visitSuspending.unsafeInvoke(Callback(body)) == 42,
+            "Async closure forwarding preserves a valid suspending native borrow")
+        let forwardSyncBody: nonisolated(nonsending) @Sendable (Sync) async throws -> Int64 = { value in
+            try unsafe await forwardSync.unsafeInvoke(value, 20)
+        }
+        let receiveSync = try NativeSwiftClosure<nonisolated(nonsending) (Sync) async throws -> Int64>(forwardSyncBody)
+        try check(try unsafe await receiveSync.unsafeInvoke(Sync { $0 + 22 }) == 42,
+            "A synchronous closure borrowed in an async scope can be forwarded across suspension")
+    }
     let nested = try await runtime.swiftFunction(
         named: "SwiftReplacementFixtures.visitNestedClosure(_:)",
         as: ((NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>) throws -> Int64>) throws -> Int64).self)

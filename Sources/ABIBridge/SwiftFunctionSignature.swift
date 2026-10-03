@@ -159,7 +159,7 @@ struct SwiftCallValues: Sendable {
         arguments = try signature.parameters.enumerated().map { index, type in
             func prepare<Value>(_ type: Value.Type) throws -> Argument {
                 let codec = try SwiftArgumentCodec<Value>(defaultConsuming: consumesArguments,
-                    generic: argumentPlans.isEmpty ? .concrete : argumentPlans[index])
+                    generic: argumentPlans.isEmpty ? .concrete : argumentPlans[index], asynchronous: signature.isAsync)
                 return Argument(type: codec.type, consumes: codec.consumes,
                     encode: { try codec.encode($0.load(as: Value.self), retainingCode: $1) })
             }
@@ -248,7 +248,7 @@ struct SwiftCallbackValues: Sendable {
             }
             if let closure = type as? any SwiftClosureValue.Type {
                 let codec: SwiftClosureCodec
-                if !arguments.isEmpty, case .closure(let plan) = arguments[index] {
+                if !arguments.isEmpty, case .closure(let plan, _) = arguments[index] {
                     codec = try closure.makeGenericClosureCodec(plan: plan)
                 } else { codec = try closure.makeClosureCodec() }
                 guard let borrow = codec.borrowValue else {
@@ -287,7 +287,7 @@ struct SwiftCallbackValues: Sendable {
         let usesSwiftStorage = if case .value = generic { true } else { false }
         if !usesSwiftStorage, let closure = Value.self as? any SwiftClosureValue.Type {
             let codec: SwiftClosureCodec
-            if case .closure(let plan) = generic { codec = try closure.makeGenericClosureCodec(plan: plan) }
+            if case .closure(let plan, _) = generic { codec = try closure.makeGenericClosureCodec(plan: plan) }
             else { codec = try closure.makeClosureCodec() }
             if consuming {
                 guard let take = codec.takeValue else {

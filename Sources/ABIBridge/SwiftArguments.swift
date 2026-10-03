@@ -37,12 +37,12 @@ struct SwiftArgumentCodec<Value>: Sendable {
         case ordinary(SwiftValueCodec<Value>)
         case explicit(SwiftConventionCodec)
         case genericValue
-        case genericClosure(SwiftGenericClosurePlan)
+        case genericClosure(SwiftGenericClosurePlan, asynchronous: Bool)
         case runtimeValue(SwiftRuntimeValuePlan, SwiftArgumentConvention, asynchronous: Bool)
     }
     private let encoding: Encoding
 
-    init(defaultConsuming: Bool, generic: SwiftGenericArgument = .concrete) throws {
+    init(defaultConsuming: Bool, generic: SwiftGenericArgument = .concrete, asynchronous: Bool = false) throws {
         switch generic {
         case .convention(let codec):
             type = codec.type; consumes = codec.consumes
@@ -51,24 +51,30 @@ struct SwiftArgumentCodec<Value>: Sendable {
             type = nativeType
             consumes = consuming || defaultConsuming
             encoding = .genericValue
-        case .closure(let plan):
+        case .closure(let plan, let asynchronous):
             let pointer = try CValueType(scalar: ABIValuePointer)
             type = try CValueType(fields: [pointer, pointer])
             consumes = defaultConsuming
-            encoding = .genericClosure(plan)
+            encoding = .genericClosure(plan, asynchronous: asynchronous)
         case .runtimeValue(let plan, let convention, let asynchronous):
             type = convention == .inoutValue ? try CValueType(scalar: ABIValuePointer) : plan.type
             consumes = convention == .consuming
             encoding = .runtimeValue(plan, convention, asynchronous: asynchronous)
         case .concrete:
             if let argument = Value.self as? any SwiftConventionArgument.Type {
-                let codec = try argument.makeArgumentCodec(generic: .concrete)
+                let nested: SwiftGenericArgument
+                if asynchronous, let closure = argument.wrappedType as? any SwiftClosureValue.Type {
+                    nested = .closure(try SwiftGenericClosurePlan.concrete(closure.swiftFunctionType), asynchronous: true)
+                } else { nested = .concrete }
+                let codec = try argument.makeArgumentCodec(generic: nested)
                 type = codec.type; consumes = codec.consumes
                 encoding = .explicit(codec)
             } else {
                 let codec = try SwiftValueCodec<Value>()
                 type = codec.type; consumes = defaultConsuming
-                encoding = .ordinary(codec)
+                if asynchronous, let closure = Value.self as? any SwiftClosureValue.Type {
+                    encoding = .genericClosure(try SwiftGenericClosurePlan.concrete(closure.swiftFunctionType), asynchronous: true)
+                } else { encoding = .ordinary(codec) }
             }
         }
     }
@@ -77,8 +83,8 @@ struct SwiftArgumentCodec<Value>: Sendable {
         switch encoding {
         case .ordinary(let codec): return try codec.encode(value)
         case .explicit(let codec): return try codec.encode(value, owner)
-        case .genericClosure(let plan):
-            return try (value as! any SwiftClosureValue).encodeGenericClosure(plan: plan, retainingCode: owner)
+        case .genericClosure(let plan, let asynchronous):
+            return try (value as! any SwiftClosureValue).encodeGenericClosure(plan: plan, retainingCode: owner, asynchronous: asynchronous)
         case .runtimeValue(let plan, let convention, let asynchronous):
             let access = try plan.encode(value, convention: convention, asynchronous: asynchronous)
             guard convention == .inoutValue else { return access }

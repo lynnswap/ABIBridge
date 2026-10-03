@@ -78,3 +78,27 @@ private final class ClosureAccumulator: Sendable { let value = Mutex<Int64>(0) }
     var total: Int64 = 7
     try await body { value in await Task.yield(); total += value; return total }
 }
+
+@inline(never) public func visitAsyncClosureSynchronously(
+    _ body: (nonisolated(nonsending) (Int64) async -> Int64) -> Void
+) {
+    var total: Int64 = 1
+    body { value in await Task.yield(); total += value; return total }
+}
+
+@inline(never) public func inspectAsyncClosureSynchronously(
+    _ body: nonisolated(nonsending) (Int64) async -> Int64
+) -> Int64 { 42 }
+
+@inline(never) public nonisolated(nonsending) func applyBorrowedClosureAsync(
+    _ body: (Int64) -> Int64, _ value: Int64
+) async -> Int64 { await Task.yield(); return body(value) }
+
+@inline(never) public nonisolated(nonsending) func applyBorrowedAsyncClosure(
+    _ body: nonisolated(nonsending) (Int64) async -> Int64, _ value: Int64
+) async -> Int64 { await body(value) }
+
+@inline(never) public func visitClosureSynchronously(_ body: ((Int64) -> Int64) -> Void) {
+    var total: Int64 = 1
+    body { total += $0; return total }
+}
