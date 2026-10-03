@@ -562,3 +562,12 @@ private final class RuntimeExtendedSubclass<Element>: RuntimeExtendedSuperclass<
 @inline(never) public func makeRuntimeExtendedSuperclassClosure<Value>(
     _ value: Value
 ) -> () -> any RuntimeExtendedSuperclass<Value> & RuntimeExtendedObject<Value> { { RuntimeExtendedSubclass(value) } }
+
+public protocol RuntimeExtendedLeft<Element> { associatedtype Element }
+public protocol RuntimeExtendedRight<Element> { associatedtype Element }
+private struct RuntimeExtendedBoth: RuntimeExtendedLeft, RuntimeExtendedRight, CustomStringConvertible {
+    typealias Element = Int
+    var description: String { "both" }
+}
+@inline(never) public func makeLeftConstrainedComposition() -> any RuntimeExtendedLeft<Int> & RuntimeExtendedRight { RuntimeExtendedBoth() }
+@inline(never) public func makeRightConstrainedComposition() -> any RuntimeExtendedLeft & RuntimeExtendedRight<Int> { RuntimeExtendedBoth() }
