@@ -53,6 +53,14 @@ struct SwiftExistentialValueTests {
             as: ((Int) -> any Collection<Int>).self, genericArguments: [.type(Int.self)])
         let madeResult: any Collection<Int> = try unsafe made.unsafeInvoke(42)
         #expect(Array(madeResult) == [42])
+        let runtimeOnly = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeGenericExtendedCollection<A>(A) -> any Swift.Collection<Self.Element == A>",
+            as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+        let owned = try unsafe runtimeOnly.unsafeInvoke(42)
+        let copied = try owned.withCopy { value -> [Int]? in
+            guard let collection = value as? any Collection<Int> else { return nil }
+            return Array(collection)
+        }
+        #expect(copied == [42])
         await #expect(throws: ABIResolutionError.self) {
             _ = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.echoGenericExtendedCollection<A>(any Swift.Collection<Self.Element == A>) -> any Swift.Collection<Self.Element == A>",
                 as: ((any Collection<Int>) -> any Collection<Int>).self, genericArguments: [.type(String.self)])

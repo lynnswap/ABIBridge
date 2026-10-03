@@ -73,6 +73,16 @@ final class SwiftSyntax: @unchecked Sendable {
             }
         }
 
+        func constrainedExistentialShapeName() throws -> String {
+            try withExtendedLifetime(owner) {
+                guard let name = ABICopySwiftConstrainedExistentialShapeName(pointer) else {
+                    throw ABIResolutionError.unsupportedDeclaration("Cannot generalize the constrained existential requirements.")
+                }
+                defer { ABIFreeString(name) }
+                return String(cString: name)
+            }
+        }
+
         func name() throws -> String {
             let mangled = try mangledName()
             guard let name = DeclarationKey.demangle(mangled.hasPrefix("$s") ? mangled : "$s" + mangled, language: .swift) else {

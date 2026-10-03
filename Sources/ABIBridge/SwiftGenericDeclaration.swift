@@ -140,7 +140,7 @@ indirect enum SwiftFormalType: Sendable, Equatable {
         let subject: String
         let value: SwiftFormalType
     }
-    case constrainedExistential(base: String, constraints: [ExistentialConstraint])
+    case constrainedExistential(base: String, constraints: [ExistentialConstraint], shape: String)
     case objectiveCClass(String)
     case opaqueResult(index: Int)
     case nested(SwiftFormalType, String, [SwiftFormalType])
@@ -165,7 +165,7 @@ indirect enum SwiftFormalType: Sendable, Equatable {
     var opaqueIndices: Set<Int> {
         switch self {
         case .opaqueResult(let index): [index]
-        case .constrainedExistential(_, let constraints):
+        case .constrainedExistential(_, let constraints, _):
             constraints.reduce(into: []) { $0.formUnion($1.value.opaqueIndices) }
         case .named(_, let values), .nominal(_, let values), .reference(_, let values),
              .tuple(let values, _), .packValue(let values):
@@ -322,7 +322,7 @@ indirect enum SwiftFormalType: Sendable, Equatable {
         switch self {
         case .named(let name, let arguments), .nominal(let name, let arguments):
             name + (arguments.isEmpty ? "" : "<" + arguments.map(\.spelling).joined(separator: ", ") + ">")
-        case .constrainedExistential(let base, let constraints):
+        case .constrainedExistential(let base, let constraints, _):
             base + "<" + constraints.map { $0.subject + " == " + $0.value.spelling }.joined(separator: ", ") + ">"
         case .objectiveCClass(let name): name
         case .opaqueResult: "some"

@@ -633,7 +633,7 @@ struct SwiftGenericCallPlan: Sendable {
             return .closure(try closure.makeGenericClosureCodec(plan: plan))
         }
         let native = try binding.resultType(actual, for: formal)
-        if binding.dependsOnParameters(formal) || formal == .opaqueResult {
+        if binding.dependsOnParameters(formal) || formal.opaqueIndex != nil {
             return .value(try layout(formal, actual: native, binding: binding))
         }
         return .concrete
@@ -1205,7 +1205,7 @@ extension SwiftGenericBinding {
     func dependsOnParameters(_ type: SwiftFormalType) -> Bool {
         return switch type {
         case .objectiveCClass, .opaqueResult: false
-        case .constrainedExistential(_, let constraints): constraints.contains { dependsOnParameters($0.value) }
+        case .constrainedExistential(_, let constraints, _): constraints.contains { dependsOnParameters($0.value) }
         case .named(let name, let parameters):
             (parameters.isEmpty && arguments[String(name.prefix { $0 != "." })] != nil) || parameters.contains(where: dependsOnParameters)
         case .nominal(_, let parameters), .reference(_, let parameters): parameters.contains(where: dependsOnParameters)

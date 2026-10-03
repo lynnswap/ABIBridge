@@ -246,17 +246,17 @@ struct SwiftOpaqueResultTests {
     }
 
     @Test func nestedAndGenericOpaqueContractsRequireDeclarationPlanning() async throws {
-        await #expect(throws: ABIResolutionError.self) {
-            _ = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.makeNestedOpaque() -> () -> some",
-                as: (() -> NativeSwiftValue).self)
-        }
+        let nested = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.makeNestedOpaque() -> () -> some",
+            as: (() -> NativeSwiftValue).self)
+        let nestedResult = try unsafe nested.unsafeInvoke()
+        #expect(try nestedResult.withCopy { ($0 as? () -> Int64)?() } == 42)
         await #expect(throws: ABIResolutionError.self) {
             _ = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.makeGenericOpaque<A>(A) -> some",
                 as: ((Int64) -> NativeSwiftValue).self)
         }
-        await #expect(throws: ABIResolutionError.self) {
-            _ = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoAny(Any) -> Any",
-                as: ((Any) -> NativeSwiftValue).self)
-        }
+        let erased = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoAny(Any) -> Any",
+            as: ((Any) -> NativeSwiftValue).self)
+        let erasedResult = try unsafe erased.unsafeInvoke("value")
+        #expect(try erasedResult.withCopy { $0 as? String } == "value")
     }
 }

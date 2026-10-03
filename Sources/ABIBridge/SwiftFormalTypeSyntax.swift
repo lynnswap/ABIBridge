@@ -167,7 +167,7 @@ extension SwiftFormalType {
                 }
                 return .init(subject: try subject(parts[0]), value: try Self(parts[1]))
             }
-            self = .constrainedExistential(base: "any " + base, constraints: requirements)
+            self = .constrainedExistential(base: "any " + base, constraints: requirements, shape: try node.constrainedExistentialShapeName())
         case "OpaqueReturnType":
             self = .opaqueResult(index: node.child(kind: "OpaqueReturnTypeIndex")?.index.map { Int($0) + 1 } ?? 0)
         case "DependentGenericParamType":

@@ -38,6 +38,8 @@ const void *ABISwiftConformance(const void *metadata, const void *protocol);
 const void *ABISwiftProtocolTypeMetadata(const void *protocol);
 /// Authenticates the shape reference in complete extended existential metadata.
 const void *ABISwiftExtendedExistentialShape(const void *metadata);
+/// Binds a compiler-emitted non-unique shape with validated generalization arguments.
+const void *ABISwiftExtendedExistentialMetadata(const void *shape, const void *const *arguments);
 const void *ABISwiftMetatypeMetadata(const void *instance);
 const void *ABISwiftExistentialMetatypeMetadata(const void *instance);
 /// Labels are nil or one space-terminated name per element; an empty name is unlabeled.

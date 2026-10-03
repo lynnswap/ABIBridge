@@ -28,6 +28,9 @@ bool ABISwiftSyntaxNodeHasIndex(const ABISwiftSyntaxNode *node);
 uint64_t ABISwiftSyntaxNodeIndex(const ABISwiftSyntaxNode *node);
 /// Remangles a subtree without symbolic references. Release with ABIFreeString.
 char *ABICopySwiftSyntaxNodeMangledName(const ABISwiftSyntaxNode *node);
+/// The compiler's uniquable shape symbol for a parameterized protocol value.
+/// Same-type constraints become generalization arguments in requirement order.
+char *ABICopySwiftConstrainedExistentialShapeName(const ABISwiftSyntaxNode *node);
 
 #ifdef __cplusplus
 }
