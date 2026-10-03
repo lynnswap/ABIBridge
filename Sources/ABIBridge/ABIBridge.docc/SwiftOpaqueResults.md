@@ -76,7 +76,7 @@ An ordinary runtime argument borrows its value. NativeSwiftConsuming transfers t
 
 Borrowed and consuming class arguments allow a subclass to be passed to its superclass or AnyObject. Inout arguments require the exact storage type because the callee can replace the reference with a different instance of the declared type.
 
-These conventions also apply through async suspension. An async call started with an owned-value borrow retains its read access through completion, even when the borrowed view's scope has ended. Generic results initialize the same owned storage used by opaque results. A declaration with an implicit Copyable requirement rejects a noncopyable substitution; `~Copyable` permits both copyable and noncopyable substitutions.
+These conventions also apply through async suspension. An async call started with an owned-value borrow retains its read access through completion, even when the borrowed view's scope has ended. Generic results initialize the same owned storage used by opaque results. Generic bindings enforce both Copyable and Escapable requirements. A noncopyable or nonescapable type can bind only where the declaration suppresses the corresponding requirement with `~Copyable` or `~Escapable`.
 
 ## Why an existential result is different
 

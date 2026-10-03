@@ -34,6 +34,9 @@ struct SwiftGenericBindingTests {
                 @_lifetime(immortal) public init(_ number: Int64) { self.number = number }
             }
             public func visit(_ body: (borrowing View) -> Void) { body(View(42)) }
+            public func save<Value>(_ value: Value) -> Any { value }
+            public func explicit<Value: Escapable>(_ value: Value) -> Any { value }
+            public func inspect<Value: ~Copyable & ~Escapable>(_ value: borrowing Value) -> Int64 { 42 }
             """, linkArguments: ["-swift-version", "6", "-enable-library-evolution", "-enable-experimental-feature", "Lifetimes"])
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
@@ -41,8 +44,23 @@ struct SwiftGenericBindingTests {
         let metadata = await type.metadata
         #expect(SwiftCopyability.accepts(metadata))
         #expect(!SwiftEscapability.accepts(metadata))
+        for name in ["save", "explicit"] {
+            do {
+                _ = try await runtime.swiftFunction(named: module + "." + name + "<A>(A) -> Any",
+                    as: ((NativeSwiftBorrowedValue) -> Any).self,
+                    genericArguments: [.type(type)], in: .path(fixture.libraryURL))
+                Issue.record("A nonescapable borrow was accepted by an Escapable generic parameter")
+            } catch ABIResolutionError.signatureMismatch { }
+        }
+        let inspect = try await runtime.swiftFunction(named: module + ".inspect<A where A: ~Swift.Copyable, A: ~Swift.Escapable>(A) -> Swift.Int64",
+            as: ((NativeSwiftBorrowedValue) -> Int64).self,
+            genericArguments: [.type(type)], in: .path(fixture.libraryURL))
         let copied = RuntimeBorrowCopy()
-        let callback = try NativeSwiftBorrowingClosure<Void>(borrowing: type) { copied.accept($0) }
+        let callback = try NativeSwiftBorrowingClosure<Void>(borrowing: type) {
+            do { #expect(try unsafe inspect.unsafeInvoke($0) == 42) }
+            catch { Issue.record(error) }
+            copied.accept($0)
+        }
         let visit = try await runtime.swiftFunction(named: module + ".visit((" + module + ".View) -> ()) -> ()",
             as: ((NativeSwiftBorrowingClosure<Void>) -> Void).self, in: .path(fixture.libraryURL))
         try unsafe visit.unsafeInvoke(callback)

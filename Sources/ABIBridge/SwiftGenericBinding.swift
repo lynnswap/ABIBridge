@@ -119,12 +119,16 @@ struct SwiftGenericBinding: Sendable {
         self.arguments = bound
         typeOwners = owners
         knownTypes = known
+        let invertibleProtocols = [
+            (name: "Swift.Copyable", mask: UInt16(1), accepts: SwiftCopyability.accepts),
+            (name: "Swift.Escapable", mask: UInt16(2), accepts: SwiftEscapability.accepts),
+        ]
         var conformances = context?.conformances ?? []
         for requirement in declaration.requirements {
             guard case .conformance(let subject, let name) = requirement else { continue }
             if conformances.contains(where: { $0.subject == subject && $0.name == name }) { continue }
-            // Marker protocols have no runtime witness table. Copyability is
-            // checked separately against the runtime's generic constraint rules.
+            // Marker protocols have no runtime witness table. Invertible
+            // requirements are checked against native metadata below.
             if ["AnyObject", "Swift.AnyObject", "Swift.Sendable", "Swift.Copyable", "Swift.Escapable"].contains(name) {
                 conformances.append(Conformance(subject: subject, name: name, descriptor: nil))
                 continue
@@ -168,10 +172,10 @@ struct SwiftGenericBinding: Sendable {
                 guard types.allSatisfy({ SwiftObjectType($0) != nil }) else {
                     throw ABIResolutionError.signatureMismatch(.init(expected: "A class type", found: types.map { String(reflecting: $0) }))
                 }
-            } else if conformance.name == "Swift.Copyable" {
-                guard types.allSatisfy(SwiftCopyability.accepts) else {
+            } else if let requirement = invertibleProtocols.first(where: { $0.name == conformance.name }) {
+                guard types.allSatisfy(requirement.accepts) else {
                     throw ABIResolutionError.signatureMismatch(.init(
-                        expected: conformance.subject.spelling + ": Swift.Copyable",
+                        expected: conformance.subject.spelling + ": " + requirement.name,
                         found: types.map { String(reflecting: $0) }))
                 }
             }
@@ -203,17 +207,17 @@ struct SwiftGenericBinding: Sendable {
         for parameter in declaration.parameters {
             let subject = SwiftFormalType.named(parameter.name, [])
             let equivalents = try equivalentTypes(of: subject)
-            let suppressesCopyable = declaration.requirements.contains {
-                if case .invertedProtocols(let type, let mask) = $0 {
-                    return mask & 1 != 0 && equivalents.contains(type)
+            let suppressed = declaration.requirements.reduce(UInt16(0)) {
+                if case .invertedProtocols(let type, let mask) = $1, equivalents.contains(type) {
+                    return $0 | mask
                 }
-                return false
+                return $0
             }
-            if !suppressesCopyable {
+            for requirement in invertibleProtocols where suppressed & requirement.mask == 0 {
                 for type in bound[parameter.name]!.types {
-                    guard SwiftCopyability.accepts(type) else {
+                    guard requirement.accepts(type) else {
                         throw ABIResolutionError.signatureMismatch(.init(
-                            expected: parameter.name + ": Swift.Copyable", found: [String(reflecting: type)]))
+                            expected: parameter.name + ": " + requirement.name, found: [String(reflecting: type)]))
                     }
                 }
             }
