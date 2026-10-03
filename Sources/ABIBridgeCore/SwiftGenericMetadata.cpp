@@ -558,6 +558,13 @@ const char *inlineFieldReference(const void *metadata, size_t index) {
 }
 }
 
+ABISwiftSyntax *ABICopySwiftExtendedExistentialTypeSyntax(const void *metadata) {
+    if (read<uintptr_t>(metadata) != 0x307) return nullptr;
+    auto shape = static_cast<const char *>(ABISwiftExtendedExistentialShape(metadata));
+    const char *type = relative(shape + 4);
+    return type ? ABICopySwiftTypeSyntax(type, symbolicNameLength(type)) : nullptr;
+}
+
 ABISwiftSyntax *ABICopySwiftTypeFieldSyntax(const void *metadata, size_t index) {
     const char *reference = inlineFieldReference(metadata, index);
     return reference ? ABICopySwiftTypeSyntax(reference, symbolicNameLength(reference)) : nullptr;

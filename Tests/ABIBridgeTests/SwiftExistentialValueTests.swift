@@ -8,6 +8,140 @@ import ABIBridgeCore
 import Testing
 
 struct SwiftExistentialValueTests {
+    @Test func functionAssociatedTypesKeepCanonicalLookupNames() async throws {
+        typealias Value = any Collection<(Int) -> Int>
+        let echo = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoRuntimeFunctionCollection(_:)",
+            as: ((Value) -> Value).self)
+        let value: Value = [{ $0 + 2 }]
+        let result = try unsafe echo.unsafeInvoke(value)
+        #expect(Array(result)[0](40) == 42)
+    }
+
+    @MainActor @Test func actorFunctionConstraintsKeepCanonicalAttributeOrder() async throws {
+        typealias Value = any Collection<@MainActor @Sendable (Int) -> Int>
+        let echo = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoRuntimeActorFunctionCollection(_:)",
+            as: ((Value) -> Value).self)
+        let value: Value = [{ $0 + 2 }]
+        let result = try unsafe echo.unsafeInvoke(value)
+        #expect(Array(result)[0](40) == 42)
+    }
+
+    @Test func tupleMetatypesKeepCanonicalGrouping() async throws {
+        typealias Value = (any Collection<Int>, Int).Type
+        let echo = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoRuntimeCollectionTupleMetatype(_:)",
+            as: ((Value) -> Value).self)
+        #expect(ObjectIdentifier(try unsafe echo.unsafeInvoke((any Collection<Int>, Int).self)) == ObjectIdentifier((any Collection<Int>, Int).self))
+    }
+
+#if DEBUG
+    @Test func metadataTypeSyntaxMatchesTheRuntimePrinter() throws {
+        typealias Body = @MainActor @Sendable (Int) -> Int
+        let types: [Any.Type] = [(any Collection<Int>).self, (any Collection<Body>).self,
+            (any Collection<(Int) -> Int>).self, ((any Collection<Int>, Int).Type).self,
+            ((any Collection<Int>)?).self, ((any Collection<Int>, Int)).self,
+            (@MainActor @Sendable (any Collection<Int>) -> Int).self]
+        for type in types {
+            let name = try #require(_mangledTypeName(type))
+            let reference = try name.utf8CString.withUnsafeBufferPointer {
+                try unsafe SwiftSyntax(typeReference: $0.baseAddress!, length: $0.count - 1).root.name()
+            }
+            #expect(try swiftNativeTypeName(type) == reference)
+        }
+    }
+#endif
+
+    @Test func classParameterizedCompositionsKeepBothWitnesses() async throws {
+        typealias Value = any RuntimeClassFirst<Int> & RuntimeClassSecond<Int>
+        let make = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeDistinctClassComposition(_:)",
+            as: ((Int) -> Value).self, genericArguments: [.type(Int.self)])
+        let value = try unsafe make.unsafeInvoke(42)
+        #expect((value as? RuntimeClassBoth<Int>)?.value == 42)
+        let echo = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoRuntimeDistinctClassComposition(_:)",
+            as: ((Value) -> Value).self, genericArguments: [.type(Int.self)])
+        #expect(try unsafe echo.unsafeInvoke(value) === value)
+        let runtimeOnly = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeDistinctClassComposition(_:)",
+            as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+        #expect(try unsafe runtimeOnly.unsafeInvoke(43).withCopy { ($0 as? RuntimeClassBoth<Int>)?.value } == 43)
+    }
+
+#if DEBUG
+    @Test func redundantRequirementParametersDoNotRemoveWitnesses() throws {
+        typealias Value = any RuntimeClassLeft<Int> & RuntimeClassRight<Int>
+        let pointer = unsafeBitCast(Value.self, to: UnsafeRawPointer.self)
+        let header = SwiftExtendedExistentialShapeLayout(ABISwiftExtendedExistentialShape(pointer)!)
+        #expect(header.witnessCount == 2)
+        // Swift 6.3's value witnesses report two words for this three-word
+        // declaration. Preparation must reject that runtime storage mismatch.
+        let nativeSize = 3 * MemoryLayout<UInt>.size
+        if ABISwiftGetValueLayout(pointer).size != nativeSize {
+            #expect(throws: ABIResolutionError.self) { _ = try SwiftValueCodec<Value>() }
+        } else {
+            #expect(try SwiftValueCodec<Value>().type.size == nativeSize)
+        }
+    }
+#endif
+
+    @Test func sharedInheritedAssociatedTypesHaveOneDeclaringProtocol() async throws {
+        let make = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeSharedComposition(_:)",
+            as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+        #expect(try unsafe make.unsafeInvoke(42).withCopy { ($0 as? any RuntimeSharedBase<Int>)?.value } == 42)
+    }
+
+    @Test func parameterizedExistentialMetatypesUseTheirExtendedShape() async throws {
+        typealias Value = any RuntimeClassLeft<Int>.Type
+        let echo = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoRuntimeParameterizedMetatype(_:)",
+            as: ((Value) -> Value).self, genericArguments: [.type(Int.self)])
+        #expect(ObjectIdentifier(try unsafe echo.unsafeInvoke(RuntimeClassBoth<Int>.self)) == ObjectIdentifier(RuntimeClassBoth<Int>.self))
+        let make = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeParameterizedMetatype(_:)",
+            as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+        let value = try unsafe make.unsafeInvoke(42)
+        #expect(try value.withCopy { ($0 as? Value).map(ObjectIdentifier.init) } == ObjectIdentifier(RuntimeClassBoth<Int>.self))
+        let erasedEcho = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoRuntimeParameterizedMetatype(_:)",
+            as: ((NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+        #expect(try unsafe erasedEcho.unsafeInvoke(value).withCopy { ($0 as? Value).map(ObjectIdentifier.init) } == ObjectIdentifier(RuntimeClassBoth<Int>.self))
+    }
+
+    @Test func nestedParameterizedMetatypesKeepTheirNamesAndWitnesses() async throws {
+        typealias Value = any RuntimeClassLeft<Int>.Type
+        let tuple = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoRuntimeParameterizedMetatypeTuple(_:)",
+            as: (((Value, Int)) -> (Value, Int)).self, genericArguments: [.type(Int.self)])
+        let result = try unsafe tuple.unsafeInvoke((RuntimeClassBoth<Int>.self, 42))
+        #expect(ObjectIdentifier(result.0) == ObjectIdentifier(RuntimeClassBoth<Int>.self))
+        #expect(result.1 == 42)
+        let optional = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoRuntimeOptionalParameterizedMetatype(_:)",
+            as: ((Value?) -> Value?).self, genericArguments: [.type(Int.self)])
+        #expect(try unsafe optional.unsafeInvoke(nil) == nil)
+        #expect(try unsafe optional.unsafeInvoke(RuntimeClassBoth<Int>.self).map(ObjectIdentifier.init) == ObjectIdentifier(RuntimeClassBoth<Int>.self))
+        let callback = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.applyRuntimeParameterizedMetatype(_:_:)",
+            as: ((NativeSwiftClosure<(Value) -> Value>, Int) -> Value).self, genericArguments: [.type(Int.self)])
+        let body = try NativeSwiftClosure<(Value) -> Value> { $0 }
+        #expect(ObjectIdentifier(try unsafe callback.unsafeInvoke(body, 42)) == ObjectIdentifier(RuntimeClassBoth<Int>.self))
+        let replace = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.replaceRuntimeParameterizedMetatype(_:_:)",
+            as: ((NativeSwiftInout<Value>, Value) -> Void).self, genericArguments: [.type(Int.self)])
+        let slot = NativeSwiftInout<Value>(RuntimeClassBoth<Int>.self)
+        try unsafe replace.unsafeInvoke(slot, RuntimeClassBoth<Int>.self)
+        #expect(ObjectIdentifier(slot.value) == ObjectIdentifier(RuntimeClassBoth<Int>.self))
+    }
+
+#if DEBUG
+    @Test func missingMetatypeShapesCanBeSynthesized() throws {
+        typealias Value = any RuntimeClassLeft<Int>.Type
+        let formal = try SwiftExtendedExistentialMetadata.formalType(Value.self)
+        guard case .existentialMetatype(.constrainedExistential(_, _, let constraints, let shape)) = formal else {
+            Issue.record("Expected a parameterized existential metatype.")
+            return
+        }
+        let syntax = try SwiftSyntax(symbol: shape)
+        let node = try syntax.root.requiredChild().requiredChild().requiredChild(kind: "Type").requiredChild()
+        let name = try node.constrainedExistentialShapeName(metatypeDepth: 1)
+        let metadata = try SwiftExtendedExistentialMetadata.metadata(shape: name, constraints: constraints,
+            arguments: [Int.self], superclass: nil, resolver: .shared)
+        #expect(try swiftNativeTypeName(metadata) == swiftNativeTypeName(Value.self))
+        #expect(SwiftMetatypeMetadata(metadata)?.witnessCount == 1)
+        #expect(ABISwiftGetValueLayout(unsafeBitCast(metadata, to: UnsafeRawPointer.self)).size == MemoryLayout<Value>.size)
+    }
+#endif
+
 #if DEBUG
     @Test func declarationCallbackAuthenticationPreservesClassExistentialIdentity() async throws {
         typealias Signature = (NativeSwiftClosure<(ManyObjectProtocols) -> ManyObjectProtocols>, ManyObjectProtocols) -> ManyObjectProtocols

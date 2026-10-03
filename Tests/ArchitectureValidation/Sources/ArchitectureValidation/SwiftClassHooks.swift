@@ -117,6 +117,7 @@ import Synchronization
 
     object = nil
     try check(observed == nil, "Published dispatchers do not retain receiver instances")
+    checks += try await validateAsyncMethodHooks(runtime: runtime, provider: provider, caller: caller)
     try check(failures.withLock { $0.isEmpty }, "No unexpected class hook failures")
     return ArchitectureReport(mode: "swift-method-hooks", cpuType: ABIValidationCPUType(),
         cpuSubtype: ABIValidationCPUSubtype(), pacCompiled: ABIValidationPACCompiled(), checks: checks, allocationTag: nil)

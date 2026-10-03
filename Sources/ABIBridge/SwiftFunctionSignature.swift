@@ -2,71 +2,90 @@ import ABIBridgeCore
 
 /// The function metadata's formal types and effects, before declaration-level lowering.
 /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/ABI/Metadata.h
-struct SwiftFunctionSignature: Sendable {
+struct SwiftFunctionMetadata: Sendable {
+    let flags: UInt
     let parameters: [Any.Type]
     let result: Any.Type
     let failure: Any.Type
-    let isAsync: Bool
-    let inheritsCallerIsolation: Bool
-    let parameterConventions: [SwiftArgumentConvention]
+    let parameterFlags: [UInt32]
+    let attributes: SwiftFunctionAttributes
+    let globalActor: Any.Type?
+    let extendedFlags: UInt32
 
-    init(_ type: Any.Type, nativeConventions: Bool = false) throws {
+    init(_ type: Any.Type) throws {
         let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
         let word = MemoryLayout<UInt>.size
         guard metadata.load(as: UInt.self) == 0x302 else {
             throw ABIResolutionError.unsupportedDeclaration("Expected a Swift function type: \(String(reflecting: type)).")
         }
-        let flags = metadata.load(fromByteOffset: word, as: UInt.self)
-        guard flags & 0x00ff0000 == 0 else {
-            throw ABIResolutionError.unsupportedDeclaration("Expected the native Swift function convention.")
-        }
+        flags = metadata.load(fromByteOffset: word, as: UInt.self)
         let count = Int(flags & 0xffff)
         result = metadata.load(fromByteOffset: 2 * word, as: Any.Type.self)
-        parameters = (0..<count).map {
-            metadata.load(fromByteOffset: (3 + $0) * word, as: Any.Type.self)
-        }
+        parameters = (0..<count).map { metadata.load(fromByteOffset: (3 + $0) * word, as: Any.Type.self) }
         var offset = (3 + count) * word
-        var conventions = Array(repeating: SwiftArgumentConvention.borrowing, count: count)
-        if flags & 0x02000000 != 0 {
-            for index in 0..<count {
-                let parameterFlags = metadata.load(fromByteOffset: offset + index * 4, as: UInt32.self)
-                // Ownership wrappers carry the corresponding storage contract.
-                // Raw inout/consuming function parameters cannot use value invocation.
-                guard nativeConventions || parameterFlags == 0 else {
-                    throw ABIResolutionError.unsupportedDeclaration("Use explicit Swift argument wrappers for parameter conventions.")
-                }
-                switch parameterFlags & 7 {
-                case 0, 2: conventions[index] = .borrowing
-                case 1: conventions[index] = .inoutValue
-                case 3: conventions[index] = .consuming
-                default:
-                    throw ABIResolutionError.unsupportedDeclaration("The native function parameter uses an unsupported ownership convention.")
-                }
-            }
-            offset += count * 4
-        }
-        parameterConventions = conventions
+        parameterFlags = flags & 0x02000000 != 0
+            ? (0..<count).map { metadata.load(fromByteOffset: offset + $0 * 4, as: UInt32.self) }
+            : Array(repeating: 0, count: count)
+        if flags & 0x02000000 != 0 { offset += count * 4 }
         func alignToWord() { offset = (offset + word - 1) & ~(word - 1) }
         alignToWord()
-        guard flags & 0x08000000 == 0, flags & 0x10000000 == 0 else {
-            throw ABIResolutionError.unsupportedDeclaration("Differentiable and global-actor function types require their native invocation conventions.")
-        }
-        let extended = flags & 0x80000000 != 0
-            ? metadata.load(fromByteOffset: offset, as: UInt32.self) : 0
-        guard extended & 0x0e == 0 || extended & 0x0e == 4 else {
-            throw ABIResolutionError.unsupportedDeclaration("An isolated-any function requires a dynamic isolation context.")
-        }
+        let differentiability = flags & 0x08000000 != 0 ? metadata.load(fromByteOffset: offset, as: UInt.self) : 0
+        if flags & 0x08000000 != 0 { offset += word }
+        globalActor = flags & 0x10000000 != 0 ? metadata.load(fromByteOffset: offset, as: Any.Type.self) : nil
+        if flags & 0x10000000 != 0 { offset += word }
+        let extended = flags & 0x80000000 != 0 ? metadata.load(fromByteOffset: offset, as: UInt32.self) : 0
+        extendedFlags = extended
         if flags & 0x80000000 != 0 { offset += 4 }
         alignToWord()
         if extended & 1 != 0 {
             failure = metadata.load(fromByteOffset: offset, as: Any.Type.self)
-        } else if flags & 0x01000000 != 0 {
-            failure = (any Error).self
         } else {
-            failure = Never.self
+            failure = flags & 0x01000000 != 0 ? (any Error).self : Never.self
         }
-        isAsync = flags & 0x20000000 != 0
-        inheritsCallerIsolation = extended & 0x0e == 4
+        guard let isolation = SwiftFunctionAttributes.Isolation(rawValue: extended & 0x0e),
+              let differentiation = SwiftFunctionAttributes.Differentiability(rawValue: differentiability) else {
+            throw ABIResolutionError.metadataUnavailable("The function metadata has an unknown effect convention.")
+        }
+        attributes = SwiftFunctionAttributes(isAsync: flags & 0x20000000 != 0,
+            isEscaping: flags & 0x04000000 != 0, isSendable: flags & 0x40000000 != 0,
+            isolation: isolation,
+            differentiability: differentiation, hasSendingResult: extended & 0x10 != 0,
+            parameterFlags: parameterFlags.map { $0 & ~7 })
+    }
+}
+
+struct SwiftFunctionSignature: Sendable {
+    private let metadata: SwiftFunctionMetadata
+    var parameters: [Any.Type] { metadata.parameters }
+    var result: Any.Type { metadata.result }
+    var failure: Any.Type { metadata.failure }
+    var isAsync: Bool { metadata.attributes.isAsync }
+    var inheritsCallerIsolation: Bool { metadata.attributes.isolation == .caller }
+    let parameterConventions: [SwiftArgumentConvention]
+
+    init(_ type: Any.Type, nativeConventions: Bool = false) throws {
+        let metadata = try SwiftFunctionMetadata(type)
+        guard metadata.flags & 0x00ff0000 == 0 else {
+            throw ABIResolutionError.unsupportedDeclaration("Expected the native Swift function convention.")
+        }
+        guard nativeConventions || metadata.parameterFlags.allSatisfy({ $0 == 0 }) else {
+            throw ABIResolutionError.unsupportedDeclaration("Use explicit Swift argument wrappers for parameter conventions.")
+        }
+        parameterConventions = try metadata.parameterFlags.map {
+            switch $0 & 7 {
+            case 0, 2: return .borrowing
+            case 1: return .inoutValue
+            case 3: return .consuming
+            default: throw ABIResolutionError.unsupportedDeclaration("The native function parameter uses an unsupported ownership convention.")
+            }
+        }
+        guard metadata.attributes.differentiability == .none, metadata.globalActor == nil else {
+            throw ABIResolutionError.unsupportedDeclaration("Differentiable and global-actor function types require their native invocation conventions.")
+        }
+        guard metadata.attributes.isolation != .isolatedAny else {
+            throw ABIResolutionError.unsupportedDeclaration("An isolated-any function requires a dynamic isolation context.")
+        }
+        self.metadata = metadata
     }
 
     func makeErrorPlan(genericType: CValueType? = nil) throws -> SwiftErrorPlan? {

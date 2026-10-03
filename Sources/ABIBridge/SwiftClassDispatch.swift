@@ -13,7 +13,7 @@ struct SwiftClassDispatch {
 
     let descriptor: ResolvedSymbol
 
-    init(metadata: Any.Type, declaration: NativeDeclaration, resolver: SymbolResolver) throws {
+    init(metadata: Any.Type, declaration: NativeDeclaration, resolver: SymbolResolver, asynchronous: Bool = false) throws {
         guard let selected = metadata as? AnyClass else {
             throw Self.unsupported("Virtual replacement requires a Swift class instance method.")
         }
@@ -58,8 +58,8 @@ struct SwiftClassDispatch {
                         let offset = try layout.offset() + Int(method - layout.methods) / 8 * Self.word
                         let flags: UInt32 = try Self.read(method)
                         let kind = flags & 0xf
-                        guard flags & 0x10 != 0, flags & 0x40 == 0, [0, 2, 3].contains(kind) else {
-                            throw Self.unsupported("This virtual descriptor is not a synchronous instance method, getter or setter.")
+                        guard flags & 0x10 != 0, (flags & 0x40 != 0) == asynchronous, [0, 2, 3].contains(kind) else {
+                            throw Self.unsupported("This virtual descriptor is not a matching instance method, getter or setter.")
                         }
                         guard offset >= -selectedHeader.addressPoint,
                               offset <= selectedHeader.size - selectedHeader.addressPoint - Self.word else {
@@ -67,7 +67,7 @@ struct SwiftClassDispatch {
                         }
                         address = try Self.add(selectedAddress, offset)
                         authentication = NativePointerAuthentication.isEnabled
-                            ? .signed(key: .instructionA, discriminator: UInt(flags >> 16), addressDiversity: true) : .unsigned
+                            ? .signed(key: asynchronous ? .dataA : .instructionA, discriminator: UInt(flags >> 16), addressDiversity: true) : .unsigned
                         descriptor = resolved
                         isSetter = kind == 3
                         return

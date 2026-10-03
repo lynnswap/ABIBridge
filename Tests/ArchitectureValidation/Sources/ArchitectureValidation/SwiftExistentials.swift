@@ -125,5 +125,31 @@ import SwiftValueFixtures
     let rightValue = try unsafe rightComposition.unsafeInvoke()
     try check(leftValue.type != rightValue.type,
         "Parameterized compositions retain the declaring protocol of same-named associated types")
+    typealias ClassComposition = any RuntimeClassFirst<Int> & RuntimeClassSecond<Int>
+    let makeComposition = try await runtime.swiftFunction(named: "SwiftValueFixtures.makeRuntimeDistinctClassComposition(_:)",
+        as: ((Int) -> ClassComposition).self, genericArguments: [.type(Int.self)])
+    let classValue = try unsafe makeComposition.unsafeInvoke(42)
+    let echoComposition = try await runtime.swiftFunction(named: "SwiftValueFixtures.echoRuntimeDistinctClassComposition(_:)",
+        as: ((ClassComposition) -> ClassComposition).self, genericArguments: [.type(Int.self)])
+    try check(try unsafe echoComposition.unsafeInvoke(classValue) === classValue && (classValue as? RuntimeClassBoth<Int>)?.value == 42,
+        "Parameterized class compositions keep both object protocol witnesses")
+    let shared = try await runtime.swiftFunction(named: "SwiftValueFixtures.makeRuntimeSharedComposition(_:)",
+        as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+    try check(try unsafe shared.unsafeInvoke(42).withCopy { ($0 as? any RuntimeSharedBase<Int>)?.value } == 42,
+        "Shared inherited associated types resolve one declaring protocol")
+    typealias Metatype = any RuntimeClassLeft<Int>.Type
+    let metatypeEcho = try await runtime.swiftFunction(named: "SwiftValueFixtures.echoRuntimeParameterizedMetatype(_:)",
+        as: ((Metatype) -> Metatype).self, genericArguments: [.type(Int.self)])
+    try check(ObjectIdentifier(try unsafe metatypeEcho.unsafeInvoke(RuntimeClassBoth<Int>.self)) == ObjectIdentifier(RuntimeClassBoth<Int>.self),
+        "Parameterized existential metatypes preserve their type and witness")
+    let metatypeFactory = try await runtime.swiftFunction(named: "SwiftValueFixtures.makeRuntimeParameterizedMetatype(_:)",
+        as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+    let erasedMetatype = try unsafe metatypeFactory.unsafeInvoke(42)
+    try check(try erasedMetatype.withCopy { ($0 as? Metatype).map(ObjectIdentifier.init) } == ObjectIdentifier(RuntimeClassBoth<Int>.self),
+        "Runtime-only metatype results retain their extended shape")
+    let metatypeApply = try await runtime.swiftFunction(named: "SwiftValueFixtures.applyRuntimeParameterizedMetatype(_:_:)",
+        as: ((NativeSwiftClosure<(Metatype) -> Metatype>, Int) -> Metatype).self, genericArguments: [.type(Int.self)])
+    try check(ObjectIdentifier(try unsafe metatypeApply.unsafeInvoke(.init { $0 }, 42)) == ObjectIdentifier(RuntimeClassBoth<Int>.self),
+        "Parameterized metatype callbacks authenticate their native entry")
     return checks
 }
