@@ -66,9 +66,15 @@ private func swiftExtendedTypeName(_ type: Any.Type) throws -> String? {
         let types = (0...count).map { metadata.load(fromByteOffset: (2 + $0) * word, as: Any.Type.self) }
         let names = try types.map(swiftExtendedTypeName)
         guard names.contains(where: { $0 != nil }) else { return nil }
-        let function = try SwiftFunctionSignature(type)
-        let arguments = try function.parameters.enumerated().map { index, type in
-            try SwiftFormalType(names[index + 1] ?? swiftNativeTypeName(type))
+        let function = try SwiftFunctionMetadata(type)
+        let arguments = try function.parameters.enumerated().map { index, type -> SwiftFormalType in
+            let value = try SwiftFormalType(names[index + 1] ?? swiftNativeTypeName(type))
+            return switch function.parameterFlags[index] & 7 {
+            case 1: .inoutValue(value)
+            case 2: .borrowing(value)
+            case 3: .consuming(value)
+            default: value
+            }
         }
         return try SwiftFormalType.function(arguments, SwiftFormalType(names[0] ?? swiftNativeTypeName(function.result)),
             failure: function.failure == Never.self ? nil : SwiftFormalType(swiftNativeTypeName(function.failure)),

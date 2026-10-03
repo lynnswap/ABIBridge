@@ -193,6 +193,18 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         let producer = try unsafe make.unsafeInvoke(second)
         let returned = try unsafe producer.unsafeInvoke().take(as: Value.self)
         #expect(returned(33) == 42)
+        typealias Extended = @MainActor (any Collection<Int>) -> Int
+        let extendedCopy = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+            as: ((@escaping Extended) -> NativeSwiftValue).self, genericArguments: [.type(Extended.self)])
+        let extended: Extended = { $0.reduce(0, +) }
+        let extendedValue = try unsafe extendedCopy.unsafeInvoke(extended).take(as: Extended.self)
+        #expect(extendedValue([40, 2]) == 42)
+        typealias Metatype = @MainActor (any RuntimeClassLeft<Int>.Type) -> Int
+        let metatypeCopy = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+            as: ((@escaping Metatype) -> NativeSwiftValue).self, genericArguments: [.type(Metatype.self)])
+        let metatype: Metatype = { ObjectIdentifier($0) == ObjectIdentifier(RuntimeClassBoth<Int>.self) ? 42 : -1 }
+        let copiedMetatype = try unsafe metatypeCopy.unsafeInvoke(metatype).take(as: Metatype.self)
+        #expect(copiedMetatype(RuntimeClassBoth<Int>.self) == 42)
     }
 
     @Test func nonescapingRuntimeClosureViewsUseScopedAdapters() async throws {
