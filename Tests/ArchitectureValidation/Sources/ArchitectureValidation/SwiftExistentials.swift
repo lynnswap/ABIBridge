@@ -92,5 +92,28 @@ import SwiftValueFixtures
     }
     try check(try unsafe applyExtended.unsafeInvoke(callback, 42) == 42,
         "Runtime-only class-constrained existential callbacks preserve their authenticated convention")
+    let superclassName = "any SwiftValueFixtures.RuntimeExtendedSuperclass<A> & SwiftValueFixtures.RuntimeExtendedObject<Self.Element == A>"
+    let makeSuperclass = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.makeRuntimeExtendedSuperclass<A>(A) -> " + superclassName,
+        as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+    let superclassValue = try unsafe makeSuperclass.unsafeInvoke(42)
+    try check(try superclassValue.withCopy { ($0 as? any CustomStringConvertible)?.description } == "42",
+        "Runtime-only superclass existential retains superclass arguments and protocol witnesses")
+    let applySuperclass = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.applyRuntimeExtendedSuperclass<A>((" + superclassName + ") -> Swift.Int, A) -> Swift.Int",
+        as: ((ExtendedCallback, Int) -> Int).self, genericArguments: [.type(Int.self)])
+    try check(try unsafe applySuperclass.unsafeInvoke(callback, 42) == 42,
+        "Generic superclass callback authenticates the native class and witness container")
+    let superclassClosure = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.makeRuntimeExtendedSuperclassClosure<A>(A) -> () -> " + superclassName,
+        as: ((Int) -> NativeSwiftClosure<() -> NativeSwiftValue>).self, genericArguments: [.type(Int.self)])
+    try check(try unsafe superclassClosure.unsafeInvoke(43).unsafeInvoke().withCopy { ($0 as? any CustomStringConvertible)?.description } == "43",
+        "Returned generic superclass closure keeps the native existential representation")
+    typealias SuperclassValue = any RuntimeExtendedSuperclass<Int> & RuntimeExtendedObject<Int>
+    let typedSuperclass = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.makeRuntimeExtendedSuperclass<A>(A) -> " + superclassName,
+        as: ((Int) -> SuperclassValue).self, genericArguments: [.type(Int.self)])
+    try check(try unsafe typedSuperclass.unsafeInvoke(44).value == 44,
+        "Typed generic superclass existential binds exact superclass metadata")
     return checks
 }

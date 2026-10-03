@@ -121,3 +121,71 @@ public final class ExistentialSuperclassValue<Value>: ExistentialSuperclass<Valu
 @inline(never) public func makeGenericSuperclass<Value>(
     _ value: Value
 ) -> any ExistentialSuperclass<Value> & ExistentialSource<Value> { ExistentialSuperclassValue(value) }
+
+public final class FreshSuperclassValue<Element>: ExistentialSuperclass<Element>, FreshExistentialClass, CustomStringConvertible {
+    public var description: String { String(describing: element) }
+}
+@inline(never) public func makeFreshSuperclass<Element>(_ value: Element) -> any ExistentialSuperclass<Element> & FreshExistentialClass<Element> {
+    FreshSuperclassValue(value)
+}
+@inline(never) public func echoFreshSuperclass<Element>(
+    _ value: any ExistentialSuperclass<Element> & FreshExistentialClass<Element>
+) -> any ExistentialSuperclass<Element> & FreshExistentialClass<Element> { value }
+
+open class ExistentialHashSuperclass<Element: Hashable> {
+    public let element: Element
+    public init(_ element: Element) { self.element = element }
+}
+public final class FreshHashSuperclassValue<Element: Hashable>: ExistentialHashSuperclass<Element>, FreshExistentialClass, CustomStringConvertible {
+    public var description: String { String(describing: element) }
+}
+@inline(never) public func makeFreshHashSuperclass<Element: Hashable>(
+    _ value: Element
+) -> any ExistentialHashSuperclass<Element> & FreshExistentialClass<Element> { FreshHashSuperclassValue(value) }
+
+public struct ExistentialOuter<Prefix> {
+    open class Inner<Element> {
+        public let prefix: Prefix
+        public let element: Element
+        public init(_ prefix: Prefix, _ element: Element) { self.prefix = prefix; self.element = element }
+    }
+}
+public final class FreshNestedSuperclassValue<Prefix, Element>: ExistentialOuter<Prefix>.Inner<Element>, FreshExistentialClass, CustomStringConvertible {
+    public var description: String { "\(prefix):\(element)" }
+}
+@inline(never) public func makeFreshNestedSuperclass<Prefix, Element>(
+    _ prefix: Prefix, _ value: Element
+) -> any ExistentialOuter<Prefix>.Inner<Element> & FreshExistentialClass<Element> { FreshNestedSuperclassValue(prefix, value) }
+
+open class ExistentialPairSuperclass<Values: Collection, Element> where Values.Element == Element {
+    public let values: Values
+    public init(_ values: Values) { self.values = values }
+}
+public final class FreshPairSuperclassValue<Values: Collection, Element>: ExistentialPairSuperclass<Values, Element>, FreshExistentialClass, CustomStringConvertible where Values.Element == Element {
+    public var description: String { String(describing: values) }
+}
+@inline(never) public func makeFreshPairSuperclass<Values: Collection>(
+    _ values: Values
+) -> any ExistentialPairSuperclass<Values, Values.Element> & FreshExistentialClass<Values.Element> { FreshPairSuperclassValue(values) }
+
+open class ExistentialCollectionSuperclass<Values: Collection> where Values.Element: Hashable {
+    public let values: Values
+    public init(_ values: Values) { self.values = values }
+}
+public final class FreshCollectionSuperclassValue<Values: Collection>: ExistentialCollectionSuperclass<Values>, FreshExistentialClass, CustomStringConvertible where Values.Element: Hashable {
+    public typealias Element = Values.Element
+    public var description: String { String(describing: values) }
+}
+@inline(never) public func makeFreshCollectionSuperclass<Values: Collection>(
+    _ values: Values
+) -> any ExistentialCollectionSuperclass<Values> & FreshExistentialClass<Values.Element> where Values.Element: Hashable {
+    FreshCollectionSuperclassValue(values)
+}
+
+@inline(never) public func applyGenericSuperclass<Element>(
+    _ body: (any ExistentialSuperclass<Element> & ExistentialSource<Element>) -> any ExistentialSuperclass<Element> & ExistentialSource<Element>,
+    _ value: any ExistentialSuperclass<Element> & ExistentialSource<Element>
+) -> any ExistentialSuperclass<Element> & ExistentialSource<Element> { body(value) }
+@inline(never) public func makeGenericSuperclassClosure<Element>(
+    _ value: Element
+) -> () -> any ExistentialSuperclass<Element> & ExistentialSource<Element> { { ExistentialSuperclassValue(value) } }

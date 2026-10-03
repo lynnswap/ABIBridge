@@ -20,7 +20,17 @@ enum SwiftExistentialRepresentation {
             case 1:
                 let parameters = shape.load(fromByteOffset: 8, as: UInt16.self)
                 let arguments = shape.load(fromByteOffset: 12, as: UInt16.self)
-                self = .classBound(witnessTables: Int(arguments - parameters))
+                var witnesses = Int(arguments - parameters)
+                if shape.load(as: UInt32.self) & 0x100 != 0 {
+                    // Generalization witnesses belong to the metadata, not to
+                    // the native object/protocol-witness container. Swift 6.3
+                    // can nevertheless include them in its dynamic VWT size;
+                    // the ordinary storage-layout check diagnoses that case.
+                    let genericParameters = shape.load(fromByteOffset: 16, as: UInt16.self)
+                    let genericArguments = shape.load(fromByteOffset: 20, as: UInt16.self)
+                    witnesses -= Int(genericArguments - genericParameters)
+                }
+                self = .classBound(witnessTables: witnesses)
             default: return nil
             }
             return
@@ -119,68 +129,74 @@ struct SwiftExtendedExistentialMetadata {
     let value: Any.Type
 
     static func metadata(shape: String, constraints: [SwiftFormalType.ExistentialConstraint],
-                         arguments: [Any.Type], resolver: SymbolResolver) throws -> Any.Type {
-        try SwiftSyntheticExistentialShape.metadata(shape: shape, constraints: constraints, arguments: arguments, resolver: resolver)
+                         arguments: [Any.Type], superclass: SwiftGenericTypeMetadata?, resolver: SymbolResolver) throws -> Any.Type {
+        try SwiftSyntheticExistentialShape.metadata(shape: shape, constraints: constraints, arguments: arguments,
+            superclass: superclass, resolver: resolver)
     }
 
     init(descriptor: ResolvedSymbol, arguments: [Any.Type], resolver: SymbolResolver) throws {
         value = try unsafe descriptor.withUnsafeAddress { address in
-            // The non-unique descriptor prefixes the shape with its cache ref.
-            let shape = address.advanced(by: 4)
-            let flags = shape.loadUnaligned(as: UInt32.self)
-            let reqParameters = Int(shape.loadUnaligned(fromByteOffset: 8, as: UInt16.self))
-            let reqRequirements = Int(shape.loadUnaligned(fromByteOffset: 10, as: UInt16.self))
-            let hasGeneralization = flags & 0x100 != 0
-            let parameterCount = hasGeneralization ? Int(shape.loadUnaligned(fromByteOffset: 16, as: UInt16.self)) : 0
-            let requirementCount = hasGeneralization ? Int(shape.loadUnaligned(fromByteOffset: 18, as: UInt16.self)) : 0
-            let keyCount = hasGeneralization ? Int(shape.loadUnaligned(fromByteOffset: 20, as: UInt16.self)) : 0
-            var offset = 16 + (hasGeneralization ? 8 : 0)
-            if flags & 0x200 != 0 { offset += 4 }
-            if flags & 0x400 != 0 { offset += 4 }
-            if flags & 0x800 == 0 { offset += reqParameters }
-            let parameters = (0..<parameterCount).map { index in
-                flags & 0x1000 != 0 ? UInt8(0x80) : shape.load(fromByteOffset: offset + index, as: UInt8.self)
+            try Self.metadata(address: address, arguments: arguments, resolver: resolver, image: descriptor.image)
+        }
+    }
+
+    static func metadata(address: UnsafeRawPointer, arguments: [Any.Type], resolver: SymbolResolver,
+                         image: NativeImage? = nil) throws -> Any.Type {
+        // The non-unique descriptor prefixes the shape with its cache ref.
+        let shape = address.advanced(by: 4)
+        let flags = shape.loadUnaligned(as: UInt32.self)
+        let reqParameters = Int(shape.loadUnaligned(fromByteOffset: 8, as: UInt16.self))
+        let reqRequirements = Int(shape.loadUnaligned(fromByteOffset: 10, as: UInt16.self))
+        let hasGeneralization = flags & 0x100 != 0
+        let parameterCount = hasGeneralization ? Int(shape.loadUnaligned(fromByteOffset: 16, as: UInt16.self)) : 0
+        let requirementCount = hasGeneralization ? Int(shape.loadUnaligned(fromByteOffset: 18, as: UInt16.self)) : 0
+        let keyCount = hasGeneralization ? Int(shape.loadUnaligned(fromByteOffset: 20, as: UInt16.self)) : 0
+        var offset = 16 + (hasGeneralization ? 8 : 0)
+        if flags & 0x200 != 0 { offset += 4 }
+        if flags & 0x400 != 0 { offset += 4 }
+        if flags & 0x800 == 0 { offset += reqParameters }
+        let parameters = (0..<parameterCount).map { index in
+            flags & 0x1000 != 0 ? UInt8(0x80) : shape.load(fromByteOffset: offset + index, as: UInt8.self)
+        }
+        if flags & 0x1000 == 0 { offset += parameterCount }
+        offset = (offset + 3) & ~3
+        offset += reqRequirements * 12
+        let requirements = try (0..<requirementCount).map { index in
+            try SwiftMetadataRequirement(shape.advanced(by: offset + index * 12))
+        }
+        let declaration = SwiftGenericDeclaration(parameters: parameters.indices.map {
+            .init(name: SwiftFormalType.parameterName(depth: 0, index: $0), isPack: parameters[$0] & 0x3f == 1)
+        }, requirements: requirements.map(\.value), arguments: [], result: .tuple([]), failure: nil,
+            isAsync: false, consumesArguments: false)
+        let binding = try SwiftGenericBinding(declaration: declaration, arguments: arguments.map { .type($0) },
+            signature: SwiftFunctionSignature((() -> Void).self), resolver: resolver, image: image)
+        var words: [UnsafeRawPointer?] = parameters.enumerated().filter { $0.element & 0x80 != 0 }.map {
+            unsafeBitCast(arguments[$0.offset], to: UnsafeRawPointer.self)
+        }
+        for (index, requirement) in requirements.enumerated()
+            where shape.loadUnaligned(fromByteOffset: offset + index * 12, as: UInt32.self) & 0x80 != 0 {
+            guard let protocolType = requirement.descriptor else {
+                throw ABIResolutionError.metadataUnavailable("The extended existential requires an unavailable witness.")
             }
-            if flags & 0x1000 == 0 { offset += parameterCount }
-            offset = (offset + 3) & ~3
-            offset += reqRequirements * 12
-            let requirements = try (0..<requirementCount).map { index in
-                try SwiftMetadataRequirement(shape.advanced(by: offset + index * 12))
+            let type = try binding.types(requirement.subject)[0]
+            let witness = unsafe protocolType.withUnsafeAddress {
+                ABISwiftConformance(unsafeBitCast(type, to: UnsafeRawPointer.self), $0)
             }
-            let declaration = SwiftGenericDeclaration(parameters: parameters.indices.map {
-                .init(name: SwiftFormalType.parameterName(depth: 0, index: $0), isPack: parameters[$0] & 0x3f == 1)
-            }, requirements: requirements.map(\.value), arguments: [], result: .tuple([]), failure: nil,
-                isAsync: false, consumesArguments: false)
-            let binding = try SwiftGenericBinding(declaration: declaration, arguments: arguments.map { .type($0) },
-                signature: SwiftFunctionSignature((() -> Void).self), resolver: resolver, image: descriptor.image)
-            var words: [UnsafeRawPointer?] = parameters.enumerated().filter { $0.element & 0x80 != 0 }.map {
-                unsafeBitCast(arguments[$0.offset], to: UnsafeRawPointer.self)
-            }
-            for (index, requirement) in requirements.enumerated()
-                where shape.loadUnaligned(fromByteOffset: offset + index * 12, as: UInt32.self) & 0x80 != 0 {
-                guard let protocolType = requirement.descriptor else {
-                    throw ABIResolutionError.metadataUnavailable("The extended existential requires an unavailable witness.")
-                }
-                let type = try binding.types(requirement.subject)[0]
-                let witness = unsafe protocolType.withUnsafeAddress {
-                    ABISwiftConformance(unsafeBitCast(type, to: UnsafeRawPointer.self), $0)
-                }
-                words.append(witness)
-            }
-            guard words.count == keyCount else {
-                throw ABIResolutionError.metadataUnavailable("The extended existential generalization arguments are incomplete.")
-            }
-            return withExtendedLifetime(binding) {
-                words.withUnsafeBufferPointer {
-                    unsafeBitCast(ABISwiftExtendedExistentialMetadata(address, $0.baseAddress)!, to: Any.Type.self)
-                }
+            words.append(witness)
+        }
+        guard words.count == keyCount else {
+            throw ABIResolutionError.metadataUnavailable("The extended existential generalization arguments are incomplete.")
+        }
+        return withExtendedLifetime(binding) {
+            words.withUnsafeBufferPointer {
+                unsafeBitCast(ABISwiftExtendedExistentialMetadata(address, $0.baseAddress)!, to: Any.Type.self)
             }
         }
     }
 }
 
 // Swift interns metadata by shape and keeps that shape's references permanently.
-// Only synthesized descriptors and their protocol images share that lifetime.
+// Synthesized descriptors and their referenced declaration images share that lifetime.
 private final class SwiftSyntheticExistentialShape: @unchecked Sendable {
     private static let shapes = Mutex<[String: SwiftSyntheticExistentialShape]>([:])
     let address: UnsafeMutableRawPointer
@@ -193,7 +209,7 @@ private final class SwiftSyntheticExistentialShape: @unchecked Sendable {
     deinit { ABIReleaseSwiftExtendedExistentialShape(address) }
 
     static func metadata(shape name: String, constraints: [SwiftFormalType.ExistentialConstraint],
-                         arguments: [Any.Type], resolver: SymbolResolver) throws -> Any.Type {
+                         arguments: [Any.Type], superclass: SwiftGenericTypeMetadata?, resolver: SymbolResolver) throws -> Any.Type {
         let shape: SwiftSyntheticExistentialShape
         if let cached = shapes.withLock({ $0[name] }) { shape = cached }
         else {
@@ -203,10 +219,7 @@ private final class SwiftSyntheticExistentialShape: @unchecked Sendable {
             var protocols: [SwiftProtocolDescriptor] = []
             var classBound = false
             func collect(_ node: SwiftSyntax.Node) throws {
-                if node.kind == "ProtocolListWithClass" {
-                    throw ABIResolutionError.metadataUnavailable("A superclass-constrained existential requires compiler-emitted metadata or its complete provider shape.")
-                }
-                if node.kind == "ProtocolListWithAnyObject" { classBound = true }
+                if node.kind == "ProtocolListWithClass" || node.kind == "ProtocolListWithAnyObject" { classBound = true }
                 if node.kind == "Protocol" {
                     let descriptor = SwiftProtocolDescriptor(try resolver.resolve(
                         .init(name: "protocol descriptor for " + node.name(), language: .swift, kind: .data),
@@ -227,6 +240,12 @@ private final class SwiftSyntheticExistentialShape: @unchecked Sendable {
             }
             var written: [String] = [], declaring: [String] = []
             var images = protocols.compactMap(\.image)
+            if let superclass {
+                if let descriptor = ABISwiftTypeDescriptor(unsafeBitCast(superclass.value, to: UnsafeRawPointer.self)),
+                   let image = try swiftImplementationImage(containing: descriptor) { images.append(image) }
+                let context = try SwiftGenericTypeContext(metadata: superclass.value)
+                images += context.conformances.compactMap { $0.descriptor?.image }
+            }
             for constraint in constraints {
                 let components = constraint.subject.split(separator: ".").map(String.init)
                 let member = components.last!
@@ -245,18 +264,16 @@ private final class SwiftSyntheticExistentialShape: @unchecked Sendable {
             }
             let addresses = protocols.map { descriptor in Optional(unsafe descriptor.withUnsafeAddress { $0 }) }
             let candidate = try SwiftSyntheticExistentialShape(address: existential.makeExtendedExistentialShape(
-                protocols: addresses, written: written, declaring: declaring, classBound: classBound), images: images)
+                protocols: addresses, written: written, declaring: declaring, classBound: classBound,
+                superclass: superclass?.value), images: images)
             shape = shapes.withLock { values in
                 if let cached = values[name] { return cached }
                 values[name] = candidate
                 return candidate
             }
         }
-        let pointers = arguments.map { Optional(unsafeBitCast($0, to: UnsafeRawPointer.self)) }
-        return withExtendedLifetime(shape) {
-            pointers.withUnsafeBufferPointer {
-                unsafeBitCast(ABISwiftExtendedExistentialMetadata(shape.address, $0.baseAddress)!, to: Any.Type.self)
-            }
+        return try withExtendedLifetime(shape) {
+            try SwiftExtendedExistentialMetadata.metadata(address: shape.address, arguments: arguments, resolver: resolver)
         }
     }
 }

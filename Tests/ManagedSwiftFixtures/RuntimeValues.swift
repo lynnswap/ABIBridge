@@ -545,3 +545,20 @@ private final class RuntimeExtendedObjectValue<Element>: RuntimeExtendedObject, 
 @inline(never) public func applyRuntimeExtendedObject<Value>(_ body: (any RuntimeExtendedObject<Value>) -> Int, _ value: Value) -> Int {
     body(RuntimeExtendedObjectValue(value))
 }
+
+open class RuntimeExtendedSuperclass<Value> {
+    public let value: Value
+    public init(_ value: Value) { self.value = value }
+}
+private final class RuntimeExtendedSubclass<Element>: RuntimeExtendedSuperclass<Element>, RuntimeExtendedObject, CustomStringConvertible {
+    var description: String { String(describing: value) }
+}
+@inline(never) public func makeRuntimeExtendedSuperclass<Value>(
+    _ value: Value
+) -> any RuntimeExtendedSuperclass<Value> & RuntimeExtendedObject<Value> { RuntimeExtendedSubclass(value) }
+@inline(never) public func applyRuntimeExtendedSuperclass<Value>(
+    _ body: (any RuntimeExtendedSuperclass<Value> & RuntimeExtendedObject<Value>) -> Int, _ value: Value
+) -> Int { body(RuntimeExtendedSubclass(value)) }
+@inline(never) public func makeRuntimeExtendedSuperclassClosure<Value>(
+    _ value: Value
+) -> () -> any RuntimeExtendedSuperclass<Value> & RuntimeExtendedObject<Value> { { RuntimeExtendedSubclass(value) } }

@@ -165,7 +165,10 @@ extension SwiftFormalType {
                 }
                 let parts = requirement.children()
                 func subject(_ part: SwiftSyntax.Node) throws -> String {
-                    if part.kind == "ConstrainedExistentialSelf" { return "Self" }
+                    // A substituted associated-type path can reuse an outer
+                    // parameter node. This requirement's subject still names
+                    // the existential's Self, not that outer generic argument.
+                    if part.kind == "ConstrainedExistentialSelf" || part.kind == "DependentGenericParamType" { return "Self" }
                     if part.kind == "DependentMemberType" {
                         let nodes = part.children()
                         let reference = nodes[1]

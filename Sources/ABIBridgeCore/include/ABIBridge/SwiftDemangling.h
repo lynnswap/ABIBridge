@@ -29,14 +29,14 @@ uint64_t ABISwiftSyntaxNodeIndex(const ABISwiftSyntaxNode *node);
 /// Remangles a subtree without symbolic references. Release with ABIFreeString.
 char *ABICopySwiftSyntaxNodeMangledName(const ABISwiftSyntaxNode *node);
 /// The compiler's uniquable shape symbol for a parameterized protocol value.
-/// Same-type constraints become generalization arguments in requirement order.
+/// Superclass arguments precede same-type constraints in generalization order.
 char *ABICopySwiftConstrainedExistentialShapeName(const ABISwiftSyntaxNode *node);
 /// Builds an unpublished parameterized-protocol shape. The caller keeps its
 /// storage and referenced protocol images alive after publishing it to Swift.
 void *ABICreateSwiftExtendedExistentialShape(const ABISwiftSyntaxNode *node,
     const void *const *protocols, size_t protocolCount,
     const char *const *writtenProtocols, const char *const *declaringProtocols,
-    size_t constraintCount, bool classBound);
+    size_t constraintCount, bool classBound, const void *superclass);
 void ABIReleaseSwiftExtendedExistentialShape(void *shape);
 
 #ifdef __cplusplus

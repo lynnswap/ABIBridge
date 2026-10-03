@@ -617,16 +617,24 @@ struct SwiftGenericBinding: Sendable {
                 }
                 if matches { return [metadata] }
             }
+            let superclassMetadata = try expectedSuperclass.map { try SwiftGenericTypeMetadata(metadata: $0) }
+            let superclassArguments: [Any.Type] = try superclassMetadata?.arguments.map {
+                guard case .type(let type, _) = $0.storage else {
+                    throw ABIResolutionError.unsupportedDeclaration("The extended existential shape has a superclass parameter pack.")
+                }
+                return type
+            } ?? []
+            let generalizedArguments = superclassArguments + expected
             let request = NativeDeclaration(linkerName: shape, language: .swift, kind: .data)
             if let image = images.first {
                 do {
                     let descriptor = try resolver.resolve(request, in: image, loading: .loadedOnly)
                     return [try SwiftExtendedExistentialMetadata(descriptor: descriptor,
-                        arguments: expected, resolver: resolver).value]
+                        arguments: generalizedArguments, resolver: resolver).value]
                 } catch ABIResolutionError.declarationNotFound {}
             }
             return [try SwiftExtendedExistentialMetadata.metadata(shape: shape, constraints: constraints,
-                arguments: expected, resolver: resolver)]
+                arguments: generalizedArguments, superclass: superclassMetadata, resolver: resolver)]
         case .function(let parameters, let result, let failure, let attributes):
             return [try functionType(parameters: parameters, result: result, failure: failure,
                 attributes: attributes, packIndex: packIndex)]

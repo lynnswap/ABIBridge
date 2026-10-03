@@ -1,4 +1,5 @@
 #include <ABIBridge/SwiftDemangling.h>
+#include <ABIBridge/SwiftInvocation.h>
 #include <ptrauth.h>
 #include <cstring>
 #include <memory>
@@ -67,6 +68,9 @@ struct ABISwiftSyntax {
     swift::Demangle::Demangler demangler;
     swift::Demangle::NodePointer root = nullptr;
 };
+
+struct ABISwiftTypeName { const char *data; uintptr_t length; };
+extern "C" ABISwiftTypeName __attribute__((swiftcall)) swift_getMangledTypeName(const void *);
 
 namespace {
 using namespace swift::Demangle;
@@ -165,6 +169,8 @@ char *ABICopySwiftConstrainedExistentialShapeName(const ABISwiftSyntaxNode *node
         return nullptr;
     NodeFactory factory;
     auto copySubject = [&](auto &&copy, NodePointer node) -> NodePointer {
+        if (node->getKind() == Node::Kind::DependentGenericParamType)
+            return factory.createNode(Node::Kind::ConstrainedExistentialSelf);
         NodePointer result = node->hasText() ? factory.createNode(node->getKind(), node->getText())
             : node->hasIndex() ? factory.createNode(node->getKind(), node->getIndex())
             : factory.createNode(node->getKind());
@@ -175,21 +181,36 @@ char *ABICopySwiftConstrainedExistentialShapeName(const ABISwiftSyntaxNode *node
         }
         return result;
     };
-    auto existential = factory.createNode(Node::Kind::ConstrainedExistential);
-    existential->addChild(source->getChild(0), factory);
-    auto requirements = factory.createNode(Node::Kind::ConstrainedExistentialRequirementList);
     size_t index = 0;
-    for (auto requirement : *source->getChild(1)) {
-        if (requirement->getKind() != Node::Kind::DependentGenericSameTypeRequirement
-            || requirement->getNumChildren() != 2) return nullptr;
-        auto replacement = factory.createNode(requirement->getKind());
-        replacement->addChild(copySubject(copySubject, requirement->getChild(0)), factory);
+    auto parameterType = [&]() {
         auto type = factory.createNode(Node::Kind::Type);
         auto parameter = factory.createNode(Node::Kind::DependentGenericParamType);
         parameter->addChild(factory.createNode(Node::Kind::Index, uint64_t(0)), factory);
         parameter->addChild(factory.createNode(Node::Kind::Index, uint64_t(index++)), factory);
         type->addChild(parameter, factory);
-        replacement->addChild(type, factory);
+        return type;
+    };
+    auto generalize = [&](auto &&copy, NodePointer node, bool superclass) -> NodePointer {
+        NodePointer result = node->hasText() ? factory.createNode(node->getKind(), node->getText())
+            : node->hasIndex() ? factory.createNode(node->getKind(), node->getIndex())
+            : factory.createNode(node->getKind());
+        for (size_t child = 0; child < node->getNumChildren(); ++child) {
+            if (superclass && node->getKind() == Node::Kind::TypeList)
+                result->addChild(parameterType(), factory);
+            else result->addChild(copy(copy, node->getChild(child), superclass
+                || (node->getKind() == Node::Kind::ProtocolListWithClass && child == 1)), factory);
+        }
+        return result;
+    };
+    auto existential = factory.createNode(Node::Kind::ConstrainedExistential);
+    existential->addChild(generalize(generalize, source->getChild(0), false), factory);
+    auto requirements = factory.createNode(Node::Kind::ConstrainedExistentialRequirementList);
+    for (auto requirement : *source->getChild(1)) {
+        if (requirement->getKind() != Node::Kind::DependentGenericSameTypeRequirement
+            || requirement->getNumChildren() != 2) return nullptr;
+        auto replacement = factory.createNode(requirement->getKind());
+        replacement->addChild(copySubject(copySubject, requirement->getChild(0)), factory);
+        replacement->addChild(parameterType(), factory);
         requirements->addChild(replacement, factory);
     }
     existential->addChild(requirements, factory);
@@ -211,7 +232,7 @@ char *ABICopySwiftConstrainedExistentialShapeName(const ABISwiftSyntaxNode *node
 void *ABICreateSwiftExtendedExistentialShape(const ABISwiftSyntaxNode *node,
     const void *const *protocols, size_t protocolCount,
     const char *const *writtenProtocols, const char *const *declaringProtocols,
-    size_t constraintCount, bool classBound) {
+    size_t constraintCount, bool classBound, const void *superclass) {
     using namespace swift::Demangle;
     auto source = nativeNode(node);
     if (source->getKind() != Node::Kind::ConstrainedExistential || source->getNumChildren() != 2
@@ -255,15 +276,88 @@ void *ABICreateSwiftExtendedExistentialShape(const ABISwiftSyntaxNode *node,
         return result;
     };
     auto spelling = [&](NodePointer node) -> std::string {
-        auto result = mangleNode(node);
+        auto result = mangleNode(node, [&](SymbolicReferenceKind kind, const void *address) -> NodePointer {
+            if (kind != SymbolicReferenceKind::Context) return nullptr;
+            uint32_t flags;
+            std::memcpy(&flags, address, sizeof(flags));
+            if ((flags & 0x1f) != 3) return nullptr;
+            auto name = swift_getMangledTypeName(ABISwiftProtocolTypeMetadata(address));
+            return name.data ? protocolNode(std::string(name.data, name.length).c_str()) : nullptr;
+        });
         if (!result.isSuccess()) return {};
         auto name = result.result();
         return name.compare(0, 2, "$s") == 0 ? name.substr(2) : name;
     };
+    struct Requirement {
+        uint32_t flags;
+        std::string subject, constraint;
+        const void *protocol = nullptr;
+        uint32_t payload = 0;
+    };
+    std::vector<Requirement> generalization, required;
+    size_t superclassParameters = 0;
+    auto base = source->getChild(0);
+    while (base->getKind() == Node::Kind::Type && base->getNumChildren() == 1) base = base->getChild(0);
+    NodePointer superclassType = base->getKind() == Node::Kind::ProtocolListWithClass ? base->getChild(1) : nullptr;
+    if (bool(superclassType) != bool(superclass)) return nullptr;
+    if (superclass) {
+        std::unique_ptr<ABISwiftTypeMetadata, decltype(&ABIReleaseSwiftTypeMetadata)> context(
+            ABICopySwiftTypeMetadata(superclass, nullptr), ABIReleaseSwiftTypeMetadata);
+        if (!context || !ABIPrepareSwiftTypeMetadataContext(context.get(), nullptr)) return nullptr;
+        superclassParameters = ABISwiftTypeMetadataArgumentCount(context.get());
+        std::vector<std::string> references;
+        for (size_t index = 0; index < superclassParameters; ++index) {
+            if (ABISwiftTypeMetadataArgumentIsPack(context.get(), index)) return nullptr;
+            std::string name = ABISwiftTypeMetadataParameterReference(context.get(), index);
+            references.push_back(name.compare(0, 2, "$s") == 0 ? name.substr(2) : name);
+        }
+        auto substitute = [&](auto &&copy, NodePointer node) -> NodePointer {
+            if (node->getKind() == Node::Kind::DependentGenericParamType) {
+                auto name = spelling(node);
+                auto found = std::find(references.begin(), references.end(), name);
+                if (found == references.end()) return nullptr;
+                auto parameter = factory.createNode(Node::Kind::DependentGenericParamType);
+                parameter->addChild(factory.createNode(Node::Kind::Index, uint64_t(0)), factory);
+                parameter->addChild(factory.createNode(Node::Kind::Index, uint64_t(found - references.begin())), factory);
+                return parameter;
+            }
+            NodePointer result = node->hasText() ? factory.createNode(node->getKind(), node->getText())
+                : node->hasIndex() ? factory.createNode(node->getKind(), node->getIndex())
+                : factory.createNode(node->getKind());
+            for (auto child : *node) {
+                auto replacement = copy(copy, child);
+                if (!replacement) return nullptr;
+                result->addChild(replacement, factory);
+            }
+            return result;
+        };
+        // ExistentialGeneralization.cpp carries conformance substitutions from
+        // the nominal context, but gives every written type argument a fresh
+        // key parameter. Nominal same-type constraints do not merge these keys.
+        for (size_t index = 0; index < ABISwiftTypeMetadataRequirementCount(context.get()); ++index) {
+            auto address = static_cast<const char *>(ABISwiftTypeMetadataRequirement(context.get(), index));
+            uint32_t flags;
+            std::memcpy(&flags, address, sizeof(flags));
+            const auto kind = flags & 0x1f;
+            if (kind != 0 && kind != 5) continue;
+            std::unique_ptr<ABISwiftSyntax, decltype(&ABIReleaseSwiftSyntax)> syntax(
+                ABICopySwiftGenericRequirementTypeSyntax(address, false), ABIReleaseSwiftSyntax);
+            if (!syntax) return nullptr;
+            auto transformed = substitute(substitute, syntax->root);
+            auto name = transformed ? spelling(transformed) : std::string();
+            if (name.empty()) return nullptr;
+            Requirement requirement{flags, name, {}};
+            if (kind == 0) {
+                requirement.protocol = ABISwiftProtocolRequirementDescriptor(address + 8);
+                if (!requirement.protocol) return nullptr;
+                required.push_back(requirement);
+            } else std::memcpy(&requirement.payload, address + 8, sizeof(requirement.payload));
+            generalization.push_back(std::move(requirement));
+        }
+    }
     auto existential = factory.createNode(Node::Kind::ConstrainedExistential);
     existential->addChild(source->getChild(0), factory);
     auto requirements = factory.createNode(Node::Kind::ConstrainedExistentialRequirementList);
-    std::vector<std::string> parameters, associatedTypes;
     for (size_t index = 0; index < constraintCount; ++index) {
         auto original = source->getChild(1)->getChild(index);
         auto written = protocolNode(writtenProtocols[index]);
@@ -274,26 +368,45 @@ void *ABICreateSwiftExtendedExistentialShape(const ABISwiftSyntaxNode *node,
         constraint->addChild(subject(subject, original->getChild(0), written, false), factory);
         constraint->addChild(original->getChild(1), factory);
         requirements->addChild(constraint, factory);
-        parameters.push_back(spelling(original->getChild(1)));
-        associatedTypes.push_back(spelling(subject(subject, original->getChild(0), declaring, true)));
+        required.push_back({1, spelling(original->getChild(1)),
+            spelling(subject(subject, original->getChild(0), declaring, true))});
     }
     existential->addChild(requirements, factory);
     const auto typeName = spelling(existential);
     if (typeName.empty()) return nullptr;
-    const size_t requirementCount = constraintCount + protocolCount;
-    size_t size = 28 + requirementCount * 12;
-    for (const auto &name : parameters) size += name.size() + 1;
-    for (const auto &name : associatedTypes) size += name.size() + 1;
-    size += typeName.size() + 1 + sizeof("qd__");
+    if (superclassType) required.push_back({2, "qd__", spelling(superclassType)});
+    for (size_t index = 0; index < protocolCount; ++index)
+        required.push_back({0x80, "qd__", {}, protocols[index]});
+    const size_t parameterCount = superclassParameters + constraintCount;
+    const size_t generalizationKeys = parameterCount + std::count_if(generalization.begin(), generalization.end(),
+        [](const Requirement &requirement) { return requirement.flags & 0x80; });
+    const size_t requirementKeys = parameterCount + 1 + std::count_if(required.begin(), required.end(),
+        [](const Requirement &requirement) { return requirement.flags & 0x80; });
+    if (requirementKeys > UINT16_MAX || generalizationKeys > UINT16_MAX
+        || required.size() > UINT16_MAX || generalization.size() > UINT16_MAX) return nullptr;
+    const size_t requirementCount = required.size();
+    required.insert(required.end(), generalization.begin(), generalization.end());
+    size_t size = 28 + required.size() * 12;
+    size_t protocolSlots = 0;
+    for (const auto &requirement : required) {
+        if (requirement.subject.empty()) return nullptr;
+        size += requirement.subject.size() + 1;
+        if ((requirement.flags & 0x1f) == 1 || (requirement.flags & 0x1f) == 2) {
+            if (requirement.constraint.empty()) return nullptr;
+            size += requirement.constraint.size() + 1;
+        }
+        protocolSlots += bool(requirement.protocol);
+    }
+    size += typeName.size() + 1;
     size = (size + sizeof(void *) - 1) & ~(sizeof(void *) - 1);
     const size_t slots = size;
-    size += (protocolCount + 1) * sizeof(void *);
+    size += (protocolSlots + 1) * sizeof(void *);
     auto memory = static_cast<char *>(std::calloc(1, size));
     auto put = [&](size_t at, auto value) { std::memcpy(memory + at, &value, sizeof(value)); };
     auto relative = [&](size_t at, size_t target, int tag = 0) {
         put(at, int32_t(target - at) | tag);
     };
-    size_t cursor = 28 + requirementCount * 12;
+    size_t cursor = 28 + required.size() * 12;
     auto string = [&](const std::string &text) {
         const size_t start = cursor;
         std::memcpy(memory + cursor, text.c_str(), text.size() + 1);
@@ -303,30 +416,30 @@ void *ABICreateSwiftExtendedExistentialShape(const ABISwiftSyntaxNode *node,
     relative(0, slots);
     put(4, uint32_t(0x1900 | (classBound ? 1 : 0)));
     relative(8, string(typeName));
-    put(12, uint16_t(constraintCount + 1));
+    put(12, uint16_t(parameterCount + 1));
     put(14, uint16_t(requirementCount));
-    put(16, uint16_t(constraintCount + 1 + protocolCount));
-    put(20, uint16_t(constraintCount));
-    put(24, uint16_t(constraintCount));
-    for (size_t index = 0; index < constraintCount; ++index) {
+    put(16, uint16_t(requirementKeys));
+    put(20, uint16_t(parameterCount));
+    put(22, uint16_t(generalization.size()));
+    put(24, uint16_t(generalizationKeys));
+    size_t nextSlot = slots + sizeof(void *);
+    for (size_t index = 0; index < required.size(); ++index) {
         const size_t entry = 28 + index * 12;
-        put(entry, uint32_t(1));
-        relative(entry + 4, string(parameters[index]));
-        relative(entry + 8, string(associatedTypes[index]));
-    }
-    const size_t self = string("qd__");
-    for (size_t index = 0; index < protocolCount; ++index) {
-        const size_t entry = 28 + (constraintCount + index) * 12;
-        const size_t slot = slots + (index + 1) * sizeof(void *);
-        put(entry, uint32_t(0x80));
-        relative(entry + 4, self);
-        relative(entry + 8, slot, 1);
-        const void *protocol = protocols[index];
+        const auto &requirement = required[index];
+        put(entry, requirement.flags);
+        relative(entry + 4, string(requirement.subject));
+        if (requirement.protocol) {
+            const size_t slot = nextSlot;
+            nextSlot += sizeof(void *);
+            relative(entry + 8, slot, 1);
+            const void *protocol = requirement.protocol;
 #if __has_feature(ptrauth_calls)
-        protocol = ptrauth_sign_unauthenticated(protocol, ptrauth_key_process_independent_data,
-            ptrauth_blend_discriminator(memory + slot, 0xae86));
+            protocol = ptrauth_sign_unauthenticated(protocol, ptrauth_key_process_independent_data,
+                ptrauth_blend_discriminator(memory + slot, 0xae86));
 #endif
-        put(slot, protocol);
+            put(slot, protocol);
+        } else if (!requirement.constraint.empty()) relative(entry + 8, string(requirement.constraint));
+        else put(entry + 8, requirement.payload);
     }
     return memory;
 }

@@ -65,3 +65,20 @@ public typealias ManyObjectProtocols = any ExistentialObjectValue & ExistentialO
 @inline(never) @concurrent public func applyAsyncExistentialClosure(_ body: @concurrent @Sendable (any ExistentialValue) async -> any ExistentialValue, _ value: any ExistentialValue) async -> any ExistentialValue {
     await body(value)
 }
+
+open class RuntimeExtendedSuperclass<Value> {
+    public let value: Value
+    public init(_ value: Value) { self.value = value }
+}
+private final class RuntimeExtendedSubclass<Element>: RuntimeExtendedSuperclass<Element>, RuntimeExtendedObject, CustomStringConvertible {
+    var description: String { String(describing: value) }
+}
+@inline(never) public func makeRuntimeExtendedSuperclass<Value>(
+    _ value: Value
+) -> any RuntimeExtendedSuperclass<Value> & RuntimeExtendedObject<Value> { RuntimeExtendedSubclass(value) }
+@inline(never) public func applyRuntimeExtendedSuperclass<Value>(
+    _ body: (any RuntimeExtendedSuperclass<Value> & RuntimeExtendedObject<Value>) -> Int, _ value: Value
+) -> Int { body(RuntimeExtendedSubclass(value)) }
+@inline(never) public func makeRuntimeExtendedSuperclassClosure<Value>(
+    _ value: Value
+) -> () -> any RuntimeExtendedSuperclass<Value> & RuntimeExtendedObject<Value> { { RuntimeExtendedSubclass(value) } }
