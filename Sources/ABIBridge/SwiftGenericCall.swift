@@ -627,7 +627,7 @@ struct SwiftGenericCallPlan: Sendable {
                 asynchronous: asynchronous ?? binding.declaration.isAsync), consuming: defaultConsuming,
                 asynchronous: asynchronous ?? binding.declaration.isAsync)
         }
-        guard binding.dependsOnParameters(formal) else { return .concrete }
+        guard binding.dependsOnParameters(formal) || !formal.opaqueIndices.isEmpty else { return .concrete }
         try binding.validate(actual, for: formal)
         return .value(try Self.layout(formal, actual: actual, binding: binding), consuming: false)
     }
@@ -645,7 +645,7 @@ struct SwiftGenericCallPlan: Sendable {
             let plan = try Self.closure(canonical, signature: SwiftFunctionSignature(closure.swiftFunctionType), binding: binding)
             return .closure(try closure.makeGenericClosureCodec(plan: plan))
         }
-        if binding.dependsOnParameters(formal) || formal.opaqueIndex != nil {
+        if binding.dependsOnParameters(formal) || !formal.opaqueIndices.isEmpty {
             let native = try binding.resultType(actual, for: formal)
             return .value(try layout(formal, actual: native, binding: binding))
         }
@@ -911,8 +911,12 @@ struct SwiftGenericCallPlan: Sendable {
               failure != nil || signature.failure == Never.self else {
             throw ABIResolutionError.signatureMismatch(.init(expected: formal.spelling, found: []))
         }
-        let parameterPlan = try SwiftGenericParameters(formal: parameters, actual: signature.parameters, binding: binding,
+        // An opaque-bearing returned function is erased to the ordinary Swift
+        // function-value storage convention before it crosses the factory ABI.
+        let usesStorageConvention = !formal.opaqueIndices.isEmpty
+        var parameterPlan = try SwiftGenericParameters(formal: parameters, actual: signature.parameters, binding: binding,
             asynchronous: attributes.isAsync, callback: true)
+        if usesStorageConvention { parameterPlan = parameterPlan.usingStorageConvention() }
         if let failure { try binding.validate(signature.failure, for: failure) }
         let runtimeArguments: [SwiftCallbackRuntimeArgument?] = parameterPlan.arguments.enumerated().map { index, argument in
             guard case .runtimeValue(let plan, let convention, _) = argument else { return nil }
@@ -963,12 +967,27 @@ struct SwiftGenericCallPlan: Sendable {
                 authentication.append(contentsOf: try authTypes(formal, actual: actual, binding: binding))
             }
         }
+        if usesStorageConvention {
+            logicalTypes = try zip(nativeParameters, parameterPlan.arguments).map { metadata, argument in
+                argument.convention == .inoutValue ? try CValueType(scalar: ABIValuePointer)
+                    : try SwiftGenericParameters.storageType(metadata)
+            }
+            authentication = attributes.isAsync && signature.inheritsCallerIsolation ? ["-class"] : []
+            authentication += parameterPlan.groups.map {
+                if case .pack = $0 { return "-" }
+                return "-indirect"
+            }
+        }
         let types = parameterPlan.types(from: logicalTypes)
         let nativeResult = try binding.resultType(signature.result, for: result)
-        let resultType = try layout(result, actual: nativeResult, binding: binding)
+        let resultType = try usesStorageConvention ? SwiftGenericParameters.storageType(nativeResult)
+            : layout(result, actual: nativeResult, binding: binding)
         let resultPlan = try Self.result(result, actual: signature.result, binding: binding)
         let errorType = try failure.flatMap {
-            binding.dependsOnParameters($0) ? try layout($0, actual: signature.failure, binding: binding) : nil
+            if usesStorageConvention && signature.failure != (any Error).self {
+                return try SwiftGenericParameters.storageType(signature.failure)
+            }
+            return binding.dependsOnParameters($0) ? try layout($0, actual: signature.failure, binding: binding) : nil
         }
         let errorPlan = try signature.makeErrorPlan(genericType: errorType)
         let transport: SwiftGenericClosurePlan.Transport = attributes.isAsync
@@ -976,7 +995,8 @@ struct SwiftGenericCallPlan: Sendable {
                 errorPlan: errorPlan, inheritsCallerIsolation: signature.inheritsCallerIsolation),
                 inheritsCallerIsolation: signature.inheritsCallerIsolation)
             : .synchronous(try SwiftCallInterface.cached(result: resultType, parameters: types, errorPlan: errorPlan))
-        let resultAuthentication = try authTypes(result, actual: nativeResult, binding: binding, isResult: true)
+        let resultAuthentication = try usesStorageConvention ? ["-indirect"]
+            : authTypes(result, actual: nativeResult, binding: binding, isResult: true)
         let nativeArgumentClosures = zip(parameterPlan.arguments, nativeParameters).map { argument, metadata -> SwiftGenericClosurePlan? in
             if let closure = argument.closure { return closure }
             return argument.tuple == nil ? SwiftGenericClosurePlan.closureInStoredValue(metadata) : nil
@@ -986,7 +1006,7 @@ struct SwiftGenericCallPlan: Sendable {
         return SwiftGenericClosurePlan(transport: transport, parameters: parameterPlan,
             discriminator: swiftClosureDiscriminator(parameters: authentication, results: resultAuthentication),
             authentication: swiftClosureAuthDescription(parameters: authentication, results: resultAuthentication), isEscaping: attributes.isEscaping,
-            resultConstants: SwiftValueConstants(nativeResult), errorPlan: errorPlan,
+            resultConstants: SwiftValueConstants(usesStorageConvention ? Void.self : nativeResult), errorPlan: errorPlan,
             runtimeArguments: runtimeArguments, result: resultPlan, nativeResult: nativeResult,
             hostParameters: signature.parameters, nativeParameters: nativeParameters,
             nativeArgumentClosures: nativeArgumentClosures, nativeResultClosure: nativeResultClosure)
@@ -1027,7 +1047,7 @@ struct SwiftGenericCallPlan: Sendable {
             let outputs = try authTypes(result, actual: binding.types(result)[0], binding: binding, isResult: true)
             return ["(" + swiftClosureAuthDescription(parameters: inputs, results: outputs) + ")"]
         }
-        if !binding.dependsOnParameters(formal), formal.opaqueIndex == nil {
+        if !binding.dependsOnParameters(formal), formal.opaqueIndices.isEmpty {
             let explicit = formal.nominalDeclaration == nil ? nil : try binding.explicitValueType(actual)
             if explicit == nil {
                 // Concrete class existentials and metatypes keep their formal
@@ -1074,10 +1094,10 @@ struct SwiftGenericCallPlan: Sendable {
             }
             return opaque.type
         }
-        if formal.nominalDeclaration != nil, !binding.dependsOnParameters(formal),
+        if formal.nominalDeclaration != nil, !binding.dependsOnParameters(formal), formal.opaqueIndices.isEmpty,
            let explicit = try binding.explicitValueType(actual) { return explicit }
         func prepare<Value>(_ type: Value.Type) throws -> CValueType {
-            if !binding.dependsOnParameters(formal) { return try SwiftValueCodec<Value>().type }
+            if !binding.dependsOnParameters(formal), formal.opaqueIndices.isEmpty { return try SwiftValueCodec<Value>().type }
             if try binding.isClassBound(formal) { return try CValueType(scalar: ABIValuePointer) }
             switch formal {
             case .associated:

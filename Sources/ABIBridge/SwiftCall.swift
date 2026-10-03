@@ -26,7 +26,14 @@ final class SwiftCall: Sendable {
         if let generic {
             parameters += Array(repeating: try CValueType(scalar: ABIValuePointer), count: generic.metadata.count)
         }
-        interface = try SwiftCallInterface.cached(result: values.result.type, parameters: parameters, errorPlan: errorPlan)
+        if let closure {
+            guard case .synchronous(let original) = closure.transport else {
+                preconditionFailure("A synchronous closure has a synchronous transport.")
+            }
+            interface = original
+        } else {
+            interface = try SwiftCallInterface.cached(result: values.result.type, parameters: parameters, errorPlan: errorPlan)
+        }
         hasTrailingValue = trailingType != nil
 
     }
