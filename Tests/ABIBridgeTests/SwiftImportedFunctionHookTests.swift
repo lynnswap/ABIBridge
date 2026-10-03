@@ -8,6 +8,50 @@ import Testing
 
 @Suite(.serialized)
 struct SwiftImportedFunctionHookTests {
+
+    @Test func opaqueResultsKeepTheirDeclaredReturnConvention() async throws {
+        let fixture = try CompiledSwiftReplacementFixture()
+        defer { fixture.cleanup() }
+        let scalar = try await fixture.runtime.swiftFunction(named: fixture.module + ".opaqueScalar(Swift.Int64) -> some",
+            as: ((Int64) -> Int64).self, declaredAs: "(Swift.Int64) -> some", in: fixture.providerScope)
+        let scalarOracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".importedOpaqueScalar(_:)",
+            as: ((Int64) -> Int64).self, in: fixture.callerScope)
+        #expect(try unsafe scalar.unsafeInvoke(41) == 42)
+        let scalarHook = try await unsafe scalar.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { Issue.record($0) }) { call, value in try call.proceed(value + 1) + 10 }
+        defer { scalarHook.invalidate() }
+        #expect(try unsafe scalarOracle.unsafeInvoke(40) == 52)
+        scalarHook.invalidate()
+        #expect(try unsafe scalarOracle.unsafeInvoke(40) == 41)
+
+        let text = try await fixture.runtime.swiftFunction(named: fixture.module + ".opaqueText(Swift.String) -> some",
+            as: ((String) -> String).self, declaredAs: "(Swift.String) -> some", in: fixture.providerScope)
+        let textOracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".importedOpaqueText(_:)",
+            as: ((String) -> String).self, in: fixture.callerScope)
+        let textHook = try await unsafe text.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { Issue.record($0) }) { call, value in
+                _ = try call.proceed(value + " discarded")
+                return try call.proceed(value + " edited") + " returned"
+            }
+        defer { textHook.invalidate() }
+        let input = String(repeating: "owned opaque value ", count: 100)
+        for _ in 0..<10 {
+            #expect(try unsafe textOracle.unsafeInvoke(input) == input + " edited original returned")
+        }
+        let failures = Mutex(0)
+        let failing = try await unsafe text.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value in
+                _ = try call.proceed(value + " outer")
+                throw SwiftHookTestFailure.afterProceed
+            }
+        defer { failing.invalidate() }
+        #expect(try unsafe textOracle.unsafeInvoke(input) == input + " outer edited original returned")
+        #expect(failures.withLock { $0 } == 1)
+        failing.invalidate()
+        textHook.invalidate()
+        #expect(try unsafe textOracle.unsafeInvoke(input) == input + " original")
+    }
+
     @Test func chainsTypedArgumentsResultsAndIndependentInvalidation() async throws {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
         let target = try await fixture.runtime.swiftFunction(named: fixture.module + ".scalar(_:)", as: (@Sendable (Int64) -> Int64).self, in: fixture.providerScope)

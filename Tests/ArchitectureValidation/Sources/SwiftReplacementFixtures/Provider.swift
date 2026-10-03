@@ -6,6 +6,8 @@ public struct ReplacementPayload {
 }
 
 @inline(never) public func scalar(_ value: Int64) -> Int64 { value + 1 }
+@inline(never) public func opaqueScalar(_ value: Int64) -> some Any { value + 1 }
+@inline(never) public func opaqueText(_ value: String) -> some Any { value + " original" }
 @inline(never) public func replacementScalar(_ value: Int64) -> Int64 { value + 100 }
 @inline(never) public func text(_ value: String) -> String { "original:" + value }
 @inline(never) public func replacementText(_ value: String) -> String { "replacement:" + value }

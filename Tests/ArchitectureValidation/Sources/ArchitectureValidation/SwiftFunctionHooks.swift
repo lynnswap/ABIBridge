@@ -60,6 +60,39 @@ import Synchronization
     second.invalidate()
     try check(try unsafe scalar.unsafeInvoke(40) == 41, "Empty generated Swift entries call their retained predecessor")
 
+    let opaqueScalar = try await runtime.swiftFunction(named: "SwiftImportProvider.opaqueScalar(Swift.Int64) -> some",
+        as: ((Int64) -> Int64).self, declaredAs: "(Swift.Int64) -> some", in: provider)
+    let opaqueScalarCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.importedOpaqueScalar(_:)",
+        as: ((Int64) -> Int64).self, in: control)
+    let opaqueScalarHook = try await unsafe opaqueScalar.hookImportedCalls(in: control, using: runtime,
+        onFailure: failure) { call, value in try call.proceed(value + 1) + 10 }
+    defer { opaqueScalarHook.invalidate() }
+    try check(try unsafe opaqueScalarCaller.unsafeInvoke(40) == 52,
+        "Opaque scalar hooks preserve the declared indirect return convention")
+    opaqueScalarHook.invalidate()
+    try check(try unsafe opaqueScalarCaller.unsafeInvoke(40) == 41,
+        "Opaque scalar fallback preserves the original indirect result")
+    let opaqueText = try await runtime.swiftFunction(named: "SwiftImportProvider.opaqueText(Swift.String) -> some",
+        as: ((String) -> String).self, declaredAs: "(Swift.String) -> some", in: provider)
+    let opaqueTextCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.importedOpaqueText(_:)",
+        as: ((String) -> String).self, in: control)
+    let opaqueTextHook = try await unsafe opaqueText.hookImportedCalls(in: control, using: runtime,
+        onFailure: failure) { call, value in
+            _ = try call.proceed(value + " discarded")
+            return try call.proceed(value + " edited") + " returned"
+        }
+    defer { opaqueTextHook.invalidate() }
+    let opaqueInput = String(repeating: "owned opaque value ", count: 100)
+    for _ in 0..<10 {
+        guard try unsafe opaqueTextCaller.unsafeInvoke(opaqueInput) == opaqueInput + " edited original returned" else {
+            throw ArchitectureValidationFailure(description: "Opaque String hook lost its owned result")
+        }
+    }
+    checks.append("Repeated opaque continuations retain independent managed results")
+    opaqueTextHook.invalidate()
+    try check(try unsafe opaqueTextCaller.unsafeInvoke(opaqueInput) == opaqueInput + " original",
+        "Opaque managed-result fallback survives invalidation")
+
     let text = try await runtime.swiftFunction(named: "SwiftImportProvider.text(_:)",
         as: ((String) -> String).self, in: provider)
     let textCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.importedText(_:)",

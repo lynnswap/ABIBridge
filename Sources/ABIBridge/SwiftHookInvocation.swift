@@ -77,6 +77,7 @@ public struct NativeSwiftFunctionInvocation<Result, each Argument>: CustomString
 
 struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
     let result: SwiftValueCodec<Result>
+    private let resultType: CValueType
     let arguments: (repeat SwiftValueCodec<each Argument>)
     init(declaration: SwiftGenericCallPlan? = nil) throws {
         if let declaration {
@@ -103,6 +104,9 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
             }
         }
         result = try SwiftValueCodec()
+        // An opaque result can use indirect native return storage even when its
+        // known payload has an ordinary scalar or reference representation.
+        resultType = declaration?.result.type ?? result.type
         arguments = (repeat try SwiftValueCodec<each Argument>())
     }
     func encodeArguments(_ values: repeat each Argument) throws -> [NativeValueStorage] {
@@ -122,7 +126,7 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
         var types: [CValueType] = [], identities: [ObjectIdentifier] = [ObjectIdentifier(Result.self)]
         for codec in repeat each arguments { types.append(codec.type) }
         for type in repeat (each Argument).self { identities.append(ObjectIdentifier(type)) }
-        return try SwiftHookSignature(result: result.type, arguments: types, identities: identities,
+        return try SwiftHookSignature(result: resultType, arguments: types, identities: identities,
             consumesArguments: consumingArguments, receiver: receiver, owner: owner, cloneArguments: { storage in
                 var index = 0, result: [NativeValueStorage] = []
                 for codec in repeat each arguments {

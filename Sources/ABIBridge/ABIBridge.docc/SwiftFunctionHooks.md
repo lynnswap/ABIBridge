@@ -46,6 +46,8 @@ Inspect `slots` for current displacement and per-registration publication outcom
 
 The declared ABI, ownership, and isolation must match the native entry. Source names and Swift metatypes do not prove those contracts. The supported value representations are those of the concrete Swift invocation API: scalars, pointers, object references, String, standard C values, and fixed trivial layouts supplied by adapters. Arbitrary nontrivial adapters, native async/throws, generic metadata or witness arguments, resilient layouts, and yielding accessors require separate support.
 
+For an opaque result whose concrete payload is known, resolve its full `-> some` declaration with a matching `declaredAs:` signature and the concrete payload in `as:`. The hook and `proceed` preserve that declaration's return convention, including indirect results for scalar and String payloads.
+
 This interface operates on function imports. Swift receiver and metadata-dispatch hooks are described in <doc:SwiftMethodHooks>. Use <doc:SwiftImportedReplacements> when the replacement itself is compiler-generated code and explicit physical restoration is required.
 
 ## Validation boundary
