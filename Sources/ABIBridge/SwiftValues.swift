@@ -23,6 +23,25 @@ struct SwiftValueCodec<Value>: Sendable {
     private let tuple: SwiftTupleValuePlan?
     private let constants = SwiftValueConstants(Value.self)
 
+    init(nativeStorage type: CValueType) {
+        self.type = type
+        cValue = nil; closure = nil; tuple = nil
+        let base = (Value.self as? any NativeOptionalValue.Type)?.wrappedType ?? Value.self
+        objectResult = base is AnyClass || base == AnyObject.self
+    }
+
+    init(closure: SwiftClosureCodec) {
+        self.closure = closure; type = closure.type
+        cValue = nil; tuple = nil; objectResult = false
+    }
+
+    var initializeNativeResult: SwiftResultInitializer {
+        if cValue != nil {
+            return { _, size, destination, source in destination.copyMemory(from: source, byteCount: size) }
+        }
+        return swiftResultInitializer(nativeMetadata: Value.self, tuple: tuple)
+    }
+
     init() throws {
         guard !(Value.self is any SwiftConventionArgument.Type) else {
             throw ABIResolutionError.unsupportedDeclaration("Swift argument convention markers require the invocation argument path; results and managed callbacks cannot use them.")
@@ -123,7 +142,10 @@ struct SwiftValueCodec<Value>: Sendable {
             }
             return storage
         }
-        if closure != nil { return try (value as! any SwiftClosureValue).encodeClosure(consuming: consuming) }
+        if let closure {
+            if closure.nativePlan != nil, let encode = closure.encodeValue { return try encode(value, nil) }
+            return try (value as! any SwiftClosureValue).encodeClosure(consuming: consuming)
+        }
         if Value.self == Void.self { return NativeValueStorage(size: 0, alignment: 1) }
         if let cValue { return try cValue.encode(value) }
         let storage = makeStorage()
@@ -180,7 +202,11 @@ struct SwiftValueCodec<Value>: Sendable {
         }
         // Receiver/argument storage can belong to the object receiving this
         // closure later. Only code dependencies belong in its escaping context.
-        if let closure { return try closure.makeValue(storage.address.load(as: ABISwiftClosureValue.self), codeOwner, true, storage.codeLifetime) as! Value }
+        if let closure {
+            let value = storage.address.load(as: ABISwiftClosureValue.self)
+            storage.relinquishValue()
+            return try closure.makeValue(value, codeOwner, true, storage.codeLifetime) as! Value
+        }
         if let cValue { return try cValue.decode(storage, retaining: owner) }
         if objectResult, !(Value.self is any NativeOptionalValue.Type),
            storage.address.load(as: UnsafeRawPointer?.self) == nil {

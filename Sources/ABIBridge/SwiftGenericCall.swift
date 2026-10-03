@@ -558,6 +558,73 @@ struct SwiftGenericCallPlan: Sendable {
         try binding.validateMetadataArguments(fulfilledBy: receiver == .object || receiver == .address ? context : nil)
     }
 
+    var hookEnclosingClass: AnyClass? {
+        context != nil && receiver == .object ? enclosingMetadata as? AnyClass : nil
+    }
+
+    func hookMetadataArguments() throws -> [SwiftGenericBinding.HookMetadataArgument] {
+        let fulfilled = receiver == .object || receiver == .address ? context : nil
+        let prefix: [SwiftGenericBinding.HookMetadataArgument] = context != nil && receiver == .address
+            ? [.value(unsafeBitCast(enclosingMetadata!, to: UInt.self))] : []
+        return try prefix + binding.hookMetadataArguments(fulfilledBy: fulfilled)
+    }
+
+    struct HookClassArgument: Sendable {
+        let index: Int
+        let expected: AnyClass
+        let isMetatype: Bool
+    }
+
+    func hookClassArguments() throws -> [HookClassArgument] {
+        var sources: [HookClassArgument] = []
+        var nativeIndex = 0
+        func add(_ type: Any.Type, layout: CValueType, at index: Int) {
+            guard !ABISwiftValueIsIndirect(layout.handle) else { return }
+            if let instance = SwiftMetatypeMetadata(type)?.instance as? AnyClass {
+                sources.append(.init(index: index, expected: instance, isMetatype: true))
+            } else if let expected = type as? AnyClass {
+                sources.append(.init(index: index, expected: expected, isMetatype: false))
+            }
+        }
+        func add(_ tuple: SwiftTupleValuePlan, at start: Int) {
+            var index = start
+            for group in tuple.parameters.groups {
+                switch group {
+                case .pack: index += 1
+                case .value(let logical):
+                    let field = tuple.fields[logical]
+                    if let nested = SwiftGenericParameters.expandedTuple(field.argument) {
+                        add(nested, at: index)
+                        index += nested.argumentTypes.count
+                    } else {
+                        switch field.argument {
+                        case .concrete: break
+                        default: add(field.nativeType, layout: field.type, at: index)
+                        }
+                        index += 1
+                    }
+                }
+            }
+        }
+        for (formal, group) in zip(binding.declaration.arguments, parameters.groups) {
+            switch group {
+            case .pack: nativeIndex += 1
+            case .value(let logical):
+                let argument = parameters.arguments[logical]
+                let tuple = SwiftGenericParameters.expandedTuple(argument)
+                defer { nativeIndex += tuple?.argumentTypes.count ?? 1 }
+                guard argument.convention != .inoutValue, binding.dependsOnParameters(formal) else { continue }
+                if let tuple {
+                    add(tuple, at: nativeIndex)
+                } else {
+                    let native = try binding.types(formal)[0]
+                    add(native, layout: try Self.layout(formal, actual: native, binding: binding), at: nativeIndex)
+                }
+            }
+        }
+        return sources
+    }
+
     func receiverType() throws -> CValueType? {
         guard let context, let enclosingMetadata, !(enclosingMetadata is AnyClass) else { return nil }
         let arguments = context.parameters.map { SwiftFormalType.named($0.name, []) }

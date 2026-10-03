@@ -263,15 +263,28 @@ final class SymbolResolver: Sendable {
                     genericContext: genericContext)
     }
 
-    func swiftMemberCandidates(_ declaration: NativeDeclaration, in image: NativeImage?,
-                               extensionsOnly: Bool = false) throws -> [ResolvedSymbol] {
-        let scope = try image.map { SearchScope.images([$0]) }
+    func swiftDeclarationCandidates(_ declaration: NativeDeclaration, in selector: ImageSelector,
+                                    loading: ImageLoadingPolicy) throws -> [ResolvedSymbol] {
+        try validate(declaration)
+        return try swiftDeclarationCandidates(declaration, in: searchScope(selector, loading: loading), extensionsOnly: false)
+    }
+
+    func swiftDeclarationCandidates(_ declaration: NativeDeclaration, in image: NativeImage?,
+                                    loading: ImageLoadingPolicy = .loadedOnly,
+                                    extensionsOnly: Bool = false) throws -> [ResolvedSymbol] {
+        try validate(declaration)
+        let scope = try image.map { SearchScope.images([loading == .ifNeeded ? try $0.opened() : $0]) }
             ?? searchScope(.automatic, loading: .loadedOnly)
+        return try swiftDeclarationCandidates(declaration, in: scope, extensionsOnly: extensionsOnly)
+    }
+
+    private func swiftDeclarationCandidates(_ declaration: NativeDeclaration, in scope: SearchScope,
+                                           extensionsOnly: Bool) throws -> [ResolvedSymbol] {
         let query = SymbolQuery(declaration)
         let indexes = state.withLock { state in scope.images.map { state.index(for: $0) } }
         func matches(_ source: ResolvedSymbol.Source) -> [ResolvedSymbol] {
             state.withLock { _ in
-                indexes.flatMap { $0.swiftMemberCandidates(query, source: source, extensionsOnly: extensionsOnly) }
+                indexes.flatMap { $0.swiftDeclarationCandidates(query, source: source, extensionsOnly: extensionsOnly) }
             }
         }
         let primary = matches(.image)

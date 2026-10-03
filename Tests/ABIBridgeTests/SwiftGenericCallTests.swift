@@ -47,6 +47,62 @@ private final class GenericCaptureState: Sendable {
 
 @Suite(.serialized)
 struct SwiftGenericCallTests {
+    @Test func labelOnlyFreeFunctionsBindTheirNativeDeclarations() async throws {
+        let runtime = ABIRuntime()
+        let name = "ManagedSwiftFixtures.labelLookupGeneric(_:)"
+        let scalar = try await runtime.swiftFunction(named: name, as: ((Int64) -> Int64).self,
+            genericArguments: [.type(Int64.self)])
+        let array = try await runtime.swiftFunction(named: name, as: (([Int64]) -> Int64).self,
+            genericArguments: [.type(Int64.self)])
+        #expect(try unsafe scalar.unsafeInvoke(42) == labelLookupGeneric(Int64(42)))
+        #expect(try unsafe array.unsafeInvoke([35, 7]) == labelLookupGeneric([Int64(35), 7]))
+        let retainedImage = try await runtime.swiftFunction(named: name, as: (([Int64]) -> Int64).self,
+            genericArguments: [.type(Int64.self)], in: array.symbol.image)
+        #expect(try unsafe retainedImage.unsafeInvoke([35, 7]) == labelLookupGeneric([Int64(35), 7]))
+
+        typealias Callback = NativeSwiftClosure<(Int64) -> Int64>
+        typealias Caller = NativeSwiftClosure<(Callback, Int64) -> Int64>
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeConcreteNestedCaller()",
+            as: (() -> Caller).self)
+        let apply = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.callNestedRuntimeCaller(_:_:)",
+            as: ((Caller, Int64) -> Int64).self, genericArguments: [.type(Int64.self)])
+        #expect(try unsafe apply.unsafeInvoke(make.unsafeInvoke(), 42)
+            == callNestedRuntimeCaller(makeConcreteNestedCaller(), Int64(42)))
+    }
+
+    @Test func labelOnlyValueABIsUseTheProviderTypes() async throws {
+        let runtime = ABIRuntime()
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair")
+        let abi = try NativeType.structure(named: type.name, fields: [.int64, .int64])
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeFixedPair(_:_:)",
+            as: ((Int64, Int64) -> NativeSwiftValue).self, valueABIs: [type: abi])
+        let retainedImage = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeFixedPair(_:_:)",
+            as: ((Int64, Int64) -> NativeSwiftValue).self, valueABIs: [type: abi], in: type.image)
+        for value in [try unsafe make.unsafeInvoke(35, 7), try unsafe retainedImage.unsafeInvoke(35, 7)] {
+            #expect(try value.take(as: RuntimeFixedPair.self).sum() == makeRuntimeFixedPair(35, 7).sum())
+        }
+    }
+
+    @Test func labelBindingPreservesAmbiguityAndCompleteSignatureSelection() async throws {
+        let runtime = ABIRuntime()
+        let name = "ManagedSwiftFixtures.ambiguousLookupGeneric(_:)"
+        for clearCache in [false, true] {
+            if clearCache { await runtime.removeCachedResults() }
+            do {
+                _ = try await runtime.swiftFunction(named: name, as: ((Int64) -> Int64).self,
+                    genericArguments: [.type(Int64.self)])
+                Issue.record("Two applicable generic declarations must remain ambiguous")
+            } catch let ABIResolutionError.ambiguousDeclaration(_, candidates) { #expect(candidates.count == 2) }
+        }
+        for constraint in ["Equatable", "CustomStringConvertible"] {
+            let selected = try await runtime.swiftFunction(
+                named: "ManagedSwiftFixtures.ambiguousLookupGeneric<A where A: Swift." + constraint + ">(A) -> Swift.Int64",
+                as: ((Int64) -> Int64).self, genericArguments: [.type(Int64.self)])
+            let expected = constraint == "Equatable" ? referenceEquatableLookup(Int64(42)) : referenceDescriptionLookup(Int64(42))
+            #expect(try unsafe selected.unsafeInvoke(42) == expected)
+        }
+    }
+
     @MainActor @Test func packsReabstractClosuresAndCleanUpAfterLaterFailures() async throws {
         typealias TextBody = NativeSwiftClosure<() -> String>
         typealias NumberBody = NativeSwiftClosure<() -> Int64>

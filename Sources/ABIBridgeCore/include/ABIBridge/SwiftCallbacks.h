@@ -103,10 +103,18 @@ void *ABICopySwiftAsyncClosureCallbackBodyOwner(ABIUnmanagedFunction function, v
 /// is usable only during invoke, on its entering thread.
 typedef struct ABISwiftCallbackFunctions {
     void (*invoke)(void *context, ABISwiftIncomingCall *call);
+    /// Select a bound interface with IncomingPrepare before reading values.
+    /// Raw metadata remains available without interpreting indirect payloads.
+    bool preparesArguments;
     void (*releaseContext)(void *context);
     /// Destroys an owned native result that was superseded or not returned.
     /// Null is appropriate for trivially destructible result storage.
     void (*destroyResult)(void *context, void *result);
+    /// Destroys an owned native error that was superseded or not returned.
+    void (*destroyError)(void *context, void *errorResult);
+    /// Moves complete native value projections into result/error storage.
+    ABISwiftResultInitializer initializeResult;
+    ABISwiftResultInitializer initializeError;
     /// Releases incoming consumed arguments/self when the untouched fallback
     /// did not consume them. Ordinary guaranteed arguments need no destructor.
     void (*destroyConsumedArguments)(void *context, const void *receiver, void *const *arguments, size_t count);
@@ -132,10 +140,21 @@ void ABIReleaseSwiftCallback(ABISwiftCallback *callback);
 
 size_t ABISwiftIncomingArgumentCount(const ABISwiftIncomingCall *call);
 const void *ABISwiftIncomingContext(const ABISwiftIncomingCall *call);
+/// Reads a directly passed pointer word using the candidate's physical plan.
+/// It never dereferences the pointer or any unrelated argument.
+bool ABISwiftIncomingReadPointer(ABISwiftIncomingCall *call, const ABISwiftCallInterface *interface,
+    size_t index, uintptr_t *value, ABIResolutionFailure **error);
+/// Selects the interface and value operations for this invocation. Success owns
+/// context through functions.releaseContext; failure consumes neither. An
+/// invocation with preparesArguments selects at most once, before reading values.
+bool ABISwiftIncomingPrepare(ABISwiftIncomingCall *call, const ABISwiftCallInterface *interface,
+    ABISwiftCallbackFunctions functions, void *context, ABIResolutionFailure **error);
+/// Borrows an argument at its original indirect address, or captured direct storage.
+void *ABISwiftIncomingArgumentAddress(ABISwiftIncomingCall *call, size_t index);
 bool ABISwiftIncomingReadArgument(ABISwiftIncomingCall *call, size_t index,
     void *output, size_t size, ABIResolutionFailure **error);
 /// Calls the captured fallback with supplied storage and receiver context. Each
-/// successful completion replaces the previous completed result. It does not
+/// successful completion replaces the previous completed result or native error. It does not
 /// change the incoming arguments used by automatic fallback. Consumed values
 /// and self require independently owned copies for each call.
 bool ABISwiftIncomingProceed(ABISwiftIncomingCall *call, void *const *arguments, size_t count,
@@ -144,10 +163,21 @@ bool ABISwiftIncomingProceed(ABISwiftIncomingCall *call, void *const *arguments,
 /// the invocation still owns this result until it is replaced or returned.
 bool ABISwiftIncomingCopyResult(ABISwiftIncomingCall *call, void *output, size_t size,
     ABIResolutionFailure **error);
+/// Whether the latest completed predecessor threw its native error.
+bool ABISwiftIncomingDidThrow(const ABISwiftIncomingCall *call);
+/// Borrows the latest completed result or error without relocating its storage.
+/// The address remains live until another predecessor completes or invoke returns.
+void *ABISwiftIncomingResultAddress(ABISwiftIncomingCall *call);
+/// Copies borrowed native error bits under the same ownership contract as CopyResult.
+bool ABISwiftIncomingCopyError(ABISwiftIncomingCall *call, void *output, size_t size,
+    ABIResolutionFailure **error);
 /// Transfers an independently owned result into this invocation on success.
 /// The source must not subsequently destroy the transferred value. No result
 /// assignment means the latest completed result, or untouched fallback if none.
 bool ABISwiftIncomingSetResult(ABISwiftIncomingCall *call, const void *value, size_t size,
+    ABIResolutionFailure **error);
+/// Transfers an owned native error instead of an ordinary result.
+bool ABISwiftIncomingSetError(ABISwiftIncomingCall *call, const void *value, size_t size,
     ABIResolutionFailure **error);
 
 #ifdef __cplusplus

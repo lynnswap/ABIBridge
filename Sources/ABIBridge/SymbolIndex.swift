@@ -604,7 +604,7 @@ final class SymbolIndex {
         return Self.matching(candidates, query: query, extensionsOnly: extensionsOnly, genericContext: genericContext, unsupported: &unsupported)
     }
 
-    func swiftMemberCandidates(_ query: SymbolQuery, source: ResolvedSymbol.Source,
+    func swiftDeclarationCandidates(_ query: SymbolQuery, source: ResolvedSymbol.Source,
                                extensionsOnly: Bool) -> [ResolvedSymbol] {
         guard let key = SwiftMemberLookup.key(query.declaration.name) else { return [] }
         var symbols: [IndexedSymbol] = []

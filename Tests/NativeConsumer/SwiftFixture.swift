@@ -71,3 +71,10 @@ public final class Renderer {
     public init(x: Double, y: Double) { self.x = x; self.y = y }
     @inline(never) public func sum(_ extra: Double) -> Double { x + y + extra }
 }
+import Foundation
+
+@inline(never) public func hookEcho<Value>(_ value: Value) -> Value { value }
+@inline(never) public func hookThrowing(_ value: Int64) throws(NSError) -> Int64 {
+    if value < 0 { throw NSError(domain: "native-hook-consumer", code: Int(value)) }
+    return value + 1
+}

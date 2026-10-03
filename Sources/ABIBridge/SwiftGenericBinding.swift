@@ -286,6 +286,28 @@ struct SwiftGenericBinding: Sendable {
         try unfulfilledMetadata(in: context).map(\.value)
     }
 
+    enum HookMetadataArgument: Sendable {
+        case value(UInt)
+        case pack([UInt])
+        case witness
+    }
+
+    func hookMetadataArguments(fulfilledBy context: SwiftGenericTypeContext?) throws -> [HookMetadataArgument] {
+        try unfulfilledMetadata(in: context).map { source, value in
+            switch source {
+            case .shape: return .value(value)
+            case .parameter(let name):
+                let argument = arguments[name]!
+                if argument.isPack { return .pack(argument.types.map { unsafeBitCast($0, to: UInt.self) }) }
+                return .value(value)
+            case .conformance:
+                // Type metadata selects the binding. Forward the caller's own
+                // conformance witnesses instead of substituting cached witnesses.
+                return .witness
+            }
+        }
+    }
+
     private func unfulfilledMetadata(in context: SwiftGenericTypeContext?) throws -> [(source: MetadataSource, value: UInt)] {
         guard let context else { return metadataWords }
         let parameters = Set(context.parameters.map(\.name))

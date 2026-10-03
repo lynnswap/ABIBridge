@@ -4,11 +4,11 @@ Bind a declaration's type parameters with `genericArguments:` and pass its concr
 
 ## Bind a generic function
 
-For a provider declaring `func run<T>(_ apply: () -> T) -> T`, supply its complete source-level declaration:
+For a provider declaring `func run<T>(_ apply: () -> T) -> T`, use its qualified name and argument labels:
 
 ```swift
 let run = try await ABIRuntime.shared.swiftFunction(
-    named: "Example.run<A>(() -> A) -> A",
+    named: "Example.run(_:)",
     as: ((NativeSwiftClosure<() -> String>) -> String).self,
     genericArguments: [.type(String.self)]
 )
@@ -17,7 +17,9 @@ let apply = try NativeSwiftClosure { "Hello" + suffix }
 let result = try unsafe run.unsafeInvoke(apply)
 ```
 
-`A`, `B`, and later names are the Swift demangler's names for the declaration's type parameters. Supply one argument per parameter in declaration order. A complete declaration selects the original generic implementation; `as:` describes the concrete values used by the caller. Generic member lookup also accepts the short member names shown below.
+Supply one generic argument per declared parameter, in declaration order. Lookup binds each candidate's original declaration and constraints to these arguments, then checks the concrete signature in `as:`. Multiple matching candidates report ambiguity. This also applies when `valueABIs:` describes a runtime-only argument or result.
+
+To select an exact overload, pass its complete source-level declaration, such as `Example.run<A>(() -> A) -> A`. `A`, `B`, and later names are the Swift demangler's names for the declaration's type parameters. A complete declaration preserves explicit native types and constraints while `as:` describes the values used by the caller. Generic member lookup uses the same binding rules.
 
 Use `.type(String.self)` for a linked Swift type or `.type(retainedType)` for a ``NativeSwiftType`` obtained at runtime. The latter retains the type's metadata and implementation images through calls and adapted callback contexts. A bare metatype assumes its implementation remains loaded. Replace the former single `substituting:` argument with `genericArguments: [.type(...)]` when migrating.
 

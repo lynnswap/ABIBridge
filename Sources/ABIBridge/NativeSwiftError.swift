@@ -40,6 +40,10 @@ struct SwiftErrorPlan: Sendable {
     let identity: ObjectIdentifier
     let makeStorage: @Sendable () -> NativeValueStorage
     let decode: @Sendable (NativeValueStorage) throws -> any Error
+    let encode: @Sendable (any Error) -> NativeValueStorage?
+    let copy: @Sendable (NativeValueStorage) -> NativeValueStorage
+    let destroy: @Sendable (UnsafeMutableRawPointer) -> Void
+    let initialize: SwiftResultInitializer
 
     static func validateReplacement(_ replacement: SwiftErrorPlan?, for original: SwiftErrorPlan?) throws {
         guard replacement == nil || original?.identity == replacement?.identity else {
@@ -57,6 +61,29 @@ struct SwiftErrorPlan: Sendable {
     private init<Failure: Error>(_ failure: Failure.Type, genericType: CValueType?) throws {
         identity = ObjectIdentifier(Failure.self)
         isTyped = genericType != nil || Failure.self != (any Error).self
+        initialize = swiftResultInitializer(nativeMetadata: Failure.self)
+        @Sendable func storage(owner: AnyObject? = nil) -> NativeValueStorage {
+            NativeValueStorage(size: MemoryLayout<Failure>.stride, alignment: MemoryLayout<Failure>.alignment, owner: owner)
+        }
+        encode = { incoming in
+            func convert(_ error: any Error) -> NativeValueStorage? {
+                guard Failure.self == (any Error).self || Swift.type(of: error) is Failure.Type else { return nil }
+                guard let value = error as? Failure else { return nil }
+                let output = storage(owner: incoming as? NativeSwiftError)
+                output.initialize(value)
+                return output
+            }
+            if let wrapped = incoming as? NativeSwiftError {
+                return wrapped.withUnderlyingError(convert)
+            }
+            return convert(incoming)
+        }
+        copy = { source in
+            let output = storage()
+            output.initialize(source.address.load(as: Failure.self))
+            return output
+        }
+        destroy = { $0.assumingMemoryBound(to: Failure.self).deinitialize(count: 1) }
         if let genericType {
             type = genericType
             makeStorage = { NativeValueStorage(size: MemoryLayout<Failure>.stride, alignment: MemoryLayout<Failure>.alignment) }

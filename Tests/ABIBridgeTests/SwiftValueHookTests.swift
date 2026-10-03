@@ -270,6 +270,6 @@ struct SwiftValueHookTests {
 }
 private enum SwiftValueHookFailure: Error { case afterProceed }
 private final class SavedValueInvocation: @unchecked Sendable {
-    var value: NativeSwiftMethodInvocation<Int64, Int64>?
+    var value: NativeSwiftMethodInvocation<(Int64) -> Int64>?
 }
 #endif
