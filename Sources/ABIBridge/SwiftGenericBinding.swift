@@ -616,6 +616,9 @@ struct SwiftGenericBinding: Sendable {
                 if matches { return [metadata] }
             }
             throw ABIResolutionError.metadataUnavailable("The signature must supply compiler-emitted metadata matching " + type.spelling + ".")
+        case .function(let parameters, let result, let failure, let attributes):
+            return [try functionType(parameters: parameters, result: result, failure: failure,
+                attributes: attributes, packIndex: packIndex)]
         case .opaqueResult(let index):
             guard let opaqueResult = opaqueResults[index] else {
                 throw ABIResolutionError.unsupportedDeclaration("An opaque result requires its resolved runtime value representation.")
@@ -632,7 +635,7 @@ struct SwiftGenericBinding: Sendable {
             return [unsafeBitCast(result, to: Any.Type.self)]
         default: break
         }
-        if case .reference = type {} else {
+        if case .reference = type {} else if !Self.containsFunctionMetadata(type) {
             let name = try spelling(type, packIndex: packIndex)
             if let known = knownTypes[try Self.key(name)] { return [known] }
         }
@@ -689,6 +692,95 @@ struct SwiftGenericBinding: Sendable {
         return [metadata.value]
     }
 
+    private static func containsFunctionMetadata(_ type: SwiftFormalType) -> Bool {
+        switch type {
+        case .function: true
+        case .tuple(let fields, _): fields.contains(where: containsFunctionMetadata)
+        default: false
+        }
+    }
+
+    private func functionType(parameters: [SwiftFormalType], result: SwiftFormalType,
+                              failure: SwiftFormalType?, attributes: SwiftFunctionAttributes,
+                              packIndex: Int?) throws -> Any.Type {
+        var inputs: [Any.Type] = [], parameterFlags: [UInt32] = []
+        func append(_ parameter: SwiftFormalType, flags: UInt32, packIndex: Int?) throws {
+            if case .pack(let pattern, let shape) = parameter {
+                for index in 0..<(try packCount(in: shape ?? pattern)) {
+                    try append(pattern, flags: flags, packIndex: index)
+                }
+                return
+            }
+            if case .packValue(let fields) = parameter {
+                for field in fields { try append(field, flags: flags, packIndex: packIndex) }
+                return
+            }
+            let value: SwiftFormalType, ownership: UInt32
+            switch parameter {
+            case .inoutValue(let pointee): value = pointee; ownership = 1
+            case .borrowing(let pointee): value = pointee; ownership = 2
+            case .consuming(let pointee): value = pointee; ownership = 3
+            default: value = parameter; ownership = 0
+            }
+            let values = try types(value, packIndex: packIndex)
+            inputs += values
+            parameterFlags += Array(repeating: flags | ownership, count: values.count)
+        }
+        for (index, parameter) in parameters.enumerated() {
+            try append(parameter, flags: attributes.parameterFlags.isEmpty ? 0 : attributes.parameterFlags[index], packIndex: packIndex)
+        }
+        let results = try types(result, packIndex: packIndex)
+        guard results.count == 1 else {
+            throw ABIResolutionError.metadataUnavailable("A function requires one result type.")
+        }
+        let error = try failure.map { type in
+            type.spelling == "Swift.Error" || type.spelling == "Error"
+                ? (any Error).self : try types(type, packIndex: packIndex)[0]
+        }
+        let actor = try attributes.globalActor.map { try types($0, packIndex: packIndex)[0] }
+        return try Self.functionType(parameters: inputs, parameterFlags: parameterFlags,
+            result: results[0], failure: error, attributes: attributes, globalActor: actor)
+    }
+
+    static func functionType(parameters: [Any.Type], parameterFlags: [UInt32], result: Any.Type,
+                             failure: Any.Type?, attributes: SwiftFunctionAttributes,
+                             globalActor: Any.Type?) throws -> Any.Type {
+        guard parameters.count <= 0xffff else {
+            throw ABIResolutionError.metadataUnavailable("The function exceeds Swift's metadata parameter count.")
+        }
+        var flags = UInt(parameters.count)
+        if attributes.isEscaping { flags |= 0x04000000 }
+        if attributes.isAsync { flags |= 0x20000000 }
+        if attributes.isSendable { flags |= 0x40000000 }
+        if attributes.differentiability != .none { flags |= 0x08000000 }
+        let hasParameterFlags = parameterFlags.contains { $0 != 0 }
+        if hasParameterFlags { flags |= 0x02000000 }
+        var extended = attributes.isolation.rawValue | (attributes.hasSendingResult ? 0x10 : 0)
+        var thrownError: UnsafeRawPointer?
+        if let failure, failure != Never.self {
+            flags |= 0x01000000
+            if failure != (any Error).self {
+                extended |= 1
+                thrownError = unsafeBitCast(failure, to: UnsafeRawPointer.self)
+            }
+        }
+        if extended != 0 { flags |= 0x80000000 }
+        if globalActor != nil { flags |= 0x10000000 }
+        let pointers = parameters.map { Optional(unsafeBitCast($0, to: UnsafeRawPointer.self)) }
+        let metadata = pointers.withUnsafeBufferPointer { inputs in
+            parameterFlags.withUnsafeBufferPointer { parameterFlags in
+                ABISwiftFunctionTypeMetadata(flags, inputs.baseAddress,
+                    hasParameterFlags ? parameterFlags.baseAddress : nil,
+                    unsafeBitCast(result, to: UnsafeRawPointer.self), extended, thrownError,
+                    attributes.differentiability.rawValue, globalActor.map { unsafeBitCast($0, to: UnsafeRawPointer.self) })
+            }
+        }
+        guard let metadata else {
+            throw ABIResolutionError.metadataUnavailable("The Swift runtime could not construct the function type.")
+        }
+        return unsafeBitCast(metadata, to: Any.Type.self)
+    }
+
     func packCount(in type: SwiftFormalType) throws -> Int {
         var counts: [Int] = []
         func visit(_ type: SwiftFormalType) {
@@ -704,8 +796,9 @@ struct SwiftGenericBinding: Sendable {
             case .nested(let parent, _, let parameters): visit(parent); parameters.forEach(visit)
             case .associated(let base, _, _): visit(base)
             case .tuple(let fields, _), .packValue(let fields): fields.forEach(visit)
-            case .function(let parameters, let result, let failure, _, _):
+            case .function(let parameters, let result, let failure, let attributes):
                 parameters.forEach(visit); visit(result); if let failure { visit(failure) }
+                if let actor = attributes.globalActor { visit(actor) }
             case .foreignFunction(_, let parameters, let result):
                 parameters.forEach(visit); visit(result)
             case .pack(let value, let shape): visit(shape ?? value)
@@ -755,11 +848,25 @@ struct SwiftGenericBinding: Sendable {
         case .inoutValue(let value), .borrowing(let value), .consuming(let value): return try spelling(value, packIndex: packIndex)
         case .metatype, .existentialMetatype:
             return try swiftNativeTypeName(types(type, packIndex: packIndex)[0])
-        case .function(let values, let result, let failure, let isAsync, _):
+        case .function(let values, let result, let failure, let attributes):
             let error = try failure.map { try spelling($0, packIndex: packIndex) }
-            return "(" + (try values.map { try spelling($0, packIndex: packIndex) }).joined(separator: ", ") + ")" + (isAsync ? " async" : "")
+            var attributes = attributes
+            attributes.globalActor = try attributes.globalActor.map { try SwiftFormalType(spelling($0, packIndex: packIndex)) }
+            let parameters = try values.enumerated().map { index, value -> String in
+                let name: String
+                if let convention = value.argumentConvention {
+                    let prefix = switch convention.convention {
+                    case .inoutValue: "inout "
+                    case .borrowing: "__shared "
+                    case .consuming: "__owned "
+                    }
+                    name = prefix + (try spelling(convention.value, packIndex: packIndex))
+                } else { name = try spelling(value, packIndex: packIndex) }
+                return SwiftFormalType.parameterSpelling(name, flags: attributes.parameterFlags.isEmpty ? 0 : attributes.parameterFlags[index])
+            }
+            return attributes.spelling + "(" + parameters.joined(separator: ", ") + ")" + (attributes.isAsync ? " async" : "")
                 + (error.map { $0 == "Swift.Never" ? "" : $0 == "Swift.Error" ? " throws" : " throws(" + $0 + ")" } ?? "")
-                + " -> " + (try spelling(result, packIndex: packIndex))
+                + " -> " + (attributes.hasSendingResult ? "sending " : "") + (try spelling(result, packIndex: packIndex))
         case .foreignFunction(let convention, let values, let result):
             return "@convention(" + convention.rawValue + ") ("
                 + (try values.map { try spelling($0, packIndex: packIndex) }).joined(separator: ", ")
@@ -769,9 +876,15 @@ struct SwiftGenericBinding: Sendable {
 
     func resultType(_ actual: Any.Type, for formal: SwiftFormalType) throws -> Any.Type {
         if actual == NativeSwiftValue.self { return try types(formal)[0] }
-        if case .function = formal, actual is any SwiftClosureValue.Type {
-            try validateArgument(actual, for: formal)
-            return actual
+        let canonical = try canonicalType(of: formal)
+        if case .tuple = canonical {
+            let plan = try SwiftGenericCallPlan.tuple(canonical, actual: actual, binding: self)
+            try plan.validateOwnedResult()
+            return plan.nativeMetadata
+        }
+        if case .function = canonical, actual is any SwiftClosureValue.Type {
+            try validateArgument(actual, for: canonical)
+            return try types(canonical)[0]
         }
         let optional = actual as? any NativeOptionalValue.Type
         if (optional?.wrappedType ?? actual) == AnyObject.self {
@@ -813,9 +926,11 @@ struct SwiftGenericBinding: Sendable {
         try valueABIs[ObjectIdentifier(type)].map { try explicitSwiftValueType(type, abi: $0) }
     }
 
-    func runtimeValuePlan(metadata: Any.Type, type: CValueType) throws -> SwiftRuntimeValuePlan {
+    func runtimeValuePlan(metadata: Any.Type, type: CValueType,
+                          nativeTuple: SwiftTupleValuePlan? = nil,
+                          nativeClosure: SwiftGenericClosurePlan? = nil) throws -> SwiftRuntimeValuePlan {
         try SwiftRuntimeValuePlan(metadata: metadata, type: type, resolver: resolver,
-            retaining: images + typeOwners.flatMap(\.codeImages))
+            retaining: images + typeOwners.flatMap(\.codeImages), nativeTuple: nativeTuple, nativeClosure: nativeClosure)
     }
 
     func validateArgument(_ actual: Any.Type, for formal: SwiftFormalType) throws {
@@ -824,6 +939,11 @@ struct SwiftGenericBinding: Sendable {
         } else if actual == NativeSwiftValue.self || actual == NativeSwiftBorrowedValue.self {
             _ = try types(formal)
         } else {
+            let canonical = try canonicalType(of: formal)
+            if case .tuple = canonical {
+                _ = try SwiftGenericCallPlan.tuple(canonical, actual: actual, binding: self)
+                return
+            }
             try validate(actual, for: formal)
         }
     }

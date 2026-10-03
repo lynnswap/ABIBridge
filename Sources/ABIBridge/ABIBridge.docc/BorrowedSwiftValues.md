@@ -36,7 +36,7 @@ A complete source-level declaration supplies the runtime callback argument's nam
 
 ## Keep the borrow inside each callback
 
-``NativeSwiftBorrowedValue`` refers to the caller's original initialized storage. The bridge does not copy or destroy it, including when invoking a member. A member checks actual metadata identity before dispatch. Managed getter and method results retain their ordinary Swift result ownership and can outlive the borrowed receiver.
+``NativeSwiftBorrowedValue`` grants scoped access to an initialized native value without transferring ownership of the caller's value. The bridge retains any storage needed to present that view until callback completion. A member checks actual metadata identity before dispatch. Managed getter and method results retain their ordinary Swift result ownership and can outlive the borrowed receiver.
 
 The callback itself may escape and be called repeatedly; its native capture context retains its body, type and code owners. Each invocation receives a separate borrow which expires when that body returns. Saving the handle does not extend the storage lifetime. Later access throws `expiredBorrow`; a synchronous borrow accessed from another thread throws `wrongThread`. The value is not Sendable. Type diagnostics may be retained after return, but do not make value access valid.
 
@@ -48,7 +48,7 @@ A borrowed view from a synchronous native callback cannot begin an async member 
 
 An ordinary borrowed view cannot mutate or consume its native value. A native `inout` callback parameter provides a view with exclusive mutation access; it still cannot consume the value, and the view expires at callback completion. An owned value supports mutating and consuming members, including async methods: access remains active through native completion. Mutation updates the owned storage even when the native method throws. Consumption marks the owner consumed after the native call takes its value; a failure before invocation leaves it owned. Copying, borrowing, or consuming through another alias during exclusive access throws NativeSwiftValueError.valueInUse.
 
-Async callback signatures can borrow across suspension. The body must await operations using those native inputs before returning; saved views still expire at completion. Multiple runtime inputs, mixed known types, native errors, and generic packs share the same closure API. Generic outer entry points use explicit type arguments in <doc:GenericSwiftValues>.
+Async callback signatures can borrow across suspension. The body must await operations using those native inputs before returning; saved views still expire at completion. Multiple runtime inputs, mixed known types, native errors, and generic packs share the same closure API. Generic outer entry points use explicit type arguments in <doc:GenericSwiftValues>. Ordinary tuple fields follow the same scoped lifetime. Use `NativeSwiftBorrowedValue` for a runtime field and `NativeSwiftClosure<Signature>` for a closure field; see <doc:SwiftClosureValues>.
 
 ## Verification boundary
 

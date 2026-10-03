@@ -105,6 +105,33 @@ struct SwiftDeclaredSignature {
     }
 }
 
+struct SwiftFunctionAttributes: Sendable, Equatable {
+    enum Isolation: UInt32, Sendable { case none = 0, isolatedAny = 2, caller = 4 }
+    enum Differentiability: UInt, Sendable { case none = 0, forward = 1, reverse = 2, normal = 3, linear = 4 }
+    var isAsync = false
+    var isEscaping = false
+    var isSendable = false
+    var isolation: Isolation = .none
+    var globalActor: SwiftFormalType?
+    var differentiability: Differentiability = .none
+    var hasSendingResult = false
+    // Ownership remains on each formal parameter; these are its other ABI flags.
+    var parameterFlags: [UInt32] = []
+
+    var spelling: String {
+        var result = isEscaping ? "@escaping " : "@noescape "
+        if isSendable { result += "@Sendable " }
+        switch isolation {
+        case .none: break
+        case .isolatedAny: result += "@isolated(any) "
+        case .caller: result += "nonisolated(nonsending) "
+        }
+        if let globalActor { result += "@" + globalActor.spelling + " " }
+        if differentiability != .none { result += "@differentiable(\(differentiability)) " }
+        return result
+    }
+}
+
 indirect enum SwiftFormalType: Sendable, Equatable {
     enum ForeignConvention: String, Sendable { case c, block }
     case named(String, [SwiftFormalType])
@@ -120,7 +147,7 @@ indirect enum SwiftFormalType: Sendable, Equatable {
     case reference(SwiftNominalDescriptor, [SwiftFormalType])
     case associated(SwiftFormalType, String, protocolName: String? = nil)
     case tuple([SwiftFormalType], labels: [String]? = nil)
-    case function([SwiftFormalType], SwiftFormalType, failure: SwiftFormalType?, isAsync: Bool, isEscaping: Bool = false)
+    case function([SwiftFormalType], SwiftFormalType, failure: SwiftFormalType?, attributes: SwiftFunctionAttributes = .init())
     case foreignFunction(ForeignConvention, [SwiftFormalType], SwiftFormalType)
     case pack(SwiftFormalType, shape: SwiftFormalType? = nil)
     case packValue([SwiftFormalType])
@@ -147,7 +174,7 @@ indirect enum SwiftFormalType: Sendable, Equatable {
             values.reduce(into: parent.opaqueIndices) { $0.formUnion($1.opaqueIndices) }
         case .associated(let parent, _, _), .inoutValue(let parent), .borrowing(let parent),
              .consuming(let parent), .metatype(let parent), .existentialMetatype(let parent): parent.opaqueIndices
-        case .function(let values, let result, let failure, _, _):
+        case .function(let values, let result, let failure, _):
             values.reduce(into: result.opaqueIndices.union(failure?.opaqueIndices ?? [])) { $0.formUnion($1.opaqueIndices) }
         case .foreignFunction(_, let values, let result):
             values.reduce(into: result.opaqueIndices) { $0.formUnion($1.opaqueIndices) }
@@ -156,7 +183,7 @@ indirect enum SwiftFormalType: Sendable, Equatable {
         }
     }
 
-    init(_ source: String) throws {
+    init(_ source: String, isFunctionParameter: Bool = false) throws {
         var text = source.trimmingCharacters(in: .whitespaces)
         if text == "some" { self = .opaqueResult(index: 0); return }
         // Labels are outside the type grammar, including labeled tuple fields.
@@ -180,17 +207,43 @@ indirect enum SwiftFormalType: Sendable, Equatable {
             self = wrap(try Self(String(text.dropFirst(prefix.count))))
             return
         }
-        var isEscaping = false
-        // Escape permission changes context ownership, not the function pair layout.
-        let qualifiers = ["@escaping ", "@noescape ", "@Sendable ", "@concurrent ", "nonisolated(nonsending) "]
-        while let prefix = qualifiers.first(where: { text.hasPrefix($0) }) {
-            if prefix == "@escaping " { isEscaping = true }
-            text = String(text.dropFirst(prefix.count))
+        var attributes = SwiftFunctionAttributes(isEscaping: !isFunctionParameter)
+        while true {
+            let qualifiers = ["@escaping ", "@noescape ", "@Sendable ", "@concurrent ",
+                              "nonisolated(nonsending) ", "@isolated(any) "]
+            if let prefix = qualifiers.first(where: { text.hasPrefix($0) }) {
+                switch prefix {
+                case "@escaping ": attributes.isEscaping = true
+                case "@noescape ": attributes.isEscaping = false
+                case "@Sendable ": attributes.isSendable = true
+                case "nonisolated(nonsending) ": attributes.isolation = .caller
+                case "@isolated(any) ": attributes.isolation = .isolatedAny
+                default: attributes.isolation = .none
+                }
+                text = String(text.dropFirst(prefix.count))
+            } else if text.hasPrefix("@differentiable("), let end = text.firstIndex(of: ")") {
+                let kind = String(text[text.index(text.startIndex, offsetBy: 16)..<end])
+                switch kind {
+                case "forward": attributes.differentiability = .forward
+                case "reverse": attributes.differentiability = .reverse
+                case "normal": attributes.differentiability = .normal
+                case "linear", "_linear": attributes.differentiability = .linear
+                default: throw ABIResolutionError.unsupportedDeclaration("Unknown Swift differentiability: " + kind)
+                }
+                text = text[text.index(after: end)...].trimmingCharacters(in: .whitespaces)
+            } else if text.first == "@", !text.hasPrefix("@convention("),
+                      let end = text.firstIndex(where: \.isWhitespace) {
+                let name = String(text[text.index(after: text.startIndex)..<end])
+                attributes.globalActor = try Self(name == "MainActor" ? "Swift.MainActor" : name)
+                attributes.isSendable = true
+                text = text[end...].trimmingCharacters(in: .whitespaces)
+            } else { break }
         }
         for convention in [ForeignConvention.c, .block] {
             let prefix = "@convention(" + convention.rawValue + ") "
             if text.hasPrefix(prefix) {
-                guard case .function(let arguments, let result, nil, false, _) = try Self(String(text.dropFirst(prefix.count))) else {
+                guard case .function(let arguments, let result, nil, let attributes) = try Self(String(text.dropFirst(prefix.count))),
+                      !attributes.isAsync else {
                     throw ABIResolutionError.unsupportedDeclaration("A C or block function requires a synchronous nonthrowing signature.")
                 }
                 self = .foreignFunction(convention, arguments, result)
@@ -205,9 +258,14 @@ indirect enum SwiftFormalType: Sendable, Equatable {
             }
             let fields = input[input.index(after: opening)..<closing]
             let effects = input[input.index(after: closing)...].trimmingCharacters(in: .whitespaces)
-            self = .function(try SwiftFormalSyntax.fields(fields).map { try Self($0) },
-                try Self(String(text[arrow.upperBound...])), failure: try SwiftFormalSyntax.failure(in: effects),
-                isAsync: effects.split(whereSeparator: \.isWhitespace).contains("async"), isEscaping: isEscaping)
+            let parameters = try SwiftFormalSyntax.fields(fields).map { try Self.functionParameter($0) }
+            attributes.parameterFlags = parameters.map(\.flags)
+            if attributes.parameterFlags.allSatisfy({ $0 == 0 }) { attributes.parameterFlags = [] }
+            attributes.isAsync = effects.split(whereSeparator: \.isWhitespace).contains("async")
+            var result = String(text[arrow.upperBound...]).trimmingCharacters(in: .whitespaces)
+            if result.hasPrefix("sending ") { attributes.hasSendingResult = true; result = String(result.dropFirst(8)) }
+            self = .function(parameters.map(\.type), try Self(result),
+                failure: try SwiftFormalSyntax.failure(in: effects), attributes: attributes)
             return
         }
         if text.hasSuffix(".Type") {
@@ -278,11 +336,13 @@ indirect enum SwiftFormalType: Sendable, Equatable {
             "(" + values.enumerated().map { index, value in
                 (labels?[index].isEmpty == false ? labels![index] + ": " : "") + value.spelling
             }.joined(separator: ", ") + ")"
-        case .function(let arguments, let result, let failure, let isAsync, _):
-            "(" + arguments.map(\.spelling).joined(separator: ", ") + ")"
-                + (isAsync ? " async" : "")
+        case .function(let arguments, let result, let failure, let attributes):
+            attributes.spelling + "(" + arguments.enumerated().map { index, type in
+                Self.parameterSpelling(type.spelling, flags: attributes.parameterFlags.isEmpty ? 0 : attributes.parameterFlags[index])
+            }.joined(separator: ", ") + ")"
+                + (attributes.isAsync ? " async" : "")
                 + (failure.map { $0.spelling == "Swift.Error" ? " throws" : " throws(" + $0.spelling + ")" } ?? "")
-                + " -> " + result.spelling
+                + " -> " + (attributes.hasSendingResult ? "sending " : "") + result.spelling
         case .foreignFunction(let convention, let arguments, let result):
             "@convention(" + convention.rawValue + ") (" + arguments.map(\.spelling).joined(separator: ", ") + ") -> " + result.spelling
         case .pack(let value, _): "repeat " + value.spelling
@@ -293,6 +353,31 @@ indirect enum SwiftFormalType: Sendable, Equatable {
         case .metatype(let value): value.spelling + ".Type"
         case .existentialMetatype(let value): value.spelling + ".Type"
         }
+    }
+
+    private static func functionParameter(_ source: String) throws -> (type: Self, flags: UInt32) {
+        var text = source.trimmingCharacters(in: .whitespaces), flags: UInt32 = 0
+        if let colon = SwiftFormalSyntax.topLevelColon(in: text) {
+            text = text[text.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        }
+        // Source borrowing canonicalizes to default function ownership; the
+        // compiler's __shared spelling keeps its explicit Shared metadata flag.
+        let qualifiers: [(String, UInt32)] = [("borrowing ", 0), ("isolated ", 0x400), ("sending ", 0x800),
+                                             ("@autoclosure ", 0x100), ("@noDerivative ", 0x200)]
+        while let qualifier = qualifiers.first(where: { text.hasPrefix($0.0) }) {
+            flags |= qualifier.1
+            text = String(text.dropFirst(qualifier.0.count))
+        }
+        if text.hasSuffix("...") { flags |= 0x80; text = String(text.dropLast(3)) }
+        var type = try Self(text, isFunctionParameter: true)
+        if flags & 0x800 != 0, type.argumentConvention == nil { type = .consuming(type) }
+        return (type, flags)
+    }
+
+    static func parameterSpelling(_ type: String, flags: UInt32) -> String {
+        (flags & 0x400 != 0 ? "isolated " : "") + (flags & 0x800 != 0 ? "sending " : "")
+            + (flags & 0x100 != 0 ? "@autoclosure " : "") + (flags & 0x200 != 0 ? "@noDerivative " : "")
+            + type + (flags & 0x80 != 0 ? "..." : "")
     }
 }
 
@@ -452,7 +537,9 @@ enum SwiftFormalSyntax {
             guard let closing = matchingClose(in: effects, opening: opening) else {
                 throw ABIResolutionError.unsupportedDeclaration("Incomplete Swift error type: " + effects)
             }
-            return try SwiftFormalType(String(effects[range.upperBound..<closing]))
+            let name = effects[range.upperBound..<closing].trimmingCharacters(in: .whitespaces)
+            return ["any Error", "any Swift.Error", "Error"].contains(name)
+                ? .named("Swift.Error", []) : try SwiftFormalType(name)
         }
         if effects.split(whereSeparator: \.isWhitespace).contains(where: { $0 == "throws" || $0 == "rethrows" }) {
             return .named("Swift.Error", [])

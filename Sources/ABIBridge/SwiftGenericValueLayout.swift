@@ -86,8 +86,10 @@ extension SwiftFormalType {
         case .borrowing(let value): return .borrowing(try qualify(value))
         case .consuming(let value): return .consuming(try qualify(value))
         case .inoutValue(let value): return .inoutValue(try qualify(value))
-        case .function(let values, let result, let failure, let isAsync, let isEscaping):
-            return .function(try values.map(qualify), try qualify(result), failure: try failure.map(qualify), isAsync: isAsync, isEscaping: isEscaping)
+        case .function(let values, let result, let failure, let attributes):
+            var attributes = attributes
+            attributes.globalActor = try attributes.globalActor.map(qualify)
+            return .function(try values.map(qualify), try qualify(result), failure: try failure.map(qualify), attributes: attributes)
         case .foreignFunction(let convention, let values, let result):
             return .foreignFunction(convention, try values.map(qualify), try qualify(result))
         }
