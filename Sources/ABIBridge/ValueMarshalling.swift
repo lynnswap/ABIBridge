@@ -50,6 +50,10 @@ extension OpaquePointer: NativePointerValue {
     var rawPointer: UnsafeRawPointer { UnsafeRawPointer(self) }
     static func fromRawPointer(_ pointer: UnsafeRawPointer) -> Any { OpaquePointer(pointer) }
 }
+extension Unmanaged: NativePointerValue {
+    var rawPointer: UnsafeRawPointer { UnsafeRawPointer(toOpaque()) }
+    static func fromRawPointer(_ pointer: UnsafeRawPointer) -> Any { Self.fromOpaque(pointer) }
+}
 extension Selector: NativePointerValue {
     var rawPointer: UnsafeRawPointer { unsafeBitCast(self, to: UnsafeRawPointer.self) }
     static func fromRawPointer(_ pointer: UnsafeRawPointer) -> Any { unsafeBitCast(pointer, to: Selector.self) }

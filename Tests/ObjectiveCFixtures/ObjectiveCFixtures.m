@@ -33,6 +33,10 @@
 
 @implementation ABIBlockFixture
 - (int32_t)apply:(int32_t)value using:(ABIIntegerBlock)block { return block ? block(value) : -1; }
+- (int32_t)consumeBlock:(id)block value:(int32_t)value {
+    ABIIntegerBlock typed = block;
+    return typed ? typed(value) : -1;
+}
 - (ABIObjectBlock)blockHolding:(id)object { return [^{ return object; } copy]; }
 - (ABIObjectBlock)copyBlockHolding:(id)object { return [^{ return object; } copy]; }
 - (ABIObjectBlock)retainedBlockHolding:(id)object { return [^{ return object; } copy]; }
@@ -48,6 +52,7 @@
 @interface ABIOwnershipFixture ()
 @property(nonatomic) NSInteger liveResults;
 @property(nonatomic) NSInteger classCalls;
+@property(nonatomic) NSInteger consumedCalls;
 @end
 
 @interface ABICountedResult : NSObject
@@ -66,6 +71,11 @@
 @end
 
 @implementation ABIOwnershipFixture
+- (NSInteger)consume:(NSObject *)value { self.consumedCalls += 1; return value ? 1 : 0; }
+- (NSInteger)consume:(NSObject *)value withClass:(Class)type {
+    self.consumedCalls += 1; return value && type ? 1 : 0;
+}
+- (CFTypeRef)echoCFValue:(CFTypeRef)value { return value; }
 - (NSObject *)object { return [[ABICountedResult alloc] initWithFixture:self]; }
 - (NSObject *)copyObject { return [[ABICountedResult alloc] initWithFixture:self]; }
 - (NSObject *)retainedObject { return [[ABICountedResult alloc] initWithFixture:self]; }
@@ -77,9 +87,16 @@
 - (ABIUnionFixture *)unionPointer:(ABIUnionFixture *)value { return value; }
 @end
 
+@implementation ABIConsumedHookFixture
+@end
+
 @implementation ABIInitializerFixture
+- (instancetype)initConsuming:(NSObject *)value { return [self init]; }
 - (instancetype)initWithReplacement { return [[ABIInitializerFixture alloc] init]; }
 - (instancetype)initReturningNil { return nil; }
+@end
+
+@implementation ABIConsumedInitializerFixture
 @end
 
 @implementation ABIForwardingFixture

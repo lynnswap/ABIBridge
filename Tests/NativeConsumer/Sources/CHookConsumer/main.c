@@ -22,6 +22,17 @@ static bool add(void *context, ABIObjCHookInvocation *call, ABIResolutionFailure
     result += 1;
     return ABIObjCHookSetResult(call, &result, sizeof(result), error);
 }
+static bool consumed(void *context, ABIObjCHookInvocation *call, ABIResolutionFailure **error) {
+    (void)context;
+    void *value = NULL;
+    int32_t first = 0, second = 0;
+    if (!ABIObjCHookReadArgument(call, 0, &value, sizeof(value), error)) return false;
+    const void *arguments[] = {&value};
+    if (!ABIObjCHookProceed(call, arguments, 1, error) || !ABIObjCHookReadResult(call, &first, sizeof(first), error)) return false;
+    if (!ABIObjCHookProceed(call, arguments, 1, error) || !ABIObjCHookReadResult(call, &second, sizeof(second), error)) return false;
+    int32_t result = first + second;
+    return ABIObjCHookSetResult(call, &result, sizeof(result), error);
+}
 static bool before(void *context, ABIObjCInitializerArguments *arguments, ABIResolutionFailure **error) {
     (void)context;
     int32_t seed = 0;
@@ -79,6 +90,18 @@ int main(void) {
     ABIHookFixtureRelease(initialized);
     ABIReleaseObjCMethodHook(hook);
     assert(disposed == 7);
+    ABIObjCHookValueType objectType = {"@", sizeof(void *), _Alignof(void *)};
+    ABIObjCHookSignature consumeSignature = {integer, &objectType, 1};
+    size_t consumedIndex = 0;
+    ABIObjCHookOptions consumeOptions = {0};
+    consumeOptions.consumedParameters = &consumedIndex;
+    consumeOptions.consumedParameterCount = 1;
+    ABIObjCMethodHook *consumeHook = ABIInstallObjCMethodHook(ABIHookFixtureClass(), "consume:",
+        &consumeSignature, consumeOptions, NULL, consumed, failure, dispose, &error);
+    assert(consumeHook && !error);
+    assert(ABIHookFixtureConsume(object) == 2 && ABIHookFixtureLiveResults() == 0);
+    ABIReleaseObjCMethodHook(consumeHook);
+    assert(disposed == 8);
     ABIInvalidateObjCMethodHook(NULL); ABIReleaseObjCMethodHook(NULL);
     ABIHookFixtureRelease(object);
     puts("C hook consumer passed");

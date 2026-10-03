@@ -18,10 +18,23 @@ public struct NativeMethodOptions: Sendable {
     /// Initializer hooks instead forward the incoming consumed reference once.
     public var consumesReceiver: Bool?
 
+    /// Zero-based explicit arguments passed with an additional owned reference.
+    ///
+    /// These positions must have an Objective-C object, class, or block encoding
+    /// and match the declaration's `ns_consumed` parameters. The receiver and
+    /// selector are excluded. The bridge preserves the caller's references.
+    public var consumedArguments: Set<Int>
+
     /// Creates ownership overrides; nil values use method-family conventions.
-    public init(returnsRetainedObject: Bool? = nil, consumesReceiver: Bool? = nil) {
+    public init(returnsRetainedObject: Bool? = nil, consumesReceiver: Bool? = nil,
+                consumedArguments: Set<Int> = []) {
         self.returnsRetainedObject = returnsRetainedObject
         self.consumesReceiver = consumesReceiver
+        self.consumedArguments = consumedArguments
+    }
+
+    func withConsumedArguments<Result>(_ body: (UnsafeBufferPointer<Int>) throws -> Result) rethrows -> Result {
+        try consumedArguments.sorted().withUnsafeBufferPointer(body)
     }
 }
 
@@ -183,11 +196,14 @@ public final class NativeObject {
         let declaration = objcMethodDeclaration(on: receiverType, selector: selector,
             classMethod: class_isMetaClass(receiverType))
         var error: NSError?
-        guard let handle = ABICopyObjCInvocation(
-            receiver!, NSSelectorFromString(selector),
-            options.returnsRetainedObject.map { $0 ? 1 : 0 } ?? -1,
-            options.consumesReceiver.map { $0 ? 1 : 0 } ?? -1, &error
-        ) else {
+        let handle = options.withConsumedArguments { consumed in
+            ABICopyObjCInvocation(
+                receiver!, NSSelectorFromString(selector),
+                options.returnsRetainedObject.map { $0 ? 1 : 0 } ?? -1,
+                options.consumesReceiver.map { $0 ? 1 : 0 } ?? -1, consumed.baseAddress, consumed.count, &error
+            )
+        }
+        guard let handle else {
             throw objcResolutionError(error, declaration: declaration)
         }
         return try NativeBoundObjCMethod(binding: ObjCInvocationBinding(handle, declaration: declaration))

@@ -70,6 +70,29 @@ struct CFunctionInvocationTests {
         #expect(throws: ABIInvocationError.self) { try unsafe nonoptional.unsafeInvoke(nil) }
     }
 
+    @Test func unmanagedReferencesPreserveExplicitCoreFoundationOwnership() async throws {
+        let runtime = ABIRuntime()
+        let echo = try await runtime.cFunction(named: "ABICEchoCFValue",
+            as: ((Unmanaged<NSObject>?) -> Unmanaged<NSObject>?).self)
+        let retain = try await runtime.cFunction(named: "ABICRetainCFValue",
+            as: ((Unmanaged<NSObject>) -> Unmanaged<NSObject>).self)
+        let consume = try await runtime.cFunction(named: "ABICConsumeCFValue",
+            as: ((Unmanaged<NSObject>) -> Void).self)
+        let fixture = ABIOwnershipFixture()
+        weak var observed: NSObject?
+        try autoreleasepool {
+            let value = fixture.copyObject()
+            observed = value
+            #expect(try unsafe echo.unsafeInvoke(.passUnretained(value))?.takeUnretainedValue() === value)
+            #expect(try unsafe echo.unsafeInvoke(nil) == nil)
+            let retained = try unsafe retain.unsafeInvoke(.passUnretained(value)).takeRetainedValue()
+            #expect(retained === value)
+            try unsafe consume.unsafeInvoke(.passRetained(value))
+            #expect(observed === value && fixture.liveResults == 1)
+        }
+        #expect(observed == nil && fixture.liveResults == 0)
+    }
+
     @Test func preparedHandleCanCrossActorsAndBeReused() async throws {
         let function = try await ABIRuntime.shared.cFunction(
             named: "ABICIncrement", as: ((Int32) -> Int32).self

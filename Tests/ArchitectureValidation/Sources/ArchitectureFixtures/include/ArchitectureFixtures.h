@@ -4,6 +4,14 @@
 #include <ABIBridge/PointerSlot.h>
 #ifdef __OBJC__
 #import <Foundation/Foundation.h>
+@interface ABIValidationOwnershipFixture : NSObject
+@property(nonatomic, readonly) NSInteger liveValues;
+@property(nonatomic, readonly) NSInteger calls;
+- (NSObject * _Nonnull)copyValue;
+- (NSInteger)consume:(NSObject * _Nullable NS_RELEASES_ARGUMENT)value;
+- (NSInteger)consumeBlock:(id _Nullable NS_RELEASES_ARGUMENT)block value:(NSInteger)value;
+- (CFTypeRef _Nullable)echoCFValue:(CFTypeRef _Nullable)value CF_RETURNS_NOT_RETAINED;
+@end
 #endif
 #ifdef __cplusplus
 extern "C" {
