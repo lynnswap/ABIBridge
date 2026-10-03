@@ -15,7 +15,10 @@ final class SwiftHookHandler: @unchecked Sendable {
 
 final class SwiftHookNode: Sendable {
     private let state: Mutex<SwiftHookHandler?>
-    init(_ handler: SwiftHookHandler) { state = Mutex(handler) }
+    let signature: SwiftHookSignature
+    init(_ handler: SwiftHookHandler, signature: SwiftHookSignature) {
+        state = Mutex(handler); self.signature = signature
+    }
     func snapshot() -> SwiftHookHandler? { state.withLock { $0 } }
     func invalidate() {
         let previous = state.withLock { value in let previous = value; value = nil; return previous }
@@ -54,7 +57,7 @@ private final class SwiftHookExecution {
             do {
                 let result = try invoke(count - 1, arguments: signature.preservingReceiver(values, from: arguments))
                 step.record(.success(result))
-                return result
+                return try signature.cloneResult(result)
             } catch let error as SwiftHookCompletedResultError {
                 step.record(.failure(error)); throw error
             }
@@ -66,6 +69,9 @@ private final class SwiftHookExecution {
         } catch {
             frame.expire()
             let underlying = (error as? SwiftHookCompletedResultError)?.underlying ?? error
+            if let nativeError = signature.errorPlan?.encode(underlying) {
+                throw SwiftHookCompletedResultError(underlying: underlying, nativeError: nativeError)
+            }
             handler.failure(underlying)
             if let last = step.last { return try last.get() }
             if let completed = error as? SwiftHookCompletedResultError { throw completed }
@@ -86,22 +92,35 @@ final class SwiftHookDispatcher: Sendable {
         withExtendedLifetime(previous) {}
     }
     func invoke(_ call: OpaquePointer) {
-        let snapshot = nodes.withLock { $0.compactMap { $0.snapshot() } }
-        guard !snapshot.isEmpty else { return } // Untouched native fallback, including consumed arguments.
+        let nodes = nodes.withLock { $0.compactMap { node in node.snapshot().map { (node.signature, $0) } } }
+        var snapshot: [SwiftHookHandler] = []
+        var selected = signature
         do {
-            let arguments = try signature.readArguments(call)
-            let execution = SwiftHookExecution(call: call, handlers: snapshot, signature: signature)
+            for (signature, handler) in nodes where try signature.matchesIncoming(call) {
+                selected = signature
+                snapshot.append(handler)
+            }
+            guard !snapshot.isEmpty else { return }
+            try selected.prepareIncoming(call)
+            let arguments = try selected.readArguments(call)
+            let execution = SwiftHookExecution(call: call, handlers: snapshot, signature: selected)
             let value = try execution.invoke(snapshot.count, arguments: arguments)
             var error: OpaquePointer?
-            guard ABISwiftIncomingSetResult(call, value.address, signature.result.size, &error) else {
+            guard ABISwiftIncomingSetResult(call, value.address, selected.result.size, &error) else {
                 throw consumeNativeCallFailure(error)
             }
             value.relinquishValue()
-        } catch is SwiftHookCompletedResultError {
+        } catch let completed as SwiftHookCompletedResultError {
+            if let nativeError = completed.nativeError, let errorPlan = selected.errorPlan {
+                var error: OpaquePointer?
+                if ABISwiftIncomingSetError(call, nativeError.address, errorPlan.type.size, &error) {
+                    nativeError.relinquishValue()
+                } else { snapshot.last?.failure(consumeNativeCallFailure(error)) }
+            }
             // A node already reported conversion failure. Preserve the native
             // entry's owned result without decoding it or executing it twice.
         } catch {
-            snapshot.last?.failure(error)
+            (snapshot.last ?? nodes.last?.1)?.failure(error)
         }
     }
 }
@@ -114,14 +133,8 @@ final class SwiftGeneratedCallback: @unchecked Sendable {
         functions.invoke = { context, call in
             Unmanaged<SwiftHookDispatcher>.fromOpaque(context!).takeUnretainedValue().invoke(call!)
         }
+        functions.preparesArguments = true
         functions.releaseContext = { Unmanaged<SwiftHookDispatcher>.fromOpaque($0!).release() }
-        functions.destroyResult = { context, value in
-            Unmanaged<SwiftHookDispatcher>.fromOpaque(context!).takeUnretainedValue().signature.destroyResult(value!)
-        }
-        functions.destroyConsumedArguments = { context, receiver, arguments, count in
-            let signature = Unmanaged<SwiftHookDispatcher>.fromOpaque(context!).takeUnretainedValue().signature
-            signature.destroyConsumedInputs(context: receiver, arguments: UnsafeBufferPointer(start: arguments, count: count))
-        }
         let context = Unmanaged.passRetained(dispatcher), owner = Unmanaged.passRetained(original)
         var error: OpaquePointer?
         guard let handle = ABICreateSwiftCallback(dispatcher.signature.interface.handle, original.function,
@@ -131,4 +144,35 @@ final class SwiftGeneratedCallback: @unchecked Sendable {
         self.handle = handle
     }
     deinit { ABIReleaseSwiftCallback(handle) }
+}
+
+extension SwiftHookSignature {
+    func prepareIncoming(_ call: OpaquePointer) throws {
+        var functions = ABISwiftCallbackFunctions()
+        functions.releaseContext = { Unmanaged<SwiftHookSignature>.fromOpaque($0!).release() }
+        functions.destroyResult = { context, value in
+            Unmanaged<SwiftHookSignature>.fromOpaque(context!).takeUnretainedValue().destroyResult(value!)
+        }
+        functions.destroyError = { context, value in
+            Unmanaged<SwiftHookSignature>.fromOpaque(context!).takeUnretainedValue().errorPlan?.destroy(value!)
+        }
+        functions.initializeResult = { context, offset, size, destination, source in
+            let signature = Unmanaged<SwiftHookSignature>.fromOpaque(context!).takeUnretainedValue()
+            if let initialize = signature.initializeResult { initialize(offset, size, destination!, source!) }
+            else { destination!.copyMemory(from: source!, byteCount: size) }
+        }
+        functions.initializeError = { context, offset, size, destination, source in
+            let signature = Unmanaged<SwiftHookSignature>.fromOpaque(context!).takeUnretainedValue()
+            signature.errorPlan!.initialize(offset, size, destination!, source!)
+        }
+        functions.destroyConsumedArguments = { context, receiver, arguments, count in
+            let signature = Unmanaged<SwiftHookSignature>.fromOpaque(context!).takeUnretainedValue()
+            signature.destroyConsumedInputs(context: receiver, arguments: UnsafeBufferPointer(start: arguments, count: count))
+        }
+        let context = Unmanaged.passRetained(self)
+        var error: OpaquePointer?
+        guard ABISwiftIncomingPrepare(call, interface.handle, functions, context.toOpaque(), &error) else {
+            context.release(); throw consumeNativeCallFailure(error)
+        }
+    }
 }

@@ -57,7 +57,7 @@ Generic declarations use the same callable handles with explicit type arguments:
 
 ```swift
 let echo = try await runtime.swiftFunction(
-    named: "Example.echo<A>(A) -> A", as: ((String) -> String).self,
+    named: "Example.echo(_:)", as: ((String) -> String).self,
     genericArguments: [.type(String.self)]
 )
 let message = try unsafe echo.unsafeInvoke("Hello")

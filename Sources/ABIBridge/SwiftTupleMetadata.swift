@@ -267,7 +267,7 @@ struct SwiftTupleValuePlan: Sendable {
     let type: CValueType
     let fields: [Field]
     let leaves: [Leaf]
-    private let parameters: SwiftGenericParameters
+    let parameters: SwiftGenericParameters
     let argumentTypes: [CValueType]
     let nativeProjections: [NativeProjection]
     var needsConversion: Bool {

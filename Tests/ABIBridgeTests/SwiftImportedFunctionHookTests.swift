@@ -9,6 +9,399 @@ import Testing
 @Suite(.serialized)
 struct SwiftImportedFunctionHookTests {
 
+    @Test func unmatchedPackBindingsPreserveStackArguments() async throws {
+        let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
+        @inline(never) public func hookStackPack<each Value>(_ values: repeat each Value,
+            a: Int64, b: Int64, c: Int64, d: Int64, e: Int64, f: Int64, g: Int64, h: Int64) -> String {
+            var result = ""
+            for value in repeat each values { result += "\\(value)|" }
+            return result + "sum=\\(a+b+c+d+e+f+g+h)"
+        }
+        """, callerExtra: """
+        @inline(never) public func stackPackEmpty() -> String {
+            hookStackPack(a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8)
+        }
+        @inline(never) public func stackPackOne() -> String {
+            hookStackPack(Int64(41), a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8)
+        }
+        @inline(never) public func stackPackTen() -> String {
+            hookStackPack(Int64(1), Int64(2), Int64(3), Int64(4), Int64(5), Int64(6), Int64(7), Int64(8), Int64(9), Int64(10),
+                a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8)
+        }
+        """)
+        defer { fixture.cleanup() }
+        let short = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookStackPack(_:a:b:c:d:e:f:g:h:)",
+            as: ((Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64) -> String).self,
+            genericArguments: [.pack([.type(Int64.self)])], in: fixture.providerScope)
+        let long = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookStackPack(_:a:b:c:d:e:f:g:h:)",
+            as: ((Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64,
+                  Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64) -> String).self,
+            genericArguments: [.pack(Array(repeating: .type(Int64.self), count: 10))], in: fixture.providerScope)
+        let empty = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".stackPackEmpty()",
+            as: (() -> String).self, in: fixture.callerScope)
+        let one = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".stackPackOne()",
+            as: (() -> String).self, in: fixture.callerScope)
+        let ten = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".stackPackTen()",
+            as: (() -> String).self, in: fixture.callerScope)
+        let expectedTen = "1|2|3|4|5|6|7|8|9|10|sum=36"
+        #expect(try unsafe empty.unsafeInvoke() == "sum=36")
+        #expect(try unsafe one.unsafeInvoke() == "41|sum=36")
+        #expect(try unsafe ten.unsafeInvoke() == expectedTen)
+        let first = try unsafe await short.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { Issue.record($0) }) { call, value, a, b, c, d, e, f, g, h in
+                try call.proceed(value, a, b, c, d, e, f, g, h) + " short"
+            }
+        defer { first.invalidate() }
+        #expect(try unsafe empty.unsafeInvoke() == "sum=36")
+        #expect(try unsafe one.unsafeInvoke() == "41|sum=36 short")
+        #expect(try unsafe ten.unsafeInvoke() == expectedTen)
+        let second = try unsafe await long.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { Issue.record($0) }) { call, v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, a, b, c, d, e, f, g, h in
+                try call.proceed(v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, a, b, c, d, e, f, g, h) + " long"
+            }
+        defer { second.invalidate() }
+        first.invalidate()
+        #expect(try unsafe empty.unsafeInvoke() == "sum=36")
+        #expect(try unsafe one.unsafeInvoke() == "41|sum=36")
+        #expect(try unsafe ten.unsafeInvoke() == expectedTen + " long")
+        second.invalidate()
+        #expect(try unsafe empty.unsafeInvoke() == "sum=36")
+        #expect(try unsafe one.unsafeInvoke() == "41|sum=36")
+        #expect(try unsafe ten.unsafeInvoke() == expectedTen)
+    }
+
+    @Test func tuplePackClassArgumentsUseTheirPhysicalNativePositions() async throws {
+        let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
+        @inline(never) public func hookPlainTuplePack<each Value>(_ values: (repeat each Value, object: NSObject)) -> NSObject {
+            values.object
+        }
+        @inline(never) public func hookTuplePack<each Value, Object: AnyObject>(_ values: (repeat each Value, object: Object)) -> Object {
+            values.object
+        }
+        """, callerExtra: """
+        @inline(never) public func plainTuplePackObject(_ object: NSObject) -> NSObject {
+            hookPlainTuplePack((Int64(4), "plain", object: object))
+        }
+        @inline(never) public func tuplePackObject(_ object: NSObject) -> NSObject {
+            hookTuplePack((Int64(4), "bound", object: object))
+        }
+        @inline(never) public func tuplePackOther(_ object: NSObject) -> NSObject {
+            hookTuplePack((true, object: object))
+        }
+        """)
+        defer { fixture.cleanup() }
+        typealias Values = (Int64, String, object: NSObject)
+        let plain = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookPlainTuplePack(_:)",
+            as: ((Values) -> NSObject).self,
+            genericArguments: [.pack([.type(Int64.self), .type(String.self)])], in: fixture.providerScope)
+        let bound = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookTuplePack(_:)",
+            as: ((Values) -> NSObject).self,
+            genericArguments: [.pack([.type(Int64.self), .type(String.self)]), .type(NSObject.self)], in: fixture.providerScope)
+        let plainCaller = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".plainTuplePackObject(_:)",
+            as: ((NSObject) -> NSObject).self, in: fixture.callerScope)
+        let boundCaller = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".tuplePackObject(_:)",
+            as: ((NSObject) -> NSObject).self, in: fixture.callerScope)
+        let otherCaller = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".tuplePackOther(_:)",
+            as: ((NSObject) -> NSObject).self, in: fixture.callerScope)
+        let calls = Mutex(0)
+        let first = try unsafe await plain.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { Issue.record($0) }) { call, value in
+                calls.withLock { $0 += 1 }
+                return try call.proceed(value)
+            }
+        defer { first.invalidate() }
+        let second = try unsafe await bound.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { Issue.record($0) }) { call, value in
+                calls.withLock { $0 += 1 }
+                return try call.proceed((value.0 + 1, value.1, object: value.object))
+            }
+        defer { second.invalidate() }
+        let object = NSObject()
+        #expect(try unsafe plainCaller.unsafeInvoke(object) === object)
+        #expect(try unsafe boundCaller.unsafeInvoke(object) === object)
+        #expect(try unsafe otherCaller.unsafeInvoke(object) === object)
+        #expect(calls.withLock { $0 } == 2)
+    }
+
+    @Test func returnedClosuresTransferOneOwnedContextThroughProceed() async throws {
+        let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
+        @inline(never) public func hookFactory(_ value: AnyObject) -> () -> AnyObject { { value } }
+        """, callerExtra: """
+        @inline(never) public func importedFactory(_ value: AnyObject) -> () -> AnyObject { hookFactory(value) }
+        """)
+        defer { fixture.cleanup() }
+        typealias Closure = NativeSwiftClosure<() -> AnyObject>
+        let factory = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookFactory(_:)",
+            as: ((AnyObject) -> Closure).self, in: fixture.providerScope)
+        let oracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".importedFactory(_:)",
+            as: ((AnyObject) -> Closure).self, in: fixture.callerScope)
+        let hook = try unsafe await factory.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { Issue.record($0) }) { call, value in
+                _ = try call.proceed(value)
+                return try call.proceed(value)
+            }
+        defer { hook.invalidate() }
+        weak var observed: NSObject?
+        var saved: Closure?
+        do {
+            let object = NSObject()
+            observed = object
+            saved = try unsafe oracle.unsafeInvoke(object as AnyObject)
+            #expect(try unsafe saved?.unsafeInvoke() === object)
+        }
+        hook.invalidate()
+        #expect(observed != nil)
+        saved = nil
+        #expect(observed == nil)
+    }
+
+    @Test func genericHooksSelectBindingsBeforeReadingNativeValues() async throws {
+        let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
+        import Foundation
+        @inline(never) public func hookEcho<Value>(_ value: Value) -> Value { value }
+        @inline(never) public func hookPack<each Value>(_ values: repeat each Value) -> (repeat each Value) { (repeat each values) }
+        @inline(never) public func hookTuple(_ value: (Int64, String)) -> (Int64, String) { value }
+        @inline(never) public func hookNativeScalar(_ value: Int64) -> Int64 { value + 1 }
+        @inline(never) public func hookGenericFactory<Value>(_ value: Value) -> () -> Value { { value } }
+        """, callerExtra: """
+        import Foundation
+        @inline(never) public func echoInt(_ value: Int64) -> Int64 { hookEcho(value) }
+        @inline(never) public func echoText(_ value: String) -> String { hookEcho(value) }
+        @inline(never) public func echoArray(_ value: [String]) -> [String] { hookEcho(value) }
+        @inline(never) public func forwardGeneric<Value>(_ value: Value) -> Value { hookEcho(value) }
+        @inline(never) public func importedTuple(_ value: (Int64, String)) -> (Int64, String) { hookTuple(value) }
+        @inline(never) public func importedNativeScalar(_ value: Int64) -> Int64 { hookNativeScalar(value) }
+        @inline(never) public func echoObject(_ value: NSObject) -> NSObject { hookEcho(value) }
+        @inline(never) public func genericFactoryInteger(_ value: Int64) -> Int64 { hookGenericFactory(value)() }
+        @inline(never) public func genericFactoryString(_ value: String) -> String { hookGenericFactory(value)() }
+        @inline(never) public func packPair(_ value: Int64, _ text: String) -> (Int64, String) { hookPack(value, text) }
+        @inline(never) public func packSingle(_ value: Int64) -> Int64 { hookPack(value) }
+        @inline(never) public func packTriple(_ text: String) -> (String, Int64, Double) { hookPack(text, Int64(7), 1.5) }
+        """)
+        defer { fixture.cleanup() }
+        let integer = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookEcho(_:)",
+            as: ((Int64) -> Int64).self, genericArguments: [.type(Int64.self)], in: fixture.providerScope)
+        let text = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookEcho(_:)",
+            as: ((String) -> String).self, genericArguments: [.type(String.self)], in: fixture.providerScope)
+        let intOracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".echoInt(_:)",
+            as: ((Int64) -> Int64).self, in: fixture.callerScope)
+        let textOracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".echoText(_:)",
+            as: ((String) -> String).self, in: fixture.callerScope)
+        let arrayOracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".echoArray(_:)",
+            as: (([String]) -> [String]).self, in: fixture.callerScope)
+        #expect(try unsafe intOracle.unsafeInvoke(40) == 40)
+        let failures = Mutex<[String]>([])
+        let failure: @Sendable (any Error) -> Void = { error in failures.withLock { $0.append(String(describing: error)) } }
+        let intHook = try unsafe await integer.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: failure) { call, value in try call.proceed(value + 1) + 10 }
+        defer { intHook.invalidate() }
+        let textHook = try unsafe await text.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: failure) { call, value in try call.proceed(value + " input") + " output" }
+        defer { textHook.invalidate() }
+        let input = String(repeating: "generic hook value ", count: 80)
+        #expect(try unsafe intOracle.unsafeInvoke(40) == 51)
+        #expect(try unsafe textOracle.unsafeInvoke(input) == input + " input output")
+        #expect(try unsafe arrayOracle.unsafeInvoke([input, "unchanged"]) == [input, "unchanged"])
+        intHook.invalidate()
+        #expect(try unsafe intOracle.unsafeInvoke(40) == 40)
+        #expect(try unsafe textOracle.unsafeInvoke(input) == input + " input output")
+        textHook.invalidate()
+        #expect(try unsafe textOracle.unsafeInvoke(input) == input)
+
+        let object = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookEcho(_:)",
+            as: ((NSObject) -> NSObject).self, genericArguments: [.type(NSObject.self)], in: fixture.providerScope)
+        let objectOracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".echoObject(_:)",
+            as: ((NSObject) -> NSObject).self, in: fixture.callerScope)
+        let received = Mutex(0)
+        let objectHook = try unsafe await object.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: failure) { call, value in
+                received.withLock { $0 += 1 }
+                return try call.proceed(value)
+            }
+        defer { objectHook.invalidate() }
+        let instance = NSObject()
+        #expect(try unsafe objectOracle.unsafeInvoke(instance) === instance)
+        #expect(received.withLock { $0 } == 1)
+        objectHook.invalidate()
+
+        let factory = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookGenericFactory(_:)",
+            as: ((Int64) -> NativeSwiftClosure<() -> Int64>).self,
+            genericArguments: [.type(Int64.self)], in: fixture.providerScope)
+        let factoryOracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".genericFactoryInteger(_:)",
+            as: ((Int64) -> Int64).self, in: fixture.callerScope)
+        let factoryControl = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".genericFactoryString(_:)",
+            as: ((String) -> String).self, in: fixture.callerScope)
+        #expect(try unsafe factoryOracle.unsafeInvoke(40) == 40)
+        let factoryHook = try unsafe await factory.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: failure) { call, value in
+                _ = try call.proceed(value)
+                return try call.proceed(value + 1)
+            }
+        defer { factoryHook.invalidate() }
+        #expect(try unsafe factoryOracle.unsafeInvoke(40) == 41)
+        #expect(try unsafe factoryControl.unsafeInvoke(input) == input)
+        factoryHook.invalidate()
+
+        let native = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookEcho(_:)",
+            as: ((SwiftHookDistinctABIValue) -> SwiftHookDistinctABIValue).self,
+            genericArguments: [.type(SwiftHookDistinctABIValue.self)], in: fixture.providerScope)
+        let nativeOracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".forwardGeneric(_:)",
+            as: ((SwiftHookDistinctABIValue) -> SwiftHookDistinctABIValue).self,
+            genericArguments: [.type(SwiftHookDistinctABIValue.self)], in: fixture.callerScope)
+        let nativeHook = try unsafe await native.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: failure) { call, value in
+                try call.proceed(.init(value.number + 1, value.text + " native"))
+            }
+        defer { nativeHook.invalidate() }
+        let preserved = try unsafe nativeOracle.unsafeInvoke(.init(40, input))
+        #expect(preserved.number == 41 && preserved.text == input + " native")
+        nativeHook.invalidate()
+
+        let tuple = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookTuple(_:)",
+            as: (((Int64, String)) -> (Int64, String)).self, in: fixture.providerScope)
+        let tupleOracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".importedTuple(_:)",
+            as: (((Int64, String)) -> (Int64, String)).self, in: fixture.callerScope)
+        let tupleHook = try unsafe await tuple.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: failure) { call, value in try call.proceed((value.0 + 4, value.1 + " tuple")) }
+        defer { tupleHook.invalidate() }
+        let tupleResult = try unsafe tupleOracle.unsafeInvoke((Int64(40), input))
+        #expect(tupleResult.0 == 44 && tupleResult.1 == input + " tuple")
+        tupleHook.invalidate()
+
+        let scalarAdapter = try await fixture.runtime.swiftFunction(
+            named: fixture.module + ".hookNativeScalar(Swift.Int64) -> Swift.Int64",
+            as: ((Int64) -> SwiftHookDistinctABIValue).self, in: fixture.providerScope)
+        let scalarOracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".importedNativeScalar(_:)",
+            as: ((Int64) -> Int64).self, in: fixture.callerScope)
+        let scalarHook = try unsafe await scalarAdapter.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: failure) { call, value in
+                let result = try call.proceed(value)
+                return .init(result.number + 10, result.text)
+            }
+        defer { scalarHook.invalidate() }
+        #expect(try unsafe scalarOracle.unsafeInvoke(40) == 51)
+        scalarHook.invalidate()
+
+        let pair = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookPack(_:)",
+            as: ((Int64, String) -> (Int64, String)).self,
+            genericArguments: [.pack([.type(Int64.self), .type(String.self)])], in: fixture.providerScope)
+        let single = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookPack(_:)",
+            as: ((Int64) -> Int64).self, genericArguments: [.pack([.type(Int64.self)])], in: fixture.providerScope)
+        let pairOracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".packPair(_:_:)",
+            as: ((Int64, String) -> (Int64, String)).self, in: fixture.callerScope)
+        let singleOracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".packSingle(_:)",
+            as: ((Int64) -> Int64).self, in: fixture.callerScope)
+        let tripleOracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".packTriple(_:)",
+            as: ((String) -> (String, Int64, Double)).self, in: fixture.callerScope)
+        #expect(try unsafe singleOracle.unsafeInvoke(40) == 40)
+        let pairHook = try unsafe await pair.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: failure) { call, number, text in try call.proceed(number + 2, text + " pair") }
+        defer { pairHook.invalidate() }
+        let singleHook = try unsafe await single.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: failure) { call, value in try call.proceed(value + 3) }
+        defer { singleHook.invalidate() }
+        let paired = try unsafe pairOracle.unsafeInvoke(40, input)
+        #expect(paired.0 == 42 && paired.1 == input + " pair")
+        #expect(try unsafe singleOracle.unsafeInvoke(40) == 43)
+        let untouched = try unsafe tripleOracle.unsafeInvoke(input)
+        #expect(untouched.0 == input && untouched.1 == 7 && untouched.2 == 1.5)
+        pairHook.invalidate(); singleHook.invalidate()
+        let restored = try unsafe pairOracle.unsafeInvoke(40, input)
+        #expect(restored.0 == 40 && restored.1 == input)
+        #expect(failures.withLock { $0.isEmpty })
+    }
+
+    @Test func throwingHooksUseNativeErrorsAndPreserveCompletedFailures() async throws {
+        let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
+        import Foundation
+        @inline(never) public func throwsAny(_ value: Int64, _ calls: UnsafeMutablePointer<Int64>) throws -> Int64 {
+            calls.pointee += 1
+            if value < 0 { throw NSError(domain: "native", code: Int(value)) }
+            return value + 1
+        }
+        @inline(never) public func throwsTyped(_ value: Int64, _ calls: UnsafeMutablePointer<Int64>) throws(NSError) -> Int64 {
+            calls.pointee += 1
+            if value < 0 { throw NSError(domain: "native", code: Int(value)) }
+            return value + 1
+        }
+        """, callerExtra: """
+        import Foundation
+        @inline(never) public func importedThrowsAny(_ value: Int64, _ calls: UnsafeMutablePointer<Int64>) throws -> Int64 {
+            try throwsAny(value, calls)
+        }
+        @inline(never) public func importedThrowsTyped(_ value: Int64, _ calls: UnsafeMutablePointer<Int64>) throws(NSError) -> Int64 {
+            try throwsTyped(value, calls)
+        }
+        """)
+        defer { fixture.cleanup() }
+        let any = try await fixture.runtime.swiftFunction(named: fixture.module + ".throwsAny(_:_:)",
+            as: ((Int64, UnsafeMutablePointer<Int64>) throws -> Int64).self, in: fixture.providerScope)
+        let anyOracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".importedThrowsAny(_:_:)",
+            as: ((Int64, UnsafeMutablePointer<Int64>) throws -> Int64).self, in: fixture.callerScope)
+        let typed = try await fixture.runtime.swiftFunction(named: fixture.module + ".throwsTyped(_:_:)",
+            as: ((Int64, UnsafeMutablePointer<Int64>) throws(NSError) -> Int64).self, in: fixture.providerScope)
+        let typedOracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".importedThrowsTyped(_:_:)",
+            as: ((Int64, UnsafeMutablePointer<Int64>) throws(NSError) -> Int64).self, in: fixture.callerScope)
+        let calls = UnsafeMutablePointer<Int64>.allocate(capacity: 1)
+        calls.initialize(to: 0)
+        defer { calls.deinitialize(count: 1); calls.deallocate() }
+        #expect(try unsafe anyOracle.unsafeInvoke(1, calls) == 2)
+        #expect(try unsafe typedOracle.unsafeInvoke(1, calls) == 2)
+        let failures = Mutex(0)
+        let anyHook = try unsafe await any.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value, count in
+                if value == 99 { throw SwiftHookTestFailure.afterProceed }
+                let result = try call.proceed(value, count)
+                if value == 98 { throw SwiftHookTestFailure.afterProceed }
+                return result + 10
+            }
+        defer { anyHook.invalidate() }
+        #expect(try unsafe anyOracle.unsafeInvoke(1, calls) == 12)
+        func caught(_ body: () throws -> Int64) throws -> NativeSwiftError {
+            do { _ = try body(); throw SwiftHookTestFailure.timeout }
+            catch let error as NativeSwiftError { return error }
+        }
+        calls.pointee = 0
+        let before = try caught { try unsafe anyOracle.unsafeInvoke(99, calls) }
+        before.withUnderlyingError { #expect($0 is SwiftHookTestFailure) }
+        #expect(calls.pointee == 0)
+        let after = try caught { try unsafe anyOracle.unsafeInvoke(98, calls) }
+        after.withUnderlyingError { #expect($0 is SwiftHookTestFailure) }
+        #expect(calls.pointee == 1)
+        let native = try caught { try unsafe anyOracle.unsafeInvoke(-7, calls) }
+        native.withUnderlyingError { #expect(($0 as NSError).domain == "native" && ($0 as NSError).code == -7) }
+        #expect(calls.pointee == 2 && failures.withLock { $0 } == 0)
+
+        let typedHook = try unsafe await typed.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value, count in
+                if value == 99 { throw NSError(domain: "hook", code: 99) }
+                if value == 98 { throw SwiftHookTestFailure.afterProceed }
+                do {
+                    let result = try call.proceed(value, count)
+                    if value == 97 { throw SwiftHookTestFailure.afterProceed }
+                    return result + 10
+                } catch {
+                    if value == -8 { throw SwiftHookTestFailure.afterProceed }
+                    throw error
+                }
+            }
+        defer { typedHook.invalidate() }
+        calls.pointee = 0
+        let replacement = try caught { try unsafe typedOracle.unsafeInvoke(99, calls) }
+        replacement.withUnderlyingError { #expect(($0 as NSError).domain == "hook") }
+        #expect(calls.pointee == 0)
+        #expect(try unsafe typedOracle.unsafeInvoke(98, calls) == 99)
+        #expect(try unsafe typedOracle.unsafeInvoke(97, calls) == 98)
+        let preserved = try caught { try unsafe typedOracle.unsafeInvoke(-8, calls) }
+        preserved.withUnderlyingError { #expect(($0 as NSError).domain == "native" && ($0 as NSError).code == -8) }
+        #expect(calls.pointee == 3 && failures.withLock { $0 } == 3)
+        typedHook.invalidate()
+        anyHook.invalidate()
+        #expect(try unsafe typedOracle.unsafeInvoke(1, calls) == 2)
+        let fallback = try caught { try unsafe anyOracle.unsafeInvoke(-9, calls) }
+        fallback.withUnderlyingError { #expect(($0 as NSError).code == -9) }
+    }
+
     @Test func opaqueResultsKeepTheirDeclaredReturnConvention() async throws {
         let fixture = try CompiledSwiftReplacementFixture()
         defer { fixture.cleanup() }
@@ -357,6 +750,18 @@ struct SwiftImportedFunctionHookTests {
     }
 }
 
+private struct SwiftHookDistinctABIValue: ABIBridgeValue {
+    static var abiType: NativeType { .int64 }
+    let number: Int64
+    let text: String
+    init(_ number: Int64, _ text: String) { self.number = number; self.text = text }
+    init(nativeValue: NativeValue) throws {
+        number = try unsafe nativeValue.read(as: Int64.self)
+        text = "foreign conversion"
+    }
+    static func nativeValue(from value: Self) throws -> NativeValue { try .init(copying: value.number, as: .int64) }
+}
+
 private enum SwiftHookTestFailure: Error { case afterProceed, timeout }
 
 @MainActor private final class SwiftHookMainActorState { var calls = 0 }
@@ -364,7 +769,7 @@ private enum SwiftHookTestFailure: Error { case afterProceed, timeout }
 // The fixture invokes synchronously; this box deliberately lets the test retain
 // a non-Sendable continuation after that same call has completed.
 private final class SavedSwiftHookInvocation: @unchecked Sendable {
-    var value: NativeSwiftFunctionInvocation<Int64, Int64>?
+    var value: NativeSwiftFunctionInvocation<(Int64) -> Int64>?
 }
 
 private final class SwiftHookCapture: Sendable {

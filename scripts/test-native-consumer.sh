@@ -71,7 +71,7 @@ xcrun swiftc -parse-as-library -emit-library -emit-module -enable-library-evolut
     -o "$task_fixture/libSwiftFixture.dylib"
 xcrun swiftc -parse-as-library -emit-library -enable-library-evolution \
     -module-name SwiftExtensionFixture -I "$task_fixture" -L "$task_fixture" -lSwiftFixture \
-    -Xlinker -rpath -Xlinker "$task_fixture" \
+    -Xlinker -rpath -Xlinker "$task_fixture" -Xlinker -no_data_const \
     "$task_root/Tests/NativeConsumer/SwiftExtensionFixture.swift" \
     -o "$task_fixture/libSwiftExtensionFixture.dylib"
 xcrun clang -std=c11 -pedantic-errors -fsyntax-only \
@@ -125,7 +125,7 @@ xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" SwiftObjectConsumer "$task_fixture/libFixture.dylib"
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
-    --scratch-path "$task_root/.build/native-consumer" SwiftFunctionConsumer "$task_fixture/libSwiftFixture.dylib"
+    --scratch-path "$task_root/.build/native-consumer" SwiftFunctionConsumer "$task_fixture/libSwiftFixture.dylib" "$task_fixture/libSwiftExtensionFixture.dylib"
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" SwiftClosureConsumer "$task_fixture/libSwiftFixture.dylib" "$task_fixture/libClosureLease.dylib"
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
