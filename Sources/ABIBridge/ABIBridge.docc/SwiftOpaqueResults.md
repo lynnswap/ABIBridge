@@ -1,6 +1,6 @@
 # Calling Swift functions with opaque results
 
-Use NativeSwiftValue for a native declaration whose result is a single `some P`. The bridge obtains complete underlying metadata from the matched declaration's opaque descriptor. Its class constraints select a direct object result or indirect storage; the metadata supplies the actual storage size and alignment.
+Use NativeSwiftValue for a native declaration returning `some P`. The bridge obtains complete underlying metadata from the matched declaration's opaque descriptor. Its class constraints select a direct object result or indirect storage; the metadata supplies the actual storage size and alignment.
 
 For a loaded module declaring `func makeSummary(_ title: String) -> some Summary`:
 
@@ -18,6 +18,19 @@ try result.withCopy { value in
 ```
 
 The same result type works with supported synchronous, throwing, and async functions, methods, static methods, and property getters, including declarations in another module's extension. Match the native effects, argument ownership, receiver, and isolation conventions exactly as for ordinary calls.
+
+For a generic factory, use its complete declaration and bind the generic arguments:
+
+```swift
+let make = try await runtime.swiftFunction(
+    named: "Example.makeSummary<A>(A) -> some",
+    as: ((String) -> NativeSwiftValue).self,
+    genericArguments: [.type(String.self)]
+)
+let result = try unsafe make.unsafeInvoke("Title")
+```
+
+Opaque descriptors receive the enclosing type and function bindings, including existing protocol witnesses. Generic instance members combine their owner's arguments with method arguments. Tuples and Optional containers preserve the opaque declaration's storage convention. A tuple can contain multiple independent opaque results, and returned NativeSwiftClosure values use the same declaration plan, including throwing and async signatures.
 
 ## Values and lifetime
 
@@ -84,7 +97,7 @@ A function returning `some P` does not directly initialize an `any P` or Any con
 
 ## Scope
 
-The first supported contract is a nongeneric declaration with one opaque result at the outermost return position whose interface guarantees Escapable. Copyability comes from the concrete metadata; some ~Copyable results use the same owned storage and can be moved without Any erasure. Enclosing generic metadata/witness substitutions, opaque results nested inside tuples or closures, nonescapable contracts, opaque callback results, and managed hook bodies require a compiled adapter. Lookup checks captured generic arguments and inverse Escapable requirements before asking the runtime to instantiate or erase the type.
+Owned opaque results must be Escapable. Their generic bindings and nested tuple or closure positions are resolved from the matched declaration. Copyability comes from the concrete metadata; `some ~Copyable` results use the same owned storage and can be moved without Any erasure. Nonescapable result scopes, opaque callback results, and managed hook bodies require separate contracts; this owned-result API does not extend their lifetime.
 
 This does not synthesize protocol witnesses. Existing View conformance can be opened and erased with AnyView while retaining the result owner; see <doc:SwiftUIInteroperability>. Use the native protocol API or an explicitly compiled adapter for other operations.
 

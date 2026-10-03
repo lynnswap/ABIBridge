@@ -83,6 +83,9 @@ struct SwiftGenericTypeMetadata: Sendable {
             guard visited.insert(ObjectIdentifier(type)).inserted else { return }
             let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
             try retainImage(at: ABISwiftTypeDescriptor(metadata))
+            if metadata.load(as: UInt.self) == 0x307 {
+                try retainImage(at: ABISwiftExtendedExistentialShape(metadata))
+            }
             var failure: OpaquePointer?
             guard let nested = ABICopySwiftTypeMetadata(metadata, &failure) else {
                 throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftMetadata")
@@ -107,6 +110,7 @@ struct SwiftGenericTypeMetadata: Sendable {
             case .pack(let elements): try elements.forEach(retainArgument)
             }
         }
+        try retainType(value)
         try arguments.forEach(retainArgument)
         self.images = images
     }

@@ -12,7 +12,7 @@ Add the ABIBridgeSwiftUI product to a SwiftUI consumer. The ABIBridge product re
 
 ## Load and display a view
 
-Resolve a nongeneric native factory returning some View through ABIBridge, then create a ``NativeSwiftView`` on MainActor:
+Resolve a native factory returning some View through ABIBridge, then create a ``NativeSwiftView`` on MainActor:
 
 ```swift
 import ABIBridge

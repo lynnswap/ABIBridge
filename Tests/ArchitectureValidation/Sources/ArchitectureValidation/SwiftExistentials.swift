@@ -73,5 +73,24 @@ import SwiftValueFixtures
         return InlineExistentialValue(value.number + 1)
     }
     try check(try unsafe await asyncApply.unsafeInvoke(AsyncCallback(body), InlineExistentialValue(41)).number == 42, "Async callback returns an owned existential after suspension")
+    for name in ["makeRuntimeExtended", "makeRuntimeExtendedObject"] {
+        let protocolName = name == "makeRuntimeExtended" ? "RuntimeExtendedSource" : "RuntimeExtendedObject"
+        let call = try await runtime.swiftFunction(
+            named: "SwiftValueFixtures.\(name)<A>(A) -> any SwiftValueFixtures.\(protocolName)<Self.Element == A>",
+            as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+        let value = try unsafe call.unsafeInvoke(42)
+        try check(try value.withCopy { ($0 as? any CustomStringConvertible)?.description } == "42",
+            name + " constructs missing parameterized-protocol metadata from its declaration")
+    }
+    typealias ExtendedCallback = NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Int>
+    let applyExtended = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.applyRuntimeExtendedObject<A>((any SwiftValueFixtures.RuntimeExtendedObject<Self.Element == A>) -> Swift.Int, A) -> Swift.Int",
+        as: ((ExtendedCallback, Int) -> Int).self, genericArguments: [.type(Int.self)])
+    let callback = try ExtendedCallback { value in
+        do { return try value.copy().withCopy { ($0 as? any CustomStringConvertible)?.description == "42" ? 42 : -1 } }
+        catch { return -2 }
+    }
+    try check(try unsafe applyExtended.unsafeInvoke(callback, 42) == 42,
+        "Runtime-only class-constrained existential callbacks preserve their authenticated convention")
     return checks
 }

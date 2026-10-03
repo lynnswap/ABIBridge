@@ -19,6 +19,7 @@ struct MetadataResponse { const void *value; uintptr_t state; };
 extern "C" const void *swift_conformsToProtocol(const void *, const void *);
 extern "C" const void *swift_getExistentialTypeMetadata(bool, const void *, size_t, const uintptr_t *);
 extern "C" const void *swift_getMetatypeMetadata(const void *);
+extern "C" const void *swift_getExtendedExistentialTypeMetadata(const void *, const void *const *);
 extern "C" const void *swift_getExistentialMetatypeMetadata(const void *);
 extern "C" const void *swift_getFunctionTypeMetadata(uintptr_t, const void *const *, const uint32_t *, const void *);
 extern "C" const void *swift_getFunctionTypeMetadataDifferentiable(
@@ -107,6 +108,16 @@ const void *associatedType(const void *metadata, const void *protocol,
 
 const void *ABISwiftConformance(const void *metadata, const void *protocol) {
     return swift_conformsToProtocol(metadata, protocol);
+}
+
+const void *ABISwiftExtendedExistentialShape(const void *metadata) {
+    const void *slot = static_cast<const char *>(metadata) + sizeof(void *);
+    const void *shape = read<const void *>(slot);
+#if __has_feature(ptrauth_calls)
+    shape = ptrauth_auth_data(shape, ptrauth_key_process_independent_data,
+                             ptrauth_blend_discriminator(slot, 0xe798));
+#endif
+    return shape;
 }
 
 const void *ABISwiftMetatypeMetadata(const void *instance) {
@@ -491,6 +502,33 @@ ABISwiftTypeMetadata *ABICopySwiftTypeMetadata(const void *metadata, ABIResoluti
         }
         collectConformances(*result, descriptor);
     }
+    if (read<uintptr_t>(metadata) == 0x307) {
+        auto shape = static_cast<const char *>(ABISwiftExtendedExistentialShape(metadata));
+        auto flags = read<uint32_t>(shape);
+        if (flags & 0x100) {
+            auto parameterCount = read<uint16_t>(shape + 16);
+            auto keyCount = read<uint16_t>(shape + 20);
+            auto parameters = shape + 24 + ((flags & 0x200) ? 4 : 0) + ((flags & 0x400) ? 4 : 0)
+                + ((flags & 0x800) ? 0 : read<uint16_t>(shape + 8));
+            auto afterParameters = reinterpret_cast<uintptr_t>(parameters + ((flags & 0x1000) ? 0 : parameterCount));
+            auto requirements = reinterpret_cast<const char *>((afterParameters + 3) & ~uintptr_t(3));
+            auto afterRequirements = requirements + (read<uint16_t>(shape + 10) + read<uint16_t>(shape + 18)) * 12;
+            size_t index = (flags & 0x2000) ? read<uint16_t>(afterRequirements + 2) : 0;
+            auto arguments = reinterpret_cast<const void *const *>(static_cast<const char *>(metadata) + 2 * sizeof(void *));
+            for (size_t parameter = 0; parameter < parameterCount; ++parameter) {
+                if ((flags & 0x1000) || (uint8_t(parameters[parameter]) & 0x80))
+                    result->arguments.push_back(arguments[index++]);
+            }
+            for (; index < keyCount; ++index) {
+                auto argument = reinterpret_cast<uintptr_t>(arguments[index]);
+                if (argument & 1) {
+                    auto pack = reinterpret_cast<const void *const *>(argument & ~uintptr_t(1));
+                    for (size_t element = 0; element < read<size_t>(pack - 1); ++element)
+                        result->conformances.push_back(ABISwiftConformanceDescriptor(pack[element]));
+                } else result->conformances.push_back(ABISwiftConformanceDescriptor(arguments[index]));
+            }
+        }
+    }
     return result.release();
 }
 
@@ -639,3 +677,10 @@ const void *ABISwiftTypeMetadataValue(const ABISwiftTypeMetadata *result) { retu
 size_t ABISwiftTypeMetadataConformanceCount(const ABISwiftTypeMetadata *result) { return result->conformances.size(); }
 const void *ABISwiftTypeMetadataConformance(const ABISwiftTypeMetadata *result, size_t index) { return result->conformances[index]; }
 void ABIReleaseSwiftTypeMetadata(ABISwiftTypeMetadata *result) { delete result; }
+
+const void *ABISwiftExtendedExistentialMetadata(const void *shape, const void *const *arguments) {
+#if __has_feature(ptrauth_calls)
+    shape = ptrauth_sign_unauthenticated(shape, ptrauth_key_process_independent_data, 0xe798);
+#endif
+    return swift_getExtendedExistentialTypeMetadata(shape, arguments);
+}

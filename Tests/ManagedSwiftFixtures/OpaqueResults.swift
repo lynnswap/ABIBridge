@@ -79,3 +79,72 @@ private final class HiddenOpaqueObjC: NSObject {
     init(_ token: ErrorLifetimeToken) { self.token = token }
 }
 @inline(never) public func makeOpaqueObjC(_ token: ErrorLifetimeToken) -> some NSObjectProtocol { HiddenOpaqueObjC(token) }
+
+private struct HiddenConstrainedOpaque<Value: ExistentialValue>: ExistentialValue {
+    let value: Value
+    var number: Int64 { value.number }
+}
+@inline(never) public func makeConstrainedOpaque<Value: ExistentialValue>(_ value: Value) -> some ExistentialValue {
+    HiddenConstrainedOpaque(value: value)
+}
+@inline(never) public func makeGenericOpaqueObject<Value: ExistentialObjectValue>(_ value: Value) -> some ExistentialObjectValue {
+    value
+}
+public final class GenericOpaqueOwner<Value> {
+    public let value: Value
+    public init(_ value: Value) { self.value = value }
+    public var opaque: some Any { HiddenGenericOpaque(value: value) }
+    @inline(never) public func make<Other>(_ other: Other) -> some Any {
+        HiddenGenericOpaque(value: (value, other))
+    }
+}
+
+@inline(never) public func makeGenericOpaquePair<First, Second>(_ first: First, _ second: Second) -> (some Any, some Any) {
+    (first, second)
+}
+
+@inline(never) public func makeOptionalOpaqueObject(_ token: ErrorLifetimeToken, _ present: Bool) -> (some ExistentialValue)? {
+    present ? HiddenOpaqueObject(token, 42) : nil
+}
+@inline(never) public func makeOptionalClassOpaqueObject(_ token: ErrorLifetimeToken, _ present: Bool) -> (some ExistentialObjectValue)? {
+    present ? HiddenOpaqueObject(token, 42) : nil
+}
+@inline(never) public func makeOptionalOpaqueClosure(_ token: ErrorLifetimeToken) -> (Bool) -> (some ExistentialValue)? {
+    let body: (Bool) -> HiddenOpaqueObject? = { $0 ? HiddenOpaqueObject(token, 42) : nil }
+    return body
+}
+@frozen public struct InlineOpaqueBox<Value>: CustomStringConvertible {
+    public let value: Value
+    public var description: String { String((value as? any ExistentialValue)?.number ?? -1) }
+}
+@inline(never) public func makeInlineOpaqueBox(_ token: ErrorLifetimeToken) -> InlineOpaqueBox<some ExistentialValue> {
+    InlineOpaqueBox(value: HiddenOpaqueObject(token, 42))
+}
+
+@inline(never) public func makeOptionalOpaqueThrowingClosure(_ token: ErrorLifetimeToken) -> (Bool) throws(ScalarFailure) -> (some ExistentialValue)? {
+    let body: (Bool) throws(ScalarFailure) -> HiddenOpaqueObject? = { present throws(ScalarFailure) in
+        if !present { throw ScalarFailure(42) }
+        return HiddenOpaqueObject(token, 42)
+    }
+    return body
+}
+@inline(never) public func makeOptionalOpaqueAsyncClosure(_ token: ErrorLifetimeToken) -> @Sendable @concurrent (Bool) async -> (some ExistentialValue)? {
+    let body: @Sendable @concurrent (Bool) async -> HiddenOpaqueObject? = { present in
+        await Task.yield()
+        return present ? HiddenOpaqueObject(token, 42) : nil
+    }
+    return body
+}
+
+@inline(never) public func makeOpaqueTupleClosure() -> ((Int64, String, ErrorLifetimeToken)) -> some Any {
+    let body: ((Int64, String, ErrorLifetimeToken)) -> String = { value in
+        withExtendedLifetime(value.2) { "\(value.0):\(value.1)" }
+    }
+    return body
+}
+@inline(never) public func makeOpaqueConsumingTupleClosure() -> (consuming (Int64, String, ErrorLifetimeToken)) -> some Any {
+    let body: (consuming (Int64, String, ErrorLifetimeToken)) -> String = { (value: consuming (Int64, String, ErrorLifetimeToken)) in
+        withExtendedLifetime(value.2) { "\(value.0):\(value.1)" }
+    }
+    return body
+}
