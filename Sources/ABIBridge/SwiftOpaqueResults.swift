@@ -121,10 +121,15 @@ struct SwiftResultCodec<Value>: Sendable {
     private let constants = SwiftValueConstants(Value.self)
     private let closure: SwiftClosureCodec?
     private let runtimeValue: SwiftRuntimeValuePlan?
+    private let tuple: SwiftTupleValuePlan?
 
     init(opaque: SwiftOpaqueResultPlan? = nil, generic: SwiftGenericResult = .concrete) throws {
+        if case .tuple(let plan) = generic {
+            try plan.validateOwnedResult()
+            tuple = plan
+        } else { tuple = nil }
         if case .runtimeValue(let plan) = generic {
-            try plan.requireOwnedValue()
+            try plan.requireOwnedValue(as: Value.self)
             runtimeValue = plan
         } else { runtimeValue = nil }
         if case .closure(let codec) = generic { closure = codec } else { closure = nil }
@@ -147,6 +152,7 @@ struct SwiftResultCodec<Value>: Sendable {
     }
 
     func makeStorage() -> NativeValueStorage {
+        if let tuple { return tuple.makeResultStorage() }
         if let runtimeValue { return runtimeValue.makeStorage() }
         if closure != nil {
             return NativeValueStorage(size: type.size, alignment: type.alignment, codeLifetime: SwiftValueCodeLifetime([]))
@@ -157,6 +163,9 @@ struct SwiftResultCodec<Value>: Sendable {
     }
 
     func decode(_ storage: NativeValueStorage, retaining owner: Any?, retainingCode codeOwner: Any?) throws -> Value {
+        if let tuple {
+            return try tuple.decodeResult(storage, retaining: owner, retainingCode: codeOwner, as: Value.self)
+        }
         if let runtimeValue { return try runtimeValue.decode(storage) as! Value }
         if let closure { return try closure.makeValue(storage.address.load(as: ABISwiftClosureValue.self), codeOwner, true, storage.codeLifetime) as! Value }
         if genericValue {

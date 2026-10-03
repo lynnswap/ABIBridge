@@ -163,6 +163,25 @@ guard try unsafe concrete.unsafeInvoke(produced).take(as: String.self) == "retur
 }
 print("Nongeneric returned closures use their native value declaration without generic arguments")
 
+let makeStoredFunction = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.makeConcreteRuntimeCopy() -> (Swift.String) -> Swift.String",
+    as: (() -> NativeSwiftValue).self, in: source)
+let storedFunction = try unsafe makeStoredFunction.unsafeInvoke()
+try storedFunction.withCopy { value in
+    guard let function = value as? (String) -> String, function("copied") == "copied!" else {
+        throw ConsumerError.wrongResult
+    }
+}
+let takenFunction = try storedFunction.take(as: ((String) -> String).self)
+guard takenFunction("taken") == "taken!" else { throw ConsumerError.wrongResult }
+let makeStoredProducer = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.makeConcreteNestedProducer() -> () -> (Swift.Int64) -> Swift.Int64",
+    as: (() -> NativeSwiftValue).self, in: source)
+let storedProducer = try unsafe makeStoredProducer.unsafeInvoke()
+let takenProducer = try storedProducer.take(as: (() -> (Int64) -> Int64).self)
+guard takenProducer()(35) == 42 else { throw ConsumerError.wrongResult }
+print("Runtime function values support standard Swift copies, typed moves, and nested returned functions")
+
 let nestedVisit = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.visitNestedClosure(_:)",
     as: ((NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>) throws -> Int64>) throws -> Int64).self, in: source)
 let nestedBody = try NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>) throws -> Int64> { value in
@@ -372,3 +391,120 @@ do {
         catch ABIResolutionError.signatureMismatch { }
 }
 print("Native closure compatibility preserves every mixed runtime-value argument position")
+
+do {
+    typealias Callback = NativeSwiftClosure<(Int64) -> Int64>
+    typealias Snapshot = (lead: Int8, record: NativeSwiftValue, nested: (callback: Callback, text: String, tail: Int8))
+    typealias BorrowedSnapshot = (lead: Int8, record: NativeSwiftBorrowedValue, nested: (callback: Callback, text: String, tail: Int8))
+    typealias Inspect = NativeSwiftClosure<(BorrowedSnapshot) throws -> Int64>
+    let nativeSnapshot = "(lead: Swift.Int8, record: ManagedSwiftFixtures.RuntimeFixedPair, nested: (callback: (Swift.Int64) -> Swift.Int64, text: Swift.String, tail: Swift.Int8))"
+    let make = try await runtime.swiftFunction(
+        named: "ManagedSwiftFixtures.makeCompositionSnapshot(Swift.AnyObject, Swift.Int64, Swift.Int64, Swift.String) -> " + nativeSnapshot,
+        as: ((AnyObject, Int64, Int64, String) -> Snapshot).self, valueABIs: pairABIs, in: source)
+    let echo = try await runtime.swiftFunction(
+        named: "ManagedSwiftFixtures.echoCompositionSnapshot(" + nativeSnapshot + ") -> " + nativeSnapshot,
+        as: ((Snapshot) -> Snapshot).self, valueABIs: pairABIs, in: source)
+    let inspect = try await runtime.swiftFunction(
+        named: "ManagedSwiftFixtures.inspectCompositionSnapshot(" + nativeSnapshot + ", (" + nativeSnapshot + ") throws -> Swift.Int64) throws -> Swift.Int64",
+        as: ((Snapshot, Inspect) throws -> Int64).self, valueABIs: pairABIs, in: source)
+    let consume = try await runtime.swiftFunction(
+        named: "ManagedSwiftFixtures.consumeCompositionSnapshot(__owned " + nativeSnapshot + ") -> " + nativeSnapshot,
+        as: ((NativeSwiftConsuming<Snapshot>) -> Snapshot).self, valueABIs: pairABIs, in: source)
+    let text = String(repeating: "tuple", count: 100)
+    let snapshot = try unsafe make.unsafeInvoke(NSObject(), 35, 7, text)
+    guard snapshot.lead == 11, snapshot.nested.text == text, snapshot.nested.tail == -7,
+          try unsafe sumPair.unsafeInvoke(on: snapshot.record) == 42,
+          try unsafe snapshot.nested.callback.unsafeInvoke(0) == 42 else { throw ConsumerError.wrongResult }
+    let echoed = try unsafe echo.unsafeInvoke(snapshot)
+    let body = try Inspect { value in
+        guard value.lead == 11, value.nested.text == text, value.nested.tail == -7 else { throw ConsumerError.wrongResult }
+        return try unsafe sumPair.unsafeInvoke(on: value.record) + value.nested.callback.unsafeInvoke(0)
+    }
+    guard try unsafe inspect.unsafeInvoke(echoed, body) == 84 else { throw ConsumerError.wrongResult }
+    let moved = try unsafe consume.unsafeInvoke(NativeSwiftConsuming(snapshot))
+    guard snapshot.record.isConsumed, !echoed.record.isConsumed,
+          try unsafe sumPair.unsafeInvoke(on: moved.record) == 42,
+          try unsafe moved.nested.callback.unsafeInvoke(0) == 42 else { throw ConsumerError.wrongResult }
+    print("Nested tuples carry runtime-only records, native closures, and owned results without importing provider types")
+
+    typealias OwnedTuple = (Int8, NativeSwiftValue, Int64)
+    typealias BorrowedTuple = (Int8, NativeSwiftBorrowedValue, Int64)
+    typealias AsyncBody = NativeSwiftClosure<nonisolated(nonsending) (BorrowedTuple) async throws -> OwnedTuple>
+    let transform = try await runtime.swiftFunction(
+        named: "ManagedSwiftFixtures.transformRuntimeTupleAsync<A>((Swift.Int8, A, Swift.Int64), nonisolated(nonsending) ((Swift.Int8, A, Swift.Int64)) async throws -> (Swift.Int8, A, Swift.Int64)) async throws -> (Swift.Int8, A, Swift.Int64)",
+        as: (nonisolated(nonsending) (OwnedTuple, AsyncBody) async throws -> OwnedTuple).self,
+        genericArguments: [.type(pairType)], in: source)
+    let copy: nonisolated(nonsending) @Sendable (BorrowedTuple) async throws -> OwnedTuple = { value in
+        await Task.yield()
+        guard try unsafe sumPair.unsafeInvoke(on: value.1) == 42 else { throw ConsumerError.wrongResult }
+        return (value.0 + 1, try value.1.copy(), value.2 + 1)
+    }
+    let resumed = try unsafe await transform.unsafeInvoke((11, pair, 90), AsyncBody(copy))
+    guard resumed.0 == 12, resumed.2 == 91, !pair.isConsumed,
+          try unsafe sumPair.unsafeInvoke(on: resumed.1) == 42 else { throw ConsumerError.wrongResult }
+    print("Async tuple callbacks copy borrowed native fields and return owned values after awaiting")
+
+    typealias Edit = NativeSwiftClosure<(NativeSwiftInout<Callback>) throws -> Void>
+    typealias EditPair = NativeSwiftClosure<(NativeSwiftInout<Callback>, NativeSwiftInout<Callback>) throws -> Int64>
+    let swap = try await runtime.swiftFunction(
+        named: "ManagedSwiftFixtures.swapRuntimeClosures<A>(inout (A) -> A, inout (A) -> A) -> ()",
+        as: ((NativeSwiftInout<Callback>, NativeSwiftInout<Callback>) -> Void).self,
+        genericArguments: [.type(Int64.self)], in: source)
+    let visit = try await runtime.swiftFunction(
+        named: "ManagedSwiftFixtures.visitRuntimeClosure<A>(inout (A) -> A, (inout (A) -> A) throws -> ()) throws -> ()",
+        as: ((NativeSwiftInout<Callback>, Edit) throws -> Void).self, genericArguments: [.type(Int64.self)], in: source)
+    let first = NativeSwiftInout(try Callback { $0 + 7 })
+    let second = NativeSwiftInout(try Callback { $0 * 2 })
+    try unsafe swap.unsafeInvoke(first, second)
+    guard try unsafe first.value.unsafeInvoke(21) == 42,
+          try unsafe second.value.unsafeInvoke(35) == 42 else { throw ConsumerError.wrongResult }
+    let replaceAndThrow = try Edit { value in
+        value.value = try Callback { $0 + 1 }
+        throw ConsumerError.callback("body")
+    }
+    do { try unsafe visit.unsafeInvoke(first, replaceAndThrow); throw ConsumerError.wrongResult }
+    catch let error as NativeSwiftError {
+        guard error.withUnderlyingError({ if case ConsumerError.callback("body") = $0 { return true }; return false }) else { throw error }
+    }
+    guard try unsafe first.value.unsafeInvoke(41) == 42,
+          try unsafe second.value.unsafeInvoke(35) == 42 else { throw ConsumerError.wrongResult }
+    print("Inout closures swap native contexts and publish replacements even when the callback throws")
+
+    let capture = try NativeSwiftClosure<(Callback) throws -> Int64> { value in
+        state.closure = value
+        return try unsafe value.unsafeInvoke(0)
+    }
+    _ = try unsafe nestedVisit.unsafeInvoke(capture)
+    guard let expired = state.closure else { throw ConsumerError.wrongResult }
+    do { _ = try expired.copy(); throw ConsumerError.wrongResult }
+    catch NativeSwiftBorrowError.expiredBorrow { }
+    let visitPair = try await runtime.swiftFunction(
+        named: "ManagedSwiftFixtures.visitRuntimeClosurePair<A>(inout (A) -> A, inout (A) -> A, (inout (A) -> A, inout (A) -> A) throws -> Swift.Int64) throws -> Swift.Int64",
+        as: ((NativeSwiftInout<Callback>, NativeSwiftInout<Callback>, EditPair) throws -> Int64).self,
+        genericArguments: [.type(Int64.self)], in: source)
+    for bodyFails in [false, true] {
+        let invalid = try EditPair { first, second in
+            first.value = try Callback { $0 + 100 }
+            second.value = state.closure!
+            if bodyFails { throw ConsumerError.callback("body") }
+            return 99
+        }
+        do { _ = try unsafe visitPair.unsafeInvoke(first, second, invalid); throw ConsumerError.wrongResult }
+        catch let error as NativeSwiftError {
+            let preservesErrors = error.withUnderlyingError { underlying in
+                let writeback: any Error
+                if bodyFails {
+                    guard let combined = underlying as? NativeSwiftWritebackError,
+                          case ConsumerError.callback("body") = combined.invocationError else { return false }
+                    writeback = combined.writebackError
+                } else { writeback = underlying }
+                if case ABIResolutionError.unsupportedDeclaration = writeback { return true }
+                return false
+            }
+            guard preservesErrors else { throw error }
+        }
+        guard try unsafe first.value.unsafeInvoke(41) == 42,
+              try unsafe second.value.unsafeInvoke(35) == 42 else { throw ConsumerError.wrongResult }
+    }
+    print("Failed closure writeback preserves both native slots and reports the callback and conversion failures")
+}

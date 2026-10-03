@@ -12,7 +12,44 @@ struct SwiftGenericParameters: Sendable {
     let groups: [Group]
     let hasPacks: Bool
     private let constants: [SwiftValueConstants]
-    var needsEncoding: Bool { hasPacks || constants.contains { !$0.isEmpty } }
+    var needsEncoding: Bool { hasPacks || arguments.contains { Self.expandedTuple($0) != nil } || constants.contains { !$0.isEmpty } }
+
+    static func expandedTuple(_ argument: SwiftGenericArgument) -> SwiftTupleValuePlan? {
+        argument.convention == .inoutValue ? nil : argument.tuple
+    }
+
+    private static func constants(for type: Any.Type, argument: SwiftGenericArgument) -> SwiftValueConstants {
+        if expandedTuple(argument) != nil { return SwiftValueConstants(Void.self) }
+        switch argument {
+        case .value(let layout, _):
+            return SwiftValueConstants(ABISwiftValueIsIndirect(layout.handle) ? Void.self : type)
+        case .runtimeValue(let plan, let convention, _):
+            return SwiftValueConstants(convention == .inoutValue || ABISwiftValueIsIndirect(plan.type.handle)
+                ? Void.self : plan.valueType.metadata)
+        case .convention(let codec):
+            if codec.convention == .inoutValue { return SwiftValueConstants(Void.self) }
+            return constants(for: (type as! any SwiftConventionArgument.Type).wrappedType, argument: codec.argument)
+        default: return SwiftValueConstants(type)
+        }
+    }
+
+    static func concreteArguments(signature: SwiftFunctionSignature, defaultConsuming: Bool = false) throws -> [SwiftGenericArgument] {
+        try signature.parameters.map { type in
+            if let convention = type as? any SwiftConventionArgument.Type {
+                let nested: SwiftGenericArgument
+                if let tuple = try SwiftGenericCallPlan.concreteTuple(convention.wrappedType) {
+                    nested = .tuple(tuple, consuming: convention.convention == .consuming, asynchronous: signature.isAsync)
+                } else if signature.isAsync, let closure = convention.wrappedType as? any SwiftClosureValue.Type {
+                    nested = .closure(try SwiftGenericClosurePlan.concrete(closure.swiftFunctionType), asynchronous: true)
+                } else { nested = .concrete }
+                return .convention(try convention.makeArgumentCodec(generic: nested))
+            }
+            if let tuple = try SwiftGenericCallPlan.concreteTuple(type) {
+                return .tuple(tuple, consuming: defaultConsuming, asynchronous: signature.isAsync)
+            }
+            return .concrete
+        }
+    }
 
     init(formal: [SwiftFormalType], actual: [Any.Type], binding: SwiftGenericBinding, defaultConsuming: Bool = false,
          asynchronous: Bool? = nil, callback: Bool = false) throws {
@@ -46,19 +83,14 @@ struct SwiftGenericParameters: Sendable {
         self.arguments = arguments
         self.groups = groups
         self.hasPacks = hasPacks
-        constants = zip(actual, arguments).map { type, argument in
-            if case .runtimeValue(let plan, let convention, _) = argument {
-                return SwiftValueConstants(convention == .inoutValue ? UnsafeRawPointer.self : plan.valueType.metadata)
-            }
-            return SwiftValueConstants(type)
-        }
+        constants = zip(actual, arguments).map { Self.constants(for: $0, argument: $1) }
     }
 
-    init(actual: [Any.Type], arguments: [SwiftGenericArgument]) {
+    init(actual: [Any.Type], arguments: [SwiftGenericArgument], groups: [Group]? = nil) {
         self.arguments = arguments
-        groups = actual.indices.map { .value($0) }
-        hasPacks = false
-        constants = actual.map(SwiftValueConstants.init)
+        self.groups = groups ?? actual.indices.map { .value($0) }
+        hasPacks = self.groups.contains { if case .pack = $0 { true } else { false } }
+        constants = zip(actual, arguments).map { Self.constants(for: $0, argument: $1) }
     }
 
     static func storageType(_ type: Any.Type) throws -> CValueType {
@@ -71,60 +103,114 @@ struct SwiftGenericParameters: Sendable {
     }
 
     func types(from logical: [CValueType]) -> [CValueType] {
-        groups.map {
+        groups.flatMap {
             switch $0 {
-            case .value(let index): logical[index]
-            case .pack(_, let type): type
+            case .value(let index): Self.expandedTuple(arguments[index])?.argumentTypes ?? [logical[index]]
+            case .pack(_, let type): [type]
             }
         }
     }
 
     struct Encoded {
         let addresses: [UnsafeMutableRawPointer?]
-        let packs: [NativeValueStorage]
+        let storage: [NativeValueStorage]
+        var consumed: [NativeValueStorage] = []
+
+        func finishInvocation() {
+            for value in consumed { value.relinquishValue() }
+        }
     }
 
-    func encode(_ logical: [UnsafeMutableRawPointer?]) -> Encoded {
-        guard needsEncoding else { return Encoded(addresses: logical, packs: []) }
+    func encode(_ logical: [UnsafeMutableRawPointer?], retaining owners: [NativeValueStorage] = [], consuming: Bool = false) -> Encoded {
+        guard needsEncoding else { return Encoded(addresses: logical, storage: []) }
         var packs: [NativeValueStorage] = []
-        let logical = zip(logical, constants).map { address, constants -> UnsafeMutableRawPointer? in
-            guard !constants.isEmpty, let address else { return address }
-            let storage = constants.copyStorage(from: address)
-            packs.append(storage)
-            return storage.address
-        }
-        let addresses = groups.map { group -> UnsafeMutableRawPointer? in
+        var consumed: [NativeValueStorage] = []
+        let addresses = groups.flatMap { group -> [UnsafeMutableRawPointer?] in
             switch group {
-            case .value(let index): return logical[index]
+            case .value(let index):
+                if let tuple = Self.expandedTuple(arguments[index]) {
+                    let encoded = tuple.encodeArguments(from: logical[index]!, retaining: owners.isEmpty ? nil : owners[index],
+                        consuming: consuming || arguments[index].convention == .consuming)
+                    packs += encoded.storage
+                    consumed += encoded.consumed
+                    return encoded.addresses
+                }
+                return [logical[index]]
             case .pack(let range, let type):
                 let storage = NativeValueStorage(size: type.size, alignment: type.alignment)
                 for (element, index) in range.enumerated() {
-                    storage.address.storeBytes(of: logical[index],
+                    let address: UnsafeMutableRawPointer?
+                    if let tuple = Self.expandedTuple(arguments[index]) {
+                        let consuming = consuming || arguments[index].convention == .consuming
+                        let value = tuple.materializeArgument(from: logical[index]!, consuming: consuming,
+                            retaining: owners.isEmpty ? nil : owners[index])
+                        packs.append(value)
+                        if consuming { consumed.append(value) }
+                        address = value.address
+                    } else { address = logical[index] }
+                    storage.address.storeBytes(of: address,
                         toByteOffset: element * MemoryLayout<UInt>.size, as: UnsafeMutableRawPointer?.self)
                 }
                 packs.append(storage)
-                return storage.address
+                return [storage.address]
             }
         }
-        return Encoded(addresses: addresses, packs: packs)
+        return Encoded(addresses: addresses, storage: packs, consumed: consumed)
     }
 
-    func encode(_ logical: UnsafePointer<UnsafeMutableRawPointer?>?) -> Encoded {
-        encode(Array(UnsafeBufferPointer(start: logical, count: arguments.count)))
+    func encode(_ logical: Encoded) -> Encoded {
+        let encoded = encode(logical.addresses)
+        return Encoded(addresses: encoded.addresses, storage: logical.storage + encoded.storage,
+                       consumed: logical.consumed + encoded.consumed)
     }
 
-    func unpack(_ native: UnsafePointer<UnsafeMutableRawPointer?>?) -> [UnsafeMutableRawPointer?] {
-        var arguments: [UnsafeMutableRawPointer?] = []
-        for (index, group) in groups.enumerated() {
+    func unpack(_ native: UnsafePointer<UnsafeMutableRawPointer?>?) -> Encoded {
+        var addresses: [UnsafeMutableRawPointer?] = []
+        var storage: [NativeValueStorage] = []
+        var index = 0
+        for group in groups {
             switch group {
-            case .value: arguments.append(native![index])
+            case .value(let logical):
+                if let tuple = Self.expandedTuple(arguments[logical]) {
+                    let unpacked = tuple.unpackArguments(native?.advanced(by: index))
+                    storage += unpacked.storage
+                    let vector = NativeValueStorage(size: tuple.leaves.count * MemoryLayout<UnsafeMutableRawPointer?>.stride,
+                        alignment: MemoryLayout<UnsafeMutableRawPointer?>.alignment)
+                    for element in tuple.leaves.indices {
+                        vector.address.storeBytes(of: unpacked.addresses[element],
+                            toByteOffset: element * MemoryLayout<UnsafeMutableRawPointer?>.stride, as: UnsafeMutableRawPointer?.self)
+                    }
+                    storage.append(vector)
+                    addresses.append(vector.address)
+                    index += tuple.argumentTypes.count
+                } else {
+                    let address = native![index]
+                    if let address, !constants[logical].isEmpty {
+                        let restored = constants[logical].copyStorage(from: address)
+                        storage.append(restored)
+                        addresses.append(restored.address)
+                    } else { addresses.append(address) }
+                    index += 1
+                }
             case .pack(let range, _):
                 for element in 0..<range.count {
-                    arguments.append(native![index]!.load(fromByteOffset: element * MemoryLayout<UInt>.size,
-                                                          as: UnsafeMutableRawPointer?.self))
+                    let value = native![index]!.load(fromByteOffset: element * MemoryLayout<UInt>.size,
+                                                    as: UnsafeMutableRawPointer?.self)
+                    if let tuple = Self.expandedTuple(arguments[range.lowerBound + element]) {
+                        let leaves = tuple.nativeArgumentAddresses(value!)
+                        let vector = NativeValueStorage(size: leaves.count * MemoryLayout<UnsafeMutableRawPointer?>.stride,
+                            alignment: MemoryLayout<UnsafeMutableRawPointer?>.alignment)
+                        for (position, address) in leaves.enumerated() {
+                            vector.address.storeBytes(of: address,
+                                toByteOffset: position * MemoryLayout<UnsafeMutableRawPointer?>.stride, as: UnsafeMutableRawPointer?.self)
+                        }
+                        storage.append(vector)
+                        addresses.append(vector.address)
+                    } else { addresses.append(value) }
                 }
+                index += 1
             }
         }
-        return arguments
+        return Encoded(addresses: addresses, storage: storage)
     }
 }

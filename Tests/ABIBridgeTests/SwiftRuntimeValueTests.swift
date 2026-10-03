@@ -53,6 +53,398 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
 @Suite struct SwiftRuntimeValueTests {
 
+    @Test func ordinaryRuntimeResultsRequireAnOwnedRepresentation() async throws {
+        let runtime = ABIRuntime.shared
+        await #expect(throws: ABIResolutionError.self) {
+            _ = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+                as: ((Int64) -> NativeSwiftBorrowedValue).self, genericArguments: [.type(Int64.self)])
+        }
+        typealias Producer = NativeSwiftClosure<() -> NativeSwiftBorrowedValue>
+        await #expect(throws: ABIResolutionError.self) {
+            _ = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeProducer<A>(A) -> () -> A",
+                as: ((Int64) -> Producer).self, genericArguments: [.type(Int64.self)])
+        }
+    }
+
+    @Test func composedTuplesUseNativeFieldLayoutsAndOwnership() async throws {
+        typealias Callback = NativeSwiftClosure<(Int64) -> Int64>
+        typealias Snapshot = (
+            lead: Int8, record: NativeSwiftValue,
+            nested: (callback: Callback, text: String, tail: Int8)
+        )
+        typealias BorrowedSnapshot = (
+            lead: Int8, record: NativeSwiftBorrowedValue,
+            nested: (callback: Callback, text: String, tail: Int8)
+        )
+        typealias Inspect = NativeSwiftClosure<(BorrowedSnapshot) throws -> Int64>
+        let runtime = ABIRuntime.shared
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair")
+        let abi = try NativeType.structure(named: type.name, fields: [.int64, .int64])
+        let abis = [type: abi]
+        let nativeSnapshot = "(lead: Swift.Int8, record: ManagedSwiftFixtures.RuntimeFixedPair, nested: (callback: (Swift.Int64) -> Swift.Int64, text: Swift.String, tail: Swift.Int8))"
+        let make = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeCompositionSnapshot(Swift.AnyObject, Swift.Int64, Swift.Int64, Swift.String) -> " + nativeSnapshot,
+            as: ((AnyObject, Int64, Int64, String) -> Snapshot).self, valueABIs: abis)
+        let echo = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.echoCompositionSnapshot(\(nativeSnapshot)) -> " + nativeSnapshot,
+            as: ((Snapshot) -> Snapshot).self, valueABIs: abis)
+        let consume = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.consumeCompositionSnapshot(__owned \(nativeSnapshot)) -> " + nativeSnapshot,
+            as: ((NativeSwiftConsuming<Snapshot>) -> Snapshot).self, valueABIs: abis)
+        let inspect = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.inspectCompositionSnapshot(\(nativeSnapshot), (\(nativeSnapshot)) throws -> Swift.Int64) throws -> Swift.Int64",
+            as: ((Snapshot, Inspect) throws -> Int64).self, valueABIs: abis)
+        let sum = try await type.method(named: "sum()", as: (() -> Int64).self, receiverABI: abi)
+        let text = String(repeating: "composed tuple ", count: 80)
+        let deaths = RuntimeValueDeaths()
+        #expect(MemoryLayout<NativeSwiftValue>.size != MemoryLayout<RuntimeFixedPair>.size)
+        do {
+            let life = RuntimeValueLife(deaths)
+            let snapshot = try unsafe make.unsafeInvoke(life, 35, 7, text)
+            let control = echoCompositionSnapshot(makeCompositionSnapshot(life, 35, 7, text))
+            let echoed = try unsafe echo.unsafeInvoke(snapshot)
+            #expect(echoed.lead == control.lead && echoed.nested.tail == control.nested.tail)
+            #expect(echoed.nested.text == control.nested.text)
+            #expect(try unsafe sum.unsafeInvoke(on: echoed.record) == control.record.sum())
+            #expect(try unsafe echoed.nested.callback.unsafeInvoke(3) == control.nested.callback(3))
+            #expect(!snapshot.record.isConsumed)
+            let body = try Inspect { value in
+                #expect(value.lead == 11 && value.nested.tail == -7 && value.nested.text == text)
+                return try unsafe sum.unsafeInvoke(on: value.record) + value.nested.callback.unsafeInvoke(0)
+            }
+            #expect(try unsafe inspect.unsafeInvoke(snapshot, body) == 84)
+            let moved = try unsafe consume.unsafeInvoke(NativeSwiftConsuming(echoed))
+            #expect(echoed.record.isConsumed && !snapshot.record.isConsumed)
+            #expect(moved.lead == 11 && moved.nested.tail == -7 && moved.nested.text == text)
+            #expect(try unsafe sum.unsafeInvoke(on: moved.record) == 42)
+            #expect(try unsafe moved.nested.callback.unsafeInvoke(0) == 42)
+            #expect(try unsafe echoed.nested.callback.unsafeInvoke(0) == 42)
+            #expect(deaths.count.withLock { $0 } == 0)
+        }
+        #expect(deaths.count.withLock { $0 } == 1)
+    }
+
+    @Test func wholeRuntimeTuplesUseSwiftStorageForCopyTakeAndInout() async throws {
+        let runtime = ABIRuntime.shared
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair")
+        let abi = try NativeType.structure(named: type.name, fields: [.int64, .int64])
+        let native = "(lead: Swift.Int8, record: ManagedSwiftFixtures.RuntimeFixedPair, nested: (callback: (Swift.Int64) -> Swift.Int64, text: Swift.String, tail: Swift.Int8))"
+        let make = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeCompositionSnapshot(Swift.AnyObject, Swift.Int64, Swift.Int64, Swift.String) -> " + native,
+            as: ((AnyObject, Int64, Int64, String) -> NativeSwiftValue).self, valueABIs: [type: abi])
+        let echo = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.echoCompositionSnapshot(\(native)) -> " + native,
+            as: ((NativeSwiftValue) -> NativeSwiftValue).self, valueABIs: [type: abi])
+        let copy = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+            as: ((NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: [.type(CompositionSnapshot.self)])
+        let mutate = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.mutateCompositionSnapshot(inout \(native), Swift.Int64) -> ()",
+            as: ((NativeSwiftInout<NativeSwiftValue>, Int64) -> Void).self, valueABIs: [type: abi])
+        let mutateBorrow = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.mutateCompositionSnapshot(inout \(native), Swift.Int64) -> ()",
+            as: ((NativeSwiftInout<NativeSwiftBorrowedValue>, Int64) -> Void).self, valueABIs: [type: abi])
+        typealias Edit = NativeSwiftClosure<(NativeSwiftBorrowedValue) throws -> Void>
+        let edit = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.editCompositionSnapshot(inout \(native), (inout \(native)) throws -> ()) throws -> ()",
+            as: ((NativeSwiftInout<NativeSwiftValue>, Edit) throws -> Void).self, valueABIs: [type: abi])
+        let deaths = RuntimeValueDeaths()
+        let captured = RuntimeCallbackValues()
+        do {
+            let original = try unsafe make.unsafeInvoke(RuntimeValueLife(deaths), 35, 7, "whole tuple")
+            let value = try unsafe echo.unsafeInvoke(original)
+            let copied = try unsafe copy.unsafeInvoke(value)
+            try copied.withCopy { value in
+                let tuple = try #require(value as? CompositionSnapshot)
+                #expect(tuple.nested.callback(3) == 45)
+                #expect(tuple.record.sum() == 42 && tuple.nested.text == "whole tuple")
+            }
+            let slot = NativeSwiftInout(value)
+            try unsafe mutate.unsafeInvoke(slot, 5)
+            let body = try Edit { value in
+                captured.borrowed = value
+                try unsafe mutateBorrow.unsafeInvoke(NativeSwiftInout(value), 7)
+                throw RuntimeRejectedArgument.Failure.rejected
+            }
+            do {
+                try unsafe edit.unsafeInvoke(slot, body)
+                Issue.record("Missing callback error")
+            } catch let error as NativeSwiftError {
+                #expect(error.withUnderlyingError { $0 is RuntimeRejectedArgument.Failure })
+            }
+            #expect(throws: NativeSwiftBorrowError.expiredBorrow) { try captured.borrowed!.copy() }
+            let changed = try slot.value.take(as: CompositionSnapshot.self)
+            let unchanged = try original.take(as: CompositionSnapshot.self)
+            #expect(changed.nested.callback(3) == 57 && changed.nested.tail == -9)
+            #expect(unchanged.nested.callback(3) == 45 && unchanged.nested.tail == -7)
+            #expect(deaths.count.withLock { $0 } == 0)
+        }
+        #expect(deaths.count.withLock { $0 } == 1)
+    }
+
+    @MainActor @Test func genericFunctionDataDoesNotRequireCallablePreparation() async throws {
+        typealias Value = @MainActor (Int64) -> Int64
+        let runtime = ABIRuntime.shared
+        let copy = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+            as: ((@escaping Value) -> NativeSwiftValue).self, genericArguments: [.type(Value.self)])
+        let first: Value = { $0 + 7 }
+        let value = try unsafe copy.unsafeInvoke(first)
+        let callable = try value.take(as: Value.self)
+        #expect(callable(35) == 42)
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeProducer<A>(A) -> () -> A",
+            as: ((@escaping Value) -> NativeSwiftClosure<() -> NativeSwiftValue>).self,
+            genericArguments: [.type(Value.self)])
+        let second: Value = { $0 + 9 }
+        let producer = try unsafe make.unsafeInvoke(second)
+        let returned = try unsafe producer.unsafeInvoke().take(as: Value.self)
+        #expect(returned(33) == 42)
+    }
+
+    @Test func nonescapingRuntimeClosureViewsUseScopedAdapters() async throws {
+        let runtime = ABIRuntime.shared
+        typealias Callback = NativeSwiftClosure<(Int64) -> Int64>
+        typealias Inspect = NativeSwiftClosure<(NativeSwiftBorrowedValue) throws -> Int64>
+        let invoke = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.invokeCompositionClosure((Swift.Int64) -> Swift.Int64, Swift.Int64) -> Swift.Int64",
+            as: ((NativeSwiftBorrowedValue, Int64) -> Int64).self)
+        let inspect = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.inspectCompositionClosure((Swift.Int64) -> Swift.Int64, ((Swift.Int64) -> Swift.Int64) throws -> Swift.Int64) throws -> Swift.Int64",
+            as: ((Callback, Inspect) throws -> Int64).self)
+        let captured = RuntimeCallbackValues()
+        let body = try Inspect { value in
+            captured.borrowed = value
+            #expect(throws: ABIResolutionError.self) { try value.copy() }
+            return try unsafe invoke.unsafeInvoke(value, 35)
+        }
+        #expect(try unsafe inspect.unsafeInvoke(Callback { $0 + 7 }, body) == 42)
+        #expect(throws: NativeSwiftBorrowError.expiredBorrow) { try unsafe invoke.unsafeInvoke(captured.borrowed!, 35) as Int64 }
+    }
+
+    @Test func closureInoutReabstractsSwapsAndWritesBackThrowingCallbacks() async throws {
+        typealias Callback = NativeSwiftClosure<(Int64) -> Int64>
+        typealias Edit = NativeSwiftClosure<(NativeSwiftInout<Callback>) throws -> Void>
+        let runtime = ABIRuntime.shared
+        let swap = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.swapRuntimeClosures<A>(inout (A) -> A, inout (A) -> A) -> ()",
+            as: ((NativeSwiftInout<Callback>, NativeSwiftInout<Callback>) -> Void).self,
+            genericArguments: [.type(Int64.self)])
+        let visit = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitRuntimeClosure<A>(inout (A) -> A, (inout (A) -> A) throws -> ()) throws -> ()",
+            as: ((NativeSwiftInout<Callback>, Edit) throws -> Void).self,
+            genericArguments: [.type(Int64.self)])
+        let first = NativeSwiftInout(try Callback { $0 + 7 })
+        let second = NativeSwiftInout(try Callback { $0 * 2 })
+        try unsafe swap.unsafeInvoke(first, second)
+        #expect(try unsafe first.value.unsafeInvoke(21) == 42)
+        #expect(try unsafe second.value.unsafeInvoke(35) == 42)
+        let unchanged: @Sendable (NativeSwiftInout<Callback>) throws -> Void = { value in
+            let result = try unsafe value.value.unsafeInvoke(21)
+            #expect(result == 42)
+        }
+        try unsafe visit.unsafeInvoke(first, Edit(unchanged))
+        #expect(try unsafe first.value.unsafeInvoke(21) == 42)
+        let change = try Edit { value in
+            value.value = try Callback { $0 + 1 }
+            throw RuntimeTicketFailure.rejected
+        }
+        do { try unsafe visit.unsafeInvoke(first, change); Issue.record("Missing callback error") }
+        catch let error as NativeSwiftError {
+            #expect(error.withUnderlyingError { $0 is RuntimeTicketFailure })
+        }
+        #expect(try unsafe first.value.unsafeInvoke(41) == 42)
+        #expect(try unsafe second.value.unsafeInvoke(35) == 42)
+    }
+
+    @Test(arguments: [false, true])
+    func failedClosureWritebackPreservesEverySlotAndBodyError(_ bodyFails: Bool) async throws {
+        typealias Callback = NativeSwiftClosure<(Int64) -> Int64>
+        typealias Capture = NativeSwiftClosure<(Callback) throws -> Int64>
+        typealias Edit = NativeSwiftClosure<(NativeSwiftInout<Callback>, NativeSwiftInout<Callback>) throws -> Int64>
+        let runtime = ABIRuntime.shared
+        let acquire = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitNestedClosure(((Swift.Int64) -> Swift.Int64) throws -> Swift.Int64) throws -> Swift.Int64",
+            as: ((Capture) throws -> Int64).self)
+        let saved = NestedRuntimePackCopies()
+        let capture: @Sendable (Callback) throws -> Int64 = { value in
+            saved.number = value
+            return try unsafe value.unsafeInvoke(0)
+        }
+        _ = try unsafe acquire.unsafeInvoke(Capture(capture))
+        let expired = try #require(saved.number)
+        #expect(throws: NativeSwiftBorrowError.expiredBorrow) { try expired.copy() }
+        let visit = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitRuntimeClosurePair<A>(inout (A) -> A, inout (A) -> A, (inout (A) -> A, inout (A) -> A) throws -> Swift.Int64) throws -> Swift.Int64",
+            as: ((NativeSwiftInout<Callback>, NativeSwiftInout<Callback>, Edit) throws -> Int64).self,
+            genericArguments: [.type(Int64.self)])
+        let first = NativeSwiftInout(try Callback { $0 + 7 })
+        let second = NativeSwiftInout(try Callback { $0 * 2 })
+        let deaths = RuntimeValueDeaths()
+        let change: @Sendable (NativeSwiftInout<Callback>, NativeSwiftInout<Callback>) throws -> Int64 = { first, second in
+            let life = RuntimeValueLife(deaths)
+            first.value = try Callback { value in withExtendedLifetime(life) { value + 100 } }
+            second.value = saved.number!
+            if bodyFails { throw RuntimeTicketFailure.rejected }
+            return 99
+        }
+        do {
+            _ = try unsafe visit.unsafeInvoke(first, second, Edit(change))
+            Issue.record("A failed closure replacement must not return the callback result")
+        } catch let error as NativeSwiftError {
+            if bodyFails {
+                let combined = try #require(error.withUnderlyingError { $0 as? NativeSwiftWritebackError })
+                #expect(combined.invocationError is RuntimeTicketFailure)
+                guard case ABIResolutionError.unsupportedDeclaration = combined.writebackError else {
+                    Issue.record(combined.writebackError)
+                    return
+                }
+            } else {
+                #expect(error.withUnderlyingError {
+                    if case ABIResolutionError.unsupportedDeclaration = $0 { return true }
+                    return false
+                })
+            }
+        }
+        #expect(try unsafe first.value.unsafeInvoke(35) == 42)
+        #expect(try unsafe second.value.unsafeInvoke(21) == 42)
+        #expect(deaths.count.withLock { $0 } == 1)
+    }
+
+    @MainActor @Test(arguments: [false, true])
+    func weakTupleFieldsPreserveWitnessesAcrossCallbacksAndSuspension(_ resilient: Bool) async throws {
+        typealias Owned = (Int8, NativeSwiftValue, Int64)
+        typealias Borrowed = (Int8, NativeSwiftBorrowedValue, Int64)
+        typealias Body = NativeSwiftClosure<(Borrowed) throws -> Owned>
+        typealias AsyncBody = NativeSwiftClosure<nonisolated(nonsending) (Borrowed) async throws -> Owned>
+        let runtime = ABIRuntime.shared
+        func make<Value>(_ value: Value) async throws -> NativeSwiftValue {
+            let factory = try await runtime.swiftFunction(
+                named: "ManagedSwiftFixtures.makeRuntimeProducer<A>(A) -> () -> A",
+                as: ((Value) -> NativeSwiftClosure<() -> NativeSwiftValue>).self,
+                genericArguments: [.type(Value.self)])
+            return try unsafe factory.unsafeInvoke(value).unsafeInvoke()
+        }
+        var object: NSObject? = NSObject()
+        weak var observed = object
+        let input: NativeSwiftValue
+        if resilient { input = try await make(RuntimeResilientWeakRecord(object, 42)) }
+        else { input = try await make(RuntimeWeakRecord(object, 42)) }
+        let abi = try NativeType.opaque(named: input.type.name)
+        let number = try await input.type.getter(named: "number", as: (() -> Int64).self, receiverABI: abi)
+        let hasObject = try await input.type.method(named: "hasObject()", as: (() -> Bool).self, receiverABI: abi)
+        let transform = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.transformRuntimeTuple<A>((Swift.Int8, A, Swift.Int64), ((Swift.Int8, A, Swift.Int64)) throws -> (Swift.Int8, A, Swift.Int64)) throws -> (Swift.Int8, A, Swift.Int64)",
+            as: ((Owned, Body) throws -> Owned).self, genericArguments: [.type(input.type)])
+        let copy: @Sendable (Borrowed) throws -> Owned = { value in
+            #expect(try unsafe number.unsafeInvoke(on: value.1) == 42)
+            return (value.0 + 1, try value.1.copy(), value.2 + 1)
+        }
+        let output = try unsafe transform.unsafeInvoke((11, input, 90), Body { try copy($0) })
+        #expect(output.0 == 12 && output.2 == 91 && !input.isConsumed)
+        #expect(try unsafe hasObject.unsafeInvoke(on: output.1))
+        let reject: @Sendable (Borrowed) throws -> Owned = { _ in throw RuntimeTicketFailure.rejected }
+        do {
+            _ = try unsafe transform.unsafeInvoke((11, input, 90), Body { try reject($0) })
+            Issue.record("Missing tuple callback error")
+        } catch let error as NativeSwiftError {
+            #expect(error.withUnderlyingError { $0 is RuntimeTicketFailure })
+        }
+        #expect(try unsafe hasObject.unsafeInvoke(on: input))
+
+        let pack = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.pairedPackGeneric<each A, B where A.shape == B.shape>(repeat (A, B)) -> (repeat (B, A))",
+            as: (((Void, NativeSwiftValue)) -> (NativeSwiftValue, Void)).self,
+            genericArguments: [.pack([.type(Void.self)]), .pack([.type(input.type)])])
+        let packed = try unsafe pack.unsafeInvoke(((), input))
+        #expect(try unsafe number.unsafeInvoke(on: packed.0) == 42)
+        #expect(try unsafe hasObject.unsafeInvoke(on: packed.0))
+        typealias PackBody = NativeSwiftClosure<(NativeSwiftBorrowedValue, Void) throws -> (NativeSwiftValue, Void)>
+        let transformPack = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.transformRuntimePack<each A>((repeat A) throws -> (repeat A), repeat A) throws -> (repeat A)",
+            as: ((PackBody, NativeSwiftValue, Void) throws -> (NativeSwiftValue, Void)).self,
+            genericArguments: [.pack([.type(input.type), .type(Void.self)])])
+        let packCopy: @Sendable (NativeSwiftBorrowedValue, Void) throws -> (NativeSwiftValue, Void) = { value, _ in
+            (try value.copy(), ())
+        }
+        let callbackPacked = try unsafe transformPack.unsafeInvoke(PackBody(packCopy), input, ())
+        #expect(try unsafe number.unsafeInvoke(on: callbackPacked.0) == 42)
+        #expect(try unsafe hasObject.unsafeInvoke(on: callbackPacked.0))
+
+        let asynchronous = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.transformRuntimeTupleAsync<A>((Swift.Int8, A, Swift.Int64), nonisolated(nonsending) ((Swift.Int8, A, Swift.Int64)) async throws -> (Swift.Int8, A, Swift.Int64)) async throws -> (Swift.Int8, A, Swift.Int64)",
+            as: (nonisolated(nonsending) (Owned, AsyncBody) async throws -> Owned).self,
+            genericArguments: [.type(input.type)])
+        let gate = AsyncGate()
+        let suspendedCopy: nonisolated(nonsending) @Sendable (Borrowed) async throws -> Owned = { value in
+            #expect(try unsafe hasObject.unsafeInvoke(on: value.1))
+            await gate.wait()
+            #expect(try unsafe number.unsafeInvoke(on: value.1) == 42)
+            #expect(try unsafe !hasObject.unsafeInvoke(on: value.1))
+            return (value.0 + 2, try value.1.copy(), value.2 + 2)
+        }
+        var resumedValue: Owned?
+        let task = Task { @MainActor in
+            resumedValue = try unsafe await asynchronous.unsafeInvoke((11, input, 90), AsyncBody { try await suspendedCopy($0) })
+        }
+        await gate.waitUntilSuspended()
+        #expect(observed != nil && !input.isConsumed)
+        object = nil
+        #expect(observed == nil)
+        await gate.open()
+        try await task.value
+        let resumed = try #require(resumedValue)
+        #expect(resumed.0 == 13 && resumed.2 == 92)
+        #expect(try unsafe number.unsafeInvoke(on: resumed.1) == 42)
+        for value in [input, output.1, resumed.1, packed.0, callbackPacked.0] {
+            #expect(try unsafe !hasObject.unsafeInvoke(on: value))
+        }
+    }
+
+    @MainActor @Test(arguments: [false, true])
+    func wholeRuntimeTuplesPreserveWeakAndMetatypeStorage(_ formalTuple: Bool) async throws {
+        typealias Element = (Int64.Type, RuntimeWeakRecord)
+        typealias Whole = (Int8, Element, Int64)
+        typealias Body = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftBorrowedValue) async throws -> NativeSwiftValue>
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+            as: ((Whole) -> NativeSwiftValue).self, genericArguments: [.type(Whole.self)])
+        let name = formalTuple
+            ? "ManagedSwiftFixtures.transformRuntimeTupleAsync<A>((Swift.Int8, A, Swift.Int64), nonisolated(nonsending) ((Swift.Int8, A, Swift.Int64)) async throws -> (Swift.Int8, A, Swift.Int64)) async throws -> (Swift.Int8, A, Swift.Int64)"
+            : "ManagedSwiftFixtures.callRuntimeThrowingAsyncCopy<A>(nonisolated(nonsending) (A) async throws -> A, A) async throws -> A"
+        var object: NSObject? = NSObject()
+        weak var observed = object
+        let control: Whole = (11, (Int64.self, RuntimeWeakRecord(object, 42)), 90)
+        let input = try unsafe make.unsafeInvoke(control)
+        let gate = AsyncGate()
+        let body = try Body { value in
+            await gate.wait()
+            let copy = try value.copy()
+            try copy.withCopy {
+                let tuple = try #require($0 as? Whole)
+                #expect(tuple.1.0 == Int64.self && tuple.1.1.object == nil && tuple.1.1.number == 42)
+            }
+            return copy
+        }
+        var result: NativeSwiftValue?
+        let task: Task<Void, any Error>
+        if formalTuple {
+            let call = try await runtime.swiftFunction(named: name,
+                as: (nonisolated(nonsending) (NativeSwiftValue, Body) async throws -> NativeSwiftValue).self,
+                genericArguments: [.type(Element.self)])
+            task = Task { @MainActor in result = try unsafe await call.unsafeInvoke(input, body) }
+        } else {
+            let call = try await runtime.swiftFunction(named: name,
+                as: (nonisolated(nonsending) (Body, NativeSwiftValue) async throws -> NativeSwiftValue).self,
+                genericArguments: [.type(Whole.self)])
+            task = Task { @MainActor in result = try unsafe await call.unsafeInvoke(body, input) }
+        }
+        await gate.waitUntilSuspended()
+        object = nil
+        #expect(observed == nil && !input.isConsumed)
+        await gate.open()
+        try await task.value
+        let output = try #require(result).take(as: Whole.self)
+        let original = try input.take(as: Whole.self)
+        #expect(output.0 == control.0 && output.2 == control.2)
+        #expect(output.1.0 == Int64.self && output.1.1.object == nil)
+        #expect(original.1.0 == Int64.self && original.1.1.object == nil)
+        #expect(output.1.1.number == control.1.1.number && original.1.1.number == control.1.1.number)
+    }
+
     @Test func explicitRuntimeValueABIsComposeAcrossCallbacksAndMembers() async throws {
         let runtime = ABIRuntime.shared
         let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair")

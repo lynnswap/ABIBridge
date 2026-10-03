@@ -59,16 +59,34 @@ extension Selector: NativePointerValue {
     static func fromRawPointer(_ pointer: UnsafeRawPointer) -> Any { unsafeBitCast(pointer, to: Selector.self) }
 }
 
+typealias SwiftWritebackPreparation = () throws -> (() -> Void)
+
+func finishSwiftInvocation<Output>(
+    _ outcome: Result<Output, any Error>, writeback: () throws -> Void
+) throws -> Output {
+    do {
+        try writeback()
+    } catch {
+        if case .failure(let invocationError) = outcome {
+            throw NativeSwiftWritebackError(invocationError: invocationError, writebackError: error)
+        }
+        throw error
+    }
+    return try outcome.get()
+}
+
 final class NativeValueStorage {
     let address: UnsafeMutableRawPointer
     private(set) var owner: AnyObject?
     private var destroyValue: ((UnsafeMutableRawPointer) -> Void)?
     private let ownsAllocation: Bool
     private let resultStorage: NativeValueStorage?
+    private var resources: [AnyObject] = []
     let codeLifetime: SwiftValueCodeLifetime?
     var ownerForResult: NativeValueStorage { resultStorage ?? self }
     private var didRelinquish: (() -> Void)?
     var transfersOwnership: Bool { didRelinquish != nil }
+    var prepareWriteback: SwiftWritebackPreparation?
 
     init(borrowing address: UnsafeMutableRawPointer, owner: AnyObject,
          retainingResourcesOf storage: NativeValueStorage? = nil, codeLifetime: SwiftValueCodeLifetime? = nil,
@@ -83,17 +101,19 @@ final class NativeValueStorage {
     }
 
     init(size: Int, alignment: Int, owner: AnyObject? = nil, codeLifetime: SwiftValueCodeLifetime? = nil,
+         didRelinquish: (() -> Void)? = nil,
          destroyingWith destroy: ((UnsafeMutableRawPointer) -> Void)? = nil) {
         address = .allocate(byteCount: max(size, 1), alignment: max(alignment, 1))
         address.initializeMemory(as: UInt8.self, repeating: 0, count: max(size, 1))
         self.owner = owner
+        self.didRelinquish = didRelinquish
         destroyValue = destroy
         resultStorage = nil
         self.codeLifetime = codeLifetime
         ownsAllocation = true
     }
     deinit {
-        withExtendedLifetime((owner, codeLifetime)) { destroyValue?(address) }
+        withExtendedLifetime((owner, codeLifetime, resources)) { destroyValue?(address) }
         if ownsAllocation { address.deallocate() }
     }
 
@@ -110,6 +130,10 @@ final class NativeValueStorage {
     func assumeInitialized(retaining owner: AnyObject? = nil, destroyingWith destroy: @escaping (UnsafeMutableRawPointer) -> Void) {
         if let owner { self.owner = owner }
         destroyValue = destroy
+    }
+
+    func retainResource(_ resource: AnyObject) {
+        resources.append(resource)
     }
 
     func take<Value: ~Copyable>(as type: Value.Type) -> Value {

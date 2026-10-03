@@ -117,30 +117,39 @@ public struct NativeSwiftClosure<Signature> {
         let signature = try SwiftFunctionSignature(Signature.self)
         let codeLifetime = SwiftValueCodeLifetime([])
         let factory = SwiftClosureBodyFactory(signature: Signature.self, synchronous: { plan, factory, owner in
-            let inputs = try SwiftCallbackValues(signature, arguments: plan?.parameters.arguments ?? [])
+            let parameters = try plan?.parameters ?? SwiftGenericParameters(actual: signature.parameters,
+                arguments: SwiftGenericParameters.concreteArguments(signature: signature))
+            let inputs = try SwiftCallbackValues(signature, arguments: parameters.arguments)
             let result = try SwiftCallbackResult<Result>(failure: Failure.self, generic: plan?.result ?? .concrete)
-            return SwiftThrowingClosureBody(retainingCode: owner, codeLifetime: codeLifetime, callbackFactory: factory) { native, output, errorOutput in
-                let unpacked = plan?.parameters.hasPacks == true ? plan?.parameters.unpack(native) : nil
+            return SwiftThrowingClosureBody(retainingCode: owner, codeLifetime: codeLifetime, callbackFactory: factory,
+                initializeResult: result.initializeNativeResult) { native, output, errorOutput in
+                let unpacked = parameters.needsEncoding ? parameters.unpack(native) : nil
                 func invoke(_ arguments: UnsafePointer<UnsafeMutableRawPointer?>?) -> Bool {
-                    let scope = inputs.makeScope(asynchronous: false)
+                    let scope = inputs.makeScope(asynchronous: false, arguments: arguments)
                     defer { withExtendedLifetime(scope) {} }
                     var index = 0
-                    func decode<Value>(_ type: Value.Type) -> Value {
+                    func decode<Value>(_ type: Value.Type) throws -> Value {
                         defer { index += 1 }
-                        return inputs.decode(arguments![index]!, at: index, scope: scope, as: type)
+                        return try inputs.decode(arguments![index]!, at: index, scope: scope, as: type)
                     }
-                    let values = (repeat decode((each Argument).self))
                     do {
-                        let value = try body(repeat each values)
-                        let convertedResult = plan?.makeCallbackResultStorage()
-                        try result.initialize(value, at: convertedResult?.address ?? output)
-                        return plan?.encodeCallbackResult(convertedResult, to: output, errorOutput: errorOutput) ?? false
+                        let values = (repeat try decode((each Argument).self))
+                        if scope?.hasWritebacks != true {
+                            try result.initialize(body(repeat each values), at: output)
+                            return false
+                        }
+                        let outcome = Swift.Result<(UnsafeMutableRawPointer) -> Void, any Error> {
+                            try result.prepare(body(repeat each values))
+                        }
+                        let initialize = try scope?.finishInvocation(outcome) ?? outcome.get()
+                        initialize(output)
+                        return false
                     } catch {
                         errorOutput!.initializeMemory(as: Failure.self, repeating: error as! Failure, count: 1)
                         return true
                     }
                 }
-                if let unpacked { return unpacked.withUnsafeBufferPointer { invoke($0.baseAddress) } }
+                if let unpacked { return withExtendedLifetime(unpacked) { unpacked.addresses.withUnsafeBufferPointer { invoke($0.baseAddress) } } }
                 return invoke(native)
             }
         })
@@ -226,7 +235,9 @@ extension NativeSwiftClosure: SwiftClosureValue {
             // Native copies retain only the closure's heap context. Forwarding keeps
             // implementation images alive until the final native copy is destroyed.
             let callback = try SwiftClosureContext(interface: prepared.interface, body: SwiftThrowingClosureBody(
-                retainingCode: original.codeOwner, codeLifetime: original.codeLifetime) { arguments, result, failure in
+                retainingCode: original.codeOwner, codeLifetime: original.codeLifetime,
+                initializeResult: swiftResultInitializer(nativeMetadata: generic?.nativeResult ?? signature.result,
+                    generic: generic?.result ?? .concrete)) { arguments, result, failure in
                 var didThrow = false
                 func invoke(_ arguments: UnsafePointer<UnsafeMutableRawPointer?>?) -> Bool {
                     if prepared.errorPlan != nil {
@@ -297,7 +308,8 @@ extension NativeSwiftClosure {
             return try factory.encode(plan: plan, retainingCode: (original.codeOwner, owner),
                 codeLifetime: original.codeLifetime)
         }
-        if plan.hasNestedClosures || prepared.closure?.hasNestedClosures == true {
+        if plan.hasNestedClosures || prepared.closure?.hasNestedClosures == true
+            || plan.hasTuples || prepared.closure?.hasTuples == true {
             let source = try prepared.closure ?? SwiftGenericClosurePlan.concrete(Signature.self)
             let adapter = try SwiftNativeClosureAdapter(source: source, target: plan)
             return adapter.encode(original.value, taking: false, escaping: false, retainingValue: original,
@@ -306,7 +318,8 @@ extension NativeSwiftClosure {
         if let native = prepared.closure { try native.validateNativeValues(for: plan) }
         else { try plan.validateCallbackConversion() }
         let callback = try SwiftClosureContext(interface: interface, body: SwiftThrowingClosureBody(
-            retainingCode: (original.codeOwner, owner), codeLifetime: original.codeLifetime) { arguments, output, error in
+            retainingCode: (original.codeOwner, owner), codeLifetime: original.codeLifetime,
+            initializeResult: swiftResultInitializer(nativeMetadata: plan.nativeResult, generic: plan.result)) { arguments, output, error in
             var didThrow = false
             let convertedResult = prepared.closure == nil ? plan.makeCallbackResultStorage() : nil
             let hostOutput = convertedResult?.address ?? output
@@ -331,6 +344,7 @@ extension NativeSwiftClosure {
                 success = withExtendedLifetime(decoded) { decoded.addresses.withUnsafeBufferPointer { invoke($0.baseAddress) } }
             } else { success = invoke(arguments) }
             precondition(success, "A prepared closure reabstraction must have a valid call frame.")
+            native?.finishInvocation()
             return didThrow || plan.encodeCallbackResult(convertedResult, to: output, errorOutput: error)
         })
         return try callback.storage(discriminator: plan.discriminator,

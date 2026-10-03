@@ -4,11 +4,18 @@ import Foundation
 final class SwiftThrowingClosureBody {
     let codeOwner: SwiftClosureCodeOwner?
     let callbackFactory: SwiftClosureBodyFactory?
+    let initializeResult: SwiftResultInitializer?
     let invoke: (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer, UnsafeMutableRawPointer?) -> Bool
     init(retainingCode codeOwner: Any? = nil, codeLifetime: SwiftValueCodeLifetime? = nil, callbackFactory: SwiftClosureBodyFactory? = nil,
+         initializeResult: SwiftResultInitializer? = nil,
          _ invoke: @escaping (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer, UnsafeMutableRawPointer?) -> Bool) {
         self.callbackFactory = callbackFactory
         self.codeOwner = SwiftClosureCodeOwner(codeOwner, codeLifetime: codeLifetime)
+        if let initialize = initializeResult {
+            self.initializeResult = { @Sendable offset, size, destination, source in
+                SwiftValueCodeLifetime.withCurrent(codeLifetime) { initialize(offset, size, destination, source) }
+            }
+        } else { self.initializeResult = nil }
         self.invoke = { arguments, result, error in
             SwiftValueCodeLifetime.withCurrent(codeLifetime) { invoke(arguments, result, error) }
         }
@@ -44,6 +51,11 @@ extension SwiftClosureCallbackOwner {
         functions.usesNativeContext = true
         functions.invoke = { context, arguments, result, error in
             Unmanaged<SwiftClosureContext>.fromOpaque(context!).takeUnretainedValue().body.invoke(arguments, result!, error)
+        }
+        functions.initializeResult = { context, offset, size, destination, source in
+            let body = Unmanaged<SwiftClosureContext>.fromOpaque(context!).takeUnretainedValue().body
+            if let initialize = body.initializeResult { initialize(offset, size, destination!, source!) }
+            else { destination!.copyMemory(from: source!, byteCount: size) }
         }
         functions.copyCodeOwner = { context in
             let owner = Unmanaged<SwiftClosureContext>.fromOpaque(context!).takeUnretainedValue().body.codeOwner

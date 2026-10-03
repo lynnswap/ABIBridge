@@ -224,6 +224,45 @@ public final class RuntimeFixedPairStore {
     body(value)
 }
 
+public typealias CompositionSnapshot = (
+    lead: Int8,
+    record: RuntimeFixedPair,
+    nested: (callback: (Int64) -> Int64, text: String, tail: Int8)
+)
+
+@inline(never) public func makeCompositionSnapshot(
+    _ object: AnyObject, _ first: Int64, _ second: Int64, _ text: String
+) -> CompositionSnapshot {
+    let record = RuntimeFixedPair(first, second)
+    return (11, record, ({ value in withExtendedLifetime(object) { value + record.sum() } }, text, -7))
+}
+
+@inline(never) public func echoCompositionSnapshot(_ value: CompositionSnapshot) -> CompositionSnapshot { value }
+
+@inline(never) public func consumeCompositionSnapshot(_ value: consuming CompositionSnapshot) -> CompositionSnapshot { value }
+
+@inline(never) public func inspectCompositionSnapshot(
+    _ value: CompositionSnapshot, _ body: (CompositionSnapshot) throws -> Int64
+) rethrows -> Int64 { try body(value) }
+
+@inline(never) public nonisolated(nonsending) func transformRuntimeTupleAsync<Value>(
+    _ value: (Int8, Value, Int64),
+    _ body: nonisolated(nonsending) ((Int8, Value, Int64)) async throws -> (Int8, Value, Int64)
+) async rethrows -> (Int8, Value, Int64) { try await body(value) }
+
+@inline(never) public func swapRuntimeClosures<Value>(
+    _ first: inout (Value) -> Value, _ second: inout (Value) -> Value
+) { swap(&first, &second) }
+
+@inline(never) public func visitRuntimeClosure<Value>(
+    _ value: inout (Value) -> Value, _ body: (inout (Value) -> Value) throws -> Void
+) rethrows { try body(&value) }
+
+@inline(never) public func visitRuntimeClosurePair<Value>(
+    _ first: inout (Value) -> Value, _ second: inout (Value) -> Value,
+    _ body: (inout (Value) -> Value, inout (Value) -> Value) throws -> Int64
+) rethrows -> Int64 { try body(&first, &second) }
+
 @inline(never) public func makeOpaqueUsingCallback(_ body: (Int64) -> Int64) -> some Equatable { body(41) }
 
 @inline(never) public nonisolated(nonsending) func visitOwnedNestedAsync<Value>(

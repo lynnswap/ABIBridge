@@ -189,13 +189,21 @@ private final class SwiftRuntimeValueAccess {
 struct SwiftRuntimeValuePlan: Sendable {
     let valueType: NativeSwiftType
     let type: CValueType
+    let nativeTuple: SwiftTupleValuePlan?
+    let nativeClosure: SwiftGenericClosurePlan?
+    private let closureConversions: SwiftRuntimeClosureConversions
+    var hasClosureConversions: Bool { !closureConversions.isEmpty }
     private let size: Int
     private let alignment: Int
     private let constants: SwiftValueConstants
 
-    init(metadata: Any.Type, type: CValueType, resolver: SymbolResolver, retaining images: [NativeImage]) throws {
+    init(metadata: Any.Type, type: CValueType, resolver: SymbolResolver, retaining images: [NativeImage],
+         nativeTuple: SwiftTupleValuePlan? = nil, nativeClosure: SwiftGenericClosurePlan? = nil) throws {
         self.type = type
-        constants = SwiftValueConstants(metadata)
+        self.nativeTuple = nativeTuple
+        self.nativeClosure = nativeClosure
+        closureConversions = try SwiftRuntimeClosureConversions(metadata: metadata, tuple: nativeTuple, closure: nativeClosure)
+        constants = SwiftValueConstants(ABISwiftValueIsIndirect(type.handle) ? Void.self : metadata)
         let pointer = unsafeBitCast(metadata, to: UnsafeRawPointer.self)
         let layout = ABISwiftGetValueLayout(pointer)
         size = layout.stride
@@ -229,13 +237,48 @@ struct SwiftRuntimeValuePlan: Sendable {
 
     // Callback preparation establishes Copyable and Escapable before publication.
     func copyCallbackArgument(from address: UnsafeRawPointer, type: NativeSwiftType) -> NativeSwiftValue {
+        NativeSwiftValue(storage: copyCallbackStorage(from: address, type: type), type: type)
+    }
+
+    func copyCallbackStorage(from address: UnsafeRawPointer, type: NativeSwiftType) -> NativeValueStorage {
+        let storage = copyStorage(from: address, type: type)
+        normalizeCallbackArgument(storage)
+        return storage
+    }
+
+    private func copyStorage(from address: UnsafeRawPointer, type: NativeSwiftType,
+                             retaining owner: AnyObject? = nil, codeLifetime: SwiftValueCodeLifetime? = nil,
+                             didRelinquish: (() -> Void)? = nil) -> NativeValueStorage {
         let storage = NativeValueStorage(size: size, alignment: alignment, owner: type,
-            codeLifetime: type.codeLifetime)
+            codeLifetime: codeLifetime ?? type.codeLifetime, didRelinquish: didRelinquish)
         ABISwiftCopyValue(unsafeBitCast(type.metadata, to: UnsafeRawPointer.self), storage.address, address)
-        storage.assumeInitialized {
+        storage.assumeInitialized(retaining: owner) {
             ABISwiftDestroyValue(unsafeBitCast(type.metadata, to: UnsafeRawPointer.self), $0)
         }
-        return NativeSwiftValue(storage: storage, type: type)
+        return storage
+    }
+
+    func normalizeCallbackArgument(_ storage: NativeValueStorage) {
+        closureConversions.apply(to: storage, native: false, retainingCode: valueType,
+                                 codeLifetime: storage.codeLifetime)
+    }
+
+    func prepareCallbackWriteback(from storage: NativeValueStorage, to nativeAddress: UnsafeMutableRawPointer) -> (() -> Void) {
+        let replacement = copyStorage(from: storage.address, type: valueType, retaining: storage, codeLifetime: storage.codeLifetime)
+        closureConversions.apply(to: replacement, native: true, retainingCode: valueType,
+                                 codeLifetime: replacement.codeLifetime)
+        return replaceValue(at: nativeAddress, with: replacement)
+    }
+
+    private func replaceValue(at address: UnsafeMutableRawPointer, with replacement: NativeValueStorage) -> (() -> Void) {
+        let metadata = unsafeBitCast(valueType.metadata, to: UnsafeRawPointer.self)
+        let previous = makeStorage()
+        return {
+            ABISwiftTakeValue(metadata, previous.address, address)
+            previous.assumeInitialized { ABISwiftDestroyValue(metadata, $0) }
+            ABISwiftTakeValue(metadata, address, replacement.address)
+            replacement.relinquishValue()
+        }
     }
 
     func takeCallbackArgument(from address: UnsafeMutableRawPointer, type: NativeSwiftType) -> NativeSwiftValue {
@@ -246,10 +289,14 @@ struct SwiftRuntimeValuePlan: Sendable {
         storage.assumeInitialized {
             ABISwiftDestroyValue(unsafeBitCast(type.metadata, to: UnsafeRawPointer.self), $0)
         }
+        normalizeCallbackArgument(storage)
         return NativeSwiftValue(storage: storage, type: type)
     }
 
-    func requireOwnedValue() throws {
+    func requireOwnedValue(as representation: Any.Type = NativeSwiftValue.self) throws {
+        guard representation != NativeSwiftBorrowedValue.self else {
+            throw ABIResolutionError.unsupportedDeclaration("A borrowed runtime result requires a scoped result lifetime.")
+        }
         guard SwiftEscapability.accepts(valueType.metadata) else {
             throw ABIResolutionError.unsupportedDeclaration("An owned runtime value requires an Escapable native type.")
         }
@@ -264,6 +311,7 @@ struct SwiftRuntimeValuePlan: Sendable {
         storage.assumeInitialized(retaining: retainedType) {
             ABISwiftDestroyValue(unsafeBitCast(retainedType.metadata, to: UnsafeRawPointer.self), $0)
         }
+        normalizeCallbackArgument(storage)
         return NativeSwiftValue(storage: storage, type: retainedType)
     }
 
@@ -285,8 +333,46 @@ struct SwiftRuntimeValuePlan: Sendable {
         guard compatible else {
             throw ABIInvocationError.incompatibleValue(expected: valueType.name, actual: actual.name)
         }
-        if let owned = value as? NativeSwiftValue { return try owned.access(convention) }
-        return try (value as! NativeSwiftBorrowedValue).borrow.access(
-            asynchronous: asynchronous, type: actual, convention: convention)
+        let access: NativeValueStorage
+        if let owned = value as? NativeSwiftValue { access = try owned.access(convention) }
+        else {
+            access = try (value as! NativeSwiftBorrowedValue).borrow.access(
+                asynchronous: asynchronous, type: actual, convention: convention)
+        }
+        guard hasClosureConversions else { return access }
+        let metadata = unsafeBitCast(valueType.metadata, to: UnsafeRawPointer.self)
+        // Conversion owns a copy until native invocation commits. Consuming that
+        // copy also ends the handle's original canonical value and exclusive access.
+        let native = copyStorage(from: access.address, type: valueType, retaining: access,
+            codeLifetime: access.codeLifetime, didRelinquish: convention == .consuming ? {
+                ABISwiftDestroyValue(metadata, access.address)
+                access.relinquishValue()
+            } : nil)
+        closureConversions.apply(to: native, native: true, retainingCode: valueType,
+                                 codeLifetime: native.codeLifetime)
+        if convention == .inoutValue {
+            let address = native.address
+            let lifetime = native.codeLifetime
+            native.prepareWriteback = {
+                let replacement = self.copyStorage(from: address, type: self.valueType, codeLifetime: lifetime)
+                self.normalizeCallbackArgument(replacement)
+                return self.replaceValue(at: access.address, with: replacement)
+            }
+        }
+        return native
+    }
+
+    func encodeArgument(_ value: Any, convention: SwiftArgumentConvention, asynchronous: Bool) throws -> NativeValueStorage {
+        let access = try encode(value, convention: convention, asynchronous: asynchronous)
+        guard convention != .inoutValue, let nativeTuple else { return access }
+        let addresses = nativeTuple.nativeArgumentAddresses(access.address)
+        let vector = NativeValueStorage(size: addresses.count * MemoryLayout<UnsafeMutableRawPointer?>.stride,
+            alignment: MemoryLayout<UnsafeMutableRawPointer?>.alignment, owner: access, codeLifetime: access.codeLifetime,
+            didRelinquish: convention == .consuming ? { access.relinquishValue() } : nil)
+        for (index, address) in addresses.enumerated() {
+            vector.address.storeBytes(of: address,
+                toByteOffset: index * MemoryLayout<UnsafeMutableRawPointer?>.stride, as: UnsafeMutableRawPointer?.self)
+        }
+        return vector
     }
 }
