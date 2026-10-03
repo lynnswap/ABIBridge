@@ -54,9 +54,11 @@ enum SwiftClosureCall {
     case asynchronous(SwiftAsyncClosureStorage, SwiftAsyncCall)
 
     case borrowed(resolve: (Bool) throws -> SwiftClosureCall, copy: () throws -> SwiftClosureCall)
+    case failure(any Error)
 
     func resolved(asynchronous: Bool = false) throws -> SwiftClosureCall {
         if case .borrowed(let resolve, _) = self { return try resolve(asynchronous) }
+        if case .failure(let error) = self { throw error }
         return self
     }
 
@@ -64,7 +66,7 @@ enum SwiftClosureCall {
         switch self {
         case .synchronous(let storage, _): storage.encoded()
         case .asynchronous(let storage, _): storage.encoded()
-        case .borrowed: try resolved().encoded()
+        case .borrowed, .failure: try resolved().encoded()
         }
     }
 }
@@ -75,8 +77,11 @@ enum SwiftClosureCall {
 /// a returned closure. Copies preserve its captured context, authenticated entry,
 /// and implementation images. The signature carries native errors and async
 /// effects; invocation can also throw bridge errors. Values are not assumed Sendable.
-/// A closure received as a callback input borrows that callback's scope. Saved
-/// copies throw NativeSwiftBorrowError.expiredBorrow after the callback returns.
+/// An ordinary closure callback input borrows that callback's scope. Saved copies
+/// throw NativeSwiftBorrowError.expiredBorrow after the callback returns.
+/// A NativeSwiftConsuming input owns its native context and may outlive the callback.
+/// If preparing that owned input fails, invocation, copy(), and passing the handle
+/// back to native code throw the preparation error; the incoming context is released.
 /// Use copy() during the callback to retain an input declared @escaping.
 /// Async callbacks must await operations on borrowed inputs before returning.
 /// See <doc:SwiftClosureValues>.
@@ -91,7 +96,7 @@ public struct NativeSwiftClosure<Signature> {
     /// the original borrow scope. Preparing native code ownership can also throw.
     public func copy() throws -> Self {
         if case .borrowed(_, let copy) = call { return Self(call: try copy()) }
-        return self
+        return Self(call: try call.resolved())
     }
 
     /// Creates a synchronous callback whose Sendable body may escape into native storage.
@@ -201,7 +206,7 @@ extension NativeSwiftClosure: SwiftClosureValue {
         switch resolved {
         case .synchronous(_, let prepared): native = prepared.closure
         case .asynchronous(_, let prepared): native = prepared.closure
-        case .borrowed: preconditionFailure("Resolving a borrow produces a native call.")
+        case .borrowed, .failure: preconditionFailure("Resolving a closure produces a native call.")
         }
         guard native == nil else {
             throw ABIResolutionError.signatureMismatch(.init(
@@ -291,6 +296,9 @@ extension NativeSwiftClosure: SwiftClosureValue {
                     (try makeValue(access.address.load(as: ABISwiftClosureValue.self), nil, false, lifetime) as! Self).call
                 }
             }))
+        }, taking: { value, lifetime in
+            do { return try makeValue(value, nil, true, lifetime) }
+            catch { return Self(call: .failure(error)) }
         }, makeValue: makeValue)
     }
 }

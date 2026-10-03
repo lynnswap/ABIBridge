@@ -257,3 +257,17 @@ guard try unsafe readTicket.unsafeInvoke(on: received) == 50 else { throw Consum
 do { try unsafe addTicket.unsafeInvoke(on: state.borrow!, Int64(1)); throw ConsumerError.wrongResult }
 catch NativeSwiftBorrowError.expiredBorrow { }
 print("Runtime inout callback views mutate noncopyable values and expire after native completion")
+
+
+typealias OwnedNested = NativeSwiftClosure<(NativeSwiftConsuming<NativeSwiftClosure<(Int64) -> Int64>>) -> Void>
+let deliverOwned = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.visitOwnedNested<A>(A, () -> (), (__owned (A) -> A) -> ()) -> ()",
+    as: ((Int64, NativeSwiftClosure<() -> Void>, OwnedNested) -> Void).self,
+    genericArguments: [.type(Int64.self)], in: source)
+state.text = "live"
+try unsafe deliverOwned.unsafeInvoke(42, NativeSwiftClosure { state.text = "destroyed" },
+    OwnedNested { state.closure = $0.value })
+guard try unsafe state.closure!.unsafeInvoke(0) == 42, state.text == "live" else { throw ConsumerError.wrongResult }
+state.closure = nil
+guard state.text == "destroyed" else { throw ConsumerError.wrongResult }
+print("Consuming nested closure inputs remain callable after delivery and release captures exactly once")

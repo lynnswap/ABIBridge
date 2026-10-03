@@ -270,12 +270,15 @@ struct SwiftCallbackValues: Sendable {
             }
         }
         if let closure = Value.self as? any SwiftClosureValue.Type {
-            guard !consuming else {
-                throw ABIResolutionError.unsupportedDeclaration("Consuming nested closures require an owned native callback input.")
-            }
             let codec: SwiftClosureCodec
             if case .closure(let plan) = generic { codec = try (closure as! any SwiftGenericClosureValue.Type).makeGenericClosureCodec(plan: plan) }
             else { codec = try closure.makeClosureCodec() }
+            if consuming {
+                guard let take = codec.takeValue else {
+                    throw ABIResolutionError.unsupportedDeclaration("This closure representation cannot own native callback inputs.")
+                }
+                return { address, _ in take(address.load(as: ABISwiftClosureValue.self), SwiftValueCodeLifetime.current) }
+            }
             guard let borrow = codec.borrowValue else {
                 throw ABIResolutionError.unsupportedDeclaration("This closure representation cannot borrow native callback inputs.")
             }

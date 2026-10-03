@@ -18,6 +18,7 @@ private final class RuntimeCallbackValues: @unchecked Sendable {
     var owned: NativeSwiftValue?
     var nested: NativeSwiftClosure<(NativeSwiftValue) -> NativeSwiftValue>?
     var predicate: NativeSwiftClosure<() -> Bool>?
+    var asyncText: NativeSwiftClosure<nonisolated(nonsending) (String) async -> String>?
 }
 
 private struct RuntimeCopyablePayload {
@@ -51,6 +52,113 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 }
 
 @Suite struct SwiftRuntimeValueTests {
+
+    @Test func consumingNestedInputsRemainOwnedAfterNonthrowingCallbacks() async throws {
+        let runtime = ABIRuntime.shared
+        typealias Copy = NativeSwiftClosure<(String) -> String>
+        typealias Body = NativeSwiftClosure<(NativeSwiftConsuming<Copy>) -> Void>
+        let visit = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitOwnedNested<A>(A, () -> (), (__owned (A) -> A) -> ()) -> ()",
+            as: ((String, NativeSwiftClosure<() -> Void>, Body) -> Void).self, genericArguments: [.type(String.self)])
+        let saved = NestedRuntimePackCopies()
+        let counts = ArgumentCounts()
+        let body = try Body { incoming in saved.text = incoming.value }
+        try unsafe visit.unsafeInvoke("captured owned value", NativeSwiftClosure { counts.destroyed() }, body)
+        #expect(counts.destructions == 0)
+        #expect(try unsafe saved.text!.unsafeInvoke("ignored") == "captured owned value")
+        do {
+            let copy = try saved.text!.copy()
+            saved.text = nil
+            #expect(try unsafe copy.unsafeInvoke("ignored") == "captured owned value")
+            #expect(counts.destructions == 0)
+        }
+        #expect(counts.destructions == 1)
+        typealias RuntimeCopy = NativeSwiftClosure<(NativeSwiftValue) -> NativeSwiftValue>
+        typealias RuntimeBody = NativeSwiftClosure<(NativeSwiftConsuming<RuntimeCopy>) -> Void>
+        let runtimeVisit = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitOwnedNested<A>(A, () -> (), (__owned (A) -> A) -> ()) -> ()",
+            as: ((String, NativeSwiftClosure<() -> Void>, RuntimeBody) -> Void).self, genericArguments: [.type(String.self)])
+        let captured = RuntimeCallbackValues()
+        try unsafe runtimeVisit.unsafeInvoke("runtime owned value", NativeSwiftClosure { counts.destroyed() },
+            RuntimeBody { captured.nested = $0.value })
+        let make = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+            as: ((String) -> NativeSwiftValue).self, genericArguments: [.type(String.self)])
+        let input = try unsafe make.unsafeInvoke("argument")
+        #expect(try unsafe captured.nested!.unsafeInvoke(input).take(as: String.self) == "runtime owned value")
+        captured.nested = nil
+        #expect(counts.destructions == 2)
+    }
+
+    @Test func consumingNestedInputsReleaseTheirCaptureWhenTheHostThrows() async throws {
+        typealias Copy = NativeSwiftClosure<(String) -> String>
+        typealias Body = NativeSwiftClosure<(NativeSwiftConsuming<Copy>) throws -> Void>
+        let visit = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.visitOwnedNestedThrowing<A>(A, () -> (), (__owned (A) -> A) throws -> ()) throws -> ()",
+            as: ((String, NativeSwiftClosure<() -> Void>, Body) throws -> Void).self, genericArguments: [.type(String.self)])
+        let counts = ArgumentCounts()
+        do {
+            try unsafe visit.unsafeInvoke("released", NativeSwiftClosure { counts.destroyed() },
+                Body { _ in throw RuntimeTicketFailure.rejected })
+            Issue.record("The native caller must receive the callback failure")
+        } catch let error as NativeSwiftError {
+            #expect(error.withUnderlyingError { $0 is RuntimeTicketFailure })
+        }
+        #expect(counts.destructions == 1)
+    }
+
+    @Test func consumingNestedAsyncInputsSurviveCallbackSuspensionAndReturn() async throws {
+        typealias Copy = NativeSwiftClosure<nonisolated(nonsending) (String) async -> String>
+        typealias Body = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftConsuming<Copy>) async -> Void>
+        let visit = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.visitOwnedNestedAsync<A>(A, () -> (), nonisolated(nonsending) (__owned nonisolated(nonsending) (A) async -> A) async -> ()) async -> ()",
+            as: (nonisolated(nonsending) (String, NativeSwiftClosure<() -> Void>, Body) async -> Void).self,
+            genericArguments: [.type(String.self)])
+        let counts = ArgumentCounts()
+        let saved = RuntimeCallbackValues()
+        let operation: nonisolated(nonsending) @Sendable (NativeSwiftConsuming<Copy>) async -> Void = { incoming in
+            await Task.yield()
+            saved.asyncText = incoming.value
+        }
+        try unsafe await visit.unsafeInvoke("async owned", NativeSwiftClosure { counts.destroyed() }, Body(operation))
+        #expect(counts.destructions == 0)
+        #expect(try unsafe await saved.asyncText!.unsafeInvoke("ignored") == "async owned")
+        saved.asyncText = nil
+        #expect(counts.destructions == 1)
+    }
+
+    @Test func nativeConsumingNestedClosuresReabstractOwnershipInBothDirections() async throws {
+        let runtime = ABIRuntime.shared
+        typealias Copy = NativeSwiftClosure<(Int64) -> Int64>
+        typealias Caller = NativeSwiftClosure<(NativeSwiftConsuming<Copy>, Int64) -> Int64>
+        let concreteFactory = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeConcreteOwnedNestedCaller()",
+            as: (() -> Caller).self)
+        let genericFactory = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeOwnedNestedRuntimeCaller<A>(A.Type) -> (__owned (A) -> A, A) -> A",
+            as: ((Int64.Type) -> Caller).self, genericArguments: [.type(Int64.self)])
+        let genericCall = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.callOwnedNestedRuntimeCaller<A>((__owned (A) -> A, A) -> A, A, () -> ()) -> A",
+            as: ((Caller, Int64, NativeSwiftClosure<() -> Void>) -> Int64).self, genericArguments: [.type(Int64.self)])
+        let concreteCall = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.callConcreteOwnedNestedCaller(_:_:_:)",
+            as: ((Caller, Int64, NativeSwiftClosure<() -> Void>) -> Int64).self)
+        let counts = ArgumentCounts()
+        let destroyed = try NativeSwiftClosure { counts.destroyed() }
+        #expect(try unsafe genericCall.unsafeInvoke(concreteFactory.unsafeInvoke(), 42, destroyed) == 42)
+        #expect(counts.destructions == 1)
+        #expect(try unsafe concreteCall.unsafeInvoke(genericFactory.unsafeInvoke(Int64.self), 43, destroyed) == 43)
+        #expect(counts.destructions == 2)
+        typealias AsyncCopy = NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>
+        typealias AsyncCaller = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftConsuming<AsyncCopy>, Int64) async -> Int64>
+        let asyncFactory = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeConcreteOwnedNestedAsyncCaller()",
+            as: (() -> AsyncCaller).self)
+        let asyncCall = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.callOwnedNestedRuntimeAsyncCaller<A>(nonisolated(nonsending) (__owned nonisolated(nonsending) (A) async -> A, A) async -> A, A, () -> ()) async -> A",
+            as: (nonisolated(nonsending) (AsyncCaller, Int64, NativeSwiftClosure<() -> Void>) async -> Int64).self,
+            genericArguments: [.type(Int64.self)])
+        #expect(try unsafe await asyncCall.unsafeInvoke(asyncFactory.unsafeInvoke(), 44, destroyed) == 44)
+        #expect(counts.destructions == 3)
+    }
+
     @Test func runtimeInoutCallbacksMutateNoncopyableNativeStorageAndExpire() async throws {
         let runtime = ABIRuntime.shared
         let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",

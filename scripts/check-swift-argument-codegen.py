@@ -81,6 +81,15 @@ def main():
             'makeRuntimeConsumer': '(@in τ_0_0) -> Int64',
             'visitConsumingRuntimeValueAsync': '@guaranteed Builtin.ImplicitActor, @in τ_0_0) -> (Int64, @error any Error)',
             'visitConsumingString': '(@owned String) -> Int64',
+            'visitOwnedNested': '(@owned @callee_guaranteed @substituted',
+            'visitOwnedNestedThrowing': '(@owned @callee_guaranteed @substituted',
+            'visitOwnedNestedAsync': '@owned @async @callee_guaranteed @substituted',
+            'makeConcreteOwnedNestedCaller': '(@owned @callee_guaranteed (Int64) -> Int64, Int64)',
+            'makeOwnedNestedRuntimeCaller': '(@owned @callee_guaranteed @substituted',
+            'callOwnedNestedRuntimeCaller': '(@owned @callee_guaranteed @substituted',
+            'callConcreteOwnedNestedCaller': '(@owned @callee_guaranteed (Int64) -> Int64, Int64)',
+            'makeConcreteOwnedNestedAsyncCaller': '@owned @async @callee_guaranteed',
+            'callOwnedNestedRuntimeAsyncCaller': '@owned @async @callee_guaranteed @substituted',
         }.items():
             identifier = str(len(name)) + name
             candidates = [line for line in sil.splitlines() if line.startswith('sil [noinline]') and identifier in line]

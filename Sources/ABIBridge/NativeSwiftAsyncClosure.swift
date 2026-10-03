@@ -312,6 +312,9 @@ extension NativeSwiftClosure {
                     (try makeValue(access.address.load(as: ABISwiftClosureValue.self), nil, false, lifetime) as! Self).call
                 }
             }))
+        }, taking: { value, lifetime in
+            do { return try makeValue(value, nil, true, lifetime) }
+            catch { return Self(call: .failure(error)) }
         }, makeValue: makeValue)
     }
 

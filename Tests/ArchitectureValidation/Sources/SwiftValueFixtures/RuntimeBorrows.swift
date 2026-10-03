@@ -185,3 +185,61 @@ private func makeNestedPackAnswer<each Value>(_ values: repeat each Value) -> (r
 @inline(never) public func makeRuntimeInoutReader<T: ~Copyable>(_ type: T.Type) -> (inout T) -> Int64 {
     { value in Int64(MemoryLayout<T>.size) }
 }
+@inline(never) public func visitOwnedNested<Value>(
+    _ value: Value, _ onDestroy: @escaping () -> Void,
+    _ body: (consuming @escaping (Value) -> Value) -> Void
+) {
+    let lifetime = RuntimeNestedClosureLifetime(onDestroy)
+    body { _ in withExtendedLifetime(lifetime) { value } }
+}
+
+@inline(never) public func visitOwnedNestedThrowing<Value>(
+    _ value: Value, _ onDestroy: @escaping () -> Void,
+    _ body: (consuming @escaping (Value) -> Value) throws -> Void
+) rethrows {
+    let lifetime = RuntimeNestedClosureLifetime(onDestroy)
+    try body { _ in withExtendedLifetime(lifetime) { value } }
+}
+
+public typealias OwnedNestedAsync<Value> = nonisolated(nonsending) (Value) async -> Value
+
+@inline(never) public nonisolated(nonsending) func visitOwnedNestedAsync<Value>(
+    _ value: Value, _ onDestroy: @escaping () -> Void,
+    _ body: nonisolated(nonsending) (consuming @escaping OwnedNestedAsync<Value>) async -> Void
+) async {
+    let lifetime = RuntimeNestedClosureLifetime(onDestroy)
+    await body { _ in await Task.yield(); return withExtendedLifetime(lifetime) { value } }
+}
+
+@inline(never) public func makeConcreteOwnedNestedCaller()
+    -> (consuming @escaping (Int64) -> Int64, Int64) -> Int64 { { callback, value in callback(value) } }
+
+@inline(never) public func makeOwnedNestedRuntimeCaller<Value>(_ type: Value.Type)
+    -> (consuming @escaping (Value) -> Value, Value) -> Value { { callback, value in callback(value) } }
+
+@inline(never) public func callOwnedNestedRuntimeCaller<Value>(
+    _ body: (consuming @escaping (Value) -> Value, Value) -> Value, _ value: Value, _ onDestroy: @escaping () -> Void
+) -> Value {
+    let lifetime = RuntimeNestedClosureLifetime(onDestroy)
+    return body({ _ in withExtendedLifetime(lifetime) { value } }, value)
+}
+
+@inline(never) public func callConcreteOwnedNestedCaller(
+    _ body: (consuming @escaping (Int64) -> Int64, Int64) -> Int64, _ value: Int64, _ onDestroy: @escaping () -> Void
+) -> Int64 {
+    let lifetime = RuntimeNestedClosureLifetime(onDestroy)
+    return body({ _ in withExtendedLifetime(lifetime) { value } }, value)
+}
+
+@inline(never) public func makeConcreteOwnedNestedAsyncCaller()
+    -> nonisolated(nonsending) (consuming @escaping OwnedNestedAsync<Int64>, Int64) async -> Int64 {
+    { callback, value in await Task.yield(); return await callback(value) }
+}
+
+@inline(never) public nonisolated(nonsending) func callOwnedNestedRuntimeAsyncCaller<Value>(
+    _ body: nonisolated(nonsending) (consuming @escaping OwnedNestedAsync<Value>, Value) async -> Value,
+    _ value: Value, _ onDestroy: @escaping () -> Void
+) async -> Value {
+    let lifetime = RuntimeNestedClosureLifetime(onDestroy)
+    return await body({ _ in await Task.yield(); return withExtendedLifetime(lifetime) { value } }, value)
+}

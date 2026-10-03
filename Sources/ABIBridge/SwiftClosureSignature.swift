@@ -157,17 +157,20 @@ struct SwiftClosureCodec: Sendable {
     let nativePlan: SwiftGenericClosurePlan?
     let encodeValue: (@Sendable (Any, Any?) throws -> NativeValueStorage)?
     let borrowValue: (@Sendable (SwiftValueBorrow, SwiftValueCodeLifetime?) -> Any)?
+    let takeValue: (@Sendable (ABISwiftClosureValue, SwiftValueCodeLifetime?) -> Any)?
     let makeValue: @Sendable (ABISwiftClosureValue, Any?, Bool, SwiftValueCodeLifetime?) throws -> Any
 
     init(type: CValueType, nativeValueTypes: [ObjectIdentifier] = [], nativePlan: SwiftGenericClosurePlan? = nil,
          encoding encodeValue: (@Sendable (Any, Any?) throws -> NativeValueStorage)? = nil,
          borrowing borrowValue: (@Sendable (SwiftValueBorrow, SwiftValueCodeLifetime?) -> Any)? = nil,
+         taking takeValue: (@Sendable (ABISwiftClosureValue, SwiftValueCodeLifetime?) -> Any)? = nil,
          makeValue: @escaping @Sendable (ABISwiftClosureValue, Any?, Bool, SwiftValueCodeLifetime?) throws -> Any) {
         self.type = type
         self.nativeValueTypes = nativeValueTypes
         self.nativePlan = nativePlan
         self.encodeValue = encodeValue
         self.borrowValue = borrowValue
+        self.takeValue = takeValue
         self.makeValue = makeValue
     }
 }
@@ -248,7 +251,7 @@ final class SwiftNativeClosureAdapter {
     }
     private let source: SwiftGenericClosurePlan
     private let target: SwiftGenericClosurePlan
-    private let arguments: [(index: Int, adapter: SwiftNativeClosureAdapter, escaping: Bool)]
+    private let arguments: [(index: Int, adapter: SwiftNativeClosureAdapter, escaping: Bool, consuming: Bool)]
     private let result: SwiftNativeClosureAdapter?
     private let entry: Entry
 
@@ -256,8 +259,9 @@ final class SwiftNativeClosureAdapter {
         try source.validateNativeValues(for: target)
         self.source = source; self.target = target
         arguments = try zip(source.parameters.arguments, target.parameters.arguments).enumerated().compactMap { index, pair in
-            guard case .closure(let expected) = pair.0, case .closure(let incoming) = pair.1 else { return nil }
-            return (index, try SwiftNativeClosureAdapter(source: incoming, target: expected), incoming.isEscaping)
+            guard let expected = pair.0.closure, let incoming = pair.1.closure else { return nil }
+            return (index, try SwiftNativeClosureAdapter(source: incoming, target: expected),
+                    incoming.isEscaping, pair.1.convention == .consuming)
         }
         if case .closure(let produced) = source.result, case .closure(let expected) = target.result {
             result = try SwiftNativeClosureAdapter(source: produced.nativePlan!, target: expected.nativePlan!)
@@ -335,10 +339,11 @@ final class SwiftNativeClosureAdapter {
         var storage: [NativeValueStorage] = []
         for argument in arguments {
             let value = addresses[argument.index]!.load(as: ABISwiftClosureValue.self)
-            let encoded = argument.adapter.encode(value, taking: false, escaping: argument.escaping,
+            let encoded = argument.adapter.encode(value, taking: argument.consuming, escaping: argument.escaping,
                 retainingCode: context.codeOwner, codeLifetime: context.codeLifetime)
             storage.append(encoded)
             addresses[argument.index] = encoded.address
+            if argument.consuming { encoded.relinquishValue() }
         }
         return (source.parameters.encode(addresses), storage)
     }

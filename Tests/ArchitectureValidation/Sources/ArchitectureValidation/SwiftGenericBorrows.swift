@@ -21,6 +21,8 @@ private final class GenericBorrowState: @unchecked Sendable {
     var object: AnyObject?
     var failure: (any Error)?
     var owned: NativeSwiftValue?
+    var ownedClosure: NativeSwiftClosure<(String) -> String>?
+    var ownedAsyncClosure: NativeSwiftClosure<nonisolated(nonsending) (String) async -> String>?
 }
 
 private enum GenericBorrowConversionError: Error { case converted }
@@ -312,5 +314,40 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     let typedBuffer = NativeSwiftInout("before")
     try unsafe typedInout.unsafeInvoke(typedBuffer, TypedInout { $0.value += " after" })
     try check(typedBuffer.value == "before after", "Known inout callback type authenticates and writes its buffer back")
+    typealias OwnedCopy = NativeSwiftClosure<(String) -> String>
+    typealias OwnedBody = NativeSwiftClosure<(NativeSwiftConsuming<OwnedCopy>) -> Void>
+    let ownedDelivery = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.visitOwnedNested<A>(A, () -> (), (__owned (A) -> A) -> ()) -> ()",
+        as: ((String, NativeSwiftClosure<() -> Void>, OwnedBody) -> Void).self, genericArguments: [.type(String.self)])
+    let ownedDeaths = GenericBorrowCounter()
+    try unsafe ownedDelivery.unsafeInvoke("owned captured", NativeSwiftClosure { ownedDeaths.increment() },
+        OwnedBody { state.ownedClosure = $0.value })
+    try check(try unsafe state.ownedClosure!.unsafeInvoke("ignored") == "owned captured" && ownedDeaths.count == 0,
+        "Consuming nested input retains its native context and authenticates after delivery")
+    state.ownedClosure = nil
+    try check(ownedDeaths.count == 1, "Consuming nested input releases its native capture once")
+    typealias OwnedAsyncCopy = NativeSwiftClosure<nonisolated(nonsending) (String) async -> String>
+    typealias OwnedAsyncBody = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftConsuming<OwnedAsyncCopy>) async -> Void>
+    let ownedAsyncDelivery = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.visitOwnedNestedAsync<A>(A, () -> (), nonisolated(nonsending) (__owned nonisolated(nonsending) (A) async -> A) async -> ()) async -> ()",
+        as: (nonisolated(nonsending) (String, NativeSwiftClosure<() -> Void>, OwnedAsyncBody) async -> Void).self,
+        genericArguments: [.type(String.self)])
+    let ownedOperation: nonisolated(nonsending) @Sendable (NativeSwiftConsuming<OwnedAsyncCopy>) async -> Void = { incoming in
+        await Task.yield()
+        state.ownedAsyncClosure = incoming.value
+    }
+    try unsafe await ownedAsyncDelivery.unsafeInvoke("owned async", NativeSwiftClosure { ownedDeaths.increment() }, OwnedAsyncBody(ownedOperation))
+    try check(try unsafe await state.ownedAsyncClosure!.unsafeInvoke("ignored") == "owned async",
+        "Consuming async nested input survives delivery and authenticates across suspension")
+    state.ownedAsyncClosure = nil
+    try check(ownedDeaths.count == 2, "Consuming async nested input releases its native capture once")
+    typealias OwnedNumber = NativeSwiftClosure<(Int64) -> Int64>
+    typealias OwnedCaller = NativeSwiftClosure<(NativeSwiftConsuming<OwnedNumber>, Int64) -> Int64>
+    let ownedFactory = try await runtime.swiftFunction(named: "SwiftValueFixtures.makeConcreteOwnedNestedCaller()", as: (() -> OwnedCaller).self)
+    let ownedCall = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.callOwnedNestedRuntimeCaller<A>((__owned (A) -> A, A) -> A, A, () -> ()) -> A",
+        as: ((OwnedCaller, Int64, NativeSwiftClosure<() -> Void>) -> Int64).self, genericArguments: [.type(Int64.self)])
+    try check(try unsafe ownedCall.unsafeInvoke(ownedFactory.unsafeInvoke(), 42, NativeSwiftClosure { ownedDeaths.increment() }) == 42
+        && ownedDeaths.count == 3, "Native consuming nested reabstraction authenticates and transfers exactly one owned context")
     return checks
 }

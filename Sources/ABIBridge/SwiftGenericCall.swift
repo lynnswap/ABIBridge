@@ -7,6 +7,14 @@ enum SwiftGenericArgument: Sendable {
     case closure(SwiftGenericClosurePlan)
     case runtimeValue(SwiftRuntimeValuePlan, convention: SwiftArgumentConvention, asynchronous: Bool)
 
+    var closure: SwiftGenericClosurePlan? {
+        switch self {
+        case .closure(let plan): plan
+        case .convention(let codec): codec.argument.closure
+        default: nil
+        }
+    }
+
     var runtimeValue: SwiftRuntimeValuePlan? {
         switch self {
         case .runtimeValue(let plan, _, _): plan
@@ -97,7 +105,7 @@ final class SwiftGenericClosurePlan: Sendable {
 
     var hasNestedClosures: Bool {
         if case .closure = result { return true }
-        return parameters.arguments.contains { if case .closure = $0 { true } else { false } }
+        return parameters.arguments.contains { $0.closure != nil }
     }
 
     static func concrete(_ type: Any.Type) throws -> SwiftGenericClosurePlan {
@@ -105,6 +113,13 @@ final class SwiftGenericClosurePlan: Sendable {
         func layout<Value>(_ type: Value.Type) throws -> CValueType { try SwiftArgumentCodec<Value>(defaultConsuming: false).type }
         let types = try signature.parameters.map { try _openExistential($0, do: layout) }
         let arguments = try signature.parameters.map { type -> SwiftGenericArgument in
+            if let convention = type as? any SwiftConventionArgument.Type {
+                let nested: SwiftGenericArgument
+                if let closure = convention.wrappedType as? any SwiftClosureValue.Type {
+                    nested = .closure(try concrete(closure.swiftFunctionType))
+                } else { nested = .concrete }
+                return .convention(try convention.makeArgumentCodec(generic: nested))
+            }
             guard let closure = type as? any SwiftClosureValue.Type else { return .concrete }
             return .closure(try concrete(closure.swiftFunctionType))
         }
@@ -182,7 +197,7 @@ final class SwiftGenericClosurePlan: Sendable {
     var nativeValueTypes: [ObjectIdentifier] {
         var result: [ObjectIdentifier] = []
         for argument in parameters.arguments {
-            if case .closure(let plan) = argument { result += plan.nativeValueTypes }
+            if let plan = argument.closure { result += plan.nativeValueTypes }
             else if let runtime = argument.runtimeValue { result.append(ObjectIdentifier(runtime.valueType.metadata)) }
         }
         if case .closure(let codec) = self.result { result += codec.nativeValueTypes }
@@ -214,7 +229,7 @@ final class SwiftGenericClosurePlan: Sendable {
             }
         }
         for (first, second) in zip(parameters.arguments, other.parameters.arguments) {
-            if case .closure(let first) = first, case .closure(let second) = second,
+            if let first = first.closure, let second = second.closure,
                !first.hasSameNativeABI(as: second) { return false }
         }
         if case .closure(let first) = result, case .closure(let second) = other.result {
@@ -231,7 +246,7 @@ final class SwiftGenericClosurePlan: Sendable {
             throw ABIResolutionError.signatureMismatch(.init(expected: "The closure's native argument ownership", found: []))
         }
         for (first, second) in zip(parameters.arguments, other.parameters.arguments) {
-            if case .closure(let expected) = first, case .closure(let incoming) = second {
+            if let expected = first.closure, let incoming = second.closure {
                 guard !expected.isEscaping || incoming.isEscaping else {
                     throw ABIResolutionError.signatureMismatch(.init(
                         expected: "An escaping nested closure accepted by the original native caller", found: ["A nonescaping input"]))
