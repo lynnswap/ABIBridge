@@ -104,10 +104,16 @@ final class SwiftClosureHost {
     }
 
     func resolved() throws -> SwiftClosureCall {
-        lock.lock(); defer { lock.unlock() }
-        if let native { return native }
-        let value = try prepare()
-        native = value
+        lock.lock()
+        let cached = native
+        lock.unlock()
+        if let cached { return cached }
+        // Custom value layouts can run client code and reenter preparation.
+        let prepared = try prepare()
+        lock.lock()
+        if native == nil { native = prepared }
+        let value = native!
+        lock.unlock()
         return value
     }
 }

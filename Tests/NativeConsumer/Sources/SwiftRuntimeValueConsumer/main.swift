@@ -293,3 +293,25 @@ let pairBody = try PairBody { value in
 guard try unsafe inspectPair.unsafeInvoke(pair, pairBody) == 42, pairABIs[pair.type] == pairABI else { throw ConsumerError.wrongResult }
 if let error = state.error { throw error }
 print("Explicit fixed Swift components compose runtime-only values and callbacks without importing their type")
+
+
+typealias ClosureData = NativeSwiftClosure<() -> Int64>
+let closureData = try ClosureData { Int64(42) }
+let copyClosureData = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.callRuntimeCopy<A>((A) -> A, A) -> A",
+    as: ((NativeSwiftClosure<(ClosureData) -> ClosureData>, ClosureData) -> ClosureData).self,
+    genericArguments: [.type(ClosureData.self)], in: source)
+let closureIdentity = try NativeSwiftClosure<(ClosureData) -> ClosureData> { $0 }
+let copiedClosureData = try unsafe copyClosureData.unsafeInvoke(closureIdentity, closureData)
+guard try unsafe copiedClosureData.unsafeInvoke() == 42 else { throw ConsumerError.wrongResult }
+typealias AsyncClosureDataReader = NativeSwiftClosure<nonisolated(nonsending) (ClosureData) async throws -> Int64>
+let readClosureData = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.visitRuntimeValueAsync<A where A: ~Swift.Copyable>(A, nonisolated(nonsending) (A) async throws -> Swift.Int64) async throws -> Swift.Int64",
+    as: (nonisolated(nonsending) (ClosureData, AsyncClosureDataReader) async throws -> Int64).self,
+    genericArguments: [.type(ClosureData.self)], in: source)
+let readClosureBody: nonisolated(nonsending) @Sendable (ClosureData) async throws -> Int64 = { value in
+    await Task.yield()
+    return try unsafe value.copy().unsafeInvoke()
+}
+guard try unsafe await readClosureData.unsafeInvoke(closureData, AsyncClosureDataReader(readClosureBody)) == 42 else { throw ConsumerError.wrongResult }
+print("Callbacks copy and return closure wrappers bound as native generic data, including after suspension")

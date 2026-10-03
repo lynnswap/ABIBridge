@@ -70,6 +70,28 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     try check(try unsafe echo.unsafeInvoke(pointer) == pointer, "Generic optional wrapper uses actual Swift storage rather than its foreign pointer conversion")
     try check(try unsafe echo.unsafeInvoke(nil) == nil, "Generic optional wrapper preserves nil")
 
+    typealias ClosureData = NativeSwiftClosure<() -> Int64>
+    let closureData = try ClosureData { Int64(42) }
+    let copyClosureData = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.callRuntimeCallbackCopy<A>((A) -> A, A) -> A",
+        as: ((NativeSwiftClosure<(ClosureData) -> ClosureData>, ClosureData) -> ClosureData).self,
+        genericArguments: [.type(ClosureData.self)])
+    let closureIdentity = try NativeSwiftClosure<(ClosureData) -> ClosureData> { $0 }
+    let copiedClosureData = try unsafe copyClosureData.unsafeInvoke(closureIdentity, closureData)
+    try check(try unsafe copiedClosureData.unsafeInvoke() == 42,
+        "Callbacks copy and return a closure wrapper bound as native generic data")
+    typealias AsyncClosureDataReader = NativeSwiftClosure<nonisolated(nonsending) (ClosureData) async throws -> Int64>
+    let readClosureData = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.visitRuntimeCallbackAsync<A where A: ~Swift.Copyable>(A, nonisolated(nonsending) (A) async throws -> Swift.Int64) async throws -> Swift.Int64",
+        as: (nonisolated(nonsending) (ClosureData, AsyncClosureDataReader) async throws -> Int64).self,
+        genericArguments: [.type(ClosureData.self)])
+    let readClosureBody: nonisolated(nonsending) @Sendable (ClosureData) async throws -> Int64 = { value in
+        await Task.yield()
+        return try unsafe value.copy().unsafeInvoke()
+    }
+    try check(try unsafe await readClosureData.unsafeInvoke(closureData, AsyncClosureDataReader(readClosureBody)) == 42,
+        "Async callbacks preserve owned closure wrappers used as generic data across suspension")
+
     let type = try await runtime.swiftType(named: "SwiftValueFixtures.BorrowedRuntimeRecord")
     let text = try await type.getter(named: "text", as: (() -> String).self, receiverABI: .opaque(named: type.name))
     let changed = try await type.getter(named: "changed", as: (() -> AnyObject?).self, receiverABI: .opaque(named: type.name))

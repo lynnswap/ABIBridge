@@ -510,10 +510,14 @@ struct NativeSwiftClosureTests {
         }
     }
 
-    @Test func rejectsFallibleCustomConversionsBeforePublishingACallback() {
-        #expect(throws: ABIResolutionError.self) {
-            try NativeSwiftClosure { (value: RejectingClosureArgument) in Int64(42) }
+    @Test func rejectsFallibleCustomConversionsBeforeInvokingACallback() throws {
+        let calls = ClosureCounter()
+        let callback = try NativeSwiftClosure { (value: RejectingClosureArgument) in
+            calls.increment()
+            return Int64(42)
         }
+        #expect(throws: ABIResolutionError.self) { try unsafe callback.unsafeInvoke(RejectingClosureArgument()) as Int64 }
+        #expect(calls.count == 0)
     }
 
     @Test func passesConcreteCallbackToNonescapingNativeParameter() async throws {

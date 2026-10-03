@@ -236,9 +236,6 @@ extension NativeSwiftClosure {
         asyncBody body: @escaping @Sendable (repeat each Argument) async throws(Failure) -> Result
     ) throws {
         let signature = try SwiftFunctionSignature(Signature.self)
-        let discriminator = try signature.closureDiscriminator()
-        let prepared = try SwiftAsyncCall(signature: Signature.self, errorPlan: signature.makeErrorPlan(),
-            inheritsCallerIsolation: signature.inheritsCallerIsolation)
         let codeLifetime = SwiftValueCodeLifetime([])
         let factory = SwiftClosureBodyFactory(signature: Signature.self, asynchronous: { plan, factory, owner in
             let inputs = try SwiftCallbackValues(signature, arguments: plan?.parameters.arguments ?? [])
@@ -269,18 +266,21 @@ extension NativeSwiftClosure {
                 }
             }
         })
-        let canonicalBody = try factory.asynchronous(plan: nil, retainingCode: nil)
         call = .host(SwiftClosureHost(factory: factory, codeLifetime: codeLifetime) {
+            let discriminator = try signature.closureDiscriminator()
+            let prepared = try SwiftAsyncCall(signature: Signature.self, errorPlan: signature.makeErrorPlan(),
+                inheritsCallerIsolation: signature.inheritsCallerIsolation)
+            let canonicalBody = try factory.asynchronous(plan: nil, retainingCode: nil)
             let context = try SwiftAsyncClosureContext(interface: prepared.interface, body: canonicalBody)
             return .asynchronous(try context.storage(discriminator: discriminator), prepared)
         })
     }
 
     static func makeAsyncClosureCodec(signature: SwiftFunctionSignature, generic: SwiftGenericClosurePlan? = nil) throws -> SwiftClosureCodec {
-        let discriminator = try signature.closureDiscriminator()
+        let discriminator = try generic?.discriminator ?? signature.closureDiscriminator()
         let prepared = try SwiftAsyncCall(signature: Signature.self,
-            errorPlan: generic?.convertsValues == true ? generic?.errorPlan : signature.makeErrorPlan(),
-            inheritsCallerIsolation: signature.inheritsCallerIsolation, closure: generic?.convertsValues == true ? generic : nil)
+            errorPlan: generic == nil ? signature.makeErrorPlan() : generic?.errorPlan,
+            inheritsCallerIsolation: signature.inheritsCallerIsolation, closure: generic)
         let interface: SwiftAsyncCallInterface
         if let generic {
             guard case .asynchronous(let original, _) = generic.transport else {
@@ -288,32 +288,27 @@ extension NativeSwiftClosure {
             }
             interface = original
         } else { interface = prepared.interface }
-        let borrowedCall = try generic.map { try SwiftAsyncCall(signature: Signature.self, errorPlan: $0.errorPlan,
-            inheritsCallerIsolation: signature.inheritsCallerIsolation, closure: $0) } ?? prepared
         let makeValue: @Sendable (ABISwiftClosureValue, Any?, Bool, SwiftValueCodeLifetime?) throws -> Any = { value, owner, taking, codeLifetime in
             if !taking { ABIRetainSwiftClosureContext(value.context) }
-            let original = try SwiftAsyncClosureStorage(adopting: value, discriminator: generic?.discriminator ?? discriminator,
+            let original = try SwiftAsyncClosureStorage(adopting: value, discriminator: discriminator,
                 retaining: owner, codeLifetime: codeLifetime)
             if ABIIsSwiftAsyncClosureCallbackFunction(original.entry.function) {
-                return Self(call: .asynchronous(original, borrowedCall))
+                return Self(call: .asynchronous(original, prepared))
             }
             let callback = try SwiftAsyncClosureContext(interface: prepared.interface,
                 body: SwiftAsyncClosureBody(inheritsCallerIsolation: signature.inheritsCallerIsolation,
                     retainingCode: original.codeOwner, codeLifetime: original.codeLifetime) { arguments, result, error in
-                    let encoded = prepared.closure == nil && generic?.parameters.needsEncoding == true
-                    ? generic!.parameters.encode(arguments) : nil
-                    let unusedError = prepared.errorPlan == nil ? generic?.errorPlan?.makeStorage() : nil
                     func prepare(_ arguments: UnsafePointer<UnsafeMutableRawPointer?>?) -> OpaquePointer? {
                         ABICreateSwiftAsyncInvocation(interface.handle, original.entry.function,
-                            original.entry.contextSize, result, arguments, original.value.context, error ?? unusedError?.address, nil)
+                            original.entry.contextSize, result, arguments, original.value.context, error, nil)
                     }
-                    let invocation = encoded.map { $0.addresses.withUnsafeBufferPointer { prepare($0.baseAddress) } } ?? prepare(arguments)
+                    let invocation = prepare(arguments)
                     precondition(invocation != nil, "The prepared async closure forwarding call must be valid.")
-                    defer { withExtendedLifetime((original, encoded, unusedError)) { ABIReleaseSwiftAsyncInvocation(invocation!) } }
+                    defer { withExtendedLifetime(original) { ABIReleaseSwiftAsyncInvocation(invocation!) } }
                     await invokeSwiftAsync(invocation!)
                     return ABISwiftAsyncInvocationDidThrow(invocation!)
                 })
-            return Self(call: .asynchronous(try callback.storage(discriminator: prepared.closure?.discriminator ?? discriminator,
+            return Self(call: .asynchronous(try callback.storage(discriminator: discriminator,
                 codeLifetime: original.codeLifetime), prepared))
         }
         let pointer = try CValueType(scalar: ABIValuePointer)
@@ -322,9 +317,9 @@ extension NativeSwiftClosure {
             Self(call: .borrowed(resolve: { asynchronous in
                 let access = try borrow.access(asynchronous: asynchronous, codeLifetime: lifetime)
                 let value = access.address.load(as: ABISwiftClosureValue.self)
-                let storage = try SwiftAsyncClosureStorage(adopting: value, discriminator: generic?.discriminator ?? discriminator,
+                let storage = try SwiftAsyncClosureStorage(adopting: value, discriminator: discriminator,
                     retaining: access, codeLifetime: lifetime, ownsContext: false)
-                return .asynchronous(storage, borrowedCall)
+                return .asynchronous(storage, prepared)
             }, copy: {
                 let access = try borrow.access(asynchronous: false, codeLifetime: lifetime)
                 guard generic?.isEscaping == true else {

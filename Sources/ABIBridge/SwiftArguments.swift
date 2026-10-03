@@ -52,7 +52,8 @@ struct SwiftArgumentCodec<Value>: Sendable {
             consumes = consuming || defaultConsuming
             encoding = .genericValue
         case .closure(let plan):
-            type = try SwiftValueCodec<Value>().type
+            let pointer = try CValueType(scalar: ABIValuePointer)
+            type = try CValueType(fields: [pointer, pointer])
             consumes = defaultConsuming
             encoding = .genericClosure(plan)
         case .runtimeValue(let plan, let convention, let asynchronous):

@@ -226,6 +226,7 @@ struct SwiftCallbackValues: Sendable {
         constants = signature.parameters.map(SwiftValueConstants.init)
         decoders = try signature.parameters.enumerated().map { index, type in
             let argument: SwiftGenericArgument = arguments.isEmpty ? .concrete : arguments[index]
+            if case .value = argument { return nil }
             if case .runtimeValue = argument {
                 if type == NativeSwiftBorrowedValue.self {
                     return try Self.decoder(for: NativeSwiftBorrowedValue.self, generic: argument, consuming: false)
@@ -235,7 +236,6 @@ struct SwiftCallbackValues: Sendable {
             if let convention = type as? any SwiftConventionArgument.Type {
                 let codec: SwiftConventionCodec
                 if case .convention(let prepared) = argument { codec = prepared }
-                else if case .value = argument { return nil }
                 else { codec = try convention.makeArgumentCodec(generic: argument) }
                 return try codec.prepareCallback()
             }
@@ -317,7 +317,8 @@ struct SwiftCallbackResult<Value>: Sendable {
     private let encode: (@Sendable (Any, Any?) throws -> NativeValueStorage)?
     init(failure: Any.Type, generic: SwiftGenericResult = .concrete) throws {
         if case .closure(let codec) = generic { encode = codec.encodeValue } else { encode = nil }
-        closure = Value.self is any SwiftClosureValue.Type
+        if case .value = generic { closure = false }
+        else { closure = Value.self is any SwiftClosureValue.Type }
         if closure && failure != (any Error).self {
             throw ABIResolutionError.unsupportedDeclaration("A host callback returning a closure requires throws(any Error) to report ownership and conversion failures.")
         }

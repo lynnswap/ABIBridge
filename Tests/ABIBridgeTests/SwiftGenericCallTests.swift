@@ -1016,6 +1016,39 @@ struct SwiftGenericCallTests {
         #expect(try unsafe returned.unsafeInvoke() == 42)
     }
 
+    @MainActor @Test func callbacksPreserveClosureWrappersUsedAsNativeGenericData() async throws {
+        typealias Value = NativeSwiftClosure<() -> Int64>
+        let runtime = ABIRuntime.shared
+        let input = try Value { Int64(42) }
+        let transform = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.transformGeneric<A, B>([A], (A) throws -> B) throws -> [B]",
+            as: (([Value], NativeSwiftClosure<(Value) throws -> Int64>) throws -> [Int64]).self,
+            genericArguments: [.type(Value.self), .type(Int64.self)])
+        let callback = try NativeSwiftClosure<(Value) throws -> Int64> { value in
+            try unsafe value.copy().unsafeInvoke()
+        }
+        #expect(try unsafe transform.unsafeInvoke([input], callback) == [42])
+
+        let copyForeignData = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.callRuntimeCopy<A>((A) -> A, A) -> A",
+            as: ((NativeSwiftClosure<(GenericPointerWrapper) -> GenericPointerWrapper>, GenericPointerWrapper) -> GenericPointerWrapper).self,
+            genericArguments: [.type(GenericPointerWrapper.self)])
+        let foreignIdentity = try NativeSwiftClosure<(GenericPointerWrapper) -> GenericPointerWrapper> { $0 }
+        let foreign = GenericPointerWrapper(pointer: try #require(UnsafeRawPointer(bitPattern: 0x1000)), marker: 42)
+        #expect(try unsafe copyForeignData.unsafeInvoke(foreignIdentity, foreign) == foreign)
+        #expect(throws: ABIResolutionError.self) { try unsafe foreignIdentity.unsafeInvoke(foreign) as GenericPointerWrapper }
+
+        let produce = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.runGeneric<A>(() -> A) -> A",
+            as: ((NativeSwiftClosure<() -> Value>) -> Value).self,
+            genericArguments: [.type(Value.self)])
+        let returned = try unsafe NativeSwiftClosure<() -> Value>.withUnsafeNonescaping({ input }) { body in
+            #expect(throws: ABIResolutionError.self) { try unsafe body.unsafeInvoke() as Value }
+            return try unsafe produce.unsafeInvoke(body)
+        }
+        #expect(try unsafe returned.unsafeInvoke() == 42)
+    }
+
     @Test func capturingCallbacksMatchCompilerGeneratedCalls() async throws {
         let runtime = ABIRuntime.shared
         let boolean = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.runGeneric<A>(() -> A) -> A",
