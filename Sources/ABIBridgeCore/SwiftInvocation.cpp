@@ -1446,7 +1446,16 @@ void *ABISwiftIncomingArgumentAddress(ABISwiftIncomingCall *call, size_t index) 
 bool ABISwiftIncomingReadArgument(ABISwiftIncomingCall *call, size_t index,
     void *output, size_t size, ABIResolutionFailure **error) {
     if (!checkIncoming(call, error)) return false;
-    if (index >= call->arguments.size() || size != call->interface.parameters[index]->size() || (size && !output)) {
+    const auto *interface = &call->interface;
+    size_t parameter = index;
+    if (call->asynchronous) {
+        const auto &async = *call->asynchronous;
+        interface = async.entry.get();
+        parameter += async.completion->resultLayout.indirect + async.completion->indirectResults.size()
+            + (async.inheritsCallerIsolation ? 2 : 0);
+    }
+    if (index >= call->arguments.size() || parameter >= interface->parameters.size()
+        || size != interface->parameters[parameter]->size() || (size && !output)) {
         fail(error, ABIFailureInvalidRequest, "The destination must match the selected Swift argument storage."); return false;
     }
     if (size) std::memcpy(output, call->arguments[index], size);
