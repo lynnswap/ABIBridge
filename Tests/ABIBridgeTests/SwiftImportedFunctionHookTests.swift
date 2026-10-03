@@ -9,6 +9,78 @@ import Testing
 @Suite(.serialized)
 struct SwiftImportedFunctionHookTests {
 
+    @Test func runtimeValuesNestedClosuresAndInoutComposeThroughHooks() async throws {
+        let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
+        @inline(never) public func runtimeHookEcho<Value>(_ value: Value) -> Value { value }
+        @inline(never) public func runtimeHookTuple(_ value: (Int64, () -> String)) -> (Int64, () -> String) { value }
+        @inline(never) public func runtimeHookEdit(_ value: inout String, _ suffix: consuming String) { value += suffix }
+        """, callerExtra: """
+        @inline(never) public func runtimeHookInteger(_ value: Int64) -> Int64 { runtimeHookEcho(value) }
+        @inline(never) public func runtimeHookNested(_ value: Int64, _ text: String) -> (Int64, String) {
+            let result = runtimeHookTuple((value, { text }))
+            return (result.0, result.1())
+        }
+        @inline(never) public func runtimeHookEdited(_ value: String) -> String {
+            var output = value
+            runtimeHookEdit(&output, " native")
+            return output
+        }
+        """)
+        defer { fixture.cleanup() }
+        let echo = try await fixture.runtime.swiftFunction(named: fixture.module + ".runtimeHookEcho(_:)",
+            as: ((NativeSwiftValue) -> NativeSwiftValue).self,
+            genericArguments: [.type(Int64.self)], in: fixture.providerScope)
+        let integer = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".runtimeHookInteger(_:)",
+            as: ((Int64) -> Int64).self, in: fixture.callerScope)
+        let saved = SavedRuntimeHookValues()
+        let first = try unsafe await echo.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { Issue.record($0) }) { call, value in
+                #expect(try value.withCopy { $0 as? Int64 } == 41)
+                saved.input = value
+                let result = try call.proceed(value)
+                saved.output = result
+                return result
+            }
+        defer { first.invalidate() }
+        #expect(try unsafe integer.unsafeInvoke(41) == 41)
+        #expect(try saved.input?.take(as: Int64.self) == 41)
+        #expect(saved.output?.isConsumed == true)
+        first.invalidate()
+
+        typealias Pair = (Int64, NativeSwiftClosure<() -> String>)
+        let tuple = try await fixture.runtime.swiftFunction(named: fixture.module + ".runtimeHookTuple(_:)",
+            as: ((Pair) -> Pair).self, in: fixture.providerScope)
+        let nested = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".runtimeHookNested(_:_:)",
+            as: ((Int64, String) -> (Int64, String)).self, in: fixture.callerScope)
+        let second = try unsafe await tuple.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { Issue.record($0) }) { call, value in
+                saved.borrowedClosure = value.1
+                saved.copiedClosure = try value.1.copy()
+                let result = try call.proceed((value.0 + 1, value.1))
+                return (result.0 + 1, result.1)
+            }
+        defer { second.invalidate() }
+        let text = String(repeating: "runtime hook ", count: 50)
+        let pair = try unsafe nested.unsafeInvoke(40, text)
+        #expect(pair.0 == 42 && pair.1 == text)
+        #expect(throws: NativeSwiftBorrowError.expiredBorrow) { try unsafe saved.borrowedClosure!.unsafeInvoke() }
+        #expect(try unsafe saved.copiedClosure!.unsafeInvoke() == text)
+        second.invalidate()
+
+        let edit = try await fixture.runtime.swiftFunction(named: fixture.module + ".runtimeHookEdit(_:_:)",
+            as: ((NativeSwiftInout<String>, NativeSwiftConsuming<String>) -> Void).self, in: fixture.providerScope)
+        let edited = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".runtimeHookEdited(_:)",
+            as: ((String) -> String).self, in: fixture.callerScope)
+        let third = try unsafe await edit.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { Issue.record($0) }) { call, value, suffix in
+                value.value += " before"
+                try call.proceed(value, NativeSwiftConsuming(suffix.value + " replacement"))
+                value.value += " after"
+            }
+        defer { third.invalidate() }
+        #expect(try unsafe edited.unsafeInvoke(text) == text + " before native replacement after")
+    }
+
     @Test func tuplePackClassArgumentsUseTheirPhysicalNativePositions() async throws {
         let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
         @inline(never) public func hookPlainTuplePack<each Value>(_ values: (repeat each Value, object: NSObject)) -> NSObject {
@@ -699,6 +771,13 @@ private struct SwiftHookDistinctABIValue: ABIBridgeValue {
         text = "foreign conversion"
     }
     static func nativeValue(from value: Self) throws -> NativeValue { try .init(copying: value.number, as: .int64) }
+}
+
+private final class SavedRuntimeHookValues: @unchecked Sendable {
+    var input: NativeSwiftValue?
+    var output: NativeSwiftValue?
+    var borrowedClosure: NativeSwiftClosure<() -> String>?
+    var copiedClosure: NativeSwiftClosure<() -> String>?
 }
 
 private enum SwiftHookTestFailure: Error { case afterProceed, timeout }

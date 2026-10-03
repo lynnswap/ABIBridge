@@ -79,13 +79,7 @@ public struct NativeSwiftMethodInvocation<Signature>: CustomStringConvertible {
     }
 
     private func invoke<Result, each Argument>(_ values: repeat each Argument) throws -> Result {
-        do {
-            return try frame.use { operation in
-                let storage = try prepared.encode(repeat each values, retainingCode: nil)
-                let result = try operation(storage)
-                return try prepared.decode(result, retaining: result, retainingCode: nil)
-            }
-        } catch let error as SwiftHookCompletedResultError { throw error.underlying }
+        try frame.invoke(prepared: prepared, repeat each values)
     }
 }
 
@@ -100,10 +94,11 @@ func prepareSwiftMethodHandler<Signature, Result, each Argument>(
     let description = hookDescription(declaration: declaration,
         signature: Signature.self, unnamed: "<Swift method>")
     return SwiftHookHandler(requiresMainActor: requiresMainActor, retaining: method, failure: onFailure) { frame, storage in
-        let values = try prepared.decodeArguments(storage)
         let call = NativeSwiftMethodInvocation<Signature>(frame: frame, prepared: prepared.call.values, receiverView: receiver,
             declaration: declaration, description: description)
-        return try prepared.result.encode(body(call, repeat each values))
+        return try prepared.invoke(storage) { (values: repeat each Argument) in
+            try body(call, repeat each values)
+        }
     }
 }
 

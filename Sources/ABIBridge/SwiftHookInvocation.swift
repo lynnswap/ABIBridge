@@ -35,6 +35,23 @@ final class SwiftHookFrame {
     func use<T>(_ body: (Operation) throws -> T) throws -> T {
         try body(current().invoke)
     }
+    func invoke<Result, each Argument>(prepared: SwiftCallValues, _ values: repeat each Argument) throws -> Result {
+        try use { operation in
+            let storage = try prepared.encode(repeat each values, retainingCode: nil)
+            let outcome = Swift.Result<Result, any Error> {
+                let result: NativeValueStorage
+                do { result = try operation(storage) }
+                catch let completed as SwiftHookCompletedResultError {
+                    prepared.relinquishConsumed(storage)
+                    throw completed.underlying
+                }
+                prepared.relinquishConsumed(storage)
+                return try prepared.decode(result, retaining: result, retainingCode: nil)
+            }
+            return try prepared.finishInvocation(outcome, storage: storage)
+        }
+    }
+
     func receiver<T>(_ body: (NativeValueStorage) throws -> T) throws -> T {
         guard let read = try current().receiver else {
             throw ABIResolutionError.unsupportedDeclaration("This invocation has no instance receiver.")
@@ -78,101 +95,159 @@ public struct NativeSwiftFunctionInvocation<Signature>: CustomStringConvertible 
     }
 
     private func invoke<Result, each Argument>(_ values: repeat each Argument) throws -> Result {
-        do {
-            return try frame.use { operation in
-                let storage = try prepared.encode(repeat each values, retainingCode: nil)
-                let result = try operation(storage)
-                return try prepared.decode(result, retaining: result, retainingCode: nil)
+        try frame.invoke(prepared: prepared, repeat each values)
+    }
+}
+
+// Recovery keeps native values in their declaration's representation. Callback
+// decoding and encoding remain shared with ordinary Swift closure callbacks.
+struct SwiftHookValueOperations: Sendable {
+    let copy: @Sendable (NativeValueStorage) throws -> NativeValueStorage
+    let destroy: @Sendable (UnsafeMutableRawPointer) -> Void
+
+    private init(copy: @escaping @Sendable (NativeValueStorage) throws -> NativeValueStorage,
+                 destroy: @escaping @Sendable (UnsafeMutableRawPointer) -> Void) {
+        self.copy = copy; self.destroy = destroy
+    }
+
+    init<Value>(_ host: Value.Type, result: SwiftGenericResult, type: CValueType) throws {
+        switch result {
+        case .runtimeValue(let plan): self.init(metadata: plan.valueType.metadata, type: type, makeStorage: { plan.makeStorage() })
+        case .tuple(let tuple): self.init(metadata: tuple.nativeMetadata, type: type, makeStorage: { tuple.makeResultStorage() })
+        default:
+            let codec: SwiftValueCodec<Value>
+            switch result {
+            case .value: codec = SwiftValueCodec(nativeStorage: type)
+            case .closure(let closure): codec = SwiftValueCodec(closure: closure)
+            default: codec = try SwiftValueCodec()
             }
-        } catch let error as SwiftHookCompletedResultError { throw error.underlying }
+            self.init(copy: { try codec.copyNativeStorage($0) }, destroy: { codec.destroyNativeValue(at: $0) })
+        }
+    }
+
+    private init(metadata: Any.Type, type: CValueType, makeStorage: @escaping @Sendable () -> NativeValueStorage) {
+        let constants = SwiftValueConstants(ABISwiftValueIsIndirect(type.handle) ? Void.self : metadata)
+        copy = { source in
+            guard SwiftCopyability.accepts(metadata) else { throw NativeSwiftValueError.noncopyableType }
+            let restored = constants.isEmpty ? nil : constants.copyStorage(from: source.address)
+            let result = makeStorage()
+            SwiftValueCodeLifetime.connect([source.codeLifetime, result.codeLifetime].compactMap { $0 }, retaining: [])
+            ABISwiftCopyValue(unsafeBitCast(metadata, to: UnsafeRawPointer.self), result.address, restored?.address ?? source.address)
+            result.assumeInitialized { ABISwiftDestroyValue(unsafeBitCast(metadata, to: UnsafeRawPointer.self), $0) }
+            return result
+        }
+        destroy = { address in
+            constants.initialize(at: address)
+            ABISwiftDestroyValue(unsafeBitCast(metadata, to: UnsafeRawPointer.self), address)
+        }
+    }
+
+    init(host: Any.Type, argument: SwiftGenericArgument, type: CValueType) throws {
+        if case .convention(let codec) = argument {
+            try self.init(host: (host as! any SwiftConventionArgument.Type).wrappedType,
+                          argument: codec.argument, type: type)
+            return
+        }
+        if let tuple = SwiftGenericParameters.expandedTuple(argument) {
+            self.init(copy: { source in
+                guard SwiftCopyability.accepts(tuple.nativeMetadata) else { throw NativeSwiftValueError.noncopyableType }
+                let value = tuple.materializeArgument(from: source.address, consuming: false, retaining: source)
+                let addresses = tuple.nativeArgumentAddresses(value.address)
+                let vector = NativeValueStorage(size: addresses.count * MemoryLayout<UnsafeMutableRawPointer?>.stride,
+                    alignment: MemoryLayout<UnsafeMutableRawPointer?>.alignment, owner: value, codeLifetime: value.codeLifetime,
+                    didRelinquish: { value.relinquishValue() })
+                for (index, address) in addresses.enumerated() {
+                    vector.address.storeBytes(of: address, toByteOffset: index * MemoryLayout<UnsafeMutableRawPointer?>.stride,
+                                               as: UnsafeMutableRawPointer?.self)
+                }
+                return vector
+            }, destroy: { source in
+                let addresses = source.assumingMemoryBound(to: UnsafeMutableRawPointer?.self)
+                for (index, leaf) in tuple.leaves.enumerated() {
+                    SwiftValueConstants(leaf.nativeType).initialize(at: addresses[index]!)
+                    ABISwiftDestroyValue(unsafeBitCast(leaf.nativeType, to: UnsafeRawPointer.self), addresses[index]!)
+                }
+            })
+            return
+        }
+        if let runtime = argument.runtimeValue {
+            self.init(metadata: runtime.valueType.metadata, type: type, makeStorage: { runtime.makeStorage() })
+            return
+        }
+        if argument.closure != nil || host is any SwiftClosureValue.Type {
+            self.init(copy: { SwiftClosureStorage.copy($0.address.load(as: ABISwiftClosureValue.self), retaining: $0, codeLifetime: $0.codeLifetime) },
+                      destroy: { SwiftClosureStorage.destroy($0) })
+            return
+        }
+        let result: SwiftGenericResult = if case .value = argument { .value(type) } else { .concrete }
+        func prepare<Value>(_ value: Value.Type) throws -> Self { try Self(value, result: result, type: type) }
+        self = try _openExistential(host, do: prepare)
     }
 }
 
 struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
-    let result: SwiftValueCodec<Result>
-    private let resultType: CValueType
-    private let initializeResult: SwiftResultInitializer
-    let arguments: (repeat SwiftValueCodec<each Argument>)
+    private let callbackValues: SwiftCallbackValues
+    private let callbackResult: SwiftCallbackResult<Result>
+    private let argumentOperations: [SwiftHookValueOperations]
+    private let resultOperations: SwiftHookValueOperations
     let call: SwiftCall
     init(call: SwiftCall? = nil) throws {
         let call = try call ?? SwiftCall(signature: ((repeat each Argument) -> Result).self)
         self.call = call
-        let declaration = call.generic
-        if let declaration {
-            let convertsResult: Bool
-            switch declaration.result {
-            case .runtimeValue: convertsResult = true
-            case .closure(let codec): convertsResult = codec.nativePlan?.convertsValues == true
-            case .tuple(let tuple): convertsResult = tuple.needsConversion
-            default: convertsResult = false
-            }
-            guard !convertsResult, !declaration.arguments.contains(where: { $0.runtimeValue != nil || $0.tuple?.needsConversion == true }) else {
-                throw ABIResolutionError.unsupportedDeclaration("Managed hooks require declaration-based runtime value conversion; use direct invocation.")
-            }
+        // The hook dispatcher owns error recovery even for a nonthrowing native
+        // entry, so every conversion error has a host-side reporting channel.
+        let signature = try SwiftFunctionSignature(((repeat each Argument) throws -> Result).self)
+        callbackValues = try SwiftCallbackValues(signature, arguments: call.parameters.arguments,
+                                                 consumingArguments: call.values.arguments.map(\.consumes))
+        callbackResult = try SwiftCallbackResult(failure: (any Error).self, generic: call.generic?.result ?? .concrete)
+        resultOperations = try SwiftHookValueOperations(Result.self, result: call.generic?.result ?? .concrete,
+                                                        type: call.values.result.type)
+        argumentOperations = try zip(signature.parameters, call.parameters.arguments).enumerated().map {
+            try SwiftHookValueOperations(host: $0.element.0, argument: $0.element.1, type: call.values.arguments[$0.offset].type)
         }
-        for type in repeat (each Argument).self {
-            if type is any SwiftClosureValue.Type {
-                // A native nonescaping closure can carry a stack context that
-                // cannot be retained as an owned closure value.
-                throw ABIResolutionError.unsupportedDeclaration(
-                    "Incoming Swift closure hook arguments require a scoped nonescaping representation."
-                )
-            }
-        }
-        switch declaration?.result {
-        case .value, .tuple: result = SwiftValueCodec(nativeStorage: call.values.result.type)
-        case .closure(let codec): result = SwiftValueCodec(closure: codec)
-        default: result = try SwiftValueCodec()
-        }
-        initializeResult = result.initializeNativeResult
-        // An opaque result can use indirect native return storage even when its
-        // known payload has an ordinary scalar or reference representation.
-        resultType = call.values.result.type
-        var index = 0
-        func codec<Value>(_ type: Value.Type) throws -> SwiftValueCodec<Value> {
-            defer { index += 1 }
-            switch call.parameters.arguments[index] {
-            case .value, .tuple: return SwiftValueCodec(nativeStorage: call.values.arguments[index].type)
-            default: return try SwiftValueCodec()
-            }
-        }
-        arguments = (repeat try codec((each Argument).self))
     }
-    func decodeArguments(_ storage: [NativeValueStorage]) throws -> (repeat each Argument) {
-        var index = 0
-        func decode<T>(_ codec: SwiftValueCodec<T>) throws -> T {
-            defer { index += 1 }
-            if let tuple = SwiftGenericParameters.expandedTuple(call.parameters.arguments[index]) {
-                let materialized = tuple.materializeArgument(from: storage[index].address, consuming: false)
-                return try codec.copy(from: materialized, retaining: materialized)
-            }
-            return try codec.copy(from: storage[index], retaining: storage[index])
+
+    func invoke(_ storage: [NativeValueStorage], body: (repeat each Argument) throws -> Result) throws -> NativeValueStorage {
+        let inputs = try zip(storage, call.values.arguments).enumerated().map { index, pair in
+            pair.1.consumes ? try argumentOperations[index].copy(pair.0) : pair.0
         }
-        return (repeat try decode(each arguments))
+        let addresses: [UnsafeMutableRawPointer?] = inputs.map(\.address)
+        let scope = addresses.withUnsafeBufferPointer { callbackValues.makeScope(asynchronous: false, arguments: $0.baseAddress) }
+        for (input, argument) in zip(inputs, call.values.arguments) where argument.consumes { input.relinquishValue() }
+        return try withExtendedLifetime(inputs) {
+            let outcome = Swift.Result<NativeValueStorage, any Error> {
+                var index = 0
+                func decode<Value>(_ type: Value.Type) throws -> Value {
+                    defer { index += 1 }
+                    return try callbackValues.decode(inputs[index].address, at: index, scope: scope, as: type)
+                }
+                let value = try body(repeat try decode((each Argument).self))
+                let initialize = try callbackResult.prepare(value)
+                let result = call.values.result.makeStorage()
+                initialize(result.address)
+                result.assumeInitialized { resultOperations.destroy($0) }
+                return result
+            }
+            return try scope?.finishInvocation(outcome) ?? outcome.get()
+        }
     }
+
     func erased(consumingArguments: Bool, receiver: SwiftReceiverPlan? = nil, errorPlan: SwiftErrorPlan? = nil,
                 retaining owner: any Sendable) throws -> SwiftHookSignature {
-        var types: [CValueType] = [], identities: [ObjectIdentifier] = [ObjectIdentifier(Result.self)]
-        types = call.values.arguments.map(\.type)
+        var identities: [ObjectIdentifier] = [ObjectIdentifier(Result.self)]
         for type in repeat (each Argument).self { identities.append(ObjectIdentifier(type)) }
-        return try SwiftHookSignature(result: resultType, arguments: types, identities: identities,
-            consumesArguments: consumingArguments, receiver: receiver, errorPlan: errorPlan,
+        return try SwiftHookSignature(result: call.values.result.type, arguments: call.values.arguments.map(\.type), identities: identities,
+            consumesArguments: consumingArguments, consumedArguments: call.values.arguments.map(\.consumes), receiver: receiver, errorPlan: errorPlan,
             parameters: call.parameters, generic: call.generic, interface: call.interface,
             owner: owner, cloneArguments: { storage in
-                let values = try decodeArguments(storage)
-                return try call.values.encode(repeat each values, retainingCode: call.generic)
-            }, cloneResult: { try result.copyNativeStorage($0) }, destroyResult: { result.destroyNativeValue(at: $0) },
-            initializeResult: initializeResult,
+                try zip(storage, call.values.arguments).enumerated().map { index, pair in
+                    pair.1.consumes ? try argumentOperations[index].copy(pair.0) : pair.0
+                }
+            }, cloneResult: resultOperations.copy, destroyResult: resultOperations.destroy,
+            initializeResult: callbackResult.initializeNativeResult,
             destroyArguments: { addresses in
-                var index = 0
-                for codec in repeat each arguments {
-                    if let tuple = SwiftGenericParameters.expandedTuple(call.parameters.arguments[index]) {
-                        let vector = addresses[index]!.assumingMemoryBound(to: UnsafeMutableRawPointer?.self)
-                        for (leaf, address) in zip(tuple.leaves, UnsafeBufferPointer(start: vector, count: tuple.leaves.count)) {
-                            ABISwiftDestroyValue(unsafeBitCast(leaf.nativeType, to: UnsafeRawPointer.self), address!)
-                        }
-                    } else { codec.destroyNativeValue(at: addresses[index]!) }
-                    index += 1
+                for (index, argument) in call.values.arguments.enumerated() where argument.consumes {
+                    argumentOperations[index].destroy(addresses[index]!)
                 }
             })
     }
@@ -183,6 +258,7 @@ final class SwiftHookSignature: @unchecked Sendable {
     let arguments: [CValueType]
     let identities: [ObjectIdentifier]
     let consumesArguments: Bool
+    let consumedArguments: [Bool]
     let explicitArgumentCount: Int
     let receiver: SwiftReceiverPlan?
     let errorPlan: SwiftErrorPlan?
@@ -198,7 +274,7 @@ final class SwiftHookSignature: @unchecked Sendable {
     let destroyResult: (UnsafeMutableRawPointer) -> Void
     let initializeResult: SwiftResultInitializer?
     let destroyArguments: (UnsafeBufferPointer<UnsafeMutableRawPointer?>) -> Void
-    init(result: CValueType, arguments: [CValueType], identities: [ObjectIdentifier], consumesArguments: Bool,
+    init(result: CValueType, arguments: [CValueType], identities: [ObjectIdentifier], consumesArguments: Bool, consumedArguments: [Bool],
          receiver: SwiftReceiverPlan?, errorPlan: SwiftErrorPlan? = nil,
          parameters: SwiftGenericParameters? = nil, generic: SwiftGenericCallPlan? = nil, interface: SwiftCallInterface? = nil,
          owner: any Sendable, cloneArguments: @escaping ([NativeValueStorage]) throws -> [NativeValueStorage],
@@ -215,7 +291,7 @@ final class SwiftHookSignature: @unchecked Sendable {
         self.parameters = parameters; self.generic = generic
         metadataMatches = try generic?.hookMetadataArguments() ?? []
         classMatches = try generic?.hookClassArguments() ?? []
-        self.consumesArguments = consumesArguments; self.owner = owner
+        self.consumesArguments = consumesArguments; self.consumedArguments = consumedArguments; self.owner = owner
         self.receiver = receiver
         self.errorPlan = errorPlan
         self.cloneArguments = cloneArguments; self.cloneResult = cloneResult
@@ -307,7 +383,7 @@ final class SwiftHookSignature: @unchecked Sendable {
         return values
     }
     func proceed(_ call: OpaquePointer, arguments: [NativeValueStorage]) throws -> NativeValueStorage {
-        var values = consumesArguments ? try cloneArguments(arguments) : Array(arguments.prefix(explicitArgumentCount))
+        var values = try cloneArguments(Array(arguments.prefix(explicitArgumentCount)))
         if let receiver, receiver.mode == .value {
             let value = arguments[explicitArgumentCount]
             values.append(receiver.isConsuming ? try receiver.codec.clone(value) : value)
@@ -341,7 +417,7 @@ final class SwiftHookSignature: @unchecked Sendable {
         guard ok else { throw consumeNativeCallFailure(error) }
         invoked = true
         encoded?.finishInvocation()
-        if consumesArguments { for value in values.prefix(explicitArgumentCount) { value.relinquishValue() } }
+        for (value, consumes) in zip(values, consumedArguments) where consumes { value.relinquishValue() }
         if receiver?.isConsuming == true && receiver?.mode == .value { values[explicitArgumentCount].relinquishValue() }
         consumedValue?.relinquishValue()
         let bytes = NativeValueStorage(borrowing: ABISwiftIncomingResultAddress(call)!, owner: self)
@@ -369,11 +445,9 @@ final class SwiftHookSignature: @unchecked Sendable {
     }
 
     func destroyConsumedInputs(context: UnsafeRawPointer?, arguments: UnsafeBufferPointer<UnsafeMutableRawPointer?>) {
-        if consumesArguments {
-            let logical = parameters?.unpack(arguments.baseAddress)
-            if let logical { logical.addresses.withUnsafeBufferPointer(destroyArguments) }
-            else { destroyArguments(arguments) }
-        }
+        let logical = parameters?.unpack(arguments.baseAddress)
+        if let logical { logical.addresses.withUnsafeBufferPointer(destroyArguments) }
+        else { destroyArguments(arguments) }
         guard let receiver, receiver.isConsuming else { return }
         switch receiver.mode {
         case .object:

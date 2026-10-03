@@ -491,40 +491,6 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
     }
 
 
-    @Test func runtimeValueHooksFailBeforePreparingNativeSlots() async throws {
-        let runtime = ABIRuntime.shared
-        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair")
-        let abi = try NativeType.structure(named: type.name, fields: [.int64, .int64])
-        let abis = [type: abi]
-        let make = try await runtime.swiftFunction(
-            named: "ManagedSwiftFixtures.makeRuntimeFixedPair(Swift.Int64, Swift.Int64) -> ManagedSwiftFixtures.RuntimeFixedPair",
-            as: ((Int64, Int64) -> NativeSwiftValue).self, valueABIs: abis)
-        let missingImporter = ImageSelector.installName("ABIBridge-missing-hook-importer")
-        do {
-            _ = try await unsafe make.hookImportedCalls(in: missingImporter, onFailure: { Issue.record($0) }) { call, first, second in
-                try call.proceed(first, second)
-            }
-            Issue.record("Runtime result conversion requires a declaration-aware hook")
-        } catch ABIResolutionError.unsupportedDeclaration { }
-        let storeType = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPairStore")
-        let getter = try await storeType.getter(named: "value", as: (() -> NativeSwiftValue).self, valueABIs: abis)
-        do {
-            _ = try await unsafe getter.hookImportedCalls(in: missingImporter, onFailure: { Issue.record($0) }) { call in
-                try call.proceed()
-            }
-            Issue.record("Runtime member result conversion requires a declaration-aware hook")
-        } catch ABIResolutionError.unsupportedDeclaration { }
-        let setter = try await storeType.setter(named: "value", as: NativeSwiftValue.self, valueABIs: abis)
-        do {
-            _ = try await unsafe setter.hookVirtualCalls(onFailure: { Issue.record($0) }) { call, value in
-                try call.proceed(value)
-            }
-            Issue.record("Runtime member input conversion requires a declaration-aware hook")
-        } catch ABIResolutionError.unsupportedDeclaration { }
-        let value = try unsafe make.unsafeInvoke(35, 7)
-        let sum = try await type.method(named: "sum()", as: (() -> Int64).self, receiverABI: abi)
-        #expect(try unsafe sum.unsafeInvoke(on: value) == 42)
-    }
 
     @Test func ownershipWrappersPreserveNativeGenericClosureData() async throws {
         typealias Value = NativeSwiftClosure<() -> Int64>
