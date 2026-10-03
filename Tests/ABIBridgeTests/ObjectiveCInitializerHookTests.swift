@@ -20,6 +20,33 @@ struct ObjectiveCInitializerHookTests {
     let selector = "initWithMode:value:object:"
     typealias Signature = (Int, Int, NSObject?) -> ABIManagedInitializerFixture?
 
+    @Test(arguments: ["success", "before", "after"])
+    func consumedInitializerArgumentsBalanceTransformedAndFailedPaths(_ stage: String) throws {
+        let fixture = ABIOwnershipFixture()
+        let fixtureOwner = InitBox(fixture)
+        let failures = InitBox(0), observations = InitBox(0)
+        let hook = try unsafe runtime.hookInitializer(on: ABIConsumedInitializerFixture.self,
+            selector: "initConsuming:", as: ((NSObject?) -> ABIConsumedInitializerFixture).self,
+            options: .init(consumedArguments: [0]),
+            onFailure: { _ in failures.update { $0 += 1 } },
+            transformingArguments: { _ in
+                if stage == "before" { throw InitFailure.deliberate }
+                return fixtureOwner.read().copyObject()
+            }, before: { _ in observations.update { $0 += 1 } },
+            after: { _ in if stage == "after" { throw InitFailure.deliberate } })
+        defer { hook.invalidate() }
+        weak var observed: NSObject?
+        autoreleasepool {
+            let value = fixture.copyObject()
+            observed = value
+            let result = ABIConsumedInitializerFixture(consuming: value)
+            withExtendedLifetime(result) { #expect(observed === value) }
+        }
+        #expect(observed == nil && fixture.liveResults == 0)
+        #expect(failures.read() == (stage == "success" ? 0 : 1))
+        #expect(observations.read() == 1)
+    }
+
     @Test func sameNilAndReplacementResultsBalanceIncomingOwnership() throws {
         let observedValues = InitBox<[Int?]>([])
         let hook = try unsafe runtime.hookInitializer(on: ABIManagedInitializerFixture.self, selector: selector,

@@ -260,6 +260,115 @@ struct ObjectiveCInvocationTests {
         }
     }
 
+    @Test(arguments: ["bound", "message", "captured"])
+    func consumedObjectArgumentsKeepCallerOwnership(_ path: String) throws {
+        let fixture = ABIOwnershipFixture()
+        let options = NativeMethodOptions(consumedArguments: [0])
+        let signature = ((NSObject?) -> Int).self
+        let bound = try ABIRuntime.shared.object(fixture).method(selector: "consume:", as: signature, options: options)
+        let message = try ABIRuntime.shared.objcMethod(on: ABIOwnershipFixture.self,
+            selector: "consume:", as: signature, options: options)
+        let captured = try ABIRuntime.shared.objcImplementation(on: ABIOwnershipFixture.self,
+            selector: "consume:", as: signature, options: options)
+        func invoke(_ value: NSObject?) throws -> Int {
+            switch path {
+            case "bound": return try unsafe bound.unsafeInvoke(value)
+            case "message": return try unsafe message.unsafeInvoke(on: fixture, value)
+            default: return try unsafe captured.unsafeInvoke(on: fixture, value)
+            }
+        }
+        weak var observed: NSObject?
+        try autoreleasepool {
+            let value = fixture.copyObject()
+            observed = value
+            #expect(fixture.consume(value) == 1)
+            for _ in 0..<4 {
+                let result = try invoke(value)
+                #expect(result == 1)
+            }
+            #expect(observed === value && fixture.liveResults == 1)
+            let nilResult = try invoke(nil)
+            #expect(nilResult == 0)
+        }
+        #expect(fixture.consumedCalls == 6)
+        #expect(observed == nil && fixture.liveResults == 0)
+    }
+
+    @Test func consumedArgumentsAreNotTransferredBeforeConversionSucceeds() throws {
+        let fixture = ABIOwnershipFixture()
+        let method = try ABIRuntime.shared.object(fixture).method(
+            selector: "consume:withClass:", as: ((NSObject, NSObject) -> Int).self,
+            options: .init(consumedArguments: [0]))
+        weak var observed: NSObject?
+        autoreleasepool {
+            let value = fixture.copyObject()
+            observed = value
+            #expect(throws: ABIInvocationError.self) { try unsafe method.unsafeInvoke(value, NSObject()) }
+            #expect(observed === value && fixture.liveResults == 1)
+        }
+        #expect(fixture.consumedCalls == 0)
+        #expect(observed == nil && fixture.liveResults == 0)
+    }
+
+    @Test func consumedArgumentValidationUsesNativeReferenceKinds() throws {
+        let object = ABIRuntime.shared.object(ABIOwnershipFixture())
+        for index in [-1, 1] {
+            #expect(throws: ABIResolutionError.self) {
+                _ = try object.method(selector: "consume:", as: ((NSObject?) -> Int).self,
+                    options: .init(consumedArguments: [index]))
+            }
+        }
+        #expect(throws: ABIResolutionError.self) {
+            _ = try object.method(selector: "negateCharacterBoolean:", as: ((Bool) -> Bool).self,
+                options: .init(consumedArguments: [0]))
+        }
+    }
+
+    @Test(arguments: ["bound", "captured"])
+    func consumedBlocksAndInitializerInputsStayAlive(_ path: String) throws {
+        typealias Block = @convention(block) (Int32) -> Int32
+        let fixture = ABIOwnershipFixture()
+        let blocks = ABIBlockFixture()
+        let options = NativeMethodOptions(consumedArguments: [0])
+        let bound = try ABIRuntime.shared.object(blocks).method(selector: "consumeBlock:value:",
+            as: ((Block?, Int32) -> Int32).self, options: options)
+        let captured = try ABIRuntime.shared.objcImplementation(on: ABIBlockFixture.self,
+            selector: "consumeBlock:value:", as: ((Block?, Int32) -> Int32).self, options: options)
+        weak var observed: NSObject?
+        try autoreleasepool {
+            let value = fixture.copyObject()
+            observed = value
+            let block: Block = { [value] number in withExtendedLifetime(value) { number + 1 } }
+            for _ in 0..<4 {
+                let result = path == "bound"
+                    ? try unsafe bound.unsafeInvoke(block, 41)
+                    : try unsafe captured.unsafeInvoke(on: blocks, block, 41)
+                #expect(result == blocks.consumeBlock(block, value: 41))
+            }
+            let receiver = ABIInitializerFixture()
+            let initialize = try ABIRuntime.shared.object(receiver).method(selector: "initConsuming:",
+                as: ((NSObject?) -> ABIInitializerFixture?).self, options: options)
+            #expect(try unsafe initialize.unsafeInvoke(value) === receiver)
+            #expect(observed === value && fixture.liveResults == 1)
+        }
+        #expect(observed == nil && fixture.liveResults == 0)
+    }
+
+    @Test func unmanagedCoreFoundationReferencesUsePointerEncoding() throws {
+        let fixture = ABIOwnershipFixture()
+        let echo = try ABIRuntime.shared.object(fixture).method(selector: "echoCFValue:",
+            as: ((Unmanaged<NSObject>?) -> Unmanaged<NSObject>?).self)
+        weak var observed: NSObject?
+        try autoreleasepool {
+            let value = fixture.copyObject()
+            observed = value
+            let result = try unsafe echo.unsafeInvoke(.passUnretained(value))
+            #expect(result?.takeUnretainedValue() === value)
+            #expect(try unsafe echo.unsafeInvoke(nil) == nil)
+        }
+        #expect(observed == nil && fixture.liveResults == 0)
+    }
+
     @Test func characterBooleanClassAndSelector() throws {
         let object = ABIRuntime.shared.object(ABIOwnershipFixture())
         let negate = try object.method(

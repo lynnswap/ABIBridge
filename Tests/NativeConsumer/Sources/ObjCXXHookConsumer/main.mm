@@ -9,6 +9,25 @@ int main() {
     auto failed = [&](const abi_bridge::resolution_error&) noexcept { ++failures; };
     @autoreleasepool {
         ABINativeHookFixture *object = [[ABINativeHookFixture alloc] initWithSeed:0];
+        auto consumed = abi_bridge::install_objc_hooks({
+            abi_bridge::objc_hook_request::method<int32_t(ABINativeHookResult *)>(
+                ABINativeHookFixture.class, "consume:",
+                [](auto& call, ABINativeHookResult *value) {
+                    return call.proceed(value) + call.proceed(value);
+                }, failed, {.consumed_parameters = {0}})
+        });
+        @autoreleasepool {
+            ABINativeHookResult *value = [[ABINativeHookResult alloc] init];
+#if __has_feature(objc_arc)
+            assert([object consume:value] == 2);
+#else
+            assert([object consume:[value retain]] == 2);
+            assert(ABINativeHookResult.liveObjects == 1);
+            [value release];
+#endif
+        }
+        assert(ABINativeHookResult.liveObjects == 0 && object.calls == 2);
+        consumed.clear();
         abi_bridge::objc_hook_options ordinary;
         ordinary.returns_retained = false;
         ordinary.consumes_receiver = false;

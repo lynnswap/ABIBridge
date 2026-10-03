@@ -48,3 +48,7 @@ void ABICDestroyResource(void *resource) {
     *value->live -= 1;
     free(value);
 }
+
+CFTypeRef ABICEchoCFValue(CFTypeRef value) { return value; }
+CFTypeRef ABICRetainCFValue(CFTypeRef value) { return CFRetain(value); }
+void ABICConsumeCFValue(CFTypeRef value) { CFRelease(value); }

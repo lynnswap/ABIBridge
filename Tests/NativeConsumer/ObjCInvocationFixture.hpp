@@ -77,7 +77,7 @@ inline void checkReceiverRetainReentry() {
     }
     {
         NSError *error = nil;
-        auto *binding = ABICopyObjCMethod(prototype, @selector(value), @encode(NSInteger), nullptr, 0, -1, -1, &error);
+        auto *binding = ABICopyObjCMethod(prototype, @selector(value), @encode(NSInteger), nullptr, 0, -1, -1, nullptr, 0, &error);
         assert(binding && !error);
         auto *source = ABICopyObjCMethodImplementation(binding);
         ABIReleaseObjCMethod(binding);
@@ -105,6 +105,68 @@ inline void checkReceiverRetainReentry() {
 #endif
 }
 @end
+
+typedef NSInteger (^ConsumedTransform)(NSInteger);
+@interface ConsumingReceiver : NSObject
+- (NSInteger)consume:(NSObject * NS_RELEASES_ARGUMENT)value;
+- (NSInteger)consumeBlock:(id NS_RELEASES_ARGUMENT)block value:(NSInteger)value;
+@end
+@implementation ConsumingReceiver
+- (NSInteger)consume:(NSObject *)value {
+    NSInteger result = value ? 1 : 0;
+#if !__has_feature(objc_arc)
+    [value release];
+#endif
+    return result;
+}
+- (NSInteger)consumeBlock:(id)block value:(NSInteger)value {
+    ConsumedTransform typed = (ConsumedTransform)block;
+    NSInteger result = typed ? typed(value) : -1;
+#if !__has_feature(objc_arc)
+    if (block) _Block_release((const void *)block);
+#endif
+    return result;
+}
+@end
+
+inline void checkConsumedArguments() {
+    using namespace abi_bridge;
+    @autoreleasepool {
+        ConsumingReceiver *receiver = [[ConsumingReceiver alloc] init];
+        ProxyResult *value = [[ProxyResult alloc] init];
+        objc_method_options options{.consumed_parameters = {0}};
+        bound_objc_implementation<NSInteger(NSObject *)> bound(receiver, "consume:", options);
+        auto captured = bound.implementation();
+#if __has_feature(objc_arc)
+        assert([receiver consume:value] == 1);
+#else
+        assert([receiver consume:[value retain]] == 1);
+#endif
+        for (int index = 0; index < 4; ++index) {
+            assert(bound.unsafe_invoke(value) == 1);
+            assert(captured.unsafe_invoke(receiver, value) == 1);
+            assert(liveProxyResults == 1);
+        }
+        assert(bound.unsafe_invoke(nil) == 0);
+        bound_objc_implementation<NSInteger(id, NSInteger)> block(
+            receiver, "consumeBlock:value:", options);
+        @autoreleasepool {
+            ConsumedTransform transform = [^NSInteger(NSInteger number) { return value ? number + 1 : 0; } copy];
+            assert(block.unsafe_invoke(transform, 41) == 42);
+            assert(block.implementation().unsafe_invoke(receiver, transform, 41) == 42);
+            assert(transform(41) == 42 && liveProxyResults == 1);
+#if !__has_feature(objc_arc)
+            [transform release];
+#endif
+        }
+        assert(block.unsafe_invoke(nil, 41) == -1);
+#if !__has_feature(objc_arc)
+        [value release];
+        [receiver release];
+#endif
+    }
+    assert(liveProxyResults == 0);
+}
 
 @interface ConcreteProxy : NSProxy {
     NSInteger _value;
@@ -169,7 +231,7 @@ inline void checkReusableCapturedImplementation() {
         auto bound = bound_objc_implementation<NSInteger()>(prototype, "value");
         captured = bound.implementation();
         NSError *error = nil;
-        auto *binding = ABICopyObjCMethod(prototype, @selector(value), @encode(NSInteger), nullptr, 0, -1, -1, &error);
+        auto *binding = ABICopyObjCMethod(prototype, @selector(value), @encode(NSInteger), nullptr, 0, -1, -1, nullptr, 0, &error);
         assert(binding && !error);
         native.reset(ABICopyObjCMethodImplementation(binding));
         ABIRetainObjCImplementation(native.get());
@@ -227,6 +289,7 @@ inline void checkReusableCapturedImplementation() {
 }
 
 inline void checkPublicObjCInvocation() {
+    checkConsumedArguments();
     checkAssignmentReentry(false);
     checkAssignmentReentry(true);
 #if !__has_feature(objc_arc)

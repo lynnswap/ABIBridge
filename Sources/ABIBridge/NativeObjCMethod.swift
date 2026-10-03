@@ -78,11 +78,14 @@ extension ABIRuntime {
     ) throws -> NativeObjCMethod<Result, repeat each Argument> {
         let declaration = objcMethodDeclaration(on: type, selector: selector, classMethod: classMethod)
         var error: NSError?
-        guard let handle = ABICopyObjCDispatch(
-            type, NSSelectorFromString(selector), classMethod,
-            options.returnsRetainedObject.map { $0 ? 1 : 0 } ?? -1,
-            options.consumesReceiver.map { $0 ? 1 : 0 } ?? -1, &error
-        ) else { throw objcResolutionError(error, declaration: declaration) }
+        let handle = options.withConsumedArguments { consumed in
+            ABICopyObjCDispatch(
+                type, NSSelectorFromString(selector), classMethod,
+                options.returnsRetainedObject.map { $0 ? 1 : 0 } ?? -1,
+                options.consumesReceiver.map { $0 ? 1 : 0 } ?? -1, consumed.baseAddress, consumed.count, &error
+            )
+        }
+        guard let handle else { throw objcResolutionError(error, declaration: declaration) }
         return try NativeObjCMethod(
             binding: ObjCInvocationBinding(handle, declaration: declaration, retaining: owner)
         )
