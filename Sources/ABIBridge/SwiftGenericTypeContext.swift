@@ -3,9 +3,11 @@ import Foundation
 import ObjectiveC
 
 /// A descriptor can come from a symbol or from an instantiated type's context.
-struct SwiftProtocolDescriptor: Sendable {
+struct SwiftProtocolDescriptor: Sendable, Equatable {
     private let address: UInt
     let image: NativeImage?
+
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.address == rhs.address }
 
     init(_ symbol: ResolvedSymbol) {
         address = unsafe symbol.withUnsafeAddress { UInt(bitPattern: $0) }

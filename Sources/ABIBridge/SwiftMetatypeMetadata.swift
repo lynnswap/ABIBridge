@@ -3,13 +3,21 @@ import ABIBridgeCore
 /// Metadata.h and SIL/TypeLowering.cpp: a singleton metatype occupies a word
 /// in generic value storage, but has no components in a concrete SIL signature.
 struct SwiftMetatypeMetadata {
-    let instance: Any.Type
+    let instance: Any.Type?
     let isExistential: Bool
     let witnessCount: Int
 
     init?(_ type: Any.Type) {
         let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
         let kind = metadata.load(as: UInt.self)
+        if kind == 0x307, let shape = ABISwiftExtendedExistentialShape(metadata),
+           shape.loadUnaligned(as: UInt32.self) & 0xff == 2 {
+            guard let witnesses = SwiftExtendedExistentialShapeLayout(shape).witnessCount else { return nil }
+            instance = nil
+            isExistential = true
+            witnessCount = witnesses
+            return
+        }
         guard kind == 0x304 || kind == 0x306 else { return nil }
         instance = metadata.load(fromByteOffset: MemoryLayout<UInt>.size, as: Any.Type.self)
         isExistential = kind == 0x306
@@ -17,12 +25,12 @@ struct SwiftMetatypeMetadata {
             ? Int(metadata.load(fromByteOffset: 2 * MemoryLayout<UInt>.size, as: UInt32.self) & 0x00ffffff) : 0
     }
 
-    var isSingleton: Bool { !isExistential && Self.hasSingletonMetatype(instance) }
+    var isSingleton: Bool { !isExistential && instance.map(Self.hasSingletonMetatype) == true }
 
     private static func hasSingletonMetatype(_ instance: Any.Type) -> Bool {
         if instance is AnyClass { return false }
-        if let metatype = Self(instance), !metatype.isExistential {
-            return hasSingletonMetatype(metatype.instance)
+        if let metatype = Self(instance), !metatype.isExistential, let nested = metatype.instance {
+            return hasSingletonMetatype(nested)
         }
         return true
     }
@@ -52,8 +60,8 @@ struct SwiftValueConstants: Sendable {
     init(_ type: Any.Type) {
         func collect(_ type: Any.Type, offset: Int) -> [(Int, UInt, Bool)] {
             let wrapped = (type as? any NativeOptionalValue.Type)?.wrappedType
-            if let metatype = SwiftMetatypeMetadata(wrapped ?? type), metatype.isSingleton {
-                return [(offset, unsafeBitCast(metatype.instance, to: UInt.self), wrapped != nil)]
+            if let metatype = SwiftMetatypeMetadata(wrapped ?? type), metatype.isSingleton, let instance = metatype.instance {
+                return [(offset, unsafeBitCast(instance, to: UInt.self), wrapped != nil)]
             }
             if let tuple = SwiftTupleMetadata(type) {
                 return tuple.elements.flatMap { collect($0.type, offset: offset + $0.offset) }

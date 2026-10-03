@@ -71,6 +71,8 @@ const void *ABISwiftTypeDescriptor(const void *metadata);
 /// preserve generic parameters and symbolic descriptor identities.
 size_t ABISwiftTypeFieldCount(const void *metadata);
 ABISwiftSyntax *ABICopySwiftTypeFieldSyntax(const void *metadata, size_t index);
+/// The shape's generalized type expression, preserving symbolic references.
+ABISwiftSyntax *ABICopySwiftExtendedExistentialTypeSyntax(const void *metadata);
 ABISwiftSyntax *ABICopySwiftAssociatedTypeSyntax(const void *metadata, const void *protocol, const char *name);
 /// Recovers the source-written arguments of existing complete metadata.
 ABISwiftTypeMetadata *ABICopySwiftTypeMetadata(const void *metadata, ABIResolutionFailure **error);
