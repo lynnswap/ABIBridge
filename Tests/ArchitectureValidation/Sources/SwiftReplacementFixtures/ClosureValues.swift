@@ -157,3 +157,11 @@ public final class ExplicitValueToken {
     var total: Int64 = 1
     body { total += $0; return total }
 }
+
+@inline(never) public func callUnmanagedClosureValue(
+    _ body: (Unmanaged<AnyObject>?) -> Unmanaged<AnyObject>?, _ value: Unmanaged<AnyObject>?
+) -> Unmanaged<AnyObject>? { body(value) }
+
+@inline(never) public func makeUnmanagedClosureValue() -> (Unmanaged<AnyObject>?) -> Unmanaged<AnyObject>? {
+    { $0 }
+}

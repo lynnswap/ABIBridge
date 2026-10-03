@@ -397,6 +397,23 @@ private final class NestedClosureProbeCapture: @unchecked Sendable {
     try check(result == 42, "Typed-pointer substitution matches the native closure discriminator")
     try check(try unsafe applyPointer.unsafeInvoke(read, nil) == -1, "Optional pointer preserves its nil representation")
 
+    let applyUnmanaged = try await runtime.swiftFunction(
+        named: "SwiftReplacementFixtures.callUnmanagedClosureValue(_:_:)",
+        as: ((NativeSwiftClosure<(Unmanaged<AnyObject>?) -> Unmanaged<AnyObject>?>,
+              Unmanaged<AnyObject>?) -> Unmanaged<AnyObject>?).self)
+    let unmanagedBody = try NativeSwiftClosure<(Unmanaged<AnyObject>?) -> Unmanaged<AnyObject>?> { $0 }
+    let unmanagedObject = ClosureProbeCapture(ClosureProbeCounter())
+    try check(try unsafe applyUnmanaged.unsafeInvoke(unmanagedBody, .passUnretained(unmanagedObject))?.takeUnretainedValue() === unmanagedObject,
+        "Unmanaged callback values use the compiler's nominal pointer authentication")
+    try check(try unsafe applyUnmanaged.unsafeInvoke(unmanagedBody, nil) == nil,
+        "Optional Unmanaged callbacks preserve nil without changing ownership")
+    let makeUnmanaged = try await runtime.swiftFunction(
+        named: "SwiftReplacementFixtures.makeUnmanagedClosureValue()",
+        as: (() -> NativeSwiftClosure<(Unmanaged<AnyObject>?) -> Unmanaged<AnyObject>?>).self)
+    let returnedUnmanaged = try unsafe makeUnmanaged.unsafeInvoke()
+    try check(try unsafe returnedUnmanaged.unsafeInvoke(.passUnretained(unmanagedObject))?.takeUnretainedValue() === unmanagedObject,
+        "Returned Unmanaged closures preserve their native authentication and borrowed object")
+
     let applyVoid = try await runtime.swiftFunction(
         named: "SwiftReplacementFixtures.callVoidClosureValue(_:)",
         as: ((NativeSwiftClosure<() -> Void>) -> Void).self

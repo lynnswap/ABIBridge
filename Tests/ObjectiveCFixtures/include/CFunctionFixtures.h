@@ -21,4 +21,7 @@ FOUNDATION_EXPORT ABIAdapterPair ABICTransformPair(ABIAdapterPair value, int32_t
 FOUNDATION_EXPORT void * _Nullable ABICCreateResource(int32_t *live);
 FOUNDATION_EXPORT int32_t ABICReadResource(const void *resource);
 FOUNDATION_EXPORT void ABICDestroyResource(void *resource);
+FOUNDATION_EXPORT CFTypeRef _Nullable ABICEchoCFValue(CFTypeRef _Nullable value) CF_RETURNS_NOT_RETAINED;
+FOUNDATION_EXPORT CFTypeRef ABICRetainCFValue(CFTypeRef value) CF_RETURNS_RETAINED;
+FOUNDATION_EXPORT void ABICConsumeCFValue(CFTypeRef CF_CONSUMED value);
 NS_ASSUME_NONNULL_END

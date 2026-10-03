@@ -16,7 +16,7 @@ typedef struct ABIObjCHookInvocation ABIObjCHookInvocation;
 typedef struct ABIObjCInitializerArguments ABIObjCInitializerArguments;
 
 /// Encoding and actual caller storage layout. Strings are copied at installation.
-/// Types must have supported C layouts; explicit consumed arguments, unions,
+/// Types must have supported C layouts; unions,
 /// bitfields, packed/nontrivial values and foreign exception unwinding are excluded.
 typedef struct {
     const char *encoding;
@@ -41,6 +41,10 @@ typedef struct {
     /// Optional live Objective-C owner for first-created fallback code/class.
     /// Retained independently of callbacks for the dispatcher's process lifetime.
     void *fallbackOwner;
+    /// Zero-based explicit parameters with ns_consumed ownership. Copied during
+    /// preparation; each position must have an object, class, or block encoding.
+    const size_t *consumedParameters;
+    size_t consumedParameterCount;
 } ABIObjCHookOptions;
 
 enum { ABIObjCHookInvalidated = 0, ABIObjCHookActive = 1, ABIObjCHookDisplaced = 2 };

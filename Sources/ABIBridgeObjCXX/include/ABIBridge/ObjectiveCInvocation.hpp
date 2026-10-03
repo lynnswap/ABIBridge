@@ -2,18 +2,23 @@
 
 #import <ABIBridge/ObjectiveCInvocation.h>
 #include <ABIBridge/Inspection.hpp>
+#include <algorithm>
 #include <array>
+#include <Block.h>
 #include <optional>
+#include <tuple>
 #include <type_traits>
+#include <vector>
 
 namespace abi_bridge {
 
 /// Ownership overrides for annotations not represented in runtime encodings.
-/// Omitted values use selector-family conventions. Explicit consumed arguments
-/// other than self require a target-specific adapter.
+/// Omitted receiver/result values use selector-family conventions.
 struct objc_method_options {
     std::optional<bool> returns_retained;
     std::optional<bool> consumes_receiver;
+    /// Zero-based explicit ns_consumed parameters.
+    std::vector<std::size_t> consumed_parameters;
 };
 
 namespace detail {
@@ -21,6 +26,9 @@ template <typename T>
 struct is_objc_result : std::bool_constant<std::is_pointer_v<T> && std::is_convertible_v<T, id>> {};
 template <typename Result, typename... Arguments>
 struct is_objc_result<Result (^)(Arguments...)> : std::true_type {};
+template <typename T> struct is_objc_block : std::false_type {};
+template <typename Result, typename... Arguments>
+struct is_objc_block<Result (^)(Arguments...)> : std::true_type {};
 }
 
 template <typename Signature> class bound_objc_implementation;
@@ -52,10 +60,13 @@ public:
         if (!ABIValidateObjCImplementationReceiver(implementation.get(), receiver, &error)) {
             throw resolution_error(static_cast<std::int32_t>(error.code), error.localizedDescription.UTF8String);
         }
+        std::array<bool, sizeof...(Arguments)> parameters{};
+        for (std::size_t index = 0; index < parameters.size(); ++index)
+            parameters[index] = ABIObjCImplementationConsumesParameter(implementation.get(), index);
         return invoke_owned(receiver, ABIObjCImplementationSelector(implementation.get()),
             ABIObjCImplementationIMP(implementation.get()),
             ABIObjCImplementationConsumesReceiver(implementation.get()),
-            ABIObjCImplementationReturnsRetained(implementation.get()), std::forward<Arguments>(arguments)...);
+            ABIObjCImplementationReturnsRetained(implementation.get()), parameters, std::forward<Arguments>(arguments)...);
     }
 
     /// Retains another receiver without repeating lookup or changing the IMP.
@@ -74,7 +85,8 @@ private:
         auto* method = ABICopyObjCMethod(receiver, selector, @encode(Result),
             parameters.data(), parameters.size(),
             options.returns_retained ? (*options.returns_retained ? 1 : 0) : -1,
-            options.consumes_receiver ? (*options.consumes_receiver ? 1 : 0) : -1, &error);
+            options.consumes_receiver ? (*options.consumes_receiver ? 1 : 0) : -1,
+            options.consumed_parameters.data(), options.consumed_parameters.size(), &error);
         if (!method) {
             throw resolution_error(static_cast<std::int32_t>(error.code), error.localizedDescription.UTF8String);
         }
@@ -88,8 +100,47 @@ private:
         return sel_registerName(selector.c_str());
     }
 
+    struct owned_arguments {
+        std::tuple<Arguments...> values;
+        std::array<CFTypeRef, sizeof...(Arguments)> references{};
+        bool transferred = false;
+        explicit owned_arguments(Arguments... arguments) : values(std::forward<Arguments>(arguments)...) {}
+        ~owned_arguments() {
+            if (!transferred) for (auto value : references) if (value) CFRelease(value);
+        }
+        template <std::size_t Index>
+        void retain(bool consumed) {
+            using Argument = std::tuple_element_t<Index, std::tuple<Arguments...>>;
+            if constexpr (detail::is_objc_result<Argument>::value) {
+                auto value = std::get<Index>(values);
+                if (!consumed || !value) return;
+                if constexpr (detail::is_objc_block<Argument>::value)
+                    references[Index] = _Block_copy((__bridge const void *)value);
+                else references[Index] = CFRetain((__bridge CFTypeRef)value);
+                std::get<Index>(values) = (__bridge Argument)references[Index];
+            }
+        }
+        template <std::size_t... Index>
+        void prepare(const std::array<bool, sizeof...(Arguments)>& parameters, std::index_sequence<Index...>) {
+            (retain<Index>(parameters[Index]), ...);
+        }
+    };
+
     static Result invoke_owned(id receiver, SEL selector, IMP implementation, bool consumed, bool retained,
-                               Arguments... arguments) {
+                               const std::array<bool, sizeof...(Arguments)>& parameters, Arguments... arguments) {
+        if (std::none_of(parameters.begin(), parameters.end(), [](bool value) { return value; }))
+            return invoke_prepared(receiver, selector, implementation, consumed, retained,
+                                   std::forward<Arguments>(arguments)...);
+        owned_arguments owned(std::forward<Arguments>(arguments)...);
+        owned.prepare(parameters, std::index_sequence_for<Arguments...>{});
+        owned.transferred = true;
+        return std::apply([&](auto... values) {
+            return invoke_prepared(receiver, selector, implementation, consumed, retained, values...);
+        }, owned.values);
+    }
+
+    static Result invoke_prepared(id receiver, SEL selector, IMP implementation, bool consumed, bool retained,
+                                 Arguments... arguments) {
         if constexpr (detail::is_objc_result<Result>::value) {
             if (retained) {
                 return consumed ? invoke<true, true>(receiver, selector, implementation, std::forward<Arguments>(arguments)...)
@@ -152,9 +203,12 @@ public:
     Result unsafe_invoke(Arguments... arguments) const {
         const auto method = method_;
         __unsafe_unretained id receiver = (__bridge id)ABIObjCMethodReceiverAddress(method.get());
+        std::array<bool, sizeof...(Arguments)> parameters{};
+        for (std::size_t index = 0; index < parameters.size(); ++index)
+            parameters[index] = ABIObjCMethodConsumesParameter(method.get(), index);
         return implementation_type::invoke_owned(receiver,
             ABIObjCMethodSelector(method.get()), ABIObjCMethodImplementation(method.get()),
-            ABIObjCMethodConsumesReceiver(method.get()), ABIObjCMethodReturnsRetained(method.get()),
+            ABIObjCMethodConsumesReceiver(method.get()), ABIObjCMethodReturnsRetained(method.get()), parameters,
             std::forward<Arguments>(arguments)...);
     }
 

@@ -371,6 +371,59 @@ struct ObjectiveCMethodHookTests {
         }
     }
 
+    @Test(arguments: ["skip", "proceed", "repeat", "beforeFailure", "afterFailure", "save"])
+    func consumedInputsAreBalancedAcrossHookOutcomes(_ mode: String) throws {
+        let fixture = ABIConsumedHookFixture()
+        let failures = HookBox(0)
+        let saved = HookBox<NSObject?>(nil)
+        let options = NativeMethodOptions(consumedArguments: [0])
+        let first = try unsafe runtime.hookMethod(on: ABIConsumedHookFixture.self, selector: "consume:",
+            as: ((NSObject?) -> Int).self, options: options, onFailure: { Issue.record($0) }) { call, value in
+                try call.proceed(value)
+            }
+        let second = try unsafe runtime.hookMethod(on: ABIConsumedHookFixture.self, selector: "consume:",
+            as: ((NSObject?) -> Int).self, options: options, onFailure: { _ in failures.update { $0 += 1 } }) { call, value in
+                if mode == "skip" { return 99 }
+                if mode == "save" { saved.update { $0 = value }; return 99 }
+                if mode == "beforeFailure" { throw HookFailure.deliberate }
+                let result = try call.proceed(value)
+                if mode == "afterFailure" { throw HookFailure.deliberate }
+                if mode == "repeat" { return result + (try call.proceed(value)) }
+                return result
+            }
+        defer { second.invalidate(); first.invalidate() }
+        weak var observed: NSObject?
+        autoreleasepool {
+            let value = fixture.copyObject()
+            observed = value
+            let result = fixture.consume(value)
+            #expect(result == (mode == "skip" || mode == "save" ? 99 : mode == "repeat" ? 2 : 1))
+            #expect(observed === value && fixture.liveResults == 1)
+        }
+        #expect(fixture.consumedCalls == (mode == "skip" || mode == "save" ? 0 : mode == "repeat" ? 2 : 1))
+        #expect(failures.read() == (mode.hasSuffix("Failure") ? 1 : 0))
+        if mode == "save" { #expect(observed != nil); saved.update { $0 = nil } }
+        #expect(observed == nil && fixture.liveResults == 0)
+    }
+
+    @Test func coordinatedConsumedArgumentContractsAreCheckedBeforePublication() throws {
+        let selector = NSSelectorFromString("consume:withClass:")
+        let method = try #require(class_getInstanceMethod(ABIConsumedHookFixture.self, selector))
+        let original = method_getImplementation(method)
+        let consumed = unsafe NativeObjCHookRequest.method(on: ABIConsumedHookFixture.self,
+            selector: "consume:withClass:", as: ((NSObject?, AnyClass) -> Int).self,
+            options: .init(consumedArguments: [0]), onFailure: { Issue.record($0) }) { call, value, type in
+                try call.proceed(value, type)
+            }
+        let borrowed = unsafe NativeObjCHookRequest.method(on: ABIConsumedHookFixture.self,
+            selector: "consume:withClass:", as: ((NSObject?, AnyClass) -> Int).self,
+            onFailure: { Issue.record($0) }) { call, value, type in try call.proceed(value, type) }
+        #expect(throws: NativeObjCHookInstallationError.self) {
+            _ = try unsafe runtime.installHooks([consumed, borrowed])
+        }
+        #expect(method_getImplementation(method) == original)
+    }
+
     @Test func mixedArgumentsAndBlocksTraverseTheChain() throws {
         typealias Mixed = (Int8, UInt16, Float, Double, Int, UnsafeMutableRawPointer?, CGSize, CGRect, Bool, Int64, Float, Double) -> Double
         let selector = "mixed:b:c:d:e:f:g:h:i:j:k:l:"

@@ -7,6 +7,7 @@
 #include <tuple>
 #include <type_traits>
 #include <utility>
+#include <vector>
 #ifdef __OBJC__
 #import <Foundation/Foundation.h>
 #endif
@@ -48,6 +49,8 @@ struct objc_hook_options {
     id object_filter = nullptr;
     /// Used only when first publishing the method's permanent fallback entry.
     id fallback_owner = nullptr;
+    /// Zero-based explicit ns_consumed parameters.
+    std::vector<std::size_t> consumed_parameters;
 };
 enum class objc_hook_status { invalidated = ABIObjCHookInvalidated, active = ABIObjCHookActive, displaced = ABIObjCHookDisplaced };
 
@@ -90,7 +93,8 @@ inline ABIObjCHookOptions hook_options(const objc_hook_options& options) {
     return {options.class_method, options.requires_main_thread,
         options.returns_retained ? (*options.returns_retained ? 2 : 1) : 0,
         options.consumes_receiver ? (*options.consumes_receiver ? 2 : 1) : 0,
-        hook_object_pointer(options.object_filter), hook_object_pointer(options.fallback_owner)};
+        hook_object_pointer(options.object_filter), hook_object_pointer(options.fallback_owner),
+        options.consumed_parameters.data(), options.consumed_parameters.size()};
 }
 #ifdef __OBJC__
 template <typename T> struct hook_objc_value : std::bool_constant<std::is_convertible_v<T, id>> {};

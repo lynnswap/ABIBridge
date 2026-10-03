@@ -155,7 +155,7 @@ The frontend supports these mappings:
 | Objective-C object | Object types and Swift values that bridge to objects, optionally wrapped in `Optional` |
 | Objective-C class | Class metatypes, optionally wrapped in `Optional` |
 | Objective-C block | Typed `@convention(block)` values, optionally wrapped in `Optional` |
-| Pointer or selector | Swift pointer types, `OpaquePointer`, or `Selector`; pointer values may be optional |
+| Pointer or selector | Swift pointer types, `OpaquePointer`, `Unmanaged<T>`, or `Selector`; pointer values may be optional |
 | Structures with complete field encodings | Caller-selected compatible Swift values, including SDK and user-defined structures, nested structures, and fixed-size array fields |
 | Void result | `Void` |
 
@@ -220,7 +220,20 @@ let result = try object.method(
 let value = try unsafe result.unsafeInvoke()
 ```
 
-Use ``NativeMethodOptions`` to override retained-result or consumed-receiver inference when the declaration requires it. Consumed explicit arguments and Core Foundation ownership conventions require an adapter and are not managed by this frontend.
+Use ``NativeMethodOptions`` to override retained-result or consumed-receiver inference when the declaration requires it. Set `consumedArguments` to the zero-based explicit parameter indexes annotated `ns_consumed`; indexes exclude `self` and `_cmd`:
+
+```swift
+let consume = try object.method(
+    selector: "consumeObject:",
+    as: ((NSObject?) -> Void).self,
+    options: .init(consumedArguments: [0])
+)
+try unsafe consume.unsafeInvoke(value)
+```
+
+For each selected object, class, or block parameter, invocation transfers a separate +1 reference to native code. The caller keeps its ordinary Swift value. Conversion failures before native entry release prepared references without transferring them. The same options apply to receiver-independent messages, captured implementations, and managed hooks. A nil optional parameter remains nil.
+
+Core Foundation values use their pointer representation through `Unmanaged<T>`, optionally wrapped in `Optional`. The bridge does not retain or release these references automatically. Pass `Unmanaged.passUnretained(value)` for a borrowed input; use `takeRetainedValue()` for a result whose native declaration returns +1 and `takeUnretainedValue()` for a borrowed result. Explicit `cf_consumed` inputs use `passRetained`; the caller must release that reference if invocation fails before native entry. See <doc:CFunctionInvocation>.
 
 ## Preserve the receiver's execution requirements
 

@@ -2,6 +2,7 @@
 #import <ABIBridgeObjCXX/Invocation.h>
 #import <CoreGraphics/CGGeometry.h>
 #include <optional>
+#include <algorithm>
 #include <atomic>
 #import <objc/message.h>
 #include <ABIBridgeCore.h>
@@ -23,6 +24,7 @@ struct ABIObjCImplementation {
     IMP implementation = nullptr;
     bool returnsRetained = false;
     bool consumesReceiver = false;
+    std::vector<char> consumedParameters;
     using ImageLease = std::unique_ptr<ABIImageLease, decltype(&ABIReleaseImage)>;
     std::vector<ImageLease> images;
 };
@@ -102,7 +104,37 @@ bool inFamily(const char* selector, const char* family) {
     return next < 'a' || next > 'z';
 }
 
-struct Ownership { bool retained; bool consumed; };
+struct Ownership {
+    bool retained;
+    bool consumed;
+    std::vector<char> parameters;
+};
+
+template <typename Encoding>
+std::optional<std::vector<char>> consumedParametersFor(
+    size_t parameterCount, const size_t *indices, size_t count, Encoding encoding, NSError **error) {
+    if (count && !indices) {
+        fail(error, ABIFailureInvalidRequest, @"Consumed argument indices require storage.");
+        return std::nullopt;
+    }
+    std::vector<char> parameters(parameterCount, 0);
+    for (size_t position = 0; position < count; ++position) {
+        const size_t index = indices[position];
+        if (index >= parameterCount) {
+            fail(error, ABIFailureInvalidRequest,
+                 [NSString stringWithFormat:@"Consumed argument %zu is outside the explicit argument list.", index]);
+            return std::nullopt;
+        }
+        const char *type = unqualified(encoding(index));
+        if (*type != '@' && *type != '#') {
+            fail(error, ABIFailureInvalidRequest,
+                 [NSString stringWithFormat:@"Consumed argument %zu requires an Objective-C object, class, or block encoding.", index]);
+            return std::nullopt;
+        }
+        parameters[index] = *type == '@' && type[1] == '?' ? '?' : '@';
+    }
+    return parameters;
+}
 
 std::optional<Ownership> ownershipFor(
     const char *resultType, Class cls, SEL selector,
@@ -124,7 +156,7 @@ std::optional<Ownership> ownershipFor(
 
     return Ownership{
         returnsRetained == -1 ? retainedFamily : returnsRetained == 1,
-        consumesReceiver == -1 ? initializer : consumesReceiver == 1
+        consumesReceiver == -1 ? initializer : consumesReceiver == 1, {}
     };
 }
 }
@@ -156,7 +188,8 @@ static bool validateReceiver(const Plan *plan, __unsafe_unretained id receiver, 
 ABIObjCMethod *ABICopyObjCMethod(
     id receiver, SEL selector, const char *resultType,
     const char *const *parameterTypes, size_t parameterCount,
-    int32_t returnsRetained, int32_t consumesReceiver, NSError **error)
+    int32_t returnsRetained, int32_t consumesReceiver,
+    const size_t *consumedParameters, size_t consumedParameterCount, NSError **error)
 {
     if (error) *error = nil;
     if (!receiver || !selector || !resultType || (parameterCount && !parameterTypes)
@@ -215,6 +248,9 @@ ABIObjCMethod *ABICopyObjCMethod(
 
     const auto ownership = ownershipFor(resultType, cls, selector, returnsRetained, consumesReceiver, error);
     if (!ownership) return nullptr;
+    auto parameters = consumedParametersFor(parameterCount, consumedParameters, consumedParameterCount,
+        [&](size_t index) { return parameterTypes[index]; }, error);
+    if (!parameters) return nullptr;
     auto plan = std::make_unique<ABIObjCImplementation>();
     plan->classMethod = class_isMetaClass(cls);
     plan->receiverType = plan->classMethod ? (Class)receiver : cls;
@@ -222,6 +258,7 @@ ABIObjCMethod *ABICopyObjCMethod(
     plan->implementation = implementation;
     plan->returnsRetained = ownership->retained;
     plan->consumesReceiver = ownership->consumed;
+    plan->consumedParameters = std::move(*parameters);
     const void *address = reinterpret_cast<const void *>(implementation);
 #if __has_feature(ptrauth_calls)
     address = ptrauth_strip(address, ptrauth_key_function_pointer);
@@ -239,6 +276,9 @@ SEL ABIObjCMethodSelector(const ABIObjCMethod *method) { return method->plan->se
 IMP ABIObjCMethodImplementation(const ABIObjCMethod *method) { return method->plan->implementation; }
 BOOL ABIObjCMethodReturnsRetained(const ABIObjCMethod *method) { return method->plan->returnsRetained; }
 BOOL ABIObjCMethodConsumesReceiver(const ABIObjCMethod *method) { return method->plan->consumesReceiver; }
+BOOL ABIObjCMethodConsumesParameter(const ABIObjCMethod *method, size_t index) {
+    return method->plan->consumedParameters[index] != 0;
+}
 
 ABIObjCImplementation *ABICopyObjCMethodImplementation(const ABIObjCMethod *method) {
     ABIRetainObjCImplementation(method->plan);
@@ -266,6 +306,9 @@ SEL ABIObjCImplementationSelector(const ABIObjCImplementation *implementation) {
 IMP ABIObjCImplementationIMP(const ABIObjCImplementation *implementation) { return implementation->implementation; }
 BOOL ABIObjCImplementationReturnsRetained(const ABIObjCImplementation *implementation) { return implementation->returnsRetained; }
 BOOL ABIObjCImplementationConsumesReceiver(const ABIObjCImplementation *implementation) { return implementation->consumesReceiver; }
+BOOL ABIObjCImplementationConsumesParameter(const ABIObjCImplementation *implementation, size_t index) {
+    return implementation->consumedParameters[index] != 0;
+}
 
 struct ABIObjCInvocation {
     std::atomic<size_t> references{1};
@@ -330,7 +373,8 @@ NSMethodSignature *receiverSignature(id receiver, SEL selector, NSError **error)
 }
 
 ABIObjCInvocation *ABICopyObjCInvocation(
-    id receiver, SEL selector, int32_t returnsRetained, int32_t consumesReceiver, NSError **error)
+    id receiver, SEL selector, int32_t returnsRetained, int32_t consumesReceiver,
+    const size_t *consumedParameters, size_t consumedParameterCount, NSError **error)
 {
     if (error) *error = nil;
     if (!receiver || !selector || returnsRetained < -1 || returnsRetained > 1
@@ -341,9 +385,14 @@ ABIObjCInvocation *ABICopyObjCInvocation(
     NSMethodSignature *signature = receiverSignature(receiver, selector, error);
     if (!signature) return nullptr;
     Class cls = object_getClass(receiver);
-    const auto ownership = ownershipFor(signature.methodReturnType, cls, selector,
-                                        returnsRetained, consumesReceiver, error);
+    auto ownership = ownershipFor(signature.methodReturnType, cls, selector,
+                                  returnsRetained, consumesReceiver, error);
     if (!ownership) return nullptr;
+    auto parameters = consumedParametersFor(signature.numberOfArguments - 2,
+        consumedParameters, consumedParameterCount,
+        [&](size_t index) { return [signature getArgumentTypeAtIndex:index + 2]; }, error);
+    if (!parameters) return nullptr;
+    ownership->parameters = std::move(*parameters);
     auto plan = std::make_unique<ABIObjCInvocation>(nil, signature, selector, *ownership);
     plan->classMethod = class_isMetaClass(cls);
     plan->receiverType = plan->classMethod ? (Class)receiver : cls;
@@ -361,7 +410,8 @@ ABIObjCInvocation *ABICopyObjCInvocationPlan(ABIObjCInvocation *invocation) {
 
 static ABIObjCInvocation *copyClassInvocation(
     Class type, SEL selector, BOOL classMethod, int32_t returnsRetained,
-    int32_t consumesReceiver, bool capture, NSError **error) {
+    int32_t consumesReceiver, const size_t *consumedParameters, size_t consumedParameterCount,
+    bool capture, NSError **error) {
     if (error) *error = nil;
     if (!type || class_isMetaClass(type) || !selector ||
         returnsRetained < -1 || returnsRetained > 1 || consumesReceiver < -1 || consumesReceiver > 1) {
@@ -390,9 +440,14 @@ static ABIObjCInvocation *copyClassInvocation(
         fail(error, ABIFailureSignatureMismatch, @"The method has no usable signature.");
         return nullptr;
     }
-    const auto ownership = ownershipFor(signature.methodReturnType, lookup, selector,
-                                        returnsRetained, consumesReceiver, error);
+    auto ownership = ownershipFor(signature.methodReturnType, lookup, selector,
+                                  returnsRetained, consumesReceiver, error);
     if (!ownership) return nullptr;
+    auto parameters = consumedParametersFor(signature.numberOfArguments - 2,
+        consumedParameters, consumedParameterCount,
+        [&](size_t index) { return [signature getArgumentTypeAtIndex:index + 2]; }, error);
+    if (!parameters) return nullptr;
+    ownership->parameters = std::move(*parameters);
     auto plan = std::make_unique<ABIObjCInvocation>(nil, signature, selector, *ownership);
     plan->receiverType = type;
     plan->classMethod = classMethod;
@@ -409,14 +464,18 @@ static ABIObjCInvocation *copyClassInvocation(
 
 ABIObjCInvocation *ABICopyObjCImplementation(
     Class type, SEL selector, BOOL classMethod, int32_t returnsRetained,
-    int32_t consumesReceiver, NSError **error) {
-    return copyClassInvocation(type, selector, classMethod, returnsRetained, consumesReceiver, true, error);
+    int32_t consumesReceiver, const size_t *consumedParameters, size_t consumedParameterCount,
+    NSError **error) {
+    return copyClassInvocation(type, selector, classMethod, returnsRetained, consumesReceiver,
+                               consumedParameters, consumedParameterCount, true, error);
 }
 
 ABIObjCInvocation *ABICopyObjCDispatch(
     Class type, SEL selector, BOOL classMethod, int32_t returnsRetained,
-    int32_t consumesReceiver, NSError **error) {
-    return copyClassInvocation(type, selector, classMethod, returnsRetained, consumesReceiver, false, error);
+    int32_t consumesReceiver, const size_t *consumedParameters, size_t consumedParameterCount,
+    NSError **error) {
+    return copyClassInvocation(type, selector, classMethod, returnsRetained, consumesReceiver,
+                               consumedParameters, consumedParameterCount, false, error);
 }
 
 static bool compatibleDispatchEncoding(const char *expected, const char *actual) {
@@ -467,6 +526,9 @@ void ABIReleaseObjCInvocation(ABIObjCInvocation *invocation) {
 IMP ABIObjCInvocationImplementation(const ABIObjCInvocation *invocation) { return invocation->implementation; }
 BOOL ABIObjCInvocationReturnsRetained(const ABIObjCInvocation *invocation) { return invocation->ownership.retained; }
 BOOL ABIObjCInvocationConsumesReceiver(const ABIObjCInvocation *invocation) { return invocation->ownership.consumed; }
+BOOL ABIObjCInvocationConsumesParameter(const ABIObjCInvocation *invocation, size_t index) {
+    return invocation->ownership.parameters[index] != 0;
+}
 size_t ABIObjCInvocationParameterCount(const ABIObjCInvocation *invocation) {
     return invocation->parameterCount;
 }
@@ -484,6 +546,41 @@ size_t ABIObjCInvocationParameterSize(const ABIObjCInvocation *invocation, size_
 size_t ABIObjCInvocationResultSize(const ABIObjCInvocation *invocation) {
     return invocation->resultSize;
 }
+ABIObjCArgumentOwnership::~ABIObjCArgumentOwnership() {
+    if (owned_) for (auto value : references_) if (value) CFRelease(value);
+}
+
+bool ABIObjCArgumentOwnership::retain(const void *const *arguments, NSError **error) {
+    incoming_ = arguments;
+    const auto& parameters = plan_->ownership.parameters;
+    if (std::none_of(parameters.begin(), parameters.end(), [](char value) { return value != 0; })) return true;
+    references_.resize(parameters.size());
+    replacements_.assign(arguments, arguments + parameters.size());
+    for (size_t index = 0; index < parameters.size(); ++index) {
+        if (!parameters[index]) continue;
+        CFTypeRef object = nullptr;
+        std::memcpy(&object, arguments[index], sizeof(object));
+        if (object) {
+            references_[index] = parameters[index] == '?' ? ABICopyObjCBlock(object) : CFRetain(object);
+            if (!references_[index]) {
+                fail(error, ABIFailureSignatureMismatch, @"A consumed block argument requires a live Objective-C block.");
+                return false;
+            }
+        }
+        replacements_[index] = &references_[index];
+    }
+    return true;
+}
+
+void ABIObjCArgumentOwnership::adopt(const void *const *arguments) {
+    incoming_ = arguments;
+    const auto& parameters = plan_->ownership.parameters;
+    if (std::none_of(parameters.begin(), parameters.end(), [](char value) { return value != 0; })) return;
+    references_.resize(parameters.size());
+    for (size_t index = 0; index < parameters.size(); ++index)
+        if (parameters[index]) std::memcpy(&references_[index], arguments[index], sizeof(CFTypeRef));
+}
+
 static BOOL invokeMessage(
     ABIObjCInvocation *plan, id receiver, void *result, const void *const *arguments, NSError **error)
 {
@@ -503,9 +600,13 @@ static BOOL invokeMessage(
             fail(error, ABIFailureInvalidRequest, @"Each argument requires value storage.");
             return NO;
         }
-        [invocation setArgument:const_cast<void *>(arguments[index]) atIndex:index + 2];
     }
+    ABIObjCArgumentOwnership ownership(plan);
+    if (!ownership.retain(arguments, error)) return NO;
+    for (size_t index = 0; index < count; ++index)
+        [invocation setArgument:const_cast<void *>(ownership.arguments()[index]) atIndex:index + 2];
     if (plan->ownership.consumed) CFRetain((__bridge CFTypeRef)receiver);
+    ownership.transfer();
     [invocation invokeWithTarget:receiver];
     if (resultSize) {
         if (plan->objectResult) {
@@ -556,15 +657,20 @@ BOOL ABIInvokeObjCImplementation(
             fail(error, ABIFailureInvalidRequest, @"Each argument requires storage.");
             return NO;
         }
-        values.push_back(const_cast<void*>(arguments[index]));
     }
+    ABIObjCArgumentOwnership ownership(plan);
+    if (!ownership.retain(arguments, error)) return NO;
+    for (size_t index = 0; index < count; ++index)
+        values.push_back(const_cast<void *>(ownership.arguments()[index]));
     if (plan->ownership.consumed) CFRetain((__bridge CFTypeRef)receiver);
     ABIResolutionFailure *failure = nullptr;
     // Keep the IMP as a function pointer; the compiler preserves/resigns its
     // authentication when converting it to the generic C function-pointer ABI.
     const auto function = reinterpret_cast<ABIUnmanagedFunction>(plan->implementation);
+    ownership.transfer();
     const bool success = ABIUnsafeInvokeCCallInterface(interface, function, result, values.data(), &failure);
     if (!success) {
+        ownership.reclaim();
         if (plan->ownership.consumed) CFRelease((__bridge CFTypeRef)receiver);
         fail(error, failure ? ABIResolutionFailureCode(failure) : ABIFailureInvalidRequest,
              failure ? @(ABIResolutionFailureMessage(failure)) : @"Captured invocation failed.");

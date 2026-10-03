@@ -290,9 +290,12 @@ package final class ObjCReplacement<Result, each Argument> {
         callback: (ObjCMethodSignature<Result, repeat each Argument>) -> ObjCReplacementCallback) throws -> OpaquePointer {
         let declaration = objcMethodDeclaration(on: type, selector: selector, classMethod: classMethod)
         var error: NSError?
-        guard let binding = ABICopyObjCImplementation(type, NSSelectorFromString(selector), classMethod,
-            options.returnsRetainedObject.map { $0 ? 1 : 0 } ?? -1,
-            options.consumesReceiver.map { $0 ? 1 : 0 } ?? -1, &error) else {
+        let binding = options.withConsumedArguments { consumed in
+            ABICopyObjCImplementation(type, NSSelectorFromString(selector), classMethod,
+                options.returnsRetainedObject.map { $0 ? 1 : 0 } ?? -1,
+                options.consumesReceiver.map { $0 ? 1 : 0 } ?? -1, consumed.baseAddress, consumed.count, &error)
+        }
+        guard let binding else {
             throw objcResolutionError(error, declaration: declaration)
         }
         defer { ABIReleaseObjCInvocation(binding) }

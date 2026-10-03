@@ -37,11 +37,10 @@ func swiftClosureAuthType(_ type: Any.Type) throws -> String {
     // SIL hashes these nominal declarations without their generic substitutions.
     if base is any SwiftArrayValue.Type {
         name = "Sa"
-    } else if base is any NativePointerValue.Type {
-        if name.hasPrefix("SPy") { name = "SP" }
-        else if name.hasPrefix("Spy") { name = "Sp" }
     }
-    if managed, name.hasSuffix("G") { name = try swiftNominalClosureName(name) }
+    if (managed || base is any NativePointerValue.Type), name.hasSuffix("G") {
+        name = try swiftNominalClosureName(name)
+    }
     let nominal = "$s" + name
     return type is any NativeOptionalValue.Type ? "Optional<" + nominal + ">" : nominal
 }
