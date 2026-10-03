@@ -127,7 +127,7 @@ struct SwiftExistentialValueTests {
     @Test func missingMetatypeShapesCanBeSynthesized() throws {
         typealias Value = any RuntimeClassLeft<Int>.Type
         let formal = try SwiftExtendedExistentialMetadata.formalType(Value.self)
-        guard case .existentialMetatype(.constrainedExistential(_, let constraints, let shape)) = formal else {
+        guard case .existentialMetatype(.constrainedExistential(_, _, let constraints, let shape)) = formal else {
             Issue.record("Expected a parameterized existential metatype.")
             return
         }
@@ -135,7 +135,7 @@ struct SwiftExistentialValueTests {
         let node = try syntax.root.requiredChild().requiredChild().requiredChild(kind: "Type").requiredChild()
         let name = try node.constrainedExistentialShapeName(metatypeDepth: 1)
         let metadata = try SwiftExtendedExistentialMetadata.metadata(shape: name, constraints: constraints,
-            arguments: [Int.self], resolver: .shared)
+            arguments: [Int.self], superclass: nil, resolver: .shared)
         #expect(try swiftNativeTypeName(metadata) == swiftNativeTypeName(Value.self))
         #expect(SwiftMetatypeMetadata(metadata)?.witnessCount == 1)
         #expect(ABISwiftGetValueLayout(unsafeBitCast(metadata, to: UnsafeRawPointer.self)).size == MemoryLayout<Value>.size)
@@ -202,6 +202,26 @@ struct SwiftExistentialValueTests {
         }
     }
 
+    @Test func genericSuperclassBindsTypedExistentialMetadata() async throws {
+        typealias Value = any ExistentialSuperclass<Int> & ExistentialSource<Int>
+        let native = "any ManagedSwiftFixtures.ExistentialSuperclass<A> & ManagedSwiftFixtures.ExistentialSource<Self.Element == A>"
+        let echo = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.echoGenericSuperclass<A>(" + native + ") -> " + native,
+            as: ((Value) -> Value).self, genericArguments: [.type(Int.self)])
+        let value = ExistentialSuperclassValue(42)
+        let result = try unsafe echo.unsafeInvoke(value)
+        #expect(result === value && result.element == 42)
+        let make = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.makeGenericSuperclass<A>(A) -> " + native,
+            as: ((Int) -> Value).self, genericArguments: [.type(Int.self)])
+        #expect(try unsafe make.unsafeInvoke(43).element == 43)
+        await #expect(throws: ABIResolutionError.self) {
+            _ = try await ABIRuntime.shared.swiftFunction(
+                named: "ManagedSwiftFixtures.echoGenericSuperclass<A>(" + native + ") -> " + native,
+                as: ((Value) -> Value).self, genericArguments: [.type(String.self)])
+        }
+    }
+
     @Test func runtimeOnlyExistentialsConstructMissingProviderShapes() async throws {
         let call = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.makeFreshExistential<A>(A) -> any ManagedSwiftFixtures.FreshExistentialSource<Self.Element == A>",
@@ -219,6 +239,84 @@ struct SwiftExistentialValueTests {
             as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
         let objectValue = try unsafe object.unsafeInvoke(43)
         #expect(try objectValue.withCopy { ($0 as? any CustomStringConvertible)?.description } == "43")
+    }
+
+    @Test func runtimeOnlySuperclassExistentialsPreserveGenericArguments() async throws {
+        let valueType = "any ManagedSwiftFixtures.ExistentialSuperclass<A> & ManagedSwiftFixtures.FreshExistentialClass<Self.Element == A>"
+        let make = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.makeFreshSuperclass<A>(A) -> " + valueType,
+            as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+        let value = try unsafe make.unsafeInvoke(42)
+        #expect(try value.withCopy { ($0 as? any CustomStringConvertible)?.description } == "42")
+        let echo = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.echoFreshSuperclass<A>(" + valueType + ") -> " + valueType,
+            as: ((NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+        #expect(try unsafe echo.unsafeInvoke(value).withCopy { ($0 as? any CustomStringConvertible)?.description } == "42")
+    }
+
+    @Test func superclassConformanceWitnessesRespectTheCompilerStorageBoundary() async throws {
+        typealias Value = any ExistentialHashSuperclass<Int> & FreshExistentialClass<Int>
+        let compatible = ABISwiftGetValueLayout(unsafeBitCast(Value.self, to: UnsafeRawPointer.self)).size == MemoryLayout<Value>.size
+        let valueType = "any ManagedSwiftFixtures.ExistentialHashSuperclass<A> & ManagedSwiftFixtures.FreshExistentialClass<Self.Element == A>"
+        do {
+            let make = try await ABIRuntime.shared.swiftFunction(
+                named: "ManagedSwiftFixtures.makeFreshHashSuperclass<A where A: Swift.Hashable>(A) -> " + valueType,
+                as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+            #expect(compatible)
+            #expect(try unsafe make.unsafeInvoke(43).withCopy { ($0 as? any CustomStringConvertible)?.description } == "43")
+        } catch ABIResolutionError.unsupportedDeclaration(let reason) {
+            #expect(!compatible && reason.hasPrefix("Unsupported Swift storage layout"))
+        }
+    }
+
+    @Test func nestedSuperclassArgumentsUseTheirDeclarationOrder() async throws {
+        let nested = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.makeFreshNestedSuperclass<A, B>(A, B) -> any ManagedSwiftFixtures.ExistentialOuter<A>.Inner<B> & ManagedSwiftFixtures.FreshExistentialClass<Self.Element == B>",
+            as: ((String, Int) -> NativeSwiftValue).self, genericArguments: [.type(String.self), .type(Int.self)])
+        #expect(try unsafe nested.unsafeInvoke("nested", 44).withCopy { ($0 as? any CustomStringConvertible)?.description } == "nested:44")
+    }
+
+    @Test func superclassSameTypeConstraintsKeepEveryWrittenArgument() async throws {
+        typealias Value = any ExistentialPairSuperclass<[Int], Int> & FreshExistentialClass<Int>
+        let compatible = ABISwiftGetValueLayout(unsafeBitCast(Value.self, to: UnsafeRawPointer.self)).size == MemoryLayout<Value>.size
+        do {
+            let make = try await ABIRuntime.shared.swiftFunction(
+                named: "ManagedSwiftFixtures.makeFreshPairSuperclass<A where A: Swift.Collection>(A) -> any ManagedSwiftFixtures.ExistentialPairSuperclass<A, A.Element> & ManagedSwiftFixtures.FreshExistentialClass<A.Element == A.Element>",
+                as: (([Int]) -> NativeSwiftValue).self, genericArguments: [.type([Int].self)])
+            #expect(compatible)
+            #expect(try unsafe make.unsafeInvoke([42, 43]).withCopy { ($0 as? any CustomStringConvertible)?.description } == "[42, 43]")
+        } catch ABIResolutionError.unsupportedDeclaration(let reason) {
+            #expect(!compatible && reason.hasPrefix("Unsupported Swift storage layout"))
+        }
+    }
+
+    @Test func genericSuperclassCallbacksUseTheNativeContainer() async throws {
+        typealias Value = any ExistentialSuperclass<Int> & ExistentialSource<Int>
+        typealias Callback = NativeSwiftClosure<(Value) -> Value>
+        let native = "any ManagedSwiftFixtures.ExistentialSuperclass<A> & ManagedSwiftFixtures.ExistentialSource<Self.Element == A>"
+        let apply = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.applyGenericSuperclass<A>((" + native + ") -> " + native + ", " + native + ") -> " + native,
+            as: ((Callback, Value) -> Value).self, genericArguments: [.type(Int.self)])
+        let object = ExistentialSuperclassValue(42)
+        #expect(try unsafe apply.unsafeInvoke(.init { $0 }, object) === object)
+        let make = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.makeGenericSuperclassClosure<A>(A) -> () -> " + native,
+            as: ((Int) -> NativeSwiftClosure<() -> Value>).self, genericArguments: [.type(Int.self)])
+        #expect(try unsafe make.unsafeInvoke(43).unsafeInvoke().element == 43)
+    }
+
+    @Test func superclassAssociatedTypeConformancesRetainTheirQualification() async throws {
+        typealias Value = any ExistentialCollectionSuperclass<[Int]> & FreshExistentialClass<Int>
+        let compatible = ABISwiftGetValueLayout(unsafeBitCast(Value.self, to: UnsafeRawPointer.self)).size == MemoryLayout<Value>.size
+        do {
+            let make = try await ABIRuntime.shared.swiftFunction(
+                named: "ManagedSwiftFixtures.makeFreshCollectionSuperclass<A where A: Swift.Collection, A.Element: Swift.Hashable>(A) -> any ManagedSwiftFixtures.ExistentialCollectionSuperclass<A> & ManagedSwiftFixtures.FreshExistentialClass<A.Element == A.Element>",
+                as: (([Int]) -> NativeSwiftValue).self, genericArguments: [.type([Int].self)])
+            #expect(compatible)
+            #expect(try unsafe make.unsafeInvoke([42]).withCopy { ($0 as? any CustomStringConvertible)?.description } == "[42]")
+        } catch ABIResolutionError.unsupportedDeclaration(let reason) {
+            #expect(!compatible && reason.hasPrefix("Unsupported Swift storage layout"))
+        }
     }
 
     @Test func compositionShapesKeepAssociatedTypeProtocolIdentity() async throws {

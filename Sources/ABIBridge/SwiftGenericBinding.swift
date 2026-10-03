@@ -618,21 +618,23 @@ struct SwiftGenericBinding: Sendable {
                 return matches[0]
             }
         }
-        func constrainedMetadata(base: String, constraints: [SwiftFormalType.ExistentialConstraint],
+        func constrainedMetadata(base: String, superclass: SwiftFormalType?, constraints: [SwiftFormalType.ExistentialConstraint],
                                  shape: String, metatypeDepth: Int = 0) throws -> Any.Type {
             // Swift 6.3 cannot instantiate the textual constrained existential
             // form. Reuse compiler-emitted metadata supplied by the signature
             // after checking the complete bound same-type requirements.
             // MetadataLookup.cpp: createConstrainedExistentialType.
             let expected = try constraints.map { try types($0.value, packIndex: packIndex)[0] }
+            let expectedSuperclass = try superclass.map { try types($0, packIndex: packIndex)[0] }
             for metadata in knownTypes.values {
                 guard unsafeBitCast(metadata, to: UnsafeRawPointer.self).load(as: UInt.self) == 0x307 else { continue }
                 var actual = try SwiftExtendedExistentialMetadata.formalType(metadata)
                 var actualDepth = 0
                 while case .existentialMetatype(let instance) = actual { actual = instance; actualDepth += 1 }
                 guard actualDepth == metatypeDepth,
-                      case .constrainedExistential(let actualBase, let actualConstraints, _) = actual,
-                      try Self.key(base) == Self.key(actualBase), constraints.count == actualConstraints.count else { continue }
+                      case .constrainedExistential(let actualBase, let actualSuperclass, let actualConstraints, _) = actual,
+                      try Self.key(base) == Self.key(actualBase), constraints.count == actualConstraints.count,
+                      try actualSuperclass.map({ try types($0, packIndex: packIndex)[0] }) == expectedSuperclass else { continue }
                 let matches = try zip(constraints, expected).allSatisfy { constraint, expected in
                     let candidates = actualConstraints.filter { actual in
                         actual.subject == constraint.subject
@@ -643,6 +645,14 @@ struct SwiftGenericBinding: Sendable {
                 }
                 if matches { return metadata }
             }
+            let superclassMetadata = try expectedSuperclass.map { try SwiftGenericTypeMetadata(metadata: $0) }
+            let superclassArguments: [Any.Type] = try superclassMetadata?.arguments.map {
+                guard case .type(let type, _) = $0.storage else {
+                    throw ABIResolutionError.unsupportedDeclaration("The extended existential shape has a superclass parameter pack.")
+                }
+                return type
+            } ?? []
+            let generalizedArguments = superclassArguments + expected
             let shapeName: String
             if metatypeDepth == 0 { shapeName = shape }
             else {
@@ -655,15 +665,15 @@ struct SwiftGenericBinding: Sendable {
                 do {
                     let descriptor = try resolver.resolve(request, in: image, loading: .loadedOnly)
                     return try SwiftExtendedExistentialMetadata(descriptor: descriptor,
-                        arguments: expected, resolver: resolver).value
+                        arguments: generalizedArguments, resolver: resolver).value
                 } catch ABIResolutionError.declarationNotFound {}
             }
             return try SwiftExtendedExistentialMetadata.metadata(shape: shapeName, constraints: constraints,
-                arguments: expected, resolver: resolver)
+                arguments: generalizedArguments, superclass: superclassMetadata, resolver: resolver)
         }
         switch type {
-        case .constrainedExistential(let base, let constraints, let shape):
-            return [try constrainedMetadata(base: base, constraints: constraints, shape: shape)]
+        case .constrainedExistential(let base, let superclass, let constraints, let shape):
+            return [try constrainedMetadata(base: base, superclass: superclass, constraints: constraints, shape: shape)]
         case .function(let parameters, let result, let failure, let attributes):
             return [try functionType(parameters: parameters, result: result, failure: failure,
                 attributes: attributes, packIndex: packIndex)]
@@ -677,8 +687,8 @@ struct SwiftGenericBinding: Sendable {
                 var underlying = instance
                 var depth = 1
                 while case .existentialMetatype(let nested) = underlying { underlying = nested; depth += 1 }
-                if case .constrainedExistential(let base, let constraints, let shape) = underlying {
-                    return [try constrainedMetadata(base: base, constraints: constraints, shape: shape, metatypeDepth: depth)]
+                if case .constrainedExistential(let base, let superclass, let constraints, let shape) = underlying {
+                    return [try constrainedMetadata(base: base, superclass: superclass, constraints: constraints, shape: shape, metatypeDepth: depth)]
                 }
             }
             let metadata = unsafeBitCast(try types(instance, packIndex: packIndex)[0], to: UnsafeRawPointer.self)
@@ -842,7 +852,9 @@ struct SwiftGenericBinding: Sendable {
         func visit(_ type: SwiftFormalType) {
             switch type {
             case .objectiveCClass, .opaqueResult: break
-            case .constrainedExistential(_, let constraints, _): constraints.forEach { visit($0.value) }
+            case .constrainedExistential(_, let superclass, let constraints, _):
+                if let superclass { visit(superclass) }
+                constraints.forEach { visit($0.value) }
             case .named(let name, let parameters):
                 if let argument = arguments[String(name.prefix { $0 != "." })], argument.isPack {
                     counts.append(argument.types.count)

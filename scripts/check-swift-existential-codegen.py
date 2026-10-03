@@ -34,9 +34,13 @@ def main():
             '-target', target, '-sdk', sdk, '-emit-ir', *provider, '-o', str(ir_path))
         ir = ir_path.read_text()
         signatures = {}
+        superclass_components = {'makeGenericSuperclass': 2, 'makeFreshHashSuperclass': 2,
+                                 'makeFreshNestedSuperclass': 2, 'makeFreshPairSuperclass': 2,
+                                 'makeFreshCollectionSuperclass': 2}
         for name in ['echoAny', 'echoExistential', 'echoComposition', 'echoClassExistential',
                      'echoManyClassExistential', 'echoErrorExistential', 'echoOptionalExistential',
-                     'echoOptionalAny', 'echoOptionalClass', 'echoOptionalError', 'echoClassErrorExistential']:
+                     'echoOptionalAny', 'echoOptionalClass', 'echoOptionalError', 'echoClassErrorExistential',
+                     *superclass_components]:
             line = function(ir, name).splitlines()[0]
             indirect = name in ['echoAny', 'echoExistential', 'echoComposition', 'echoManyClassExistential',
                                 'echoOptionalExistential', 'echoOptionalAny']
@@ -50,13 +54,17 @@ def main():
                 raise RuntimeError(f'{target}: expected an error box pointer: {line}')
             if name == 'echoClassErrorExistential' and not line.startswith('define swiftcc { ptr, ptr }'):
                 raise RuntimeError(f'{target}: re-evaluate class-constrained Error storage mismatch: {line}')
+            if name in superclass_components:
+                result = '{ ' + ', '.join(['ptr'] * superclass_components[name]) + ' }'
+                if not line.startswith('define swiftcc ' + result):
+                    raise RuntimeError(f'{target}: re-evaluate superclass witness storage: {line}')
             signatures[name] = line
         discriminators = {}
         if target.startswith('arm64e'):
             for name, expected in {'applyAnyExistentialClosure': 55683, 'applyExistentialClosure': 55683,
                                    'applyClassExistentialClosure': 59948, 'applyManyClassExistentialClosure': 59948,
                                    'applyErrorExistentialClosure': 30340, 'applyOptionalClassClosure': 30130,
-                                   'applyOptionalErrorClosure': 1845}.items():
+                                   'applyOptionalErrorClosure': 1845, 'applyGenericSuperclass': 59948}.items():
                 values = re.findall(r'"ptrauth"\(i32 0, i64 (\d+)\)', function(ir, name))
                 if values != [str(expected)]:
                     raise RuntimeError(f'{target}: re-evaluate authentication for {name}: {values}')
