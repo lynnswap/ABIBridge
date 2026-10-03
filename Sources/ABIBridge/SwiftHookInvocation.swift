@@ -189,6 +189,7 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
         }
         switch declaration?.result {
         case .value, .tuple: result = SwiftValueCodec(nativeStorage: values.result.type)
+        case .closure(let codec): result = SwiftValueCodec(closure: codec)
         default: result = try SwiftValueCodec()
         }
         initializeResult = result.initializeNativeResult

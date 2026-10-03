@@ -30,6 +30,11 @@ struct SwiftValueCodec<Value>: Sendable {
         objectResult = base is AnyClass || base == AnyObject.self
     }
 
+    init(closure: SwiftClosureCodec) {
+        self.closure = closure; type = closure.type
+        cValue = nil; tuple = nil; objectResult = false
+    }
+
     var initializeNativeResult: SwiftResultInitializer {
         if cValue != nil {
             return { _, size, destination, source in destination.copyMemory(from: source, byteCount: size) }
@@ -137,7 +142,10 @@ struct SwiftValueCodec<Value>: Sendable {
             }
             return storage
         }
-        if closure != nil { return try (value as! any SwiftClosureValue).encodeClosure(consuming: consuming) }
+        if let closure {
+            if closure.nativePlan != nil, let encode = closure.encodeValue { return try encode(value, nil) }
+            return try (value as! any SwiftClosureValue).encodeClosure(consuming: consuming)
+        }
         if Value.self == Void.self { return NativeValueStorage(size: 0, alignment: 1) }
         if let cValue { return try cValue.encode(value) }
         let storage = makeStorage()

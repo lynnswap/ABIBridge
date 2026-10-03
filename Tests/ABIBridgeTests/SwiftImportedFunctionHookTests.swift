@@ -43,17 +43,23 @@ struct SwiftImportedFunctionHookTests {
 
     @Test func genericHooksSelectBindingsBeforeReadingNativeValues() async throws {
         let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
+        import Foundation
         @inline(never) public func hookEcho<Value>(_ value: Value) -> Value { value }
         @inline(never) public func hookPack<each Value>(_ values: repeat each Value) -> (repeat each Value) { (repeat each values) }
         @inline(never) public func hookTuple(_ value: (Int64, String)) -> (Int64, String) { value }
         @inline(never) public func hookNativeScalar(_ value: Int64) -> Int64 { value + 1 }
+        @inline(never) public func hookGenericFactory<Value>(_ value: Value) -> () -> Value { { value } }
         """, callerExtra: """
+        import Foundation
         @inline(never) public func echoInt(_ value: Int64) -> Int64 { hookEcho(value) }
         @inline(never) public func echoText(_ value: String) -> String { hookEcho(value) }
         @inline(never) public func echoArray(_ value: [String]) -> [String] { hookEcho(value) }
         @inline(never) public func forwardGeneric<Value>(_ value: Value) -> Value { hookEcho(value) }
         @inline(never) public func importedTuple(_ value: (Int64, String)) -> (Int64, String) { hookTuple(value) }
         @inline(never) public func importedNativeScalar(_ value: Int64) -> Int64 { hookNativeScalar(value) }
+        @inline(never) public func echoObject(_ value: NSObject) -> NSObject { hookEcho(value) }
+        @inline(never) public func genericFactoryInteger(_ value: Int64) -> Int64 { hookGenericFactory(value)() }
+        @inline(never) public func genericFactoryString(_ value: String) -> String { hookGenericFactory(value)() }
         @inline(never) public func packPair(_ value: Int64, _ text: String) -> (Int64, String) { hookPack(value, text) }
         @inline(never) public func packSingle(_ value: Int64) -> Int64 { hookPack(value) }
         @inline(never) public func packTriple(_ text: String) -> (String, Int64, Double) { hookPack(text, Int64(7), 1.5) }
@@ -87,6 +93,40 @@ struct SwiftImportedFunctionHookTests {
         #expect(try unsafe textOracle.unsafeInvoke(input) == input + " input output")
         textHook.invalidate()
         #expect(try unsafe textOracle.unsafeInvoke(input) == input)
+
+        let object = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookEcho(_:)",
+            as: ((NSObject) -> NSObject).self, genericArguments: [.type(NSObject.self)], in: fixture.providerScope)
+        let objectOracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".echoObject(_:)",
+            as: ((NSObject) -> NSObject).self, in: fixture.callerScope)
+        let received = Mutex(0)
+        let objectHook = try unsafe await object.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: failure) { call, value in
+                received.withLock { $0 += 1 }
+                return try call.proceed(value)
+            }
+        defer { objectHook.invalidate() }
+        let instance = NSObject()
+        #expect(try unsafe objectOracle.unsafeInvoke(instance) === instance)
+        #expect(received.withLock { $0 } == 1)
+        objectHook.invalidate()
+
+        let factory = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookGenericFactory(_:)",
+            as: ((Int64) -> NativeSwiftClosure<() -> Int64>).self,
+            genericArguments: [.type(Int64.self)], in: fixture.providerScope)
+        let factoryOracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".genericFactoryInteger(_:)",
+            as: ((Int64) -> Int64).self, in: fixture.callerScope)
+        let factoryControl = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".genericFactoryString(_:)",
+            as: ((String) -> String).self, in: fixture.callerScope)
+        #expect(try unsafe factoryOracle.unsafeInvoke(40) == 40)
+        let factoryHook = try unsafe await factory.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: failure) { call, value in
+                _ = try call.proceed(value)
+                return try call.proceed(value + 1)
+            }
+        defer { factoryHook.invalidate() }
+        #expect(try unsafe factoryOracle.unsafeInvoke(40) == 41)
+        #expect(try unsafe factoryControl.unsafeInvoke(input) == input)
+        factoryHook.invalidate()
 
         let native = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookEcho(_:)",
             as: ((SwiftHookDistinctABIValue) -> SwiftHookDistinctABIValue).self,
