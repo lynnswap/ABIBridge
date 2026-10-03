@@ -23,8 +23,8 @@ struct SwiftExistentialValueTests {
     @Test func metadataKindsAndAuthenticationKeepDistinctContracts() throws {
         #expect(SwiftExistentialRepresentation((any ExistentialValue).Type.self) == nil)
         #expect(SwiftExistentialRepresentation((any ExistentialValue.Type).self) == nil)
-        #expect(SwiftExistentialRepresentation((any Collection<Int>).self) == nil)
-        #expect(throws: ABIResolutionError.self) { _ = try SwiftValueCodec<(any Collection<Int>)>() }
+        #expect(SwiftExistentialRepresentation((any Collection<Int>).self) != nil)
+        #expect(try SwiftValueCodec<any Collection<Int>>().type.size == MemoryLayout<any Collection<Int>>.size)
         // Swift 6.3 reports one word of generic storage for this composition,
         // while its native declaration uses object and witness pointers.
         #expect(throws: ABIResolutionError.self) { _ = try SwiftValueCodec<(any Error & AnyObject)>() }
@@ -35,6 +35,89 @@ struct SwiftExistentialValueTests {
         #expect(swiftClosureDiscriminator(parameters: [try swiftClosureAuthType((any Error)?.self)], result: try swiftClosureAuthType((any Error)?.self)) == 1845)
     }
 #endif
+    @Test func extendedExistentialsKeepAssociatedTypeConstraints() async throws {
+        let runtime = ABIRuntime.shared
+        let collection = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.echoExtendedCollection(_:)",
+            as: ((any Collection<Int>) -> any Collection<Int>).self)
+        let ordinaryResult: any Collection<Int> = try unsafe collection.unsafeInvoke([1, 2, 3])
+        #expect(Array(ordinaryResult) == [1, 2, 3])
+        let source = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.echoExtendedSource(_:)",
+            as: ((any ExistentialSource<Int>) -> any ExistentialSource<Int>).self)
+        let value = ExistentialIntSource(42)
+        #expect(try unsafe source.unsafeInvoke(value) === value)
+        let generic = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.echoGenericExtendedCollection<A>(any Swift.Collection<Self.Element == A>) -> any Swift.Collection<Self.Element == A>",
+            as: ((any Collection<Int>) -> any Collection<Int>).self, genericArguments: [.type(Int.self)])
+        let genericResult: any Collection<Int> = try unsafe generic.unsafeInvoke([40, 2])
+        #expect(Array(genericResult) == [40, 2])
+        let made = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeGenericExtendedCollection<A>(A) -> any Swift.Collection<Self.Element == A>",
+            as: ((Int) -> any Collection<Int>).self, genericArguments: [.type(Int.self)])
+        let madeResult: any Collection<Int> = try unsafe made.unsafeInvoke(42)
+        #expect(Array(madeResult) == [42])
+        let runtimeOnly = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeGenericExtendedCollection<A>(A) -> any Swift.Collection<Self.Element == A>",
+            as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+        let owned = try unsafe runtimeOnly.unsafeInvoke(42)
+        let copied = try owned.withCopy { value -> [Int]? in
+            guard let collection = value as? any Collection<Int> else { return nil }
+            return Array(collection)
+        }
+        #expect(copied == [42])
+        await #expect(throws: ABIResolutionError.self) {
+            _ = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.echoGenericExtendedCollection<A>(any Swift.Collection<Self.Element == A>) -> any Swift.Collection<Self.Element == A>",
+                as: ((any Collection<Int>) -> any Collection<Int>).self, genericArguments: [.type(String.self)])
+        }
+    }
+
+    @Test func runtimeOnlyExistentialsConstructMissingProviderShapes() async throws {
+        let call = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.makeFreshExistential<A>(A) -> any ManagedSwiftFixtures.FreshExistentialSource<Self.Element == A>",
+            as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+        let result = try unsafe call.unsafeInvoke(42)
+        #expect(try result.withCopy { ($0 as? any CustomStringConvertible)?.description } == "42")
+        #expect(result.type.name.contains("FreshExistentialSource"))
+        let pair = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.makeFreshExistentialPair<A, B>(A, B) -> any ManagedSwiftFixtures.FreshExistentialPair<Self.First == A, Self.Second == B>",
+            as: ((Int, String) -> NativeSwiftValue).self, genericArguments: [.type(Int.self), .type(String.self)])
+        let paired = try unsafe pair.unsafeInvoke(42, "value")
+        #expect(try paired.withCopy { ($0 as? any CustomStringConvertible)?.description } == "42:value")
+        let object = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.makeFreshExistentialClass<A>(A) -> any ManagedSwiftFixtures.FreshExistentialClass<Self.Element == A>",
+            as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+        let objectValue = try unsafe object.unsafeInvoke(43)
+        #expect(try objectValue.withCopy { ($0 as? any CustomStringConvertible)?.description } == "43")
+    }
+
+    @Test func compositionShapesKeepAssociatedTypeProtocolIdentity() async throws {
+        let runtime = ABIRuntime.shared
+        let left = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeLeftConstrainedComposition() -> any ManagedSwiftFixtures.RuntimeExtendedLeft & ManagedSwiftFixtures.RuntimeExtendedRight<Self.ManagedSwiftFixtures.RuntimeExtendedLeft.Element == Swift.Int>",
+            as: (() -> NativeSwiftValue).self)
+        let right = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeRightConstrainedComposition() -> any ManagedSwiftFixtures.RuntimeExtendedLeft & ManagedSwiftFixtures.RuntimeExtendedRight<Self.ManagedSwiftFixtures.RuntimeExtendedRight.Element == Swift.Int>",
+            as: (() -> NativeSwiftValue).self)
+        let first = try unsafe left.unsafeInvoke()
+        let second = try unsafe right.unsafeInvoke()
+        #expect(first.type != second.type)
+        #expect(first.type.name.contains("RuntimeExtendedLeft.Element == Swift.Int"))
+        #expect(second.type.name.contains("RuntimeExtendedRight.Element == Swift.Int"))
+        #expect(try first.withCopy { ($0 as? any CustomStringConvertible)?.description } == "both")
+        #expect(try second.withCopy { ($0 as? any CustomStringConvertible)?.description } == "both")
+    }
+
+    @Test func extendedExistentialCallbacksUseTheirContainerConvention() async throws {
+        let runtime = ABIRuntime.shared
+        typealias Source = NativeSwiftClosure<(any ExistentialSource<Int>) -> any ExistentialSource<Int>>
+        let source = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.applyExtendedSource(_:_:)",
+            as: ((Source, any ExistentialSource<Int>) -> any ExistentialSource<Int>).self)
+        let value = ExistentialIntSource(42)
+        #expect(try unsafe source.unsafeInvoke(.init { $0 }, value) === value)
+        typealias CollectionBody = NativeSwiftClosure<(any Collection<Int>) -> any Collection<Int>>
+        let collection = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.applyExtendedCollection(_:_:)",
+            as: ((CollectionBody, any Collection<Int>) -> any Collection<Int>).self)
+        let callback = try CollectionBody { $0 }
+        let result: any Collection<Int> = try unsafe collection.unsafeInvoke(callback, [42])
+        #expect(Array(result) == [42])
+    }
+
     @Test func anyAndProtocolContainersOpenInlineAndBoxedValues() async throws {
         let runtime = ABIRuntime.shared
         let any = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.echoAny(_:)", as: ((Any) -> Any).self)

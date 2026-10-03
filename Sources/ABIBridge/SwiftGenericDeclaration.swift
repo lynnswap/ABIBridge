@@ -136,8 +136,13 @@ indirect enum SwiftFormalType: Sendable, Equatable {
     enum ForeignConvention: String, Sendable { case c, block }
     case named(String, [SwiftFormalType])
     case nominal(String, [SwiftFormalType])
+    struct ExistentialConstraint: Sendable, Equatable {
+        let subject: String
+        let value: SwiftFormalType
+    }
+    case constrainedExistential(base: String, constraints: [ExistentialConstraint], shape: String)
     case objectiveCClass(String)
-    case opaqueResult
+    case opaqueResult(index: Int)
     case nested(SwiftFormalType, String, [SwiftFormalType])
     case reference(SwiftNominalDescriptor, [SwiftFormalType])
     case associated(SwiftFormalType, String, protocolName: String? = nil)
@@ -152,9 +157,35 @@ indirect enum SwiftFormalType: Sendable, Equatable {
     case metatype(SwiftFormalType)
     case existentialMetatype(SwiftFormalType)
 
+    var opaqueIndex: Int? {
+        if case .opaqueResult(let index) = self { return index }
+        return nil
+    }
+
+    var opaqueIndices: Set<Int> {
+        switch self {
+        case .opaqueResult(let index): [index]
+        case .constrainedExistential(_, let constraints, _):
+            constraints.reduce(into: []) { $0.formUnion($1.value.opaqueIndices) }
+        case .named(_, let values), .nominal(_, let values), .reference(_, let values),
+             .tuple(let values, _), .packValue(let values):
+            values.reduce(into: []) { $0.formUnion($1.opaqueIndices) }
+        case .nested(let parent, _, let values):
+            values.reduce(into: parent.opaqueIndices) { $0.formUnion($1.opaqueIndices) }
+        case .associated(let parent, _, _), .inoutValue(let parent), .borrowing(let parent),
+             .consuming(let parent), .metatype(let parent), .existentialMetatype(let parent): parent.opaqueIndices
+        case .function(let values, let result, let failure, _):
+            values.reduce(into: result.opaqueIndices.union(failure?.opaqueIndices ?? [])) { $0.formUnion($1.opaqueIndices) }
+        case .foreignFunction(_, let values, let result):
+            values.reduce(into: result.opaqueIndices) { $0.formUnion($1.opaqueIndices) }
+        case .pack(let value, let shape): value.opaqueIndices.union(shape?.opaqueIndices ?? [])
+        case .objectiveCClass: []
+        }
+    }
+
     init(_ source: String, isFunctionParameter: Bool = false) throws {
         var text = source.trimmingCharacters(in: .whitespaces)
-        if text == "some" { self = .opaqueResult; return }
+        if text == "some" { self = .opaqueResult(index: 0); return }
         // Labels are outside the type grammar, including labeled tuple fields.
         if let colon = SwiftFormalSyntax.topLevelColon(in: text) {
             text = text[text.index(after: colon)...].trimmingCharacters(in: .whitespaces)
@@ -291,6 +322,8 @@ indirect enum SwiftFormalType: Sendable, Equatable {
         switch self {
         case .named(let name, let arguments), .nominal(let name, let arguments):
             name + (arguments.isEmpty ? "" : "<" + arguments.map(\.spelling).joined(separator: ", ") + ">")
+        case .constrainedExistential(let base, let constraints, _):
+            base + "<" + constraints.map { $0.subject + " == " + $0.value.spelling }.joined(separator: ", ") + ">"
         case .objectiveCClass(let name): name
         case .opaqueResult: "some"
         case .reference(let descriptor, let arguments):

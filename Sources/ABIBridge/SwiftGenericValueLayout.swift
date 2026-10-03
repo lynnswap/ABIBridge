@@ -15,22 +15,27 @@ enum SwiftGenericValueLayout {
             switch type {
             case .associated:
                 return try !binding.isClassBound(type)
+            case .opaqueResult(let index):
+                guard let value = binding.opaqueResults[index] else {
+                    throw ABIResolutionError.metadataUnavailable("The opaque field ABI has not been resolved.")
+                }
+                return ABISwiftValueIsIndirect(value.type.handle)
             case .named(let name, let arguments), .nominal(let name, let arguments):
                 if case .named = type, arguments.isEmpty, binding.arguments[String(name.prefix { $0 != "." })] != nil {
                     return try !binding.isClassBound(type)
                 }
                 if name == "Swift.Optional", let wrapped = arguments.first { return try hasUnboundStorage(wrapped) }
-                if arguments.isEmpty || !binding.dependsOnParameters(type) { return false }
+                if arguments.isEmpty || (!binding.dependsOnParameters(type) && type.opaqueIndices.isEmpty) { return false }
                 let metadata = try binding.types(type)[0]
                 if metadata is AnyClass { return false }
                 return try isIndirect(metadata, arguments: arguments, binding: binding)
             case .reference(_, let arguments):
-                if arguments.isEmpty || !binding.dependsOnParameters(type) { return false }
+                if arguments.isEmpty || (!binding.dependsOnParameters(type) && type.opaqueIndices.isEmpty) { return false }
                 let metadata = try binding.types(type)[0]
                 if metadata is AnyClass { return false }
                 return try isIndirect(metadata, arguments: arguments, binding: binding)
             case .nested:
-                guard let declaration = type.nominalDeclaration, binding.dependsOnParameters(type) else { return false }
+                guard let declaration = type.nominalDeclaration, binding.dependsOnParameters(type) || !type.opaqueIndices.isEmpty else { return false }
                 let metadata = try binding.types(type)[0]
                 if metadata is AnyClass { return false }
                 return try isIndirect(metadata, arguments: declaration.arguments, binding: binding)
@@ -56,6 +61,10 @@ extension SwiftFormalType {
         func qualify(_ type: Self) throws -> Self { try type.qualifyingAssociatedTypes(using: conformances) }
         switch self {
         case .objectiveCClass, .opaqueResult: return self
+        case .constrainedExistential(let base, let constraints, let shape):
+            return .constrainedExistential(base: base, constraints: try constraints.map {
+                .init(subject: $0.subject, value: try qualify($0.value))
+            }, shape: shape)
         case .associated(let base, let member, let protocolName):
             var names: Set<String> = []
             if let protocolName { names.insert(protocolName) }

@@ -92,8 +92,15 @@ final class SwiftAsyncCall: Sendable {
         }
         self.generic = generic
         self.closure = closure
-        interface = try SwiftAsyncCallInterface(result: values.result.type, parameters: types,
-            errorPlan: errorPlan, inheritsCallerIsolation: inheritsCallerIsolation)
+        if let closure {
+            guard case .asynchronous(let original, _) = closure.transport else {
+                preconditionFailure("An async closure has an async transport.")
+            }
+            interface = original
+        } else {
+            interface = try SwiftAsyncCallInterface(result: values.result.type, parameters: types,
+                errorPlan: errorPlan, inheritsCallerIsolation: inheritsCallerIsolation)
+        }
         self.errorPlan = errorPlan
         hasTrailingValue = trailingType != nil
 
