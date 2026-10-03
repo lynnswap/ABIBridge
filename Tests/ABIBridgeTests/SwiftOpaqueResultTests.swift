@@ -245,6 +245,47 @@ struct SwiftOpaqueResultTests {
         #expect(try await task.value == 44)
     }
 
+    @Test func opaqueContainersPreserveFormalIndirectionAndClosureAuthentication() async throws {
+        let runtime = ABIRuntime.shared
+        for name in ["makeOptionalOpaqueObject", "makeOptionalClassOpaqueObject"] {
+            let call = try await runtime.swiftFunction(
+                named: "ManagedSwiftFixtures.\(name)(ManagedSwiftFixtures.ErrorLifetimeToken, Swift.Bool) -> some?",
+                as: ((ErrorLifetimeToken, Bool) -> NativeSwiftValue).self)
+            for present in [false, true] {
+                let result = try unsafe call.unsafeInvoke(ErrorLifetimeToken(), present)
+                #expect(try result.withCopy { ($0 as? any ExistentialValue)?.number } == (present ? 42 : nil))
+            }
+        }
+        let factory = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeOptionalOpaqueClosure(ManagedSwiftFixtures.ErrorLifetimeToken) -> (Swift.Bool) -> some?",
+            as: ((ErrorLifetimeToken) -> NativeSwiftClosure<(Bool) -> NativeSwiftValue>).self)
+        let body = try unsafe factory.unsafeInvoke(ErrorLifetimeToken())
+        for present in [false, true] {
+            let result = try unsafe body.unsafeInvoke(present)
+            #expect(try result.withCopy { ($0 as? any ExistentialValue)?.number } == (present ? 42 : nil))
+        }
+        let throwingFactory = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeOptionalOpaqueThrowingClosure(ManagedSwiftFixtures.ErrorLifetimeToken) -> (Swift.Bool) throws(ManagedSwiftFixtures.ScalarFailure) -> some?",
+            as: ((ErrorLifetimeToken) -> NativeSwiftClosure<(Bool) throws(ScalarFailure) -> NativeSwiftValue>).self)
+        let throwing = try unsafe throwingFactory.unsafeInvoke(ErrorLifetimeToken())
+        do { _ = try unsafe throwing.unsafeInvoke(false); Issue.record("Expected native failure") }
+        catch let error as NativeSwiftError { #expect(error.withUnderlyingError { ($0 as? ScalarFailure)?.code } == 42) }
+        #expect(try unsafe throwing.unsafeInvoke(true).withCopy { ($0 as? any ExistentialValue)?.number } == 42)
+        let asyncFactory = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeOptionalOpaqueAsyncClosure(ManagedSwiftFixtures.ErrorLifetimeToken) -> @Sendable (Swift.Bool) async -> some?",
+            as: ((ErrorLifetimeToken) -> NativeSwiftClosure<@Sendable @concurrent (Bool) async -> NativeSwiftValue>).self)
+        let async = try unsafe asyncFactory.unsafeInvoke(ErrorLifetimeToken())
+        for present in [false, true] {
+            let result = try unsafe await async.unsafeInvoke(present)
+            #expect(try result.withCopy { ($0 as? any ExistentialValue)?.number } == (present ? 42 : nil))
+        }
+        let box = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeInlineOpaqueBox(ManagedSwiftFixtures.ErrorLifetimeToken) -> ManagedSwiftFixtures.InlineOpaqueBox<some>",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self)
+        let result = try unsafe box.unsafeInvoke(ErrorLifetimeToken())
+        #expect(try result.withCopy { ($0 as? any CustomStringConvertible)?.description } == "42")
+    }
+
     @Test func genericOpaqueTupleResultsResolveEveryUnderlyingIndex() async throws {
         let call = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.makeGenericOpaquePair<A, B>(A, B) -> (some, some)",

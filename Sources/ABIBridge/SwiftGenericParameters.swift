@@ -11,8 +11,23 @@ struct SwiftGenericParameters: Sendable {
     let arguments: [SwiftGenericArgument]
     let groups: [Group]
     let hasPacks: Bool
+    private let expandsTuples: Bool
     private let constants: [SwiftValueConstants]
-    var needsEncoding: Bool { hasPacks || arguments.contains { Self.expandedTuple($0) != nil } || constants.contains { !$0.isEmpty } }
+    var needsEncoding: Bool { hasPacks || arguments.contains { expandedTuple($0) != nil } || constants.contains { !$0.isEmpty } }
+
+    private func expandedTuple(_ argument: SwiftGenericArgument) -> SwiftTupleValuePlan? {
+        expandsTuples ? Self.expandedTuple(argument) : nil
+    }
+
+    func usingStorageConvention() -> Self {
+        Self(arguments: arguments, groups: groups, hasPacks: hasPacks, constants: constants, expandsTuples: false)
+    }
+
+    private init(arguments: [SwiftGenericArgument], groups: [Group], hasPacks: Bool,
+                 constants: [SwiftValueConstants], expandsTuples: Bool) {
+        self.arguments = arguments; self.groups = groups; self.hasPacks = hasPacks
+        self.constants = constants; self.expandsTuples = expandsTuples
+    }
 
     static func expandedTuple(_ argument: SwiftGenericArgument) -> SwiftTupleValuePlan? {
         argument.convention == .inoutValue ? nil : argument.tuple
@@ -83,12 +98,14 @@ struct SwiftGenericParameters: Sendable {
         self.arguments = arguments
         self.groups = groups
         self.hasPacks = hasPacks
+        expandsTuples = true
         constants = zip(actual, arguments).map { Self.constants(for: $0, argument: $1) }
     }
 
     init(actual: [Any.Type], arguments: [SwiftGenericArgument], groups: [Group]? = nil) {
         self.arguments = arguments
         self.groups = groups ?? actual.indices.map { .value($0) }
+        expandsTuples = true
         hasPacks = self.groups.contains { if case .pack = $0 { true } else { false } }
         constants = zip(actual, arguments).map { Self.constants(for: $0, argument: $1) }
     }
@@ -105,7 +122,7 @@ struct SwiftGenericParameters: Sendable {
     func types(from logical: [CValueType]) -> [CValueType] {
         groups.flatMap {
             switch $0 {
-            case .value(let index): Self.expandedTuple(arguments[index])?.argumentTypes ?? [logical[index]]
+            case .value(let index): expandedTuple(arguments[index])?.argumentTypes ?? [logical[index]]
             case .pack(_, let type): [type]
             }
         }
@@ -128,7 +145,7 @@ struct SwiftGenericParameters: Sendable {
         let addresses = groups.flatMap { group -> [UnsafeMutableRawPointer?] in
             switch group {
             case .value(let index):
-                if let tuple = Self.expandedTuple(arguments[index]) {
+                if let tuple = expandedTuple(arguments[index]) {
                     let encoded = tuple.encodeArguments(from: logical[index]!, retaining: owners.isEmpty ? nil : owners[index],
                         consuming: consuming || arguments[index].convention == .consuming)
                     packs += encoded.storage
@@ -140,7 +157,7 @@ struct SwiftGenericParameters: Sendable {
                 let storage = NativeValueStorage(size: type.size, alignment: type.alignment)
                 for (element, index) in range.enumerated() {
                     let address: UnsafeMutableRawPointer?
-                    if let tuple = Self.expandedTuple(arguments[index]) {
+                    if let tuple = expandedTuple(arguments[index]) {
                         let consuming = consuming || arguments[index].convention == .consuming
                         let value = tuple.materializeArgument(from: logical[index]!, consuming: consuming,
                             retaining: owners.isEmpty ? nil : owners[index])
@@ -171,7 +188,7 @@ struct SwiftGenericParameters: Sendable {
         for group in groups {
             switch group {
             case .value(let logical):
-                if let tuple = Self.expandedTuple(arguments[logical]) {
+                if let tuple = expandedTuple(arguments[logical]) {
                     let unpacked = tuple.unpackArguments(native?.advanced(by: index))
                     storage += unpacked.storage
                     let vector = NativeValueStorage(size: tuple.leaves.count * MemoryLayout<UnsafeMutableRawPointer?>.stride,
@@ -196,7 +213,7 @@ struct SwiftGenericParameters: Sendable {
                 for element in 0..<range.count {
                     let value = native![index]!.load(fromByteOffset: element * MemoryLayout<UInt>.size,
                                                     as: UnsafeMutableRawPointer?.self)
-                    if let tuple = Self.expandedTuple(arguments[range.lowerBound + element]) {
+                    if let tuple = expandedTuple(arguments[range.lowerBound + element]) {
                         let leaves = tuple.nativeArgumentAddresses(value!)
                         let vector = NativeValueStorage(size: leaves.count * MemoryLayout<UnsafeMutableRawPointer?>.stride,
                             alignment: MemoryLayout<UnsafeMutableRawPointer?>.alignment)

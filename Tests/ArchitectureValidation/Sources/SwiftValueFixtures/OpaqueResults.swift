@@ -155,3 +155,36 @@ private final class RuntimeExtendedObjectValue<Element>: RuntimeExtendedObject, 
 @inline(never) public func applyRuntimeExtendedObject<Value>(_ body: (any RuntimeExtendedObject<Value>) -> Int, _ value: Value) -> Int {
     body(RuntimeExtendedObjectValue(value))
 }
+
+@inline(never) public func makeOptionalOpaqueObject(_ token: ErrorToken, _ present: Bool) -> (some ExistentialValue)? {
+    present ? HiddenOpaqueObject(token, 42) : nil
+}
+@inline(never) public func makeOptionalClassOpaqueObject(_ token: ErrorToken, _ present: Bool) -> (some ExistentialObjectValue)? {
+    present ? HiddenOpaqueObject(token, 42) : nil
+}
+@inline(never) public func makeOptionalOpaqueClosure(_ token: ErrorToken) -> (Bool) -> (some ExistentialValue)? {
+    let body: (Bool) -> HiddenOpaqueObject? = { $0 ? HiddenOpaqueObject(token, 42) : nil }
+    return body
+}
+@frozen public struct InlineOpaqueBox<Value>: CustomStringConvertible {
+    public let value: Value
+    public var description: String { String((value as? any ExistentialValue)?.number ?? -1) }
+}
+@inline(never) public func makeInlineOpaqueBox(_ token: ErrorToken) -> InlineOpaqueBox<some ExistentialValue> {
+    InlineOpaqueBox(value: HiddenOpaqueObject(token, 42))
+}
+
+@inline(never) public func makeOptionalOpaqueThrowingClosure(_ token: ErrorToken) -> (Bool) throws(SmallError) -> (some ExistentialValue)? {
+    let body: (Bool) throws(SmallError) -> HiddenOpaqueObject? = { present throws(SmallError) in
+        if !present { throw SmallError(42) }
+        return HiddenOpaqueObject(token, 42)
+    }
+    return body
+}
+@inline(never) public func makeOptionalOpaqueAsyncClosure(_ token: ErrorToken) -> @Sendable @concurrent (Bool) async -> (some ExistentialValue)? {
+    let body: @Sendable @concurrent (Bool) async -> HiddenOpaqueObject? = { present in
+        await Task.yield()
+        return present ? HiddenOpaqueObject(token, 42) : nil
+    }
+    return body
+}

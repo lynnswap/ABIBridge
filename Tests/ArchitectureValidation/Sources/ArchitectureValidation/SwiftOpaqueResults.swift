@@ -256,6 +256,49 @@ private struct OpaqueWordResult: ABIBridgeValue {
     let methodValue = try unsafe genericMethod.unsafeInvoke(on: genericInstance, 42)
     try check(try methodValue.withCopy { ($0 as? (String, Int))?.1 } == 42,
         "Opaque members combine enclosing and introduced type bindings")
+    for name in ["makeOptionalOpaqueObject", "makeOptionalClassOpaqueObject"] {
+        let call = try await runtime.swiftFunction(
+            named: "SwiftValueFixtures.\(name)(SwiftValueFixtures.ErrorToken, Swift.Bool) -> some?",
+            as: ((ErrorToken, Bool) -> NativeSwiftValue).self)
+        for present in [false, true] {
+            let value = try unsafe call.unsafeInvoke(ErrorToken(), present)
+            try check(try value.withCopy { ($0 as? any ExistentialValue)?.number } == (present ? 42 : nil),
+                name + " preserves the formal result convention with present=\(present)")
+        }
+    }
+    let optionalClosure = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.makeOptionalOpaqueClosure(SwiftValueFixtures.ErrorToken) -> (Swift.Bool) -> some?",
+        as: ((ErrorToken) -> NativeSwiftClosure<(Bool) -> NativeSwiftValue>).self)
+    let optionalBody = try unsafe optionalClosure.unsafeInvoke(ErrorToken())
+    for present in [false, true] {
+        let value = try unsafe optionalBody.unsafeInvoke(present)
+        try check(try value.withCopy { ($0 as? any ExistentialValue)?.number } == (present ? 42 : nil),
+            "Returned optional opaque closure authenticates its indirect result with present=\(present)")
+    }
+    let throwingOptionalFactory = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.makeOptionalOpaqueThrowingClosure(SwiftValueFixtures.ErrorToken) -> (Swift.Bool) throws(SwiftValueFixtures.SmallError) -> some?",
+        as: ((ErrorToken) -> NativeSwiftClosure<(Bool) throws(SmallError) -> NativeSwiftValue>).self)
+    let throwingOptional = try unsafe throwingOptionalFactory.unsafeInvoke(ErrorToken())
+    do { _ = try unsafe throwingOptional.unsafeInvoke(false); throw ArchitectureValidationFailure(description: "Expected native opaque closure failure") }
+    catch let error as NativeSwiftError {
+        try check(error.withUnderlyingError { ($0 as? SmallError)?.code } == 42,
+            "Opaque closures retain typed error storage in the erased function convention")
+    }
+    let asyncOptionalFactory = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.makeOptionalOpaqueAsyncClosure(SwiftValueFixtures.ErrorToken) -> @Sendable (Swift.Bool) async -> some?",
+        as: ((ErrorToken) -> NativeSwiftClosure<@Sendable @concurrent (Bool) async -> NativeSwiftValue>).self)
+    let asyncOptional = try unsafe asyncOptionalFactory.unsafeInvoke(ErrorToken())
+    for present in [false, true] {
+        let value = try unsafe await asyncOptional.unsafeInvoke(present)
+        try check(try value.withCopy { ($0 as? any ExistentialValue)?.number } == (present ? 42 : nil),
+            "Async opaque closure preserves indirect storage with present=\(present)")
+    }
+    let opaqueBox = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.makeInlineOpaqueBox(SwiftValueFixtures.ErrorToken) -> SwiftValueFixtures.InlineOpaqueBox<some>",
+        as: ((ErrorToken) -> NativeSwiftValue).self)
+    let boxedValue = try unsafe opaqueBox.unsafeInvoke(ErrorToken())
+    try check(try boxedValue.withCopy { ($0 as? any CustomStringConvertible)?.description } == "42",
+        "A nominal inline opaque field preserves formal indirection")
     checks += try await validateRuntimeValueArguments()
     checks += try await validateRuntimeClassArguments()
     return checks
