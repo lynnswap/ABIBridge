@@ -23,8 +23,20 @@ infix operator <>
 infix operator <≪
 infix operator ≪<
 infix operator .<>
+infix operator -->
+infix operator ->>
 prefix operator ^^^
 postfix operator ^^^
+
+@inline(never) public func -->(lhs: Int64, rhs: Int64) -> Int64 { lhs + rhs }
+@inline(never) public func ->>(lhs: Int64, rhs: Int64) -> Int64 { lhs - rhs }
+
+public final class ArrowOperatorValue {
+    public let value: Int64
+    public init(_ value: Int64) { self.value = value }
+    @inline(never) public static func -->(lhs: ArrowOperatorValue, rhs: ArrowOperatorValue) -> Int64 { lhs.value + rhs.value }
+    @inline(never) public static func ->>(lhs: ArrowOperatorValue, rhs: ArrowOperatorValue) -> Int64 { lhs.value - rhs.value }
+}
 
 public final class GenericOperatorBox<Value> {
     public let value: Int64
@@ -36,10 +48,19 @@ public final class GenericOperatorBox<Value> {
     @inline(never) public static func <≪(lhs: GenericOperatorBox, rhs: GenericOperatorBox) -> Bool { lhs.value > rhs.value }
     @inline(never) public static func ≪<(lhs: GenericOperatorBox, rhs: GenericOperatorBox) -> Bool { lhs.value < rhs.value }
     @inline(never) public static func .<>(lhs: GenericOperatorBox, rhs: GenericOperatorBox) -> Bool { lhs.value != rhs.value }
+    @inline(never) public static func -->(lhs: GenericOperatorBox, rhs: GenericOperatorBox) -> Int64 { lhs.value + rhs.value }
+    @inline(never) public static func ->>(lhs: GenericOperatorBox, rhs: GenericOperatorBox) -> Int64 { lhs.value - rhs.value }
     @inline(never) public static prefix func ^^^(value: GenericOperatorBox) -> Int64 { value.value + 1 }
     @inline(never) public static postfix func ^^^(value: GenericOperatorBox) -> Int64 { value.value - 1 }
     @inline(never) public static func +<Other>(lhs: GenericOperatorBox, rhs: Other) -> Other { rhs }
 }
+
+@inline(never) public func labelLookupGeneric<Value>(_ value: Value) -> Int64 { 11 }
+@inline(never) public func labelLookupGeneric<Value>(_ value: [Value]) -> Int64 { 40 + Int64(value.count) }
+@inline(never) public func ambiguousLookupGeneric<Value: Equatable>(_ value: Value) -> Int64 { 23 }
+@inline(never) public func ambiguousLookupGeneric<Value: CustomStringConvertible>(_ value: Value) -> Int64 { 17 }
+@inline(never) public func referenceEquatableLookup<Value: Equatable>(_ value: Value) -> Int64 { ambiguousLookupGeneric(value) }
+@inline(never) public func referenceDescriptionLookup<Value: CustomStringConvertible>(_ value: Value) -> Int64 { ambiguousLookupGeneric(value) }
 
 public final class GenericCallbackConventions<Value> {
     public init() {}

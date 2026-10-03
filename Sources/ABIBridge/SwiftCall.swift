@@ -3,11 +3,11 @@ import ABIBridgeCore
 final class SwiftCall: Sendable {
     let interface: SwiftCallInterface
     let errorPlan: SwiftErrorPlan?
-    private let values: SwiftCallValues
+    let values: SwiftCallValues
     private let hasTrailingValue: Bool
     let generic: SwiftGenericCallPlan?
     let closure: SwiftGenericClosurePlan?
-    private let parameters: SwiftGenericParameters
+    let parameters: SwiftGenericParameters
 
     init(signature: Any.Type, trailingType: CValueType? = nil, consumesArguments: Bool = false, errorPlan: SwiftErrorPlan? = nil, opaqueResult: SwiftOpaqueResultPlan? = nil, generic: SwiftGenericCallPlan? = nil, closure: SwiftGenericClosurePlan? = nil) throws {
         try generic?.validateMetadataArguments()

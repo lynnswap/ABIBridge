@@ -277,7 +277,11 @@ struct SwiftResultCodec<Value>: Sendable {
             return try tuple.decodeResult(storage, retaining: owner, retainingCode: codeOwner, as: Value.self)
         }
         if let runtimeValue { return try runtimeValue.decode(storage) as! Value }
-        if let closure { return try closure.makeValue(storage.address.load(as: ABISwiftClosureValue.self), codeOwner, true, storage.codeLifetime) as! Value }
+        if let closure {
+            let value = storage.address.load(as: ABISwiftClosureValue.self)
+            storage.relinquishValue()
+            return try closure.makeValue(value, codeOwner, true, storage.codeLifetime) as! Value
+        }
         if genericValue {
             constants.initialize(at: storage.address)
             return storage.take(as: Value.self)

@@ -125,6 +125,78 @@ import Synchronization
     try check(try unsafe payloadCaller.unsafeInvoke(40) == 315, "Imported Swift closure preserves caller-provided indirect result storage")
     payloadHook.invalidate()
     try check(try unsafe payloadCaller.unsafeInvoke(40) == 210, "Indirect-result fallback survives logical invalidation")
+
+    let genericInteger = try await runtime.swiftFunction(named: "SwiftImportProvider.composedHookEcho(_:)",
+        as: ((Int64) -> Int64).self, genericArguments: [.type(Int64.self)], in: provider)
+    let genericText = try await runtime.swiftFunction(named: "SwiftImportProvider.composedHookEcho(_:)",
+        as: ((String) -> String).self, genericArguments: [.type(String.self)], in: provider)
+    let genericObject = try await runtime.swiftFunction(named: "SwiftImportProvider.composedHookEcho(_:)",
+        as: ((NSObject) -> NSObject).self, genericArguments: [.type(NSObject.self)], in: provider)
+    let integerCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.composedHookInteger(_:)",
+        as: ((Int64) -> Int64).self, in: control)
+    let stringCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.composedHookString(_:)",
+        as: ((String) -> String).self, in: control)
+    let objectCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.composedHookObject(_:)",
+        as: ((NSObject) -> NSObject).self, in: control)
+    let booleanCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.composedHookBoolean(_:)",
+        as: ((Bool) -> Bool).self, in: control)
+    _ = try unsafe integerCaller.unsafeInvoke(40)
+    let integerHook = try unsafe await genericInteger.hookImportedCalls(in: control, using: runtime,
+        onFailure: failure) { call, value in try call.proceed(value + 1) + 10 }
+    defer { integerHook.invalidate() }
+    let stringHook = try unsafe await genericText.hookImportedCalls(in: control, using: runtime,
+        onFailure: failure) { call, value in try call.proceed(value + " hook") }
+    defer { stringHook.invalidate() }
+    let objectCalls = Mutex(0)
+    let objectHook = try unsafe await genericObject.hookImportedCalls(in: control, using: runtime,
+        onFailure: failure) { call, value in
+            objectCalls.withLock { $0 += 1 }
+            return try call.proceed(value)
+        }
+    defer { objectHook.invalidate() }
+    try check(try unsafe integerCaller.unsafeInvoke(40) == 51, "Generic scalar hooks select their bound native metadata")
+    try check(try unsafe stringCaller.unsafeInvoke(input) == input + " hook", "A second generic binding preserves owned String values")
+    let object = NSObject()
+    try check(try unsafe objectCaller.unsafeInvoke(object) === object && objectCalls.withLock { $0 } == 1,
+        "An unconstrained class substitution retains indirect argument passing")
+    try check(try unsafe booleanCaller.unsafeInvoke(false) == false, "Unmatched generic metadata forwards the untouched native frame")
+    integerHook.invalidate(); stringHook.invalidate(); objectHook.invalidate()
+
+    let genericFactory = try await runtime.swiftFunction(named: "SwiftImportProvider.composedHookFactory(_:)",
+        as: ((Int64) -> NativeSwiftClosure<() -> Int64>).self, genericArguments: [.type(Int64.self)], in: provider)
+    let factoryCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.composedHookFactoryResult(_:)",
+        as: ((Int64) -> Int64).self, in: control)
+    _ = try unsafe factoryCaller.unsafeInvoke(40)
+    let factoryHook = try unsafe await genericFactory.hookImportedCalls(in: control, using: runtime,
+        onFailure: failure) { call, value in try call.proceed(value + 1) }
+    defer { factoryHook.invalidate() }
+    try check(try unsafe factoryCaller.unsafeInvoke(40) == 41, "Returned generic closures preserve their declared ABI and pointer authentication")
+    factoryHook.invalidate()
+
+    let throwing = try await runtime.swiftFunction(named: "SwiftImportProvider.composedHookError(_:)",
+        as: ((Int64) throws(NSError) -> Int64).self, in: provider)
+    let throwingCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.composedHookErrorResult(_:)",
+        as: ((Int64) throws(NSError) -> Int64).self, in: control)
+    _ = try unsafe throwingCaller.unsafeInvoke(40)
+    let throwingHook = try unsafe await throwing.hookImportedCalls(in: control, using: runtime,
+        onFailure: failure) { call, value in
+            if value == 99 { throw NSError(domain: "callback-hook", code: 99) }
+            return try call.proceed(value) + 10
+        }
+    defer { throwingHook.invalidate() }
+    try check(try unsafe throwingCaller.unsafeInvoke(40) == 51, "Typed-error hooks preserve ordinary successful results")
+    for (value, domain) in [(Int64(-7), "native-hook"), (Int64(99), "callback-hook")] {
+        do {
+            _ = try unsafe throwingCaller.unsafeInvoke(value)
+            throw ArchitectureValidationFailure(description: "Expected the declared native error channel")
+        } catch let error as NativeSwiftError {
+            try error.withUnderlyingError {
+                try check(($0 as NSError).domain == domain && ($0 as NSError).code == Int(value),
+                    "Typed error channel preserves " + domain + " ownership")
+            }
+        }
+    }
+    throwingHook.invalidate()
     try check(failures.withLock { $0.isEmpty }, "No unexpected Swift callback failures")
     return ArchitectureReport(mode: "swift-function-hooks", cpuType: ABIValidationCPUType(),
         cpuSubtype: ABIValidationCPUSubtype(), pacCompiled: ABIValidationPACCompiled(),

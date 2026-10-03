@@ -4,9 +4,37 @@
 import ABIBridge
 #endif
 import Foundation
+import ManagedSwiftFixtures
 import Testing
 
 struct SwiftFunctionDeclarationTests {
+    @Test func arrowOperatorsResolveByLabelsAndCompleteDeclarations() async throws {
+        let runtime = ABIRuntime()
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.ArrowOperatorValue")
+        let generic = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericOperatorBox",
+            genericArguments: [.type(Int64.self)])
+        let first = ArrowOperatorValue(35), second = ArrowOperatorValue(7)
+        let genericFirst = GenericOperatorBox<Int64>(35), genericSecond = GenericOperatorBox<Int64>(7)
+        for operation in ["-->", "->>"] {
+            let expected = operation == "-->" ? (Int64(35) --> Int64(7)) : (Int64(35) ->> Int64(7))
+            let function = try await runtime.swiftFunction(named: "ManagedSwiftFixtures." + operation + "(_:_:)",
+                as: ((Int64, Int64) -> Int64).self)
+            #expect(try unsafe function.unsafeInvoke(35, 7) == expected)
+            let complete = try await runtime.swiftFunction(
+                named: "ManagedSwiftFixtures." + operation + " infix(Swift.Int64, Swift.Int64) -> Swift.Int64",
+                as: ((Int64, Int64) -> Int64).self, in: function.symbol.image)
+            #expect(try unsafe complete.unsafeInvoke(35, 7) == expected)
+            let method = try await type.staticMethod(named: operation + "(_:_:)",
+                as: ((ArrowOperatorValue, ArrowOperatorValue) -> Int64).self)
+            let memberControl = operation == "-->" ? (first --> second) : (first ->> second)
+            #expect(try unsafe method.unsafeInvoke(first, second) == memberControl)
+            let genericMethod = try await generic.staticMethod(named: operation + "(_:_:)",
+                as: ((GenericOperatorBox<Int64>, GenericOperatorBox<Int64>) -> Int64).self)
+            let genericControl = operation == "-->" ? (genericFirst --> genericSecond) : (genericFirst ->> genericSecond)
+            #expect(try unsafe genericMethod.unsafeInvoke(genericFirst, genericSecond) == genericControl)
+        }
+    }
+
     @Test func compiledGenericFunctionTypesRequireAdapters() async throws {
         let variants = [("use", ""), ("throwing", " throws"),
                         ("asynchronous", " async"), ("asyncThrowing", " async throws")]
@@ -76,7 +104,7 @@ struct SwiftFunctionDeclarationTests {
         #expect(signature.text.trimmingCharacters(in: .whitespaces).hasSuffix("async throws"))
     }
 
-    @Test(arguments: ["<", "<<", "<>", ">"])
+    @Test(arguments: ["<", "<<", "<>", ">", "-->", "->>"])
     func operatorNamesDoNotHideOuterEffects(_ name: String) throws {
         let declaration = "static Example.Value.\(name) infix(Example.Value, Example.Value) async throws -> Swift.Bool"
         let signature = swiftOuterSignature(declaration)

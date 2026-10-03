@@ -165,7 +165,7 @@ actor SwiftHookRegistry {
             }
             records.append(SwiftHookSlotRecord(group))
         }
-        let node = SwiftHookNode(handler)
+        let node = SwiftHookNode(handler, signature: signature)
         let registration = NativeSwiftImportedFunctionHook(node: node, records: records)
         var activated: [SwiftHookSlotRecord] = []
         for (index, record) in records.enumerated() {
