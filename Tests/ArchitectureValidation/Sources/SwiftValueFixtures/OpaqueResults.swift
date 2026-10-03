@@ -188,3 +188,16 @@ private final class RuntimeExtendedObjectValue<Element>: RuntimeExtendedObject, 
     }
     return body
 }
+
+@inline(never) public func makeOpaqueTupleClosure() -> ((Int64, String, ErrorToken)) -> some Any {
+    let body: ((Int64, String, ErrorToken)) -> String = { value in
+        withExtendedLifetime(value.2) { "\(value.0):\(value.1)" }
+    }
+    return body
+}
+@inline(never) public func makeOpaqueConsumingTupleClosure() -> (consuming (Int64, String, ErrorToken)) -> some Any {
+    let body: (consuming (Int64, String, ErrorToken)) -> String = { (value: consuming (Int64, String, ErrorToken)) in
+        withExtendedLifetime(value.2) { "\(value.0):\(value.1)" }
+    }
+    return body
+}

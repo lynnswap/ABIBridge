@@ -135,3 +135,16 @@ public final class GenericOpaqueOwner<Value> {
     }
     return body
 }
+
+@inline(never) public func makeOpaqueTupleClosure() -> ((Int64, String, ErrorLifetimeToken)) -> some Any {
+    let body: ((Int64, String, ErrorLifetimeToken)) -> String = { value in
+        withExtendedLifetime(value.2) { "\(value.0):\(value.1)" }
+    }
+    return body
+}
+@inline(never) public func makeOpaqueConsumingTupleClosure() -> (consuming (Int64, String, ErrorLifetimeToken)) -> some Any {
+    let body: (consuming (Int64, String, ErrorLifetimeToken)) -> String = { (value: consuming (Int64, String, ErrorLifetimeToken)) in
+        withExtendedLifetime(value.2) { "\(value.0):\(value.1)" }
+    }
+    return body
+}

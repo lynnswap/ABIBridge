@@ -286,6 +286,33 @@ struct SwiftOpaqueResultTests {
         #expect(try result.withCopy { ($0 as? any CustomStringConvertible)?.description } == "42")
     }
 
+    @Test func opaqueReturnedClosuresMaterializeManagedTupleArguments() async throws {
+        let runtime = ABIRuntime.shared
+        let declaration = "ManagedSwiftFixtures.makeOpaqueTupleClosure() -> ((Swift.Int64, Swift.String, ManagedSwiftFixtures.ErrorLifetimeToken)) -> some"
+        let factory = try await runtime.swiftFunction(named: declaration,
+            as: (() -> NativeSwiftClosure<((Int64, String, ErrorLifetimeToken)) -> NativeSwiftValue>).self)
+        let body = try unsafe factory.unsafeInvoke()
+        let erasedFactory = try await runtime.swiftFunction(named: declaration, as: (() -> NativeSwiftValue).self)
+        let erased = try unsafe erasedFactory.unsafeInvoke()
+        let native = try erased.take(as: (((Int64, String, ErrorLifetimeToken)) -> String).self)
+        let consume = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeOpaqueConsumingTupleClosure() -> (__owned (Swift.Int64, Swift.String, ManagedSwiftFixtures.ErrorLifetimeToken)) -> some",
+            as: (() -> NativeSwiftClosure<(NativeSwiftConsuming<(Int64, String, ErrorLifetimeToken)>) -> NativeSwiftValue>).self)
+        let consuming = try unsafe consume.unsafeInvoke()
+        let counts = ArgumentCounts()
+        weak var observed: ErrorLifetimeToken?
+        do {
+            let token = ErrorLifetimeToken { counts.destroyed() }
+            observed = token
+            let value = try unsafe body.unsafeInvoke((Int64(42), "borrowed", token))
+            #expect(try value.withCopy { $0 as? String } == "42:borrowed")
+            #expect(native((43, "erased", token)) == "43:erased")
+            let consumed = try unsafe consuming.unsafeInvoke(NativeSwiftConsuming((Int64(44), "consumed", token)))
+            #expect(try consumed.withCopy { $0 as? String } == "44:consumed")
+        }
+        #expect(observed == nil && counts.destructions == 1)
+    }
+
     @Test func genericOpaqueTupleResultsResolveEveryUnderlyingIndex() async throws {
         let call = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.makeGenericOpaquePair<A, B>(A, B) -> (some, some)",

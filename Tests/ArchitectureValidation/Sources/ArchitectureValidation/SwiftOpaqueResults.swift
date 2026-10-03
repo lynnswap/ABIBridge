@@ -299,6 +299,25 @@ private struct OpaqueWordResult: ABIBridgeValue {
     let boxedValue = try unsafe opaqueBox.unsafeInvoke(ErrorToken())
     try check(try boxedValue.withCopy { ($0 as? any CustomStringConvertible)?.description } == "42",
         "A nominal inline opaque field preserves formal indirection")
+    let tupleDeclaration = "SwiftValueFixtures.makeOpaqueTupleClosure() -> ((Swift.Int64, Swift.String, SwiftValueFixtures.ErrorToken)) -> some"
+    let tupleFactory = try await runtime.swiftFunction(named: tupleDeclaration,
+        as: (() -> NativeSwiftClosure<((Int64, String, ErrorToken)) -> NativeSwiftValue>).self)
+    let tupleBody = try unsafe tupleFactory.unsafeInvoke()
+    let tupleArgument = try unsafe tupleBody.unsafeInvoke((Int64(42), "tuple", ErrorToken()))
+    try check(try tupleArgument.withCopy { $0 as? String } == "42:tuple",
+        "Opaque returned closures materialize managed tuple inputs as contiguous native values")
+    let erasedTupleFactory = try await runtime.swiftFunction(named: tupleDeclaration, as: (() -> NativeSwiftValue).self)
+    let erasedTuple = try unsafe erasedTupleFactory.unsafeInvoke()
+    let nativeTuple = try erasedTuple.take(as: (((Int64, String, ErrorToken)) -> String).self)
+    try check(nativeTuple((43, "erased", ErrorToken())) == "43:erased",
+        "Erased opaque closures convert tuple storage before an ordinary Swift call")
+    let consumeTupleFactory = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.makeOpaqueConsumingTupleClosure() -> (__owned (Swift.Int64, Swift.String, SwiftValueFixtures.ErrorToken)) -> some",
+        as: (() -> NativeSwiftClosure<(NativeSwiftConsuming<(Int64, String, ErrorToken)>) -> NativeSwiftValue>).self)
+    let consumeTuple = try unsafe consumeTupleFactory.unsafeInvoke()
+    let consumedTuple = try unsafe consumeTuple.unsafeInvoke(NativeSwiftConsuming((Int64(44), "consumed", ErrorToken())))
+    try check(try consumedTuple.withCopy { $0 as? String } == "44:consumed",
+        "Consuming opaque closure inputs transfer every managed tuple field")
     checks += try await validateRuntimeValueArguments()
     checks += try await validateRuntimeClassArguments()
     return checks
