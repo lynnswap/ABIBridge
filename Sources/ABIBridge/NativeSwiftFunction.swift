@@ -23,7 +23,7 @@ func swiftFunctionTypeName(_ type: Any.Type) throws -> String {
 }
 
 func swiftNativeTypeName(_ type: Any.Type) throws -> String {
-    if let name = try swiftExtendedTypeName(type) { return name }
+    if let syntax = try SwiftSyntax.extendedMetadataType(type) { return try syntax.name() }
     // Objective-C metatypes can print an unqualified runtime name (NSString),
     // while Swift declarations use their imported identity (__C.NSString).
     // The runtime mangler has no spelling for Objective-C superclass
@@ -34,59 +34,6 @@ func swiftNativeTypeName(_ type: Any.Type) throws -> String {
         throw ABIResolutionError.metadataUnavailable("No canonical Swift name for \(String(reflecting: type)).")
     }
     return name
-}
-
-private func swiftExtendedTypeName(_ type: Any.Type) throws -> String? {
-    func spelling(_ type: SwiftFormalType) -> String {
-        // NodePrinter.cpp omits escaping qualifiers for Swift function types.
-        // Keep those qualifiers in the formal ABI model, but not lookup names.
-        type.spelling.replacingOccurrences(of: "@escaping ", with: "")
-            .replacingOccurrences(of: "@noescape ", with: "")
-    }
-    let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
-    if metadata.load(as: UInt.self) == 0x307 {
-        // Swift 6.3's runtime mangler assumes the generalized expression is a
-        // constrained value; an existential metatype adds a wrapper and traps.
-        return try spelling(SwiftExtendedExistentialMetadata.formalType(type))
-    }
-    if let optional = type as? any NativeOptionalValue.Type,
-       let wrapped = try swiftExtendedTypeName(optional.wrappedType) {
-        return "Swift.Optional<" + wrapped + ">"
-    }
-    if let metatype = SwiftMetatypeMetadata(type), let instance = metatype.instance,
-       let name = try swiftExtendedTypeName(instance) {
-        return metatype.isExistential ? name + ".Type" : "(" + name + ").Type"
-    }
-    if let tuple = SwiftTupleMetadata(type) {
-        let names = try tuple.elements.map { try swiftExtendedTypeName($0.type) }
-        guard names.contains(where: { $0 != nil }) else { return nil }
-        return "(" + (try tuple.elements.enumerated().map { index, element in
-            (tuple.labels[index].isEmpty ? "" : tuple.labels[index] + ": ")
-                + (try names[index] ?? swiftNativeTypeName(element.type))
-        }).joined(separator: ", ") + ")"
-    }
-    if metadata.load(as: UInt.self) == 0x302 {
-        let word = MemoryLayout<UInt>.size
-        let flags = metadata.load(fromByteOffset: word, as: UInt.self)
-        let count = Int(flags & 0xffff)
-        let types = (0...count).map { metadata.load(fromByteOffset: (2 + $0) * word, as: Any.Type.self) }
-        let names = try types.map(swiftExtendedTypeName)
-        guard names.contains(where: { $0 != nil }) else { return nil }
-        let function = try SwiftFunctionMetadata(type)
-        let arguments = try function.parameters.enumerated().map { index, type -> SwiftFormalType in
-            let value = try SwiftFormalType(names[index + 1] ?? swiftNativeTypeName(type))
-            return switch function.parameterFlags[index] & 7 {
-            case 1: .inoutValue(value)
-            case 2: .borrowing(value)
-            case 3: .consuming(value)
-            default: value
-            }
-        }
-        return try spelling(SwiftFormalType.function(arguments, SwiftFormalType(names[0] ?? swiftNativeTypeName(function.result)),
-            failure: function.failure == Never.self ? nil : SwiftFormalType(swiftNativeTypeName(function.failure)),
-            attributes: function.attributes))
-    }
-    return nil
 }
 
 func swiftFunctionDeclaration<Signature>(

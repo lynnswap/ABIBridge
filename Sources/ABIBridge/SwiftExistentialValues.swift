@@ -164,30 +164,7 @@ struct SwiftObjectType {
 /// existential metadata. The descriptor owns the signature and witness order.
 struct SwiftExtendedExistentialMetadata {
     static func formalType(_ metadata: Any.Type) throws -> SwiftFormalType {
-        guard let handle = ABICopySwiftExtendedExistentialTypeSyntax(unsafeBitCast(metadata, to: UnsafeRawPointer.self)) else {
-            throw ABIResolutionError.metadataUnavailable("The extended existential's type expression is unavailable.")
-        }
-        let generalized = try SwiftFormalType(SwiftSyntax(adopting: handle).root)
-        let arguments = try SwiftGenericTypeMetadata(metadata: metadata).arguments
-        let substitutions = try Dictionary(uniqueKeysWithValues: arguments.enumerated().map { index, argument in
-            guard case .type(let type, _) = argument.storage else {
-                throw ABIResolutionError.metadataUnavailable("The extended existential has a non-scalar generalization parameter.")
-            }
-            return (SwiftFormalType.parameterName(depth: 0, index: index), try SwiftFormalType(swiftNativeTypeName(type)))
-        })
-        func substitute(_ type: SwiftFormalType) throws -> SwiftFormalType {
-            switch type {
-            case .existentialMetatype(let instance): return .existentialMetatype(try substitute(instance))
-            case .constrainedExistential(let base, let constraints, let shape):
-                return .constrainedExistential(base: base, constraints: try constraints.map {
-                    .init(subject: $0.subject, value: try substitute($0.value))
-                }, shape: shape)
-            case .named(let name, let parameters) where parameters.isEmpty:
-                return substitutions[name] ?? type
-            default: return type
-            }
-        }
-        return try substitute(generalized)
+        try SwiftFormalType(SwiftSyntax.metadataType(metadata))
     }
 
     let value: Any.Type

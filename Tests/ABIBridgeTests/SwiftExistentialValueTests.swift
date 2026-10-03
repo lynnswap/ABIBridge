@@ -17,6 +17,39 @@ struct SwiftExistentialValueTests {
         #expect(Array(result)[0](40) == 42)
     }
 
+    @MainActor @Test func actorFunctionConstraintsKeepCanonicalAttributeOrder() async throws {
+        typealias Value = any Collection<@MainActor @Sendable (Int) -> Int>
+        let echo = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoRuntimeActorFunctionCollection(_:)",
+            as: ((Value) -> Value).self)
+        let value: Value = [{ $0 + 2 }]
+        let result = try unsafe echo.unsafeInvoke(value)
+        #expect(Array(result)[0](40) == 42)
+    }
+
+    @Test func tupleMetatypesKeepCanonicalGrouping() async throws {
+        typealias Value = (any Collection<Int>, Int).Type
+        let echo = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoRuntimeCollectionTupleMetatype(_:)",
+            as: ((Value) -> Value).self)
+        #expect(ObjectIdentifier(try unsafe echo.unsafeInvoke((any Collection<Int>, Int).self)) == ObjectIdentifier((any Collection<Int>, Int).self))
+    }
+
+#if DEBUG
+    @Test func metadataTypeSyntaxMatchesTheRuntimePrinter() throws {
+        typealias Body = @MainActor @Sendable (Int) -> Int
+        let types: [Any.Type] = [(any Collection<Int>).self, (any Collection<Body>).self,
+            (any Collection<(Int) -> Int>).self, ((any Collection<Int>, Int).Type).self,
+            ((any Collection<Int>)?).self, ((any Collection<Int>, Int)).self,
+            (@MainActor @Sendable (any Collection<Int>) -> Int).self]
+        for type in types {
+            let name = try #require(_mangledTypeName(type))
+            let reference = try name.utf8CString.withUnsafeBufferPointer {
+                try unsafe SwiftSyntax(typeReference: $0.baseAddress!, length: $0.count - 1).root.name()
+            }
+            #expect(try swiftNativeTypeName(type) == reference)
+        }
+    }
+#endif
+
     @Test func classParameterizedCompositionsKeepBothWitnesses() async throws {
         typealias Value = any RuntimeClassFirst<Int> & RuntimeClassSecond<Int>
         let make = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeDistinctClassComposition(_:)",

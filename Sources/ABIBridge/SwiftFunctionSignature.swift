@@ -9,6 +9,8 @@ struct SwiftFunctionMetadata: Sendable {
     let failure: Any.Type
     let parameterFlags: [UInt32]
     let attributes: SwiftFunctionAttributes
+    let globalActor: Any.Type?
+    let extendedFlags: UInt32
 
     init(_ type: Any.Type) throws {
         let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
@@ -29,9 +31,10 @@ struct SwiftFunctionMetadata: Sendable {
         alignToWord()
         let differentiability = flags & 0x08000000 != 0 ? metadata.load(fromByteOffset: offset, as: UInt.self) : 0
         if flags & 0x08000000 != 0 { offset += word }
-        let globalActor = flags & 0x10000000 != 0 ? metadata.load(fromByteOffset: offset, as: Any.Type.self) : nil
+        globalActor = flags & 0x10000000 != 0 ? metadata.load(fromByteOffset: offset, as: Any.Type.self) : nil
         if flags & 0x10000000 != 0 { offset += word }
         let extended = flags & 0x80000000 != 0 ? metadata.load(fromByteOffset: offset, as: UInt32.self) : 0
+        extendedFlags = extended
         if flags & 0x80000000 != 0 { offset += 4 }
         alignToWord()
         if extended & 1 != 0 {
@@ -43,9 +46,9 @@ struct SwiftFunctionMetadata: Sendable {
               let differentiation = SwiftFunctionAttributes.Differentiability(rawValue: differentiability) else {
             throw ABIResolutionError.metadataUnavailable("The function metadata has an unknown effect convention.")
         }
-        attributes = try SwiftFunctionAttributes(isAsync: flags & 0x20000000 != 0,
+        attributes = SwiftFunctionAttributes(isAsync: flags & 0x20000000 != 0,
             isEscaping: flags & 0x04000000 != 0, isSendable: flags & 0x40000000 != 0,
-            isolation: isolation, globalActor: globalActor.map { try SwiftFormalType(swiftNativeTypeName($0)) },
+            isolation: isolation,
             differentiability: differentiation, hasSendingResult: extended & 0x10 != 0,
             parameterFlags: parameterFlags.map { $0 & ~7 })
     }
@@ -76,7 +79,7 @@ struct SwiftFunctionSignature: Sendable {
             default: throw ABIResolutionError.unsupportedDeclaration("The native function parameter uses an unsupported ownership convention.")
             }
         }
-        guard metadata.attributes.differentiability == .none, metadata.attributes.globalActor == nil else {
+        guard metadata.attributes.differentiability == .none, metadata.globalActor == nil else {
             throw ABIResolutionError.unsupportedDeclaration("Differentiable and global-actor function types require their native invocation conventions.")
         }
         guard metadata.attributes.isolation != .isolatedAny else {
