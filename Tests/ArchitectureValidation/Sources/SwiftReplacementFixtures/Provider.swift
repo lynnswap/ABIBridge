@@ -194,3 +194,20 @@ open class HookTicketRenderer {
 
 @inline(never) public func hookOptionalPointer(_ value: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? { value }
 @inline(never) public func consumeHookObject(_ value: consuming NSObject) -> Int64 { 42 }
+
+@inline(never) public func hookBorrowedPointer(_ value: borrowing UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? { copy value }
+@inline(never) public func moveHookTicketWithBody<Value: ~Copyable>(_ value: consuming Value, _ body: inout () -> Int64, _ borrowed: () -> Int64) -> Value {
+    _ = borrowed()
+    ticketState.withLock { $0.entries += 1 }
+    let number = body()
+    body = { number + 1 }
+    return value
+}
+@inline(never) @concurrent public func moveAsyncHookTicketWithBody<Value: ~Copyable>(_ value: consuming Value, _ body: inout () -> Int64, _ borrowed: () -> Int64) async -> Value {
+    _ = borrowed()
+    ticketState.withLock { $0.entries += 1 }
+    await Task.yield()
+    let number = body()
+    body = { number + 1 }
+    return value
+}

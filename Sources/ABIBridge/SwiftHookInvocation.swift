@@ -344,21 +344,17 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
             } else if values.arguments[index].consumes { input.relinquishValue() }
         }
         return try withExtendedLifetime(inputs) {
-            let outcome = Swift.Result<NativeValueStorage, any Error> {
+            let outcome = Swift.Result<Result, any Error> {
                 var index = 0
                 func decode<Value>(_ type: Value.Type) throws -> Value {
                     defer { index += 1 }
                     return try callbackValues.decode(inputs[index].address, at: index, scope: scope, as: type)
                 }
                 let value = try body(repeat try decode((each Argument).self))
-                let initialize = try recovery.map { scope in try scope.withTransfer { try callbackResult.prepare(value) } }
-                ?? callbackResult.prepare(value)
-                let result = values.result.makeStorage()
-                initialize(result.address)
-                result.assumeInitialized { resultOperations.destroy($0) }
-                return result
+                return value
             }
-            return try scope?.finishInvocation(outcome) ?? outcome.get()
+            let value = try scope?.finishInvocation(outcome) ?? outcome.get()
+            return try encodeResult(value, recovery: recovery)
         }
     }
 
@@ -376,7 +372,7 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
             } else if values.arguments[index].consumes { input.relinquishValue() }
         }
         defer { withExtendedLifetime(inputs) {} }
-        let outcome: Swift.Result<NativeValueStorage, any Error>
+        let outcome: Swift.Result<Result, any Error>
         do {
             var index = 0
             func decode<Value>(_ type: Value.Type) throws -> Value {
@@ -384,14 +380,19 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
                 return try callbackValues.decode(inputs[index].address, at: index, scope: scope, as: type)
             }
             let value = try await body(invocation, repeat try decode((each Argument).self))
-            let initialize = try recovery.map { scope in try scope.withTransfer { try callbackResult.prepare(value) } }
-                ?? callbackResult.prepare(value)
-            let result = values.result.makeStorage()
-            initialize(result.address)
-            result.assumeInitialized { resultOperations.destroy($0) }
-            outcome = .success(result)
+            outcome = .success(value)
         } catch { outcome = .failure(error) }
-        return try scope?.finishInvocation(outcome) ?? outcome.get()
+        let value = try scope?.finishInvocation(outcome) ?? outcome.get()
+        return try encodeResult(value, recovery: recovery)
+    }
+
+    private func encodeResult(_ value: Result, recovery: SwiftHookRecoveryScope?) throws -> NativeValueStorage {
+        let initialize = try recovery.map { scope in try scope.withTransfer { try callbackResult.prepare(value) } }
+            ?? callbackResult.prepare(value)
+        let result = values.result.makeStorage()
+        initialize(result.address)
+        result.assumeInitialized { resultOperations.destroy($0) }
+        return result
     }
 
     func erased(consumingArguments: Bool, receiver: SwiftReceiverPlan? = nil, errorPlan: SwiftErrorPlan? = nil,

@@ -84,3 +84,15 @@ open class CallerOverridingRenderer: ReplacementRenderer {
 
 @inline(never) public func callOptionalHookPointer(_ value: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? { hookOptionalPointer(value) }
 @inline(never) public func callConsumeHookObject(_ value: consuming NSObject) -> Int64 { consumeHookObject(value) }
+
+@inline(never) public func callBorrowedHookPointer(_ value: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? { hookBorrowedPointer(value) }
+@inline(never) public func callMoveTicketWithBody(_ number: Int64) -> (Int64, Int64) {
+    var body = { Int64(42) }
+    let value = moveHookTicketWithBody(HookTicket(number), &body, { 99 })
+    return (value.read(), body())
+}
+@inline(never) @concurrent public func callAsyncMoveTicketWithBody(_ number: Int64) async -> (Int64, Int64) {
+    var body = { Int64(42) }
+    let value = await moveAsyncHookTicketWithBody(HookTicket(number), &body, { 99 })
+    return (value.read(), body())
+}

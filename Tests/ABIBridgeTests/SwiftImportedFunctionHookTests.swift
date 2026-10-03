@@ -267,6 +267,68 @@ struct SwiftImportedFunctionHookTests {
         #expect(saved.output!.isConsumed)
     }
 
+    @Test func borrowedPointerAdaptersUseTheSharedHookCodec() async throws {
+        let fixture = try CompiledSwiftReplacementFixture()
+        defer { fixture.cleanup() }
+        let target = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookBorrowedPointer(Swift.UnsafeMutableRawPointer?) -> Swift.UnsafeMutableRawPointer?",
+            as: ((NativeSwiftBorrowing<OptionalHookPointer?>) -> OptionalHookPointer?).self, in: fixture.providerScope)
+        let caller = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".callBorrowedHookPointer(_:)",
+            as: ((UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer?).self, in: fixture.callerScope)
+        let hook = try unsafe await target.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { Issue.record($0) }) { call, value in
+                if let value = value.value { #expect(value.marker == 42) }
+                return try call.proceed(value)
+            }
+        defer { hook.invalidate() }
+        let pointer = UnsafeMutableRawPointer.allocate(byteCount: 1, alignment: 1)
+        defer { pointer.deallocate() }
+        #expect(try unsafe caller.unsafeInvoke(nil) == nil)
+        #expect(try unsafe caller.unsafeInvoke(pointer) == pointer)
+    }
+
+    @MainActor @Test func writebackFailurePreservesNoncopyableRecoveryResults() async throws {
+        let fixture = try CompiledSwiftReplacementFixture()
+        defer { fixture.cleanup() }
+        let runtime = fixture.runtime
+        let type = try await runtime.swiftType(named: fixture.module + ".HookTicket", in: fixture.providerScope)
+        typealias Body = NativeSwiftClosure<() -> Int64>
+        let target = try await runtime.swiftFunction(named: fixture.module + ".moveHookTicketWithBody(_:_:_:)",
+            as: ((NativeSwiftConsuming<NativeSwiftValue>, NativeSwiftInout<Body>, Body) -> NativeSwiftValue).self,
+            genericArguments: [.type(type)], in: fixture.providerScope)
+        let caller = try await runtime.swiftFunction(named: fixture.callerModule + ".callMoveTicketWithBody(_:)",
+            as: ((Int64) -> (Int64, Int64)).self, in: fixture.callerScope)
+        let saved = SavedRuntimeHookValues()
+        let failures = Mutex(0)
+        let hook = try unsafe await target.hookImportedCalls(in: fixture.callerScope, using: runtime,
+            onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value, body, borrowed in
+                let result = try call.proceed(value, body, borrowed)
+                saved.output = result
+                body.value = borrowed
+                return result
+            }
+        #expect(try unsafe caller.unsafeInvoke(42) == (42, 42))
+        #expect(saved.output!.isConsumed && failures.withLock { $0 } == 1)
+        hook.invalidate()
+        let asyncTarget = try await runtime.swiftFunction(named: fixture.module + ".moveAsyncHookTicketWithBody(_:_:_:)",
+            as: (@concurrent (NativeSwiftConsuming<NativeSwiftValue>, NativeSwiftInout<Body>, Body) async -> NativeSwiftValue).self,
+            genericArguments: [.type(type)], in: fixture.providerScope)
+        let asyncCaller = try await runtime.swiftFunction(named: fixture.callerModule + ".callAsyncMoveTicketWithBody(_:)",
+            as: (@concurrent (Int64) async -> (Int64, Int64)).self, in: fixture.callerScope)
+        let asyncHook = try unsafe await asyncTarget.hookImportedCalls(in: fixture.callerScope, using: runtime,
+            onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value, body, borrowed in
+                let result = try await call.proceed(value, body, borrowed)
+                saved.output = result
+                body.value = borrowed
+                return result
+            }
+        defer { asyncHook.invalidate() }
+        #expect(try unsafe await asyncCaller.unsafeInvoke(42) == (42, 42))
+        #expect(saved.output!.isConsumed && failures.withLock { $0 } == 2)
+        let counts = try await runtime.swiftFunction(named: fixture.module + ".hookTicketCounts()",
+            as: (() -> (Int64, Int64)).self, in: fixture.providerScope)
+        #expect(try unsafe counts.unsafeInvoke() == (2, 2))
+    }
+
     @Test func runtimeValuesNestedClosuresAndInoutComposeThroughHooks() async throws {
         let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
         @inline(never) public func runtimeHookEcho<Value>(_ value: Value) -> Value { value }

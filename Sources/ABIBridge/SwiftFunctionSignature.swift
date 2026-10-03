@@ -357,11 +357,7 @@ struct SwiftCallbackValues: Sendable {
             let base = (type as? any NativeOptionalValue.Type)?.wrappedType ?? type
             if base is any ABIBridgeValue.Type, !(base is any ABIBridgeSwiftValue.Type) {
                 func prepare<Value>(_ type: Value.Type) throws -> SwiftCallbackDecoder {
-                    let codec = try SwiftValueCodec<Value>()
-                    return { address, scope in
-                        let value = NativeValueStorage(borrowing: address, owner: scope)
-                        return try codec.copy(from: value, retaining: value)
-                    }
+                    try Self.decoder(for: type, generic: argument, consuming: false)
                 }
                 return try _openExistential(type, do: prepare)
             }
@@ -468,6 +464,14 @@ struct SwiftCallbackValues: Sendable {
                 throw ABIResolutionError.unsupportedDeclaration("This closure representation cannot borrow native callback inputs.")
             }
             return { borrow($1.borrow($0), SwiftValueCodeLifetime.current) }
+        }
+        let base = (Value.self as? any NativeOptionalValue.Type)?.wrappedType ?? Value.self
+        if !usesSwiftStorage, base is any ABIBridgeValue.Type, !(base is any ABIBridgeSwiftValue.Type) {
+            let codec = try SwiftValueCodec<Value>()
+            return { address, scope in
+                let storage = NativeValueStorage(borrowing: address, owner: scope)
+                return try codec.copy(from: storage, retaining: storage)
+            }
         }
         let constants = SwiftValueConstants(usesSwiftStorage ? Void.self : Value.self)
         return { address, _ in

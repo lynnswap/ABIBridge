@@ -344,6 +344,53 @@ private struct RuntimeHookProbeError: Error {}
         throw ArchitectureValidationFailure(description: "An Optional pointer adapter failed to preserve its native representation")
     }
     checks.append("Optional pointer adapters decode and encode nil and nonnil native values through hooks")
+    optionalHook.invalidate()
+    let borrowingTarget = try await runtime.swiftFunction(named: "SwiftImportProvider.hookBorrowedPointer(Swift.UnsafeMutableRawPointer?) -> Swift.UnsafeMutableRawPointer?",
+        as: ((NativeSwiftBorrowing<HookPointerValue?>) -> HookPointerValue?).self, in: provider)
+    let borrowingCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.callBorrowedHookPointer(_:)",
+        as: ((UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer?).self, in: caller)
+    let borrowingHook = try unsafe await borrowingTarget.hookImportedCalls(in: caller, using: runtime,
+        onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value in try call.proceed(value) }
+    defer { borrowingHook.invalidate() }
+    guard try unsafe borrowingCaller.unsafeInvoke(pointer) == pointer else {
+        throw ArchitectureValidationFailure(description: "A borrowed adapter did not use native pointer conversion")
+    }
+    checks.append("Borrowing wrappers use the shared Optional adapter decoder")
+    borrowingHook.invalidate()
+    typealias Body = NativeSwiftClosure<() -> Int64>
+    let writebackTarget = try await runtime.swiftFunction(named: "SwiftImportProvider.moveHookTicketWithBody(_:_:_:)",
+        as: ((NativeSwiftConsuming<NativeSwiftValue>, NativeSwiftInout<Body>, Body) -> NativeSwiftValue).self,
+        genericArguments: [.type(type)], in: provider)
+    let writebackCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.callMoveTicketWithBody(_:)",
+        as: ((Int64) -> (Int64, Int64)).self, in: caller)
+    let writebackHook = try unsafe await writebackTarget.hookImportedCalls(in: caller, using: runtime,
+        onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value, body, borrowed in
+            state.output = try call.proceed(value, body, borrowed)
+            body.value = borrowed
+            return state.output!
+        }
+    guard try unsafe writebackCaller.unsafeInvoke(48) == (48, 42), state.output!.isConsumed else {
+        throw ArchitectureValidationFailure(description: "A failed inout conversion consumed its noncopyable recovery result")
+    }
+    checks.append("Inout conversion failure preserves native noncopyable result ownership until recovery publication")
+    writebackHook.invalidate()
+    let asyncWritebackTarget = try await runtime.swiftFunction(named: "SwiftImportProvider.moveAsyncHookTicketWithBody(_:_:_:)",
+        as: (@concurrent (NativeSwiftConsuming<NativeSwiftValue>, NativeSwiftInout<Body>, Body) async -> NativeSwiftValue).self,
+        genericArguments: [.type(type)], in: provider)
+    let asyncWritebackCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.callAsyncMoveTicketWithBody(_:)",
+        as: (@concurrent (Int64) async -> (Int64, Int64)).self, in: caller)
+    let asyncWritebackHook = try unsafe await asyncWritebackTarget.hookImportedCalls(in: caller, using: runtime,
+        onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value, body, borrowed in
+            state.output = try await call.proceed(value, body, borrowed)
+            body.value = borrowed
+            return state.output!
+        }
+    defer { asyncWritebackHook.invalidate() }
+    guard try unsafe await asyncWritebackCaller.unsafeInvoke(49) == (49, 42), state.output!.isConsumed,
+          try unsafe counts.unsafeInvoke() == (8, 8), failures.withLock({ $0 }) == 5 else {
+        throw ArchitectureValidationFailure(description: "Async inout failure did not preserve the completed result or exact cleanup")
+    }
+    checks.append("Async result ownership transfers only after inout writeback succeeds")
     return checks
 }
 
