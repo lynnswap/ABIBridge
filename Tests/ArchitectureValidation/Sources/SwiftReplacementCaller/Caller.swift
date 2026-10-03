@@ -96,3 +96,8 @@ open class CallerOverridingRenderer: ReplacementRenderer {
     let value = await moveAsyncHookTicketWithBody(HookTicket(number), &body, { 99 })
     return (value.read(), body())
 }
+
+@inline(never) public func callHookPointerAndBorrow(_ value: UnsafeMutableRawPointer?, _ text: String) -> UnsafeMutableRawPointer? {
+    hookPointerAndBorrow(value, { text })
+}
+@inline(never) public func callConsumeHookTuple(_ value: NSObject) -> Int64 { consumeHookTuple((value, 42)) }

@@ -126,7 +126,7 @@ public struct NativeSwiftClosure<Signature> {
                 let unpacked = parameters.needsEncoding ? parameters.unpack(native) : nil
                 func invoke(_ arguments: UnsafePointer<UnsafeMutableRawPointer?>?) -> Bool {
                     let scope = inputs.makeScope(asynchronous: false, arguments: arguments)
-                    defer { withExtendedLifetime(scope) {} }
+                    defer { scope?.expire(); withExtendedLifetime(scope) {} }
                     var index = 0
                     func decode<Value>(_ type: Value.Type) throws -> Value {
                         defer { index += 1 }

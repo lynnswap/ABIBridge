@@ -236,6 +236,14 @@ struct SwiftCallValues: Sendable {
         return storage
     }
 
+    func finishCopiedTransfers(_ storage: [NativeValueStorage]) {
+        for (value, argument) in zip(storage, arguments) where argument.consumes && value.transfersOwnership {
+            guard let destroy = value.destroyTransferredCopy else { continue }
+            destroy()
+            value.relinquishValue()
+        }
+    }
+
     func decode<Output>(_ storage: NativeValueStorage, retaining owner: Any?, retainingCode codeOwner: Any?) throws -> Output {
         try withUnsafeTemporaryAllocation(of: Output.self, capacity: 1) { buffer in
             try result.initialize(storage, owner, codeOwner, buffer.baseAddress!)
@@ -276,7 +284,8 @@ final class SwiftCallbackScope {
     func claimInput(at index: Int) { pendingInputs.removeValue(forKey: index) }
     func prepareWriteback(_ body: @escaping SwiftWritebackPreparation) { writebacks.append(body) }
     func finishInvocation<Output>(_ outcome: Result<Output, any Error>) throws -> Output {
-        try finishSwiftInvocation(outcome) {
+        defer { expire() }
+        return try finishSwiftInvocation(outcome) {
             let commits = try writebacks.map { try $0() }
             for commit in commits { commit() }
         }
@@ -288,11 +297,14 @@ final class SwiftCallbackScope {
         borrows.append(borrow)
         return borrow
     }
-    deinit {
-        for cleanup in pendingInputs.values { cleanup() }
+    func expire() {
+        let pending = pendingInputs
+        pendingInputs.removeAll()
+        for cleanup in pending.values { cleanup() }
         for borrow in borrows { borrow.expire() }
-        withExtendedLifetime(storage) {}
+        borrows.removeAll()
     }
+    deinit { expire(); withExtendedLifetime(storage) {} }
 }
 
 typealias SwiftCallbackDecoder = @Sendable (UnsafeMutableRawPointer, SwiftCallbackScope) throws -> Any

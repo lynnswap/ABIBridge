@@ -63,8 +63,10 @@ final class SwiftHookFrame {
                 let result: NativeValueStorage
                 do { result = try operation(storage) }
                 catch let completed as SwiftHookCompletedResultError {
+                    prepared.finishCopiedTransfers(storage)
                     throw completed.underlying
                 }
+                prepared.finishCopiedTransfers(storage)
                 return try prepared.decode(result, retaining: result, retainingCode: nil)
             }
             return try prepared.finishInvocation(outcome, storage: storage)
@@ -81,8 +83,10 @@ final class SwiftHookFrame {
                 let result: NativeValueStorage
                 do { result = try await operation(storage) }
                 catch let completed as SwiftHookCompletedResultError {
+                    prepared.finishCopiedTransfers(storage)
                     throw completed.underlying
                 }
+                prepared.finishCopiedTransfers(storage)
                 outcome = .success(try prepared.decode(result, retaining: result, retainingCode: nil))
             } catch { outcome = .failure(error) }
             return try prepared.finishInvocation(outcome, storage: storage)
@@ -337,6 +341,7 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
         }
         let addresses: [UnsafeMutableRawPointer?] = inputs.map(\.address)
         let scope = addresses.withUnsafeBufferPointer { callbackValues.makeScope(asynchronous: false, arguments: $0.baseAddress) }
+        defer { scope?.expire() }
         for (index, input) in inputs.enumerated() {
             if let owner = input.runtimeValueOwner, let plan = parameters.arguments[index].runtimeValue {
                 scope?.retainRuntimeInput(NativeSwiftValue(storage: try owner.ownedStorage(), type: plan.valueType),
@@ -344,17 +349,16 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
             } else if values.arguments[index].consumes { input.relinquishValue() }
         }
         return try withExtendedLifetime(inputs) {
-            let outcome = Swift.Result<Result, any Error> {
+            let outcome = Swift.Result<(UnsafeMutableRawPointer) -> Void, any Error> {
                 var index = 0
                 func decode<Value>(_ type: Value.Type) throws -> Value {
                     defer { index += 1 }
                     return try callbackValues.decode(inputs[index].address, at: index, scope: scope, as: type)
                 }
-                let value = try body(repeat try decode((each Argument).self))
-                return value
+                return try prepareResult(body(repeat try decode((each Argument).self)), recovery: recovery)
             }
-            let value = try scope?.finishInvocation(outcome) ?? outcome.get()
-            return try encodeResult(value, recovery: recovery)
+            let initialize = try scope?.finishInvocation(outcome) ?? outcome.get()
+            return finishResult(initialize)
         }
     }
 
@@ -365,6 +369,7 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
         }
         let addresses: [UnsafeMutableRawPointer?] = inputs.map(\.address)
         let scope = addresses.withUnsafeBufferPointer { callbackValues.makeScope(asynchronous: true, arguments: $0.baseAddress) }
+        defer { scope?.expire() }
         for (index, input) in inputs.enumerated() {
             if let owner = input.runtimeValueOwner, let plan = parameters.arguments[index].runtimeValue {
                 scope?.retainRuntimeInput(NativeSwiftValue(storage: try owner.ownedStorage(), type: plan.valueType),
@@ -372,7 +377,7 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
             } else if values.arguments[index].consumes { input.relinquishValue() }
         }
         defer { withExtendedLifetime(inputs) {} }
-        let outcome: Swift.Result<Result, any Error>
+        let outcome: Swift.Result<(UnsafeMutableRawPointer) -> Void, any Error>
         do {
             var index = 0
             func decode<Value>(_ type: Value.Type) throws -> Value {
@@ -380,15 +385,18 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
                 return try callbackValues.decode(inputs[index].address, at: index, scope: scope, as: type)
             }
             let value = try await body(invocation, repeat try decode((each Argument).self))
-            outcome = .success(value)
+            outcome = .success(try prepareResult(value, recovery: recovery))
         } catch { outcome = .failure(error) }
-        let value = try scope?.finishInvocation(outcome) ?? outcome.get()
-        return try encodeResult(value, recovery: recovery)
+        let initialize = try scope?.finishInvocation(outcome) ?? outcome.get()
+        return finishResult(initialize)
     }
 
-    private func encodeResult(_ value: Result, recovery: SwiftHookRecoveryScope?) throws -> NativeValueStorage {
-        let initialize = try recovery.map { scope in try scope.withTransfer { try callbackResult.prepare(value) } }
+    private func prepareResult(_ value: Result, recovery: SwiftHookRecoveryScope?) throws -> (UnsafeMutableRawPointer) -> Void {
+        return try recovery.map { scope in try scope.withTransfer { try callbackResult.prepare(value) } }
             ?? callbackResult.prepare(value)
+    }
+
+    private func finishResult(_ initialize: (UnsafeMutableRawPointer) -> Void) -> NativeValueStorage {
         let result = values.result.makeStorage()
         initialize(result.address)
         result.assumeInitialized { resultOperations.destroy($0) }
