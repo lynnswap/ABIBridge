@@ -31,6 +31,13 @@ char *ABICopySwiftSyntaxNodeMangledName(const ABISwiftSyntaxNode *node);
 /// The compiler's uniquable shape symbol for a parameterized protocol value.
 /// Same-type constraints become generalization arguments in requirement order.
 char *ABICopySwiftConstrainedExistentialShapeName(const ABISwiftSyntaxNode *node);
+/// Builds an unpublished parameterized-protocol shape. The caller keeps its
+/// storage and referenced protocol images alive after publishing it to Swift.
+void *ABICreateSwiftExtendedExistentialShape(const ABISwiftSyntaxNode *node,
+    const void *const *protocols, size_t protocolCount,
+    const char *const *writtenProtocols, const char *const *declaringProtocols,
+    size_t constraintCount, bool classBound);
+void ABIReleaseSwiftExtendedExistentialShape(void *shape);
 
 #ifdef __cplusplus
 }

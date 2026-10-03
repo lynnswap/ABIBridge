@@ -616,15 +616,15 @@ struct SwiftGenericBinding: Sendable {
                 if matches { return [metadata] }
             }
             let request = NativeDeclaration(linkerName: shape, language: .swift, kind: .data)
-            let descriptor: ResolvedSymbol
             if let image = images.first {
-                do { descriptor = try resolver.resolve(request, in: image, loading: .loadedOnly) }
-                catch ABIResolutionError.declarationNotFound {
-                    descriptor = try resolver.resolve(request, in: .automatic, loading: .loadedOnly)
-                }
-            } else { descriptor = try resolver.resolve(request, in: .automatic, loading: .loadedOnly) }
-            return [try SwiftExtendedExistentialMetadata(descriptor: descriptor,
-                arguments: expected, resolver: resolver).value]
+                do {
+                    let descriptor = try resolver.resolve(request, in: image, loading: .loadedOnly)
+                    return [try SwiftExtendedExistentialMetadata(descriptor: descriptor,
+                        arguments: expected, resolver: resolver).value]
+                } catch ABIResolutionError.declarationNotFound {}
+            }
+            return [try SwiftExtendedExistentialMetadata.metadata(shape: shape, constraints: constraints,
+                arguments: expected, resolver: resolver)]
         case .function(let parameters, let result, let failure, let attributes):
             return [try functionType(parameters: parameters, result: result, failure: failure,
                 attributes: attributes, packIndex: packIndex)]

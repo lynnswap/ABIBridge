@@ -67,6 +67,25 @@ struct SwiftExistentialValueTests {
         }
     }
 
+    @Test func runtimeOnlyExistentialsConstructMissingProviderShapes() async throws {
+        let call = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.makeFreshExistential<A>(A) -> any ManagedSwiftFixtures.FreshExistentialSource<Self.Element == A>",
+            as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+        let result = try unsafe call.unsafeInvoke(42)
+        #expect(try result.withCopy { ($0 as? any CustomStringConvertible)?.description } == "42")
+        #expect(result.type.name.contains("FreshExistentialSource"))
+        let pair = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.makeFreshExistentialPair<A, B>(A, B) -> any ManagedSwiftFixtures.FreshExistentialPair<Self.First == A, Self.Second == B>",
+            as: ((Int, String) -> NativeSwiftValue).self, genericArguments: [.type(Int.self), .type(String.self)])
+        let paired = try unsafe pair.unsafeInvoke(42, "value")
+        #expect(try paired.withCopy { ($0 as? any CustomStringConvertible)?.description } == "42:value")
+        let object = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.makeFreshExistentialClass<A>(A) -> any ManagedSwiftFixtures.FreshExistentialClass<Self.Element == A>",
+            as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+        let objectValue = try unsafe object.unsafeInvoke(43)
+        #expect(try objectValue.withCopy { ($0 as? any CustomStringConvertible)?.description } == "43")
+    }
+
     @Test func extendedExistentialCallbacksUseTheirContainerConvention() async throws {
         let runtime = ABIRuntime.shared
         typealias Source = NativeSwiftClosure<(any ExistentialSource<Int>) -> any ExistentialSource<Int>>

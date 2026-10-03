@@ -1,5 +1,6 @@
 import ABIBridgeCore
 import ObjectiveC
+import Synchronization
 
 // Simple existential metadata has a kind word followed by 32-bit flags.
 // Extended shapes preserve their constraint signature and container convention.
@@ -117,6 +118,11 @@ struct SwiftObjectType {
 struct SwiftExtendedExistentialMetadata {
     let value: Any.Type
 
+    static func metadata(shape: String, constraints: [SwiftFormalType.ExistentialConstraint],
+                         arguments: [Any.Type], resolver: SymbolResolver) throws -> Any.Type {
+        try SwiftSyntheticExistentialShape.metadata(shape: shape, constraints: constraints, arguments: arguments, resolver: resolver)
+    }
+
     init(descriptor: ResolvedSymbol, arguments: [Any.Type], resolver: SymbolResolver) throws {
         value = try unsafe descriptor.withUnsafeAddress { address in
             // The non-unique descriptor prefixes the shape with its cache ref.
@@ -168,6 +174,85 @@ struct SwiftExtendedExistentialMetadata {
                 words.withUnsafeBufferPointer {
                     unsafeBitCast(ABISwiftExtendedExistentialMetadata(address, $0.baseAddress)!, to: Any.Type.self)
                 }
+            }
+        }
+    }
+}
+
+// Swift interns metadata by shape and keeps that shape's references permanently.
+// Only synthesized descriptors and their protocol images share that lifetime.
+private final class SwiftSyntheticExistentialShape: @unchecked Sendable {
+    private static let shapes = Mutex<[String: SwiftSyntheticExistentialShape]>([:])
+    let address: UnsafeMutableRawPointer
+    let images: [NativeImage]
+
+    private init(address: UnsafeMutableRawPointer, images: [NativeImage]) {
+        self.address = address
+        self.images = images
+    }
+    deinit { ABIReleaseSwiftExtendedExistentialShape(address) }
+
+    static func metadata(shape name: String, constraints: [SwiftFormalType.ExistentialConstraint],
+                         arguments: [Any.Type], resolver: SymbolResolver) throws -> Any.Type {
+        let shape: SwiftSyntheticExistentialShape
+        if let cached = shapes.withLock({ $0[name] }) { shape = cached }
+        else {
+            let syntax = try SwiftSyntax(symbol: name)
+            let existential = try syntax.root.requiredChild().requiredChild()
+                .requiredChild(kind: "Type").requiredChild()
+            var protocols: [SwiftProtocolDescriptor] = []
+            var classBound = false
+            func collect(_ node: SwiftSyntax.Node) throws {
+                if node.kind == "ProtocolListWithAnyObject" { classBound = true }
+                if node.kind == "Protocol" {
+                    let descriptor = SwiftProtocolDescriptor(try resolver.resolve(
+                        .init(name: "protocol descriptor for " + node.name(), language: .swift, kind: .data),
+                        in: .automatic, loading: .loadedOnly))
+                    protocols.append(descriptor)
+                    if unsafe descriptor.withUnsafeAddress({ $0.loadUnaligned(as: UInt32.self) & 0x10000 == 0 }) { classBound = true }
+                    return
+                }
+                try node.children().forEach(collect)
+            }
+            try collect(existential.requiredChild(kind: "Type"))
+            func mangled(_ descriptor: SwiftProtocolDescriptor) throws -> String {
+                let metadata = unsafe descriptor.withUnsafeAddress { ABISwiftProtocolTypeMetadata($0)! }
+                guard let name = _mangledTypeName(unsafeBitCast(metadata, to: Any.Type.self)) else {
+                    throw ABIResolutionError.metadataUnavailable("The protocol's type spelling is unavailable.")
+                }
+                return name
+            }
+            var written: [String] = [], declaring: [String] = []
+            var images = protocols.compactMap(\.image)
+            for constraint in constraints {
+                let components = constraint.subject.split(separator: ".").map(String.init)
+                let member = components.last!
+                let qualifier = components.count > 2 ? components.dropFirst().dropLast().joined(separator: ".") : nil
+                var candidates: [(SwiftProtocolDescriptor, SwiftProtocolDescriptor)] = []
+                for descriptor in protocols {
+                    if let qualifier, try !descriptor.qualifiedNames().contains(qualifier) { continue }
+                    candidates += try descriptor.protocolsDeclaring(member).map { (descriptor, $0) }
+                }
+                guard candidates.count == 1 else {
+                    throw ABIResolutionError.metadataUnavailable("Cannot identify the declaring protocol for " + constraint.subject + ".")
+                }
+                written.append(try mangled(candidates[0].0))
+                declaring.append(try mangled(candidates[0].1))
+                if let image = candidates[0].1.image { images.append(image) }
+            }
+            let addresses = protocols.map { descriptor in Optional(unsafe descriptor.withUnsafeAddress { $0 }) }
+            let candidate = try SwiftSyntheticExistentialShape(address: existential.makeExtendedExistentialShape(
+                protocols: addresses, written: written, declaring: declaring, classBound: classBound), images: images)
+            shape = shapes.withLock { values in
+                if let cached = values[name] { return cached }
+                values[name] = candidate
+                return candidate
+            }
+        }
+        let pointers = arguments.map { Optional(unsafeBitCast($0, to: UnsafeRawPointer.self)) }
+        return withExtendedLifetime(shape) {
+            pointers.withUnsafeBufferPointer {
+                unsafeBitCast(ABISwiftExtendedExistentialMetadata(shape.address, $0.baseAddress)!, to: Any.Type.self)
             }
         }
     }
