@@ -180,7 +180,11 @@ struct SwiftValueCodec<Value>: Sendable {
         }
         // Receiver/argument storage can belong to the object receiving this
         // closure later. Only code dependencies belong in its escaping context.
-        if let closure { return try closure.makeValue(storage.address.load(as: ABISwiftClosureValue.self), codeOwner, true, storage.codeLifetime) as! Value }
+        if let closure {
+            let value = storage.address.load(as: ABISwiftClosureValue.self)
+            storage.relinquishValue()
+            return try closure.makeValue(value, codeOwner, true, storage.codeLifetime) as! Value
+        }
         if let cValue { return try cValue.decode(storage, retaining: owner) }
         if objectResult, !(Value.self is any NativeOptionalValue.Type),
            storage.address.load(as: UnsafeRawPointer?.self) == nil {

@@ -9,6 +9,109 @@ import Testing
 @Suite(.serialized)
 struct SwiftImportedFunctionHookTests {
 
+    @Test func returnedClosuresTransferOneOwnedContextThroughProceed() async throws {
+        let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
+        @inline(never) public func hookFactory(_ value: AnyObject) -> () -> AnyObject { { value } }
+        """, callerExtra: """
+        @inline(never) public func importedFactory(_ value: AnyObject) -> () -> AnyObject { hookFactory(value) }
+        """)
+        defer { fixture.cleanup() }
+        typealias Closure = NativeSwiftClosure<() -> AnyObject>
+        let factory = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookFactory(_:)",
+            as: ((AnyObject) -> Closure).self, in: fixture.providerScope)
+        let oracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".importedFactory(_:)",
+            as: ((AnyObject) -> Closure).self, in: fixture.callerScope)
+        let hook = try unsafe await factory.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { Issue.record($0) }) { call, value in
+                _ = try call.proceed(value)
+                return try call.proceed(value)
+            }
+        defer { hook.invalidate() }
+        weak var observed: NSObject?
+        var saved: Closure?
+        do {
+            let object = NSObject()
+            observed = object
+            saved = try unsafe oracle.unsafeInvoke(object as AnyObject)
+            #expect(try unsafe saved?.unsafeInvoke() === object)
+        }
+        hook.invalidate()
+        #expect(observed != nil)
+        saved = nil
+        #expect(observed == nil)
+    }
+
+    @Test func genericHooksSelectBindingsBeforeReadingNativeValues() async throws {
+        let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
+        @inline(never) public func hookEcho<Value>(_ value: Value) -> Value { value }
+        @inline(never) public func hookPack<each Value>(_ values: repeat each Value) -> (repeat each Value) { (repeat each values) }
+        """, callerExtra: """
+        @inline(never) public func echoInt(_ value: Int64) -> Int64 { hookEcho(value) }
+        @inline(never) public func echoText(_ value: String) -> String { hookEcho(value) }
+        @inline(never) public func echoArray(_ value: [String]) -> [String] { hookEcho(value) }
+        @inline(never) public func packPair(_ value: Int64, _ text: String) -> (Int64, String) { hookPack(value, text) }
+        @inline(never) public func packSingle(_ value: Int64) -> Int64 { hookPack(value) }
+        @inline(never) public func packTriple(_ text: String) -> (String, Int64, Double) { hookPack(text, Int64(7), 1.5) }
+        """)
+        defer { fixture.cleanup() }
+        let integer = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookEcho(_:)",
+            as: ((Int64) -> Int64).self, genericArguments: [.type(Int64.self)], in: fixture.providerScope)
+        let text = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookEcho(_:)",
+            as: ((String) -> String).self, genericArguments: [.type(String.self)], in: fixture.providerScope)
+        let intOracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".echoInt(_:)",
+            as: ((Int64) -> Int64).self, in: fixture.callerScope)
+        let textOracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".echoText(_:)",
+            as: ((String) -> String).self, in: fixture.callerScope)
+        let arrayOracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".echoArray(_:)",
+            as: (([String]) -> [String]).self, in: fixture.callerScope)
+        #expect(try unsafe intOracle.unsafeInvoke(40) == 40)
+        let failures = Mutex<[String]>([])
+        let failure: @Sendable (any Error) -> Void = { error in failures.withLock { $0.append(String(describing: error)) } }
+        let intHook = try unsafe await integer.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: failure) { call, value in try call.proceed(value + 1) + 10 }
+        defer { intHook.invalidate() }
+        let textHook = try unsafe await text.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: failure) { call, value in try call.proceed(value + " input") + " output" }
+        defer { textHook.invalidate() }
+        let input = String(repeating: "generic hook value ", count: 80)
+        #expect(try unsafe intOracle.unsafeInvoke(40) == 51)
+        #expect(try unsafe textOracle.unsafeInvoke(input) == input + " input output")
+        #expect(try unsafe arrayOracle.unsafeInvoke([input, "unchanged"]) == [input, "unchanged"])
+        intHook.invalidate()
+        #expect(try unsafe intOracle.unsafeInvoke(40) == 40)
+        #expect(try unsafe textOracle.unsafeInvoke(input) == input + " input output")
+        textHook.invalidate()
+        #expect(try unsafe textOracle.unsafeInvoke(input) == input)
+
+        let pair = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookPack(_:)",
+            as: ((Int64, String) -> (Int64, String)).self,
+            genericArguments: [.pack([.type(Int64.self), .type(String.self)])], in: fixture.providerScope)
+        let single = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookPack(_:)",
+            as: ((Int64) -> Int64).self, genericArguments: [.pack([.type(Int64.self)])], in: fixture.providerScope)
+        let pairOracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".packPair(_:_:)",
+            as: ((Int64, String) -> (Int64, String)).self, in: fixture.callerScope)
+        let singleOracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".packSingle(_:)",
+            as: ((Int64) -> Int64).self, in: fixture.callerScope)
+        let tripleOracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".packTriple(_:)",
+            as: ((String) -> (String, Int64, Double)).self, in: fixture.callerScope)
+        #expect(try unsafe singleOracle.unsafeInvoke(40) == 40)
+        let pairHook = try unsafe await pair.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: failure) { call, number, text in try call.proceed(number + 2, text + " pair") }
+        defer { pairHook.invalidate() }
+        let singleHook = try unsafe await single.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: failure) { call, value in try call.proceed(value + 3) }
+        defer { singleHook.invalidate() }
+        let paired = try unsafe pairOracle.unsafeInvoke(40, input)
+        #expect(paired.0 == 42 && paired.1 == input + " pair")
+        #expect(try unsafe singleOracle.unsafeInvoke(40) == 43)
+        let untouched = try unsafe tripleOracle.unsafeInvoke(input)
+        #expect(untouched.0 == input && untouched.1 == 7 && untouched.2 == 1.5)
+        pairHook.invalidate(); singleHook.invalidate()
+        let restored = try unsafe pairOracle.unsafeInvoke(40, input)
+        #expect(restored.0 == 40 && restored.1 == input)
+        #expect(failures.withLock { $0.isEmpty })
+    }
+
     @Test func throwingHooksUseNativeErrorsAndPreserveCompletedFailures() async throws {
         let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
         import Foundation
@@ -455,7 +558,7 @@ private enum SwiftHookTestFailure: Error { case afterProceed, timeout }
 // The fixture invokes synchronously; this box deliberately lets the test retain
 // a non-Sendable continuation after that same call has completed.
 private final class SavedSwiftHookInvocation: @unchecked Sendable {
-    var value: NativeSwiftFunctionInvocation<Int64, Int64>?
+    var value: NativeSwiftFunctionInvocation<(Int64) -> Int64>?
 }
 
 private final class SwiftHookCapture: Sendable {

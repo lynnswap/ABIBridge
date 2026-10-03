@@ -103,6 +103,9 @@ void *ABICopySwiftAsyncClosureCallbackBodyOwner(ABIUnmanagedFunction function, v
 /// is usable only during invoke, on its entering thread.
 typedef struct ABISwiftCallbackFunctions {
     void (*invoke)(void *context, ABISwiftIncomingCall *call);
+    /// Select a bound interface with IncomingPrepare before reading values.
+    /// Raw metadata remains available without interpreting indirect payloads.
+    bool preparesArguments;
     void (*releaseContext)(void *context);
     /// Destroys an owned native result that was superseded or not returned.
     /// Null is appropriate for trivially destructible result storage.
@@ -137,6 +140,17 @@ void ABIReleaseSwiftCallback(ABISwiftCallback *callback);
 
 size_t ABISwiftIncomingArgumentCount(const ABISwiftIncomingCall *call);
 const void *ABISwiftIncomingContext(const ABISwiftIncomingCall *call);
+/// Reads a directly passed pointer word using the candidate's physical plan.
+/// It never dereferences the pointer or any unrelated argument.
+bool ABISwiftIncomingReadPointer(ABISwiftIncomingCall *call, const ABISwiftCallInterface *interface,
+    size_t index, uintptr_t *value, ABIResolutionFailure **error);
+/// Selects the interface and value operations for this invocation. Success owns
+/// context through functions.releaseContext; failure consumes neither. An
+/// invocation with preparesArguments selects at most once, before reading values.
+bool ABISwiftIncomingPrepare(ABISwiftIncomingCall *call, const ABISwiftCallInterface *interface,
+    ABISwiftCallbackFunctions functions, void *context, ABIResolutionFailure **error);
+/// Borrows an argument at its original indirect address, or captured direct storage.
+void *ABISwiftIncomingArgumentAddress(ABISwiftIncomingCall *call, size_t index);
 bool ABISwiftIncomingReadArgument(ABISwiftIncomingCall *call, size_t index,
     void *output, size_t size, ABIResolutionFailure **error);
 /// Calls the captured fallback with supplied storage and receiver context. Each

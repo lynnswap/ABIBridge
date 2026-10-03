@@ -6,6 +6,50 @@ import Testing
 
 @Suite(.serialized)
 struct SwiftClassHookTests {
+
+    @Test func virtualMethodHooksReturnNativeErrorsThroughTheirDeclaredChannel() async throws {
+        let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
+        import Foundation
+        open class HookThrower {
+            public init() {}
+            @inline(never) open func value(_ value: Int64) throws(NSError) -> Int64 {
+                if value < 0 { throw NSError(domain: "virtual-native", code: Int(value)) }
+                return value + 1
+            }
+        }
+        @inline(never) public func makeHookThrower() -> HookThrower { HookThrower() }
+        """, callerExtra: """
+        import Foundation
+        @inline(never) public func importedThrower(_ object: HookThrower, _ value: Int64) throws(NSError) -> Int64 {
+            try object.value(value)
+        }
+        """)
+        defer { fixture.cleanup() }
+        let type = try await fixture.runtime.swiftType(named: fixture.module + ".HookThrower", in: fixture.providerScope)
+        let method = try await type.method(named: "value(_:)", as: ((Int64) throws(NSError) -> Int64).self)
+        let make = try await fixture.runtime.swiftFunction(named: fixture.module + ".makeHookThrower() -> " + fixture.module + ".HookThrower",
+            as: (() -> AnyObject).self, in: fixture.providerScope)
+        let errorName = try swiftFunctionTypeName(NSError.self)
+        let caller = try await fixture.runtime.swiftFunction(
+            named: fixture.callerModule + ".importedThrower(" + fixture.module + ".HookThrower, Swift.Int64) throws(" + errorName + ") -> Swift.Int64",
+            as: ((AnyObject, Int64) throws(NSError) -> Int64).self, in: fixture.callerScope)
+        let object = try unsafe make.unsafeInvoke()
+        let hook = try unsafe await method.hookVirtualCalls(onFailure: { Issue.record($0) }) { call, value in
+            _ = try call.receiver(as: AnyObject.self)
+            if value == 99 { throw NSError(domain: "virtual-hook", code: 99) }
+            return try call.proceed(value) + 10
+        }
+        defer { hook.invalidate() }
+        #expect(try unsafe caller.unsafeInvoke(object, 40) == 51)
+        for (value, domain) in [(Int64(-1), "virtual-native"), (Int64(99), "virtual-hook")] {
+            do { _ = try unsafe caller.unsafeInvoke(object, value); Issue.record("Expected a native error") }
+            catch let error as NativeSwiftError {
+                error.withUnderlyingError { #expect(($0 as NSError).domain == domain) }
+            }
+        }
+        hook.invalidate()
+        #expect(try unsafe caller.unsafeInvoke(object, 40) == 41)
+    }
     @Test @MainActor func sendableImportedMemberHooksKeepTheMainActorContract() async throws {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
         let type = try await fixture.runtime.swiftType(named: fixture.module + ".ReplacementValue", as: Int64.self, in: fixture.providerScope)
@@ -327,6 +371,6 @@ private final class SwiftClassObject: @unchecked Sendable {
 @MainActor private final class SwiftClassActorState { var calls = 0 }
 private enum SwiftClassHookFailure: Error { case afterProceed }
 private final class SavedSwiftClassInvocation: @unchecked Sendable {
-    var value: NativeSwiftMethodInvocation<Int64, Int64>?
+    var value: NativeSwiftMethodInvocation<(Int64) -> Int64>?
 }
 #endif

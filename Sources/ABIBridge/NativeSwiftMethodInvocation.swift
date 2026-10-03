@@ -36,14 +36,14 @@ struct SwiftHookReceiverView: Sendable {
 /// Access requires the original thread and an active callback. Copied diagnostic
 /// metadata remains readable after return; a saved invocation does not preserve
 /// its native frame or callback captures. `proceed` does not redispatch the method.
-public struct NativeSwiftMethodInvocation<Result, each Argument>: CustomStringConvertible {
+public struct NativeSwiftMethodInvocation<Signature>: CustomStringConvertible {
     let frame: SwiftHookFrame
-    let prepared: SwiftHookCallbackSignature<Result, repeat each Argument>
+    let prepared: SwiftCallValues
     let receiverView: SwiftHookReceiverView
     /// The resolved source declaration, not an inferred predecessor name.
     public let declaration: NativeDeclaration
-    /// Explicit argument/result types, excluding the hidden receiver.
-    public var signature: ((repeat each Argument) -> Result).Type { ((repeat each Argument) -> Result).self }
+    /// Argument, result, and effect signature, excluding the hidden receiver.
+    public var signature: Signature.Type { Signature.self }
     /// Cached declaration and signature without accessing receiver properties.
     public let description: String
 
@@ -68,12 +68,22 @@ public struct NativeSwiftMethodInvocation<Result, each Argument>: CustomStringCo
     /// inspect its receiver before and after proceeding. Native failures throw
     /// `NativeSwiftError`. If a later hook failure cannot use the declared native
     /// error channel, recovery preserves the latest result or native failure.
-    public func proceed(_ values: repeat each Argument) throws -> Result {
+    public func proceed<Result, Failure: Error, each Argument>(_ values: repeat each Argument) throws -> Result
+    where Signature == (repeat each Argument) throws(Failure) -> Result {
+        try invoke(repeat each values)
+    }
+
+    public func proceed<Result, Failure: Error, each Argument>(_ values: repeat each Argument) throws -> Result
+    where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
+        try invoke(repeat each values)
+    }
+
+    private func invoke<Result, each Argument>(_ values: repeat each Argument) throws -> Result {
         do {
             return try frame.use { operation in
-                let storage = try prepared.encodeArguments(repeat each values)
+                let storage = try prepared.encode(repeat each values, retainingCode: nil)
                 let result = try operation(storage)
-                return try prepared.result.copy(from: result, retaining: result)
+                return try prepared.decode(result, retaining: result, retainingCode: nil)
             }
         } catch let error as SwiftHookCompletedResultError { throw error.underlying }
     }
@@ -84,14 +94,14 @@ func prepareSwiftMethodHandler<Signature, Result, each Argument>(
     prepared: SwiftHookCallbackSignature<Result, repeat each Argument>,
     receiver: SwiftHookReceiverView, requiresMainActor: Bool,
     onFailure: @escaping @Sendable (any Error) -> Void,
-    body: @escaping @Sendable (NativeSwiftMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+    body: @escaping @Sendable (NativeSwiftMethodInvocation<Signature>, repeat each Argument) throws -> Result
 ) -> SwiftHookHandler {
     let declaration = method.symbol.declaration
     let description = hookDescription(declaration: declaration,
-        signature: ((repeat each Argument) -> Result).self, unnamed: "<Swift method>")
+        signature: Signature.self, unnamed: "<Swift method>")
     return SwiftHookHandler(requiresMainActor: requiresMainActor, retaining: method, failure: onFailure) { frame, storage in
         let values = try prepared.decodeArguments(storage)
-        let call = NativeSwiftMethodInvocation(frame: frame, prepared: prepared, receiverView: receiver,
+        let call = NativeSwiftMethodInvocation<Signature>(frame: frame, prepared: prepared.call.values, receiverView: receiver,
             declaration: declaration, description: description)
         return try prepared.result.encode(body(call, repeat each values))
     }
@@ -100,10 +110,13 @@ func prepareSwiftMethodHandler<Signature, Result, each Argument>(
 extension NativeSwiftMethod {
     func prepareHook<Result, each Argument>(
         requiresMainActor: Bool, onFailure: @escaping @Sendable (any Error) -> Void,
-        body: @escaping @Sendable (NativeSwiftMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+        body: @escaping @Sendable (NativeSwiftMethodInvocation<Signature>, repeat each Argument) throws -> Result
     ) throws -> (signature: SwiftHookSignature, handler: SwiftHookHandler) {
         let receiverView = SwiftHookReceiverView(self)
-        let prepared = try SwiftHookCallbackSignature<Result, repeat each Argument>(declaration: call.generic)
+        guard case .synchronous(let call) = call else {
+            preconditionFailure("A synchronous hook has a synchronous callable plan.")
+        }
+        let prepared = try SwiftHookCallbackSignature<Result, repeat each Argument>(call: call)
         let signature = try prepared.erased(consumingArguments: consumesArguments, receiver: receiver,
             errorPlan: errorPlan, retaining: self)
         let handler = prepareSwiftMethodHandler(method: self, prepared: prepared, receiver: receiverView,

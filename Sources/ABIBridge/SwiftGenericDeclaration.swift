@@ -2,8 +2,8 @@ import Foundation
 
 /// Formal declaration types preserve generic indirection and pack expansion
 /// that concrete function metadata cannot describe.
-struct SwiftGenericDeclaration: Sendable {
-    struct Parameter: Sendable {
+struct SwiftGenericDeclaration: Sendable, Equatable {
+    struct Parameter: Sendable, Equatable {
         let name: String
         let isPack: Bool
     }

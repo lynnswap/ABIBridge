@@ -61,7 +61,7 @@ Virtual selection uses the lookup type's metadata and the introducing declaratio
 
 The callback applies to every receiver reaching that dispatcher. It is not filtered to a single object. Direct, final, devirtualized or inlined calls and previously captured original implementations can bypass virtual dispatch. If an import reference and a selected metadata entry identify the same physical storage and authentication schema, the two operations share one chain rather than publishing competing dispatchers.
 
-Later registrations wrap earlier ones. Each `proceed` follows the captured snapshot and then its predecessor using the actual incoming receiver. It does not look the method up again. An earlier interposer can be that predecessor.
+`NativeSwiftMethodInvocation<Signature>` carries the complete argument, result, and error signature. Later registrations wrap earlier ones. Each `proceed` follows the captured snapshot and then its predecessor using the actual incoming receiver. It does not look the method up again. An earlier interposer can be that predecessor.
 
 ## Preserve ownership and isolation
 
@@ -71,7 +71,7 @@ A method resolved with `consuming: true` gets an independent owned receiver refe
 
 Ordinary callbacks stay on the incoming thread. `hookMainActorVirtualCalls` and `hookMainActorImportedCalls` express a caller-supplied MainActor contract. They report background entry and bypass that callback before decoding its arguments or receiver. There is no executor hop, and the error observer must be thread-safe.
 
-Callback/conversion failures follow <doc:SwiftFunctionHooks>: before a completed continuation, the current arguments pass to the remaining chain; after a continuation, its latest completed result survives without replaying native side effects. Object property mutations already performed by the callback or native implementation are not rolled back.
+Callback and conversion errors use the native error channel when the declaration can represent them. Other failures follow <doc:SwiftFunctionHooks>: before a completed continuation, the current arguments pass to the remaining chain; after a continuation, its latest completed result or native failure survives without replaying native side effects. Object property mutations already performed by the callback or native implementation are not rolled back.
 
 ## Invalidate and inspect failures
 
@@ -81,9 +81,9 @@ Preparation failures publish nothing. A failed virtual installation throws `Nati
 
 ## Supported boundary
 
-This interface requires initialized instances and a known synchronous, nonthrowing Swift calling convention. Initializers, deinitializers, yielding accessors and unestablished class metadata layouts require separate support. Known asynchronous virtual descriptors are rejected. Property getter names and ordinary getter descriptors do not encode throwing effects, so a source name and metatype cannot establish that a getter is nonthrowing; the caller must know that contract.
+This interface requires initialized instances and a known synchronous Swift calling convention. Initializers, deinitializers, yielding accessors and unestablished class metadata layouts require separate support. Known asynchronous virtual descriptors are rejected. Property getter names and ordinary getter descriptors do not encode throwing effects; supply the getter's source contract, including `declaredAs:` when generic metadata needs it.
 
-The class interface preserves the selected method's receiver representation and requires a compatible class for typed receiver reads. Native async/throws/generic effects, unestablished resilient/nontrivial value layouts, and SwiftUI-specific work remain separate workstreams. The low-level compiled replacement interfaces remain available for separately established ABI contracts.
+The class interface preserves the selected method's receiver representation and requires a compatible class for typed receiver reads. Bound generic declarations and native errors follow the same selection and recovery contract as imported functions. Runtime value and nested callback conversion, explicit argument ownership wrappers, and noncopyable recovery are tracked in [#296](https://github.com/lynnswap/ABIBridge/issues/296); async hooks are tracked in [#297](https://github.com/lynnswap/ABIBridge/issues/297). The low-level compiled replacement interfaces remain available for separately established ABI contracts.
 
 ## Validation boundary
 

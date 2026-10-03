@@ -1,17 +1,17 @@
 import Foundation
 
-private func prepareSwiftImportedHandler<Result, each Argument>(
+private func prepareSwiftImportedHandler<Signature, Result, each Argument>(
     declaration: NativeDeclaration,
     prepared: SwiftHookCallbackSignature<Result, repeat each Argument>,
     requiresMainActor: Bool,
     onFailure: @escaping @Sendable (any Error) -> Void,
-    body: @escaping @Sendable (NativeSwiftFunctionInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+    body: @escaping @Sendable (NativeSwiftFunctionInvocation<Signature>, repeat each Argument) throws -> Result
 ) -> SwiftHookHandler {
     let description = hookDescription(declaration: declaration,
-        signature: ((repeat each Argument) -> Result).self, unnamed: "<Swift function>")
+        signature: Signature.self, unnamed: "<Swift function>")
     return SwiftHookHandler(requiresMainActor: requiresMainActor, failure: onFailure) { frame, storage in
         let values = try prepared.decodeArguments(storage)
-        let call = NativeSwiftFunctionInvocation(frame: frame, prepared: prepared,
+        let call = NativeSwiftFunctionInvocation<Signature>(frame: frame, prepared: prepared.call.values,
             declaration: declaration, description: description)
         return try prepared.result.encode(body(call, repeat each values))
     }
@@ -66,7 +66,7 @@ extension NativeSwiftFunction {
         in importer: ImageSelector, from provider: ImageSelector? = nil,
         using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
-        body: @escaping @Sendable (NativeSwiftFunctionInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+        body: @escaping @Sendable (NativeSwiftFunctionInvocation<Signature>, repeat each Argument) throws -> Result
     ) async throws -> NativeSwiftImportedFunctionHook where Signature == (repeat each Argument) throws(Failure) -> Result {
         try await _hookImportedCalls(in: importer, from: provider, using: runtime, retaining: owner, onFailure: onFailure, body: body)
     }
@@ -76,7 +76,7 @@ extension NativeSwiftFunction {
         in importer: ImageSelector, from provider: ImageSelector? = nil,
         using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
-        body: @escaping @Sendable (NativeSwiftFunctionInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+        body: @escaping @Sendable (NativeSwiftFunctionInvocation<Signature>, repeat each Argument) throws -> Result
     ) async throws -> NativeSwiftImportedFunctionHook where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
         try await _hookImportedCalls(in: importer, from: provider, using: runtime, retaining: owner, onFailure: onFailure, body: body)
     }
@@ -92,7 +92,7 @@ extension NativeSwiftFunction {
         in importer: ImageSelector, from provider: ImageSelector? = nil,
         using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
-        body: @escaping @MainActor @Sendable (NativeSwiftFunctionInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+        body: @escaping @MainActor @Sendable (NativeSwiftFunctionInvocation<Signature>, repeat each Argument) throws -> Result
     ) async throws -> NativeSwiftImportedFunctionHook where Signature == (repeat each Argument) throws(Failure) -> Result {
         try await _hookMainActorImportedCalls(in: importer, from: provider, using: runtime, retaining: owner, onFailure: onFailure, body: body)
     }
@@ -102,16 +102,19 @@ extension NativeSwiftFunction {
         in importer: ImageSelector, from provider: ImageSelector? = nil,
         using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
-        body: @escaping @MainActor @Sendable (NativeSwiftFunctionInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+        body: @escaping @MainActor @Sendable (NativeSwiftFunctionInvocation<Signature>, repeat each Argument) throws -> Result
     ) async throws -> NativeSwiftImportedFunctionHook where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
         try await _hookMainActorImportedCalls(in: importer, from: provider, using: runtime, retaining: owner, onFailure: onFailure, body: body)
     }
 
     private func prepareHook<Result, each Argument>(
         requiresMainActor: Bool, onFailure: @escaping @Sendable (any Error) -> Void,
-        body: @escaping @Sendable (NativeSwiftFunctionInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+        body: @escaping @Sendable (NativeSwiftFunctionInvocation<Signature>, repeat each Argument) throws -> Result
     ) throws -> (signature: SwiftHookSignature, handler: SwiftHookHandler) {
-        let prepared = try SwiftHookCallbackSignature<Result, repeat each Argument>(declaration: call.generic)
+        guard case .synchronous(let call) = call else {
+            preconditionFailure("A synchronous hook has a synchronous callable plan.")
+        }
+        let prepared = try SwiftHookCallbackSignature<Result, repeat each Argument>(call: call)
         let signature = try prepared.erased(consumingArguments: consumesArguments, errorPlan: errorPlan, retaining: self)
         let handler = prepareSwiftImportedHandler(declaration: symbol.declaration, prepared: prepared,
             requiresMainActor: requiresMainActor, onFailure: onFailure, body: body)
@@ -132,7 +135,7 @@ extension NativeSwiftFunction {
         in importer: ImageSelector, from provider: ImageSelector? = nil,
         using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
-        body: @escaping @Sendable (NativeSwiftFunctionInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+        body: @escaping @Sendable (NativeSwiftFunctionInvocation<Signature>, repeat each Argument) throws -> Result
     ) async throws -> NativeSwiftImportedFunctionHook {
         let prepared = try prepareHook(requiresMainActor: false, onFailure: onFailure, body: body)
         return try await installImportedHook(in: importer, from: provider, using: runtime, retaining: owner, prepared: prepared)
@@ -142,10 +145,10 @@ extension NativeSwiftFunction {
         in importer: ImageSelector, from provider: ImageSelector? = nil,
         using runtime: ABIRuntime = .shared, retaining owner: (any Sendable)? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
-        body: @escaping @MainActor @Sendable (NativeSwiftFunctionInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+        body: @escaping @MainActor @Sendable (NativeSwiftFunctionInvocation<Signature>, repeat each Argument) throws -> Result
     ) async throws -> NativeSwiftImportedFunctionHook {
         let prepared = try prepareHook(requiresMainActor: true, onFailure: onFailure) {
-                (call: NativeSwiftFunctionInvocation<Result, repeat each Argument>, values: repeat each Argument) in
+                (call: NativeSwiftFunctionInvocation<Signature>, values: repeat each Argument) in
                 let input = ObjCReplacementIsolatedValue(value: (call, (repeat each values)))
                 return try MainActor.assumeIsolated {
                     ObjCReplacementIsolatedValue(value: try body(input.value.0, repeat each input.value.1))
