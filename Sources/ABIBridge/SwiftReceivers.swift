@@ -127,8 +127,8 @@ struct SwiftReceiverPlan: Sendable {
             convention: isConsuming ? .consuming : isMutating && mode != .object ? .inoutValue : .borrowing)
     }
 
-    func finishInvocation<Result, Receiver>(
-        _ outcome: Swift.Result<Result, any Error>, storage: NativeValueStorage, invoked: Bool,
+    func finishInvocation<Result: ~Copyable, Receiver>(
+        _ outcome: consuming Swift.Result<Result, any Error>, storage: NativeValueStorage, invoked: Bool,
         receiver: inout Receiver, retaining owner: Any?
     ) throws -> Result {
         try finishSwiftInvocation(outcome) {

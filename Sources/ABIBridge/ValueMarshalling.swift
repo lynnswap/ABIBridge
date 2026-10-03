@@ -61,8 +61,8 @@ extension Selector: NativePointerValue {
 
 typealias SwiftWritebackPreparation = () throws -> (() -> Void)
 
-func finishSwiftInvocation<Output>(
-    _ outcome: Result<Output, any Error>, writeback: () throws -> Void
+func finishSwiftInvocation<Output: ~Copyable>(
+    _ outcome: consuming Result<Output, any Error>, writeback: () throws -> Void
 ) throws -> Output {
     do {
         try writeback()
@@ -148,6 +148,12 @@ final class NativeValueStorage {
             return value.lifetimeForCopy(retaining: images)
         }
         return self
+    }
+
+    func destroyInitializedValue() {
+        let destroy = destroyValue
+        destroyValue = nil
+        withExtendedLifetime((owner, codeLifetime)) { destroy?(address) }
     }
 
     // Called only after a native call has consumed the initialized value.

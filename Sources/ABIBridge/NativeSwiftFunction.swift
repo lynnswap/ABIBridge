@@ -318,6 +318,64 @@ public struct NativeSwiftFunction<Signature>: Sendable {
             retainingCode: typeOwner?.image, repeat each values)
     }
 
+    /// Uses the native result while its return storage and input lifetimes remain active.
+    /// The borrowed view expires and the native result is destroyed before writeback.
+    @unsafe public func unsafeInvoke<Output: ~Copyable, Failure: Error, each Argument>(
+        _ values: repeat each Argument, withResult body: (NativeSwiftBorrowedValue) throws -> Output
+    ) throws -> Output where Signature == (repeat each Argument) throws(Failure) -> NativeSwiftBorrowedValue {
+        guard case .synchronous(let call) = call else { preconditionFailure("A synchronous signature has a synchronous call plan.") }
+        return try unsafe call.unsafeInvoke(symbol: symbol, context: UnsafeRawPointer(bitPattern: context),
+            retaining: (symbol, typeOwner), retainingCode: typeOwner?.image, implementation: implementation,
+            repeat each values, withResult: body)
+    }
+
+    /// Uses the native result while its return storage and input lifetimes remain active.
+    /// The borrowed view expires and the native result is destroyed before writeback.
+    @unsafe public func unsafeInvoke<Output: ~Copyable, Failure: Error, each Argument>(
+        _ values: repeat each Argument, withResult body: (NativeSwiftBorrowedValue) throws -> Output
+    ) throws -> Output where Signature == @Sendable (repeat each Argument) throws(Failure) -> NativeSwiftBorrowedValue {
+        guard case .synchronous(let call) = call else { preconditionFailure("A synchronous signature has a synchronous call plan.") }
+        return try unsafe call.unsafeInvoke(symbol: symbol, context: UnsafeRawPointer(bitPattern: context),
+            retaining: (symbol, typeOwner), retainingCode: typeOwner?.image, implementation: implementation,
+            repeat each values, withResult: body)
+    }
+
+    @_transparent
+    @unsafe public nonisolated(nonsending) func unsafeInvoke<Output: ~Copyable, Failure: Error, each Argument>(
+        _ values: repeat each Argument, withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output where Signature == (repeat each Argument) async throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe await invokeAsync(repeat each values, withResult: body)
+    }
+
+    @_transparent
+    @unsafe public nonisolated(nonsending) func unsafeInvoke<Output: ~Copyable, Failure: Error, each Argument>(
+        _ values: repeat each Argument, withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output where Signature == @Sendable (repeat each Argument) async throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe await invokeAsync(repeat each values, withResult: body)
+    }
+
+    @_transparent
+    @unsafe public nonisolated(nonsending) func unsafeInvoke<Output: ~Copyable, Failure: Error, each Argument>(
+        _ values: repeat each Argument, withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output where Signature == @concurrent (repeat each Argument) async throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe await invokeAsync(repeat each values, withResult: body)
+    }
+
+    @_transparent
+    @unsafe public nonisolated(nonsending) func unsafeInvoke<Output: ~Copyable, Failure: Error, each Argument>(
+        _ values: repeat each Argument, withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output where Signature == @Sendable @concurrent (repeat each Argument) async throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe await invokeAsync(repeat each values, withResult: body)
+    }
+
+    @unsafe @usableFromInline nonisolated(nonsending) func invokeAsync<Output: ~Copyable, each Argument>(
+        _ values: repeat each Argument, withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output {
+        guard case .asynchronous(let call, let entry) = call else { preconditionFailure("An async signature has an async call plan.") }
+        return try unsafe await call.unsafeInvoke(implementation: entry, context: UnsafeRawPointer(bitPattern: context),
+            retaining: (entry, typeOwner), retainingCode: typeOwner?.image, repeat each values, withResult: body)
+    }
+
 }
 
 extension ABIRuntime {

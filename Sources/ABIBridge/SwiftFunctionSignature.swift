@@ -175,6 +175,7 @@ struct SwiftCallValues: Sendable {
         let encode: @Sendable (UnsafeRawPointer, Any?) throws -> NativeValueStorage
     }
     struct Result: Sendable {
+        let scoped: SwiftRuntimeValuePlan?
         let type: CValueType
         let makeStorage: @Sendable () -> NativeValueStorage
         let initialize: @Sendable (NativeValueStorage, Any?, Any?, UnsafeMutableRawPointer) throws -> Void
@@ -202,13 +203,26 @@ struct SwiftCallValues: Sendable {
         }
         func prepareResult<Value>(_ type: Value.Type) throws -> Result {
             let codec = try SwiftResultCodec<Value>(opaque: opaqueResult, generic: resultPlan)
-            return Result(type: codec.type, makeStorage: { codec.makeStorage() },
+            return Result(scoped: codec.scoped, type: codec.type, makeStorage: { codec.makeStorage() },
                 initialize: { storage, owner, codeOwner, output in
                     let value = try codec.decode(storage, retaining: owner, retainingCode: codeOwner)
                     output.initializeMemory(as: Value.self, repeating: value, count: 1)
                 })
         }
         result = try _openExistential(signature.result, do: prepareResult)
+    }
+
+    func requireIndependentResult() throws {
+        guard result.scoped == nil else {
+            throw ABIResolutionError.unsupportedDeclaration("A scoped runtime result requires unsafeInvoke(..., withResult:).")
+        }
+    }
+
+    func scopedResult() throws -> SwiftRuntimeValuePlan {
+        guard let scoped = result.scoped else {
+            throw ABIResolutionError.unsupportedDeclaration("withResult: requires a scoped runtime result signature.")
+        }
+        return scoped
     }
 
     func encode<each Argument>(_ values: repeat each Argument, retainingCode owner: Any?) throws -> [NativeValueStorage] {
@@ -233,7 +247,7 @@ struct SwiftCallValues: Sendable {
         for (argument, value) in zip(arguments, storage) where argument.consumes { value.relinquishValue() }
     }
 
-    func finishInvocation<Output>(_ outcome: Swift.Result<Output, any Error>,
+    func finishInvocation<Output: ~Copyable>(_ outcome: consuming Swift.Result<Output, any Error>,
                                   storage: [NativeValueStorage]) throws -> Output {
         try finishSwiftInvocation(outcome) {
             let commits = try storage.compactMap(\.prepareWriteback).map { try $0() }
