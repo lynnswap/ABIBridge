@@ -1,4 +1,12 @@
 import SwiftReplacementFixtures
+import Foundation
+
+@inline(never) public func composedHookInteger(_ value: Int64) -> Int64 { composedHookEcho(value) }
+@inline(never) public func composedHookString(_ value: String) -> String { composedHookEcho(value) }
+@inline(never) public func composedHookObject(_ value: NSObject) -> NSObject { composedHookEcho(value) }
+@inline(never) public func composedHookBoolean(_ value: Bool) -> Bool { composedHookEcho(value) }
+@inline(never) public func composedHookFactoryResult(_ value: Int64) -> Int64 { composedHookFactory(value)() }
+@inline(never) public func composedHookErrorResult(_ value: Int64) throws(NSError) -> Int64 { try composedHookError(value) }
 
 // Separate compilation keeps these oracles independent of replacement code.
 @inline(never) public func importedScalar(_ value: Int64) -> Int64 { scalar(value) }

@@ -119,3 +119,11 @@ public struct HookWideValue {
     @inline(never) public func sum(_ value: Int64) -> Int64 { a+b+c+d+e+value }
     @inline(never) public consuming func consume(_ value: Int64) -> Int64 { a+b+c+d+e+value }
 }
+import Foundation
+
+@inline(never) public func composedHookEcho<Value>(_ value: Value) -> Value { value }
+@inline(never) public func composedHookFactory<Value>(_ value: Value) -> () -> Value { { value } }
+@inline(never) public func composedHookError(_ value: Int64) throws(NSError) -> Int64 {
+    if value < 0 { throw NSError(domain: "native-hook", code: Int(value)) }
+    return value + 1
+}

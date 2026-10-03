@@ -575,7 +575,8 @@ struct SwiftGenericCallPlan: Sendable {
     func hookClassArguments() throws -> [HookClassArgument] {
         var sources: [HookClassArgument] = []
         var nativeIndex = 0
-        func add(_ type: Any.Type, at index: Int) {
+        func add(_ type: Any.Type, layout: CValueType, at index: Int) {
+            guard !ABISwiftValueIsIndirect(layout.handle) else { return }
             if let instance = SwiftMetatypeMetadata(type)?.instance as? AnyClass {
                 sources.append(.init(index: index, expected: instance, isMetatype: true))
             } else if let expected = type as? AnyClass {
@@ -591,8 +592,13 @@ struct SwiftGenericCallPlan: Sendable {
                 defer { nativeIndex += tuple?.argumentTypes.count ?? 1 }
                 guard argument.convention != .inoutValue, binding.dependsOnParameters(formal) else { continue }
                 if let tuple {
-                    for (index, leaf) in tuple.leaves.enumerated() { add(leaf.nativeType, at: nativeIndex + index) }
-                } else { add(try binding.types(formal)[0], at: nativeIndex) }
+                    for (index, leaf) in tuple.leaves.enumerated() {
+                        add(leaf.nativeType, layout: leaf.type, at: nativeIndex + index)
+                    }
+                } else {
+                    let native = try binding.types(formal)[0]
+                    add(native, layout: try Self.layout(formal, actual: native, binding: binding), at: nativeIndex)
+                }
             }
         }
         return sources
