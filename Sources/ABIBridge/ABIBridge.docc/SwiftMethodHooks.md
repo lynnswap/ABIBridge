@@ -27,6 +27,12 @@ When the receiver type is importable, `call.receiver(as: Renderer.self)` returns
 
 Use `method.hookImportedCalls(in:using:onFailure:body:)` to intercept references to a concrete member implementation in loaded callers. A final method has no virtual table entry, but can still have importing references. An ordinary virtual call does not necessarily use an import reference. Value methods use importing references; they do not acquire a class metadata table. Import selection follows the loaded-image, provider-filter and protection contracts in <doc:SwiftFunctionHooks>.
 
+## Await asynchronous methods
+
+An async method uses the same registration and `NativeSwiftMethodInvocation<Signature>`. Include its native isolation convention in the signature, and await `call.proceed(...)`. `call.receiver(as:)` remains available before and after suspension while the callback runs on the same Swift task. Native argument and receiver storage stays live until completion.
+
+Virtual async methods use the class metadata's async descriptor slot. The published descriptor preserves the captured predecessor's context size, so calls still pass through after invalidation. Imported async members intercept their implementation's function references. In both cases, callback failures, cancellation, snapshots, and code lifetime follow <doc:SwiftFunctionHooks>.
+
 ## Inspect value receivers
 
 Imported-member hooks also accept the concrete value representation selected during type lookup. For a native counter whose fixed storage is one `Int64`:
@@ -69,7 +75,7 @@ Receiver reads and continuations are valid only on the entering thread while the
 
 A method resolved with `consuming: true` gets an independent owned receiver reference for each continuation. The bridge disposes of the unused incoming ownership if the closure skips the native implementation. Getter results and setter arguments keep their Swift ownership conventions; resolve a setter using `setter(named:as:)` so its consumed argument contract is established.
 
-Ordinary callbacks stay on the incoming thread. `hookMainActorVirtualCalls` and `hookMainActorImportedCalls` express a caller-supplied MainActor contract. They report background entry and bypass that callback before decoding its arguments or receiver. There is no executor hop, and the error observer must be thread-safe.
+Synchronous callbacks stay on the incoming thread. `hookMainActorVirtualCalls` and `hookMainActorImportedCalls` express a caller-supplied MainActor contract. They report background entry and bypass that callback before decoding its arguments or receiver. Synchronous bodies enter directly. Async bodies resume on MainActor after suspension. The error observer must be thread-safe.
 
 Callback and conversion errors use the native error channel when the declaration can represent them. Other failures follow <doc:SwiftFunctionHooks>: before a completed continuation, the current arguments pass to the remaining chain; after a continuation, its latest completed result or native failure survives without replaying native side effects. Object property mutations already performed by the callback or native implementation are not rolled back.
 
@@ -81,12 +87,12 @@ Preparation failures publish nothing. A failed virtual installation throws `Nati
 
 ## Supported boundary
 
-This interface requires initialized instances and a known synchronous Swift calling convention. Initializers, deinitializers, yielding accessors and unestablished class metadata layouts require separate support. Known asynchronous virtual descriptors are rejected. Property getter names and ordinary getter descriptors do not encode throwing effects; supply the getter's source contract, including `declaredAs:` when generic metadata needs it.
+This interface requires initialized instances and a known Swift calling convention. Initializers, deinitializers, yielding accessors and unestablished class metadata layouts require separate support. Async function signatures select the async descriptor convention. Property getter names and ordinary getter descriptors do not encode throwing effects; supply the getter's source contract, including `declaredAs:` when generic metadata needs it.
 
-The class interface preserves the selected method's receiver representation and requires a compatible class for typed receiver reads. Bound generic declarations and native errors follow the same selection and recovery contract as imported functions. Runtime value and nested callback conversion, explicit argument ownership wrappers, and noncopyable recovery are tracked in [#296](https://github.com/lynnswap/ABIBridge/issues/296); async hooks are tracked in [#297](https://github.com/lynnswap/ABIBridge/issues/297). The low-level compiled replacement interfaces remain available for separately established ABI contracts.
+The class interface preserves the selected method's receiver representation and requires a compatible class for typed receiver reads. Bound generic declarations and native errors follow the same selection and recovery contract as imported functions. Runtime value and nested callback conversion, explicit argument ownership wrappers, and noncopyable recovery are tracked in [#296](https://github.com/lynnswap/ABIBridge/issues/296). The low-level compiled replacement interfaces remain available for separately established ABI contracts.
 
 ## Validation boundary
 
-Compiled macOS fixtures verify class scope and receiver identity, mutable property access, getter/setter ownership, repeated consuming continuations, MainActor/background entry, escaped views, and shared imported/virtual selection. An arm64e iPhone run passed 16 checks, including authentication on the same inherited entry selected through both APIs. arm64e.x1 compilation is validated separately; matching-device execution remains outstanding.
+Compiled macOS fixtures verify class scope and receiver identity, mutable property access, getter/setter ownership, repeated consuming continuations, MainActor/background entry, escaped views, and shared imported/virtual selection. An arm64e iPhone run passed 21 checks, including authentication on the same inherited entry selected through both APIs and async descriptor authentication, typed errors, receiver lifetime, and pass-through after invalidation. arm64e.x1 compilation is validated separately; matching-device execution remains outstanding.
 
 Value-receiver fixtures additionally cover original-address mutation, consuming String/reference ownership, large indirect receivers/results, nonmutating setters and trailing self after stack arguments. An arm64e iPhone run passed 12 value-hook checks with pointer authentication enabled. These tests establish the supplied concrete layouts; they do not establish arbitrary nontrivial or resilient value representations.

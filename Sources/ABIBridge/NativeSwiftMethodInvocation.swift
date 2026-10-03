@@ -33,9 +33,10 @@ struct SwiftHookReceiverView: Sendable {
 
 /// A scoped Swift receiver and continuation for an intercepted instance method.
 ///
-/// Access requires the original thread and an active callback. Copied diagnostic
-/// metadata remains readable after return; a saved invocation does not preserve
-/// its native frame or callback captures. `proceed` does not redispatch the method.
+/// Access requires an active callback and the original thread for synchronous
+/// signatures or the same Swift task for asynchronous signatures. Copied
+/// diagnostic metadata remains readable after return; a saved invocation does
+/// not preserve its native frame or captures. `proceed` does not redispatch.
 public struct NativeSwiftMethodInvocation<Signature>: CustomStringConvertible {
     let frame: SwiftHookFrame
     let prepared: SwiftCallValues
@@ -55,7 +56,7 @@ public struct NativeSwiftMethodInvocation<Signature>: CustomStringConvertible {
     /// representation; editing that copy does not write back. A later read sees
     /// native changes made through an original mutating receiver address.
     /// Pointer adapters retain their own pointee rules.
-    /// - Throws: Scope/thread errors or an incompatible receiver representation.
+    /// - Throws: Scope, thread/task errors, or an incompatible receiver representation.
     public func receiver<Receiver>(as type: Receiver.Type) throws -> Receiver {
         try frame.receiver { try receiverView.decode($0, as: type) }
     }

@@ -898,6 +898,7 @@ struct ABISwiftIncomingCall {
     CallFrame &frame;
     std::optional<ABISwiftAsyncCallInterface> asynchronous;
     uint32_t contextSize = 0;
+    const void *task = nullptr;
     std::vector<void *> outputs;
     void *indirectResult = nullptr;
     uintptr_t isolation[2]{};
@@ -921,7 +922,7 @@ struct ABISwiftIncomingCall {
           receiver(reinterpret_cast<const void *>(frame.context)) {}
     ABISwiftIncomingCall(const ABISwiftAsyncCallInterface &interface, ABIUnmanagedFunction fallback,
                         uint32_t contextSize, CallFrame &frame)
-        : fallback(fallback), frame(frame), asynchronous(interface), contextSize(contextSize),
+        : fallback(fallback), frame(frame), asynchronous(interface), contextSize(contextSize), task(swift_task_getCurrent()),
           interface(*interface.completion), receiver(reinterpret_cast<const void *>(frame.context)) {}
     ~ABISwiftIncomingCall() {
         if (prepared && !untouchedFallback && handler->functions.destroyConsumedArguments)
@@ -967,6 +968,9 @@ bool checkIncoming(ABISwiftIncomingCall *call, ABIResolutionFailure **error) {
     if (!call) { fail(error, ABIFailureInvalidRequest, "A live Swift callback invocation is required."); return false; }
     if (!call->asynchronous && !pthread_equal(call->thread, pthread_self())) {
         fail(error, ABIFailureWrongThread, "A Swift callback invocation stays on its entering thread."); return false;
+    }
+    if (call->asynchronous && call->task != swift_task_getCurrent()) {
+        fail(error, ABIFailureInvalidRequest, "An asynchronous Swift hook stays on its entering task."); return false;
     }
     if (!call->active) { fail(error, ABIFailureInvalidRequest, "The Swift callback invocation has expired."); return false; }
     return true;
@@ -1168,7 +1172,9 @@ ABISwiftAsyncClosureCallback *ABICreateSwiftAsyncHookCallback(ABISwiftAsyncCallI
         fail(error, ABIFailureInvalidRequest, "An async interface, predecessor and body factory are required."); return nullptr;
     }
     auto callback = std::make_unique<ABISwiftAsyncClosureCallback>(*interface);
-    callback->code = std::make_unique<abibridge::SwiftCallbackCode>(callback.get(), error, false, sizeof(SwiftAsyncCallbackContext));
+    // A virtual caller allocates the size advertised by this descriptor.
+    // Raw pass-through reuses that context for the captured native entry.
+    callback->code = std::make_unique<abibridge::SwiftCallbackCode>(callback.get(), error, false, contextSize);
     if (!callback->code->function()) return nullptr;
     callback->fallback = fallback;
     callback->contextSize = contextSize;
@@ -1397,19 +1403,19 @@ bool ABISwiftAsyncIncomingPrepare(ABISwiftIncomingCall *call, const ABISwiftAsyn
     return true;
 }
 ABISwiftAsyncInvocation *ABISwiftIncomingCreateAsyncProceed(ABISwiftIncomingCall *call,
-    void *const *arguments, size_t count, const void *receiver, ABIResolutionFailure **error) {
+    void *const *arguments, size_t count, const void *receiver, bool untouched, ABIResolutionFailure **error) {
     if (!checkIncoming(call, error)) return nullptr;
     auto &interface = *call->asynchronous;
-    if (arguments && count != interface.argumentCount) {
+    if (!untouched && count != interface.argumentCount) {
         fail(error, ABIFailureInvalidRequest, "Arguments must match the selected async hook interface."); return nullptr;
     }
     call->pendingResult = std::make_unique<SwiftOwnedResult>(*interface.completion->result, *call->handler);
     call->pendingError = interface.completion->errorResult
         ? std::make_unique<SwiftOwnedResult>(*interface.completion->errorResult, *call->handler, true) : nullptr;
     auto *invocation = ABICreateSwiftAsyncInvocation(&interface, call->fallback, call->contextSize,
-        call->pendingResult->value.data(), arguments ? arguments : call->arguments.data(),
-        arguments ? receiver : call->receiver, call->pendingError ? call->pendingError->value.data() : nullptr, error);
-    if (invocation && !arguments) call->untouchedFallback = true;
+        call->pendingResult->value.data(), untouched ? call->arguments.data() : arguments,
+        untouched ? call->receiver : receiver, call->pendingError ? call->pendingError->value.data() : nullptr, error);
+    if (invocation && untouched) call->untouchedFallback = true;
     return invocation;
 }
 void ABISwiftIncomingCompleteAsyncProceed(ABISwiftIncomingCall *call, ABISwiftAsyncInvocation *invocation) {

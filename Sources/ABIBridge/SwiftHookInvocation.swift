@@ -3,11 +3,11 @@ import Foundation
 import Darwin
 import ObjectiveC
 
-/// A Swift hook continuation was used outside its synchronous invocation.
+/// A Swift hook continuation was used outside its active invocation.
 public enum NativeSwiftHookInvocationError: Error, Sendable {
     /// The callback that provided the continuation has returned.
     case expiredInvocation
-    /// The continuation or MainActor callback was entered from another thread.
+    /// A synchronous continuation or MainActor callback entered from another thread.
     case wrongThread
     /// An asynchronous continuation was used by another Swift task.
     case wrongTask
@@ -70,6 +70,8 @@ final class SwiftHookFrame {
 /// calls the captured predecessor with the incoming Swift context. It does not
 /// resolve the source declaration again. Saving this value preserves diagnostics,
 /// but does not extend its call frame or retain callback captures after return.
+/// Synchronous continuations stay on the entering thread. Async continuations
+/// remain valid across suspension on the same Swift task until the callback ends.
 public struct NativeSwiftFunctionInvocation<Signature>: CustomStringConvertible {
     let frame: SwiftHookFrame
     let prepared: SwiftCallValues
@@ -461,7 +463,7 @@ final class SwiftHookSignature: @unchecked Sendable {
         var invoked = false
         defer { if !invoked { consumedObject?.release() } }
         let invocation = addresses.withUnsafeBufferPointer {
-            ABISwiftIncomingCreateAsyncProceed(call, $0.baseAddress, $0.count, context, &error)
+            ABISwiftIncomingCreateAsyncProceed(call, $0.baseAddress, $0.count, context, false, &error)
         }
         guard let invocation else { throw consumeNativeCallFailure(error) }
         defer { withExtendedLifetime((values, consumedValue, encoded)) { ABIReleaseSwiftAsyncInvocation(invocation) } }

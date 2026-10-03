@@ -44,6 +44,8 @@ private final class SwiftHookStep {
     }
 }
 
+// Each call owns its execution buffers; async continuations verify the entering
+// task before reaching them, even if a consumer transfers the public view.
 private final class SwiftHookExecution: @unchecked Sendable {
     let call: OpaquePointer
     let handlers: [SwiftHookHandler]
@@ -88,10 +90,6 @@ private final class SwiftHookExecution: @unchecked Sendable {
     nonisolated(nonsending) func invokeAsync(_ count: Int, arguments: [NativeValueStorage]) async throws -> NativeValueStorage {
         guard count != 0 else { return try await signature.proceedAsync(call, arguments: arguments) }
         let handler = handlers[count - 1]
-        if handler.requiresMainActor && !Thread.isMainThread {
-            handler.failure(NativeSwiftHookInvocationError.wrongThread)
-            return try await invokeAsync(count - 1, arguments: arguments)
-        }
         let step = SwiftHookStep()
         let readReceiver: (() throws -> NativeValueStorage)? = signature.receiver == nil ? nil : { [self] in try signature.readReceiver(call, arguments: arguments) }
         let frame = SwiftHookFrame(receiver: readReceiver, asynchronous: { [self] values in
@@ -170,6 +168,10 @@ final class SwiftHookDispatcher: Sendable {
         var selected = signature
         do {
             for (signature, handler) in nodes where try signature.matchesIncoming(call) {
+                if handler.requiresMainActor && !Thread.isMainThread {
+                    handler.failure(NativeSwiftHookInvocationError.wrongThread)
+                    continue
+                }
                 selected = signature; snapshot.append(handler)
             }
             guard !snapshot.isEmpty else { return ABISwiftClosureValue() }
@@ -221,7 +223,7 @@ private final class SwiftHookAsyncBody: @unchecked Sendable {
         if ABISwiftIncomingResultAddress(call) == nil {
             // Prepared arguments are the unchanged native storage. This path
             // transfers original consumed ownership exactly once.
-            let invocation = ABISwiftIncomingCreateAsyncProceed(call, nil, 0, nil, nil)!
+            let invocation = ABISwiftIncomingCreateAsyncProceed(call, nil, 0, nil, true, nil)!
             await invokeSwiftAsync(invocation)
             ABISwiftIncomingCompleteAsyncProceed(call, invocation)
             ABIReleaseSwiftAsyncInvocation(invocation)

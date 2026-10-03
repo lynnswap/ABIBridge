@@ -103,6 +103,9 @@ void *ABICopySwiftAsyncClosureCallbackBodyOwner(ABIUnmanagedFunction function, v
 /// A hook entry uses the native caller's existing async context only for its
 /// eventual return. The bridge allocates its own task context; unchanged calls
 /// tail-call fallback without decoding arguments or allocating another task.
+/// The body factory selects AsyncIncomingPrepare before returning an owned async body;
+/// a null body leaves the entire native frame unchanged. Published descriptors
+/// advertise contextSize so that raw fallback can reuse the caller's allocation.
 ABISwiftAsyncClosureCallback *ABICreateSwiftAsyncHookCallback(ABISwiftAsyncCallInterface *interface,
     ABIUnmanagedFunction fallback, uint32_t contextSize,
     ABISwiftClosureValue (*createBody)(void *context, ABISwiftIncomingCall *call),
@@ -113,7 +116,8 @@ bool ABISwiftAsyncIncomingReadPointer(ABISwiftIncomingCall *call, const ABISwift
 
 /// Functions describing one callback and its native value ownership. None may
 /// throw a language exception through this C boundary. The borrowed invocation
-/// is usable only during invoke, on its entering thread.
+/// is usable only during invoke on its entering thread, or during an async
+/// hook body on its entering task.
 typedef struct ABISwiftCallbackFunctions {
     void (*invoke)(void *context, ABISwiftIncomingCall *call);
     /// Select a bound interface with IncomingPrepare before reading values.
@@ -164,11 +168,11 @@ bool ABISwiftIncomingPrepare(ABISwiftIncomingCall *call, const ABISwiftCallInter
     ABISwiftCallbackFunctions functions, void *context, ABIResolutionFailure **error);
 bool ABISwiftAsyncIncomingPrepare(ABISwiftIncomingCall *call, const ABISwiftAsyncCallInterface *interface,
     ABISwiftCallbackFunctions functions, void *context, ABIResolutionFailure **error);
-/// Creates a native predecessor call in the current task. Null arguments select
+/// Creates a native predecessor call in the current task. untouched selects
 /// unchanged incoming storage. CompleteAsync records the completed native outcome
 /// before conversion; its ownership stays with the hook until native return.
 ABISwiftAsyncInvocation *ABISwiftIncomingCreateAsyncProceed(ABISwiftIncomingCall *call,
-    void *const *arguments, size_t count, const void *receiver, ABIResolutionFailure **error);
+    void *const *arguments, size_t count, const void *receiver, bool untouched, ABIResolutionFailure **error);
 void ABISwiftIncomingCompleteAsyncProceed(ABISwiftIncomingCall *call, ABISwiftAsyncInvocation *invocation);
 
 /// Borrows an argument at its original indirect address, or captured direct storage.

@@ -19,6 +19,9 @@ def main():
     root = Path(__file__).resolve().parent.parent
     output = root / '.build/swift-async-codegen'
     reports = []
+    output.mkdir(parents=True, exist_ok=True)
+    virtual_source = output / 'virtual.swift'
+    virtual_source.write_text('open class AsyncHookClass {\n    public init() {}\n    @inline(never) open nonisolated(nonsending) func value(_ input: Int64) async -> Int64 {\n        await Task.yield()\n        return input + 1\n    }\n}\n@inline(never) public nonisolated(nonsending) func call(_ object: AsyncHookClass, _ input: Int64) async -> Int64 {\n    await object.value(input)\n}\n')
     counts = {'asyncImmediate': 4, 'asyncConcurrent': 4, 'asyncCaller': 5,
               'asyncMainActor': 2, 'asyncUntyped': 4, 'asyncTyped': 4,
               'asyncBothIndirect': 6, 'asyncFloatingError': 4, 'asyncMany': 21}
@@ -78,8 +81,23 @@ def main():
             raise RuntimeError(f'{target}: missing task-context allocation evidence')
         if 'arm64e' in target and not all(name in text for name in ['llvm.ptrauth.sign', 'llvm.ptrauth.auth']):
             raise RuntimeError(f'{target}: missing authenticated async-context evidence')
+        virtual_ir = directory / 'virtual.ll'
+        run(*common, '-module-name', 'AsyncHookProbe', str(virtual_source), '-emit-ir', '-o', str(virtual_ir))
+        virtual = virtual_ir.read_text()
+        metadata = next(line for line in virtual.splitlines() if 'ClassCMf" = ' in line)
+        descriptor = next(line for line in virtual.splitlines() if 'ClassCMn" = ' in line)
+        method = next(match for match in re.finditer(r'%swift.method_descriptor \{ i32 (-?\d+),[^}]+\}', descriptor)
+                      if '5value' in match[0])
+        flags = int(method[1]) & 0xffffffff
+        if flags & 0x50 != 0x50 or '5value' not in metadata or 'Tu' not in metadata:
+            raise RuntimeError(f'{target}: async method slots must contain async function descriptors')
+        if 'arm64e' in target:
+            signed = next(line for line in virtual.splitlines() if '5value' in line and 'Tu.ptrauth" = ' in line)
+            if 'i32 2, i64 ptrtoint' not in signed or f'i64 {flags >> 16} }}' not in signed:
+                raise RuntimeError(f'{target}: async method descriptor data authentication changed')
         reports.append({'target': target, 'declarations': declarations,
-                        'contextSizes': context_sizes, 'errorCompletions': returns[:8]})
+                        'contextSizes': context_sizes, 'errorCompletions': returns[:8],
+                        'asyncVirtualFlags': flags, 'asyncVirtualMetadata': metadata})
     report = {'compiler': run('xcrun', 'swiftc', '--version').strip(),
               'runtimeTested': False, 'targets': reports}
     (output / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
