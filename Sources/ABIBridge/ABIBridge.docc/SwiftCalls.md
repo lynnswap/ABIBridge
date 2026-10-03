@@ -13,6 +13,10 @@ Start with <doc:SwiftFunctionInvocation> for free functions or <doc:SwiftMemberI
 - <doc:SwiftFunctionInvocation>
 - ``NativeSwiftFunction``
 
+### Migration
+
+- <doc:SwiftAPIMigration>
+
 ### Types and members
 
 - <doc:SwiftMemberInvocation>
