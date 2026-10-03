@@ -657,7 +657,7 @@ struct SwiftGenericCallPlan: Sendable {
                     throw ABIResolutionError.signatureMismatch(.init(expected: formal.spelling, found: [String(reflecting: actual)]))
                 }
                 return try metatype.valueType(for: Value.self, thin: !metatype.isExistential && singletonMetatype(instance, binding: binding))
-            case .existentialMetatype:
+            case .existentialMetatype, .constrainedExistential:
                 return try SwiftValueCodec<Value>().type
             case .tuple(let fields, _):
                 let elements = try tupleElements(fields, actual: actual, binding: binding)
@@ -743,6 +743,7 @@ extension SwiftGenericBinding {
     func dependsOnParameters(_ type: SwiftFormalType) -> Bool {
         return switch type {
         case .objectiveCClass, .opaqueResult: false
+        case .constrainedExistential(_, let constraints): constraints.contains { dependsOnParameters($0.value) }
         case .named(let name, let parameters):
             (parameters.isEmpty && arguments[String(name.prefix { $0 != "." })] != nil) || parameters.contains(where: dependsOnParameters)
         case .nominal(_, let parameters), .reference(_, let parameters): parameters.contains(where: dependsOnParameters)

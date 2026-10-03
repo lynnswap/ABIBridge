@@ -593,6 +593,29 @@ struct SwiftGenericBinding: Sendable {
             }
         }
         switch type {
+        case .constrainedExistential(let base, let constraints):
+            // Swift 6.3 cannot instantiate the textual constrained existential
+            // form. Reuse compiler-emitted metadata supplied by the signature
+            // after checking the complete bound same-type requirements.
+            // MetadataLookup.cpp: createConstrainedExistentialType.
+            let expected = try constraints.map { try types($0.value, packIndex: packIndex)[0] }
+            for metadata in knownTypes.values {
+                guard unsafeBitCast(metadata, to: UnsafeRawPointer.self).load(as: UInt.self) == 0x307,
+                      let name = _mangledTypeName(metadata) else { continue }
+                let syntax = try name.withCString { try unsafe SwiftSyntax(typeReference: $0, length: name.utf8.count) }
+                guard case .constrainedExistential(let actualBase, let actualConstraints) = try SwiftFormalType(syntax.root),
+                      try Self.key(base) == Self.key(actualBase), constraints.count == actualConstraints.count else { continue }
+                let matches = try zip(constraints, expected).allSatisfy { constraint, expected in
+                    let candidates = actualConstraints.filter { actual in
+                        actual.subject == constraint.subject
+                            || (constraint.subject.split(separator: ".").count == 2
+                                && actual.subject.split(separator: ".").last == constraint.subject.split(separator: ".").last)
+                    }
+                    return try candidates.count == 1 && types(candidates[0].value, packIndex: packIndex)[0] == expected
+                }
+                if matches { return [metadata] }
+            }
+            throw ABIResolutionError.metadataUnavailable("The signature must supply compiler-emitted metadata matching " + type.spelling + ".")
         case .opaqueResult(let index):
             guard let opaqueResult = opaqueResults[index] else {
                 throw ABIResolutionError.unsupportedDeclaration("An opaque result requires its resolved runtime value representation.")
@@ -671,6 +694,7 @@ struct SwiftGenericBinding: Sendable {
         func visit(_ type: SwiftFormalType) {
             switch type {
             case .objectiveCClass, .opaqueResult: break
+            case .constrainedExistential(_, let constraints): constraints.forEach { visit($0.value) }
             case .named(let name, let parameters):
                 if let argument = arguments[String(name.prefix { $0 != "." })], argument.isPack {
                     counts.append(argument.types.count)
@@ -698,6 +722,8 @@ struct SwiftGenericBinding: Sendable {
     func spelling(_ type: SwiftFormalType, packIndex: Int? = nil) throws -> String {
         let packIndex = packIndex ?? packElementIndex
         switch type {
+        case .constrainedExistential:
+            return try swiftNativeTypeName(types(type, packIndex: packIndex)[0])
         case .objectiveCClass(let name): return name
         case .opaqueResult: return "some"
         case .named(let name, let parameters):

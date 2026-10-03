@@ -102,6 +102,16 @@ const void *ABISwiftConformance(const void *metadata, const void *protocol) {
     return swift_conformsToProtocol(metadata, protocol);
 }
 
+const void *ABISwiftExtendedExistentialShape(const void *metadata) {
+    const void *slot = static_cast<const char *>(metadata) + sizeof(void *);
+    const void *shape = read<const void *>(slot);
+#if __has_feature(ptrauth_calls)
+    shape = ptrauth_auth_data(shape, ptrauth_key_process_independent_data,
+                             ptrauth_blend_discriminator(slot, 0xe798));
+#endif
+    return shape;
+}
+
 const void *ABISwiftMetatypeMetadata(const void *instance) {
     return swift_getMetatypeMetadata(instance);
 }

@@ -2,7 +2,7 @@ import ABIBridgeCore
 import ObjectiveC
 
 // Simple existential metadata has a kind word followed by 32-bit flags.
-// Extended existentials and existential metatypes have distinct metadata kinds.
+// Extended shapes preserve their constraint signature and container convention.
 // https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/ABI/Metadata.h
 enum SwiftExistentialRepresentation {
     case opaque
@@ -11,7 +11,20 @@ enum SwiftExistentialRepresentation {
 
     init?(_ type: Any.Type) {
         let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
-        guard metadata.load(as: UInt.self) == 0x303 else { return nil }
+        let kind = metadata.load(as: UInt.self)
+        if kind == 0x307 {
+            let shape = ABISwiftExtendedExistentialShape(metadata)!
+            switch shape.load(as: UInt32.self) & 0xff {
+            case 0, 3: self = .opaque
+            case 1:
+                let parameters = shape.load(fromByteOffset: 8, as: UInt16.self)
+                let arguments = shape.load(fromByteOffset: 12, as: UInt16.self)
+                self = .classBound(witnessTables: Int(arguments - parameters))
+            default: return nil
+            }
+            return
+        }
+        guard kind == 0x303 else { return nil }
         let flags = metadata.load(fromByteOffset: MemoryLayout<UInt>.size, as: UInt32.self)
         if flags & 0x8000_0000 == 0 {
             self = .classBound(witnessTables: Int(flags & 0x00ff_ffff))
@@ -63,6 +76,9 @@ struct SwiftObjectType {
         }
         guard case .classBound(witnessTables: 0) = SwiftExistentialRepresentation(type) else { return nil }
         let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
+        // SwiftObjectType decodes the protocol list of simple Objective-C
+        // existentials; extended shapes are handled by their own metadata.
+        guard metadata.load(as: UInt.self) == 0x303 else { return nil }
         let word = MemoryLayout<UInt>.size
         let flags = metadata.load(fromByteOffset: word, as: UInt32.self)
         let count = metadata.load(fromByteOffset: word + 4, as: UInt32.self)

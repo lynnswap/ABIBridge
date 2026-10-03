@@ -148,6 +148,26 @@ extension SwiftFormalType {
         switch node.kind {
         case "Type", "ArgumentTuple", "ReturnType", "TupleElement", "PackElement", "DynamicSelf":
             self = try Self(node.requiredChild(kind: "Type", fallingBackToFirst: true))
+        case "ConstrainedExistential":
+            let base = try children[0].name()
+            let requirements = try children[1].children().map { requirement -> ExistentialConstraint in
+                guard requirement.kind == "DependentGenericSameTypeRequirement" else {
+                    throw ABIResolutionError.unsupportedDeclaration("Unknown constrained existential requirement: " + requirement.kind)
+                }
+                let parts = requirement.children()
+                func subject(_ part: SwiftSyntax.Node) throws -> String {
+                    if part.kind == "ConstrainedExistentialSelf" { return "Self" }
+                    if part.kind == "DependentMemberType" {
+                        let nodes = part.children()
+                        let reference = nodes[1]
+                        let qualifier = try reference.child(kind: "Type").map { try $0.name() + "." } ?? ""
+                        return try subject(nodes[0]) + "." + qualifier + reference.requiredChild(kind: "Identifier").requiredText()
+                    }
+                    return try subject(part.requiredChild())
+                }
+                return .init(subject: try subject(parts[0]), value: try Self(parts[1]))
+            }
+            self = .constrainedExistential(base: "any " + base, constraints: requirements)
         case "OpaqueReturnType":
             self = .opaqueResult(index: node.child(kind: "OpaqueReturnTypeIndex")?.index.map { Int($0) + 1 } ?? 0)
         case "DependentGenericParamType":

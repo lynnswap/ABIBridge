@@ -66,3 +66,18 @@ public typealias ManyObjectProtocols = any ExistentialObjectValue & ExistentialO
 @inline(never) @concurrent public func applyAsyncExistentialClosure(_ body: @concurrent @Sendable (any ExistentialValue) async -> any ExistentialValue, _ value: any ExistentialValue) async -> any ExistentialValue {
     await body(value)
 }
+
+public protocol ExistentialSource<Element>: AnyObject {
+    associatedtype Element
+    var element: Element { get }
+}
+public final class ExistentialIntSource: ExistentialSource {
+    public let element: Int
+    public init(_ element: Int) { self.element = element }
+}
+@inline(never) public func echoExtendedCollection(_ value: any Collection<Int>) -> any Collection<Int> { value }
+@inline(never) public func echoExtendedSource(_ value: any ExistentialSource<Int>) -> any ExistentialSource<Int> { value }
+@inline(never) public func echoGenericExtendedCollection<T>(_ value: any Collection<T>) -> any Collection<T> { value }
+@inline(never) public func makeGenericExtendedCollection<T>(_ value: T) -> any Collection<T> { [value] }
+@inline(never) public func applyExtendedSource(_ body: (any ExistentialSource<Int>) -> any ExistentialSource<Int>, _ value: any ExistentialSource<Int>) -> any ExistentialSource<Int> { body(value) }
+@inline(never) public func applyExtendedCollection(_ body: (any Collection<Int>) -> any Collection<Int>, _ value: any Collection<Int>) -> any Collection<Int> { body(value) }
