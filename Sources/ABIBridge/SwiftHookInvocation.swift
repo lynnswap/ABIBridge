@@ -23,15 +23,18 @@ final class SwiftHookFrame {
         let invokeAsync: AsyncOperation?
         let receiver: (() throws -> NativeValueStorage)?
     }
+    private(set) var recovery: SwiftHookRecoveryScope?
     private let lock = NSLock()
     private let thread = pthread_self()
     private let task: UnsafeRawPointer?
     private var operations: Operations?
-    init(receiver: (() throws -> NativeValueStorage)? = nil, _ operation: @escaping Operation) {
+    init(receiver: (() throws -> NativeValueStorage)? = nil, recovery: SwiftHookRecoveryScope? = nil, _ operation: @escaping Operation) {
+        self.recovery = recovery
         task = nil
         operations = Operations(invoke: operation, invokeAsync: nil, receiver: receiver)
     }
-    init(receiver: (() throws -> NativeValueStorage)? = nil, asynchronous operation: @escaping AsyncOperation) {
+    init(receiver: (() throws -> NativeValueStorage)? = nil, recovery: SwiftHookRecoveryScope? = nil, asynchronous operation: @escaping AsyncOperation) {
+        self.recovery = recovery
         task = ABISwiftCurrentTask()
         operations = Operations(invoke: nil, invokeAsync: operation, receiver: receiver)
     }
@@ -54,7 +57,8 @@ final class SwiftHookFrame {
     }
     func invoke<Result, each Argument>(prepared: SwiftCallValues, _ values: repeat each Argument) throws -> Result {
         try use { operation in
-            let storage = try prepared.encode(repeat each values, retainingCode: nil)
+            let storage = try recovery.map { scope in try scope.withTransfer { try prepared.encode(repeat each values, retainingCode: nil) } }
+                ?? prepared.encode(repeat each values, retainingCode: nil)
             let outcome = Swift.Result<Result, any Error> {
                 let result: NativeValueStorage
                 do { result = try operation(storage) }
@@ -76,7 +80,7 @@ final class SwiftHookFrame {
         return try body(read())
     }
     func expire() {
-        lock.lock(); let previous = operations; operations = nil; lock.unlock()
+        lock.lock(); let previous = (operations, recovery); operations = nil; recovery = nil; lock.unlock()
         withExtendedLifetime(previous) {}
     }
 }
@@ -142,7 +146,8 @@ public struct NativeSwiftFunctionInvocation<Signature>: CustomStringConvertible 
     @usableFromInline nonisolated(nonsending) func invokeAsync<Result, each Argument>(_ values: repeat each Argument) async throws -> Result {
         do {
             return try await frame.useAsync { operation in
-                let storage = try prepared.encode(repeat each values, retainingCode: nil)
+                let storage = try frame.recovery.map { scope in try scope.withTransfer { try prepared.encode(repeat each values, retainingCode: nil) } }
+                ?? prepared.encode(repeat each values, retainingCode: nil)
                 let result = try await operation(storage)
                 return try prepared.decode(result, retaining: result, retainingCode: nil)
             }
@@ -156,6 +161,46 @@ public struct NativeSwiftFunctionInvocation<Signature>: CustomStringConvertible 
 
 // Recovery keeps native values in their declaration's representation. Callback
 // decoding and encoding remain shared with ordinary Swift closure callbacks.
+final class SwiftHookRecoveryScope: @unchecked Sendable {
+    @TaskLocal private static var transfer: SwiftHookRecoveryScope?
+    private let protectsOwnership: Bool
+    private var inputs: [ObjectIdentifier: SwiftRuntimeValueOwner] = [:]
+    private var result: SwiftRuntimeValueOwner?
+    init(protectsOwnership: Bool) { self.protectsOwnership = protectsOwnership }
+    static func authorizes(_ owner: SwiftRuntimeValueOwner) -> Bool {
+        guard let transfer else { return false }
+        return transfer.inputs[ObjectIdentifier(owner)] != nil || transfer.result === owner
+    }
+    func retainInput(_ owner: SwiftRuntimeValueOwner) {
+        guard inputs.updateValue(owner, forKey: ObjectIdentifier(owner)) == nil else { return }
+        if protectsOwnership { owner.reserve() }
+    }
+    func retainResult(_ storage: NativeValueStorage) {
+        let owner = storage.runtimeValueOwner ?? SwiftRuntimeValueOwner(storage: storage)
+        storage.runtimeValueOwner = owner
+        guard result !== owner else { return }
+        let previous = result
+        result = owner
+        if protectsOwnership { owner.reserve(); previous?.releaseReservation() }
+    }
+    func withTransfer<Output>(_ body: () throws -> Output) rethrows -> Output {
+        try Self.$transfer.withValue(self, operation: body)
+    }
+    deinit {
+        if protectsOwnership {
+            inputs.values.forEach { $0.releaseReservation() }
+            result?.releaseReservation()
+        }
+    }
+}
+
+final class SwiftHookIncomingOwner {
+    let signature: SwiftHookSignature
+    var claimedInputs: Set<Int> = []
+    var values: [NativeSwiftValue] = []
+    init(_ signature: SwiftHookSignature) { self.signature = signature }
+}
+
 struct SwiftHookValueOperations: Sendable {
     let copy: @Sendable (NativeValueStorage) throws -> NativeValueStorage
     let destroy: @Sendable (UnsafeMutableRawPointer) -> Void
@@ -183,7 +228,7 @@ struct SwiftHookValueOperations: Sendable {
     private init(metadata: Any.Type, type: CValueType, makeStorage: @escaping @Sendable () -> NativeValueStorage) {
         let constants = SwiftValueConstants(ABISwiftValueIsIndirect(type.handle) ? Void.self : metadata)
         copy = { source in
-            guard SwiftCopyability.accepts(metadata) else { throw NativeSwiftValueError.noncopyableType }
+            guard SwiftCopyability.accepts(metadata) else { return source }
             let restored = constants.isEmpty ? nil : constants.copyStorage(from: source.address)
             let result = makeStorage()
             SwiftValueCodeLifetime.connect([source.codeLifetime, result.codeLifetime].compactMap { $0 }, retaining: [])
@@ -277,13 +322,18 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
         }
     }
 
-    func invoke(_ storage: [NativeValueStorage], body: (repeat each Argument) throws -> Result) throws -> NativeValueStorage {
+    func invoke(_ storage: [NativeValueStorage], recovery: SwiftHookRecoveryScope?, body: (repeat each Argument) throws -> Result) throws -> NativeValueStorage {
         let inputs = try zip(storage, values.arguments).enumerated().map { index, pair in
-            pair.1.consumes ? try argumentOperations[index].copy(pair.0) : pair.0
+            pair.1.consumes && pair.0.runtimeValueOwner == nil ? try argumentOperations[index].copy(pair.0) : pair.0
         }
         let addresses: [UnsafeMutableRawPointer?] = inputs.map(\.address)
         let scope = addresses.withUnsafeBufferPointer { callbackValues.makeScope(asynchronous: false, arguments: $0.baseAddress) }
-        for (input, argument) in zip(inputs, values.arguments) where argument.consumes { input.relinquishValue() }
+        for (index, input) in inputs.enumerated() {
+            if let owner = input.runtimeValueOwner, let plan = parameters.arguments[index].runtimeValue {
+                scope?.retainRuntimeInput(NativeSwiftValue(storage: try owner.ownedStorage(), type: plan.valueType),
+                    at: input.address, index: index)
+            } else if values.arguments[index].consumes { input.relinquishValue() }
+        }
         return try withExtendedLifetime(inputs) {
             let outcome = Swift.Result<NativeValueStorage, any Error> {
                 var index = 0
@@ -292,7 +342,8 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
                     return try callbackValues.decode(inputs[index].address, at: index, scope: scope, as: type)
                 }
                 let value = try body(repeat try decode((each Argument).self))
-                let initialize = try callbackResult.prepare(value)
+                let initialize = try recovery.map { scope in try scope.withTransfer { try callbackResult.prepare(value) } }
+                    ?? callbackResult.prepare(value)
                 let result = values.result.makeStorage()
                 initialize(result.address)
                 result.assumeInitialized { resultOperations.destroy($0) }
@@ -302,13 +353,19 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
         }
     }
 
-    nonisolated(nonsending) func invokeAsync(_ storage: [NativeValueStorage], body: (repeat each Argument) async throws -> Result) async throws -> NativeValueStorage {
+    nonisolated(nonsending) func invokeAsync<Invocation>(_ storage: [NativeValueStorage], recovery: SwiftHookRecoveryScope?, invocation: Invocation,
+        body: @Sendable (Invocation, repeat each Argument) async throws -> Result) async throws -> NativeValueStorage {
         let inputs = try zip(storage, values.arguments).enumerated().map { index, pair in
-            pair.1.consumes ? try argumentOperations[index].copy(pair.0) : pair.0
+            pair.1.consumes && pair.0.runtimeValueOwner == nil ? try argumentOperations[index].copy(pair.0) : pair.0
         }
         let addresses: [UnsafeMutableRawPointer?] = inputs.map(\.address)
         let scope = addresses.withUnsafeBufferPointer { callbackValues.makeScope(asynchronous: true, arguments: $0.baseAddress) }
-        for (input, argument) in zip(inputs, values.arguments) where argument.consumes { input.relinquishValue() }
+        for (index, input) in inputs.enumerated() {
+            if let owner = input.runtimeValueOwner, let plan = parameters.arguments[index].runtimeValue {
+                scope?.retainRuntimeInput(NativeSwiftValue(storage: try owner.ownedStorage(), type: plan.valueType),
+                    at: input.address, index: index)
+            } else if values.arguments[index].consumes { input.relinquishValue() }
+        }
         defer { withExtendedLifetime(inputs) {} }
         let outcome: Swift.Result<NativeValueStorage, any Error>
         do {
@@ -317,8 +374,9 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
                 defer { index += 1 }
                 return try callbackValues.decode(inputs[index].address, at: index, scope: scope, as: type)
             }
-            let value = try await body(repeat try decode((each Argument).self))
-            let initialize = try callbackResult.prepare(value)
+            let value = try await body(invocation, repeat try decode((each Argument).self))
+            let initialize = try recovery.map { scope in try scope.withTransfer { try callbackResult.prepare(value) } }
+                    ?? callbackResult.prepare(value)
             let result = values.result.makeStorage()
             initialize(result.address)
             result.assumeInitialized { resultOperations.destroy($0) }
@@ -337,12 +395,28 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
             asyncInterface: asyncInterface, contextSize: contextSize,
             owner: owner, cloneArguments: { storage in
                 try zip(storage, values.arguments).enumerated().map { index, pair in
-                    pair.1.consumes ? try argumentOperations[index].copy(pair.0) : pair.0
+                    if pair.1.consumes, let valueOwner = pair.0.runtimeValueOwner, !pair.0.transfersOwnership {
+                        return try valueOwner.access(.consuming)
+                    }
+                    return pair.1.consumes && pair.0.runtimeValueOwner == nil ? try argumentOperations[index].copy(pair.0) : pair.0
                 }
             }, cloneResult: resultOperations.copy, destroyResult: resultOperations.destroy,
             initializeResult: callbackResult.initializeNativeResult,
-            destroyArguments: { addresses in
-                for (index, argument) in values.arguments.enumerated() where argument.consumes {
+            takeResult: {
+                guard case .runtimeValue(let plan) = generic?.result,
+                      !SwiftCopyability.accepts(plan.valueType.metadata) else { return nil }
+                return { call in
+                    let storage = plan.makeStorage()
+                    var error: OpaquePointer?
+                    guard ABISwiftIncomingTakeResult(call, storage.address, values.result.type.size, &error) else {
+                        throw consumeNativeCallFailure(error)
+                    }
+                    plan.initializeHookResult(storage)
+                    return storage
+                }
+            }(),
+            destroyArguments: { addresses, excluding in
+                for (index, argument) in values.arguments.enumerated() where argument.consumes && !excluding.contains(index) {
                     argumentOperations[index].destroy(addresses[index]!)
                 }
             })
@@ -371,7 +445,8 @@ final class SwiftHookSignature: @unchecked Sendable {
     let cloneResult: (NativeValueStorage) throws -> NativeValueStorage
     let destroyResult: (UnsafeMutableRawPointer) -> Void
     let initializeResult: SwiftResultInitializer?
-    let destroyArguments: (UnsafeBufferPointer<UnsafeMutableRawPointer?>) -> Void
+    let takeResult: ((OpaquePointer) throws -> NativeValueStorage)?
+    let destroyArguments: (UnsafeBufferPointer<UnsafeMutableRawPointer?>, Set<Int>) -> Void
     init(result: CValueType, arguments: [CValueType], identities: [ObjectIdentifier], consumesArguments: Bool, consumedArguments: [Bool],
          receiver: SwiftReceiverPlan?, errorPlan: SwiftErrorPlan? = nil,
          parameters: SwiftGenericParameters? = nil, generic: SwiftGenericCallPlan? = nil, interface: SwiftCallInterface? = nil,
@@ -380,7 +455,8 @@ final class SwiftHookSignature: @unchecked Sendable {
          cloneResult: @escaping (NativeValueStorage) throws -> NativeValueStorage,
          destroyResult: @escaping (UnsafeMutableRawPointer) -> Void,
          initializeResult: SwiftResultInitializer? = nil,
-         destroyArguments: @escaping (UnsafeBufferPointer<UnsafeMutableRawPointer?>) -> Void) throws {
+         takeResult: ((OpaquePointer) throws -> NativeValueStorage)? = nil,
+         destroyArguments: @escaping (UnsafeBufferPointer<UnsafeMutableRawPointer?>, Set<Int>) -> Void) throws {
         self.result = result; self.identities = identities
         explicitArgumentCount = arguments.count
         let native = parameters?.types(from: arguments) ?? arguments
@@ -396,7 +472,7 @@ final class SwiftHookSignature: @unchecked Sendable {
         self.errorPlan = errorPlan
         self.cloneArguments = cloneArguments; self.cloneResult = cloneResult
         self.destroyResult = destroyResult; self.destroyArguments = destroyArguments
-        self.initializeResult = initializeResult
+        self.initializeResult = initializeResult; self.takeResult = takeResult
         self.interface = try interface ?? SwiftCallInterface(result: result, parameters: self.arguments, errorPlan: errorPlan)
     }
     func matches(_ other: SwiftHookSignature) -> Bool {
@@ -478,16 +554,27 @@ final class SwiftHookSignature: @unchecked Sendable {
         let native = arguments.indices.map { ABISwiftIncomingArgumentAddress(call, $0) }
         let logical = native.withUnsafeBufferPointer { parameters?.unpack($0.baseAddress) }
         let owner = SwiftHookArgumentOwner(logical?.storage ?? [])
-        var values = (logical?.addresses ?? Array(native.prefix(explicitArgumentCount))).map {
-            NativeValueStorage(borrowing: $0!, owner: owner)
+        let incoming = Unmanaged<SwiftHookIncomingOwner>.fromOpaque(ABISwiftIncomingPreparedContext(call)!).takeUnretainedValue()
+        var values = try (logical?.addresses ?? Array(native.prefix(explicitArgumentCount))).enumerated().map { index, address in
+            guard consumedArguments[index], let plan = parameters?.arguments[index].runtimeValue,
+                  !SwiftCopyability.accepts(plan.valueType.metadata) else {
+                return NativeValueStorage(borrowing: address!, owner: owner)
+            }
+            let materialized = plan.nativeTuple?.materializeArgument(from: address!, consuming: true)
+            let value = plan.takeCallbackArgument(from: materialized?.address ?? address!, type: plan.valueType)
+            materialized?.relinquishValue()
+            incoming.claimedInputs.insert(index)
+            incoming.values.append(value)
+            return try value.valueOwner.ownedStorage()
         }
         if receiver?.mode == .value {
             values.append(NativeValueStorage(borrowing: native[nativeExplicitCount]!, owner: owner))
         }
         return values
     }
-    func proceed(_ call: OpaquePointer, arguments: [NativeValueStorage]) throws -> NativeValueStorage {
-        var values = try cloneArguments(Array(arguments.prefix(explicitArgumentCount)))
+    func proceed(_ call: OpaquePointer, arguments: [NativeValueStorage], recovery: SwiftHookRecoveryScope?) throws -> NativeValueStorage {
+        var values = try recovery.map { scope in try scope.withTransfer { try cloneArguments(Array(arguments.prefix(explicitArgumentCount))) } }
+            ?? cloneArguments(Array(arguments.prefix(explicitArgumentCount)))
         if let receiver, receiver.mode == .value {
             let value = arguments[explicitArgumentCount]
             values.append(receiver.isConsuming ? try receiver.codec.clone(value) : value)
@@ -530,12 +617,13 @@ final class SwiftHookSignature: @unchecked Sendable {
             throw SwiftHookCompletedResultError(underlying: native, nativeError: errorPlan.copy(bytes))
         }
         do {
-            return try cloneResult(bytes)
+            return try takeResult?(call) ?? cloneResult(bytes)
         } catch { throw SwiftHookCompletedResultError(underlying: error) }
     }
 
-    nonisolated(nonsending) func proceedAsync(_ call: OpaquePointer, arguments: [NativeValueStorage]) async throws -> NativeValueStorage {
-        var values = consumesArguments ? try cloneArguments(arguments) : Array(arguments.prefix(explicitArgumentCount))
+    nonisolated(nonsending) func proceedAsync(_ call: OpaquePointer, arguments: [NativeValueStorage], recovery: SwiftHookRecoveryScope?) async throws -> NativeValueStorage {
+        var values = try recovery.map { scope in try scope.withTransfer { try cloneArguments(Array(arguments.prefix(explicitArgumentCount))) } }
+            ?? cloneArguments(Array(arguments.prefix(explicitArgumentCount)))
         if let receiver, receiver.mode == .value {
             let value = arguments[explicitArgumentCount]
             values.append(receiver.isConsuming ? try receiver.codec.clone(value) : value)
@@ -581,7 +669,7 @@ final class SwiftHookSignature: @unchecked Sendable {
             throw SwiftHookCompletedResultError(underlying: native, nativeError: errorPlan.copy(bytes))
         }
         do {
-            return try cloneResult(bytes)
+            return try takeResult?(call) ?? cloneResult(bytes)
         } catch { throw SwiftHookCompletedResultError(underlying: error) }
     }
 
@@ -599,10 +687,10 @@ final class SwiftHookSignature: @unchecked Sendable {
         return storage
     }
 
-    func destroyConsumedInputs(context: UnsafeRawPointer?, arguments: UnsafeBufferPointer<UnsafeMutableRawPointer?>) {
+    func destroyConsumedInputs(context: UnsafeRawPointer?, arguments: UnsafeBufferPointer<UnsafeMutableRawPointer?>, excluding: Set<Int> = []) {
         let logical = parameters?.unpack(arguments.baseAddress)
-        if let logical { logical.addresses.withUnsafeBufferPointer(destroyArguments) }
-        else { destroyArguments(arguments) }
+        if let logical { logical.addresses.withUnsafeBufferPointer { destroyArguments($0, excluding) } }
+        else { destroyArguments(arguments, excluding) }
         guard let receiver, receiver.isConsuming else { return }
         switch receiver.mode {
         case .object:

@@ -151,3 +151,23 @@ open class AsyncHookRenderer {
     }
 }
 @inline(never) public func makeAsyncHookRenderer() -> AsyncHookRenderer { AsyncHookRenderer() }
+
+
+import Synchronization
+private let ticketState = Mutex((entries: Int64(0), destructions: Int64(0)))
+public protocol HookTicketReadable: ~Copyable { borrowing func read() -> Int64 }
+public struct HookTicket: ~Copyable, HookTicketReadable {
+    public var number: Int64
+    public init(_ number: Int64) { self.number = number }
+    public borrowing func read() -> Int64 { number }
+    deinit { ticketState.withLock { $0.destructions += 1 } }
+}
+@inline(never) public func consumeHookTicket<Value: HookTicketReadable & ~Copyable>(_ value: consuming Value) -> Int64 {
+    ticketState.withLock { $0.entries += 1 }
+    return value.read()
+}
+@inline(never) public func moveHookTicket<Value: ~Copyable>(_ value: consuming Value) -> Value {
+    ticketState.withLock { $0.entries += 1 }
+    return value
+}
+@inline(never) public func hookTicketCounts() -> (Int64, Int64) { ticketState.withLock { ($0.entries, $0.destructions) } }

@@ -12,7 +12,7 @@ private func prepareSwiftImportedHandler<Signature, Result, each Argument>(
     return SwiftHookHandler(requiresMainActor: requiresMainActor, failure: onFailure) { frame, storage in
         let call = NativeSwiftFunctionInvocation<Signature>(frame: frame, prepared: prepared.values,
             declaration: declaration, description: description)
-        return try prepared.invoke(storage) { (values: repeat each Argument) in
+        return try prepared.invoke(storage, recovery: frame.recovery) { (values: repeat each Argument) in
             try body(call, repeat each values)
         }
     }
@@ -293,9 +293,7 @@ extension NativeSwiftFunction {
         let handler = SwiftHookHandler(requiresMainActor: requiresMainActor, failure: onFailure, invokeAsync: { frame, storage in
             let invocation = NativeSwiftFunctionInvocation<Signature>(frame: frame, prepared: prepared.values,
                 declaration: declaration, description: description)
-            return try await prepared.invokeAsync(storage) { (values: repeat each Argument) in
-                    try await body(invocation, repeat each values)
-                }
+            return try await prepared.invokeAsync(storage, recovery: frame.recovery, invocation: invocation, body: body)
         })
         return (signature, handler)
     }

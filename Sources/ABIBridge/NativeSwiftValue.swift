@@ -22,13 +22,11 @@ public final class NativeSwiftValue {
     /// Whether the actual native type conforms to Copyable.
     public let isCopyable: Bool
 
-    private let lock = NSLock()
-    private var storage: NativeValueStorage?
-    private var readers = 0
-    private var exclusive = false
+    let valueOwner: SwiftRuntimeValueOwner
 
     init(storage: NativeValueStorage, type: NativeSwiftType) {
-        self.storage = storage
+        valueOwner = storage.runtimeValueOwner ?? SwiftRuntimeValueOwner(storage: storage)
+        storage.runtimeValueOwner = valueOwner
         self.type = type
         isCopyable = SwiftCopyability.accepts(type.metadata)
     }
@@ -36,8 +34,7 @@ public final class NativeSwiftValue {
     /// Whether this handle has transferred its value to native code or take(as:).
     /// The type and copyability remain available after consumption.
     public var isConsumed: Bool {
-        lock.lock(); defer { lock.unlock() }
-        return storage == nil
+        valueOwner.isConsumed
     }
 
     /// Creates an independent native copy, retaining its implementation images.
@@ -116,10 +113,35 @@ public final class NativeSwiftValue {
     }
 
     func access(_ convention: SwiftArgumentConvention) throws -> NativeValueStorage {
+        try valueOwner.access(convention)
+    }
+}
+
+// Native storage and all public aliases share a single ownership state.
+final class SwiftRuntimeValueOwner {
+    private let lock = NSLock()
+    private var storage: NativeValueStorage?
+    private var readers = 0
+    private var exclusive = false
+    private var reservations = 0
+    init(storage: NativeValueStorage) { self.storage = storage }
+    var isConsumed: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return storage == nil
+    }
+    func ownedStorage() throws -> NativeValueStorage {
+        lock.lock(); defer { lock.unlock() }
+        guard let storage else { throw NativeSwiftValueError.consumedValue }
+        return storage
+    }
+    func reserve() { lock.lock(); reservations += 1; lock.unlock() }
+    func releaseReservation() { lock.lock(); reservations -= 1; lock.unlock() }
+    func access(_ convention: SwiftArgumentConvention) throws -> NativeValueStorage {
         lock.lock()
         guard let storage else { lock.unlock(); throw NativeSwiftValueError.consumedValue }
         let writes = convention != .borrowing
-        guard !exclusive, !writes || readers == 0 else {
+        guard !exclusive, !writes || readers == 0,
+              convention != .consuming || reservations == 0 || SwiftHookRecoveryScope.authorizes(self) else {
             lock.unlock(); throw NativeSwiftValueError.valueInUse
         }
         if writes { exclusive = true } else { readers += 1 }
@@ -181,8 +203,12 @@ private final class SwiftRuntimeValueAccess {
         self.storage = storage
         self.finish = finish
     }
-    func consume() { consumed = true }
-    deinit { finish(consumed) }
+    func consume() {
+        guard !consumed else { return }
+        consumed = true
+        finish(true)
+    }
+    deinit { if !consumed { finish(false) } }
 }
 
 /// Native metadata owns value operations; the formal declaration owns ABI placement.
@@ -302,16 +328,22 @@ struct SwiftRuntimeValuePlan: Sendable {
         }
     }
 
-    func decode(_ storage: NativeValueStorage) throws -> NativeSwiftValue {
-        if valueType.metadata is AnyClass, storage.address.load(as: UnsafeRawPointer?.self) == nil {
-            throw ABIInvocationError.unexpectedNilResult(expected: valueType.name)
-        }
+    func initializeHookResult(_ storage: NativeValueStorage) {
         let retainedType = valueType.retainingCode(storage.codeLifetime!)
         constants.initialize(at: storage.address)
         storage.assumeInitialized(retaining: retainedType) {
             ABISwiftDestroyValue(unsafeBitCast(retainedType.metadata, to: UnsafeRawPointer.self), $0)
         }
         normalizeCallbackArgument(storage)
+    }
+
+    func decode(_ storage: NativeValueStorage) throws -> NativeSwiftValue {
+        if storage.runtimeValueOwner != nil { return NativeSwiftValue(storage: storage, type: valueType) }
+        if valueType.metadata is AnyClass, storage.address.load(as: UnsafeRawPointer?.self) == nil {
+            throw ABIInvocationError.unexpectedNilResult(expected: valueType.name)
+        }
+        initializeHookResult(storage)
+        let retainedType = valueType.retainingCode(storage.codeLifetime!)
         return NativeSwiftValue(storage: storage, type: retainedType)
     }
 

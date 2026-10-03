@@ -617,8 +617,9 @@ struct SwiftGenericCallPlan: Sendable {
                 if let tuple {
                     add(tuple, at: nativeIndex)
                 } else {
-                    let native = try binding.types(formal)[0]
-                    add(native, layout: try Self.layout(formal, actual: native, binding: binding), at: nativeIndex)
+                    let value = formal.argumentConvention?.value ?? formal
+                    let native = try binding.types(value)[0]
+                    add(native, layout: try Self.layout(value, actual: native, binding: binding), at: nativeIndex)
                 }
             }
         }

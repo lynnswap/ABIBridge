@@ -60,3 +60,10 @@ open class CallerOverridingRenderer: ReplacementRenderer {
 @inline(never) public nonisolated(nonsending) func importedAsyncHookThrowing(_ value: Int64) async throws(NSError) -> String { try await asyncHookThrowing(value) }
 @inline(never) @MainActor public func importedAsyncHookActor(_ value: Int64) async -> Int64 { await asyncHookActor(value) }
 @inline(never) public nonisolated(nonsending) func importedAsyncHookMethod(_ object: AsyncHookRenderer, _ value: String) async throws(NSError) -> String { try await object.render(value) }
+
+
+@inline(never) public func callConsumeTicket(_ number: Int64) -> Int64 { consumeHookTicket(HookTicket(number)) }
+@inline(never) public func callMoveTicket(_ number: Int64) -> Int64 {
+    let value = moveHookTicket(HookTicket(number))
+    return value.read()
+}

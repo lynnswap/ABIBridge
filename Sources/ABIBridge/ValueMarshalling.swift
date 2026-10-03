@@ -77,6 +77,7 @@ func finishSwiftInvocation<Output>(
 
 final class NativeValueStorage {
     let address: UnsafeMutableRawPointer
+    weak var runtimeValueOwner: SwiftRuntimeValueOwner?
     private(set) var owner: AnyObject?
     private var destroyValue: ((UnsafeMutableRawPointer) -> Void)?
     private let ownsAllocation: Bool
@@ -96,6 +97,7 @@ final class NativeValueStorage {
         self.didRelinquish = didRelinquish
         // Escaping results retain the value's resources, not its active access.
         resultStorage = storage?.ownerForResult
+        runtimeValueOwner = storage?.runtimeValueOwner
         self.codeLifetime = codeLifetime ?? storage?.codeLifetime
         ownsAllocation = false
     }

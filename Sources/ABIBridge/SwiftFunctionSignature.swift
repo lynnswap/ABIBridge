@@ -249,10 +249,16 @@ final class SwiftCallbackScope {
     private var storage: [NativeValueStorage] = []
     private var writebacks: [SwiftWritebackPreparation] = []
     private var pendingInputs: [Int: () -> Void] = [:]
+    private var runtimeInputs: [UInt: NativeSwiftValue] = [:]
     private let asynchronous: Bool
     init(asynchronous: Bool) { self.asynchronous = asynchronous }
     var hasWritebacks: Bool { !writebacks.isEmpty }
     func retainInput(at index: Int, cleanup: @escaping () -> Void) { pendingInputs[index] = cleanup }
+    func retainRuntimeInput(_ value: NativeSwiftValue, at address: UnsafeMutableRawPointer, index: Int) {
+        runtimeInputs[UInt(bitPattern: address)] = value
+        claimInput(at: index)
+    }
+    func runtimeInput(at address: UnsafeMutableRawPointer) -> NativeSwiftValue? { runtimeInputs[UInt(bitPattern: address)] }
     func claimInput(at index: Int) { pendingInputs.removeValue(forKey: index) }
     func prepareWriteback(_ body: @escaping SwiftWritebackPreparation) { writebacks.append(body) }
     func finishInvocation<Output>(_ outcome: Result<Output, any Error>) throws -> Output {
@@ -390,6 +396,7 @@ struct SwiftCallbackValues: Sendable {
                 if !consuming, !SwiftCopyability.accepts(plan.valueType.metadata) { throw NativeSwiftValueError.noncopyableType }
             }
             return { address, scope in
+                if consuming, let value = scope.runtimeInput(at: address) { return value }
                 let lifetime = SwiftValueCodeLifetime.current ?? plan.valueType.codeLifetime
                 SwiftValueCodeLifetime.connect([lifetime, plan.valueType.codeLifetime], retaining: [])
                 let nativeType = plan.valueType
