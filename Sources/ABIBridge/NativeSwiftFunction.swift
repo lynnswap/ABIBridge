@@ -23,6 +23,7 @@ func swiftFunctionTypeName(_ type: Any.Type) throws -> String {
 }
 
 func swiftNativeTypeName(_ type: Any.Type) throws -> String {
+    if let syntax = try SwiftSyntax.extendedMetadataType(type) { return try syntax.name() }
     // Objective-C metatypes can print an unqualified runtime name (NSString),
     // while Swift declarations use their imported identity (__C.NSString).
     // The runtime mangler has no spelling for Objective-C superclass

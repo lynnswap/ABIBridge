@@ -178,16 +178,26 @@ final class SwiftReplacementStorage: @unchecked Sendable {
         let before: UInt
         let original: SwiftImplementation?
         let authentication: NativePointerAuthentication
+        let asyncEntry: SwiftAsyncEntry?
     }
 
-    static func capture(_ slots: [(UInt, NativePointerAuthentication)], retaining owner: (any Sendable)?) throws -> [CapturedSlot] {
+    static func capture(_ slots: [(UInt, NativePointerAuthentication)], retaining owner: (any Sendable)?, asyncDescriptors: Bool = false) throws -> [CapturedSlot] {
         try slots.map { address, authentication in
             var before: UInt = 0
             guard ABIReadMemory(address, MemoryLayout<UInt>.size, &before).status == ABIMemoryReadComplete,
                   let storage = UnsafeRawPointer(bitPattern: address) else { throw ABIResolutionError.invalidAddress }
+            if asyncDescriptors {
+                guard let descriptor = ABIUnsafeAuthenticatePointerSlot(before, storage, authentication.keyCode,
+                    authentication.discriminator, authentication.addressDiversity) else { throw ABIResolutionError.invalidAddress }
+                let entry = try SwiftAsyncEntry(descriptor: descriptor)
+                let image = try swiftImplementationImage(containing: descriptor)
+                let original = try SwiftImplementation(function: entry.function, retaining: (owner, entry, image))
+                return CapturedSlot(address: address, before: before, original: original,
+                    authentication: authentication, asyncEntry: entry)
+            }
             return CapturedSlot(address: address, before: before,
                 original: try SwiftImplementation(bits: before, storage: storage, authentication: authentication, retaining: owner),
-                authentication: authentication)
+                authentication: authentication, asyncEntry: nil)
         }
     }
 
@@ -202,15 +212,21 @@ final class SwiftReplacementStorage: @unchecked Sendable {
     }
 
     init(captured: [CapturedSlot], replacement: SwiftImplementation, retaining owners: Any,
-         transport: SwiftReplacementTransport = .live) throws {
+         replacementDescriptor: UnsafeRawPointer? = nil, transport: SwiftReplacementTransport = .live) throws {
         self.transport = transport
         storageOwners = owners
         self.replacement = replacement
         let prepared = try captured.map { slot in
             let authentication = slot.authentication
             var after: UInt = 0
-            guard ABIEncodePointerSlotFunction(replacement.function, UnsafeMutableRawPointer(bitPattern: slot.address), authentication.keyCode,
-                authentication.discriminator, authentication.addressDiversity, &after) else { throw ABIResolutionError.invalidAddress }
+            let encoded = if let replacementDescriptor {
+                ABIEncodePointerSlotData(replacementDescriptor, UnsafeRawPointer(bitPattern: slot.address), authentication.keyCode,
+                    authentication.discriminator, authentication.addressDiversity, &after)
+            } else {
+                ABIEncodePointerSlotFunction(replacement.function, UnsafeRawPointer(bitPattern: slot.address), authentication.keyCode,
+                    authentication.discriminator, authentication.addressDiversity, &after)
+            }
+            guard encoded else { throw ABIResolutionError.invalidAddress }
             return Slot(address: slot.address, before: slot.before, after: after, original: slot.original)
         }
         state = Mutex(State(slots: prepared))

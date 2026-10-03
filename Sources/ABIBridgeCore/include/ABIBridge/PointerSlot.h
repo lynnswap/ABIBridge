@@ -56,6 +56,10 @@ ABIPointerSlotResult ABIRestorePointerSlotProtection(void *storage, uintptr_t ex
 bool ABIEncodePointerSlotFunction(ABIUnmanagedFunction function, const void *storage,
     int32_t key, uintptr_t discriminator, bool addressDiversity, uintptr_t *bits);
 
+/// Signs a raw data pointer for a slot with an established data schema.
+bool ABIEncodePointerSlotData(const void *pointer, const void *storage,
+    int32_t key, uintptr_t discriminator, bool addressDiversity, uintptr_t *bits);
+
 #ifdef __cplusplus
 }
 #endif

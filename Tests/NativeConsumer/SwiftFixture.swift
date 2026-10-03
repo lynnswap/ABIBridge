@@ -78,3 +78,21 @@ import Foundation
     if value < 0 { throw NSError(domain: "native-hook-consumer", code: Int(value)) }
     return value + 1
 }
+
+@inline(never) public nonisolated(nonsending) func hookAsyncEcho<Value>(_ value: Value) async -> Value {
+    await Task.yield()
+    return value
+}
+@inline(never) public nonisolated(nonsending) func hookAsyncThrowing(_ value: Int64) async throws(NSError) -> String {
+    await Task.yield()
+    if value < 0 { throw NSError(domain: "native-async-hook-consumer", code: Int(value)) }
+    return String(repeating: "value:\(value)", count: 100)
+}
+open class AsyncHookRenderer {
+    public init() {}
+    @inline(never) open nonisolated(nonsending) func render(_ value: String) async -> String {
+        await Task.yield()
+        return value + "-native"
+    }
+}
+@inline(never) public func makeAsyncHookRenderer() -> AsyncHookRenderer { AsyncHookRenderer() }

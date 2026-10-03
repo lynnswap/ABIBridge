@@ -39,6 +39,7 @@ final class SwiftAsyncEntry: @unchecked Sendable {
 
 final class SwiftAsyncCallInterface: @unchecked Sendable {
     let handle: OpaquePointer
+    let inheritsCallerIsolation: Bool
     private let callback = Mutex<SwiftAsyncClosureCallbackOwner?>(nil)
 
     func closureEntry() throws -> SwiftAsyncClosureCallbackOwner {
@@ -50,6 +51,7 @@ final class SwiftAsyncCallInterface: @unchecked Sendable {
         }
     }
     init(result: CValueType, parameters: [CValueType], errorPlan: SwiftErrorPlan?, inheritsCallerIsolation: Bool) throws {
+        self.inheritsCallerIsolation = inheritsCallerIsolation
         let handles: [OpaquePointer?] = parameters.map(\.handle)
         var failure: OpaquePointer?
         let handle = withExtendedLifetime((result, parameters, errorPlan)) {
@@ -66,12 +68,12 @@ final class SwiftAsyncCallInterface: @unchecked Sendable {
 
 final class SwiftAsyncCall: Sendable {
     let interface: SwiftAsyncCallInterface
-    private let values: SwiftCallValues
+    let values: SwiftCallValues
     let errorPlan: SwiftErrorPlan?
     private let hasTrailingValue: Bool
     let generic: SwiftGenericCallPlan?
     let closure: SwiftGenericClosurePlan?
-    private let parameters: SwiftGenericParameters
+    let parameters: SwiftGenericParameters
 
     init(signature: Any.Type, trailingType: CValueType? = nil, consumesArguments: Bool = false,
          errorPlan: SwiftErrorPlan? = nil, inheritsCallerIsolation: Bool, opaqueResult: SwiftOpaqueResultPlan? = nil, generic: SwiftGenericCallPlan? = nil, closure: SwiftGenericClosurePlan? = nil) throws {

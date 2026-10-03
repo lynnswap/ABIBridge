@@ -158,7 +158,150 @@ char *ABICopySwiftSyntaxNodeMangledName(const ABISwiftSyntaxNode *node) {
     return result.isSuccess() ? strdup(result.result().c_str()) : nullptr;
 }
 
-char *ABICopySwiftConstrainedExistentialShapeName(const ABISwiftSyntaxNode *node) {
+namespace {
+NodePointer copyTypeNode(NodeFactory &factory, NodePointer source) {
+    auto result = source->hasText() ? factory.createNode(source->getKind(), source->getText())
+        : source->hasIndex() ? factory.createNode(source->getKind(), source->getIndex())
+        : factory.createNode(source->getKind());
+    for (auto child : *source) result->addChild(copyTypeNode(factory, child), factory);
+    return result;
+}
+NodePointer unwrappedType(NodePointer node) {
+    while (node->getKind() == Node::Kind::Type) node = node->getFirstChild();
+    return node;
+}
+NodePointer typedNode(NodeFactory &factory, NodePointer node) {
+    auto type = factory.createNode(Node::Kind::Type);
+    type->addChild(unwrappedType(node), factory);
+    return type;
+}
+}
+
+ABISwiftSyntax *ABICopySwiftSubstitutedTypeSyntax(const ABISwiftSyntaxNode *node,
+    const ABISwiftSyntaxNode *const *arguments, size_t count) {
+    auto syntax = std::make_unique<ABISwiftSyntax>();
+    auto &factory = syntax->demangler;
+    auto copy = [&](auto &&copy, NodePointer source) -> NodePointer {
+        if (source->getKind() == Node::Kind::DependentGenericParamType
+            && source->getChild(0)->getIndex() == 0 && source->getChild(1)->getIndex() < count) {
+            return copyTypeNode(factory, unwrappedType(nativeNode(arguments[source->getChild(1)->getIndex()])));
+        }
+        auto result = source->hasText() ? factory.createNode(source->getKind(), source->getText())
+            : source->hasIndex() ? factory.createNode(source->getKind(), source->getIndex())
+            : factory.createNode(source->getKind());
+        for (auto child : *source) result->addChild(copy(copy, child), factory);
+        return result;
+    };
+    syntax->root = copy(copy, nativeNode(node));
+    return syntax.release();
+}
+
+ABISwiftSyntax *ABICopySwiftContainerTypeSyntax(uint32_t kind,
+    const ABISwiftSyntaxNode *const *elements, size_t count, const char *const *labels) {
+    auto syntax = std::make_unique<ABISwiftSyntax>();
+    auto &factory = syntax->demangler;
+    NodePointer value;
+    if (kind == 0x301) {
+        value = factory.createNode(Node::Kind::Tuple);
+        for (size_t index = 0; index < count; ++index) {
+            auto element = factory.createNode(Node::Kind::TupleElement);
+            if (labels && labels[index] && labels[index][0])
+                element->addChild(factory.createNode(Node::Kind::TupleElementName, labels[index]), factory);
+            element->addChild(typedNode(factory, copyTypeNode(factory, nativeNode(elements[index]))), factory);
+            value->addChild(element, factory);
+        }
+    } else if (count == 1 && (kind == 0x304 || kind == 0x306)) {
+        value = factory.createNode(kind == 0x304 ? Node::Kind::Metatype : Node::Kind::ExistentialMetatype);
+        value->addChild(typedNode(factory, copyTypeNode(factory, nativeNode(elements[0]))), factory);
+    } else if (count == 1 && kind == 0x202) {
+        auto nominal = factory.createNode(Node::Kind::Enum);
+        nominal->addChild(factory.createNode(Node::Kind::Module, "Swift"), factory);
+        nominal->addChild(factory.createNode(Node::Kind::Identifier, "Optional"), factory);
+        auto arguments = factory.createNode(Node::Kind::TypeList);
+        arguments->addChild(typedNode(factory, copyTypeNode(factory, nativeNode(elements[0]))), factory);
+        value = factory.createNode(Node::Kind::BoundGenericEnum);
+        value->addChild(typedNode(factory, nominal), factory);
+        value->addChild(arguments, factory);
+    } else return nullptr;
+    syntax->root = typedNode(factory, value);
+    return syntax.release();
+}
+
+ABISwiftSyntax *ABICopySwiftFunctionTypeSyntax(uintptr_t flags, uint32_t extended,
+    const ABISwiftSyntaxNode *const *parameters, const uint32_t *parameterFlags,
+    const ABISwiftSyntaxNode *result, const ABISwiftSyntaxNode *failure,
+    const ABISwiftSyntaxNode *globalActor, uintptr_t differentiability) {
+    auto syntax = std::make_unique<ABISwiftSyntax>();
+    auto &factory = syntax->demangler;
+    const size_t count = flags & 0xffff;
+    Node::Kind kind;
+    switch ((flags >> 16) & 0xff) {
+    case 0: kind = flags & 0x04000000 ? Node::Kind::FunctionType : Node::Kind::NoEscapeFunctionType; break;
+    case 1: kind = Node::Kind::ObjCBlock; break;
+    case 2: kind = Node::Kind::ThinFunctionType; break;
+    case 3: kind = Node::Kind::CFunctionPointer; break;
+    default: return nullptr;
+    }
+    auto tuple = factory.createNode(Node::Kind::Tuple);
+    NodePointer single = nullptr;
+    for (size_t index = 0; index < count; ++index) {
+        auto input = unwrappedType(copyTypeNode(factory, nativeNode(parameters[index])));
+        const uint32_t parameter = parameterFlags[index];
+        auto wrap = [&](Node::Kind kind) {
+            auto parent = factory.createNode(kind);
+            parent->addChild(input, factory);
+            input = parent;
+        };
+        if (parameter & 0x200) wrap(Node::Kind::NoDerivative);
+        switch (parameter & 7) {
+        case 0: break;
+        case 1: wrap(Node::Kind::InOut); break;
+        case 2: wrap(Node::Kind::Shared); break;
+        case 3: wrap(Node::Kind::Owned); break;
+        default: return nullptr;
+        }
+        if (parameter & 0x400) wrap(Node::Kind::Isolated);
+        if (parameter & 0x800) wrap(Node::Kind::Sending);
+        if (count == 1 && !(parameter & 0x80) && input->getKind() != Node::Kind::Tuple) single = input;
+        auto element = factory.createNode(Node::Kind::TupleElement);
+        if (parameter & 0x80) element->addChild(factory.createNode(Node::Kind::VariadicMarker), factory);
+        element->addChild(typedNode(factory, input), factory);
+        tuple->addChild(element, factory);
+    }
+    auto function = factory.createNode(kind);
+    if (extended & 0x10) function->addChild(factory.createNode(Node::Kind::SendingResultFunctionType), factory);
+    if (globalActor) {
+        auto actor = factory.createNode(Node::Kind::GlobalActorFunctionType);
+        actor->addChild(copyTypeNode(factory, nativeNode(globalActor)), factory);
+        function->addChild(actor, factory);
+    } else if ((extended & 0x0e) == 2) {
+        function->addChild(factory.createNode(Node::Kind::IsolatedAnyFunctionType), factory);
+    } else if ((extended & 0x0e) == 4) {
+        function->addChild(factory.createNode(Node::Kind::NonIsolatedCallerFunctionType), factory);
+    }
+    if (differentiability) {
+        if (differentiability > 4) return nullptr;
+        const uint64_t kinds[] = {0, 'f', 'r', 'd', 'l'};
+        function->addChild(factory.createNode(Node::Kind::DifferentiableFunctionType, kinds[differentiability]), factory);
+    }
+    if (flags & 0x01000000) {
+        auto throwing = factory.createNode(failure ? Node::Kind::TypedThrowsAnnotation : Node::Kind::ThrowsAnnotation);
+        if (failure) throwing->addChild(copyTypeNode(factory, nativeNode(failure)), factory);
+        function->addChild(throwing, factory);
+    }
+    if (flags & 0x40000000) function->addChild(factory.createNode(Node::Kind::ConcurrentFunctionType), factory);
+    if (flags & 0x20000000) function->addChild(factory.createNode(Node::Kind::AsyncAnnotation), factory);
+    auto inputs = factory.createNode(Node::Kind::ArgumentTuple);
+    inputs->addChild(typedNode(factory, single ? single : tuple), factory);
+    function->addChild(inputs, factory);
+    auto output = factory.createNode(Node::Kind::ReturnType);
+    output->addChild(typedNode(factory, copyTypeNode(factory, nativeNode(result))), factory);
+    function->addChild(output, factory);
+    syntax->root = typedNode(factory, function);
+    return syntax.release();
+}
+
+char *ABICopySwiftConstrainedExistentialShapeName(const ABISwiftSyntaxNode *node, size_t metatypeDepth) {
     using namespace swift::Demangle;
     auto source = nativeNode(node);
     if (source->getKind() != Node::Kind::ConstrainedExistential || source->getNumChildren() != 2)
@@ -202,8 +345,15 @@ char *ABICopySwiftConstrainedExistentialShapeName(const ABISwiftSyntaxNode *node
     existential->addChild(requirements, factory);
     auto signature = factory.createNode(Node::Kind::DependentGenericSignature);
     signature->addChild(factory.createNode(Node::Kind::DependentGenericParamCount, uint64_t(index)), factory);
+    NodePointer generalized = existential;
+    for (size_t index = 0; index < metatypeDepth; ++index) {
+        auto instance = factory.createNode(Node::Kind::Type);
+        instance->addChild(generalized, factory);
+        generalized = factory.createNode(Node::Kind::ExistentialMetatype);
+        generalized->addChild(instance, factory);
+    }
     auto type = factory.createNode(Node::Kind::Type);
-    type->addChild(existential, factory);
+    type->addChild(generalized, factory);
     auto shape = factory.createNode(Node::Kind::ExtendedExistentialTypeShape);
     shape->addChild(signature, factory);
     shape->addChild(type, factory);
@@ -221,6 +371,12 @@ void *ABICreateSwiftExtendedExistentialShape(const ABISwiftSyntaxNode *node,
     size_t constraintCount, bool classBound) {
     using namespace swift::Demangle;
     auto source = nativeNode(node);
+    size_t metatypeDepth = 0;
+    while (source->getKind() == Node::Kind::ExistentialMetatype) {
+        if (source->getNumChildren() != 1 || source->getChild(0)->getKind() != Node::Kind::Type) return nullptr;
+        source = source->getChild(0)->getChild(0);
+        ++metatypeDepth;
+    }
     if (source->getKind() != Node::Kind::ConstrainedExistential || source->getNumChildren() != 2
         || source->getChild(1)->getNumChildren() != constraintCount
         || constraintCount + protocolCount + 1 > UINT16_MAX) return nullptr;
@@ -285,13 +441,30 @@ void *ABICreateSwiftExtendedExistentialShape(const ABISwiftSyntaxNode *node,
         associatedTypes.push_back(spelling(subject(subject, original->getChild(0), declaring, true)));
     }
     existential->addChild(requirements, factory);
-    const auto typeName = spelling(existential);
+    NodePointer generalized = existential;
+    auto head = factory.createNode(Node::Kind::DependentGenericParamType);
+    head->addChild(factory.createNode(Node::Kind::Index, uint64_t(1)), factory);
+    head->addChild(factory.createNode(Node::Kind::Index, uint64_t(0)), factory);
+    for (size_t index = 0; index < metatypeDepth; ++index) {
+        auto instance = factory.createNode(Node::Kind::Type);
+        instance->addChild(generalized, factory);
+        generalized = factory.createNode(Node::Kind::ExistentialMetatype);
+        generalized->addChild(instance, factory);
+        auto instanceHead = factory.createNode(Node::Kind::Type);
+        instanceHead->addChild(head, factory);
+        head = factory.createNode(Node::Kind::Metatype);
+        head->addChild(instanceHead, factory);
+    }
+    const auto typeName = spelling(generalized);
+    const auto typeExpression = metatypeDepth ? spelling(head) : std::string();
     if (typeName.empty()) return nullptr;
     const size_t requirementCount = constraintCount + protocolCount;
-    size_t size = 28 + requirementCount * 12;
+    const size_t records = 28 + (metatypeDepth ? 4 : 0);
+    size_t size = records + requirementCount * 12;
     for (const auto &name : parameters) size += name.size() + 1;
     for (const auto &name : associatedTypes) size += name.size() + 1;
     size += typeName.size() + 1 + sizeof("qd__");
+    if (metatypeDepth) size += typeExpression.size() + 1;
     size = (size + sizeof(void *) - 1) & ~(sizeof(void *) - 1);
     const size_t slots = size;
     size += (protocolCount + 1) * sizeof(void *);
@@ -300,7 +473,7 @@ void *ABICreateSwiftExtendedExistentialShape(const ABISwiftSyntaxNode *node,
     auto relative = [&](size_t at, size_t target, int tag = 0) {
         put(at, int32_t(target - at) | tag);
     };
-    size_t cursor = 28 + requirementCount * 12;
+    size_t cursor = records + requirementCount * 12;
     auto string = [&](const std::string &text) {
         const size_t start = cursor;
         std::memcpy(memory + cursor, text.c_str(), text.size() + 1);
@@ -308,22 +481,23 @@ void *ABICreateSwiftExtendedExistentialShape(const ABISwiftSyntaxNode *node,
         return start;
     };
     relative(0, slots);
-    put(4, uint32_t(0x1900 | (classBound ? 1 : 0)));
+    put(4, uint32_t(0x1900 | (metatypeDepth ? 0x202 : classBound ? 1 : 0)));
     relative(8, string(typeName));
     put(12, uint16_t(constraintCount + 1));
     put(14, uint16_t(requirementCount));
     put(16, uint16_t(constraintCount + 1 + protocolCount));
     put(20, uint16_t(constraintCount));
     put(24, uint16_t(constraintCount));
+    if (metatypeDepth) relative(28, string(typeExpression));
     for (size_t index = 0; index < constraintCount; ++index) {
-        const size_t entry = 28 + index * 12;
+        const size_t entry = records + index * 12;
         put(entry, uint32_t(1));
         relative(entry + 4, string(parameters[index]));
         relative(entry + 8, string(associatedTypes[index]));
     }
     const size_t self = string("qd__");
     for (size_t index = 0; index < protocolCount; ++index) {
-        const size_t entry = 28 + (constraintCount + index) * 12;
+        const size_t entry = records + (constraintCount + index) * 12;
         const size_t slot = slots + (index + 1) * sizeof(void *);
         put(entry, uint32_t(0x80));
         relative(entry + 4, self);
