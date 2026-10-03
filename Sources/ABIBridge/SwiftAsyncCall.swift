@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import Synchronization
 
 @_silgen_name("ABIInvokeSwiftAsync")
 nonisolated(nonsending) func invokeSwiftAsync(_ invocation: OpaquePointer) async
@@ -38,6 +39,16 @@ final class SwiftAsyncEntry: @unchecked Sendable {
 
 final class SwiftAsyncCallInterface: @unchecked Sendable {
     let handle: OpaquePointer
+    private let callback = Mutex<SwiftAsyncClosureCallbackOwner?>(nil)
+
+    func closureEntry() throws -> SwiftAsyncClosureCallbackOwner {
+        try callback.withLock { cached in
+            if let cached { return cached }
+            let entry = try SwiftAsyncClosureCallbackOwner(interface: self)
+            cached = entry
+            return entry
+        }
+    }
     init(result: CValueType, parameters: [CValueType], errorPlan: SwiftErrorPlan?, inheritsCallerIsolation: Bool) throws {
         let handles: [OpaquePointer?] = parameters.map(\.handle)
         var failure: OpaquePointer?
@@ -53,7 +64,7 @@ final class SwiftAsyncCallInterface: @unchecked Sendable {
     deinit { ABIReleaseSwiftAsyncCallInterface(handle) }
 }
 
-struct SwiftAsyncCall: Sendable {
+final class SwiftAsyncCall: Sendable {
     let interface: SwiftAsyncCallInterface
     private let values: SwiftCallValues
     let errorPlan: SwiftErrorPlan?

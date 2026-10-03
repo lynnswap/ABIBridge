@@ -202,9 +202,9 @@ final class SwiftCallbackScope {
     init(asynchronous: Bool) { self.asynchronous = asynchronous }
     func writeback(_ body: @escaping () -> Void) { writebacks.append(body) }
     func borrow(_ address: UnsafeRawPointer, retaining storage: NativeValueStorage? = nil,
-                allowsSuspension: Bool? = nil) -> SwiftValueBorrow {
+                allowsSuspension: Bool? = nil, allowsMutation: Bool = false) -> SwiftValueBorrow {
         if let storage { self.storage.append(storage) }
-        let borrow = SwiftValueBorrow(address, allowsSuspension: allowsSuspension ?? asynchronous)
+        let borrow = SwiftValueBorrow(address, allowsSuspension: allowsSuspension ?? asynchronous, allowsMutation: allowsMutation)
         borrows.append(borrow)
         return borrow
     }
@@ -218,15 +218,20 @@ final class SwiftCallbackScope {
 typealias SwiftCallbackDecoder = @Sendable (UnsafeMutableRawPointer, SwiftCallbackScope) -> Any
 
 struct SwiftCallbackValues: Sendable {
-    private let closures: [(@Sendable (UnsafeMutableRawPointer, SwiftCallbackScope) -> Any)?]
+    private let decoders: [SwiftCallbackDecoder?]
     private let constants: [SwiftValueConstants]
     private let needsScope: Bool
 
     init(_ signature: SwiftFunctionSignature, arguments: [SwiftGenericArgument] = []) throws {
-        needsScope = signature.parameters.contains { $0 is any SwiftClosureValue.Type || $0 is any SwiftConventionArgument.Type }
         constants = signature.parameters.map(SwiftValueConstants.init)
-        closures = try signature.parameters.enumerated().map { index, type in
+        decoders = try signature.parameters.enumerated().map { index, type in
             let argument: SwiftGenericArgument = arguments.isEmpty ? .concrete : arguments[index]
+            if case .runtimeValue = argument {
+                if type == NativeSwiftBorrowedValue.self {
+                    return try Self.decoder(for: NativeSwiftBorrowedValue.self, generic: argument, consuming: false)
+                }
+                return try Self.decoder(for: NativeSwiftValue.self, generic: argument, consuming: false)
+            }
             if let convention = type as? any SwiftConventionArgument.Type {
                 let codec: SwiftConventionCodec
                 if case .convention(let prepared) = argument { codec = prepared }
@@ -246,11 +251,12 @@ struct SwiftCallbackValues: Sendable {
             }
             return nil
         }
+        needsScope = decoders.contains { $0 != nil }
     }
 
     static func decoder<Value>(for type: Value.Type, generic: SwiftGenericArgument,
                                consuming: Bool) throws -> SwiftCallbackDecoder {
-        if case .runtimeValue(let plan, _, let asynchronous) = generic {
+        if case .runtimeValue(let plan, let convention, let asynchronous) = generic {
             if Value.self == NativeSwiftValue.self {
                 try plan.requireOwnedValue()
                 if !consuming, !SwiftCopyability.accepts(plan.valueType.metadata) { throw NativeSwiftValueError.noncopyableType }
@@ -258,13 +264,15 @@ struct SwiftCallbackValues: Sendable {
             return { address, scope in
                 let lifetime = SwiftValueCodeLifetime.current ?? plan.valueType.codeLifetime
                 SwiftValueCodeLifetime.connect([lifetime, plan.valueType.codeLifetime], retaining: [])
-                let nativeType = plan.valueType.retainingCode(lifetime)
+                let nativeType = plan.valueType
                 if consuming { return plan.takeCallbackArgument(from: address, type: nativeType) }
-                let restored = plan.restoredCallbackArgument(from: address)
-                let source = restored?.address ?? address
+                let restored = convention == .inoutValue ? nil : plan.restoredCallbackArgument(from: address)
+                let source = convention == .inoutValue
+                    ? address.load(as: UnsafeMutableRawPointer.self) : restored?.address ?? address
                 if Value.self == NativeSwiftBorrowedValue.self {
                     return NativeSwiftBorrowedValue(type: nativeType,
-                        borrow: scope.borrow(source, retaining: restored, allowsSuspension: asynchronous))
+                        borrow: scope.borrow(source, retaining: restored, allowsSuspension: asynchronous,
+                            allowsMutation: convention == .inoutValue))
                 }
                 return plan.copyCallbackArgument(from: source, type: nativeType)
             }
@@ -299,7 +307,7 @@ struct SwiftCallbackValues: Sendable {
     }
 
     func decode<Value>(_ address: UnsafeMutableRawPointer, at index: Int, scope: SwiftCallbackScope?, as type: Value.Type) -> Value {
-        if let closure = closures[index] { return closure(address, scope!) as! Value }
+        if let decode = decoders[index] { return decode(address, scope!) as! Value }
         return constants[index].load(from: address, as: type)
     }
 }

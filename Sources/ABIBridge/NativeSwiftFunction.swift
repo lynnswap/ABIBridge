@@ -124,6 +124,16 @@ func swiftOuterSignature(_ declaration: String) -> (text: String, result: Substr
 
 final class SwiftCallInterface: @unchecked Sendable {
     let handle: OpaquePointer
+    private let callback = Mutex<SwiftClosureCallbackOwner?>(nil)
+
+    func closureEntry() throws -> SwiftClosureCallbackOwner {
+        try callback.withLock { cached in
+            if let cached { return cached }
+            let entry = try SwiftClosureCallbackOwner(interface: self)
+            cached = entry
+            return entry
+        }
+    }
 
     init(result: CValueType, parameters: [CValueType], errorPlan: SwiftErrorPlan? = nil) throws {
         let handles: [OpaquePointer?] = parameters.map(\.handle)

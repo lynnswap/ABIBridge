@@ -276,7 +276,7 @@ struct NativeSwiftClosureTests {
         }
     }
 
-    @Test func callbacksAcrossMultiplePagesKeepIndependentContexts() throws {
+    @Test func manyCallbacksKeepIndependentContextsWithSharedEntries() throws {
         let destroyed = ClosureCounter()
         var callbacks: [NativeSwiftClosure<(Int64) -> Int64>] = []
         for index in 0..<1100 {
@@ -672,6 +672,28 @@ struct NativeSwiftClosureTests {
     }
 
 #if DEBUG
+    @Test func nativeContextsOwnSharedEntriesAfterEveryPreparedHandleAndCacheEntryIsReleased() async throws {
+        let deaths = ClosureCounter()
+        var keeper: ClosurePropertyOwner? = ClosurePropertyOwner()
+        do {
+            let runtime = ABIRuntime()
+            let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.ClosurePropertyOwner")
+            let set = try await type.setter(named: "callback", as: NativeSwiftClosure<(Int64) -> Int64>.self)
+            let capture = ClosureCapture(deaths)
+            let callback = try NativeSwiftClosure { (value: Int64) in value + capture.bias }
+            try unsafe set.unsafeInvoke(on: keeper!, callback)
+        }
+        for size in 1...80 {
+            let interface = try SwiftCallInterface.cached(
+                result: CValueType(indirectSwiftSize: size, alignment: 1), parameters: [])
+            _ = try interface.closureEntry()
+        }
+        #expect(deaths.count == 0)
+        #expect(keeper!.callback(35) == 42)
+        keeper = nil
+        #expect(deaths.count == 1)
+    }
+
     @Test func cachedInterfacesPreserveIndirectionErrorsAndLiveHandlesAfterEviction() throws {
         let word = try CValueType(scalar: ABIValueInt64)
         let direct = try SwiftCallInterface.cached(result: word, parameters: [word])

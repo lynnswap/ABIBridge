@@ -1,6 +1,6 @@
 import ABIBridgeCore
 
-struct SwiftCall: Sendable {
+final class SwiftCall: Sendable {
     let interface: SwiftCallInterface
     let errorPlan: SwiftErrorPlan?
     private let values: SwiftCallValues

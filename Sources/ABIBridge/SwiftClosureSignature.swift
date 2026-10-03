@@ -183,13 +183,14 @@ final class SwiftClosureStorage {
 
     // Consumes one native context reference, including on preparation failure.
     init(adopting value: ABISwiftClosureValue, discriminator: UInt16, retaining owner: Any?,
-         codeLifetime: SwiftValueCodeLifetime? = nil, ownsContext: Bool = true) throws {
+         codeLifetime: SwiftValueCodeLifetime? = nil, ownsContext: Bool = true,
+         implementation prepared: SwiftImplementation? = nil) throws {
         self.ownsContext = ownsContext
         do {
             guard let function = ABIAuthenticateSwiftClosureFunction(value.function, discriminator) else {
                 throw ABIInvocationError.unexpectedNilResult(expected: "a Swift closure")
             }
-            implementation = try SwiftImplementation(function: function, retaining: nil)
+            implementation = try prepared ?? SwiftImplementation(function: function, retaining: nil)
         } catch {
             withExtendedLifetime(owner) { if ownsContext { ABIReleaseSwiftClosureContext(value.context) } }
             throw error
@@ -280,7 +281,7 @@ final class SwiftNativeClosureAdapter {
             guard let handle = ABICreateSwiftThrowingClosureCallback(interface.handle, functions, nil, &failure) else {
                 throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftClosure")
             }
-            entry = .synchronous(SwiftClosureCallbackOwner(handle: handle))
+            entry = .synchronous(try SwiftClosureCallbackOwner(handle: handle))
         case .asynchronous(let interface, _):
             var functions = ABISwiftAsyncClosureCallbackFunctions()
             functions.usesNativeContext = true
@@ -305,7 +306,7 @@ final class SwiftNativeClosureAdapter {
             guard let handle = ABICreateSwiftAsyncClosureCallback(interface.handle, functions, nil, &failure) else {
                 throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftAsyncClosure")
             }
-            entry = .asynchronous(SwiftAsyncClosureCallbackOwner(handle: handle))
+            entry = .asynchronous(try SwiftAsyncClosureCallbackOwner(handle: handle))
         }
     }
 

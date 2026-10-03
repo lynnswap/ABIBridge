@@ -19,7 +19,7 @@ The generic parameter is the complete native function type, including its argume
 
 The synchronous initializer accepts a nonisolated `@Sendable` body matching the signature's arguments, result, and declared error type. Its captures must be safe for the native caller's thread and concurrent calls. The generated entry translates the concrete native arguments into the compiler's generic Swift representation before calling the body. The callback may be passed to a nonescaping parameter or retained by an escaping native callee.
 
-A retained native callback owns the Swift context that keeps its generated entry and body alive. Releasing the original wrapper does not invalidate a copy held by the callee. The last native context release releases the body and its captures; there is no separate invalidate or close operation.
+Host callback construction validates the signature and body conversions. Native entry preparation occurs when the value is first invoked or published to native code; that throwing operation reports entry-preparation failures. Direct invocation reuses its prepared native value. A retained native callback owns the Swift context that keeps its generated entry and body alive. Releasing the original wrapper does not invalidate a copy held by the callee. The last native context release releases the body and its captures; there is no separate invalidate or close operation.
 
 Simple existential arguments and results, including Any, protocol compositions, class constraints, and Error, use their compiler-established container and authentication conventions; see <doc:SwiftExistentialValues>.
 
@@ -168,7 +168,7 @@ Label-only lookup preserves the signature's `@Sendable` and async attributes. Th
 
 Released callback entries can reuse one idle code/configuration page pair. Additional pages are released when they become empty. This applies to synchronous and async callbacks; the idle storage retains no callback bodies or captures.
 
-Synchronous call preparation shares up to 64 immutable native ABI interfaces, compared by storage layout, formal indirection and error convention. Authentication hashing retains up to 128 signature descriptions. These caches contain no Swift metatypes or provider-image owners, and custom layouts are evaluated for each new preparation. Eviction does not invalidate live handles.
+Each prepared ABI interface reuses a capture-free callback entry and its prepared code target. Native contexts retain that entry and their own bodies independently, so live native copies survive interface-cache eviction. Synchronous call preparation shares up to 64 immutable native ABI interfaces, compared by storage layout, formal indirection and error convention. Authentication hashing retains up to 128 signature descriptions. These caches contain no callback bodies, captures, Swift metatypes, or provider-image owners, and custom layouts are evaluated for each new preparation. Async interfaces reuse their own entries without an additional process-wide cache. Eviction does not invalidate live handles.
 
 A prepared generic function also retains its callback's indirect-result interface. Each invocation still creates an independent forwarding context so escaping native copies retain their own captures and code owners. Reuse a callback when its capture lifetime permits it; page and interface reuse do not extend that lifetime.
 

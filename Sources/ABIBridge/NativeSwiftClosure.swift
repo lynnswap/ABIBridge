@@ -10,23 +10,30 @@ final class SwiftClosureCodeOwner {
     }
 }
 
-final class SwiftClosureCallbackOwner {
+final class SwiftClosureCallbackOwner: @unchecked Sendable {
     let handle: OpaquePointer
     var function: ABIUnmanagedFunction { ABISwiftClosureCallbackFunction(handle)! }
 
-    init(handle: OpaquePointer) { self.handle = handle }
+    let implementation: SwiftImplementation
+    init(handle: OpaquePointer) throws {
+        self.handle = handle
+        do { implementation = try SwiftImplementation(function: ABISwiftClosureCallbackFunction(handle)!, retaining: nil) }
+        catch { ABIReleaseSwiftClosureCallback(handle); throw error }
+    }
 
     deinit { ABIReleaseSwiftClosureCallback(handle) }
 }
 
 enum SwiftClosureCall {
+    case host(SwiftClosureHost)
     case synchronous(SwiftClosureStorage, SwiftCall)
     case asynchronous(SwiftAsyncClosureStorage, SwiftAsyncCall)
 
-    case borrowed(resolve: (Bool) throws -> SwiftClosureCall, copy: () throws -> SwiftClosureCall)
+    indirect case borrowed(resolve: (Bool) throws -> SwiftClosureCall, copy: () throws -> SwiftClosureCall)
     case failure(any Error)
 
     func resolved(asynchronous: Bool = false) throws -> SwiftClosureCall {
+        if case .host(let host) = self { return try host.resolved() }
         if case .borrowed(let resolve, _) = self { return try resolve(asynchronous) }
         if case .failure(let error) = self { throw error }
         return self
@@ -36,7 +43,7 @@ enum SwiftClosureCall {
         switch self {
         case .synchronous(let storage, _): storage.encoded()
         case .asynchronous(let storage, _): storage.encoded()
-        case .borrowed, .failure: try resolved().encoded()
+        case .host, .borrowed, .failure: try resolved().encoded()
         }
     }
 }
@@ -66,12 +73,14 @@ public struct NativeSwiftClosure<Signature> {
     /// the original borrow scope. Preparing native code ownership can also throw.
     public func copy() throws -> Self {
         if case .borrowed(_, let copy) = call { return Self(call: try copy()) }
-        return Self(call: try call.resolved())
+        if case .failure(let error) = call { throw error }
+        return self
     }
 
     /// Creates a synchronous callback whose Sendable body may escape into native storage.
     /// The body must be safe on the native caller's thread, including concurrent calls.
-    /// Its original declared errors are returned to native code.
+    /// Its original declared errors are returned to native code. Native entry
+    /// preparation occurs on the first invocation or publication.
     public init<Result, Failure: Error, each Argument>(
         _ body: @escaping @Sendable (repeat each Argument) throws(Failure) -> Result
     ) throws where Signature == (repeat each Argument) throws(Failure) -> Result {
@@ -113,8 +122,7 @@ public struct NativeSwiftClosure<Signature> {
             let inputs = try SwiftCallbackValues(signature, arguments: plan?.parameters.arguments ?? [])
             let result = try SwiftCallbackResult<Result>(failure: Failure.self, generic: plan?.result ?? .concrete)
             return SwiftThrowingClosureBody(retainingCode: owner, codeLifetime: codeLifetime, callbackFactory: factory) { native, output, errorOutput in
-                let decoded = plan?.decodeArguments(native)
-                defer { withExtendedLifetime(decoded) {} }
+                let unpacked = plan?.parameters.hasPacks == true ? plan?.parameters.unpack(native) : nil
                 func invoke(_ arguments: UnsafePointer<UnsafeMutableRawPointer?>?) -> Bool {
                     let scope = inputs.makeScope(asynchronous: false)
                     defer { withExtendedLifetime(scope) {} }
@@ -134,20 +142,15 @@ public struct NativeSwiftClosure<Signature> {
                         return true
                     }
                 }
-                if let decoded { return decoded.addresses.withUnsafeBufferPointer { invoke($0.baseAddress) } }
+                if let unpacked { return unpacked.withUnsafeBufferPointer { invoke($0.baseAddress) } }
                 return invoke(native)
             }
         })
-        let callback = try throwingClosureOwner(prepared.interface, body: factory.synchronous(plan: nil, retainingCode: nil))
-        call = .synchronous(try Self.storage(callback, discriminator: discriminator), prepared)
-    }
-
-    private static func storage(_ callback: SwiftClosureCallbackOwner, discriminator: UInt16,
-                                codeLifetime: SwiftValueCodeLifetime? = nil) throws -> SwiftClosureStorage {
-        try SwiftClosureStorage(adopting: ABISwiftClosureValue(
-            function: ABISignSwiftClosureFunction(callback.function, discriminator),
-            context: Unmanaged.passRetained(callback).toOpaque()), discriminator: discriminator, retaining: nil,
-            codeLifetime: codeLifetime)
+        let canonicalBody = try factory.synchronous(plan: nil, retainingCode: nil)
+        call = .host(SwiftClosureHost(factory: factory, codeLifetime: codeLifetime) {
+            let context = try SwiftClosureContext(interface: prepared.interface, body: canonicalBody)
+            return .synchronous(try context.storage(discriminator: discriminator), prepared)
+        })
     }
 
     /// Calls the retained native closure. Native errors are surfaced as NativeSwiftError.
@@ -176,7 +179,7 @@ extension NativeSwiftClosure: SwiftClosureValue {
         switch resolved {
         case .synchronous(_, let prepared): native = prepared.closure
         case .asynchronous(_, let prepared): native = prepared.closure
-        case .borrowed, .failure: preconditionFailure("Resolving a closure produces a native call.")
+        case .host, .borrowed, .failure: preconditionFailure("Resolving a closure produces a native call.")
         }
         guard native == nil else {
             throw ABIResolutionError.signatureMismatch(.init(
@@ -223,7 +226,7 @@ extension NativeSwiftClosure: SwiftClosureValue {
             }
             // Native copies retain only the closure's heap context. Forwarding keeps
             // implementation images alive until the final native copy is destroyed.
-            let callback = try throwingClosureOwner(prepared.interface, body: SwiftThrowingClosureBody(
+            let callback = try SwiftClosureContext(interface: prepared.interface, body: SwiftThrowingClosureBody(
                 retainingCode: original.codeOwner, codeLifetime: original.codeLifetime) { arguments, result, failure in
                 var didThrow = false
                 let encoded = prepared.closure == nil && generic?.parameters.needsEncoding == true
@@ -245,7 +248,7 @@ extension NativeSwiftClosure: SwiftClosureValue {
                 precondition(succeeded, "The prepared Swift closure forwarding call must be valid.")
                 return didThrow
             })
-            return Self(call: .synchronous(try storage(callback, discriminator: prepared.closure?.discriminator ?? discriminator,
+            return Self(call: .synchronous(try callback.storage(discriminator: prepared.closure?.discriminator ?? discriminator,
                 codeLifetime: original.codeLifetime), prepared))
         }
         let pointer = try CValueType(scalar: ABIValuePointer)
@@ -285,6 +288,9 @@ extension NativeSwiftClosure {
         if case .asynchronous = plan.transport {
             return try encodeGenericAsyncClosure(plan: plan, retainingCode: owner)
         }
+        if case .host(let host) = call {
+            return try host.factory.encode(plan: plan, retainingCode: owner, codeLifetime: host.codeLifetime)
+        }
         guard case .synchronous(let interface) = plan.transport,
               case .synchronous(let original, let prepared) = try call.resolved() else {
             preconditionFailure("The prepared callback and its formal transport must agree.")
@@ -295,11 +301,8 @@ extension NativeSwiftClosure {
         }
         else if !plan.convertsValues, interface === prepared.interface { return original.encoded() }
         if let factory = original.callbackFactory, factory.signature == Signature.self {
-            try plan.validateCallbackConversion()
-            let callback = try throwingClosureOwner(interface,
-                body: factory.synchronous(plan: plan, retainingCode: (original.codeOwner, owner)))
-            return try Self.storage(callback, discriminator: plan.discriminator,
-                codeLifetime: original.codeLifetime).encoded()
+            return try factory.encode(plan: plan, retainingCode: (original.codeOwner, owner),
+                codeLifetime: original.codeLifetime)
         }
         if plan.hasNestedClosures || prepared.closure?.hasNestedClosures == true {
             let source = try prepared.closure ?? SwiftGenericClosurePlan.concrete(Signature.self)
@@ -309,7 +312,7 @@ extension NativeSwiftClosure {
         }
         if let native = prepared.closure { try native.validateNativeValues(for: plan) }
         else { try plan.validateCallbackConversion() }
-        let callback = try throwingClosureOwner(interface, body: SwiftThrowingClosureBody(
+        let callback = try SwiftClosureContext(interface: interface, body: SwiftThrowingClosureBody(
             retainingCode: (original.codeOwner, owner), codeLifetime: original.codeLifetime) { arguments, output, error in
             var didThrow = false
             let convertedResult = prepared.closure == nil ? plan.makeCallbackResultStorage() : nil
@@ -337,10 +340,7 @@ extension NativeSwiftClosure {
             precondition(success, "A prepared closure reabstraction must have a valid call frame.")
             return didThrow || plan.encodeCallbackResult(convertedResult, to: output, errorOutput: error)
         })
-        let value = ABISwiftClosureValue(function: ABISignSwiftClosureFunction(callback.function, plan.discriminator),
-            context: Unmanaged.passRetained(callback).toOpaque())
-        let adapted = try SwiftClosureStorage(adopting: value, discriminator: plan.discriminator, retaining: original,
-            codeLifetime: original.codeLifetime)
-        return adapted.encoded()
+        return try callback.storage(discriminator: plan.discriminator,
+            codeLifetime: original.codeLifetime).encoded()
     }
 }
