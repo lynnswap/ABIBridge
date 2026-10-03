@@ -9,6 +9,67 @@ import Testing
 @Suite(.serialized)
 struct SwiftImportedFunctionHookTests {
 
+    @Test func unmatchedPackBindingsPreserveStackArguments() async throws {
+        let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
+        @inline(never) public func hookStackPack<each Value>(_ values: repeat each Value,
+            a: Int64, b: Int64, c: Int64, d: Int64, e: Int64, f: Int64, g: Int64, h: Int64) -> String {
+            var result = ""
+            for value in repeat each values { result += "\\(value)|" }
+            return result + "sum=\\(a+b+c+d+e+f+g+h)"
+        }
+        """, callerExtra: """
+        @inline(never) public func stackPackEmpty() -> String {
+            hookStackPack(a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8)
+        }
+        @inline(never) public func stackPackOne() -> String {
+            hookStackPack(Int64(41), a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8)
+        }
+        @inline(never) public func stackPackTen() -> String {
+            hookStackPack(Int64(1), Int64(2), Int64(3), Int64(4), Int64(5), Int64(6), Int64(7), Int64(8), Int64(9), Int64(10),
+                a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8)
+        }
+        """)
+        defer { fixture.cleanup() }
+        let short = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookStackPack(_:a:b:c:d:e:f:g:h:)",
+            as: ((Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64) -> String).self,
+            genericArguments: [.pack([.type(Int64.self)])], in: fixture.providerScope)
+        let long = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookStackPack(_:a:b:c:d:e:f:g:h:)",
+            as: ((Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64,
+                  Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64) -> String).self,
+            genericArguments: [.pack(Array(repeating: .type(Int64.self), count: 10))], in: fixture.providerScope)
+        let empty = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".stackPackEmpty()",
+            as: (() -> String).self, in: fixture.callerScope)
+        let one = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".stackPackOne()",
+            as: (() -> String).self, in: fixture.callerScope)
+        let ten = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".stackPackTen()",
+            as: (() -> String).self, in: fixture.callerScope)
+        let expectedTen = "1|2|3|4|5|6|7|8|9|10|sum=36"
+        #expect(try unsafe empty.unsafeInvoke() == "sum=36")
+        #expect(try unsafe one.unsafeInvoke() == "41|sum=36")
+        #expect(try unsafe ten.unsafeInvoke() == expectedTen)
+        let first = try unsafe await short.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { Issue.record($0) }) { call, value, a, b, c, d, e, f, g, h in
+                try call.proceed(value, a, b, c, d, e, f, g, h) + " short"
+            }
+        defer { first.invalidate() }
+        #expect(try unsafe empty.unsafeInvoke() == "sum=36")
+        #expect(try unsafe one.unsafeInvoke() == "41|sum=36 short")
+        #expect(try unsafe ten.unsafeInvoke() == expectedTen)
+        let second = try unsafe await long.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { Issue.record($0) }) { call, v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, a, b, c, d, e, f, g, h in
+                try call.proceed(v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, a, b, c, d, e, f, g, h) + " long"
+            }
+        defer { second.invalidate() }
+        first.invalidate()
+        #expect(try unsafe empty.unsafeInvoke() == "sum=36")
+        #expect(try unsafe one.unsafeInvoke() == "41|sum=36")
+        #expect(try unsafe ten.unsafeInvoke() == expectedTen + " long")
+        second.invalidate()
+        #expect(try unsafe empty.unsafeInvoke() == "sum=36")
+        #expect(try unsafe one.unsafeInvoke() == "41|sum=36")
+        #expect(try unsafe ten.unsafeInvoke() == expectedTen)
+    }
+
     @Test func tuplePackClassArgumentsUseTheirPhysicalNativePositions() async throws {
         let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
         @inline(never) public func hookPlainTuplePack<each Value>(_ values: (repeat each Value, object: NSObject)) -> NSObject {
