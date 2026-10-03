@@ -41,6 +41,12 @@ const void *ABISwiftExistentialMetatypeMetadata(const void *instance);
 /// Labels are nil or one space-terminated name per element; an empty name is unlabeled.
 /// The labels buffer only needs to remain valid until this call returns.
 const void *ABISwiftTupleTypeMetadata(const void *const *elements, size_t count, const char *labels);
+/// Canonical native Swift function metadata from Swift ABI function/parameter flags.
+/// flags carries the parameter count and marks any supplied extended flags.
+/// Differentiability/globalActor agree with the corresponding bits in flags.
+const void *ABISwiftFunctionTypeMetadata(uintptr_t flags, const void *const *parameters,
+    const uint32_t *parameterFlags, const void *result, uint32_t extendedFlags, const void *thrownError,
+    uintptr_t differentiability, const void *globalActor);
 /// Parses the subject or type constraint of a compiler-emitted requirement.
 /// A protocol or layout requirement has no type constraint in its second field.
 ABISwiftSyntax *ABICopySwiftGenericRequirementTypeSyntax(const void *requirement, bool constraint);

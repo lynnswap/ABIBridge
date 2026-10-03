@@ -214,11 +214,12 @@ struct SwiftGenericCallTests {
     @Test func inoutClosuresDistinguishNativeGenericStorageFromConvertedFunctions() async throws {
         typealias Closure = NativeSwiftClosure<() -> String>
         let runtime = ABIRuntime()
-        do {
-            _ = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.replaceClosureGeneric<A>(inout () -> A, A) -> ()",
-                as: ((NativeSwiftInout<Closure>, String) -> Void).self, genericArguments: [.type(String.self)])
-            Issue.record("An inout function cannot expose the converted wrapper's storage as a native closure pair")
-        } catch ABIResolutionError.unsupportedDeclaration {}
+        let replaceFunction = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.replaceClosureGeneric<A>(inout () -> A, A) -> ()",
+            as: ((NativeSwiftInout<Closure>, String) -> Void).self, genericArguments: [.type(String.self)])
+        let function = NativeSwiftInout(try Closure { "original" })
+        try unsafe replaceFunction.unsafeInvoke(function, "converted")
+        #expect(try unsafe function.value.unsafeInvoke() == "converted")
         let replace = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.mutateGeneric<A, B where B: Swift.Error>(inout A, __owned A, B, Swift.Bool) throws(B) -> ()",
             as: ((NativeSwiftInout<Closure>, NativeSwiftConsuming<Closure>, GenericGetterFailure, Bool) throws(GenericGetterFailure) -> Void).self,
@@ -757,10 +758,26 @@ struct SwiftGenericCallTests {
         let empty = try await runtime.swiftFunction(named: name, as: (() -> Void).self,
             genericArguments: [.pack([])])
         try unsafe empty.unsafeInvoke()
+        let singletonVoid = try await runtime.swiftFunction(named: name, as: ((Void) -> Void).self,
+            genericArguments: [.pack([.type(Void.self)])])
+        try unsafe singletonVoid.unsafeInvoke(())
+        let callbackName = "ManagedSwiftFixtures.callbackPackGeneric<each A>((repeat A) -> (repeat A), repeat A) -> (repeat A)"
+        let emptyCallback = try await runtime.swiftFunction(named: callbackName,
+            as: ((NativeSwiftClosure<() -> Void>) -> Void).self, genericArguments: [.pack([])])
+        try unsafe emptyCallback.unsafeInvoke(NativeSwiftClosure<() -> Void> {})
+        let voidCallback = try await runtime.swiftFunction(named: callbackName,
+            as: ((NativeSwiftClosure<(Void) -> Void>, Void) -> Void).self,
+            genericArguments: [.pack([.type(Void.self)])])
+        try unsafe voidCallback.unsafeInvoke(NativeSwiftClosure<(Void) -> Void> { _ in }, ())
         let single = try await runtime.swiftFunction(named: name, as: ((String) -> String).self,
             genericArguments: [.pack([.type(String.self)])])
         let text = String(repeating: "pack", count: 100)
         #expect(try unsafe single.unsafeInvoke(text) == text)
+        let singletonTuple = try await runtime.swiftFunction(named: name,
+            as: (((String, Int64)) -> (String, Int64)).self,
+            genericArguments: [.pack([.type((String, Int64).self)])])
+        let tuple = try unsafe singletonTuple.unsafeInvoke((text, Int64(42)))
+        #expect(tuple.0 == text && tuple.1 == 42)
         let values = try await runtime.swiftFunction(named: name,
             as: ((String, Int64, Bool) -> (String, Int64, Bool)).self,
             genericArguments: [.pack([.type(String.self), .type(Int64.self), .type(Bool.self)])])
@@ -1014,6 +1031,42 @@ struct SwiftGenericCallTests {
             genericArguments: [.type(NativeSwiftClosure<() -> Int64>.self)])
         let returned = try unsafe closure.unsafeInvoke(NativeSwiftClosure { Int64(42) })
         #expect(try unsafe returned.unsafeInvoke() == 42)
+    }
+
+    @Test func genericTupleBindingsPreserveRuntimeAndClosureWrapperData() async throws {
+        typealias Callback = NativeSwiftClosure<() -> Int64>
+        typealias Data = (record: NativeSwiftValue, callback: Callback)
+        typealias Identity = NativeSwiftClosure<(Data) -> Data>
+        typealias Edit = NativeSwiftClosure<(NativeSwiftInout<Data>) throws -> Void>
+        let runtime = ABIRuntime.shared
+        let factory = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeProducer<A>(A) -> () -> A",
+            as: ((Int64) -> NativeSwiftClosure<() -> NativeSwiftValue>).self,
+            genericArguments: [.type(Int64.self)])
+        let record = try unsafe factory.unsafeInvoke(42).unsafeInvoke()
+        let input: Data = (record, try Callback { 42 })
+        let copy = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.callRuntimeCopy<A>((A) -> A, A) -> A",
+            as: ((Identity, Data) -> Data).self, genericArguments: [.type(Data.self)])
+        let copied = try unsafe copy.unsafeInvoke(Identity { $0 }, input)
+        #expect(copied.record === record && !record.isConsumed)
+        #expect(try unsafe copied.callback.unsafeInvoke() == 42)
+        let consume = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.consumingGeneric<A>(__owned A) -> A",
+            as: ((NativeSwiftConsuming<Data>) -> Data).self, genericArguments: [.type(Data.self)])
+        let consumed = try unsafe consume.unsafeInvoke(NativeSwiftConsuming(input))
+        #expect(consumed.record === record && !record.isConsumed)
+        #expect(try unsafe consumed.callback.unsafeInvoke() == 42)
+        let visit = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitRuntimeInout<A where A: ~Swift.Copyable>(inout A, (inout A) throws -> ()) throws -> ()",
+            as: ((NativeSwiftInout<Data>, Edit) throws -> Void).self, genericArguments: [.type(Data.self)])
+        let buffer = NativeSwiftInout(input)
+        try unsafe visit.unsafeInvoke(buffer, Edit { value in
+            value.value = (value.value.record, try Callback { 43 })
+        })
+        #expect(buffer.value.record === record && !record.isConsumed)
+        #expect(try unsafe buffer.value.callback.unsafeInvoke() == 43)
+        #expect(try record.copy().take(as: Int64.self) == 42)
     }
 
     @MainActor @Test func callbacksPreserveClosureWrappersUsedAsNativeGenericData() async throws {

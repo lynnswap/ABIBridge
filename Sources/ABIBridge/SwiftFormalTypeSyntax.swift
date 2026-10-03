@@ -65,11 +65,11 @@ extension SwiftGenericDeclaration {
             result = accessor == "Setter" ? .tuple([]) : property
             if accessor == "Getter" {
                 if let getterSignature = declaredSignature?.function {
-                    guard case .function(let parameters, _, let failure, let isAsync, _) = getterSignature, parameters.isEmpty else {
+                    guard case .function(let parameters, _, let failure, let attributes) = getterSignature, parameters.isEmpty else {
                         throw ABIResolutionError.signatureMismatch(.init(expected: "A zero-argument declared getter signature", found: [getterSignature.spelling]))
                     }
                     self.failure = failure
-                    self.isAsync = isAsync
+                    self.isAsync = attributes.isAsync
                 } else {
                     if let caller, caller.failure != Never.self {
                         throw ABIResolutionError.unsupportedDeclaration("A throwing generic getter requires declaredAs: with its source function type; its symbol does not encode the formal error type.")
@@ -82,13 +82,13 @@ extension SwiftGenericDeclaration {
                 isAsync = false
             }
         } else {
-            guard case .function(let arguments, let result, let failure, let isAsync, _) = try SwiftFormalType(value) else {
+            guard case .function(let arguments, let result, let failure, let attributes) = try SwiftFormalType(value) else {
                 throw ABIResolutionError.unsupportedDeclaration("The Swift declaration is missing its function type.")
             }
             self.arguments = arguments
             self.result = result
             self.failure = failure
-            self.isAsync = isAsync
+            self.isAsync = attributes.isAsync
         }
         implicitRequirements = context?.requirements ?? []
         abiRequirements = try declaredSignature?.requirements(for: self)
@@ -204,18 +204,37 @@ extension SwiftFormalType {
             if case .tuple(let elements, _) = input { arguments = elements } else { arguments = [input] }
             self = .foreignFunction(node.kind == "CFunctionPointer" ? .c : .block,
                 arguments, try Self(node.requiredChild(kind: "ReturnType")))
-        case "FunctionType", "NoEscapeFunctionType", "UncurriedFunctionType":
-            let input = try Self(node.requiredChild(kind: "ArgumentTuple"))
-            let arguments: [Self]
-            if case .tuple(let elements, _) = input { arguments = elements } else { arguments = [input] }
+        case "FunctionType", "NoEscapeFunctionType", "UncurriedFunctionType", "AutoClosureType", "EscapingAutoClosureType":
+            let input = try node.requiredChild(kind: "ArgumentTuple").requiredChild(kind: "Type", fallingBackToFirst: true).requiredChild()
+            let parameters = try (input.kind == "Tuple" ? input.children() : [input]).map(Self.functionParameter)
             let failure: Self?
             if let typed = node.child(kind: "TypedThrowsAnnotation") {
                 failure = try Self(typed.requiredChild())
             } else {
                 failure = node.child(kind: "ThrowsAnnotation") == nil ? nil : .nominal("Swift.Error", [])
             }
-            self = .function(arguments, try Self(node.requiredChild(kind: "ReturnType")),
-                failure: failure, isAsync: node.child(kind: "AsyncAnnotation") != nil, isEscaping: node.kind != "NoEscapeFunctionType")
+            var attributes = SwiftFunctionAttributes(isAsync: node.child(kind: "AsyncAnnotation") != nil,
+                isEscaping: !["NoEscapeFunctionType", "AutoClosureType"].contains(node.kind),
+                isSendable: node.child(kind: "ConcurrentFunctionType") != nil,
+                hasSendingResult: node.child(kind: "SendingResultFunctionType") != nil,
+                parameterFlags: parameters.map(\.flags))
+            if attributes.parameterFlags.allSatisfy({ $0 == 0 }) { attributes.parameterFlags = [] }
+            if node.child(kind: "IsolatedAnyFunctionType") != nil { attributes.isolation = .isolatedAny }
+            if node.child(kind: "NonIsolatedCallerFunctionType") != nil { attributes.isolation = .caller }
+            if let actor = node.child(kind: "GlobalActorFunctionType") {
+                attributes.globalActor = try Self(actor.requiredChild())
+            }
+            if let differentiable = node.child(kind: "DifferentiableFunctionType") {
+                switch differentiable.index {
+                case 102: attributes.differentiability = .forward
+                case 114: attributes.differentiability = .reverse
+                case 100: attributes.differentiability = .normal
+                case 108: attributes.differentiability = .linear
+                default: throw ABIResolutionError.metadataUnavailable("Unknown Swift function differentiability.")
+                }
+            }
+            self = .function(parameters.map(\.type), try Self(node.requiredChild(kind: "ReturnType")),
+                failure: failure, attributes: attributes)
         case "ProtocolList", "ProtocolListWithAnyObject", "ProtocolListWithClass", "BuiltinTypeName":
             self = .nominal(try node.name(), [])
         case "SugaredOptional": self = .nominal("Swift.Optional", [try Self(node.requiredChild())])
@@ -224,6 +243,22 @@ extension SwiftFormalType {
         default:
             throw ABIResolutionError.unsupportedDeclaration("Cannot decode the Swift " + node.kind + " formal type.")
         }
+    }
+
+    private static func functionParameter(_ node: SwiftSyntax.Node) throws -> (type: Self, flags: UInt32) {
+        var value = node, flags: UInt32 = 0
+        while ["Type", "TupleElement", "Sending", "Isolated", "NoDerivative"].contains(value.kind) {
+            switch value.kind {
+            case "TupleElement": if value.child(kind: "VariadicMarker") != nil { flags |= 0x80 }
+            case "Sending": flags |= 0x800
+            case "Isolated": flags |= 0x400
+            case "NoDerivative": flags |= 0x200
+            default: break
+            }
+            value = try value.requiredChild(kind: "Type", fallingBackToFirst: true)
+        }
+        if ["AutoClosureType", "EscapingAutoClosureType"].contains(value.kind) { flags |= 0x100 }
+        return (try Self(value), flags)
     }
 
     var nominalDeclaration: (name: String, arguments: [Self])? {

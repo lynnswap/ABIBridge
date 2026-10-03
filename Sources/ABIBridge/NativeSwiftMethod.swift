@@ -1,11 +1,11 @@
-/// A native invocation and receiver writeback both failed.
+/// A Swift invocation and its subsequent writeback both failed.
 ///
-/// The native member ran and either threw or failed its result conversion. The receiver's
-/// writeback conversion then failed too; both errors remain available.
+/// The native call or callback body ran and either threw or failed its result
+/// conversion. Argument or receiver writeback then failed too; both errors remain available.
 public struct NativeSwiftWritebackError: Error {
     /// The invocation or result-conversion failure.
     public let invocationError: any Error
-    /// The subsequent receiver-conversion failure.
+    /// The subsequent argument- or receiver-writeback failure.
     public let writebackError: any Error
 }
 

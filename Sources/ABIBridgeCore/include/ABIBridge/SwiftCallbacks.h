@@ -9,6 +9,18 @@ typedef struct ABISwiftCallback ABISwiftCallback;
 typedef struct ABISwiftIncomingCall ABISwiftIncomingCall;
 typedef struct ABISwiftClosureCallback ABISwiftClosureCallback;
 
+/// Moves an initialized native result value into the caller's uninitialized
+/// indirect output storage. Called only after successful callback completion.
+/// logicalOffset and size select a prepared projection of the logical result;
+/// they do not establish type compatibility. source and destination contain one
+/// complete native value or field, never a partial register/optional carrier.
+/// The operation cannot fail and leaves source uninitialized. It may use value
+/// witnesses retained by context; the call-interface cache owns no metadata.
+/// Zero-sized outputs need no storage transfer and do not call this initializer.
+/// A null initializer retains the low-level API's bitwise-transfer contract.
+typedef void (*ABISwiftResultInitializer)(void *context, size_t logicalOffset, size_t size,
+                                        void *destination, void *source);
+
 /// The callback borrows native Swift argument storage and must initialize one
 /// owned result with the prepared signature. It cannot fail or throw through
 /// this nonthrowing Swift boundary.
@@ -24,6 +36,7 @@ typedef struct ABISwiftClosureCallbackFunctions {
     /// Optional retained Swift owner for preparing this body with another ABI.
     /// Unlike code leases, it may retain captures and belongs only to live closures.
     void *(*copyBodyOwner)(void *context);
+    ABISwiftResultInitializer initializeResult;
 } ABISwiftClosureCallbackFunctions;
 
 /// Returns true after initializing an owned error, false after initializing
@@ -37,6 +50,7 @@ typedef struct ABISwiftThrowingClosureCallbackFunctions {
     /// Optional retained Swift owner for preparing this body with another ABI.
     /// Unlike code leases, it may retain captures and belongs only to live closures.
     void *(*copyBodyOwner)(void *context);
+    ABISwiftResultInitializer initializeResult;
 } ABISwiftThrowingClosureCallbackFunctions;
 ABISwiftClosureCallback *ABICreateSwiftThrowingClosureCallback(ABISwiftCallInterface *interface,
     ABISwiftThrowingClosureCallbackFunctions functions, void *context, ABIResolutionFailure **error);
@@ -72,6 +86,7 @@ typedef struct ABISwiftAsyncClosureCallbackFunctions {
     /// Optional retained Swift owner for preparing this body with another ABI.
     /// Unlike code leases, it may retain captures and belongs only to live closures.
     void *(*copyBodyOwner)(void *context);
+    ABISwiftResultInitializer initializeResult;
 } ABISwiftAsyncClosureCallbackFunctions;
 /// Success consumes context; failure consumes neither context nor its release
 /// responsibility. Native closure contexts keep the callback alive through all calls.

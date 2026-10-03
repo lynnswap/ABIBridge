@@ -344,7 +344,7 @@ extension ABIRuntime {
         let declaration = try genericArguments.isEmpty ? swiftFunctionDeclaration(named: name, as: signature)
             : NativeDeclaration(name: name, language: .swift)
         let symbol = try resolve(declaration, in: scope, loading: loading)
-        if try !genericArguments.isEmpty || declaredSignature != nil || !valueABIs.isEmpty || SwiftFunctionSignature(signature).requiresClosureDeclaration {
+        if try !genericArguments.isEmpty || declaredSignature != nil || !valueABIs.isEmpty || SwiftFunctionSignature(signature).requiresValueDeclaration {
             return try preparedGenericFunction(symbol: symbol, signature: signature, genericArguments: genericArguments,
                                                declaredSignature: declaredSignature, valueABIs: valueABIs)
         }
@@ -375,7 +375,7 @@ extension ABIRuntime {
         let declaration = try genericArguments.isEmpty ? swiftFunctionDeclaration(named: name, as: signature)
             : NativeDeclaration(name: name, language: .swift)
         let symbol = try resolve(declaration, in: image, loading: loading)
-        if try !genericArguments.isEmpty || declaredSignature != nil || !valueABIs.isEmpty || SwiftFunctionSignature(signature).requiresClosureDeclaration {
+        if try !genericArguments.isEmpty || declaredSignature != nil || !valueABIs.isEmpty || SwiftFunctionSignature(signature).requiresValueDeclaration {
             return try preparedGenericFunction(symbol: symbol, signature: signature, genericArguments: genericArguments,
                                                declaredSignature: declaredSignature, valueABIs: valueABIs)
         }

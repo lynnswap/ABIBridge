@@ -20,6 +20,13 @@ extern "C" const void *swift_conformsToProtocol(const void *, const void *);
 extern "C" const void *swift_getExistentialTypeMetadata(bool, const void *, size_t, const uintptr_t *);
 extern "C" const void *swift_getMetatypeMetadata(const void *);
 extern "C" const void *swift_getExistentialMetatypeMetadata(const void *);
+extern "C" const void *swift_getFunctionTypeMetadata(uintptr_t, const void *const *, const uint32_t *, const void *);
+extern "C" const void *swift_getFunctionTypeMetadataDifferentiable(
+    uintptr_t, uintptr_t, const void *const *, const uint32_t *, const void *);
+extern "C" const void *swift_getFunctionTypeMetadataGlobalActor(
+    uintptr_t, uintptr_t, const void *const *, const uint32_t *, const void *, const void *);
+extern "C" const void *swift_getExtendedFunctionTypeMetadata(
+    uintptr_t, uintptr_t, const void *const *, const uint32_t *, const void *, const void *, uint32_t, const void *);
 extern "C" MetadataResponse __attribute__((swiftcall))
 swift_getTupleTypeMetadata(uintptr_t, uintptr_t, const void *const *, const char *, const void *);
 extern "C" MetadataResponse __attribute__((swiftcall))
@@ -118,6 +125,20 @@ const void *ABISwiftTupleTypeMetadata(const void *const *elements, size_t count,
     if (count == 1) return elements[0];
     // NonConstantLabels asks the runtime to retain its own copy of the labels.
     return swift_getTupleTypeMetadata(0, count | (labels ? 0x10000 : 0), elements, labels, nullptr).value;
+}
+
+const void *ABISwiftFunctionTypeMetadata(uintptr_t flags, const void *const *parameters,
+    const uint32_t *parameterFlags, const void *result, uint32_t extendedFlags, const void *thrownError,
+    uintptr_t differentiability, const void *globalActor) {
+    if (flags & 0x80000000U) {
+        return swift_getExtendedFunctionTypeMetadata(
+            flags, differentiability, parameters, parameterFlags, result, globalActor, extendedFlags, thrownError);
+    }
+    if (flags & 0x10000000U)
+        return swift_getFunctionTypeMetadataGlobalActor(flags, differentiability, parameters, parameterFlags, result, globalActor);
+    if (flags & 0x08000000U)
+        return swift_getFunctionTypeMetadataDifferentiable(flags, differentiability, parameters, parameterFlags, result);
+    return swift_getFunctionTypeMetadata(flags, parameters, parameterFlags, result);
 }
 
 const void *ABISwiftProtocolTypeMetadata(const void *protocol) {
