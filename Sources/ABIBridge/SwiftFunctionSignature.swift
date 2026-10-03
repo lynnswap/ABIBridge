@@ -354,7 +354,8 @@ struct SwiftCallbackValues: Sendable {
                 }
                 return try _openExistential(type, do: prepare)
             }
-            if type is any ABIBridgeValue.Type, !(type is any ABIBridgeSwiftValue.Type) {
+            let base = (type as? any NativeOptionalValue.Type)?.wrappedType ?? type
+            if base is any ABIBridgeValue.Type, !(base is any ABIBridgeSwiftValue.Type) {
                 func prepare<Value>(_ type: Value.Type) throws -> SwiftCallbackDecoder {
                     let codec = try SwiftValueCodec<Value>()
                     return { address, scope in

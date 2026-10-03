@@ -90,6 +90,7 @@ final class NativeValueStorage {
     var prepareWriteback: SwiftWritebackPreparation?
     var suspendHookAccess: (() -> Void)?
     var resumeHookAccess: (() throws -> Void)?
+    var transferHookOwnership: (() throws -> NativeValueStorage)?
 
     init(borrowing address: UnsafeMutableRawPointer, owner: AnyObject,
          retainingResourcesOf storage: NativeValueStorage? = nil, codeLifetime: SwiftValueCodeLifetime? = nil,

@@ -191,3 +191,6 @@ open class HookTicketRenderer {
     ticketState.withLock { $0.entries += 1 }
     return value.read()
 }
+
+@inline(never) public func hookOptionalPointer(_ value: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? { value }
+@inline(never) public func consumeHookObject(_ value: consuming NSObject) -> Int64 { 42 }

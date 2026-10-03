@@ -311,5 +311,46 @@ private struct RuntimeHookProbeError: Error {}
         throw ArchitectureValidationFailure(description: "Async runtime recovery lost ownership across suspension")
     }
     checks.append("Async runtime hooks transfer noncopyable inputs and recover completed results through suspension")
+    asyncHook.invalidate()
+    let objectTarget = try await runtime.swiftFunction(named: "SwiftImportProvider.consumeHookObject(_:)",
+        as: ((NativeSwiftConsuming<NSObject>) -> Int64).self, in: provider)
+    let objectCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.callConsumeHookObject(_:)",
+        as: ((NativeSwiftConsuming<NSObject>) -> Int64).self, in: caller)
+    let objectHook = try unsafe await objectTarget.hookImportedCalls(in: caller, using: runtime,
+        onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value in try call.proceed(value) }
+    defer { objectHook.invalidate() }
+    weak var observedObject: NSObject?
+    do {
+        let object = NSObject()
+        observedObject = object
+        guard try unsafe objectCaller.unsafeInvoke(NativeSwiftConsuming(object)) == 42 else {
+            throw ArchitectureValidationFailure(description: "A consuming object continuation changed its result")
+        }
+    }
+    guard observedObject == nil else { throw ArchitectureValidationFailure(description: "A consuming continuation leaked its original argument copy") }
+    checks.append("Ordinary consuming object arguments release every callback and continuation copy")
+    objectHook.invalidate()
+    let optionalTarget = try await runtime.swiftFunction(named: "SwiftImportProvider.hookOptionalPointer(Swift.UnsafeMutableRawPointer?) -> Swift.UnsafeMutableRawPointer?",
+        as: ((HookPointerValue?) -> HookPointerValue?).self, in: provider)
+    let optionalCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.callOptionalHookPointer(_:)",
+        as: ((UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer?).self, in: caller)
+    let optionalHook = try unsafe await optionalTarget.hookImportedCalls(in: caller, using: runtime,
+        onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value in try call.proceed(value) }
+    defer { optionalHook.invalidate() }
+    let pointer = UnsafeMutableRawPointer.allocate(byteCount: 1, alignment: 1)
+    defer { pointer.deallocate() }
+    guard try unsafe optionalCaller.unsafeInvoke(nil) == nil,
+          try unsafe optionalCaller.unsafeInvoke(pointer) == pointer, failures.withLock({ $0 }) == 3 else {
+        throw ArchitectureValidationFailure(description: "An Optional pointer adapter failed to preserve its native representation")
+    }
+    checks.append("Optional pointer adapters decode and encode nil and nonnil native values through hooks")
     return checks
+}
+
+private struct HookPointerValue: ABIBridgeValue {
+    static let abiType = NativeType.pointer
+    let native: NativeValue
+    let marker: Int64
+    init(nativeValue: NativeValue) { native = nativeValue; marker = 42 }
+    static func nativeValue(from value: Self) -> NativeValue { value.native }
 }

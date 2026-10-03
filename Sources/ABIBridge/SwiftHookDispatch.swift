@@ -55,7 +55,7 @@ private final class SwiftHookExecution: @unchecked Sendable {
     }
     func invoke(_ count: Int, arguments: [NativeValueStorage], recovery: SwiftHookRecoveryScope? = nil) throws -> NativeValueStorage {
         guard count != 0 else { return try signature.proceed(call, arguments: arguments, recovery: recovery) }
-        for value in arguments { value.suspendHookAccess?() }
+        let arguments = try signature.receivingForwardedArguments(arguments)
         let handler = handlers[count - 1]
         if handler.requiresMainActor && !Thread.isMainThread {
             handler.failure(NativeSwiftHookInvocationError.wrongThread)
@@ -96,7 +96,7 @@ private final class SwiftHookExecution: @unchecked Sendable {
     }
     nonisolated(nonsending) func invokeAsync(_ count: Int, arguments: [NativeValueStorage], recovery: SwiftHookRecoveryScope? = nil) async throws -> NativeValueStorage {
         guard count != 0 else { return try await signature.proceedAsync(call, arguments: arguments, recovery: recovery) }
-        for value in arguments { value.suspendHookAccess?() }
+        let arguments = try signature.receivingForwardedArguments(arguments)
         let handler = handlers[count - 1]
         let recovery = SwiftHookRecoveryScope(protectsOwnership: signature.errorPlan == nil || signature.errorPlan!.isTyped)
         for value in arguments {

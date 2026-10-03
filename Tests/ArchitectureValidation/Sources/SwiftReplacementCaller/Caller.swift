@@ -81,3 +81,6 @@ open class CallerOverridingRenderer: ReplacementRenderer {
 @inline(never) public func callConsumeAnyErrorTicket(_ number: Int64) throws -> Int64 {
     try consumeAnyErrorHookTicket(HookTicket(number))
 }
+
+@inline(never) public func callOptionalHookPointer(_ value: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? { hookOptionalPointer(value) }
+@inline(never) public func callConsumeHookObject(_ value: consuming NSObject) -> Int64 { consumeHookObject(value) }

@@ -134,6 +134,14 @@ final class SwiftRuntimeValueOwner {
         guard let storage else { throw NativeSwiftValueError.consumedValue }
         return storage
     }
+    func transferStorage() throws -> NativeValueStorage {
+        lock.lock(); defer { lock.unlock() }
+        guard let storage else { throw NativeSwiftValueError.consumedValue }
+        guard !exclusive, readers == 0 else { throw NativeSwiftValueError.valueInUse }
+        self.storage = nil
+        storage.runtimeValueOwner = nil
+        return storage
+    }
     func reserve() { lock.lock(); reservations += 1; lock.unlock() }
     func releaseReservation() { lock.lock(); reservations -= 1; lock.unlock() }
     func access(_ convention: SwiftArgumentConvention) throws -> NativeValueStorage {
@@ -157,8 +165,10 @@ final class SwiftRuntimeValueOwner {
             self.lock.unlock()
         }, consume: {
             self.lock.lock()
-            storage.relinquishValue()
-            self.storage = nil
+            if self.storage === storage {
+                storage.relinquishValue()
+                self.storage = nil
+            }
             self.lock.unlock()
         })
         let result = NativeValueStorage(borrowing: storage.address, owner: access, retainingResourcesOf: storage,
@@ -166,6 +176,7 @@ final class SwiftRuntimeValueOwner {
         if convention == .consuming {
             result.suspendHookAccess = { access.suspend() }
             result.resumeHookAccess = { try access.resume() }
+            result.transferHookOwnership = { try self.transferStorage() }
         }
         return result
     }

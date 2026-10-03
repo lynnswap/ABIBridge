@@ -63,10 +63,8 @@ final class SwiftHookFrame {
                 let result: NativeValueStorage
                 do { result = try operation(storage) }
                 catch let completed as SwiftHookCompletedResultError {
-                    prepared.relinquishConsumed(storage)
                     throw completed.underlying
                 }
-                prepared.relinquishConsumed(storage)
                 return try prepared.decode(result, retaining: result, retainingCode: nil)
             }
             return try prepared.finishInvocation(outcome, storage: storage)
@@ -83,10 +81,8 @@ final class SwiftHookFrame {
                 let result: NativeValueStorage
                 do { result = try await operation(storage) }
                 catch let completed as SwiftHookCompletedResultError {
-                    prepared.relinquishConsumed(storage)
                     throw completed.underlying
                 }
-                prepared.relinquishConsumed(storage)
                 outcome = .success(try prepared.decode(result, retaining: result, retainingCode: nil))
             } catch { outcome = .failure(error) }
             return try prepared.finishInvocation(outcome, storage: storage)
@@ -558,6 +554,17 @@ final class SwiftHookSignature: @unchecked Sendable {
             }
         }
         return true
+    }
+
+    func receivingForwardedArguments(_ arguments: [NativeValueStorage]) throws -> [NativeValueStorage] {
+        try arguments.map { argument in
+            argument.suspendHookAccess?()
+            guard let transfer = argument.transferHookOwnership else { return argument }
+            let storage = try transfer()
+            let owner = SwiftRuntimeValueOwner(storage: storage)
+            storage.runtimeValueOwner = owner
+            return NativeValueStorage(borrowing: storage.address, owner: owner, retainingResourcesOf: storage)
+        }
     }
 
     func preservingReceiver(_ explicit: [NativeValueStorage], from incoming: [NativeValueStorage]) -> [NativeValueStorage] {
