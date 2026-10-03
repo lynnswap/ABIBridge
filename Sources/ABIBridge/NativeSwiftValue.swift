@@ -302,7 +302,7 @@ struct SwiftRuntimeValuePlan: Sendable {
         }
     }
 
-    func decode(_ storage: NativeValueStorage) throws -> NativeSwiftValue {
+    private func initializeResult(_ storage: NativeValueStorage) throws -> NativeSwiftType {
         if valueType.metadata is AnyClass, storage.address.load(as: UnsafeRawPointer?.self) == nil {
             throw ABIInvocationError.unexpectedNilResult(expected: valueType.name)
         }
@@ -312,7 +312,27 @@ struct SwiftRuntimeValuePlan: Sendable {
             ABISwiftDestroyValue(unsafeBitCast(retainedType.metadata, to: UnsafeRawPointer.self), $0)
         }
         normalizeCallbackArgument(storage)
-        return NativeSwiftValue(storage: storage, type: retainedType)
+        return retainedType
+    }
+
+    func decode(_ storage: NativeValueStorage) throws -> NativeSwiftValue {
+        NativeSwiftValue(storage: storage, type: try initializeResult(storage))
+    }
+
+    func withBorrowedResult<Output: ~Copyable>(_ storage: NativeValueStorage,
+        _ body: (NativeSwiftBorrowedValue) throws -> Output) throws -> Output {
+        let type = try initializeResult(storage)
+        let borrow = SwiftValueBorrow(UnsafeRawPointer(storage.address))
+        defer { borrow.expire(); storage.destroyInitializedValue() }
+        return try body(NativeSwiftBorrowedValue(type: type, borrow: borrow))
+    }
+
+    nonisolated(nonsending) func withBorrowedResult<Output: ~Copyable>(_ storage: NativeValueStorage,
+        _ body: (NativeSwiftBorrowedValue) async throws -> Output) async throws -> Output {
+        let type = try initializeResult(storage)
+        let borrow = SwiftValueBorrow(UnsafeRawPointer(storage.address), allowsSuspension: true)
+        defer { borrow.expire(); storage.destroyInitializedValue() }
+        return try await body(NativeSwiftBorrowedValue(type: type, borrow: borrow))
     }
 
     func encode(_ value: Any, convention: SwiftArgumentConvention, asynchronous: Bool) throws -> NativeValueStorage {

@@ -45,13 +45,25 @@ final class SwiftCall: Sendable {
         didInvoke: (() -> Void)? = nil, implementation: SwiftImplementation? = nil,
         _ values: repeat each Argument
     ) throws -> Result {
-        try unsafe symbol.withUnsafeAddress { address in
-            try unsafe unsafeInvoke(
-                function: implementation?.function ?? ABIUnsafeFunctionAtAddress(address),
-                context: context, trailingValue: trailingValue, receiverStorage: receiverStorage, retaining: (owner ?? symbol, implementation),
-                retainingCode: (symbol.image, implementation, codeOwner), images: [symbol.image] + [implementation?.image].compactMap { $0 },
-                didInvoke: didInvoke, repeat each values
-            )
+        try self.values.requireIndependentResult()
+        return try unsafe invoke(symbol: symbol, context: context, trailingValue: trailingValue, receiverStorage: receiverStorage,
+            retaining: owner, retainingCode: codeOwner, didInvoke: didInvoke, implementation: implementation, repeat each values) { output, owner, codeOwner in
+            try self.values.decode(output, retaining: owner, retainingCode: codeOwner)
+        }
+    }
+
+    @unsafe func unsafeInvoke<Result: ~Copyable, each Argument>(
+        symbol: ResolvedSymbol, context: UnsafeRawPointer? = nil,
+        trailingValue: NativeValueStorage? = nil, receiverStorage: NativeValueStorage? = nil, retaining owner: Any? = nil,
+        retainingCode codeOwner: Any? = nil,
+        didInvoke: (() -> Void)? = nil, implementation: SwiftImplementation? = nil,
+        _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) throws -> Result
+    ) throws -> Result {
+        let result = try self.values.scopedResult()
+        return try unsafe invoke(symbol: symbol, context: context, trailingValue: trailingValue, receiverStorage: receiverStorage,
+            retaining: owner, retainingCode: codeOwner, didInvoke: didInvoke, implementation: implementation, repeat each values) { output, _, _ in
+            try result.withBorrowedResult(output, body)
         }
     }
 
@@ -60,6 +72,52 @@ final class SwiftCall: Sendable {
         trailingValue: NativeValueStorage? = nil, receiverStorage: NativeValueStorage? = nil, retaining owner: Any?,
         retainingCode codeOwner: Any? = nil, images: [NativeImage] = [],
         didInvoke: (() -> Void)? = nil, _ values: repeat each Argument
+    ) throws -> Result {
+        try self.values.requireIndependentResult()
+        return try unsafe invoke(function: function, context: context, trailingValue: trailingValue, receiverStorage: receiverStorage,
+            retaining: owner, retainingCode: codeOwner, images: images, didInvoke: didInvoke, repeat each values) { output, owner, codeOwner in
+            try self.values.decode(output, retaining: owner, retainingCode: codeOwner)
+        }
+    }
+
+    @unsafe func unsafeInvoke<Result: ~Copyable, each Argument>(
+        function: ABIUnmanagedFunction, context: UnsafeRawPointer? = nil,
+        trailingValue: NativeValueStorage? = nil, receiverStorage: NativeValueStorage? = nil, retaining owner: Any?,
+        retainingCode codeOwner: Any? = nil, images: [NativeImage] = [],
+        didInvoke: (() -> Void)? = nil, _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) throws -> Result
+    ) throws -> Result {
+        let result = try self.values.scopedResult()
+        return try unsafe invoke(function: function, context: context, trailingValue: trailingValue, receiverStorage: receiverStorage,
+            retaining: owner, retainingCode: codeOwner, images: images, didInvoke: didInvoke, repeat each values) { output, _, _ in
+            try result.withBorrowedResult(output, body)
+        }
+    }
+
+    @unsafe func invoke<Result: ~Copyable, each Argument>(
+        symbol: ResolvedSymbol, context: UnsafeRawPointer? = nil,
+        trailingValue: NativeValueStorage? = nil, receiverStorage: NativeValueStorage? = nil, retaining owner: Any? = nil,
+        retainingCode codeOwner: Any? = nil,
+        didInvoke: (() -> Void)? = nil, implementation: SwiftImplementation? = nil,
+        _ values: repeat each Argument,
+        processingResult: (NativeValueStorage, Any?, Any?) throws -> Result
+    ) throws -> Result {
+        try unsafe symbol.withUnsafeAddress { address in
+            try unsafe invoke(
+                function: implementation?.function ?? ABIUnsafeFunctionAtAddress(address),
+                context: context, trailingValue: trailingValue, receiverStorage: receiverStorage, retaining: (owner ?? symbol, implementation),
+                retainingCode: (symbol.image, implementation, codeOwner), images: [symbol.image] + [implementation?.image].compactMap { $0 },
+                didInvoke: didInvoke, repeat each values, processingResult: processingResult
+            )
+        }
+    }
+
+    @unsafe func invoke<Result: ~Copyable, each Argument>(
+        function: ABIUnmanagedFunction, context: UnsafeRawPointer? = nil,
+        trailingValue: NativeValueStorage? = nil, receiverStorage: NativeValueStorage? = nil, retaining owner: Any?,
+        retainingCode codeOwner: Any? = nil, images: [NativeImage] = [],
+        didInvoke: (() -> Void)? = nil, _ values: repeat each Argument,
+        processingResult: (NativeValueStorage, Any?, Any?) throws -> Result
     ) throws -> Result {
         precondition(hasTrailingValue == (trailingValue != nil))
         let logicalStorage = try self.values.encode(repeat each values, retainingCode: (codeOwner, generic, closure))
@@ -101,7 +159,7 @@ final class SwiftCall: Sendable {
                 if didThrow, let errorPlan, let nativeError {
                     throw NativeSwiftError(try errorPlan.decode(nativeError), retainingCode: codeOwners)
                 }
-                return try self.values.decode(output, retaining: owner, retainingCode: codeOwners)
+                return try processingResult(output, owner, codeOwners)
             }
             return try self.values.finishInvocation(outcome, storage: logicalStorage)
         }

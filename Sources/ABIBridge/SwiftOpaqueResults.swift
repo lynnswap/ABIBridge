@@ -10,12 +10,11 @@ final class SwiftOpaqueResultPlan: Sendable {
             : CValueType(indirectSwiftSize: layout.size, alignment: layout.alignment)
         value = try SwiftRuntimeValuePlan(metadata: metadata, type: type, resolver: resolver,
                                          retaining: owners.map(\.image))
-        try value.requireOwnedValue()
     }
 
     static func make(for result: Any.Type, symbol: ResolvedSymbol,
                      resolver: SymbolResolver?) throws -> SwiftOpaqueResultPlan? {
-        guard result == NativeSwiftValue.self else { return nil }
+        guard result == NativeSwiftValue.self || result == NativeSwiftBorrowedValue.self else { return nil }
         guard let origin = DeclarationKey.demangle(symbol.linkageName, language: .swift) else {
             throw ABIResolutionError.metadataUnavailable("The matched opaque declaration is unavailable.")
         }
@@ -225,6 +224,7 @@ final class SwiftOpaqueResultPlan: Sendable {
 
 struct SwiftResultCodec<Value>: Sendable {
     let type: CValueType
+    let scoped: SwiftRuntimeValuePlan?
     private let ordinary: SwiftValueCodec<Value>?
     private let opaque: SwiftOpaqueResultPlan?
     private let genericValue: Bool
@@ -239,17 +239,19 @@ struct SwiftResultCodec<Value>: Sendable {
             tuple = plan
         } else { tuple = nil }
         if case .runtimeValue(let plan) = generic {
-            try plan.requireOwnedValue(as: Value.self)
+            if Value.self != NativeSwiftBorrowedValue.self { try plan.requireOwnedValue(as: Value.self) }
             runtimeValue = plan
         } else { runtimeValue = nil }
         if case .closure(let codec) = generic { closure = codec } else { closure = nil }
         if case .value = generic { genericValue = true } else { genericValue = false }
+        scoped = Value.self == NativeSwiftBorrowedValue.self ? runtimeValue ?? opaque?.value : nil
         if let genericType = generic.type {
             type = genericType
             ordinary = nil; self.opaque = nil
             return
         }
         if let opaque {
+            if scoped == nil { try opaque.value.requireOwnedValue(as: Value.self) }
             self.opaque = opaque
             ordinary = nil
             type = opaque.type
