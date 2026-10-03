@@ -84,9 +84,12 @@ public final class NativeObjCMethodHook: @unchecked Sendable {
         let declaration = objcMethodDeclaration(on: type, selector: selector, classMethod: classMethod)
         var error: NSError?
         let sel = NSSelectorFromString(selector)
-        guard let binding = ABICopyObjCImplementation(type, sel, classMethod,
-            options.returnsRetainedObject.map { $0 ? 1 : 0 } ?? -1,
-            options.consumesReceiver.map { $0 ? 1 : 0 } ?? -1, &error) else {
+        let binding = options.withConsumedArguments { consumed in
+            ABICopyObjCImplementation(type, sel, classMethod,
+                options.returnsRetainedObject.map { $0 ? 1 : 0 } ?? -1,
+                options.consumesReceiver.map { $0 ? 1 : 0 } ?? -1, consumed.baseAddress, consumed.count, &error)
+        }
+        guard let binding else {
             if ABIObjCMethodHookIsDisplaced(type, sel, classMethod) {
                 throw NativeObjCMethodHookError.displaced
             }

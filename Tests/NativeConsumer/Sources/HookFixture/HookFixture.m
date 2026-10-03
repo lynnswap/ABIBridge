@@ -14,6 +14,7 @@ static atomic_long results;
 }
 - (int32_t)add:(int32_t)a to:(int32_t)b { _calls++; return a + b; }
 - (ABIHookPair)shift:(ABIHookPair)value { return (ABIHookPair){value.x + 1, value.y + 2}; }
+- (int32_t)consume:(ABINativeHookResult *)value { _calls++; return value ? 1 : 0; }
 - (ABINativeHookResult *)copyObject { return [ABINativeHookResult new]; }
 - (int32_t (^)(int32_t))block { return ^(int32_t value) { return value + 1; }; }
 - (NSObject *)ordinaryValue { return self; }
@@ -80,3 +81,11 @@ ABIObjCMethodHook *ABIHookFixtureInstallInitializer(void *context, void (*event)
 }
 
 ABIHookPair ABIHookFixtureShift(void *object, ABIHookPair value) { return [(__bridge ABINativeHookFixture *)object shift:value]; }
+
+int32_t ABIHookFixtureConsume(void *object) {
+    @autoreleasepool {
+        ABINativeHookResult *value = [ABINativeHookResult new];
+        return [(__bridge ABINativeHookFixture *)object consume:value];
+    }
+}
+int32_t ABIHookFixtureLiveResults(void) { return (int32_t)ABINativeHookResult.liveObjects; }

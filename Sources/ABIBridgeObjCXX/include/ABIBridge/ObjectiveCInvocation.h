@@ -17,6 +17,8 @@ FOUNDATION_EXPORT NSErrorDomain const ABIObjCInvocationErrorDomain;
 /// Parameter encodings exclude self and _cmd. Ownership overrides use -1 to
 /// infer the method-family convention, 0 for borrowed, and 1 for retained or
 /// consumed respectively. Runtime encodings cannot reveal ownership attributes.
+/// consumedParameters contains zero-based explicit argument indexes and is copied
+/// during preparation. Pass NULL and zero for ordinary borrowed parameters.
 /// A successful handle owns its receiver and any discoverable code image.
 /// Forwarded-only selectors cannot be bound to a concrete IMP.
 /// Missing declarations report ABIFailureDeclarationNotFound; forwarded-only
@@ -25,7 +27,9 @@ FOUNDATION_EXPORT NSErrorDomain const ABIObjCInvocationErrorDomain;
 FOUNDATION_EXPORT ABIObjCMethod * _Nullable ABICopyObjCMethod(
     id receiver, SEL selector, const char *resultType,
     const char * _Nonnull const * _Nullable parameterTypes, size_t parameterCount,
-    int32_t returnsRetained, int32_t consumesReceiver, NSError * _Nullable * _Nullable error);
+    int32_t returnsRetained, int32_t consumesReceiver,
+    const size_t * _Nullable consumedParameters, size_t consumedParameterCount,
+    NSError * _Nullable * _Nullable error);
 
 /// Releases the receiver before releasing its implementation image.
 FOUNDATION_EXPORT void ABIReleaseObjCMethod(ABIObjCMethod *method);
@@ -40,6 +44,9 @@ FOUNDATION_EXPORT IMP ABIObjCMethodImplementation(const ABIObjCMethod *method);
 FOUNDATION_EXPORT BOOL ABIObjCMethodReturnsRetained(const ABIObjCMethod *method);
 /// Whether the target consumes an ownership reference to self.
 FOUNDATION_EXPORT BOOL ABIObjCMethodConsumesReceiver(const ABIObjCMethod *method);
+/// Whether an explicit parameter transfers an additional reference to the callee.
+/// The index must be within the signature supplied during preparation.
+FOUNDATION_EXPORT BOOL ABIObjCMethodConsumesParameter(const ABIObjCMethod *method, size_t index);
 
 /// Copies ownership of the captured implementation without retaining the bound receiver.
 /// The handle retains its class and discoverable implementation images.
@@ -60,5 +67,6 @@ FOUNDATION_EXPORT SEL ABIObjCImplementationSelector(const ABIObjCImplementation 
 FOUNDATION_EXPORT IMP ABIObjCImplementationIMP(const ABIObjCImplementation *implementation);
 FOUNDATION_EXPORT BOOL ABIObjCImplementationReturnsRetained(const ABIObjCImplementation *implementation);
 FOUNDATION_EXPORT BOOL ABIObjCImplementationConsumesReceiver(const ABIObjCImplementation *implementation);
+FOUNDATION_EXPORT BOOL ABIObjCImplementationConsumesParameter(const ABIObjCImplementation *implementation, size_t index);
 
 NS_ASSUME_NONNULL_END

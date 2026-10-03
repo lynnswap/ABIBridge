@@ -26,7 +26,7 @@ let add = try await runtime.cxxFunction(
 let sum = try unsafe add.unsafeInvoke(20, 22)
 ```
 
-The complete demangled C++ declaration selects an overload without a mangled symbol string. The function must use C-compatible parameter and result representations. Member receivers, references, and nontrivial C++ ownership require an adapter.
+The complete demangled C++ declaration selects an overload without a mangled symbol string. The function must use C-compatible parameter and result representations. Use <doc:CXXObjectInvocation> for member receivers. Reference parameters use an address with the declared access and lifetime contract. Nontrivial by-value parameters and results require a compiler adapter because their construction, destruction, and call lowering are not established by the symbol name.
 
 ## Match native representations
 
@@ -39,7 +39,7 @@ The Swift function type describes the native ABI. A C linker name has no type in
 | Pointer-sized signed/unsigned integer | `Int`/`UInt` |
 | Float/double | `Float`/`Double` |
 | CoreGraphics floating point | `CGFloat` |
-| Pointer | Swift pointer types or `OpaquePointer`, optionally wrapped in `Optional` |
+| Pointer | Swift pointer types, `OpaquePointer`, or `Unmanaged<T>`, optionally wrapped in `Optional` |
 | Objective-C selector pointer | `Selector` |
 | Imported standard structures | `CGPoint`, `CGSize`, `CGRect`, `NSRange` |
 | Void result | `Void` |
@@ -67,3 +67,17 @@ if let image = images.first {
 Pointer arguments and results remain borrowed. Keep pointees alive and satisfy the native function's access and ownership requirements. A null return maps to an optional pointer or throws ``ABIInvocationError/unexpectedNilResult(expected:)`` for a nonoptional pointer type.
 
 Handles are Sendable and can reuse their immutable signatures concurrently. Every call has separate argument and result storage, but the native function and supplied memory still determine whether concurrent invocation is valid. Call a thread-bound function on its required thread. Native C++ and Objective-C exceptions must not cross this invocation boundary.
+
+## Express Core Foundation ownership
+
+Use `Unmanaged<T>` for a native reference represented by a pointer. For example, a provider's `ExampleCopyValue` returning `CFTypeRef` at +1 can be called as follows:
+
+```swift
+let copy = try await runtime.cFunction(
+    named: "ExampleCopyValue",
+    as: ((Unmanaged<CFString>) -> Unmanaged<CFString>).self
+)
+let result = try unsafe copy.unsafeInvoke(.passUnretained(input)).takeRetainedValue()
+```
+
+The provider's contract determines whether the result is retained. Use `takeUnretainedValue()` for a borrowed result and keep its native owner alive. These operations are Swift's standard manual ownership operations; the bridge only passes pointer bits. A consumed input uses `passRetained`, and its reference transfers when native code enters. If a call fails before entry, release that reference yourself. Complete other fallible argument conversions before creating such a reference, or use a compiler adapter when the operation needs a single ownership and error boundary.

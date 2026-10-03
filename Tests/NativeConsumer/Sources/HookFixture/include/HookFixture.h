@@ -13,6 +13,7 @@ typedef struct ABIHookPair { double x, y; } ABIHookPair;
 - (nullable instancetype)initWithSeed:(int32_t)seed;
 - (int32_t)add:(int32_t)a to:(int32_t)b;
 - (ABINativeHookResult *)copyObject;
+- (int32_t)consume:(ABINativeHookResult * NS_RELEASES_ARGUMENT)value;
 - (ABIHookPair)shift:(ABIHookPair)value;
 - (int32_t (^)(int32_t))block;
 - (NSObject *)ordinaryValue;
@@ -31,6 +32,8 @@ int32_t ABIHookFixtureAdd(void *object, int32_t a, int32_t b);
 int32_t ABIHookFixtureSeed(void *object);
 void ABIHookFixtureSetSeed(void *object, int32_t seed);
 int32_t ABIHookFixtureCalls(void *object);
+int32_t ABIHookFixtureConsume(void *object);
+int32_t ABIHookFixtureLiveResults(void);
 ABIHookPair ABIHookFixtureShift(void *object, ABIHookPair value);
 #ifdef __cplusplus
 }
