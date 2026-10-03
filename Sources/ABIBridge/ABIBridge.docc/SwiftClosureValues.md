@@ -61,6 +61,8 @@ let text = try value.take(as: String.self)
 
 The returned closure can be passed back through a resolved callback declaration with matching native value types. Its original native parameter layout is retained, including parameter packs; a new caller's lowering is adapted before forwarding. `NativeSwiftValue` bound as the actual native generic type remains an ordinary class reference, distinct from a handle used to represent another native type.
 
+Nongeneric functions and members use the same declaration planning. For a free function whose callback contains erased runtime values, supply its complete native declaration, such as `Example.makeCopy() -> (Swift.String) -> Swift.String`; no generic argument is needed. Member lookup can bind the requested signature against the retained type's declarations.
+
 A host callback can return `NativeSwiftValue` to a native caller whose callback type uses `throws(any Error)`. Successful conversion moves the native payload out of the returned handle, including noncopyable values. Return `try value.copy()` when the handle must remain usable. A wrong type, consumed handle, or conflicting access throws through the native error channel; a failed transfer leaves the value in its existing owner. The same contract applies after an async body suspends. Native code can catch the conversion error directly; a subsequent bridge invocation surfaces it in `NativeSwiftError`.
 
 For `func produce<Value: ~Copyable>(_ body: () throws -> Value) rethrows -> Value`, a runtime-only value uses the ordinary closure type:

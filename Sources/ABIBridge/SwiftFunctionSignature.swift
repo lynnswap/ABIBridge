@@ -68,6 +68,29 @@ struct SwiftFunctionSignature: Sendable {
         return try SwiftErrorPlan.make(error, genericType: genericType)
     }
 
+    var requiresRuntimeClosurePlan: Bool {
+        get throws {
+            func containsRuntimeValue(_ type: Any.Type) throws -> Bool {
+                if type == NativeSwiftValue.self || type == NativeSwiftBorrowedValue.self { return true }
+                if let convention = type as? any SwiftConventionArgument.Type {
+                    return try containsRuntimeValue(convention.wrappedType)
+                }
+                if let closure = type as? any SwiftGenericClosureValue.Type {
+                    let signature = try SwiftFunctionSignature(closure.swiftFunctionType)
+                    return try (signature.parameters + [signature.result]).contains { try containsRuntimeValue($0) }
+                }
+                if let tuple = SwiftTupleMetadata(type) {
+                    return try tuple.elements.contains { try containsRuntimeValue($0.type) }
+                }
+                return false
+            }
+            return try (parameters + [result]).contains { type in
+                guard type is any SwiftGenericClosureValue.Type else { return false }
+                return try containsRuntimeValue(type)
+            }
+        }
+    }
+
     func closureDiscriminator() throws -> UInt16 {
         var parameters = isAsync && inheritsCallerIsolation ? ["-class"] : []
         for type in self.parameters {

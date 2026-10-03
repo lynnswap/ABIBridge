@@ -44,6 +44,37 @@ private struct RuntimeRejectedArgument: ABIBridgeValue {
 }
 
 @Suite struct SwiftRuntimeValueTests {
+    @Test func nongenericRuntimeClosuresUseNativeValuePlansAcrossFunctionsAndMembers() async throws {
+        let runtime = ABIRuntime.shared
+        typealias Copy = NativeSwiftClosure<(NativeSwiftValue) -> NativeSwiftValue>
+        let make = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeConcreteRuntimeCopy() -> (Swift.String) -> Swift.String", as: (() -> Copy).self)
+        let sourceFactory = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeProducer<A>(A) -> () -> A",
+            as: ((String) -> NativeSwiftClosure<() -> NativeSwiftValue>).self, genericArguments: [.type(String.self)])
+        let input = try unsafe sourceFactory.unsafeInvoke("concrete").unsafeInvoke()
+        let callback = try unsafe make.unsafeInvoke()
+        #expect(try unsafe callback.unsafeInvoke(input).take(as: String.self) == "concrete!")
+        typealias HostCopy = NativeSwiftClosure<(NativeSwiftValue) throws -> NativeSwiftValue>
+        let apply = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.applyConcreteRuntimeCopy((Swift.String) throws -> Swift.String, Swift.String) throws -> Swift.String",
+            as: ((HostCopy, String) throws -> String).self)
+        let identity = try HostCopy { $0 }
+        #expect(try unsafe apply.unsafeInvoke(identity, "native") == "native")
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeCallbackHost", as: RuntimeCallbackHost.self)
+        let imageApply = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.applyConcreteRuntimeCopy((Swift.String) throws -> Swift.String, Swift.String) throws -> Swift.String",
+            as: ((HostCopy, String) throws -> String).self, in: type.image)
+        #expect(try unsafe imageApply.unsafeInvoke(identity, "image") == "image")
+        let host = RuntimeCallbackHost()
+        let method = try await type.method(named: "copy()", as: (() -> Copy).self)
+        let methodCopy = try unsafe method.unsafeInvoke(on: host)
+        #expect(try unsafe methodCopy.unsafeInvoke(input).take(as: String.self) == "concrete!")
+        let getter = try await type.getter(named: "copier", as: (() -> Copy).self)
+        #expect(try unsafe getter.unsafeInvoke(on: host).unsafeInvoke(input).take(as: String.self) == "concrete!")
+        let applyMethod = try await type.method(named: "apply(_:_:)", as: ((HostCopy, String) throws -> String).self)
+        #expect(try unsafe applyMethod.unsafeInvoke(on: host, identity, "method") == "method")
+    }
+
     @Test func hostRuntimeCallbackResultsMoveValuesAndReportConversionFailures() async throws {
         let runtime = ABIRuntime.shared
         let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",

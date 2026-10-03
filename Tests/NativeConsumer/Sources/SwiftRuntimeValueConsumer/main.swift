@@ -152,3 +152,12 @@ do {
     guard error.withUnderlyingError({ ($0 as? NativeSwiftValueError) == .consumedValue }) else { throw error }
 }
 print("Host callbacks transfer runtime-only noncopyable results and preserve native conversion errors")
+
+let makeConcrete = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.makeConcreteRuntimeCopy() -> (Swift.String) -> Swift.String",
+    as: (() -> NativeSwiftClosure<(NativeSwiftValue) -> NativeSwiftValue>).self, in: source)
+let concrete = try unsafe makeConcrete.unsafeInvoke()
+guard try unsafe concrete.unsafeInvoke(produced).take(as: String.self) == "returned closure!" else {
+    throw ConsumerError.wrongResult
+}
+print("Nongeneric returned closures use their native value declaration without generic arguments")

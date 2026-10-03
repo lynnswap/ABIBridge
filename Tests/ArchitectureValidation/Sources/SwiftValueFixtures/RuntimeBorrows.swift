@@ -41,6 +41,8 @@ public func referenceProducedString(_ value: String) -> String { produceGeneric 
 
 @inline(never) public func callRuntimeCallbackCopy<Value>(_ body: (Value) -> Value, _ value: Value) -> Value { body(value) }
 
+@inline(never) public func makeConcreteRuntimeCallback() -> (String) -> String { { $0 + "!" } }
+
 @inline(never) public func callRuntimeCallbackResult<Value>(_ body: (Value) throws -> Value, _ value: Value) rethrows -> Value { try body(value) }
 
 @inline(never) public nonisolated(nonsending) func callRuntimeAsyncCallbackResult<Value>(

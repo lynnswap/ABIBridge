@@ -179,6 +179,19 @@ public func referenceRuntimeRecord(_ object: AnyObject, _ text: String, _ cancel
     try body()
 }
 
+@inline(never) public func makeConcreteRuntimeCopy() -> (String) -> String { { $0 + "!" } }
+
+@inline(never) public func applyConcreteRuntimeCopy(_ body: (String) throws -> String, _ value: String) rethrows -> String {
+    try body(value)
+}
+
+public final class RuntimeCallbackHost {
+    public init() {}
+    @inline(never) public func copy() -> (String) -> String { makeConcreteRuntimeCopy() }
+    @inline(never) public func apply(_ body: (String) throws -> String, _ value: String) rethrows -> String { try body(value) }
+    public var copier: (String) -> String { makeConcreteRuntimeCopy() }
+}
+
 @inline(never) public func callRuntimeThrowingCopy<Value>(_ body: (Value) throws -> Value, _ value: Value) rethrows -> Value {
     try body(value)
 }

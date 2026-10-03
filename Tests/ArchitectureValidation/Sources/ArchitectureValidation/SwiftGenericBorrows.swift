@@ -176,6 +176,11 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     let copy = try unsafe make.unsafeInvoke("returned")
     let result = try unsafe copy.unsafeInvoke(value)
     try check(result.take(as: String.self) == "returned", "Returned runtime closure authenticates native arguments and owned results")
+    let makeConcrete = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.makeConcreteRuntimeCallback() -> (Swift.String) -> Swift.String", as: (() -> Copy).self)
+    let concrete = try unsafe makeConcrete.unsafeInvoke()
+    try check(unsafe concrete.unsafeInvoke(value).take(as: String.self) == "runtime!",
+        "Nongeneric returned runtime closure preserves its concrete authenticated value ABI")
     let apply = try await runtime.swiftFunction(named: "SwiftValueFixtures.callRuntimeCallbackCopy<A>((A) -> A, A) -> A",
         as: ((Copy, NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: [.type(value.type)])
     let passedBack = try unsafe apply.unsafeInvoke(copy, value)
