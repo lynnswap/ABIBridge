@@ -37,7 +37,6 @@ Use the native declaration's calling convention to select a representation. Buil
 
 - <doc:BorrowedSwiftValues>
 - ``NativeSwiftBorrowedValue``
-- ``NativeSwiftBorrowingClosure``
 - ``NativeSwiftBorrowError``
 
 ## See Also

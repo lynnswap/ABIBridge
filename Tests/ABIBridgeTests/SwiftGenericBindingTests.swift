@@ -56,13 +56,13 @@ struct SwiftGenericBindingTests {
             as: ((NativeSwiftBorrowedValue) -> Int64).self,
             genericArguments: [.type(type)], in: .path(fixture.libraryURL))
         let copied = RuntimeBorrowCopy()
-        let callback = try NativeSwiftBorrowingClosure<Void>(borrowing: type) {
+        let callback = try NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Void> {
             do { #expect(try unsafe inspect.unsafeInvoke($0) == 42) }
             catch { Issue.record(error) }
             copied.accept($0)
         }
         let visit = try await runtime.swiftFunction(named: module + ".visit((" + module + ".View) -> ()) -> ()",
-            as: ((NativeSwiftBorrowingClosure<Void>) -> Void).self, in: .path(fixture.libraryURL))
+            as: ((NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Void>) -> Void).self, valueABIs: [type: .opaque(named: type.name)], in: .path(fixture.libraryURL))
         try unsafe visit.unsafeInvoke(callback)
         do {
             _ = try copied.take()
@@ -246,9 +246,9 @@ struct SwiftGenericBindingTests {
                 return binding
             case .borrowedCallback:
                 let copied = RuntimeBorrowCopy()
-                let callback = try NativeSwiftBorrowingClosure<Void>(borrowing: binding.type) { copied.accept($0) }
+                let callback = try NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Void> { copied.accept($0) }
                 let visit = try await runtime.swiftFunction(named: module + "Second.visit((" + module + ".Record) -> ()) -> ()",
-                    as: ((NativeSwiftBorrowingClosure<Void>) -> Void).self, in: .path(second.libraryURL))
+                    as: ((NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Void>) -> Void).self, valueABIs: [binding.type: .opaque(named: binding.type.name)], in: .path(second.libraryURL))
                 argumentLease = visit.symbol.image.lease
                 try unsafe visit.unsafeInvoke(callback)
                 return try copied.take()

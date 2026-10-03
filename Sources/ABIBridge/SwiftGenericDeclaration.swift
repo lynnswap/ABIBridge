@@ -110,6 +110,7 @@ indirect enum SwiftFormalType: Sendable, Equatable {
     case named(String, [SwiftFormalType])
     case nominal(String, [SwiftFormalType])
     case objectiveCClass(String)
+    case opaqueResult
     case nested(SwiftFormalType, String, [SwiftFormalType])
     case reference(SwiftNominalDescriptor, [SwiftFormalType])
     case associated(SwiftFormalType, String, protocolName: String? = nil)
@@ -126,6 +127,7 @@ indirect enum SwiftFormalType: Sendable, Equatable {
 
     init(_ source: String) throws {
         var text = source.trimmingCharacters(in: .whitespaces)
+        if text == "some" { self = .opaqueResult; return }
         // Labels are outside the type grammar, including labeled tuple fields.
         if let colon = SwiftFormalSyntax.topLevelColon(in: text) {
             text = text[text.index(after: colon)...].trimmingCharacters(in: .whitespaces)
@@ -232,6 +234,7 @@ indirect enum SwiftFormalType: Sendable, Equatable {
         case .named(let name, let arguments), .nominal(let name, let arguments):
             name + (arguments.isEmpty ? "" : "<" + arguments.map(\.spelling).joined(separator: ", ") + ">")
         case .objectiveCClass(let name): name
+        case .opaqueResult: "some"
         case .reference(let descriptor, let arguments):
             descriptor.name + (arguments.isEmpty ? "" : "<" + arguments.map(\.spelling).joined(separator: ", ") + ">")
         case .nested(let parent, let name, let arguments):

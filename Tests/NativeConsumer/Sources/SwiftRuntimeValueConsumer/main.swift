@@ -16,7 +16,7 @@ private struct Prepared {
     let type: NativeSwiftType
     let text: NativeSwiftMethod<() -> String>
     let cancel: NativeSwiftMethod<() -> Void>
-    let run: NativeSwiftFunction<(NativeSwiftClosure<() -> Bool>, AnyObject, String, UnsafeMutablePointer<Int32>, NativeSwiftBorrowingClosure<Void>) -> Bool>
+    let run: NativeSwiftFunction<(NativeSwiftClosure<() -> Bool>, AnyObject, String, UnsafeMutablePointer<Int32>, NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Void>) -> Bool>
     let reference: NativeSwiftFunction<(AnyObject, String, UnsafeMutablePointer<Int32>) -> String>
 }
 
@@ -31,8 +31,8 @@ private struct Prepared {
         cancel: type.method(named: "cancel()", as: (() -> Void).self, receiverABI: .opaque(named: type.name)),
         run: runtime.swiftFunction(
             named: "ManagedSwiftFixtures.runAndVisitGeneric<A>(() -> A, Swift.AnyObject, Swift.String, Swift.UnsafeMutablePointer<Swift.Int32>, (ManagedSwiftFixtures.RuntimeRecord) -> ()) -> A",
-            as: ((NativeSwiftClosure<() -> Bool>, AnyObject, String, UnsafeMutablePointer<Int32>, NativeSwiftBorrowingClosure<Void>) -> Bool).self,
-            genericArguments: [.type(Bool.self)], in: scope),
+            as: ((NativeSwiftClosure<() -> Bool>, AnyObject, String, UnsafeMutablePointer<Int32>, NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Void>) -> Bool).self,
+            genericArguments: [.type(Bool.self)], valueABIs: [type: .opaque(named: type.name)], in: scope),
         reference: runtime.swiftFunction(named: "ManagedSwiftFixtures.referenceRuntimeRecord(_:_:_:)",
             as: ((AnyObject, String, UnsafeMutablePointer<Int32>) -> String).self, in: scope))
 }
@@ -41,7 +41,7 @@ private let prepared = try await prepare(CommandLine.arguments[1])
 // The provider's concrete type is not imported. Preparation's runtime and
 // original loader reference have ended; the public handles retain their images.
 private let state = State()
-let callback = try NativeSwiftBorrowingClosure(borrowing: prepared.type) { value in
+let callback = try NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Void> { value in
     do {
         state.text += try unsafe prepared.text.unsafeInvoke(on: value)
         try unsafe prepared.cancel.unsafeInvoke(on: value)
@@ -271,3 +271,25 @@ guard try unsafe state.closure!.unsafeInvoke(0) == 42, state.text == "live" else
 state.closure = nil
 guard state.text == "destroyed" else { throw ConsumerError.wrongResult }
 print("Consuming nested closure inputs remain callable after delivery and release captures exactly once")
+
+
+let pairType = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair", in: source)
+let pairABI = try NativeType.structure(named: pairType.name, fields: [.int64, .int64])
+let pairABIs = [pairType: pairABI]
+let makePair = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.makeRuntimeFixedPair(Swift.Int64, Swift.Int64) -> ManagedSwiftFixtures.RuntimeFixedPair",
+    as: ((Int64, Int64) -> NativeSwiftValue).self, valueABIs: pairABIs, in: source)
+let pair = try unsafe makePair.unsafeInvoke(35, 7)
+let sumPair = try await pairType.method(named: "sum()", as: (() -> Int64).self, receiverABI: pairABI)
+typealias PairBody = NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Int64>
+let inspectPair = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.inspectRuntimeFixedPair(ManagedSwiftFixtures.RuntimeFixedPair, (ManagedSwiftFixtures.RuntimeFixedPair) -> Swift.Int64) -> Swift.Int64",
+    as: ((NativeSwiftValue, PairBody) -> Int64).self, valueABIs: pairABIs, in: source)
+state.error = nil
+let pairBody = try PairBody { value in
+    do { return try unsafe sumPair.unsafeInvoke(on: value) }
+    catch { state.error = error; return -1 }
+}
+guard try unsafe inspectPair.unsafeInvoke(pair, pairBody) == 42, pairABIs[pair.type] == pairABI else { throw ConsumerError.wrongResult }
+if let error = state.error { throw error }
+print("Explicit fixed Swift components compose runtime-only values and callbacks without importing their type")

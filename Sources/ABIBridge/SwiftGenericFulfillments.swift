@@ -94,7 +94,7 @@ extension SwiftGenericBinding {
 extension SwiftFormalType {
     func substituting(_ substitutions: [String: Self]) -> Self {
         switch self {
-        case .objectiveCClass: return self
+        case .objectiveCClass, .opaqueResult: return self
         case .named(let name, let arguments):
             if arguments.isEmpty {
                 if let value = substitutions[name] { return value }

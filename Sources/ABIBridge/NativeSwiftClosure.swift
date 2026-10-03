@@ -10,42 +10,12 @@ final class SwiftClosureCodeOwner {
     }
 }
 
-final class SwiftClosureBody {
-    let codeOwner: SwiftClosureCodeOwner?
-    let invoke: (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer) -> Void
-    init(retainingCode codeOwner: Any? = nil, codeLifetime: SwiftValueCodeLifetime? = nil,
-         _ invoke: @escaping (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer) -> Void) {
-        self.codeOwner = SwiftClosureCodeOwner(codeOwner, codeLifetime: codeLifetime)
-        self.invoke = { arguments, result in
-            SwiftValueCodeLifetime.withCurrent(codeLifetime) { invoke(arguments, result) }
-        }
-    }
-}
-
 final class SwiftClosureCallbackOwner {
     let handle: OpaquePointer
     var function: ABIUnmanagedFunction { ABISwiftClosureCallbackFunction(handle)! }
 
     init(handle: OpaquePointer) { self.handle = handle }
 
-    init(interface: SwiftCallInterface, body: SwiftClosureBody) throws {
-        var functions = ABISwiftClosureCallbackFunctions()
-        functions.invoke = { context, arguments, result in
-            Unmanaged<SwiftClosureBody>.fromOpaque(context!).takeUnretainedValue().invoke(arguments, result!)
-        }
-        functions.releaseContext = { Unmanaged<SwiftClosureBody>.fromOpaque($0!).release() }
-        functions.copyCodeOwner = { context in
-            let owner = Unmanaged<SwiftClosureBody>.fromOpaque(context!).takeUnretainedValue().codeOwner
-            return owner.map { Unmanaged.passRetained($0).toOpaque() }
-        }
-        let context = Unmanaged.passRetained(body)
-        var failure: OpaquePointer?
-        guard let handle = ABICreateSwiftClosureCallback(interface.handle, functions, context.toOpaque(), &failure) else {
-            context.release()
-            throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftClosure")
-        }
-        self.handle = handle
-    }
     deinit { ABIReleaseSwiftClosureCallback(handle) }
 }
 
@@ -303,7 +273,7 @@ extension NativeSwiftClosure: SwiftClosureValue {
     }
 }
 
-extension NativeSwiftClosure: SwiftGenericClosureValue {
+extension NativeSwiftClosure {
     static func makeGenericClosureCodec(plan: SwiftGenericClosurePlan) throws -> SwiftClosureCodec {
         try makeClosureCodec(generic: plan)
     }

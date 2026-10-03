@@ -355,6 +355,29 @@ private func makeNestedPackAnswer<each Value>(_ values: repeat each Value) -> (r
 }
 
 public typealias OwnedNestedAsync<Value> = nonisolated(nonsending) (Value) async -> Value
+@frozen public struct RuntimeFixedPair {
+    public var first: Int64
+    public var second: Int64
+    public init(_ first: Int64, _ second: Int64) { self.first = first; self.second = second }
+    public func sum() -> Int64 { first + second }
+    public func inspect(_ body: (RuntimeFixedPair) -> Int64) -> Int64 { body(self) }
+}
+
+public final class RuntimeFixedPairStore {
+    public var value: RuntimeFixedPair
+    public init(_ value: RuntimeFixedPair) { self.value = value }
+    public static func echo(_ value: RuntimeFixedPair) -> RuntimeFixedPair { value }
+}
+
+@inline(never) public func makeRuntimeFixedPair(_ first: Int64, _ second: Int64) -> RuntimeFixedPair {
+    RuntimeFixedPair(first, second)
+}
+
+@inline(never) public func inspectRuntimeFixedPair(_ value: RuntimeFixedPair, _ body: (RuntimeFixedPair) -> Int64) -> Int64 {
+    body(value)
+}
+
+@inline(never) public func makeOpaqueUsingCallback(_ body: (Int64) -> Int64) -> some Equatable { body(41) }
 
 @inline(never) public nonisolated(nonsending) func visitOwnedNestedAsync<Value>(
     _ value: Value, _ onDestroy: @escaping () -> Void,

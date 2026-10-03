@@ -77,7 +77,7 @@ struct SwiftArgumentCodec<Value>: Sendable {
         case .ordinary(let codec): return try codec.encode(value)
         case .explicit(let codec): return try codec.encode(value, owner)
         case .genericClosure(let plan):
-            return try (value as! any SwiftGenericClosureValue).encodeGenericClosure(plan: plan, retainingCode: owner)
+            return try (value as! any SwiftClosureValue).encodeGenericClosure(plan: plan, retainingCode: owner)
         case .runtimeValue(let plan, let convention, let asynchronous):
             let access = try plan.encode(value, convention: convention, asynchronous: asynchronous)
             guard convention == .inoutValue else { return access }

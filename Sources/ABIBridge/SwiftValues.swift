@@ -1,5 +1,16 @@
 import ABIBridgeCore
 
+func explicitSwiftValueType(_ metadata: Any.Type, abi: NativeType) throws -> CValueType {
+    let layout = ABISwiftGetValueLayout(unsafeBitCast(metadata, to: UnsafeRawPointer.self))
+    if let components = abi.cType {
+        guard (layout.size...layout.stride).contains(components.size) else {
+            throw ABIResolutionError.unsupportedDeclaration("Swift ABI components must cover the native value without exceeding its stride.")
+        }
+        return try CValueType(swiftComponents: components, size: layout.size, alignment: layout.alignment)
+    }
+    return try CValueType(indirectSwiftSize: layout.size, alignment: layout.alignment)
+}
+
 // Array's frozen representation holds one buffer reference regardless of Element.
 protocol SwiftArrayValue {}
 extension Array: SwiftArrayValue {}

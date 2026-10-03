@@ -53,6 +53,52 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
 @Suite struct SwiftRuntimeValueTests {
 
+    @Test func explicitRuntimeValueABIsComposeAcrossCallbacksAndMembers() async throws {
+        let runtime = ABIRuntime.shared
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair")
+        let abi = try NativeType.structure(named: type.name, fields: [.int64, .int64])
+        let abis = [type: abi]
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeFixedPair(Swift.Int64, Swift.Int64) -> ManagedSwiftFixtures.RuntimeFixedPair",
+            as: ((Int64, Int64) -> NativeSwiftValue).self, valueABIs: abis)
+        let value = try unsafe make.unsafeInvoke(35, 7)
+        #expect(abis[value.type] == abi)
+        let sum = try await type.method(named: "sum()", as: (() -> Int64).self, receiverABI: abi)
+        typealias Body = NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Int64>
+        let body = try Body { value in
+            do { return try unsafe sum.unsafeInvoke(on: value) }
+            catch { Issue.record(error); return -1 }
+        }
+        let inspect = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.inspectRuntimeFixedPair(ManagedSwiftFixtures.RuntimeFixedPair, (ManagedSwiftFixtures.RuntimeFixedPair) -> Swift.Int64) -> Swift.Int64",
+            as: ((NativeSwiftValue, Body) -> Int64).self, valueABIs: abis)
+        #expect(try unsafe inspect.unsafeInvoke(value, body) == 42)
+        let member = try await type.method(named: "inspect(_:)", as: ((Body) -> Int64).self, valueABIs: abis, receiverABI: abi)
+        #expect(try unsafe member.unsafeInvoke(on: value, body) == 42)
+        let storeType = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPairStore")
+        let construct = try await storeType.initializer(named: "init(_:)",
+            as: ((NativeSwiftValue) -> RuntimeFixedPairStore).self, valueABIs: abis)
+        let store = try unsafe construct.unsafeInvoke(value)
+        #expect(value.isConsumed)
+        let getter = try await storeType.getter(named: "value", as: (() -> NativeSwiftValue).self, valueABIs: abis)
+        let first = try unsafe getter.unsafeInvoke(on: store)
+        #expect(try unsafe sum.unsafeInvoke(on: first) == 42)
+        let echo = try await storeType.staticMethod(named: "echo(_:)", as: ((NativeSwiftValue) -> NativeSwiftValue).self, valueABIs: abis)
+        let echoed = try unsafe echo.unsafeInvoke(first)
+        #expect(try unsafe sum.unsafeInvoke(on: echoed) == 42 && !first.isConsumed)
+        let setter = try await storeType.setter(named: "value", as: NativeSwiftValue.self, valueABIs: abis)
+        let replacement = try unsafe make.unsafeInvoke(40, 10)
+        try unsafe setter.unsafeInvoke(on: store, replacement)
+        #expect(replacement.isConsumed)
+        #expect(try unsafe sum.unsafeInvoke(on: getter.unsafeInvoke(on: store)) == 50)
+        do {
+            _ = try await runtime.swiftFunction(
+                named: "ManagedSwiftFixtures.makeRuntimeFixedPair(Swift.Int64, Swift.Int64) -> ManagedSwiftFixtures.RuntimeFixedPair",
+                as: ((Int64, Int64) -> NativeSwiftValue).self, valueABIs: [type: .int8])
+            Issue.record("ABI components must cover the native payload")
+        } catch ABIResolutionError.unsupportedDeclaration { }
+    }
+
+
     @Test func consumingNestedInputsRemainOwnedAfterNonthrowingCallbacks() async throws {
         let runtime = ABIRuntime.shared
         typealias Copy = NativeSwiftClosure<(String) -> String>

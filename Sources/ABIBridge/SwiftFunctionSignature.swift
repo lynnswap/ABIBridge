@@ -70,7 +70,7 @@ struct SwiftFunctionSignature: Sendable {
 
     var requiresClosureDeclaration: Bool {
         func containsClosure(_ type: Any.Type) -> Bool {
-            if type is any SwiftGenericClosureValue.Type { return true }
+            if type is any SwiftClosureValue.Type { return true }
             if let convention = type as? any SwiftConventionArgument.Type { return containsClosure(convention.wrappedType) }
             if let tuple = SwiftTupleMetadata(type) { return tuple.elements.contains { containsClosure($0.type) } }
             return false
@@ -237,7 +237,7 @@ struct SwiftCallbackValues: Sendable {
             if let closure = type as? any SwiftClosureValue.Type {
                 let codec: SwiftClosureCodec
                 if !arguments.isEmpty, case .closure(let plan) = arguments[index] {
-                    codec = try (closure as! any SwiftGenericClosureValue.Type).makeGenericClosureCodec(plan: plan)
+                    codec = try closure.makeGenericClosureCodec(plan: plan)
                 } else { codec = try closure.makeClosureCodec() }
                 guard let borrow = codec.borrowValue else {
                     throw ABIResolutionError.unsupportedDeclaration("This closure representation cannot borrow native callback inputs.")
@@ -271,7 +271,7 @@ struct SwiftCallbackValues: Sendable {
         }
         if let closure = Value.self as? any SwiftClosureValue.Type {
             let codec: SwiftClosureCodec
-            if case .closure(let plan) = generic { codec = try (closure as! any SwiftGenericClosureValue.Type).makeGenericClosureCodec(plan: plan) }
+            if case .closure(let plan) = generic { codec = try closure.makeGenericClosureCodec(plan: plan) }
             else { codec = try closure.makeClosureCodec() }
             if consuming {
                 guard let take = codec.takeValue else {

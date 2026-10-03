@@ -9,6 +9,17 @@ import Testing
 import Foundation
 
 struct SwiftOpaqueResultTests {
+    @Test func opaqueResultsSharePreparationWithClosureArguments() async throws {
+        let call = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueUsingCallback(_:)",
+            as: ((NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftValue).self)
+        let value = try unsafe call.unsafeInvoke(NativeSwiftClosure { $0 + 1 })
+        #expect(try value.take(as: Int64.self) == 42)
+        let typed = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.makeOpaqueUsingCallback((Swift.Int64) -> Swift.Int64) -> some",
+            as: ((NativeSwiftClosure<(Int64) -> Int64>) -> Int64).self)
+        #expect(try unsafe typed.unsafeInvoke(NativeSwiftClosure { $0 + 1 }) == 42)
+    }
+
     @Test func declaredClassConstraintsSelectDirectResultsAndRetainObjects() async throws {
         let runtime = ABIRuntime.shared
         for (name, expected) in [("makeOpaqueClassAny", 41), ("makeOpaqueClassProtocol", 42),

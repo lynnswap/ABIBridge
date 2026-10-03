@@ -77,8 +77,8 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     let cancel = try await type.method(named: "cancel()", as: (() -> Void).self, receiverABI: .opaque(named: type.name))
     let observe = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.observeGeneric<A>(() -> A, Swift.String, Swift.AnyObject, Swift.UnsafeMutablePointer<Swift.Int32>, (SwiftValueFixtures.BorrowedRuntimeRecord) -> ()) -> A",
-        as: ((NativeSwiftClosure<() -> Bool>, String, AnyObject, UnsafeMutablePointer<Int32>, NativeSwiftBorrowingClosure<Void>) -> Bool).self,
-        genericArguments: [.type(Bool.self)])
+        as: ((NativeSwiftClosure<() -> Bool>, String, AnyObject, UnsafeMutablePointer<Int32>, NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Void>) -> Bool).self,
+        genericArguments: [.type(Bool.self)], valueABIs: [type: .opaque(named: type.name)])
     let fire = try await runtime.swiftFunction(named: "SwiftValueFixtures.fireBorrowedRecord(_:_:_:)",
         as: ((String, AnyObject, UnsafeMutablePointer<Int32>) -> Void).self)
     let clear = try await runtime.swiftFunction(named: "SwiftValueFixtures.clearBorrowedRecord()", as: (() -> Void).self)
@@ -90,7 +90,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     defer { cancellations.deinitialize(count: 1); cancellations.deallocate() }
     do {
         let capture = GenericBorrowCapture(captureDeaths)
-        let callback = try NativeSwiftBorrowingClosure(borrowing: type) { value in
+        let callback = try NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Void> { value in
             withExtendedLifetime(capture) {
                 do {
                     state.texts.append(try unsafe text.unsafeInvoke(on: value))
@@ -349,5 +349,28 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
         as: ((OwnedCaller, Int64, NativeSwiftClosure<() -> Void>) -> Int64).self, genericArguments: [.type(Int64.self)])
     try check(try unsafe ownedCall.unsafeInvoke(ownedFactory.unsafeInvoke(), 42, NativeSwiftClosure { ownedDeaths.increment() }) == 42
         && ownedDeaths.count == 3, "Native consuming nested reabstraction authenticates and transfers exactly one owned context")
+let fixedType = try await runtime.swiftType(named: "SwiftValueFixtures.RuntimeFixedPair")
+    let fixedABI = try NativeType.structure(named: fixedType.name, fields: [.int64, .int64])
+    let fixedABIs = [fixedType: fixedABI]
+    let fixedMake = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.makeRuntimeFixedPair(Swift.Int64, Swift.Int64) -> SwiftValueFixtures.RuntimeFixedPair",
+        as: ((Int64, Int64) -> NativeSwiftValue).self, valueABIs: fixedABIs)
+    let fixedValue = try unsafe fixedMake.unsafeInvoke(35, 7)
+    let fixedSum = try await fixedType.method(named: "sum()", as: (() -> Int64).self, receiverABI: fixedABI)
+    typealias FixedBody = NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Int64>
+    let fixedState = GenericBorrowState()
+    let fixedBody = try FixedBody { value in
+        do { return try unsafe fixedSum.unsafeInvoke(on: value) }
+        catch { fixedState.failure = error; return -1 }
+    }
+    let fixedInspect = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.inspectRuntimeFixedPair(SwiftValueFixtures.RuntimeFixedPair, (SwiftValueFixtures.RuntimeFixedPair) -> Swift.Int64) -> Swift.Int64",
+        as: ((NativeSwiftValue, FixedBody) -> Int64).self, valueABIs: fixedABIs)
+    try check(try unsafe fixedInspect.unsafeInvoke(fixedValue, fixedBody) == 42 && fixedState.failure == nil,
+        "Explicit fixed Swift components authenticate a runtime-only callback input")
+    let fixedMember = try await fixedType.method(named: "inspect(_:)", as: ((FixedBody) -> Int64).self,
+        valueABIs: fixedABIs, receiverABI: fixedABI)
+    try check(try unsafe fixedMember.unsafeInvoke(on: fixedValue, fixedBody) == 42 && fixedABIs[fixedValue.type] == fixedABI,
+        "Member callbacks share explicit value ABIs and concrete type identity")
     return checks
 }

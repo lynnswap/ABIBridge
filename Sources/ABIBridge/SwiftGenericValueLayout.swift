@@ -55,7 +55,7 @@ extension SwiftFormalType {
     func qualifyingAssociatedTypes(using conformances: [SwiftGenericBinding.Conformance]) throws -> Self {
         func qualify(_ type: Self) throws -> Self { try type.qualifyingAssociatedTypes(using: conformances) }
         switch self {
-        case .objectiveCClass: return self
+        case .objectiveCClass, .opaqueResult: return self
         case .associated(let base, let member, let protocolName):
             var names: Set<String> = []
             if let protocolName { names.insert(protocolName) }

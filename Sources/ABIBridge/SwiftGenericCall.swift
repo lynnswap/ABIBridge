@@ -33,10 +33,6 @@ enum SwiftGenericArgument: Sendable {
     }
 }
 
-protocol SwiftGenericClosureValue: SwiftClosureValue {
-    static func makeGenericClosureCodec(plan: SwiftGenericClosurePlan) throws -> SwiftClosureCodec
-    func encodeGenericClosure(plan: SwiftGenericClosurePlan, retainingCode owner: Any?) throws -> NativeValueStorage
-}
 
 enum SwiftGenericResult: Sendable {
     case concrete
@@ -125,7 +121,7 @@ final class SwiftGenericClosurePlan: Sendable {
         }
         let resultType = try _openExistential(signature.result, do: layout)
         let result: SwiftGenericResult
-        if let closure = signature.result as? any SwiftGenericClosureValue.Type {
+        if let closure = signature.result as? any SwiftClosureValue.Type {
             result = .closure(try closure.makeGenericClosureCodec(plan: concrete(closure.swiftFunctionType)))
         } else { result = .value(resultType) }
         let errorPlan = try signature.makeErrorPlan()
@@ -308,17 +304,20 @@ struct SwiftGenericCallPlan: Sendable {
     var resultType: CValueType? { result.type }
     let errorType: CValueType?
 
-    init(declaration: String, linkageName: String, image: NativeImage, genericArguments: [NativeSwiftGenericArgument],
+    init(symbol: ResolvedSymbol, genericArguments: [NativeSwiftGenericArgument],
          signature: SwiftFunctionSignature, resolver: SymbolResolver,
          enclosing: SwiftGenericTypeMetadata? = nil, receiver: SwiftReceiverMode? = nil,
-         declaredSignature: String? = nil) throws {
+         declaredSignature: String? = nil, valueABIs: [NativeSwiftType: NativeType] = [:]) throws {
         let context = try enclosing.flatMap { $0.arguments.isEmpty ? nil : try SwiftGenericTypeContext(metadata: $0.value) }
         let declared = try declaredSignature.map(SwiftDeclaredSignature.init)
-        let declaration = try SwiftGenericDeclaration(linkageName: linkageName, enclosing: context,
+        let declaration = try SwiftGenericDeclaration(linkageName: symbol.linkageName, enclosing: context,
                                                        declaredSignature: declared, caller: signature)
+        let opaque = declaration.result == .opaqueResult
+            ? try SwiftOpaqueResultPlan.resolve(symbol: symbol, resolver: resolver).value : nil
         let binding = try SwiftGenericBinding(declaration: declaration,
             arguments: (enclosing?.arguments ?? []) + genericArguments,
-            signature: signature, resolver: resolver, enclosing: context, image: image)
+            signature: signature, resolver: resolver, enclosing: context, image: symbol.image,
+            valueABIs: valueABIs, opaqueResult: opaque)
         if case .function(let arguments, let result, let failure, let isAsync, _) = declared?.function {
             _ = try SwiftGenericParameters(formal: arguments, actual: signature.parameters, binding: binding,
                 defaultConsuming: declaration.consumesArguments)
@@ -354,7 +353,10 @@ struct SwiftGenericCallPlan: Sendable {
             let metadata = try binding.types(declaration.result)[0]
             result = .runtimeValue(try binding.runtimeValuePlan(metadata: metadata,
                 type: Self.layout(declaration.result, actual: metadata, binding: binding)))
-        } else if case .function = declaration.result, let closure = signature.result as? any SwiftGenericClosureValue.Type {
+        } else if let opaque {
+            _ = try binding.resultType(signature.result, for: declaration.result)
+            result = .value(opaque.type)
+        } else if case .function = declaration.result, let closure = signature.result as? any SwiftClosureValue.Type {
             let plan = try Self.closure(declaration.result,
                 signature: SwiftFunctionSignature(closure.swiftFunctionType), binding: binding)
             result = .closure(try closure.makeGenericClosureCodec(plan: plan))
@@ -444,7 +446,7 @@ struct SwiftGenericCallPlan: Sendable {
                     asynchronous: asynchronous ?? binding.declaration.isAsync)
             }
         }
-        if case .function = formal, let closure = actual as? any SwiftGenericClosureValue.Type {
+        if case .function = formal, let closure = actual as? any SwiftClosureValue.Type {
             return .closure(try Self.closure(formal, signature: SwiftFunctionSignature(closure.swiftFunctionType), binding: binding))
         }
         guard binding.dependsOnParameters(formal) else { return .concrete }
@@ -515,7 +517,7 @@ struct SwiftGenericCallPlan: Sendable {
         let resultPlan: SwiftGenericResult
         if signature.result == NativeSwiftValue.self && nativeResult != signature.result {
             resultPlan = .runtimeValue(try binding.runtimeValuePlan(metadata: nativeResult, type: resultType))
-        } else if case .function = result, let closure = signature.result as? any SwiftGenericClosureValue.Type {
+        } else if case .function = result, let closure = signature.result as? any SwiftClosureValue.Type {
             let nested = try Self.closure(result, signature: SwiftFunctionSignature(closure.swiftFunctionType), binding: binding)
             resultPlan = .closure(try closure.makeGenericClosureCodec(plan: nested))
         } else { resultPlan = .value(resultType) }
@@ -550,7 +552,7 @@ struct SwiftGenericCallPlan: Sendable {
                 return try authTypes(field, actual: elements[index].type, binding: binding, isResult: isResult)
             }
         }
-        if case .function = formal, let closure = actual as? any SwiftGenericClosureValue.Type {
+        if case .function = formal, let closure = actual as? any SwiftClosureValue.Type {
             let plan = try Self.closure(formal, signature: SwiftFunctionSignature(closure.swiftFunctionType), binding: binding)
             return ["(" + plan.authentication + ")"]
         }
@@ -582,6 +584,14 @@ struct SwiftGenericCallPlan: Sendable {
             return try binding.isClassBound(formal) ? CValueType(scalar: ABIValuePointer)
                 : SwiftGenericParameters.storageType(actual)
         }
+        if formal == .opaqueResult {
+            guard let opaque = binding.opaqueResult else {
+                throw ABIResolutionError.metadataUnavailable("The opaque result ABI has not been resolved.")
+            }
+            return opaque.type
+        }
+        if formal.nominalDeclaration != nil, !binding.dependsOnParameters(formal),
+           let explicit = try binding.explicitValueType(actual) { return explicit }
         func prepare<Value>(_ type: Value.Type) throws -> CValueType {
             if !binding.dependsOnParameters(formal) { return try SwiftValueCodec<Value>().type }
             if try binding.isClassBound(formal) { return try CValueType(scalar: ABIValuePointer) }
@@ -656,6 +666,8 @@ struct SwiftGenericCallPlan: Sendable {
                 }
                 return try CValueType(swiftTuple: types, offsets: offsets, size: MemoryLayout<Value>.size,
                     alignment: MemoryLayout<Value>.alignment)
+            case .opaqueResult:
+                throw ABIResolutionError.metadataUnavailable("The opaque result ABI has not been resolved.")
             case .pack, .packValue:
                 preconditionFailure("A pack expands within the containing parameter list or tuple.")
             case .function:
@@ -714,7 +726,7 @@ extension SwiftGenericBinding {
 
     func dependsOnParameters(_ type: SwiftFormalType) -> Bool {
         return switch type {
-        case .objectiveCClass: false
+        case .objectiveCClass, .opaqueResult: false
         case .named(let name, let parameters):
             (parameters.isEmpty && arguments[String(name.prefix { $0 != "." })] != nil) || parameters.contains(where: dependsOnParameters)
         case .nominal(_, let parameters), .reference(_, let parameters): parameters.contains(where: dependsOnParameters)
@@ -735,13 +747,10 @@ extension SwiftGenericBinding {
 extension ABIRuntime {
     func preparedGenericFunction<Signature>(
         symbol: ResolvedSymbol, signature: Signature.Type, genericArguments: [NativeSwiftGenericArgument],
-        declaredSignature: String? = nil
+        declaredSignature: String? = nil, valueABIs: [NativeSwiftType: NativeType] = [:]
     ) throws -> NativeSwiftFunction<Signature> {
-        guard let declaration = DeclarationKey.demangle(symbol.linkageName, language: .swift) else {
-            throw ABIResolutionError.metadataUnavailable("The Swift declaration cannot be demangled.")
-        }
-        let plan = try SwiftGenericCallPlan(declaration: declaration, linkageName: symbol.linkageName, image: symbol.image, genericArguments: genericArguments,
-                                            signature: SwiftFunctionSignature(signature), resolver: resolver, declaredSignature: declaredSignature)
+        let plan = try SwiftGenericCallPlan(symbol: symbol, genericArguments: genericArguments,
+                                            signature: SwiftFunctionSignature(signature), resolver: resolver, declaredSignature: declaredSignature, valueABIs: valueABIs)
         return try NativeSwiftFunction(symbol: symbol, resolver: resolver, generic: plan)
     }
 }
