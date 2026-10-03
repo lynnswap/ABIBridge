@@ -13,6 +13,11 @@ private final class RuntimeValueLife {
     init(_ deaths: RuntimeValueDeaths) { self.deaths = deaths }
     deinit { deaths.count.withLock { $0 += 1 } }
 }
+private final class RuntimeCallbackValues: @unchecked Sendable {
+    var borrowed: NativeSwiftBorrowedValue?
+    var owned: NativeSwiftValue?
+}
+
 private struct RuntimeCopyablePayload {
     let life: RuntimeValueLife
     let text: String
@@ -39,6 +44,108 @@ private struct RuntimeRejectedArgument: ABIBridgeValue {
 }
 
 @Suite struct SwiftRuntimeValueTests {
+    @Test func runtimeCallbackInputsPreserveBorrowScopeAndIndependentCopies() async throws {
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self)
+        let counts = ArgumentCounts()
+        let original = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
+        let read = try await original.type.method(named: "read()", as: (() -> Int64).self,
+            receiverABI: .opaque(named: original.type.name))
+        let visit = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitRuntimeValue<A where A: ~Swift.Copyable>(A, (A) throws -> Swift.Int64) throws -> Swift.Int64",
+            as: ((NativeSwiftValue, NativeSwiftClosure<(NativeSwiftBorrowedValue) throws -> Int64>) throws -> Int64).self,
+            genericArguments: [.type(original.type)])
+        let captured = RuntimeCallbackValues()
+        let callback = try NativeSwiftClosure<(NativeSwiftBorrowedValue) throws -> Int64> { value in
+            captured.borrowed = value
+            #expect(throws: NativeSwiftValueError.noncopyableType) { try value.copy() }
+            return try unsafe read.unsafeInvoke(on: value)
+        }
+        #expect(try unsafe visit.unsafeInvoke(original, callback) == 42)
+        #expect(!original.isConsumed && counts.destructions == 0)
+        let expired = try #require(captured.borrowed)
+        #expect(throws: NativeSwiftBorrowError.expiredBorrow) { try expired.copy() }
+
+        let makeNumber = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
+            as: ((Int64) -> NativeSwiftValue).self)
+        let number = try unsafe makeNumber.unsafeInvoke(42)
+        let copy = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitRuntimeValue<A where A: ~Swift.Copyable>(A, (A) throws -> Swift.Int64) throws -> Swift.Int64",
+            as: ((NativeSwiftValue, NativeSwiftClosure<(NativeSwiftValue) throws -> Int64>) throws -> Int64).self,
+            genericArguments: [.type(number.type)])
+        let copyBody = try NativeSwiftClosure<(NativeSwiftValue) throws -> Int64> { value in
+            captured.owned = value
+            return try value.withCopy { $0 as! Int64 }
+        }
+        #expect(try unsafe copy.unsafeInvoke(number, copyBody) == 42)
+        let retained = try #require(captured.owned)
+        #expect(retained !== number && !number.isConsumed)
+        #expect(try retained.take(as: Int64.self) == 42)
+
+        let concrete = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitConcreteRuntimeValue<A>(A, Swift.String, (Swift.String) throws -> Swift.Int64) throws -> Swift.Int64",
+            as: ((Int64, String, NativeSwiftClosure<(NativeSwiftValue) throws -> Int64>) throws -> Int64).self,
+            genericArguments: [.type(Int64.self)])
+        let textBody = try NativeSwiftClosure<(NativeSwiftValue) throws -> Int64> { value in
+            Int64(try value.take(as: String.self).count)
+        }
+        #expect(try unsafe concrete.unsafeInvoke(Int64(1), "concrete", textBody) == 8)
+    }
+
+    @Test func asyncRuntimeCallbacksKeepBorrowsUntilNativeCompletion() async throws {
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self)
+        let original = try unsafe make.unsafeInvoke(ErrorLifetimeToken {})
+        let read = try await original.type.method(named: "readAsync()", as: (() async -> Int64).self,
+            receiverABI: .opaque(named: original.type.name))
+        typealias Body = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftBorrowedValue) async throws -> Int64>
+        let visit = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitRuntimeValueAsync<A where A: ~Swift.Copyable>(A, nonisolated(nonsending) (A) async throws -> Swift.Int64) async throws -> Swift.Int64",
+            as: ((NativeSwiftValue, Body) async throws -> Int64).self,
+            genericArguments: [.type(original.type)])
+        let captured = RuntimeCallbackValues()
+        let operation: nonisolated(nonsending) @Sendable (NativeSwiftBorrowedValue) async throws -> Int64 = { value in
+            captured.borrowed = value
+            await Task.yield()
+            return try unsafe await read.unsafeInvoke(on: value)
+        }
+        let callback = try Body(operation)
+        #expect(try unsafe await visit.unsafeInvoke(original, callback) == 42)
+        #expect(!original.isConsumed)
+        let expired = try #require(captured.borrowed)
+        #expect(throws: NativeSwiftBorrowError.expiredBorrow) { try expired.copy() }
+    }
+
+    @Test func runtimeCallbackBorrowsRestoreElidedMetatypes() async throws {
+        let visit = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.visitRuntimeMetatype<A>(ManagedSwiftFixtures.GenericMetatypeValue<A>.Type, (ManagedSwiftFixtures.GenericMetatypeValue<A>.Type) throws -> Swift.Int64) throws -> Swift.Int64",
+            as: ((GenericMetatypeValue<String>.Type, NativeSwiftClosure<(NativeSwiftBorrowedValue) throws -> Int64>) throws -> Int64).self,
+            genericArguments: [.type(String.self)])
+        let body = try NativeSwiftClosure<(NativeSwiftBorrowedValue) throws -> Int64> { value in
+            let copy = try value.copy()
+            let metatype = try copy.take(as: GenericMetatypeValue<String>.Type.self)
+            #expect(unsafeBitCast(metatype, to: UInt.self) == unsafeBitCast(GenericMetatypeValue<String>.self, to: UInt.self))
+            return 42
+        }
+        #expect(try unsafe visit.unsafeInvoke(GenericMetatypeValue<String>.self, body) == 42)
+    }
+
+    @Test func callbackBodiesCanPassRuntimeHandlesAsOrdinarySwiftReferences() async throws {
+        let make = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)", as: ((Int64) -> NativeSwiftValue).self)
+        let original = try unsafe make.unsafeInvoke(42)
+        let callback = try NativeSwiftClosure<(NativeSwiftBorrowedValue) throws -> NativeSwiftValue> { value in
+            try value.copy()
+        }
+        try original.withBorrowedValue { value in
+            let copied = try unsafe callback.unsafeInvoke(value)
+            #expect(copied !== original)
+            #expect(try copied.withCopy { $0 as? Int64 } == 42)
+        }
+    }
+
     @Test func runtimeClassArgumentsRespectVarianceAndInoutReplacement() async throws {
         let runtime = ABIRuntime.shared
         let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueClassAny(_:)",

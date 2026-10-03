@@ -89,3 +89,33 @@ let copiedRecord = try unsafe copyRecord.unsafeInvoke(owned)
 guard !owned.isConsumed && copiedRecord.isCopyable,
       try unsafe prepared.text.unsafeInvoke(on: copiedRecord) == input else { throw ConsumerError.wrongResult }
 print("Runtime-only generic arguments preserve native copying and noncopyable transfer")
+
+let visitTicket = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.visitRuntimeValue<A where A: ~Swift.Copyable>(A, (A) throws -> Swift.Int64) throws -> Swift.Int64",
+    as: ((NativeSwiftValue, NativeSwiftClosure<(NativeSwiftBorrowedValue) throws -> Int64>) throws -> Int64).self,
+    genericArguments: [.type(moved.type)], in: source)
+let ticketCallback = try NativeSwiftClosure<(NativeSwiftBorrowedValue) throws -> Int64> { value in
+    state.borrow = value
+    return try unsafe readTicket.unsafeInvoke(on: value)
+}
+guard try unsafe visitTicket.unsafeInvoke(moved, ticketCallback) == 42, !moved.isConsumed,
+      let expiredTicket = state.borrow else { throw ConsumerError.wrongResult }
+do {
+    _ = try unsafe readTicket.unsafeInvoke(on: expiredTicket)
+    throw ConsumerError.wrongResult
+} catch NativeSwiftBorrowError.expiredBorrow { }
+
+let readTicketAsync = try await moved.type.method(named: "readAsync()", as: (nonisolated(nonsending) () async -> Int64).self,
+    receiverABI: .opaque(named: moved.type.name))
+typealias AsyncTicketBody = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftBorrowedValue) async throws -> Int64>
+let visitTicketAsync = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.visitRuntimeValueAsync<A where A: ~Swift.Copyable>(A, nonisolated(nonsending) (A) async throws -> Swift.Int64) async throws -> Swift.Int64",
+    as: (nonisolated(nonsending) (NativeSwiftValue, AsyncTicketBody) async throws -> Int64).self,
+    genericArguments: [.type(moved.type)], in: source)
+let readBorrow: nonisolated(nonsending) @Sendable (NativeSwiftBorrowedValue) async throws -> Int64 = { value in
+    await Task.yield()
+    return try unsafe await readTicketAsync.unsafeInvoke(on: value)
+}
+guard try unsafe await visitTicketAsync.unsafeInvoke(moved, AsyncTicketBody(readBorrow)) == 42,
+      !moved.isConsumed else { throw ConsumerError.wrongResult }
+print("Common Swift callbacks preserve runtime borrows through synchronous and async calls")

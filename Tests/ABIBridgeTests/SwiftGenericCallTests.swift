@@ -798,15 +798,18 @@ struct SwiftGenericCallTests {
         #expect(output.0 == text && output.1 == 57)
     }
 
-    @Test func packCallbacksRequireMatchingNativeValueRepresentations() async throws {
+    @Test func packCallbacksConvertRuntimeValuesAndPreserveNativeHandleReferences() async throws {
         let runtime = ABIRuntime()
         let name = "ManagedSwiftFixtures.callbackPackGeneric<each A>((repeat A) -> (repeat A), repeat A) -> (repeat A)"
-        do {
-            _ = try await runtime.swiftFunction(named: name,
-                as: ((NativeSwiftClosure<(NativeSwiftValue, String) -> (Int64, String)>, Int64, String) -> (Int64, String)).self,
-                genericArguments: [.pack([.type(Int64.self), .type(String.self)])])
-            Issue.record("A native integer cannot be forwarded as a runtime-value handle without conversion")
-        } catch ABIResolutionError.signatureMismatch { }
+        let inspect = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.inspectRuntimePack<each A>((repeat A) throws -> Swift.Int64, repeat A) throws -> Swift.Int64",
+            as: ((NativeSwiftClosure<(NativeSwiftValue, String) throws -> Int64>, Int64, String) throws -> Int64).self,
+            genericArguments: [.pack([.type(Int64.self), .type(String.self)])])
+        let inspectBody = try NativeSwiftClosure<(NativeSwiftValue, String) throws -> Int64> { value, text in
+            #expect(text == "converted")
+            return try value.take(as: Int64.self)
+        }
+        #expect(try unsafe inspect.unsafeInvoke(inspectBody, Int64(42), "converted") == 42)
 
         let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
             as: ((Int64) -> NativeSwiftValue).self)

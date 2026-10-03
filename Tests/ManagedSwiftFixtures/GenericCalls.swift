@@ -118,6 +118,11 @@ public protocol GenericNotAnyObject {}
 }
 
 @frozen public struct GenericMetatypeValue<Value> {}
+
+@inline(never) public func visitRuntimeMetatype<Value>(
+    _ type: GenericMetatypeValue<Value>.Type, _ body: (GenericMetatypeValue<Value>.Type) throws -> Int64
+) rethrows -> Int64 { try body(type) }
+
 @inline(never) public func valueMetatypeGeneric<Value>(
     _ type: GenericMetatypeValue<Value>.Type, _ value: Int64
 ) -> (GenericMetatypeValue<Value>.Type, Int64) { (type, value + 1) }

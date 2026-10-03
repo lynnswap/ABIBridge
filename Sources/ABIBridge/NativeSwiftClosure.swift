@@ -219,7 +219,10 @@ extension NativeSwiftClosure: SwiftClosureValue {
 
 extension NativeSwiftClosure: SwiftGenericClosureValue {
     static func makeGenericClosureCodec(plan: SwiftGenericClosurePlan) throws -> SwiftClosureCodec {
-        try makeClosureCodec(generic: plan)
+        guard !plan.convertsArguments else {
+            throw ABIResolutionError.unsupportedDeclaration("Returned runtime callbacks require invocation argument conversion.")
+        }
+        return try makeClosureCodec(generic: plan)
     }
 
     func encodeGenericClosure(plan: SwiftGenericClosurePlan, retainingCode owner: Any?) throws -> NativeValueStorage {
@@ -241,9 +244,10 @@ extension NativeSwiftClosure: SwiftGenericClosureValue {
                 return ABIUnsafeInvokeSwiftCallInterface(prepared.interface.handle, original.implementation.function,
                         output, arguments, original.value.context, nil)
             }
-            let success = plan.parameters.hasPacks
-                ? plan.parameters.unpack(arguments).withUnsafeBufferPointer { invoke($0.baseAddress) }
-                : invoke(arguments)
+            let decoded = plan.decodeArguments(arguments)
+            let success = decoded.map { values in
+                withExtendedLifetime(values) { values.addresses.withUnsafeBufferPointer { invoke($0.baseAddress) } }
+            } ?? invoke(arguments)
             precondition(success, "A prepared closure reabstraction must have a valid call frame.")
             if !didThrow { plan.resultConstants.initialize(at: output) }
             return didThrow

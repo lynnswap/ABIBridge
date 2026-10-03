@@ -772,7 +772,9 @@ struct SwiftGenericBinding: Sendable {
     }
 
     func validateArgument(_ actual: Any.Type, for formal: SwiftFormalType) throws {
-        if actual == NativeSwiftValue.self || actual == NativeSwiftBorrowedValue.self {
+        if case .function = formal, let closure = actual as? any SwiftGenericClosureValue.Type {
+            _ = try SwiftGenericCallPlan.closure(formal, signature: SwiftFunctionSignature(closure.swiftFunctionType), binding: self)
+        } else if actual == NativeSwiftValue.self || actual == NativeSwiftBorrowedValue.self {
             _ = try types(formal)
         } else {
             try validate(actual, for: formal)

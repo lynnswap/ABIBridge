@@ -1,5 +1,22 @@
 public enum RuntimeTicketFailure: Error { case rejected }
 
+@inline(never) public func visitRuntimeValue<T: ~Copyable>(
+    _ value: borrowing T, _ body: (borrowing T) throws -> Int64
+) rethrows -> Int64 { try body(value) }
+
+@inline(never) public nonisolated(nonsending) func visitRuntimeValueAsync<T: ~Copyable>(
+    _ value: borrowing T, _ body: (nonisolated(nonsending) (borrowing T) async throws -> Int64)
+) async rethrows -> Int64 { try await body(value) }
+
+@inline(never) public func visitConcreteRuntimeValue<Tag>(
+    _ tag: Tag, _ value: String, _ body: (String) throws -> Int64
+) rethrows -> Int64 { try body(value) }
+
+@inline(never) public func inspectRuntimePack<each Value>(
+    _ body: (repeat each Value) throws -> Int64, _ values: repeat each Value
+) rethrows -> Int64 { try body(repeat each values) }
+
+
 @inline(never) public func borrowRuntimeValue<T: ~Copyable>(_ value: borrowing T) -> Int64 {
     Int64(MemoryLayout<T>.size)
 }

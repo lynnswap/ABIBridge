@@ -112,15 +112,15 @@ extension NativeSwiftClosure {
         let callback = try SwiftAsyncClosureCallbackOwner(interface: interface,
             body: SwiftAsyncClosureBody(inheritsCallerIsolation: isolation,
                 retainingCode: (original.codeOwner, owner), codeLifetime: original.codeLifetime) { arguments, result, error in
-                let unpacked = plan.parameters.hasPacks ? SwiftGenericArgumentBuffer(
-                    plan.parameters.unpack(arguments).map { UInt(bitPattern: $0) }) : nil
+                let decoded = plan.decodeArguments(arguments)
+                let unpacked = decoded.map { SwiftGenericArgumentBuffer($0.addresses.map { UInt(bitPattern: $0) }) }
                 let forwarded: UnsafePointer<UnsafeMutableRawPointer?>? = unpacked.map {
                     UnsafeRawPointer(bitPattern: $0.address)!.assumingMemoryBound(to: UnsafeMutableRawPointer?.self)
                 } ?? arguments
                 let invocation = ABICreateSwiftAsyncInvocation(prepared.interface.handle, original.entry.function,
                     original.entry.contextSize, result, forwarded, original.value.context, error, nil)
                 precondition(invocation != nil, "The prepared async closure reabstraction must be valid.")
-                defer { withExtendedLifetime((original, unpacked)) { ABIReleaseSwiftAsyncInvocation(invocation!) } }
+                defer { withExtendedLifetime((original, decoded, unpacked)) { ABIReleaseSwiftAsyncInvocation(invocation!) } }
                 await invokeSwiftAsync(invocation!)
                 let didThrow = ABISwiftAsyncInvocationDidThrow(invocation!)
                 if !didThrow { plan.resultConstants.initialize(at: result) }

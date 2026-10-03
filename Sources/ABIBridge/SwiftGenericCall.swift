@@ -29,6 +29,29 @@ enum SwiftGenericResult: Sendable {
     }
 }
 
+final class SwiftCallbackArguments {
+    let addresses: [UnsafeMutableRawPointer?]
+    private let storage: [NativeValueStorage]
+    private let borrows: [SwiftValueBorrow]
+
+    init(addresses: [UnsafeMutableRawPointer?], storage: [NativeValueStorage], borrows: [SwiftValueBorrow]) {
+        self.addresses = addresses
+        self.storage = storage
+        self.borrows = borrows
+    }
+
+    deinit {
+        for borrow in borrows { borrow.expire() }
+        withExtendedLifetime(storage) {}
+    }
+}
+
+struct SwiftCallbackRuntimeArgument: Sendable {
+    let plan: SwiftRuntimeValuePlan
+    let borrowed: Bool
+    let asynchronous: Bool
+}
+
 struct SwiftGenericClosurePlan: Sendable {
     enum Transport: Sendable {
         case synchronous(SwiftCallInterface)
@@ -39,6 +62,42 @@ struct SwiftGenericClosurePlan: Sendable {
     let discriminator: UInt16
     let resultConstants: SwiftValueConstants
     let errorPlan: SwiftErrorPlan?
+    let runtimeArguments: [SwiftCallbackRuntimeArgument?]
+
+    var convertsArguments: Bool { runtimeArguments.contains { $0 != nil } }
+
+    func decodeArguments(_ native: UnsafePointer<UnsafeMutableRawPointer?>?) -> SwiftCallbackArguments? {
+        guard parameters.hasPacks || convertsArguments else { return nil }
+        var addresses = parameters.unpack(native)
+        var storage: [NativeValueStorage] = []
+        var borrows: [SwiftValueBorrow] = []
+        for (index, conversion) in runtimeArguments.enumerated() {
+            guard let conversion else { continue }
+            let plan = conversion.plan
+            if let restored = plan.restoredCallbackArgument(from: addresses[index]!) {
+                storage.append(restored)
+                addresses[index] = restored.address
+            }
+            let lifetime = SwiftValueCodeLifetime.current ?? plan.valueType.codeLifetime
+            SwiftValueCodeLifetime.connect([lifetime, plan.valueType.codeLifetime], retaining: [])
+            let type = plan.valueType.retainingCode(lifetime)
+            let value: NativeValueStorage
+            if conversion.borrowed {
+                let borrow = SwiftValueBorrow(UnsafeRawPointer(addresses[index]!), allowsSuspension: conversion.asynchronous)
+                borrows.append(borrow)
+                value = NativeValueStorage(size: MemoryLayout<NativeSwiftBorrowedValue>.stride,
+                    alignment: MemoryLayout<NativeSwiftBorrowedValue>.alignment, codeLifetime: lifetime)
+                value.initialize(NativeSwiftBorrowedValue(type: type, borrow: borrow))
+            } else {
+                value = NativeValueStorage(size: MemoryLayout<NativeSwiftValue>.stride,
+                    alignment: MemoryLayout<NativeSwiftValue>.alignment, codeLifetime: lifetime)
+                value.initialize(plan.copyCallbackArgument(from: addresses[index]!, type: type))
+            }
+            addresses[index] = value.address
+            storage.append(value)
+        }
+        return SwiftCallbackArguments(addresses: addresses, storage: storage, borrows: borrows)
+    }
 }
 
 struct SwiftGenericCallPlan: Sendable {
@@ -188,10 +247,7 @@ struct SwiftGenericCallPlan: Sendable {
                     asynchronous: binding.declaration.isAsync)
             }
         }
-        if case .function = formal, binding.dependsOnParameters(formal) {
-            guard let closure = actual as? any SwiftGenericClosureValue.Type else {
-                throw ABIResolutionError.signatureMismatch(.init(expected: "NativeSwiftClosure for " + formal.spelling, found: [String(reflecting: actual)]))
-            }
+        if case .function = formal, let closure = actual as? any SwiftGenericClosureValue.Type {
             return .closure(try Self.closure(formal, signature: SwiftFunctionSignature(closure.swiftFunctionType), binding: binding))
         }
         guard binding.dependsOnParameters(formal) else { return .concrete }
@@ -199,7 +255,7 @@ struct SwiftGenericCallPlan: Sendable {
         return .value(try Self.layout(formal, actual: actual, binding: binding), consuming: false)
     }
 
-    private static func closure(_ formal: SwiftFormalType, signature: SwiftFunctionSignature,
+    static func closure(_ formal: SwiftFormalType, signature: SwiftFunctionSignature,
                                 binding: SwiftGenericBinding) throws -> SwiftGenericClosurePlan {
         guard case .function(let parameters, let result, let failure, let isAsync) = formal else {
             preconditionFailure("A closure plan requires a function type.")
@@ -210,6 +266,17 @@ struct SwiftGenericCallPlan: Sendable {
         }
         let parameterPlan = try SwiftGenericParameters(formal: parameters, actual: signature.parameters, binding: binding)
         if let failure { try binding.validate(signature.failure, for: failure) }
+        let runtimeArguments: [SwiftCallbackRuntimeArgument?] = try parameterPlan.arguments.enumerated().map { index, argument in
+            guard case .runtimeValue(let plan, _, _) = argument else { return nil }
+            let borrowed = signature.parameters[index] == NativeSwiftBorrowedValue.self
+            if !borrowed {
+                try plan.requireOwnedValue()
+                guard SwiftCopyability.accepts(plan.valueType.metadata) else {
+                    throw NativeSwiftValueError.noncopyableType
+                }
+            }
+            return SwiftCallbackRuntimeArgument(plan: plan, borrowed: borrowed, asynchronous: isAsync)
+        }
         var logicalTypes: [CValueType] = []
         var authentication = isAsync && signature.inheritsCallerIsolation ? ["-class"] : []
         for (formal, group) in zip(parameters, parameterPlan.groups) {
@@ -218,17 +285,20 @@ struct SwiftGenericCallPlan: Sendable {
                 guard case .pack(let pattern, _) = formal else {
                     preconditionFailure("A pack group has a pack formal type.")
                 }
-                // The callback forwarder passes element storage through unchanged.
                 for (packIndex, index) in range.enumerated() {
-                    try binding.selectingPackElement(at: packIndex).validate(signature.parameters[index], for: pattern)
+                    if let conversion = runtimeArguments[index] {
+                        logicalTypes.append(try SwiftGenericParameters.storageType(conversion.plan.valueType.metadata))
+                    } else {
+                        try binding.selectingPackElement(at: packIndex).validate(signature.parameters[index], for: pattern)
+                        logicalTypes.append(try SwiftGenericParameters.storageType(signature.parameters[index]))
+                    }
                 }
-                logicalTypes.append(contentsOf: try range.map { try SwiftGenericParameters.storageType(signature.parameters[$0]) })
                 // SIL pack values have an opaque type hash, distinct from an
                 // ordinary formally indirect scalar (GenPointerAuth.cpp).
                 authentication.append("-")
             case .value(let index):
-                let actual = signature.parameters[index]
-                try binding.validate(actual, for: formal)
+                let actual = runtimeArguments[index]?.plan.valueType.metadata ?? signature.parameters[index]
+                if runtimeArguments[index] == nil { try binding.validate(actual, for: formal) }
                 logicalTypes.append(try layout(formal, actual: actual, binding: binding))
                 authentication.append(contentsOf: try authTypes(formal, actual: actual, binding: binding))
             }
@@ -251,7 +321,8 @@ struct SwiftGenericCallPlan: Sendable {
         return try SwiftGenericClosurePlan(transport: transport, parameters: parameterPlan,
             discriminator: swiftClosureDiscriminator(parameters: authentication,
                 results: authTypes(result, actual: nativeResult, binding: binding, isResult: true)),
-            resultConstants: SwiftValueConstants(signature.result), errorPlan: errorPlan)
+            resultConstants: SwiftValueConstants(signature.result), errorPlan: errorPlan,
+            runtimeArguments: runtimeArguments)
     }
 
     private static func authTypes(_ formal: SwiftFormalType, actual: Any.Type,

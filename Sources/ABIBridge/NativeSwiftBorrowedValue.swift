@@ -14,12 +14,15 @@ public enum NativeSwiftBorrowError: Error, Sendable, Equatable {
 
 final class SwiftValueBorrow {
     private let lock = NSLock()
-    private let thread = pthread_self()
+    private let thread: pthread_t?
+    private let allowsSuspension: Bool
     private var address: UnsafeRawPointer?
     private var storageOwner: NativeValueStorage?
 
-    init(_ address: UnsafeRawPointer, retaining owner: NativeValueStorage? = nil) {
+    init(_ address: UnsafeRawPointer, retaining owner: NativeValueStorage? = nil, allowsSuspension: Bool = false) {
         self.address = address
+        self.allowsSuspension = allowsSuspension
+        thread = allowsSuspension ? nil : pthread_self()
         storageOwner = owner
     }
 
@@ -32,7 +35,7 @@ final class SwiftValueBorrow {
     ) throws -> Result {
         lock.lock()
         guard let address else { lock.unlock(); throw NativeSwiftBorrowError.expiredBorrow }
-        guard pthread_equal(thread, pthread_self()) != 0 else {
+        if let thread, pthread_equal(thread, pthread_self()) == 0 {
             lock.unlock(); throw NativeSwiftBorrowError.wrongThread
         }
         let owner = storageOwner
@@ -42,9 +45,9 @@ final class SwiftValueBorrow {
 
     func access(asynchronous: Bool, type: NativeSwiftType) throws -> NativeValueStorage {
         try withStorage { address, owner in
-            // An owned-value borrow can keep its read access through suspension.
-            // A synchronous native callback gives us no way to extend its storage.
-            guard !asynchronous || owner != nil else { throw NativeSwiftBorrowError.synchronousBorrow }
+            // Owned storage can retain access independently. A native async caller
+            // keeps borrowed storage alive until its callback finishes awaiting it.
+            guard !asynchronous || owner != nil || allowsSuspension else { throw NativeSwiftBorrowError.synchronousBorrow }
             return NativeValueStorage(borrowing: UnsafeMutableRawPointer(mutating: address), owner: owner ?? self,
                                       retainingResourcesOf: owner, codeLifetime: type.codeLifetime)
         }
@@ -63,12 +66,14 @@ final class SwiftValueBorrow {
 /// A scoped view of a runtime-only Swift value.
 ///
 /// The storage belongs to a native caller or NativeSwiftValue. Saving this view
-/// does not extend its scope; new access after return or from another thread
-/// throws. An owned-value borrow can keep a started async member's read access
-/// until completion. A synchronous native callback cannot extend its storage
-/// across suspension and rejects async member entry with synchronousBorrow.
+/// does not extend its scope; new access after return throws. Synchronous scopes
+/// also reject access from another thread. An owned-value borrow can keep a
+/// started async member's read access until completion. A native async callback
+/// may await operations on its borrow, and must finish those operations before
+/// returning. A synchronous native callback cannot extend its storage across
+/// suspension and rejects async member entry with synchronousBorrow.
 /// The value is not Sendable and retains the declaration's isolation contract.
-public struct NativeSwiftBorrowedValue {
+public final class NativeSwiftBorrowedValue {
     /// The actual native type and its retained implementation image.
     public let type: NativeSwiftType
     let borrow: SwiftValueBorrow
