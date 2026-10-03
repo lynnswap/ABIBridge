@@ -126,7 +126,7 @@ public actor NativeSwiftType {
             let owner: Any.Type = ownerClass ?? metadata
             let enclosing = try owner == metadata ? genericMetadata : SwiftGenericTypeMetadata(metadata: owner)
             let usesBinding = try signature != nil && (!(enclosing?.arguments.isEmpty ?? true) || !genericArguments.isEmpty
-                || declaredSignature != nil || SwiftFunctionSignature(signature!).requiresRuntimeClosurePlan)
+                || declaredSignature != nil || SwiftFunctionSignature(signature!).requiresClosureDeclaration)
             let request = try declaration(ownerName, usesBinding)
             if originalRequest == nil { originalRequest = request }
             let belongs = !exact || SwiftMemberLookup.belongs(request.name, to: ownerName)
@@ -238,7 +238,7 @@ public actor NativeSwiftType {
     ) throws -> SwiftGenericCallPlan? {
         let enclosing = try member.metadata == metadata ? genericMetadata : SwiftGenericTypeMetadata(metadata: member.metadata)
         guard try !(enclosing?.arguments.isEmpty ?? true) || !arguments.isEmpty || declaredSignature != nil
-            || SwiftFunctionSignature(signature).requiresRuntimeClosurePlan else { return nil }
+            || SwiftFunctionSignature(signature).requiresClosureDeclaration else { return nil }
         guard let declaration = DeclarationKey.demangle(member.symbol.linkageName, language: .swift) else {
             throw ABIResolutionError.metadataUnavailable("The Swift member declaration cannot be demangled.")
         }

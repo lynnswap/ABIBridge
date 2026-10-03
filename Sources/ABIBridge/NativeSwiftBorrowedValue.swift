@@ -44,12 +44,16 @@ final class SwiftValueBorrow {
     }
 
     func access(asynchronous: Bool, type: NativeSwiftType) throws -> NativeValueStorage {
+        try access(asynchronous: asynchronous, codeLifetime: type.codeLifetime)
+    }
+
+    func access(asynchronous: Bool, codeLifetime: SwiftValueCodeLifetime?) throws -> NativeValueStorage {
         try withStorage { address, owner in
             // Owned storage can retain access independently. A native async caller
             // keeps borrowed storage alive until its callback finishes awaiting it.
             guard !asynchronous || owner != nil || allowsSuspension else { throw NativeSwiftBorrowError.synchronousBorrow }
             return NativeValueStorage(borrowing: UnsafeMutableRawPointer(mutating: address), owner: owner ?? self,
-                                      retainingResourcesOf: owner, codeLifetime: type.codeLifetime)
+                                      retainingResourcesOf: owner, codeLifetime: codeLifetime)
         }
     }
 

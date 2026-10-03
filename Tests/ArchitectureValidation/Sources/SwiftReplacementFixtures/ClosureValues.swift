@@ -85,3 +85,38 @@ public final class ExplicitValueToken {
 @inline(never) public func callVoidClosureValue(_ callback: () -> Void) {
     callback()
 }
+@inline(never) public func visitNestedClosure(_ body: ((Int64) -> Int64) throws -> Int64) rethrows -> Int64 {
+    var total: Int64 = 1
+    let result = try body { total += $0; return total }
+    return result + total
+}
+
+@inline(never) public nonisolated(nonsending) func visitNestedAsyncClosure(
+    _ body: nonisolated(nonsending) (nonisolated(nonsending) (Int64) async -> Int64) async throws -> Int64
+) async rethrows -> Int64 {
+    var total: Int64 = 1
+    let result = try await body { value in
+        await Task.yield()
+        total += value
+        return total
+    }
+    return result + total
+}
+
+@inline(never) public func callClosureProducer(_ body: () throws -> (Int64) -> Int64) rethrows -> Int64 {
+    try body()(35)
+}
+
+@inline(never) public func visitEscapingNestedClosure(
+    _ body: (@escaping (Int64) -> Int64) throws -> Void
+) rethrows {
+    var total: Int64 = 7
+    try body { total += $0; return total }
+}
+
+@inline(never) public nonisolated(nonsending) func visitEscapingNestedAsyncClosure(
+    _ body: nonisolated(nonsending) (nonisolated(nonsending) @escaping (Int64) async -> Int64) async throws -> Void
+) async rethrows {
+    var total: Int64 = 7
+    try await body { value in await Task.yield(); total += value; return total }
+}

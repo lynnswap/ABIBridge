@@ -8,6 +8,7 @@ private final class State: @unchecked Sendable {
     var text = ""
     var borrow: NativeSwiftBorrowedValue?
     var owned: NativeSwiftValue?
+    var closure: NativeSwiftClosure<(Int64) -> Int64>?
     var error: (any Error)?
 }
 
@@ -161,3 +162,67 @@ guard try unsafe concrete.unsafeInvoke(produced).take(as: String.self) == "retur
     throw ConsumerError.wrongResult
 }
 print("Nongeneric returned closures use their native value declaration without generic arguments")
+
+let nestedVisit = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.visitNestedClosure(_:)",
+    as: ((NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>) throws -> Int64>) throws -> Int64).self, in: source)
+let nestedBody = try NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>) throws -> Int64> { value in
+    state.closure = value
+    return try unsafe value.unsafeInvoke(20)
+}
+guard try unsafe nestedVisit.unsafeInvoke(nestedBody) == 42 else { throw ConsumerError.wrongResult }
+do { _ = try unsafe state.closure!.unsafeInvoke(1); throw ConsumerError.wrongResult }
+catch NativeSwiftBorrowError.expiredBorrow { }
+let nestedProducer = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.callClosureProducer(_:)",
+    as: ((NativeSwiftClosure<() throws -> NativeSwiftClosure<(Int64) -> Int64>>) throws -> Int64).self, in: source)
+let closureProducer = try NativeSwiftClosure<() throws -> NativeSwiftClosure<(Int64) -> Int64>> {
+    try NativeSwiftClosure { (value: Int64) in value + 7 }
+}
+guard try unsafe nestedProducer.unsafeInvoke(closureProducer) == 42 else { throw ConsumerError.wrongResult }
+print("Nested closure inputs expire with native scopes and owned results reach native callers")
+
+typealias NestedRuntimeCopy = NativeSwiftClosure<(NativeSwiftValue) -> NativeSwiftValue>
+typealias NestedRuntimeBody = NativeSwiftClosure<(NestedRuntimeCopy, NativeSwiftValue) throws -> NativeSwiftValue>
+let nestedRuntime = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.visitNestedRuntime<A>(A, ((A) -> A, A) throws -> A) throws -> A",
+    as: ((NativeSwiftValue, NestedRuntimeBody) throws -> NativeSwiftValue).self, genericArguments: [.type(String.self)], in: source)
+let nestedRuntimeBody = try NestedRuntimeBody { copy, value in try unsafe copy.unsafeInvoke(value) }
+guard try unsafe nestedRuntime.unsafeInvoke(produced, nestedRuntimeBody).take(as: String.self) == "returned closure" else {
+    throw ConsumerError.wrongResult
+}
+typealias GenericProducer = NativeSwiftClosure<() throws -> NativeSwiftClosure<(String) -> String>>
+let genericClosureProducer = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.callNestedRuntimeProducer<A>(() throws -> (A) -> A, A) throws -> A",
+    as: ((GenericProducer, String) throws -> String).self, genericArguments: [.type(String.self)], in: source)
+let genericProducer = try GenericProducer { try NativeSwiftClosure { (value: String) in value + "!" } }
+guard try unsafe genericClosureProducer.unsafeInvoke(genericProducer, "nested") == "nested!" else { throw ConsumerError.wrongResult }
+print("Generic nested callbacks decode runtime values and publish native closure results")
+
+
+typealias SavedInner = NativeSwiftClosure<(Int64) -> Int64>
+typealias SaveInput = NativeSwiftClosure<(SavedInner) throws -> Void>
+let copyVisit = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.visitEscapingNestedClosure(_:)",
+    as: ((SaveInput) throws -> Void).self, in: source)
+try unsafe copyVisit.unsafeInvoke(SaveInput { state.closure = try $0.copy() })
+guard try unsafe state.closure!.unsafeInvoke(35) == 42 else { throw ConsumerError.wrongResult }
+print("An explicit copy retains an escaping native closure beyond its callback scope")
+
+typealias NativeNestedCaller = NativeSwiftClosure<(SavedInner, Int64) -> Int64>
+let nativeNestedFactory = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeConcreteNestedCaller()",
+    as: (() -> NativeNestedCaller).self, in: source)
+let nativeNestedCall = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.callNestedRuntimeCaller<A>(((A) -> A, A) -> A, A) -> A",
+    as: ((NativeNestedCaller, Int64) -> Int64).self, genericArguments: [.type(Int64.self)], in: source)
+let nativeNestedCaller = try unsafe nativeNestedFactory.unsafeInvoke()
+guard try unsafe nativeNestedCall.unsafeInvoke(nativeNestedCaller, 42) == 42 else { throw ConsumerError.wrongResult }
+print("Native nested callers reabstract concrete and generic inner callback ABIs")
+
+typealias NativeAsyncInner = NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>
+typealias NativeAsyncProducer = NativeSwiftClosure<nonisolated(nonsending) () async -> NativeAsyncInner>
+let nativeAsyncFactory = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeConcreteNestedAsyncProducer()",
+    as: (() -> NativeAsyncProducer).self, in: source)
+let nativeAsyncCall = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.callNestedRuntimeAsyncProducer<A>(nonisolated(nonsending) () async -> nonisolated(nonsending) (A) async -> A, A) async -> A",
+    as: (nonisolated(nonsending) (NativeAsyncProducer, Int64) async -> Int64).self, genericArguments: [.type(Int64.self)], in: source)
+let nativeAsyncProducer = try unsafe nativeAsyncFactory.unsafeInvoke()
+guard try unsafe await nativeAsyncCall.unsafeInvoke(nativeAsyncProducer, 35) == 42 else { throw ConsumerError.wrongResult }
+print("Native async nested results retain their context through generic handback and suspension")

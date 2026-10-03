@@ -68,36 +68,32 @@ struct SwiftFunctionSignature: Sendable {
         return try SwiftErrorPlan.make(error, genericType: genericType)
     }
 
-    var requiresRuntimeClosurePlan: Bool {
-        get throws {
-            func containsRuntimeValue(_ type: Any.Type) throws -> Bool {
-                if type == NativeSwiftValue.self || type == NativeSwiftBorrowedValue.self { return true }
-                if let convention = type as? any SwiftConventionArgument.Type {
-                    return try containsRuntimeValue(convention.wrappedType)
-                }
-                if let closure = type as? any SwiftGenericClosureValue.Type {
-                    let signature = try SwiftFunctionSignature(closure.swiftFunctionType)
-                    return try (signature.parameters + [signature.result]).contains { try containsRuntimeValue($0) }
-                }
-                if let tuple = SwiftTupleMetadata(type) {
-                    return try tuple.elements.contains { try containsRuntimeValue($0.type) }
-                }
-                return false
-            }
-            return try (parameters + [result]).contains { type in
-                guard type is any SwiftGenericClosureValue.Type else { return false }
-                return try containsRuntimeValue(type)
-            }
+    var requiresClosureDeclaration: Bool {
+        func containsClosure(_ type: Any.Type) -> Bool {
+            if type is any SwiftGenericClosureValue.Type { return true }
+            if let convention = type as? any SwiftConventionArgument.Type { return containsClosure(convention.wrappedType) }
+            if let tuple = SwiftTupleMetadata(type) { return tuple.elements.contains { containsClosure($0.type) } }
+            return false
         }
+        return (parameters + [result]).contains(where: containsClosure)
     }
 
     func closureDiscriminator() throws -> UInt16 {
+        let (parameters, results) = try closureAuthTypes()
+        return swiftClosureDiscriminator(parameters: parameters, results: results)
+    }
+
+    func closureAuthDescription() throws -> String {
+        let (parameters, results) = try closureAuthTypes()
+        return swiftClosureAuthDescription(parameters: parameters, results: results)
+    }
+
+    private func closureAuthTypes() throws -> ([String], [String]) {
         var parameters = isAsync && inheritsCallerIsolation ? ["-class"] : []
         for type in self.parameters {
             parameters.append(contentsOf: try swiftClosureAuthTypes(type))
         }
-        return swiftClosureDiscriminator(parameters: parameters,
-            results: try swiftClosureAuthTypes(result))
+        return (parameters, try swiftClosureAuthTypes(result))
     }
 }
 
@@ -193,5 +189,71 @@ struct SwiftCallValues: Sendable {
 
     func relinquishConsumed(_ storage: [NativeValueStorage]) {
         for (argument, value) in zip(arguments, storage) where argument.consumes { value.relinquishValue() }
+    }
+}
+
+// Native function parameters can contain stack closure contexts. Their handles
+// borrow the entry frame; resolving them is a throwing invocation operation.
+final class SwiftCallbackScope {
+    private var borrows: [SwiftValueBorrow] = []
+    private let asynchronous: Bool
+    init(asynchronous: Bool) { self.asynchronous = asynchronous }
+    func borrow(_ address: UnsafeRawPointer) -> SwiftValueBorrow {
+        let borrow = SwiftValueBorrow(address, allowsSuspension: asynchronous)
+        borrows.append(borrow)
+        return borrow
+    }
+    deinit { for borrow in borrows { borrow.expire() } }
+}
+
+struct SwiftCallbackValues: Sendable {
+    private let closures: [(@Sendable (UnsafeMutableRawPointer, SwiftCallbackScope) -> Any)?]
+    private let constants: [SwiftValueConstants]
+    private let needsScope: Bool
+
+    init(_ signature: SwiftFunctionSignature, arguments: [SwiftGenericArgument] = []) throws {
+        needsScope = signature.parameters.contains { $0 is any SwiftClosureValue.Type }
+        constants = signature.parameters.map(SwiftValueConstants.init)
+        closures = try signature.parameters.enumerated().map { index, type in
+            if let closure = type as? any SwiftClosureValue.Type {
+                let codec: SwiftClosureCodec
+                if !arguments.isEmpty, case .closure(let plan) = arguments[index] {
+                    codec = try (closure as! any SwiftGenericClosureValue.Type).makeGenericClosureCodec(plan: plan)
+                } else { codec = try closure.makeClosureCodec() }
+                guard let borrow = codec.borrowValue else {
+                    throw ABIResolutionError.unsupportedDeclaration("This closure representation cannot borrow native callback inputs.")
+                }
+                return { borrow($1.borrow($0), SwiftValueCodeLifetime.current) }
+            }
+            return nil
+        }
+    }
+
+    func makeScope(asynchronous: Bool) -> SwiftCallbackScope? {
+        needsScope ? SwiftCallbackScope(asynchronous: asynchronous) : nil
+    }
+
+    func decode<Value>(_ address: UnsafeMutableRawPointer, at index: Int, scope: SwiftCallbackScope?, as type: Value.Type) -> Value {
+        if let closure = closures[index] { return closure(address, scope!) as! Value }
+        return constants[index].load(from: address, as: type)
+    }
+}
+
+struct SwiftCallbackResult<Value>: Sendable {
+    private let closure: Bool
+    private let encode: (@Sendable (Any, Any?) throws -> NativeValueStorage)?
+    init(failure: Any.Type, generic: SwiftGenericResult = .concrete) throws {
+        if case .closure(let codec) = generic { encode = codec.encodeValue } else { encode = nil }
+        closure = Value.self is any SwiftClosureValue.Type
+        if closure && failure != (any Error).self {
+            throw ABIResolutionError.unsupportedDeclaration("A host callback returning a closure requires throws(any Error) to report ownership and conversion failures.")
+        }
+    }
+    func initialize(_ value: Value, at output: UnsafeMutableRawPointer) throws {
+        guard closure else { output.initializeMemory(as: Value.self, repeating: value, count: 1); return }
+        let encoded = try encode?(value, nil) ?? (value as! any SwiftClosureValue).encodeClosureResult()
+        output.copyMemory(from: encoded.address, byteCount: MemoryLayout<ABISwiftClosureValue>.size)
+        SwiftValueCodeLifetime.connect([SwiftValueCodeLifetime.current, encoded.codeLifetime].compactMap { $0 }, retaining: [])
+        encoded.relinquishValue()
     }
 }

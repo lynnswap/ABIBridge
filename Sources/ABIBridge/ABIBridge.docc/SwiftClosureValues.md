@@ -40,6 +40,29 @@ The returned wrapper adopts the native closure's owned context and retains the d
 
 Calling stays on the caller's executor. The caller must satisfy the returned closure's actor, thread, and argument requirements. The wrapper is not Sendable: an arbitrary returned context may contain isolated or otherwise non-Sendable state.
 
+## Nested closure inputs and results
+
+Use `NativeSwiftClosure` inside the callback's signature for a native closure parameter. For `func visit(_ body: ((Int64) -> Int64) throws -> Int64) rethrows -> Int64`:
+
+```swift
+let callback = try NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>) throws -> Int64> { value in
+    try unsafe value.unsafeInvoke(42)
+}
+let visit = try await ABIRuntime.shared.swiftFunction(
+    named: "Example.visit(_:)",
+    as: ((NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>) throws -> Int64>) throws -> Int64).self
+)
+let result = try unsafe visit.unsafeInvoke(callback)
+```
+
+The incoming handle borrows the callback's scope, because a native nonescaping function can carry a stack context. Saving the handle does not retain that context; access after the callback returns throws `NativeSwiftBorrowError.expiredBorrow`. Synchronous scopes require the native caller's thread. An async callback may await a nested async closure, and must finish its borrowed operations before returning. Invocation performs the fallible entry and image preparation through `unsafeInvoke`.
+
+When the native declaration marks the nested input `@escaping`, call `try input.copy()` during the callback to obtain an owned handle that remains usable after the callback returns. The copy shares the native capture state and retains its implementation code. Copying a nonescaping input fails without retaining its stack context; copying an expired input throws `NativeSwiftBorrowError.expiredBorrow`. An already owned handle can be copied without preparing another entry.
+
+Native closures can also be passed back to declarations with different generic lowering. Preparation creates the necessary adapters for inner arguments and results, including parameter packs and async functions. Each native context retains its own captures; adapters with the same native ABI reuse the existing owned entry across repeated handoffs.
+
+A host callback returning an owned `NativeSwiftClosure` uses `throws(any Error)` so invalid ownership or conversion can reach the native caller. The result transfers a context reference that native code can retain. A borrowed nonescaping input cannot be returned as an owned closure. Ordinary callbacks without nested closure values retain their existing native error contract.
+
 ## Runtime value arguments and returned closures
 
 When the resolved declaration identifies a native argument type, use `NativeSwiftBorrowedValue` in the callback signature to inspect it during the body. The view expires when the body finishes. An async body may suspend while the native caller preserves that borrow, and must finish every operation using the view before returning. Use `NativeSwiftValue` when the body needs an independent owned copy of a Copyable, Escapable input. A noncopyable input can still use the borrowed view.
@@ -152,7 +175,7 @@ An array's element type can itself be a managed struct, enum, optional, or anoth
 
 `ABIBridgeSwiftValue` conformances use compiler-owned value operations and can therefore pass actual managed Swift values without custom conversion callbacks; see <doc:ExplicitSwiftValues>.
 
-Custom `ABIBridgeValue` conversions describe foreign representations rather than the callback's actual Swift value types, so they remain outside this callback path. Nested closures, value Optionals without an established direct representation, generic shapes outside <doc:GenericSwiftValues>, and explicit inout/consuming callback conventions require a compiler adapter. <doc:BorrowedSwiftValues> provides a separate scoped callback for a runtime-only resilient argument.
+Custom `ABIBridgeValue` conversions describe foreign representations rather than the callback's actual Swift value types, so they remain outside this callback path. Value Optionals without an established direct representation, generic shapes outside <doc:GenericSwiftValues>, and explicit inout/consuming callback conventions require a compiler adapter. <doc:BorrowedSwiftValues> provides a separate scoped callback for a runtime-only resilient argument.
 
 Incoming closure-valued hook arguments are outside this subset: a native nonescaping callback can carry a stack context that cannot be retained as an owned wrapper. Hook preparation rejects that representation before installing an entry.
 

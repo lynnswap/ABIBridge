@@ -789,9 +789,11 @@ struct SwiftHandler {
     ~SwiftHandler() { if (functions.releaseContext) functions.releaseContext(context); }
 };
 struct SwiftClosureHandler {
+    bool usesNativeContext = false;
     void (*invoke)(void *, void *const *, void *) = nullptr;
     bool (*invokeThrowing)(void *, void *const *, void *, void *) = nullptr;
     void *(*copyCodeOwner)(void *) = nullptr;
+    void *(*copyBodyOwner)(void *) = nullptr;
     void (*releaseContext)(void *) = nullptr;
     void *context = nullptr;
     ~SwiftClosureHandler() { if (releaseContext) releaseContext(context); }
@@ -855,6 +857,8 @@ static ABISwiftClosureCallback *createSwiftClosureCallback(ABISwiftCallInterface
     entry.closure->invokeThrowing = throwing.invoke;
     entry.closure->releaseContext = throwing.invoke ? throwing.releaseContext : normal.releaseContext;
     entry.closure->copyCodeOwner = throwing.invoke ? throwing.copyCodeOwner : normal.copyCodeOwner;
+    entry.closure->copyBodyOwner = throwing.invoke ? throwing.copyBodyOwner : normal.copyBodyOwner;
+    entry.closure->usesNativeContext = throwing.invoke ? throwing.usesNativeContext : normal.usesNativeContext;
     entry.closure->context = context;
     return callback.release();
 }
@@ -873,10 +877,15 @@ void ABIReleaseSwiftClosureCallback(ABISwiftClosureCallback *callback) { delete 
 bool ABIIsSwiftClosureCallbackFunction(ABIUnmanagedFunction function) {
     return abibridge::SwiftCallbackCode::closureContext(function) != nullptr;
 }
-void *ABICopySwiftClosureCallbackCodeOwner(ABIUnmanagedFunction function) {
+void *ABICopySwiftClosureCallbackCodeOwner(ABIUnmanagedFunction function, void *nativeContext) {
     auto *callback = static_cast<ABISwiftCallback *>(abibridge::SwiftCallbackCode::closureContext(function));
     if (!callback || !callback->closure->copyCodeOwner) return nullptr;
-    return callback->closure->copyCodeOwner(callback->closure->context);
+    return callback->closure->copyCodeOwner(callback->closure->usesNativeContext ? nativeContext : callback->closure->context);
+}
+void *ABICopySwiftClosureCallbackBodyOwner(ABIUnmanagedFunction function, void *nativeContext) {
+    auto *callback = static_cast<ABISwiftCallback *>(abibridge::SwiftCallbackCode::closureContext(function));
+    if (!callback || !callback->closure->copyBodyOwner) return nullptr;
+    return callback->closure->copyBodyOwner(callback->closure->usesNativeContext ? nativeContext : callback->closure->context);
 }
 
 struct ABISwiftIncomingCall {
@@ -1114,10 +1123,15 @@ void ABIReleaseSwiftAsyncClosureCallback(ABISwiftAsyncClosureCallback *callback)
 bool ABIIsSwiftAsyncClosureCallbackFunction(ABIUnmanagedFunction function) {
     return abibridge::SwiftCallbackCode::closureContext(function, true) != nullptr;
 }
-void *ABICopySwiftAsyncClosureCallbackCodeOwner(ABIUnmanagedFunction function) {
+void *ABICopySwiftAsyncClosureCallbackCodeOwner(ABIUnmanagedFunction function, void *nativeContext) {
     auto *callback = static_cast<ABISwiftAsyncClosureCallback *>(abibridge::SwiftCallbackCode::closureContext(function, true));
     if (!callback || !callback->functions.copyCodeOwner) return nullptr;
-    return callback->functions.copyCodeOwner(callback->context);
+    return callback->functions.copyCodeOwner(callback->functions.usesNativeContext ? nativeContext : callback->context);
+}
+void *ABICopySwiftAsyncClosureCallbackBodyOwner(ABIUnmanagedFunction function, void *nativeContext) {
+    auto *callback = static_cast<ABISwiftAsyncClosureCallback *>(abibridge::SwiftCallbackCode::closureContext(function, true));
+    if (!callback || !callback->functions.copyBodyOwner) return nullptr;
+    return callback->functions.copyBodyOwner(callback->functions.usesNativeContext ? nativeContext : callback->context);
 }
 
 extern "C" SwiftAsyncTransfer *ABIPrepareSwiftAsyncCallback(
@@ -1143,7 +1157,8 @@ extern "C" SwiftAsyncTransfer *ABIPrepareSwiftAsyncCallback(
     index += callback->interface.argumentCount;
     if (callback->interface.completion->indirectError)
         invocation->indirectError = reinterpret_cast<void *>(pointer());
-    invocation->body = callback->functions.createBody(callback->context, arguments, invocation->result.data(),
+    invocation->body = callback->functions.createBody(callback->functions.usesNativeContext
+        ? reinterpret_cast<void *>(incoming->context) : callback->context, arguments, invocation->result.data(),
         callback->interface.completion->errorResult ? invocation->error.data() : nullptr, &invocation->didThrow);
 
     // The body factory supplies a live compiler-generated stored Void closure,
@@ -1265,17 +1280,19 @@ extern "C" __attribute__((visibility("hidden"))) void ABIDispatchSwiftCallback(A
         unpackArguments(interface, *frame, storage, arguments, &indirectError, true);
         AlignedValue result(interface.result->size(), interface.result->native()->alignment);
         if (interface.errorResult) frame->error = 0;
+        auto *context = callback->closure->usesNativeContext
+            ? reinterpret_cast<void *>(frame->context) : callback->closure->context;
         if (callback->closure->invokeThrowing) {
             AlignedValue error(interface.errorResult ? interface.errorResult->size() : 0,
                                interface.errorResult ? interface.errorResult->native()->alignment : 1);
-            const bool threw = callback->closure->invokeThrowing(callback->closure->context, arguments.data(),
+            const bool threw = callback->closure->invokeThrowing(context, arguments.data(),
                 result.data(), interface.errorResult ? error.data() : nullptr);
             if (threw) {
                 packError(interface, *frame, error.data(), indirectError);
                 return;
             }
         } else {
-            callback->closure->invoke(callback->closure->context, arguments.data(), result.data());
+            callback->closure->invoke(context, arguments.data(), result.data());
         }
         packResult(interface, *frame, result.data());
         return; // The native caller owns the selected result or error.

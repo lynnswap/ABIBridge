@@ -54,6 +54,13 @@ struct SwiftGenericParameters: Sendable {
         }
     }
 
+    init(actual: [Any.Type], arguments: [SwiftGenericArgument]) {
+        self.arguments = arguments
+        groups = actual.indices.map { .value($0) }
+        hasPacks = false
+        constants = actual.map(SwiftValueConstants.init)
+    }
+
     static func storageType(_ type: Any.Type) throws -> CValueType {
         let layout = ABISwiftGetValueLayout(unsafeBitCast(type, to: UnsafeRawPointer.self))
         return try CValueType(indirectSwiftSize: layout.size, alignment: layout.alignment)

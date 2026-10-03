@@ -218,5 +218,49 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     }
     try check(unsafe await applyAsyncHost.unsafeInvoke(AsyncHostCopy(copyAsync), "async host result") == "async host result",
         "Async host runtime callback returns an owned native value after suspension")
+    typealias NestedBody = NativeSwiftClosure<(Copy, NativeSwiftValue) throws -> NativeSwiftValue>
+    let visitNested = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.visitNestedRuntime<A>(A, ((A) -> A, A) throws -> A) throws -> A",
+        as: ((NativeSwiftValue, NestedBody) throws -> NativeSwiftValue).self, genericArguments: [.type(String.self)])
+    let nestedBody = try NestedBody { callback, value in try unsafe callback.unsafeInvoke(value) }
+    try check(unsafe visitNested.unsafeInvoke(value, nestedBody).take(as: String.self) == "runtime",
+        "Nested runtime callback input uses its generic authenticated value plan")
+    let makeNestedCaller = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.makeNestedRuntimeCaller<A>(A.Type) -> ((A) -> A, A) -> A",
+        as: ((String.Type) -> NativeSwiftClosure<(Copy, NativeSwiftValue) -> NativeSwiftValue>).self,
+        genericArguments: [.type(String.self)])
+    let nestedCaller = try unsafe makeNestedCaller.unsafeInvoke(String.self)
+    try check(unsafe nestedCaller.unsafeInvoke(copy, value).take(as: String.self) == "returned",
+        "Returned closure passes nested runtime closures through the generic native interface")
+    typealias NestedProducer = NativeSwiftClosure<() throws -> NativeSwiftClosure<(String) -> String>>
+    let produceNested = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.callNestedRuntimeProducer<A>(() throws -> (A) -> A, A) throws -> A",
+        as: ((NestedProducer, String) throws -> String).self, genericArguments: [.type(String.self)])
+    let nestedProducer = try NestedProducer { try NativeSwiftClosure { (value: String) in value + "!" } }
+    try check(unsafe produceNested.unsafeInvoke(nestedProducer, "nested") == "nested!",
+        "Host callback results reabstract nested closures to native generic authentication")
+    typealias NestedPackBody = NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>, NativeSwiftClosure<(String) -> String>) throws -> Int64>
+    let visitNestedPack = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.visitNestedRuntimePack<each A>(_: repeat A.Type, body: (repeat (A) -> A) throws -> Swift.Int64) throws -> Swift.Int64",
+        as: ((Int64.Type, String.Type, NestedPackBody) throws -> Int64).self,
+        genericArguments: [.pack([.type(Int64.self), .type(String.self)])])
+    let nestedPack = try NestedPackBody { number, text in
+        let count = try unsafe text.unsafeInvoke("1234567").count
+        return try unsafe number.unsafeInvoke(35) + Int64(count)
+    }
+    try check(unsafe visitNestedPack.unsafeInvoke(Int64.self, String.self, nestedPack) == 42,
+        "Nested closure parameter packs retain each native generic function signature")
+    typealias NestedAsyncCopy = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftValue) async -> NativeSwiftValue>
+    typealias NestedAsyncBody = NativeSwiftClosure<nonisolated(nonsending) (NestedAsyncCopy, NativeSwiftValue) async throws -> NativeSwiftValue>
+    let visitNestedAsync = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.visitNestedRuntimeAsync<A>(A, nonisolated(nonsending) (nonisolated(nonsending) (A) async -> A, A) async throws -> A) async throws -> A",
+        as: (nonisolated(nonsending) (String, NestedAsyncBody) async throws -> String).self,
+        genericArguments: [.type(String.self)])
+    let nestedAsyncBody: nonisolated(nonsending) @Sendable (NestedAsyncCopy, NativeSwiftValue) async throws -> NativeSwiftValue = { copy, value in
+        await Task.yield()
+        return try unsafe await copy.unsafeInvoke(value)
+    }
+    try check(unsafe await visitNestedAsync.unsafeInvoke("nested async", NestedAsyncBody(nestedAsyncBody)) == "nested async",
+        "Nested async runtime closures preserve native authentication and scoped values after suspension")
     return checks
 }

@@ -9,7 +9,17 @@ func swiftFunctionTypeName(_ type: Any.Type) throws -> String {
         }
         return try swiftFunctionTypeName(closure.swiftFunctionType)
     }
-    return try swiftNativeTypeName(type)
+    var name = try swiftNativeTypeName(type)
+    let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
+    if metadata.load(as: UInt.self) == 0x302 {
+        let function = try SwiftFunctionSignature(type)
+        for child in function.parameters + [function.result] {
+            let native = try swiftNativeTypeName(child)
+            let adapted = try swiftFunctionTypeName(child)
+            if native != adapted { name = name.replacingOccurrences(of: native, with: adapted) }
+        }
+    }
+    return name
 }
 
 func swiftNativeTypeName(_ type: Any.Type) throws -> String {
@@ -209,7 +219,7 @@ public struct NativeSwiftFunction<Signature>: Sendable {
          generic: SwiftGenericCallPlan? = nil) throws {
         self.symbol = symbol
         self.consumesArguments = consumesArguments
-        isGeneric = generic != nil
+        isGeneric = generic?.binding.declaration.parameters.isEmpty == false
         context = metadata.map { unsafeBitCast($0, to: UInt.self) } ?? 0
         typeOwner = owner
         call = try SwiftCallablePlan(signature: Signature.self, symbol: symbol, resolver: resolver ?? owner?.resolver,
@@ -322,7 +332,7 @@ extension ABIRuntime {
         let declaration = try genericArguments.isEmpty ? swiftFunctionDeclaration(named: name, as: signature)
             : NativeDeclaration(name: name, language: .swift)
         let symbol = try resolve(declaration, in: scope, loading: loading)
-        if try !genericArguments.isEmpty || declaredSignature != nil || SwiftFunctionSignature(signature).requiresRuntimeClosurePlan {
+        if try !genericArguments.isEmpty || declaredSignature != nil || SwiftFunctionSignature(signature).requiresClosureDeclaration {
             return try preparedGenericFunction(symbol: symbol, signature: signature, genericArguments: genericArguments,
                                                declaredSignature: declaredSignature)
         }
@@ -351,7 +361,7 @@ extension ABIRuntime {
         let declaration = try genericArguments.isEmpty ? swiftFunctionDeclaration(named: name, as: signature)
             : NativeDeclaration(name: name, language: .swift)
         let symbol = try resolve(declaration, in: image, loading: loading)
-        if try !genericArguments.isEmpty || declaredSignature != nil || SwiftFunctionSignature(signature).requiresRuntimeClosurePlan {
+        if try !genericArguments.isEmpty || declaredSignature != nil || SwiftFunctionSignature(signature).requiresClosureDeclaration {
             return try preparedGenericFunction(symbol: symbol, signature: signature, genericArguments: genericArguments,
                                                declaredSignature: declaredSignature)
         }

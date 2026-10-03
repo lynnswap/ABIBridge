@@ -670,7 +670,7 @@ struct SwiftGenericBinding: Sendable {
             case .nested(let parent, _, let parameters): visit(parent); parameters.forEach(visit)
             case .associated(let base, _, _): visit(base)
             case .tuple(let fields, _), .packValue(let fields): fields.forEach(visit)
-            case .function(let parameters, let result, let failure, _):
+            case .function(let parameters, let result, let failure, _, _):
                 parameters.forEach(visit); visit(result); if let failure { visit(failure) }
             case .foreignFunction(_, let parameters, let result):
                 parameters.forEach(visit); visit(result)
@@ -718,7 +718,7 @@ struct SwiftGenericBinding: Sendable {
         case .inoutValue(let value), .borrowing(let value), .consuming(let value): return try spelling(value, packIndex: packIndex)
         case .metatype, .existentialMetatype:
             return try swiftNativeTypeName(types(type, packIndex: packIndex)[0])
-        case .function(let values, let result, let failure, let isAsync):
+        case .function(let values, let result, let failure, let isAsync, _):
             let error = try failure.map { try spelling($0, packIndex: packIndex) }
             return "(" + (try values.map { try spelling($0, packIndex: packIndex) }).joined(separator: ", ") + ")" + (isAsync ? " async" : "")
                 + (error.map { $0 == "Swift.Never" ? "" : $0 == "Swift.Error" ? " throws" : " throws(" + $0 + ")" } ?? "")

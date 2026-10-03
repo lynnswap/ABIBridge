@@ -65,7 +65,7 @@ extension SwiftGenericDeclaration {
             result = accessor == "Setter" ? .tuple([]) : property
             if accessor == "Getter" {
                 if let getterSignature = declaredSignature?.function {
-                    guard case .function(let parameters, _, let failure, let isAsync) = getterSignature, parameters.isEmpty else {
+                    guard case .function(let parameters, _, let failure, let isAsync, _) = getterSignature, parameters.isEmpty else {
                         throw ABIResolutionError.signatureMismatch(.init(expected: "A zero-argument declared getter signature", found: [getterSignature.spelling]))
                     }
                     self.failure = failure
@@ -82,7 +82,7 @@ extension SwiftGenericDeclaration {
                 isAsync = false
             }
         } else {
-            guard case .function(let arguments, let result, let failure, let isAsync) = try SwiftFormalType(value) else {
+            guard case .function(let arguments, let result, let failure, let isAsync, _) = try SwiftFormalType(value) else {
                 throw ABIResolutionError.unsupportedDeclaration("The Swift declaration is missing its function type.")
             }
             self.arguments = arguments
@@ -214,7 +214,7 @@ extension SwiftFormalType {
                 failure = node.child(kind: "ThrowsAnnotation") == nil ? nil : .nominal("Swift.Error", [])
             }
             self = .function(arguments, try Self(node.requiredChild(kind: "ReturnType")),
-                failure: failure, isAsync: node.child(kind: "AsyncAnnotation") != nil)
+                failure: failure, isAsync: node.child(kind: "AsyncAnnotation") != nil, isEscaping: node.kind != "NoEscapeFunctionType")
         case "ProtocolList", "ProtocolListWithAnyObject", "ProtocolListWithClass", "BuiltinTypeName":
             self = .nominal(try node.name(), [])
         case "SugaredOptional": self = .nominal("Swift.Optional", [try Self(node.requiredChild())])

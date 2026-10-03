@@ -114,7 +114,7 @@ indirect enum SwiftFormalType: Sendable, Equatable {
     case reference(SwiftNominalDescriptor, [SwiftFormalType])
     case associated(SwiftFormalType, String, protocolName: String? = nil)
     case tuple([SwiftFormalType], labels: [String]? = nil)
-    case function([SwiftFormalType], SwiftFormalType, failure: SwiftFormalType?, isAsync: Bool)
+    case function([SwiftFormalType], SwiftFormalType, failure: SwiftFormalType?, isAsync: Bool, isEscaping: Bool = false)
     case foreignFunction(ForeignConvention, [SwiftFormalType], SwiftFormalType)
     case pack(SwiftFormalType, shape: SwiftFormalType? = nil)
     case packValue([SwiftFormalType])
@@ -147,15 +147,17 @@ indirect enum SwiftFormalType: Sendable, Equatable {
             self = wrap(try Self(String(text.dropFirst(prefix.count))))
             return
         }
-        // These source qualifiers do not change the value storage convention.
+        var isEscaping = false
+        // Escape permission changes context ownership, not the function pair layout.
         let qualifiers = ["@escaping ", "@noescape ", "@Sendable ", "@concurrent ", "nonisolated(nonsending) "]
         while let prefix = qualifiers.first(where: { text.hasPrefix($0) }) {
+            if prefix == "@escaping " { isEscaping = true }
             text = String(text.dropFirst(prefix.count))
         }
         for convention in [ForeignConvention.c, .block] {
             let prefix = "@convention(" + convention.rawValue + ") "
             if text.hasPrefix(prefix) {
-                guard case .function(let arguments, let result, nil, false) = try Self(String(text.dropFirst(prefix.count))) else {
+                guard case .function(let arguments, let result, nil, false, _) = try Self(String(text.dropFirst(prefix.count))) else {
                     throw ABIResolutionError.unsupportedDeclaration("A C or block function requires a synchronous nonthrowing signature.")
                 }
                 self = .foreignFunction(convention, arguments, result)
@@ -172,7 +174,7 @@ indirect enum SwiftFormalType: Sendable, Equatable {
             let effects = input[input.index(after: closing)...].trimmingCharacters(in: .whitespaces)
             self = .function(try SwiftFormalSyntax.fields(fields).map { try Self($0) },
                 try Self(String(text[arrow.upperBound...])), failure: try SwiftFormalSyntax.failure(in: effects),
-                isAsync: effects.split(whereSeparator: \.isWhitespace).contains("async"))
+                isAsync: effects.split(whereSeparator: \.isWhitespace).contains("async"), isEscaping: isEscaping)
             return
         }
         if text.hasSuffix(".Type") {
@@ -240,7 +242,7 @@ indirect enum SwiftFormalType: Sendable, Equatable {
             "(" + values.enumerated().map { index, value in
                 (labels?[index].isEmpty == false ? labels![index] + ": " : "") + value.spelling
             }.joined(separator: ", ") + ")"
-        case .function(let arguments, let result, let failure, let isAsync):
+        case .function(let arguments, let result, let failure, let isAsync, _):
             "(" + arguments.map(\.spelling).joined(separator: ", ") + ")"
                 + (isAsync ? " async" : "")
                 + (failure.map { $0.spelling == "Swift.Error" ? " throws" : " throws(" + $0.spelling + ")" } ?? "")

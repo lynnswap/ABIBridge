@@ -52,7 +52,7 @@ struct SwiftCallbackRuntimeArgument: Sendable {
     let asynchronous: Bool
 }
 
-struct SwiftGenericClosurePlan: Sendable {
+final class SwiftGenericClosurePlan: Sendable {
     enum Transport: Sendable {
         case synchronous(SwiftCallInterface)
         case asynchronous(SwiftAsyncCallInterface, inheritsCallerIsolation: Bool)
@@ -60,15 +60,60 @@ struct SwiftGenericClosurePlan: Sendable {
     let transport: Transport
     let parameters: SwiftGenericParameters
     let discriminator: UInt16
+    let authentication: String
+    let isEscaping: Bool
     let resultConstants: SwiftValueConstants
     let errorPlan: SwiftErrorPlan?
     let runtimeArguments: [SwiftCallbackRuntimeArgument?]
     let result: SwiftGenericResult
     let nativeResult: Any.Type
 
-    var convertsArguments: Bool { runtimeArguments.contains { $0 != nil } }
+    init(transport: Transport, parameters: SwiftGenericParameters, discriminator: UInt16,
+         authentication: String, isEscaping: Bool, resultConstants: SwiftValueConstants,
+         errorPlan: SwiftErrorPlan?, runtimeArguments: [SwiftCallbackRuntimeArgument?],
+         result: SwiftGenericResult, nativeResult: Any.Type) {
+        self.transport = transport; self.parameters = parameters; self.discriminator = discriminator
+        self.authentication = authentication; self.isEscaping = isEscaping; self.resultConstants = resultConstants
+        self.errorPlan = errorPlan; self.runtimeArguments = runtimeArguments; self.result = result; self.nativeResult = nativeResult
+    }
+
+    var hasNestedClosures: Bool {
+        if case .closure = result { return true }
+        return parameters.arguments.contains { if case .closure = $0 { true } else { false } }
+    }
+
+    static func concrete(_ type: Any.Type) throws -> SwiftGenericClosurePlan {
+        let signature = try SwiftFunctionSignature(type)
+        func layout<Value>(_ type: Value.Type) throws -> CValueType { try SwiftValueCodec<Value>().type }
+        let types = try signature.parameters.map { try _openExistential($0, do: layout) }
+        let arguments = try signature.parameters.map { type -> SwiftGenericArgument in
+            guard let closure = type as? any SwiftClosureValue.Type else { return .concrete }
+            return .closure(try concrete(closure.swiftFunctionType))
+        }
+        let resultType = try _openExistential(signature.result, do: layout)
+        let result: SwiftGenericResult
+        if let closure = signature.result as? any SwiftGenericClosureValue.Type {
+            result = .closure(try closure.makeGenericClosureCodec(plan: concrete(closure.swiftFunctionType)))
+        } else { result = .value(resultType) }
+        let errorPlan = try signature.makeErrorPlan()
+        let transport: Transport = signature.isAsync
+            ? .asynchronous(try SwiftAsyncCallInterface(result: resultType, parameters: types,
+                errorPlan: errorPlan, inheritsCallerIsolation: signature.inheritsCallerIsolation),
+                inheritsCallerIsolation: signature.inheritsCallerIsolation)
+            : .synchronous(try SwiftCallInterface.cached(result: resultType, parameters: types, errorPlan: errorPlan))
+        return SwiftGenericClosurePlan(transport: transport,
+            parameters: SwiftGenericParameters(actual: signature.parameters, arguments: arguments),
+            discriminator: try signature.closureDiscriminator(), authentication: try signature.closureAuthDescription(),
+            isEscaping: false, resultConstants: SwiftValueConstants(signature.result), errorPlan: errorPlan,
+            runtimeArguments: Array(repeating: nil, count: types.count), result: result, nativeResult: signature.result)
+    }
+
+    var convertsArguments: Bool {
+        runtimeArguments.contains { $0 != nil } || parameters.arguments.contains { if case .closure = $0 { true } else { false } }
+    }
     var convertsValues: Bool {
         if case .runtimeValue = result { return true }
+        if case .closure = result { return true }
         return convertsArguments
     }
 
@@ -114,15 +159,65 @@ struct SwiftGenericClosurePlan: Sendable {
         }
     }
 
-    func validateNativeValues(for other: Self) throws {
-        for (lhs, rhs) in zip(runtimeArguments, other.runtimeArguments) {
-            guard lhs?.plan.valueType.metadata == rhs?.plan.valueType.metadata else {
-                throw ABIResolutionError.signatureMismatch(.init(expected: "The native callback argument type", found: []))
+    var nativeValueTypes: [ObjectIdentifier] {
+        var result: [ObjectIdentifier] = []
+        for (index, argument) in parameters.arguments.enumerated() {
+            if case .closure(let plan) = argument { result += plan.nativeValueTypes }
+            else if let runtime = runtimeArguments[index] { result.append(ObjectIdentifier(runtime.plan.valueType.metadata)) }
+        }
+        if case .closure(let codec) = self.result { result += codec.nativeValueTypes }
+        result.append(ObjectIdentifier(nativeResult))
+        return result
+    }
+
+    // Compare the native calling convention, including nested functions and
+    // formal error storage. Escape permission is checked separately from ABI.
+    func hasSameNativeABI(as other: SwiftGenericClosurePlan) -> Bool {
+        guard authentication == other.authentication, parameters.groups.count == other.parameters.groups.count else { return false }
+        switch (transport, other.transport) {
+        case (.synchronous, .synchronous): break
+        case (.asynchronous(_, let first), .asynchronous(_, let second)) where first == second: break
+        default: return false
+        }
+        switch (errorPlan, other.errorPlan) {
+        case (.none, .none): break
+        case (.some(let first), .some(let second)):
+            guard first.identity == second.identity, first.isTyped == second.isTyped,
+                  ABIValueTypesEqual(first.type.handle, second.type.handle) else { return false }
+        default: return false
+        }
+        for (first, second) in zip(parameters.groups, other.parameters.groups) {
+            switch (first, second) {
+            case (.value(let a), .value(let b)) where a == b: break
+            case (.pack(let a, _), .pack(let b, _)) where a == b: break
+            default: return false
             }
         }
-        guard nativeResult == other.nativeResult else {
-            throw ABIResolutionError.signatureMismatch(.init(expected: String(reflecting: nativeResult),
-                found: [String(reflecting: other.nativeResult)]))
+        for (first, second) in zip(parameters.arguments, other.parameters.arguments) {
+            if case .closure(let first) = first, case .closure(let second) = second,
+               !first.hasSameNativeABI(as: second) { return false }
+        }
+        if case .closure(let first) = result, case .closure(let second) = other.result {
+            return first.nativePlan!.hasSameNativeABI(as: second.nativePlan!)
+        }
+        return true
+    }
+
+    func validateNativeValues(for other: SwiftGenericClosurePlan) throws {
+        guard nativeValueTypes == other.nativeValueTypes else {
+            throw ABIResolutionError.signatureMismatch(.init(expected: "The closure's native argument and result types", found: []))
+        }
+        for (first, second) in zip(parameters.arguments, other.parameters.arguments) {
+            if case .closure(let expected) = first, case .closure(let incoming) = second {
+                guard !expected.isEscaping || incoming.isEscaping else {
+                    throw ABIResolutionError.signatureMismatch(.init(
+                        expected: "An escaping nested closure accepted by the original native caller", found: ["A nonescaping input"]))
+                }
+                try incoming.validateNativeValues(for: expected)
+            }
+        }
+        if case .closure(let produced) = result, case .closure(let expected) = other.result {
+            try produced.nativePlan!.validateNativeValues(for: expected.nativePlan!)
         }
     }
 
@@ -183,7 +278,7 @@ struct SwiftGenericCallPlan: Sendable {
         let binding = try SwiftGenericBinding(declaration: declaration,
             arguments: (enclosing?.arguments ?? []) + genericArguments,
             signature: signature, resolver: resolver, enclosing: context, image: image)
-        if case .function(let arguments, let result, let failure, let isAsync) = declared?.function {
+        if case .function(let arguments, let result, let failure, let isAsync, _) = declared?.function {
             _ = try SwiftGenericParameters(formal: arguments, actual: signature.parameters, binding: binding,
                 defaultConsuming: declaration.consumesArguments)
             guard isAsync == declaration.isAsync else {
@@ -311,7 +406,7 @@ struct SwiftGenericCallPlan: Sendable {
 
     static func closure(_ formal: SwiftFormalType, signature: SwiftFunctionSignature,
                                 binding: SwiftGenericBinding) throws -> SwiftGenericClosurePlan {
-        guard case .function(let parameters, let result, let failure, let isAsync) = formal else {
+        guard case .function(let parameters, let result, let failure, let isAsync, let isEscaping) = formal else {
             preconditionFailure("A closure plan requires a function type.")
         }
         guard isAsync == signature.isAsync,
@@ -337,7 +432,7 @@ struct SwiftGenericCallPlan: Sendable {
                     if let conversion = runtimeArguments[index] {
                         logicalTypes.append(try SwiftGenericParameters.storageType(conversion.plan.valueType.metadata))
                     } else {
-                        try binding.selectingPackElement(at: packIndex).validate(signature.parameters[index], for: pattern)
+                        try binding.selectingPackElement(at: packIndex).validateArgument(signature.parameters[index], for: pattern)
                         logicalTypes.append(try SwiftGenericParameters.storageType(signature.parameters[index]))
                     }
                 }
@@ -346,7 +441,7 @@ struct SwiftGenericCallPlan: Sendable {
                 authentication.append("-")
             case .value(let index):
                 let actual = runtimeArguments[index]?.plan.valueType.metadata ?? signature.parameters[index]
-                if runtimeArguments[index] == nil { try binding.validate(actual, for: formal) }
+                if runtimeArguments[index] == nil { try binding.validateArgument(actual, for: formal) }
                 logicalTypes.append(try layout(formal, actual: actual, binding: binding))
                 authentication.append(contentsOf: try authTypes(formal, actual: actual, binding: binding))
             }
@@ -354,8 +449,13 @@ struct SwiftGenericCallPlan: Sendable {
         let types = parameterPlan.types(from: logicalTypes)
         let nativeResult = try binding.resultType(signature.result, for: result)
         let resultType = try layout(result, actual: nativeResult, binding: binding)
-        let resultPlan: SwiftGenericResult = signature.result == NativeSwiftValue.self && nativeResult != signature.result
-            ? .runtimeValue(try binding.runtimeValuePlan(metadata: nativeResult, type: resultType)) : .value(resultType)
+        let resultPlan: SwiftGenericResult
+        if signature.result == NativeSwiftValue.self && nativeResult != signature.result {
+            resultPlan = .runtimeValue(try binding.runtimeValuePlan(metadata: nativeResult, type: resultType))
+        } else if case .function = result, let closure = signature.result as? any SwiftGenericClosureValue.Type {
+            let nested = try Self.closure(result, signature: SwiftFunctionSignature(closure.swiftFunctionType), binding: binding)
+            resultPlan = .closure(try closure.makeGenericClosureCodec(plan: nested))
+        } else { resultPlan = .value(resultType) }
         let errorType = try failure.flatMap {
             binding.dependsOnParameters($0) ? try layout($0, actual: signature.failure, binding: binding) : nil
         }
@@ -365,9 +465,10 @@ struct SwiftGenericCallPlan: Sendable {
                 errorPlan: errorPlan, inheritsCallerIsolation: signature.inheritsCallerIsolation),
                 inheritsCallerIsolation: signature.inheritsCallerIsolation)
             : .synchronous(try SwiftCallInterface.cached(result: resultType, parameters: types, errorPlan: errorPlan))
-        return try SwiftGenericClosurePlan(transport: transport, parameters: parameterPlan,
-            discriminator: swiftClosureDiscriminator(parameters: authentication,
-                results: authTypes(result, actual: nativeResult, binding: binding, isResult: true)),
+        let resultAuthentication = try authTypes(result, actual: nativeResult, binding: binding, isResult: true)
+        return SwiftGenericClosurePlan(transport: transport, parameters: parameterPlan,
+            discriminator: swiftClosureDiscriminator(parameters: authentication, results: resultAuthentication),
+            authentication: swiftClosureAuthDescription(parameters: authentication, results: resultAuthentication), isEscaping: isEscaping,
             resultConstants: SwiftValueConstants(nativeResult), errorPlan: errorPlan,
             runtimeArguments: runtimeArguments, result: resultPlan, nativeResult: nativeResult)
     }
@@ -385,6 +486,10 @@ struct SwiftGenericCallPlan: Sendable {
                 defer { index += 1 }
                 return try authTypes(field, actual: elements[index].type, binding: binding, isResult: isResult)
             }
+        }
+        if case .function = formal, let closure = actual as? any SwiftGenericClosureValue.Type {
+            let plan = try Self.closure(formal, signature: SwiftFunctionSignature(closure.swiftFunctionType), binding: binding)
+            return ["(" + plan.authentication + ")"]
         }
         let layout = try layout(formal, actual: actual, binding: binding)
         if ABISwiftValueIsIndirect(layout.handle) { return ["-indirect"] }
@@ -553,7 +658,7 @@ extension SwiftGenericBinding {
         case .nested(let parent, _, let parameters): dependsOnParameters(parent) || parameters.contains(where: dependsOnParameters)
         case .associated(let base, _, _): dependsOnParameters(base)
         case .tuple(let fields, _), .packValue(let fields): fields.contains(where: dependsOnParameters)
-        case .function(let parameters, let result, let failure, _):
+        case .function(let parameters, let result, let failure, _, _):
             parameters.contains(where: dependsOnParameters) || dependsOnParameters(result) || (failure.map(dependsOnParameters) ?? false)
         case .foreignFunction(_, let parameters, let result):
             parameters.contains(where: dependsOnParameters) || dependsOnParameters(result)

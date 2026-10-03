@@ -48,3 +48,100 @@ public func referenceProducedString(_ value: String) -> String { produceGeneric 
 @inline(never) public nonisolated(nonsending) func callRuntimeAsyncCallbackResult<Value>(
     _ body: nonisolated(nonsending) (Value) async throws -> Value, _ value: Value
 ) async rethrows -> Value { try await body(value) }
+@inline(never) public func visitNestedRuntime<Value>(
+    _ value: Value, _ body: ((Value) -> Value, Value) throws -> Value
+) rethrows -> Value { try body({ $0 }, value) }
+
+@inline(never) public func makeNestedRuntimeCaller<Value>(_ type: Value.Type) -> ((Value) -> Value, Value) -> Value {
+    { callback, value in callback(value) }
+}
+
+@inline(never) public func callNestedRuntimeProducer<Value>(
+    _ body: () throws -> (Value) -> Value, _ value: Value
+) rethrows -> Value { try body()(value) }
+
+private func nestedRuntimeIdentity<Value>(_ type: Value.Type) -> (Value) -> Value { { $0 } }
+@inline(never) public func visitNestedRuntimePack<each Value>(
+    _ types: repeat (each Value).Type, body: (repeat @escaping (each Value) -> each Value) throws -> Int64
+) rethrows -> Int64 { try body(repeat nestedRuntimeIdentity((each Value).self)) }
+
+@inline(never) public nonisolated(nonsending) func visitNestedRuntimeAsync<Value>(
+    _ value: Value,
+    _ body: nonisolated(nonsending) (nonisolated(nonsending) (Value) async -> Value, Value) async throws -> Value
+) async rethrows -> Value {
+    try await body({ value in await Task.yield(); return value }, value)
+}
+
+@inline(never) public func makeConcreteNestedCaller() -> ((Int64) -> Int64, Int64) -> Int64 {
+    { callback, value in callback(value) }
+}
+
+@inline(never) public func callNestedRuntimeCaller<Value>(
+    _ body: ((Value) -> Value, Value) -> Value, _ value: Value
+) -> Value { body({ $0 }, value) }
+
+@inline(never) public func callConcreteNestedCaller(_ body: ((Int64) -> Int64, Int64) -> Int64) -> Int64 {
+    body({ $0 + 7 }, 35)
+}
+
+@inline(never) public func makeConcreteNestedProducer() -> () -> (Int64) -> Int64 { { { $0 + 7 } } }
+
+@inline(never) public func makeNestedRuntimeProducer<Value>(_ type: Value.Type) -> () -> (Value) -> Value { { { $0 } } }
+
+@inline(never) public func callNonthrowingNestedRuntimeProducer<Value>(
+    _ body: () -> (Value) -> Value, _ value: Value
+) -> Value { body()(value) }
+
+@inline(never) public func callConcreteNestedProducer(_ body: () -> (Int64) -> Int64) -> Int64 { body()(42) }
+
+@inline(never) public func makeConcreteNestedAsyncCaller()
+    -> nonisolated(nonsending) (nonisolated(nonsending) (Int64) async -> Int64, Int64) async -> Int64 {
+    { callback, value in await Task.yield(); return await callback(value) }
+}
+
+@inline(never) public nonisolated(nonsending) func callNestedRuntimeAsyncCaller<Value>(
+    _ body: nonisolated(nonsending) (nonisolated(nonsending) (Value) async -> Value, Value) async -> Value, _ value: Value
+) async -> Value { await body({ value in await Task.yield(); return value }, value) }
+
+@inline(never) public func makeNestedRuntimeAsyncCaller<Value>(_ type: Value.Type)
+    -> nonisolated(nonsending) (nonisolated(nonsending) (Value) async -> Value, Value) async -> Value {
+    { callback, value in await Task.yield(); return await callback(value) }
+}
+
+@inline(never) public nonisolated(nonsending) func callConcreteNestedAsyncCaller(
+    _ body: nonisolated(nonsending) (nonisolated(nonsending) (Int64) async -> Int64, Int64) async -> Int64
+) async -> Int64 { await body({ value in await Task.yield(); return value + 7 }, 35) }
+
+private final class RuntimeNestedClosureLifetime {
+    let onDestroy: () -> Void
+    init(_ onDestroy: @escaping () -> Void) { self.onDestroy = onDestroy }
+    deinit { onDestroy() }
+}
+
+@inline(never) public func makeRetainedConcreteNestedProducer(_ onDestroy: @escaping () -> Void) -> () -> (Int64) -> Int64 {
+    let lifetime = RuntimeNestedClosureLifetime(onDestroy)
+    return { { value in withExtendedLifetime(lifetime) { value + 7 } } }
+}
+
+@inline(never) public func takeNestedRuntimeProducer<Value>(_ body: () -> (Value) -> Value) -> (Value) -> Value { body() }
+
+@inline(never) public func makeConcreteNestedAsyncProducer()
+    -> nonisolated(nonsending) () async -> nonisolated(nonsending) (Int64) async -> Int64 {
+    { await Task.yield(); return { value in await Task.yield(); return value + 7 } }
+}
+
+@inline(never) public nonisolated(nonsending) func callNestedRuntimeAsyncProducer<Value>(
+    _ body: nonisolated(nonsending) () async -> nonisolated(nonsending) (Value) async -> Value, _ value: Value
+) async -> Value { let callback = await body(); return await callback(value) }
+
+@inline(never) public func makeConcreteNestedPackCaller() -> ((Int64, String) -> Int64, Int64, String) -> Int64 {
+    { callback, value, text in callback(value, text) }
+}
+
+private func makeNestedPackAnswer<each Value>(_ values: repeat each Value) -> (repeat each Value) -> Int64 {
+    { (_: repeat each Value) in 42 }
+}
+
+@inline(never) public func callNestedRuntimePackCaller<each Value>(
+    _ values: repeat each Value, body: (@escaping (repeat each Value) -> Int64, repeat each Value) -> Int64
+) -> Int64 { body(makeNestedPackAnswer(repeat each values), repeat each values) }

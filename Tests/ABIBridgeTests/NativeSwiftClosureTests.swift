@@ -43,7 +43,211 @@ private final class ReentrantClosureCapture: Sendable {
     }
 }
 
+private final class NestedClosureCapture: @unchecked Sendable {
+    var value: NativeSwiftClosure<(Int64) -> Int64>?
+    var asyncValue: NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>?
+}
+
 struct NativeSwiftClosureTests {
+    @Test func nativeNestedResultsOwnTheirCaptureAfterBothOuterCallsReturn() async throws {
+        typealias Inner = NativeSwiftClosure<(Int64) -> Int64>
+        typealias Producer = NativeSwiftClosure<() -> Inner>
+        let runtime = ABIRuntime.shared
+        let factory = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeRetainedConcreteNestedProducer(_:)",
+            as: ((NativeSwiftClosure<() -> Void>) -> Producer).self)
+        let take = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.takeNestedRuntimeProducer<A>(() -> (A) -> A) -> (A) -> A",
+            as: ((Producer) -> Inner).self, genericArguments: [.type(Int64.self)])
+        let destroyed = ClosureCounter()
+        do {
+            var returned: Inner?
+            do {
+                let onDestroy = try NativeSwiftClosure { destroyed.increment() }
+                let producer = try unsafe factory.unsafeInvoke(onDestroy)
+                returned = try unsafe take.unsafeInvoke(producer)
+            }
+            #expect(destroyed.count == 0)
+            let copied = try returned!.copy()
+            returned = nil
+            #expect(try unsafe copied.unsafeInvoke(35) == 42)
+            #expect(destroyed.count == 0)
+        }
+        #expect(destroyed.count == 1)
+    }
+
+    @Test func nativeNestedAsyncResultsAndPackInputsUsePreparedAdapters() async throws {
+        let runtime = ABIRuntime.shared
+        typealias Inner = NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>
+        typealias Producer = NativeSwiftClosure<nonisolated(nonsending) () async -> Inner>
+        let factory = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeConcreteNestedAsyncProducer()", as: (() -> Producer).self)
+        let call = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.callNestedRuntimeAsyncProducer<A>(nonisolated(nonsending) () async -> nonisolated(nonsending) (A) async -> A, A) async -> A",
+            as: (nonisolated(nonsending) (Producer, Int64) async -> Int64).self, genericArguments: [.type(Int64.self)])
+        let producer = try unsafe factory.unsafeInvoke()
+        #expect(try unsafe await call.unsafeInvoke(producer, 35) == 42)
+        typealias PackInner = NativeSwiftClosure<(Int64, String) -> Int64>
+        typealias Caller = NativeSwiftClosure<(PackInner, Int64, String) -> Int64>
+        let packFactory = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeConcreteNestedPackCaller()", as: (() -> Caller).self)
+        let packCall = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.callNestedRuntimePackCaller<each A>(_: repeat A, body: ((repeat A) -> Swift.Int64, repeat A) -> Swift.Int64) -> Swift.Int64",
+            as: ((Int64, String, Caller) -> Int64).self,
+            genericArguments: [.pack([.type(Int64.self), .type(String.self)])])
+        let caller = try unsafe packFactory.unsafeInvoke()
+        #expect(try unsafe packCall.unsafeInvoke(35, "pack", caller) == 42)
+    }
+
+    @Test func nativeNestedClosuresReabstractGenericInputsAndResultsInBothDirections() async throws {
+        let runtime = ABIRuntime.shared
+        typealias Inner = NativeSwiftClosure<(Int64) -> Int64>
+        typealias Caller = NativeSwiftClosure<(Inner, Int64) -> Int64>
+        typealias Producer = NativeSwiftClosure<() -> Inner>
+        let concreteFactory = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeConcreteNestedCaller()", as: (() -> Caller).self)
+        let genericCall = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.callNestedRuntimeCaller<A>(((A) -> A, A) -> A, A) -> A",
+            as: ((Caller, Int64) -> Int64).self, genericArguments: [.type(Int64.self)])
+        let concrete = try unsafe concreteFactory.unsafeInvoke()
+        #expect(try unsafe genericCall.unsafeInvoke(concrete, 42) == 42)
+        let genericFactory = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeNestedRuntimeCaller<A>(A.Type) -> ((A) -> A, A) -> A",
+            as: ((Int64.Type) -> Caller).self, genericArguments: [.type(Int64.self)])
+        let concreteCall = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.callConcreteNestedCaller(_:)", as: ((Caller) -> Int64).self)
+        let generic = try unsafe genericFactory.unsafeInvoke(Int64.self)
+        #expect(try unsafe concreteCall.unsafeInvoke(generic) == 42)
+        let concreteProducerFactory = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeConcreteNestedProducer()", as: (() -> Producer).self)
+        let genericProduce = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.callNonthrowingNestedRuntimeProducer<A>(() -> (A) -> A, A) -> A",
+            as: ((Producer, Int64) -> Int64).self, genericArguments: [.type(Int64.self)])
+        #expect(try unsafe genericProduce.unsafeInvoke(concreteProducerFactory.unsafeInvoke(), 35) == 42)
+        let genericProducerFactory = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeNestedRuntimeProducer<A>(A.Type) -> () -> (A) -> A",
+            as: ((Int64.Type) -> Producer).self, genericArguments: [.type(Int64.self)])
+        let concreteProduce = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.callConcreteNestedProducer(_:)", as: ((Producer) -> Int64).self)
+        #expect(try unsafe concreteProduce.unsafeInvoke(genericProducerFactory.unsafeInvoke(Int64.self)) == 42)
+    }
+
+    @Test func nativeNestedAsyncClosuresReabstractGenericInputsInBothDirections() async throws {
+        let runtime = ABIRuntime.shared
+        typealias Inner = NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>
+        typealias Caller = NativeSwiftClosure<nonisolated(nonsending) (Inner, Int64) async -> Int64>
+        let concreteFactory = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeConcreteNestedAsyncCaller()", as: (() -> Caller).self)
+        let genericCall = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.callNestedRuntimeAsyncCaller<A>(nonisolated(nonsending) (nonisolated(nonsending) (A) async -> A, A) async -> A, A) async -> A",
+            as: (nonisolated(nonsending) (Caller, Int64) async -> Int64).self,
+            genericArguments: [.type(Int64.self)])
+        let concrete = try unsafe concreteFactory.unsafeInvoke()
+        #expect(try unsafe await genericCall.unsafeInvoke(concrete, 42) == 42)
+        let genericFactory = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeNestedRuntimeAsyncCaller<A>(A.Type) -> nonisolated(nonsending) (nonisolated(nonsending) (A) async -> A, A) async -> A",
+            as: ((Int64.Type) -> Caller).self, genericArguments: [.type(Int64.self)])
+        let concreteCall = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.callConcreteNestedAsyncCaller(_:)",
+            as: (nonisolated(nonsending) (Caller) async -> Int64).self)
+        let generic = try unsafe genericFactory.unsafeInvoke(Int64.self)
+        #expect(try unsafe await concreteCall.unsafeInvoke(generic) == 42)
+    }
+
+    @Test func escapingNestedInputsCanBeCopiedBeyondTheirCallback() async throws {
+        typealias Nested = NativeSwiftClosure<(Int64) -> Int64>
+        typealias Callback = NativeSwiftClosure<(Nested) throws -> Void>
+        let visit = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.visitEscapingNestedClosure(_:)", as: ((Callback) throws -> Void).self)
+        let borrowed = NestedClosureCapture(), owned = NestedClosureCapture()
+        let callback = try Callback { value in
+            borrowed.value = value
+            owned.value = try value.copy()
+        }
+        try unsafe visit.unsafeInvoke(callback)
+        #expect(throws: NativeSwiftBorrowError.expiredBorrow) { try unsafe borrowed.value!.unsafeInvoke(35) }
+        #expect(throws: NativeSwiftBorrowError.expiredBorrow) { try borrowed.value!.copy() }
+        #expect(try unsafe owned.value!.unsafeInvoke(35) == 42)
+        let copiedAgain = try owned.value!.copy()
+        owned.value = nil
+        #expect(try unsafe copiedAgain.unsafeInvoke(8) == 50)
+        let echo = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.echoClosure(_:)", as: ((Nested) -> Nested).self)
+        let returned = try unsafe echo.unsafeInvoke(copiedAgain)
+        #expect(try unsafe returned.unsafeInvoke(1) == 51)
+    }
+
+    @Test func escapingNestedAsyncInputsCanBeCopiedAfterSuspension() async throws {
+        typealias Nested = NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>
+        typealias Callback = NativeSwiftClosure<nonisolated(nonsending) (Nested) async throws -> Void>
+        let visit = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.visitEscapingNestedAsyncClosure(_:)",
+            as: (nonisolated(nonsending) (Callback) async throws -> Void).self)
+        let borrowed = NestedClosureCapture(), owned = NestedClosureCapture()
+        let body: nonisolated(nonsending) @Sendable (Nested) async throws -> Void = { value in
+            borrowed.asyncValue = value
+            await Task.yield()
+            owned.asyncValue = try value.copy()
+        }
+        try unsafe await visit.unsafeInvoke(Callback(body))
+        await #expect(throws: NativeSwiftBorrowError.expiredBorrow) { try unsafe await borrowed.asyncValue!.unsafeInvoke(35) }
+        #expect(try unsafe await owned.asyncValue!.unsafeInvoke(35) == 42)
+        let copiedAgain = try owned.asyncValue!.copy()
+        owned.asyncValue = nil
+        #expect(try unsafe await copiedAgain.unsafeInvoke(8) == 50)
+    }
+
+    @Test func nestedInputsBorrowStackContextsAndExpireAfterReturn() async throws {
+        typealias Inner = NativeSwiftClosure<(Int64) -> Int64>
+        let apply = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.applyIntegerClosure(_:_:)", as: ((Inner, Int64) -> Int64).self)
+        let echo = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.echoClosure(_:)", as: ((Inner) -> Inner).self)
+        let visit = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.visitNestedClosure(_:)",
+            as: ((NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>) throws -> Int64>) throws -> Int64).self)
+        let saved = NestedClosureCapture()
+        let callback = try NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>) throws -> Int64> { value in
+            saved.value = value
+            #expect(throws: ABIResolutionError.self) { try value.copy() }
+            #expect(throws: ABIResolutionError.self) { try unsafe echo.unsafeInvoke(value) }
+            return try unsafe apply.unsafeInvoke(value, 20)
+        }
+        #expect(try unsafe visit.unsafeInvoke(callback) == 42)
+        #expect(throws: NativeSwiftBorrowError.expiredBorrow) { try unsafe saved.value!.unsafeInvoke(1) }
+        #expect(throws: NativeSwiftBorrowError.expiredBorrow) { try saved.value!.copy() }
+    }
+
+    @Test func nestedAsyncInputsKeepTheirNativeScopeAcrossAwait() async throws {
+        typealias Nested = NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>
+        typealias Callback = NativeSwiftClosure<nonisolated(nonsending) (Nested) async throws -> Int64>
+        let visit = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.visitNestedAsyncClosure(_:)",
+            as: (nonisolated(nonsending) (Callback) async throws -> Int64).self)
+        let saved = NestedClosureCapture()
+        let body: nonisolated(nonsending) @Sendable (Nested) async throws -> Int64 = { value in
+            saved.asyncValue = value
+            await Task.yield()
+            return try unsafe await value.unsafeInvoke(20)
+        }
+        let callback = try Callback(body)
+        #expect(try unsafe await visit.unsafeInvoke(callback) == 42)
+        await #expect(throws: NativeSwiftBorrowError.expiredBorrow) { try unsafe await saved.asyncValue!.unsafeInvoke(1) }
+    }
+
+    @Test func nestedResultsTransferOwnedContextsToTheNativeCaller() async throws {
+        let call = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.callClosureProducer(_:)",
+            as: ((NativeSwiftClosure<() throws -> NativeSwiftClosure<(Int64) -> Int64>>) throws -> Int64).self)
+        let destroyed = ClosureCounter()
+        let producer = try NativeSwiftClosure<() throws -> NativeSwiftClosure<(Int64) -> Int64>> {
+            let capture = ClosureCapture(destroyed)
+            return try NativeSwiftClosure { (value: Int64) in value + capture.bias }
+        }
+        #expect(try unsafe call.unsafeInvoke(producer) == 42)
+        #expect(destroyed.count == 1)
+    }
+
     @Test func nonescapingConstructionInfersTheOrdinarySignature() throws {
         let result = try unsafe NativeSwiftClosure.withUnsafeNonescaping({ (value: Int64) in value + 7 }) {
             try unsafe $0.unsafeInvoke(35)
