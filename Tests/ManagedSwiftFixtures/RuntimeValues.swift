@@ -581,6 +581,7 @@ public final class RuntimeClassBoth<Element>: RuntimeClassLeft, RuntimeClassRigh
 @inline(never) public func echoRuntimeParameterizedMetatypeTuple<Element>(_ value: (any RuntimeClassLeft<Element>.Type, Int)) -> (any RuntimeClassLeft<Element>.Type, Int) { value }
 @inline(never) public func echoRuntimeOptionalParameterizedMetatype<Element>(_ value: (any RuntimeClassLeft<Element>.Type)?) -> (any RuntimeClassLeft<Element>.Type)? { value }
 @inline(never) public func replaceRuntimeParameterizedMetatype<Element>(_ value: inout any RuntimeClassLeft<Element>.Type, _ replacement: any RuntimeClassLeft<Element>.Type) { value = replacement }
+@inline(never) public func echoRuntimeFunctionCollection(_ value: any Collection<(Int) -> Int>) -> any Collection<(Int) -> Int> { value }
 
 public protocol RuntimeSharedBase<Element> { associatedtype Element; var value: Element { get } }
 public protocol RuntimeSharedLeft: RuntimeSharedBase {}

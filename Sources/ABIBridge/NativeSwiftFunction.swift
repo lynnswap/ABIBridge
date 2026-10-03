@@ -37,11 +37,17 @@ func swiftNativeTypeName(_ type: Any.Type) throws -> String {
 }
 
 private func swiftExtendedTypeName(_ type: Any.Type) throws -> String? {
+    func spelling(_ type: SwiftFormalType) -> String {
+        // NodePrinter.cpp omits escaping qualifiers for Swift function types.
+        // Keep those qualifiers in the formal ABI model, but not lookup names.
+        type.spelling.replacingOccurrences(of: "@escaping ", with: "")
+            .replacingOccurrences(of: "@noescape ", with: "")
+    }
     let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
     if metadata.load(as: UInt.self) == 0x307 {
         // Swift 6.3's runtime mangler assumes the generalized expression is a
         // constrained value; an existential metatype adds a wrapper and traps.
-        return try SwiftExtendedExistentialMetadata.formalType(type).spelling
+        return try spelling(SwiftExtendedExistentialMetadata.formalType(type))
     }
     if let optional = type as? any NativeOptionalValue.Type,
        let wrapped = try swiftExtendedTypeName(optional.wrappedType) {
@@ -76,9 +82,9 @@ private func swiftExtendedTypeName(_ type: Any.Type) throws -> String? {
             default: value
             }
         }
-        return try SwiftFormalType.function(arguments, SwiftFormalType(names[0] ?? swiftNativeTypeName(function.result)),
+        return try spelling(SwiftFormalType.function(arguments, SwiftFormalType(names[0] ?? swiftNativeTypeName(function.result)),
             failure: function.failure == Never.self ? nil : SwiftFormalType(swiftNativeTypeName(function.failure)),
-            attributes: function.attributes).spelling
+            attributes: function.attributes))
     }
     return nil
 }

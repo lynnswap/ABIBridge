@@ -8,6 +8,15 @@ import ABIBridgeCore
 import Testing
 
 struct SwiftExistentialValueTests {
+    @Test func functionAssociatedTypesKeepCanonicalLookupNames() async throws {
+        typealias Value = any Collection<(Int) -> Int>
+        let echo = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoRuntimeFunctionCollection(_:)",
+            as: ((Value) -> Value).self)
+        let value: Value = [{ $0 + 2 }]
+        let result = try unsafe echo.unsafeInvoke(value)
+        #expect(Array(result)[0](40) == 42)
+    }
+
     @Test func classParameterizedCompositionsKeepBothWitnesses() async throws {
         typealias Value = any RuntimeClassFirst<Int> & RuntimeClassSecond<Int>
         let make = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeDistinctClassComposition(_:)",
