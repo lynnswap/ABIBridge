@@ -72,7 +72,7 @@ struct SwiftGenericClosurePlan: Sendable {
         return convertsArguments
     }
 
-    func validateCallbackInputs() throws {
+    func validateCallbackConversion() throws {
         for conversion in runtimeArguments.compactMap({ $0 }) where !conversion.borrowed {
             try conversion.plan.requireOwnedValue()
             guard SwiftCopyability.accepts(conversion.plan.valueType.metadata) else {
@@ -80,7 +80,37 @@ struct SwiftGenericClosurePlan: Sendable {
             }
         }
         if case .runtimeValue = result {
-            throw ABIResolutionError.unsupportedDeclaration("Runtime value callback results require native value conversion at callback entry.")
+            guard errorPlan?.identity == ObjectIdentifier((any Error).self) else {
+                throw ABIResolutionError.unsupportedDeclaration("A host callback returning a runtime value requires throws(any Error) to report type and ownership failures.")
+            }
+        }
+    }
+
+    func makeCallbackResultStorage() -> NativeValueStorage? {
+        guard case .runtimeValue = result else { return nil }
+        return NativeValueStorage(size: MemoryLayout<NativeSwiftValue>.stride,
+            alignment: MemoryLayout<NativeSwiftValue>.alignment)
+    }
+
+    // Conversion runs only after a successful host return. Native failure leaves
+    // result storage uninitialized; an invalid handle keeps its native value.
+    func encodeCallbackResult(_ storage: NativeValueStorage?, to output: UnsafeMutableRawPointer,
+                              errorOutput: UnsafeMutableRawPointer?) -> Bool {
+        guard let storage, case .runtimeValue(let plan) = result else {
+            resultConstants.initialize(at: output)
+            return false
+        }
+        let value = storage.take(as: NativeSwiftValue.self)
+        do {
+            let source = try plan.encode(value, convention: .consuming, asynchronous: false)
+            SwiftValueCodeLifetime.connect([SwiftValueCodeLifetime.current, source.codeLifetime].compactMap { $0 }, retaining: [])
+            ABISwiftTakeValue(unsafeBitCast(plan.valueType.metadata, to: UnsafeRawPointer.self), output, source.address)
+            source.relinquishValue()
+            return false
+        } catch {
+            // Publication validated the native any Error result channel.
+            errorOutput!.initializeMemory(as: (any Error).self, repeating: error, count: 1)
+            return true
         }
     }
 

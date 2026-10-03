@@ -20,6 +20,7 @@ private final class GenericBorrowState: @unchecked Sendable {
     var borrow: NativeSwiftBorrowedValue?
     var object: AnyObject?
     var failure: (any Error)?
+    var owned: NativeSwiftValue?
 }
 
 private enum GenericBorrowConversionError: Error { case converted }
@@ -187,5 +188,30 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     let asyncCopy = try unsafe makeAsync.unsafeInvoke("async returned")
     let asyncResult = try unsafe await asyncCopy.unsafeInvoke(value)
     try check(asyncResult.take(as: String.self) == "async returned", "Returned async runtime closure authenticates after native suspension")
+    typealias HostCopy = NativeSwiftClosure<(NativeSwiftValue) throws -> NativeSwiftValue>
+    let applyHost = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.callRuntimeCallbackResult<A>((A) throws -> A, A) throws -> A",
+        as: ((HostCopy, String) throws -> String).self, genericArguments: [.type(String.self)])
+    let hostCopy = try HostCopy { value in state.owned = value; return value }
+    try check(unsafe applyHost.unsafeInvoke(hostCopy, "host result") == "host result" && state.owned?.isConsumed == true,
+        "Host runtime callback result transfers its owned value through the authenticated native entry")
+    let invalid = try HostCopy { _ in state.owned! }
+    do {
+        _ = try unsafe applyHost.unsafeInvoke(invalid, "invalid")
+        throw ArchitectureValidationFailure(description: "Consumed callback result remained usable")
+    } catch let error as NativeSwiftError {
+        try check(error.withUnderlyingError { ($0 as? NativeSwiftValueError) == .consumedValue },
+            "Runtime callback result conversion errors propagate through native throws")
+    }
+    typealias AsyncHostCopy = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftValue) async throws -> NativeSwiftValue>
+    let applyAsyncHost = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.callRuntimeAsyncCallbackResult<A>(nonisolated(nonsending) (A) async throws -> A, A) async throws -> A",
+        as: (nonisolated(nonsending) (AsyncHostCopy, String) async throws -> String).self, genericArguments: [.type(String.self)])
+    let copyAsync: nonisolated(nonsending) @Sendable (NativeSwiftValue) async throws -> NativeSwiftValue = { value in
+        await Task.yield()
+        return value
+    }
+    try check(unsafe await applyAsyncHost.unsafeInvoke(AsyncHostCopy(copyAsync), "async host result") == "async host result",
+        "Async host runtime callback returns an owned native value after suspension")
     return checks
 }

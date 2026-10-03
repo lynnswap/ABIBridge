@@ -174,3 +174,15 @@ public func referenceRuntimeRecord(_ object: AnyObject, _ text: String, _ cancel
 @inline(never) public nonisolated(nonsending) func callRuntimeAsyncCopy<Value>(
     _ body: nonisolated(nonsending) (Value) async -> Value, _ value: Value
 ) async -> Value { await body(value) }
+
+@inline(never) public func callRuntimeProducer<Value: ~Copyable>(_ body: () throws -> Value) rethrows -> Value {
+    try body()
+}
+
+@inline(never) public func callRuntimeThrowingCopy<Value>(_ body: (Value) throws -> Value, _ value: Value) rethrows -> Value {
+    try body(value)
+}
+
+@inline(never) public nonisolated(nonsending) func callRuntimeThrowingAsyncCopy<Value>(
+    _ body: nonisolated(nonsending) (Value) async throws -> Value, _ value: Value
+) async rethrows -> Value { try await body(value) }

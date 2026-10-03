@@ -40,3 +40,9 @@ public func referenceProducedString(_ value: String) -> String { produceGeneric 
 ) async rethrows -> Int64 { try await body(value) }
 
 @inline(never) public func callRuntimeCallbackCopy<Value>(_ body: (Value) -> Value, _ value: Value) -> Value { body(value) }
+
+@inline(never) public func callRuntimeCallbackResult<Value>(_ body: (Value) throws -> Value, _ value: Value) rethrows -> Value { try body(value) }
+
+@inline(never) public nonisolated(nonsending) func callRuntimeAsyncCallbackResult<Value>(
+    _ body: nonisolated(nonsending) (Value) async throws -> Value, _ value: Value
+) async rethrows -> Value { try await body(value) }

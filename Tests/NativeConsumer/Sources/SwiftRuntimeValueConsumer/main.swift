@@ -135,3 +135,20 @@ guard try copied.take(as: String.self) == "returned closure", !produced.isConsum
     throw ConsumerError.wrongResult
 }
 print("Returned Swift closures share runtime value conversion across sync and async invocation")
+
+typealias RuntimeProducer = NativeSwiftClosure<() throws -> NativeSwiftValue>
+let produceTicket = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.callRuntimeProducer<A where A: ~Swift.Copyable>(() throws -> A) throws -> A",
+    as: ((RuntimeProducer) throws -> NativeSwiftValue).self, genericArguments: [.type(moved.type)], in: source)
+state.owned = moved
+let transferTicket = try RuntimeProducer { state.owned! }
+let callbackTicket = try unsafe produceTicket.unsafeInvoke(transferTicket)
+guard moved.isConsumed, !callbackTicket.isCopyable,
+      try unsafe readTicket.unsafeInvoke(on: callbackTicket) == 42 else { throw ConsumerError.wrongResult }
+do {
+    _ = try unsafe produceTicket.unsafeInvoke(transferTicket)
+    throw ConsumerError.wrongResult
+} catch let error as NativeSwiftError {
+    guard error.withUnderlyingError({ ($0 as? NativeSwiftValueError) == .consumedValue }) else { throw error }
+}
+print("Host callbacks transfer runtime-only noncopyable results and preserve native conversion errors")

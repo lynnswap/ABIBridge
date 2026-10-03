@@ -110,7 +110,7 @@ extension NativeSwiftClosure {
             preconditionFailure("The prepared callback and its formal transport must agree.")
         }
         if let native = prepared.closure { try native.validateNativeValues(for: plan) }
-        else { try plan.validateCallbackInputs() }
+        else { try plan.validateCallbackConversion() }
         let callback = try SwiftAsyncClosureCallbackOwner(interface: interface,
             body: SwiftAsyncClosureBody(inheritsCallerIsolation: isolation,
                 retainingCode: (original.codeOwner, owner), codeLifetime: original.codeLifetime) { arguments, result, error in
@@ -123,14 +123,14 @@ extension NativeSwiftClosure {
                     UnsafeRawPointer(bitPattern: $0.address)!.assumingMemoryBound(to: UnsafeMutableRawPointer?.self)
                 } ?? arguments
                 let unusedError = plan.errorPlan == nil ? prepared.errorPlan?.makeStorage() : nil
+                let convertedResult = prepared.closure == nil ? plan.makeCallbackResultStorage() : nil
                 let invocation = ABICreateSwiftAsyncInvocation(prepared.interface.handle, original.entry.function,
-                    original.entry.contextSize, result, forwarded, original.value.context, error ?? unusedError?.address, nil)
+                    original.entry.contextSize, convertedResult?.address ?? result, forwarded, original.value.context, error ?? unusedError?.address, nil)
                 precondition(invocation != nil, "The prepared async closure reabstraction must be valid.")
                 defer { withExtendedLifetime((original, decoded, native, unpacked, unusedError)) { ABIReleaseSwiftAsyncInvocation(invocation!) } }
                 await invokeSwiftAsync(invocation!)
                 let didThrow = ABISwiftAsyncInvocationDidThrow(invocation!)
-                if !didThrow { plan.resultConstants.initialize(at: result) }
-                return didThrow
+                return didThrow || plan.encodeCallbackResult(convertedResult, to: result, errorOutput: error)
             })
         return try Self.asyncStorage(callback, discriminator: plan.discriminator, codeLifetime: original.codeLifetime).encoded()
     }

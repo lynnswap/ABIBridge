@@ -244,21 +244,23 @@ extension NativeSwiftClosure: SwiftGenericClosureValue {
             preconditionFailure("The prepared callback and its formal transport must agree.")
         }
         if let native = prepared.closure { try native.validateNativeValues(for: plan) }
-        else { try plan.validateCallbackInputs() }
+        else { try plan.validateCallbackConversion() }
         let callback = try throwingClosureOwner(interface, body: SwiftThrowingClosureBody(
             retainingCode: (original.codeOwner, owner), codeLifetime: original.codeLifetime) { arguments, output, error in
             var didThrow = false
+            let convertedResult = prepared.closure == nil ? plan.makeCallbackResultStorage() : nil
+            let hostOutput = convertedResult?.address ?? output
             // A Never-bound generic source still has its formal error output.
             let unusedError = plan.errorPlan == nil ? prepared.errorPlan?.makeStorage() : nil
             defer { withExtendedLifetime(unusedError) {} }
             func invoke(_ arguments: UnsafePointer<UnsafeMutableRawPointer?>?) -> Bool {
                 if prepared.errorPlan != nil {
                     return ABIUnsafeInvokeSwiftThrowingCallInterface(prepared.interface.handle,
-                        original.implementation.function, output, arguments, original.value.context,
+                        original.implementation.function, hostOutput, arguments, original.value.context,
                         error ?? unusedError?.address, &didThrow, nil)
                 }
                 return ABIUnsafeInvokeSwiftCallInterface(prepared.interface.handle, original.implementation.function,
-                        output, arguments, original.value.context, nil)
+                        hostOutput, arguments, original.value.context, nil)
             }
             let decoded = prepared.closure == nil ? plan.decodeArguments(arguments) : nil
             let native = prepared.closure.map { $0.parameters.encode(plan.parameters.unpack(arguments)) }
@@ -269,8 +271,7 @@ extension NativeSwiftClosure: SwiftGenericClosureValue {
                 success = withExtendedLifetime(decoded) { decoded.addresses.withUnsafeBufferPointer { invoke($0.baseAddress) } }
             } else { success = invoke(arguments) }
             precondition(success, "A prepared closure reabstraction must have a valid call frame.")
-            if !didThrow { plan.resultConstants.initialize(at: output) }
-            return didThrow
+            return didThrow || plan.encodeCallbackResult(convertedResult, to: output, errorOutput: error)
         })
         let value = ABISwiftClosureValue(function: ABISignSwiftClosureFunction(callback.function, plan.discriminator),
             context: Unmanaged.passRetained(callback).toOpaque())
