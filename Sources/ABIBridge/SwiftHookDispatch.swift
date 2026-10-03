@@ -66,6 +66,9 @@ private final class SwiftHookExecution {
         } catch {
             frame.expire()
             let underlying = (error as? SwiftHookCompletedResultError)?.underlying ?? error
+            if let nativeError = signature.errorPlan?.encode(underlying) {
+                throw SwiftHookCompletedResultError(underlying: underlying, nativeError: nativeError)
+            }
             handler.failure(underlying)
             if let last = step.last { return try last.get() }
             if let completed = error as? SwiftHookCompletedResultError { throw completed }
@@ -97,7 +100,13 @@ final class SwiftHookDispatcher: Sendable {
                 throw consumeNativeCallFailure(error)
             }
             value.relinquishValue()
-        } catch is SwiftHookCompletedResultError {
+        } catch let completed as SwiftHookCompletedResultError {
+            if let nativeError = completed.nativeError, let errorPlan = signature.errorPlan {
+                var error: OpaquePointer?
+                if ABISwiftIncomingSetError(call, nativeError.address, errorPlan.type.size, &error) {
+                    nativeError.relinquishValue()
+                } else { snapshot.last?.failure(consumeNativeCallFailure(error)) }
+            }
             // A node already reported conversion failure. Preserve the native
             // entry's owned result without decoding it or executing it twice.
         } catch {
@@ -117,6 +126,18 @@ final class SwiftGeneratedCallback: @unchecked Sendable {
         functions.releaseContext = { Unmanaged<SwiftHookDispatcher>.fromOpaque($0!).release() }
         functions.destroyResult = { context, value in
             Unmanaged<SwiftHookDispatcher>.fromOpaque(context!).takeUnretainedValue().signature.destroyResult(value!)
+        }
+        functions.destroyError = { context, value in
+            Unmanaged<SwiftHookDispatcher>.fromOpaque(context!).takeUnretainedValue().signature.errorPlan?.destroy(value!)
+        }
+        functions.initializeResult = { context, offset, size, destination, source in
+            let signature = Unmanaged<SwiftHookDispatcher>.fromOpaque(context!).takeUnretainedValue().signature
+            if let initialize = signature.initializeResult { initialize(offset, size, destination!, source!) }
+            else { destination!.copyMemory(from: source!, byteCount: size) }
+        }
+        functions.initializeError = { context, offset, size, destination, source in
+            let signature = Unmanaged<SwiftHookDispatcher>.fromOpaque(context!).takeUnretainedValue().signature
+            signature.errorPlan!.initialize(offset, size, destination!, source!)
         }
         functions.destroyConsumedArguments = { context, receiver, arguments, count in
             let signature = Unmanaged<SwiftHookDispatcher>.fromOpaque(context!).takeUnretainedValue().signature

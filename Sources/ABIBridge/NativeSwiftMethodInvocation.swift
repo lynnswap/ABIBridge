@@ -65,14 +65,17 @@ public struct NativeSwiftMethodInvocation<Result, each Argument>: CustomStringCo
     /// The incoming receiver is preserved. Mutating value methods use its
     /// original address. A consuming method receives an independent owned
     /// receiver copy for each continuation, so the callback can
-    /// inspect its receiver before and after proceeding. Errors after a completed
-    /// continuation preserve its latest result without repeating native effects.
+    /// inspect its receiver before and after proceeding. Native failures throw
+    /// `NativeSwiftError`. If a later hook failure cannot use the declared native
+    /// error channel, recovery preserves the latest result or native failure.
     public func proceed(_ values: repeat each Argument) throws -> Result {
-        try frame.use { operation in
-            let storage = try prepared.encodeArguments(repeat each values)
-            let result = try operation(storage)
-            return try prepared.result.copy(from: result, retaining: result)
-        }
+        do {
+            return try frame.use { operation in
+                let storage = try prepared.encodeArguments(repeat each values)
+                let result = try operation(storage)
+                return try prepared.result.copy(from: result, retaining: result)
+            }
+        } catch let error as SwiftHookCompletedResultError { throw error.underlying }
     }
 }
 
@@ -99,12 +102,10 @@ extension NativeSwiftMethod {
         requiresMainActor: Bool, onFailure: @escaping @Sendable (any Error) -> Void,
         body: @escaping @Sendable (NativeSwiftMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
     ) throws -> (signature: SwiftHookSignature, handler: SwiftHookHandler) {
-        guard errorPlan == nil else {
-            throw ABIResolutionError.unsupportedDeclaration("Managed hooks cannot yet return native Swift errors.")
-        }
         let receiverView = SwiftHookReceiverView(self)
         let prepared = try SwiftHookCallbackSignature<Result, repeat each Argument>(declaration: call.generic)
-        let signature = try prepared.erased(consumingArguments: consumesArguments, receiver: receiver, retaining: self)
+        let signature = try prepared.erased(consumingArguments: consumesArguments, receiver: receiver,
+            errorPlan: errorPlan, retaining: self)
         let handler = prepareSwiftMethodHandler(method: self, prepared: prepared, receiver: receiverView,
             requiresMainActor: requiresMainActor, onFailure: onFailure, body: body)
         return (signature, handler)

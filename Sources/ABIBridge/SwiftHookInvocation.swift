@@ -67,17 +67,20 @@ public struct NativeSwiftFunctionInvocation<Result, each Argument>: CustomString
     /// properties are visible to subsequent callbacks and native code.
     /// - Throws: Scope, argument/result conversion, or continuation errors.
     public func proceed(_ values: repeat each Argument) throws -> Result {
-        try frame.use { operation in
-            let storage = try prepared.encodeArguments(repeat each values)
-            let result = try operation(storage)
-            return try prepared.result.copy(from: result, retaining: result)
-        }
+        do {
+            return try frame.use { operation in
+                let storage = try prepared.encodeArguments(repeat each values)
+                let result = try operation(storage)
+                return try prepared.result.copy(from: result, retaining: result)
+            }
+        } catch let error as SwiftHookCompletedResultError { throw error.underlying }
     }
 }
 
 struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
     let result: SwiftValueCodec<Result>
     private let resultType: CValueType
+    private let initializeResult: SwiftResultInitializer
     let arguments: (repeat SwiftValueCodec<each Argument>)
     init(declaration: SwiftGenericCallPlan? = nil) throws {
         if let declaration {
@@ -104,6 +107,8 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
             }
         }
         result = try SwiftValueCodec()
+        initializeResult = swiftResultInitializer(nativeMetadata: Result.self,
+            generic: declaration?.result ?? .concrete)
         // An opaque result can use indirect native return storage even when its
         // known payload has an ordinary scalar or reference representation.
         resultType = declaration?.result.type ?? result.type
@@ -122,18 +127,20 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
         }
         return (repeat try decode(each arguments))
     }
-    func erased(consumingArguments: Bool, receiver: SwiftReceiverPlan? = nil, retaining owner: any Sendable) throws -> SwiftHookSignature {
+    func erased(consumingArguments: Bool, receiver: SwiftReceiverPlan? = nil, errorPlan: SwiftErrorPlan? = nil,
+                retaining owner: any Sendable) throws -> SwiftHookSignature {
         var types: [CValueType] = [], identities: [ObjectIdentifier] = [ObjectIdentifier(Result.self)]
         for codec in repeat each arguments { types.append(codec.type) }
         for type in repeat (each Argument).self { identities.append(ObjectIdentifier(type)) }
         return try SwiftHookSignature(result: resultType, arguments: types, identities: identities,
-            consumesArguments: consumingArguments, receiver: receiver, owner: owner, cloneArguments: { storage in
+            consumesArguments: consumingArguments, receiver: receiver, errorPlan: errorPlan, owner: owner, cloneArguments: { storage in
                 var index = 0, result: [NativeValueStorage] = []
                 for codec in repeat each arguments {
                     result.append(try codec.copyNativeStorage(storage[index])); index += 1
                 }
                 return result
             }, cloneResult: { try result.copyNativeStorage($0) }, destroyResult: { result.destroyNativeValue(at: $0) },
+            initializeResult: initializeResult,
             destroyArguments: { addresses in
                 var index = 0
                 for codec in repeat each arguments { codec.destroyNativeValue(at: addresses[index]!); index += 1 }
@@ -148,29 +155,35 @@ final class SwiftHookSignature: @unchecked Sendable {
     let consumesArguments: Bool
     let explicitArgumentCount: Int
     let receiver: SwiftReceiverPlan?
+    let errorPlan: SwiftErrorPlan?
     let owner: any Sendable
     let interface: SwiftCallInterface
     let cloneArguments: ([NativeValueStorage]) throws -> [NativeValueStorage]
     let cloneResult: (NativeValueStorage) throws -> NativeValueStorage
     let destroyResult: (UnsafeMutableRawPointer) -> Void
+    let initializeResult: SwiftResultInitializer?
     let destroyArguments: (UnsafeBufferPointer<UnsafeMutableRawPointer?>) -> Void
     init(result: CValueType, arguments: [CValueType], identities: [ObjectIdentifier], consumesArguments: Bool,
-         receiver: SwiftReceiverPlan?,
+         receiver: SwiftReceiverPlan?, errorPlan: SwiftErrorPlan? = nil,
          owner: any Sendable, cloneArguments: @escaping ([NativeValueStorage]) throws -> [NativeValueStorage],
          cloneResult: @escaping (NativeValueStorage) throws -> NativeValueStorage,
          destroyResult: @escaping (UnsafeMutableRawPointer) -> Void,
+         initializeResult: SwiftResultInitializer? = nil,
          destroyArguments: @escaping (UnsafeBufferPointer<UnsafeMutableRawPointer?>) -> Void) throws {
         self.result = result; self.identities = identities
         explicitArgumentCount = arguments.count
         self.arguments = arguments + (receiver?.trailingType.map { [$0] } ?? [])
         self.consumesArguments = consumesArguments; self.owner = owner
         self.receiver = receiver
+        self.errorPlan = errorPlan
         self.cloneArguments = cloneArguments; self.cloneResult = cloneResult
         self.destroyResult = destroyResult; self.destroyArguments = destroyArguments
-        interface = try SwiftCallInterface(result: result, parameters: self.arguments)
+        self.initializeResult = initializeResult
+        interface = try SwiftCallInterface(result: result, parameters: self.arguments, errorPlan: errorPlan)
     }
     func matches(_ other: SwiftHookSignature) -> Bool {
         identities == other.identities && consumesArguments == other.consumesArguments && matchesReceiver(other.receiver)
+            && errorPlan?.identity == other.errorPlan?.identity
             && ABIValueTypesEqual(result.handle, other.result.handle) && arguments.count == other.arguments.count
             && zip(arguments, other.arguments).allSatisfy { ABIValueTypesEqual($0.handle, $1.handle) }
     }
@@ -227,9 +240,12 @@ final class SwiftHookSignature: @unchecked Sendable {
         if consumesArguments { for value in values.prefix(explicitArgumentCount) { value.relinquishValue() } }
         if receiver?.isConsuming == true && receiver?.mode == .value { values[explicitArgumentCount].relinquishValue() }
         consumedValue?.relinquishValue()
-        let bytes = NativeValueStorage(size: result.size, alignment: result.alignment)
+        let bytes = NativeValueStorage(borrowing: ABISwiftIncomingResultAddress(call)!, owner: self)
+        if ABISwiftIncomingDidThrow(call), let errorPlan {
+            let native = NativeSwiftError(try errorPlan.decode(errorPlan.copy(bytes)), retainingCode: owner)
+            throw SwiftHookCompletedResultError(underlying: native, nativeError: errorPlan.copy(bytes))
+        }
         do {
-            guard ABISwiftIncomingCopyResult(call, bytes.address, result.size, &error) else { throw consumeNativeCallFailure(error) }
             return try cloneResult(bytes)
         } catch { throw SwiftHookCompletedResultError(underlying: error) }
     }
@@ -264,4 +280,9 @@ final class SwiftHookSignature: @unchecked Sendable {
 
 // A native call already ran, but its result cannot be represented by the
 // supplied Swift codec. The C entry still owns the raw result for pass-through.
-struct SwiftHookCompletedResultError: Error { let underlying: any Error }
+// This internal carrier stays inside the active hook frame; public continuations
+// expose only its underlying error, never its owned native storage.
+struct SwiftHookCompletedResultError: Error, @unchecked Sendable {
+    let underlying: any Error
+    var nativeError: NativeValueStorage? = nil
+}

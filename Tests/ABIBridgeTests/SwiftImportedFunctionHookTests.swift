@@ -9,6 +9,97 @@ import Testing
 @Suite(.serialized)
 struct SwiftImportedFunctionHookTests {
 
+    @Test func throwingHooksUseNativeErrorsAndPreserveCompletedFailures() async throws {
+        let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
+        import Foundation
+        @inline(never) public func throwsAny(_ value: Int64, _ calls: UnsafeMutablePointer<Int64>) throws -> Int64 {
+            calls.pointee += 1
+            if value < 0 { throw NSError(domain: "native", code: Int(value)) }
+            return value + 1
+        }
+        @inline(never) public func throwsTyped(_ value: Int64, _ calls: UnsafeMutablePointer<Int64>) throws(NSError) -> Int64 {
+            calls.pointee += 1
+            if value < 0 { throw NSError(domain: "native", code: Int(value)) }
+            return value + 1
+        }
+        """, callerExtra: """
+        import Foundation
+        @inline(never) public func importedThrowsAny(_ value: Int64, _ calls: UnsafeMutablePointer<Int64>) throws -> Int64 {
+            try throwsAny(value, calls)
+        }
+        @inline(never) public func importedThrowsTyped(_ value: Int64, _ calls: UnsafeMutablePointer<Int64>) throws(NSError) -> Int64 {
+            try throwsTyped(value, calls)
+        }
+        """)
+        defer { fixture.cleanup() }
+        let any = try await fixture.runtime.swiftFunction(named: fixture.module + ".throwsAny(_:_:)",
+            as: ((Int64, UnsafeMutablePointer<Int64>) throws -> Int64).self, in: fixture.providerScope)
+        let anyOracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".importedThrowsAny(_:_:)",
+            as: ((Int64, UnsafeMutablePointer<Int64>) throws -> Int64).self, in: fixture.callerScope)
+        let typed = try await fixture.runtime.swiftFunction(named: fixture.module + ".throwsTyped(_:_:)",
+            as: ((Int64, UnsafeMutablePointer<Int64>) throws(NSError) -> Int64).self, in: fixture.providerScope)
+        let typedOracle = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".importedThrowsTyped(_:_:)",
+            as: ((Int64, UnsafeMutablePointer<Int64>) throws(NSError) -> Int64).self, in: fixture.callerScope)
+        let calls = UnsafeMutablePointer<Int64>.allocate(capacity: 1)
+        calls.initialize(to: 0)
+        defer { calls.deinitialize(count: 1); calls.deallocate() }
+        #expect(try unsafe anyOracle.unsafeInvoke(1, calls) == 2)
+        #expect(try unsafe typedOracle.unsafeInvoke(1, calls) == 2)
+        let failures = Mutex(0)
+        let anyHook = try unsafe await any.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value, count in
+                if value == 99 { throw SwiftHookTestFailure.afterProceed }
+                let result = try call.proceed(value, count)
+                if value == 98 { throw SwiftHookTestFailure.afterProceed }
+                return result + 10
+            }
+        defer { anyHook.invalidate() }
+        #expect(try unsafe anyOracle.unsafeInvoke(1, calls) == 12)
+        func caught(_ body: () throws -> Int64) throws -> NativeSwiftError {
+            do { _ = try body(); throw SwiftHookTestFailure.timeout }
+            catch let error as NativeSwiftError { return error }
+        }
+        calls.pointee = 0
+        let before = try caught { try unsafe anyOracle.unsafeInvoke(99, calls) }
+        before.withUnderlyingError { #expect($0 is SwiftHookTestFailure) }
+        #expect(calls.pointee == 0)
+        let after = try caught { try unsafe anyOracle.unsafeInvoke(98, calls) }
+        after.withUnderlyingError { #expect($0 is SwiftHookTestFailure) }
+        #expect(calls.pointee == 1)
+        let native = try caught { try unsafe anyOracle.unsafeInvoke(-7, calls) }
+        native.withUnderlyingError { #expect(($0 as NSError).domain == "native" && ($0 as NSError).code == -7) }
+        #expect(calls.pointee == 2 && failures.withLock { $0 } == 0)
+
+        let typedHook = try unsafe await typed.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value, count in
+                if value == 99 { throw NSError(domain: "hook", code: 99) }
+                if value == 98 { throw SwiftHookTestFailure.afterProceed }
+                do {
+                    let result = try call.proceed(value, count)
+                    if value == 97 { throw SwiftHookTestFailure.afterProceed }
+                    return result + 10
+                } catch {
+                    if value == -8 { throw SwiftHookTestFailure.afterProceed }
+                    throw error
+                }
+            }
+        defer { typedHook.invalidate() }
+        calls.pointee = 0
+        let replacement = try caught { try unsafe typedOracle.unsafeInvoke(99, calls) }
+        replacement.withUnderlyingError { #expect(($0 as NSError).domain == "hook") }
+        #expect(calls.pointee == 0)
+        #expect(try unsafe typedOracle.unsafeInvoke(98, calls) == 99)
+        #expect(try unsafe typedOracle.unsafeInvoke(97, calls) == 98)
+        let preserved = try caught { try unsafe typedOracle.unsafeInvoke(-8, calls) }
+        preserved.withUnderlyingError { #expect(($0 as NSError).domain == "native" && ($0 as NSError).code == -8) }
+        #expect(calls.pointee == 3 && failures.withLock { $0 } == 3)
+        typedHook.invalidate()
+        anyHook.invalidate()
+        #expect(try unsafe typedOracle.unsafeInvoke(1, calls) == 2)
+        let fallback = try caught { try unsafe anyOracle.unsafeInvoke(-9, calls) }
+        fallback.withUnderlyingError { #expect(($0 as NSError).code == -9) }
+    }
+
     @Test func opaqueResultsKeepTheirDeclaredReturnConvention() async throws {
         let fixture = try CompiledSwiftReplacementFixture()
         defer { fixture.cleanup() }

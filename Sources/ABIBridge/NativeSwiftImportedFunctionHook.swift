@@ -35,10 +35,11 @@ extension NativeSwiftFunction {
     /// The capturing closure receives typed arguments and a scoped `proceed`
     /// continuation. It can edit arguments, call the captured predecessor chain,
     /// and transform the result. Callbacks run synchronously on the incoming
-    /// thread. If a callback throws before proceeding, its incoming arguments
-    /// continue to the next implementation. After proceeding, a thrown error
-    /// preserves the latest completed result without repeating native effects.
-    /// `onFailure` receives the original callback or conversion error.
+    /// thread. Errors representable by the declaration's native error type return
+    /// through that channel, including every error for `throws(any Error)`.
+    /// Other errors reach `onFailure`: before proceeding, the original arguments
+    /// continue to the next implementation; afterward, the latest completed
+    /// result or native error is preserved without repeating native effects.
     ///
     /// Later registrations wrap earlier callbacks. Invalidation releases captures
     /// after in-flight snapshots finish, while published pass-through code and
@@ -110,11 +111,8 @@ extension NativeSwiftFunction {
         requiresMainActor: Bool, onFailure: @escaping @Sendable (any Error) -> Void,
         body: @escaping @Sendable (NativeSwiftFunctionInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
     ) throws -> (signature: SwiftHookSignature, handler: SwiftHookHandler) {
-        guard errorPlan == nil else {
-            throw ABIResolutionError.unsupportedDeclaration("Managed hooks cannot yet return native Swift errors.")
-        }
         let prepared = try SwiftHookCallbackSignature<Result, repeat each Argument>(declaration: call.generic)
-        let signature = try prepared.erased(consumingArguments: consumesArguments, retaining: self)
+        let signature = try prepared.erased(consumingArguments: consumesArguments, errorPlan: errorPlan, retaining: self)
         let handler = prepareSwiftImportedHandler(declaration: symbol.declaration, prepared: prepared,
             requiresMainActor: requiresMainActor, onFailure: onFailure, body: body)
         return (signature, handler)
