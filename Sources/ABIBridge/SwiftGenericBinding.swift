@@ -39,7 +39,7 @@ struct SwiftGenericBinding: Sendable {
     }
 
     let declaration: SwiftGenericDeclaration
-    let opaqueResult: SwiftRuntimeValuePlan?
+    var opaqueResults: [Int: SwiftRuntimeValuePlan] = [:]
     let arguments: [String: BoundArgument]
     let conformances: [Conformance]
     let typeOwners: [NativeSwiftType]
@@ -67,13 +67,12 @@ struct SwiftGenericBinding: Sendable {
     init(declaration: SwiftGenericDeclaration, arguments: [NativeSwiftGenericArgument],
          signature: SwiftFunctionSignature, resolver: SymbolResolver,
          enclosing context: SwiftGenericTypeContext? = nil, image: NativeImage? = nil,
-         valueABIs: [NativeSwiftType: NativeType] = [:], opaqueResult: SwiftRuntimeValuePlan? = nil) throws {
+         valueABIs: [NativeSwiftType: NativeType] = [:]) throws {
         guard arguments.count == declaration.parameters.count else {
             throw ABIResolutionError.signatureMismatch(.init(
                 expected: "\(declaration.parameters.count) generic arguments", found: ["\(arguments.count) generic arguments"]))
         }
         self.declaration = declaration
-        self.opaqueResult = opaqueResult
         self.resolver = resolver
         self.valueABIs = Dictionary(uniqueKeysWithValues: valueABIs.map { (ObjectIdentifier($0.key.metadata), $0.value) })
         if let image { images.append(image) }
@@ -594,8 +593,8 @@ struct SwiftGenericBinding: Sendable {
             }
         }
         switch type {
-        case .opaqueResult:
-            guard let opaqueResult else {
+        case .opaqueResult(let index):
+            guard let opaqueResult = opaqueResults[index] else {
                 throw ABIResolutionError.unsupportedDeclaration("An opaque result requires its resolved runtime value representation.")
             }
             return [opaqueResult.valueType.metadata]

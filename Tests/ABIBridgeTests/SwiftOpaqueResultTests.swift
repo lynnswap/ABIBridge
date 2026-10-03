@@ -9,6 +9,54 @@ import Testing
 import Foundation
 
 struct SwiftOpaqueResultTests {
+    @Test func genericOpaqueResultsBindCapturedTypesAndConformances() async throws {
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeGenericOpaque<A>(A) -> some",
+            as: ((String) -> NativeSwiftValue).self, genericArguments: [.type(String.self)])
+        let value = try unsafe make.unsafeInvoke("captured")
+        let reference = makeGenericOpaque("reference")
+        try value.withCopy { #expect(ObjectIdentifier(Swift.type(of: $0)) == ObjectIdentifier(Swift.type(of: reference))) }
+        let constrained = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeConstrainedOpaque<A where A: ManagedSwiftFixtures.ExistentialValue>(A) -> some",
+            as: ((InlineExistentialValue) -> NativeSwiftValue).self,
+            genericArguments: [.type(InlineExistentialValue.self)])
+        let constrainedValue = try unsafe constrained.unsafeInvoke(InlineExistentialValue(43))
+        try constrainedValue.withCopy { #expect(($0 as? any ExistentialValue)?.number == 43) }
+        let object = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeGenericOpaqueObject<A where A: ManagedSwiftFixtures.ExistentialObjectValue>(A) -> some",
+            as: ((ExistentialObject) -> NativeSwiftValue).self,
+            genericArguments: [.type(ExistentialObject.self)])
+        let original = ExistentialObject(ErrorLifetimeToken(), 44)
+        let objectValue = try unsafe object.unsafeInvoke(original)
+        try objectValue.withCopy { #expect(($0 as? ExistentialObject) === original) }
+    }
+
+    @Test func genericOpaqueMembersCombineEnclosingAndMethodBindings() async throws {
+        let runtime = ABIRuntime.shared
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericOpaqueOwner",
+            genericArguments: [.type(String.self)])
+        let initialize = try await type.initializer(named: "init(_:)", as: ((String) -> AnyObject).self)
+        let owner = try unsafe initialize.unsafeInvoke("outer")
+        let getter = try await runtime.object(owner).getter(named: "opaque", as: (() -> NativeSwiftValue).self)
+        let method = try await runtime.object(owner).method(named: "make(_:)",
+            as: ((Int64) -> NativeSwiftValue).self, genericArguments: [.type(Int64.self)])
+        let first = try unsafe getter.unsafeInvoke()
+        let second = try unsafe method.unsafeInvoke(42)
+        let reference = GenericOpaqueOwner("outer")
+        try first.withCopy { #expect(ObjectIdentifier(Swift.type(of: $0)) == ObjectIdentifier(Swift.type(of: reference.opaque))) }
+        try second.withCopy { #expect(ObjectIdentifier(Swift.type(of: $0)) == ObjectIdentifier(Swift.type(of: reference.make(Int64(42))))) }
+    }
+
+    @Test func returnedClosuresResolveNestedOpaqueMetadata() async throws {
+        let factory = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.makeNestedOpaque()",
+            as: (() -> NativeSwiftClosure<() -> NativeSwiftValue>).self)
+        let closure = try unsafe factory.unsafeInvoke()
+        let result = try unsafe closure.unsafeInvoke()
+        #expect(try result.take(as: Int64.self) == 42)
+    }
+
     @Test func opaqueResultsSharePreparationWithClosureArguments() async throws {
         let call = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueUsingCallback(_:)",
             as: ((NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftValue).self)

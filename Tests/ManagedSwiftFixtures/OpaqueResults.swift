@@ -79,3 +79,22 @@ private final class HiddenOpaqueObjC: NSObject {
     init(_ token: ErrorLifetimeToken) { self.token = token }
 }
 @inline(never) public func makeOpaqueObjC(_ token: ErrorLifetimeToken) -> some NSObjectProtocol { HiddenOpaqueObjC(token) }
+
+private struct HiddenConstrainedOpaque<Value: ExistentialValue>: ExistentialValue {
+    let value: Value
+    var number: Int64 { value.number }
+}
+@inline(never) public func makeConstrainedOpaque<Value: ExistentialValue>(_ value: Value) -> some ExistentialValue {
+    HiddenConstrainedOpaque(value: value)
+}
+@inline(never) public func makeGenericOpaqueObject<Value: ExistentialObjectValue>(_ value: Value) -> some ExistentialObjectValue {
+    value
+}
+public final class GenericOpaqueOwner<Value> {
+    public let value: Value
+    public init(_ value: Value) { self.value = value }
+    public var opaque: some Any { HiddenGenericOpaque(value: value) }
+    @inline(never) public func make<Other>(_ other: Other) -> some Any {
+        HiddenGenericOpaque(value: (value, other))
+    }
+}

@@ -148,7 +148,8 @@ extension SwiftFormalType {
         switch node.kind {
         case "Type", "ArgumentTuple", "ReturnType", "TupleElement", "PackElement", "DynamicSelf":
             self = try Self(node.requiredChild(kind: "Type", fallingBackToFirst: true))
-        case "OpaqueReturnType": self = .opaqueResult
+        case "OpaqueReturnType":
+            self = .opaqueResult(index: node.child(kind: "OpaqueReturnTypeIndex")?.index.map { Int($0) + 1 } ?? 0)
         case "DependentGenericParamType":
             self = .named(Self.parameterName(depth: Int(children[0].index!), index: Int(children[1].index!)), [])
         case "DependentMemberType":

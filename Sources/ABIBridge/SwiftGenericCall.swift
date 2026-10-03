@@ -314,12 +314,15 @@ struct SwiftGenericCallPlan: Sendable {
         let declared = try declaredSignature.map(SwiftDeclaredSignature.init)
         let declaration = try SwiftGenericDeclaration(linkageName: symbol.linkageName, enclosing: context,
                                                        declaredSignature: declared, caller: signature)
-        let opaque = declaration.result == .opaqueResult
-            ? try SwiftOpaqueResultPlan.resolve(symbol: symbol, resolver: resolver).value : nil
-        let binding = try SwiftGenericBinding(declaration: declaration,
+        var binding = try SwiftGenericBinding(declaration: declaration,
             arguments: (enclosing?.arguments ?? []) + genericArguments,
             signature: signature, resolver: resolver, enclosing: context, image: symbol.image,
-            valueABIs: valueABIs, opaqueResult: opaque)
+            valueABIs: valueABIs)
+        if !declaration.result.opaqueIndices.isEmpty {
+            binding.opaqueResults = try SwiftOpaqueResultPlan.resolve(symbol: symbol,
+                resolver: resolver, indices: declaration.result.opaqueIndices, binding: binding)
+        }
+        let opaque = declaration.result.opaqueIndex.flatMap { binding.opaqueResults[$0] }
         if case .function(let arguments, let result, let failure, let isAsync, _) = declared?.function {
             _ = try SwiftGenericParameters(formal: arguments, actual: signature.parameters, binding: binding,
                 defaultConsuming: declaration.consumesArguments)
@@ -561,7 +564,7 @@ struct SwiftGenericCallPlan: Sendable {
             let plan = try Self.closure(formal, signature: SwiftFunctionSignature(closure.swiftFunctionType), binding: binding)
             return ["(" + plan.authentication + ")"]
         }
-        if !binding.dependsOnParameters(formal), formal != .opaqueResult {
+        if !binding.dependsOnParameters(formal), formal.opaqueIndex == nil {
             let explicit = formal.nominalDeclaration == nil ? nil : try binding.explicitValueType(actual)
             if explicit == nil {
                 // Concrete class existentials and metatypes keep their formal
@@ -597,8 +600,8 @@ struct SwiftGenericCallPlan: Sendable {
             return try binding.isClassBound(formal) ? CValueType(scalar: ABIValuePointer)
                 : SwiftGenericParameters.storageType(actual)
         }
-        if formal == .opaqueResult {
-            guard let opaque = binding.opaqueResult else {
+        if let index = formal.opaqueIndex {
+            guard let opaque = binding.opaqueResults[index] else {
                 throw ABIResolutionError.metadataUnavailable("The opaque result ABI has not been resolved.")
             }
             return opaque.type
