@@ -85,7 +85,7 @@ struct SwiftGenericBinding: Sendable {
                 for element in tuple.elements { try remember(element.type) }
             }
             if let optional = type as? any NativeOptionalValue.Type { try remember(optional.wrappedType) }
-            if let metatype = SwiftMetatypeMetadata(type) { try remember(metatype.instance) }
+            if let metatype = SwiftMetatypeMetadata(type), let instance = metatype.instance { try remember(instance) }
             if let argument = type as? any SwiftConventionArgument.Type { try remember(argument.wrappedType) }
             if let closure = type as? any SwiftClosureValue.Type {
                 let function = try SwiftFunctionSignature(closure.swiftFunctionType)

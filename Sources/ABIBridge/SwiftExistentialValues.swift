@@ -2,6 +2,54 @@ import ABIBridgeCore
 import ObjectiveC
 import Synchronization
 
+struct SwiftExtendedExistentialShapeLayout {
+    let shape: UnsafeRawPointer
+    let flags: UInt32
+    let requirementCount: Int
+    let genericParameterCount: Int
+    let genericRequirementCount: Int
+    let genericKeyCount: Int
+    let genericParametersOffset: Int
+    let requirementsOffset: Int
+
+    init(_ shape: UnsafeRawPointer) {
+        self.shape = shape
+        flags = shape.loadUnaligned(as: UInt32.self)
+        let requirementParameters = Int(shape.loadUnaligned(fromByteOffset: 8, as: UInt16.self))
+        requirementCount = Int(shape.loadUnaligned(fromByteOffset: 10, as: UInt16.self))
+        let generalized = flags & 0x100 != 0
+        genericParameterCount = generalized ? Int(shape.loadUnaligned(fromByteOffset: 16, as: UInt16.self)) : 0
+        genericRequirementCount = generalized ? Int(shape.loadUnaligned(fromByteOffset: 18, as: UInt16.self)) : 0
+        genericKeyCount = generalized ? Int(shape.loadUnaligned(fromByteOffset: 20, as: UInt16.self)) : 0
+        var offset = 16 + (generalized ? 8 : 0)
+        if flags & 0x200 != 0 { offset += 4 }
+        if flags & 0x400 != 0 { offset += 4 }
+        if flags & 0x800 == 0 { offset += requirementParameters }
+        genericParametersOffset = offset
+        if flags & 0x1000 == 0 { offset += genericParameterCount }
+        requirementsOffset = (offset + 3) & ~3
+    }
+
+    var witnessCount: Int? {
+        let depth: UInt64 = flags & 0x100 != 0 ? 1 : 0
+        var count = 0
+        for index in 0..<requirementCount {
+            let requirement = shape.advanced(by: requirementsOffset + index * 12)
+            guard requirement.loadUnaligned(as: UInt32.self) & 0x9f == 0x80 else { continue }
+            guard let handle = ABICopySwiftGenericRequirementTypeSyntax(requirement, false) else { return nil }
+            var subject = SwiftSyntax(adopting: handle).root
+            while subject.kind == "Type" || subject.kind == "DependentMemberType" {
+                guard let child = subject.children().first else { return nil }
+                subject = child
+            }
+            let indices = subject.children()
+            if subject.kind == "DependentGenericParamType", indices.count == 2,
+               indices[0].index == depth, indices[1].index == 0 { count += 1 }
+        }
+        return count
+    }
+}
+
 // Simple existential metadata has a kind word followed by 32-bit flags.
 // Extended shapes preserve their constraint signature and container convention.
 // https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/ABI/Metadata.h
@@ -18,9 +66,8 @@ enum SwiftExistentialRepresentation {
             switch shape.load(as: UInt32.self) & 0xff {
             case 0, 3: self = .opaque
             case 1:
-                let parameters = shape.load(fromByteOffset: 8, as: UInt16.self)
-                let arguments = shape.load(fromByteOffset: 12, as: UInt16.self)
-                self = .classBound(witnessTables: Int(arguments - parameters))
+                guard let witnesses = SwiftExtendedExistentialShapeLayout(shape).witnessCount else { return nil }
+                self = .classBound(witnessTables: witnesses)
             default: return nil
             }
             return
@@ -203,8 +250,12 @@ private final class SwiftSyntheticExistentialShape: @unchecked Sendable {
         if let cached = shapes.withLock({ $0[key] }) { shape = cached }
         else {
             let syntax = try SwiftSyntax(symbol: name)
-            let existential = try syntax.root.requiredChild().requiredChild()
+            let shapeType = try syntax.root.requiredChild().requiredChild()
                 .requiredChild(kind: "Type").requiredChild()
+            var existential = shapeType
+            while existential.kind == "ExistentialMetatype" {
+                existential = try existential.requiredChild(kind: "Type").requiredChild()
+            }
             var protocols: [SwiftProtocolDescriptor] = []
             var classBound = false
             func collect(_ node: SwiftSyntax.Node) throws {
@@ -239,7 +290,10 @@ private final class SwiftSyntheticExistentialShape: @unchecked Sendable {
                 var candidates: [(SwiftProtocolDescriptor, SwiftProtocolDescriptor)] = []
                 for descriptor in protocols {
                     if let qualifier, try !descriptor.qualifiedNames().contains(qualifier) { continue }
-                    candidates += try descriptor.protocolsDeclaring(member).map { (descriptor, $0) }
+                    for declaring in try descriptor.protocolsDeclaring(member)
+                        where !candidates.contains(where: { $0.1 == declaring }) {
+                        candidates.append((descriptor, declaring))
+                    }
                 }
                 guard candidates.count == 1 else {
                     throw ABIResolutionError.metadataUnavailable("Cannot identify the declaring protocol for " + constraint.subject + ".")
@@ -249,7 +303,7 @@ private final class SwiftSyntheticExistentialShape: @unchecked Sendable {
                 if let image = candidates[0].1.image { images.append(image) }
             }
             let addresses = protocols.map { descriptor in Optional(unsafe descriptor.withUnsafeAddress { $0 }) }
-            let candidate = try SwiftSyntheticExistentialShape(address: existential.makeExtendedExistentialShape(
+            let candidate = try SwiftSyntheticExistentialShape(address: shapeType.makeExtendedExistentialShape(
                 protocols: addresses, written: written, declaring: declaring, classBound: classBound), images: images)
             shape = shapes.withLock { values in
                 if let cached = values[key] { return cached }

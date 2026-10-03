@@ -73,9 +73,9 @@ final class SwiftSyntax: @unchecked Sendable {
             }
         }
 
-        func constrainedExistentialShapeName() throws -> String {
+        func constrainedExistentialShapeName(metatypeDepth: Int = 0) throws -> String {
             try withExtendedLifetime(owner) {
-                guard let name = ABICopySwiftConstrainedExistentialShapeName(pointer) else {
+                guard let name = ABICopySwiftConstrainedExistentialShapeName(pointer, metatypeDepth) else {
                     throw ABIResolutionError.unsupportedDeclaration("Cannot generalize the constrained existential requirements.")
                 }
                 defer { ABIFreeString(name) }

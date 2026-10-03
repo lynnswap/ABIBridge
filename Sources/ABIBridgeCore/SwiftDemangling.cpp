@@ -158,7 +158,7 @@ char *ABICopySwiftSyntaxNodeMangledName(const ABISwiftSyntaxNode *node) {
     return result.isSuccess() ? strdup(result.result().c_str()) : nullptr;
 }
 
-char *ABICopySwiftConstrainedExistentialShapeName(const ABISwiftSyntaxNode *node) {
+char *ABICopySwiftConstrainedExistentialShapeName(const ABISwiftSyntaxNode *node, size_t metatypeDepth) {
     using namespace swift::Demangle;
     auto source = nativeNode(node);
     if (source->getKind() != Node::Kind::ConstrainedExistential || source->getNumChildren() != 2)
@@ -202,8 +202,15 @@ char *ABICopySwiftConstrainedExistentialShapeName(const ABISwiftSyntaxNode *node
     existential->addChild(requirements, factory);
     auto signature = factory.createNode(Node::Kind::DependentGenericSignature);
     signature->addChild(factory.createNode(Node::Kind::DependentGenericParamCount, uint64_t(index)), factory);
+    NodePointer generalized = existential;
+    for (size_t index = 0; index < metatypeDepth; ++index) {
+        auto instance = factory.createNode(Node::Kind::Type);
+        instance->addChild(generalized, factory);
+        generalized = factory.createNode(Node::Kind::ExistentialMetatype);
+        generalized->addChild(instance, factory);
+    }
     auto type = factory.createNode(Node::Kind::Type);
-    type->addChild(existential, factory);
+    type->addChild(generalized, factory);
     auto shape = factory.createNode(Node::Kind::ExtendedExistentialTypeShape);
     shape->addChild(signature, factory);
     shape->addChild(type, factory);
@@ -221,6 +228,12 @@ void *ABICreateSwiftExtendedExistentialShape(const ABISwiftSyntaxNode *node,
     size_t constraintCount, bool classBound) {
     using namespace swift::Demangle;
     auto source = nativeNode(node);
+    size_t metatypeDepth = 0;
+    while (source->getKind() == Node::Kind::ExistentialMetatype) {
+        if (source->getNumChildren() != 1 || source->getChild(0)->getKind() != Node::Kind::Type) return nullptr;
+        source = source->getChild(0)->getChild(0);
+        ++metatypeDepth;
+    }
     if (source->getKind() != Node::Kind::ConstrainedExistential || source->getNumChildren() != 2
         || source->getChild(1)->getNumChildren() != constraintCount
         || constraintCount + protocolCount + 1 > UINT16_MAX) return nullptr;
@@ -285,13 +298,30 @@ void *ABICreateSwiftExtendedExistentialShape(const ABISwiftSyntaxNode *node,
         associatedTypes.push_back(spelling(subject(subject, original->getChild(0), declaring, true)));
     }
     existential->addChild(requirements, factory);
-    const auto typeName = spelling(existential);
+    NodePointer generalized = existential;
+    auto head = factory.createNode(Node::Kind::DependentGenericParamType);
+    head->addChild(factory.createNode(Node::Kind::Index, uint64_t(1)), factory);
+    head->addChild(factory.createNode(Node::Kind::Index, uint64_t(0)), factory);
+    for (size_t index = 0; index < metatypeDepth; ++index) {
+        auto instance = factory.createNode(Node::Kind::Type);
+        instance->addChild(generalized, factory);
+        generalized = factory.createNode(Node::Kind::ExistentialMetatype);
+        generalized->addChild(instance, factory);
+        auto instanceHead = factory.createNode(Node::Kind::Type);
+        instanceHead->addChild(head, factory);
+        head = factory.createNode(Node::Kind::Metatype);
+        head->addChild(instanceHead, factory);
+    }
+    const auto typeName = spelling(generalized);
+    const auto typeExpression = metatypeDepth ? spelling(head) : std::string();
     if (typeName.empty()) return nullptr;
     const size_t requirementCount = constraintCount + protocolCount;
-    size_t size = 28 + requirementCount * 12;
+    const size_t records = 28 + (metatypeDepth ? 4 : 0);
+    size_t size = records + requirementCount * 12;
     for (const auto &name : parameters) size += name.size() + 1;
     for (const auto &name : associatedTypes) size += name.size() + 1;
     size += typeName.size() + 1 + sizeof("qd__");
+    if (metatypeDepth) size += typeExpression.size() + 1;
     size = (size + sizeof(void *) - 1) & ~(sizeof(void *) - 1);
     const size_t slots = size;
     size += (protocolCount + 1) * sizeof(void *);
@@ -300,7 +330,7 @@ void *ABICreateSwiftExtendedExistentialShape(const ABISwiftSyntaxNode *node,
     auto relative = [&](size_t at, size_t target, int tag = 0) {
         put(at, int32_t(target - at) | tag);
     };
-    size_t cursor = 28 + requirementCount * 12;
+    size_t cursor = records + requirementCount * 12;
     auto string = [&](const std::string &text) {
         const size_t start = cursor;
         std::memcpy(memory + cursor, text.c_str(), text.size() + 1);
@@ -308,22 +338,23 @@ void *ABICreateSwiftExtendedExistentialShape(const ABISwiftSyntaxNode *node,
         return start;
     };
     relative(0, slots);
-    put(4, uint32_t(0x1900 | (classBound ? 1 : 0)));
+    put(4, uint32_t(0x1900 | (metatypeDepth ? 0x202 : classBound ? 1 : 0)));
     relative(8, string(typeName));
     put(12, uint16_t(constraintCount + 1));
     put(14, uint16_t(requirementCount));
     put(16, uint16_t(constraintCount + 1 + protocolCount));
     put(20, uint16_t(constraintCount));
     put(24, uint16_t(constraintCount));
+    if (metatypeDepth) relative(28, string(typeExpression));
     for (size_t index = 0; index < constraintCount; ++index) {
-        const size_t entry = 28 + index * 12;
+        const size_t entry = records + index * 12;
         put(entry, uint32_t(1));
         relative(entry + 4, string(parameters[index]));
         relative(entry + 8, string(associatedTypes[index]));
     }
     const size_t self = string("qd__");
     for (size_t index = 0; index < protocolCount; ++index) {
-        const size_t entry = 28 + (constraintCount + index) * 12;
+        const size_t entry = records + (constraintCount + index) * 12;
         const size_t slot = slots + (index + 1) * sizeof(void *);
         put(entry, uint32_t(0x80));
         relative(entry + 4, self);

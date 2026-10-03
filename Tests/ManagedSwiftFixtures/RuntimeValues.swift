@@ -554,3 +554,25 @@ private struct RuntimeExtendedBoth: RuntimeExtendedLeft, RuntimeExtendedRight, C
 }
 @inline(never) public func makeLeftConstrainedComposition() -> any RuntimeExtendedLeft<Int> & RuntimeExtendedRight { RuntimeExtendedBoth() }
 @inline(never) public func makeRightConstrainedComposition() -> any RuntimeExtendedLeft & RuntimeExtendedRight<Int> { RuntimeExtendedBoth() }
+
+public protocol RuntimeClassLeft<Element>: AnyObject { associatedtype Element }
+public protocol RuntimeClassRight<Element>: AnyObject { associatedtype Element }
+public final class RuntimeClassBoth<Element>: RuntimeClassLeft, RuntimeClassRight {
+    public let value: Element
+    public init(_ value: Element) { self.value = value }
+}
+@inline(never) public func makeRuntimeClassComposition<Element>(_ value: Element) -> any RuntimeClassLeft<Element> & RuntimeClassRight<Element> {
+    RuntimeClassBoth(value)
+}
+@inline(never) public func echoRuntimeClassComposition<Element>(_ value: any RuntimeClassLeft<Element> & RuntimeClassRight<Element>) -> any RuntimeClassLeft<Element> & RuntimeClassRight<Element> { value }
+@inline(never) public func echoRuntimeParameterizedMetatype<Element>(_ value: any RuntimeClassLeft<Element>.Type) -> any RuntimeClassLeft<Element>.Type { value }
+
+public protocol RuntimeSharedBase<Element> { associatedtype Element; var value: Element { get } }
+public protocol RuntimeSharedLeft: RuntimeSharedBase {}
+public protocol RuntimeSharedRight: RuntimeSharedBase {}
+public struct RuntimeSharedBoth<Element>: RuntimeSharedLeft, RuntimeSharedRight {
+    public let value: Element
+}
+@inline(never) public func makeRuntimeSharedComposition<Element>(_ value: Element) -> any RuntimeSharedLeft & RuntimeSharedRight & RuntimeSharedBase<Element> {
+    RuntimeSharedBoth(value: value)
+}

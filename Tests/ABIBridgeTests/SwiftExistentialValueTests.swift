@@ -4,9 +4,41 @@
 import ABIBridge
 #endif
 import ManagedSwiftFixtures
+import ABIBridgeCore
 import Testing
 
 struct SwiftExistentialValueTests {
+    @Test func classParameterizedCompositionsKeepBothWitnesses() async throws {
+        typealias Value = any RuntimeClassLeft<Int> & RuntimeClassRight<Int>
+        #if DEBUG
+        let pointer = unsafeBitCast(Value.self, to: UnsafeRawPointer.self)
+        let shape = ABISwiftExtendedExistentialShape(pointer)!
+        let header = SwiftExtendedExistentialShapeLayout(shape)
+        print("[DESIGN_AUDIT:composition-witnesses]", MemoryLayout<Value>.size, ABISwiftGetValueLayout(pointer).size,
+              shape.loadUnaligned(fromByteOffset: 8, as: UInt16.self), shape.loadUnaligned(fromByteOffset: 12, as: UInt16.self), header.witnessCount as Any)
+        #endif
+        let make = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeClassComposition(_:)",
+            as: ((Int) -> Value).self, genericArguments: [.type(Int.self)])
+        let value = try unsafe make.unsafeInvoke(42)
+        #expect((value as? RuntimeClassBoth<Int>)?.value == 42)
+        let echo = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoRuntimeClassComposition(_:)",
+            as: ((Value) -> Value).self, genericArguments: [.type(Int.self)])
+        #expect(try unsafe echo.unsafeInvoke(value) === value)
+    }
+
+    @Test func sharedInheritedAssociatedTypesHaveOneDeclaringProtocol() async throws {
+        let make = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeSharedComposition(_:)",
+            as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+        #expect(try unsafe make.unsafeInvoke(42).withCopy { ($0 as? any RuntimeSharedBase<Int>)?.value } == 42)
+    }
+
+    @Test func parameterizedExistentialMetatypesUseTheirExtendedShape() async throws {
+        typealias Value = any RuntimeClassLeft<Int>.Type
+        let echo = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoRuntimeParameterizedMetatype(_:)",
+            as: ((Value) -> Value).self, genericArguments: [.type(Int.self)])
+        #expect(ObjectIdentifier(try unsafe echo.unsafeInvoke(RuntimeClassBoth<Int>.self)) == ObjectIdentifier(RuntimeClassBoth<Int>.self))
+    }
+
 #if DEBUG
     @Test func declarationCallbackAuthenticationPreservesClassExistentialIdentity() async throws {
         typealias Signature = (NativeSwiftClosure<(ManyObjectProtocols) -> ManyObjectProtocols>, ManyObjectProtocols) -> ManyObjectProtocols
