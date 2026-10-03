@@ -26,7 +26,7 @@ struct SwiftCall: Sendable {
 
     @unsafe func unsafeInvoke<Result, each Argument>(
         symbol: ResolvedSymbol, context: UnsafeRawPointer? = nil,
-        trailingValue: NativeValueStorage? = nil, retaining owner: Any? = nil,
+        trailingValue: NativeValueStorage? = nil, receiverStorage: NativeValueStorage? = nil, retaining owner: Any? = nil,
         retainingCode codeOwner: Any? = nil,
         didInvoke: (() -> Void)? = nil, implementation: SwiftImplementation? = nil,
         _ values: repeat each Argument
@@ -34,8 +34,8 @@ struct SwiftCall: Sendable {
         try unsafe symbol.withUnsafeAddress { address in
             try unsafe unsafeInvoke(
                 function: implementation?.function ?? ABIUnsafeFunctionAtAddress(address),
-                context: context, trailingValue: trailingValue, retaining: (owner ?? symbol, implementation),
-                retainingCode: (symbol.image, implementation, codeOwner),
+                context: context, trailingValue: trailingValue, receiverStorage: receiverStorage, retaining: (owner ?? symbol, implementation),
+                retainingCode: (symbol.image, implementation, codeOwner), images: [symbol.image] + [implementation?.image].compactMap { $0 },
                 didInvoke: didInvoke, repeat each values
             )
         }
@@ -43,8 +43,8 @@ struct SwiftCall: Sendable {
 
     @unsafe func unsafeInvoke<Result, each Argument>(
         function: ABIUnmanagedFunction, context: UnsafeRawPointer? = nil,
-        trailingValue: NativeValueStorage? = nil, retaining owner: Any?,
-        retainingCode codeOwner: Any? = nil,
+        trailingValue: NativeValueStorage? = nil, receiverStorage: NativeValueStorage? = nil, retaining owner: Any?,
+        retainingCode codeOwner: Any? = nil, images: [NativeImage] = [],
         didInvoke: (() -> Void)? = nil, _ values: repeat each Argument
     ) throws -> Result {
         precondition(hasTrailingValue == (trailingValue != nil))
@@ -55,20 +55,27 @@ struct SwiftCall: Sendable {
         if let trailingValue { addresses.append(trailingValue.address) }
         if let generic { addresses.append(contentsOf: generic.metadata.addresses) }
         let output = self.values.result.makeStorage()
+        let lifetimes = (logicalStorage + [trailingValue, receiverStorage, output].compactMap { $0 }).compactMap(\.codeLifetime)
+            + [SwiftValueCodeLifetime.current].compactMap { $0 }
+        let lifetime = SwiftValueCodeLifetime.connect(lifetimes,
+            retaining: images + (generic?.binding.images ?? []) + (generic?.binding.typeOwners.flatMap(\.codeImages) ?? []))
+        let codeOwners: Any = (codeOwner, generic, lifetime)
         let nativeError = errorPlan?.makeStorage()
         var didThrow = false
-        return try withExtendedLifetime((logicalStorage, encoded, trailingValue, owner, generic)) {
+        return try withExtendedLifetime((logicalStorage, encoded, trailingValue, receiverStorage, owner, generic)) {
             var failure: OpaquePointer?
-            let success = addresses.withUnsafeBufferPointer { addresses in
-                if let nativeError {
-                    return ABIUnsafeInvokeSwiftThrowingCallInterface(
-                        interface.handle, function, output.address, addresses.baseAddress, context,
-                        nativeError.address, &didThrow, &failure
+            let success = SwiftValueCodeLifetime.withCurrent(lifetime) {
+                addresses.withUnsafeBufferPointer { addresses in
+                    if let nativeError {
+                        return ABIUnsafeInvokeSwiftThrowingCallInterface(
+                            interface.handle, function, output.address, addresses.baseAddress, context,
+                            nativeError.address, &didThrow, &failure
+                        )
+                    }
+                    return ABIUnsafeInvokeSwiftCallInterface(
+                        interface.handle, function, output.address, addresses.baseAddress, context, &failure
                     )
                 }
-                return ABIUnsafeInvokeSwiftCallInterface(
-                    interface.handle, function, output.address, addresses.baseAddress, context, &failure
-                )
             }
             guard success else {
                 throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftInvocation")
@@ -76,9 +83,9 @@ struct SwiftCall: Sendable {
             self.values.relinquishConsumed(logicalStorage)
             didInvoke?()
             if didThrow, let errorPlan, let nativeError {
-                throw NativeSwiftError(try errorPlan.decode(nativeError), retainingCode: (codeOwner, generic))
+                throw NativeSwiftError(try errorPlan.decode(nativeError), retainingCode: codeOwners)
             }
-            return try self.values.decode(output, retaining: owner, retainingCode: (codeOwner, generic))
+            return try self.values.decode(output, retaining: owner, retainingCode: codeOwners)
         }
     }
 }

@@ -9,7 +9,7 @@ root = Path(__file__).resolve().parent.parent
 binary = Path(sys.argv[1])
 source = '''import ABIBridge
 import ABIBridgeSwiftUI
-func invalidCall(_ value: NativeSwiftOpaqueValue) throws { _ = try NativeSwiftView(value) }
+func invalidCall(_ value: NativeSwiftValue) throws { _ = try NativeSwiftView(value) }
 func requiresSendable<T: Sendable>(_ value: T) {}
 @MainActor func invalidSend(_ view: NativeSwiftView) { requiresSendable(view) }
 '''

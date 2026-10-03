@@ -5,6 +5,7 @@ import PackageDescription
 
 let strictSwiftSettings: [SwiftSetting] = [
     .enableUpcomingFeature("ApproachableConcurrency"),
+    .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
 ]
 
 let package = Package(

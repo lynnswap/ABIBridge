@@ -3,9 +3,12 @@ import ABIBridgeCore
 final class SwiftThrowingClosureBody {
     let codeOwner: SwiftClosureCodeOwner?
     let invoke: (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer, UnsafeMutableRawPointer?) -> Bool
-    init(retainingCode codeOwner: Any? = nil, _ invoke: @escaping (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer, UnsafeMutableRawPointer?) -> Bool) {
-        self.codeOwner = codeOwner.map(SwiftClosureCodeOwner.init)
-        self.invoke = invoke
+    init(retainingCode codeOwner: Any? = nil, codeLifetime: SwiftValueCodeLifetime? = nil,
+         _ invoke: @escaping (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer, UnsafeMutableRawPointer?) -> Bool) {
+        self.codeOwner = SwiftClosureCodeOwner(codeOwner, codeLifetime: codeLifetime)
+        self.invoke = { arguments, result, error in
+            SwiftValueCodeLifetime.withCurrent(codeLifetime) { invoke(arguments, result, error) }
+        }
     }
 }
 func throwingClosureOwner(_ interface: SwiftCallInterface, body: SwiftThrowingClosureBody) throws -> SwiftClosureCallbackOwner {

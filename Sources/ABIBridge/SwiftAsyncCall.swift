@@ -81,19 +81,19 @@ struct SwiftAsyncCall: Sendable {
 
     @unsafe nonisolated(nonsending) func unsafeInvoke<Result, each Argument>(
         implementation: SwiftAsyncImplementation, context: UnsafeRawPointer? = nil,
-        trailingValue: NativeValueStorage? = nil, retaining owner: Any? = nil,
+        trailingValue: NativeValueStorage? = nil, receiverStorage: NativeValueStorage? = nil, retaining owner: Any? = nil,
         retainingCode codeOwner: Any? = nil, didInvoke: (() -> Void)? = nil,
         _ values: repeat each Argument
     ) async throws -> Result {
         try unsafe await unsafeInvoke(entry: implementation.entry, context: context,
-            trailingValue: trailingValue, retaining: (implementation, owner),
-            retainingCode: (implementation, codeOwner), didInvoke: didInvoke, repeat each values)
+            trailingValue: trailingValue, receiverStorage: receiverStorage, retaining: (implementation, owner),
+            retainingCode: (implementation, codeOwner), images: [implementation.symbol.image, implementation.descriptor.image], didInvoke: didInvoke, repeat each values)
     }
 
     @unsafe nonisolated(nonsending) func unsafeInvoke<Result, each Argument>(
         entry: SwiftAsyncEntry, context: UnsafeRawPointer? = nil,
-        trailingValue: NativeValueStorage? = nil, retaining owner: Any? = nil,
-        retainingCode codeOwner: Any? = nil, didInvoke: (() -> Void)? = nil,
+        trailingValue: NativeValueStorage? = nil, receiverStorage: NativeValueStorage? = nil, retaining owner: Any? = nil,
+        retainingCode codeOwner: Any? = nil, images: [NativeImage] = [], didInvoke: (() -> Void)? = nil,
         _ values: repeat each Argument
     ) async throws -> Result {
         precondition(hasTrailingValue == (trailingValue != nil))
@@ -104,8 +104,12 @@ struct SwiftAsyncCall: Sendable {
         if let trailingValue { addresses.append(trailingValue.address) }
         if let generic { addresses.append(contentsOf: generic.metadata.addresses) }
         let output = self.values.result.makeStorage()
+        let lifetimes = (logicalStorage + [trailingValue, receiverStorage, output].compactMap { $0 }).compactMap(\.codeLifetime)
+            + [SwiftValueCodeLifetime.current].compactMap { $0 }
+        let lifetime = SwiftValueCodeLifetime.connect(lifetimes,
+            retaining: images + (generic?.binding.images ?? []) + (generic?.binding.typeOwners.flatMap(\.codeImages) ?? []))
+        let codeOwners: Any = (codeOwner, generic, lifetime)
         let nativeError = errorPlan?.makeStorage()
-        let codeOwners: Any = (entry, codeOwner, generic)
         var failure: OpaquePointer?
         let invocation = addresses.withUnsafeBufferPointer {
             ABICreateSwiftAsyncInvocation(interface.handle,
@@ -115,11 +119,11 @@ struct SwiftAsyncCall: Sendable {
         }
         guard let invocation else { throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftAsyncInvocation") }
         defer {
-            withExtendedLifetime((self, entry, logicalStorage, encoded, output, nativeError, trailingValue, owner, codeOwners)) {
+            withExtendedLifetime((self, entry, logicalStorage, encoded, output, nativeError, trailingValue, receiverStorage, owner, codeOwners)) {
                 ABIReleaseSwiftAsyncInvocation(invocation)
             }
         }
-        await invokeSwiftAsync(invocation)
+        await SwiftValueCodeLifetime.withCurrent(lifetime) { await invokeSwiftAsync(invocation) }
         self.values.relinquishConsumed(logicalStorage)
         didInvoke?()
         if ABISwiftAsyncInvocationDidThrow(invocation), let errorPlan, let nativeError {

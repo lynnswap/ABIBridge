@@ -88,7 +88,7 @@ For a nongeneric factory returning `some View`, add the optional `ABIBridgeSwift
 import ABIBridgeSwiftUI
 
 let makePanel = try await runtime.swiftFunction(
-    named: "Example.makePanel(_:)", as: ((String) -> NativeSwiftOpaqueValue).self
+    named: "Example.makePanel(_:)", as: ((String) -> NativeSwiftValue).self
 )
 let panel = try NativeSwiftView(unsafe makePanel.unsafeInvoke("Hello"))
 ```

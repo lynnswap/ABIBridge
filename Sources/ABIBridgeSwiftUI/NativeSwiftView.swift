@@ -4,7 +4,7 @@ import SwiftUI
 /// A SwiftUI view that owns a native opaque result and its implementation images.
 ///
 /// Resolve a nongeneric native factory returning some View using
-/// NativeSwiftOpaqueValue, then pass its result to this initializer. The provider
+/// NativeSwiftValue, then pass its result to this initializer. The provider
 /// module and concrete view type need not be importable by the consumer.
 ///
 /// Construction and body evaluation occur on MainActor. The value does not
@@ -21,8 +21,8 @@ public nonisolated struct NativeSwiftView: View {
     ///
     /// - Parameter value: A live result whose underlying type conforms to View.
     /// - Throws: ABIInvocationError.incompatibleValue if the result is not a View.
-    @MainActor public init(_ value: NativeSwiftOpaqueValue) throws {
-        let content = try value.withValue { payload in
+    @MainActor public init(_ value: NativeSwiftValue) throws {
+        let content = try value.withCopy { payload in
             guard let view = payload as? any View else {
                 throw ABIInvocationError.incompatibleValue(
                     expected: "any SwiftUI.View", actual: String(reflecting: Swift.type(of: payload)))
@@ -36,9 +36,9 @@ public nonisolated struct NativeSwiftView: View {
     @MainActor public var body: some View { storage.content! }
 
     private final class Storage {
-        let owner: NativeSwiftOpaqueValue
+        let owner: NativeSwiftValue
         var content: AnyView?
-        init(owner: NativeSwiftOpaqueValue, content: AnyView) {
+        init(owner: NativeSwiftValue, content: AnyView) {
             self.owner = owner
             self.content = content
         }

@@ -1,5 +1,4 @@
 import ABIBridgeCore
-import ObjectiveC
 
 struct SwiftReceiverCodec: Sendable {
     let type: CValueType
@@ -9,27 +8,7 @@ struct SwiftReceiverCodec: Sendable {
     let clone: @Sendable (NativeValueStorage) throws -> NativeValueStorage
     let destroy: @Sendable (UnsafeMutableRawPointer) -> Void
 
-    init<Value>(_ valueType: Value.Type, formalType: CValueType? = nil) throws {
-        if let formalType {
-            type = formalType
-            representation = ObjectIdentifier(Value.self)
-            @Sendable func storage(_ value: Value) -> NativeValueStorage {
-                let storage = NativeValueStorage(size: MemoryLayout<Value>.stride, alignment: MemoryLayout<Value>.alignment)
-                storage.initialize(value)
-                return storage
-            }
-            encode = { value in
-                guard let value = value as? Value else {
-                    throw ABIInvocationError.incompatibleValue(
-                        expected: String(reflecting: Value.self), actual: String(reflecting: Swift.type(of: value)))
-                }
-                return storage(value)
-            }
-            decode = { source, _ in source.address.load(as: Value.self) }
-            clone = { storage($0.address.load(as: Value.self)) }
-            destroy = { $0.assumingMemoryBound(to: Value.self).deinitialize(count: 1) }
-            return
-        }
+    init<Value>(_ valueType: Value.Type) throws {
         let codec = try SwiftValueCodec<Value>()
         type = codec.type
         representation = ObjectIdentifier(Value.self)
@@ -46,8 +25,47 @@ struct SwiftReceiverCodec: Sendable {
         destroy = { codec.destroyNativeValue(at: $0) }
     }
 
-    static func make(for type: Any.Type, formalType: CValueType? = nil) throws -> Self {
-        func open<Value>(_ type: Value.Type) throws -> Self { try Self(type, formalType: formalType) }
+    init(runtimeType metadata: Any.Type, formalType: CValueType) {
+        type = formalType
+        representation = ObjectIdentifier(metadata)
+        encode = { value in
+            func copy<Value>(_ type: Value.Type) throws -> NativeValueStorage {
+                guard let value = value as? Value else {
+                    throw ABIInvocationError.incompatibleValue(
+                        expected: String(reflecting: metadata), actual: String(reflecting: Swift.type(of: value)))
+                }
+                let storage = NativeValueStorage(size: MemoryLayout<Value>.stride, alignment: MemoryLayout<Value>.alignment)
+                storage.initialize(value)
+                return storage
+            }
+            guard SwiftCopyability.accepts(metadata) else {
+                throw NativeSwiftValueError.noncopyableType
+            }
+            return try _openExistential(metadata, do: copy)
+        }
+        decode = { source, _ in
+            guard SwiftCopyability.accepts(metadata) else {
+                throw NativeSwiftValueError.noncopyableType
+            }
+            func read<Value>(_ type: Value.Type) -> Any { source.address.load(as: Value.self) }
+            return _openExistential(metadata, do: read)
+        }
+        clone = { source in
+            let pointer = unsafeBitCast(metadata, to: UnsafeRawPointer.self)
+            let layout = ABISwiftGetValueLayout(pointer)
+            let copy = NativeValueStorage(size: layout.stride, alignment: layout.alignment)
+            guard SwiftCopyability.accepts(metadata) else {
+                throw NativeSwiftValueError.noncopyableType
+            }
+            ABISwiftCopyValue(pointer, copy.address, source.address)
+            copy.assumeInitialized { ABISwiftDestroyValue(pointer, $0) }
+            return copy
+        }
+        destroy = { ABISwiftDestroyValue(unsafeBitCast(metadata, to: UnsafeRawPointer.self), $0) }
+    }
+
+    static func make(for type: Any.Type) throws -> Self {
+        func open<Value>(_ type: Value.Type) throws -> Self { try Self(type) }
         return try _openExistential(type, do: open)
     }
 }
@@ -60,6 +78,7 @@ struct SwiftReceiverPlan: Sendable {
     let isMutating: Bool
     let isConsuming: Bool
     let expectedClass: AnyClass?
+    let metadata: Any.Type
 
     init(codec: SwiftReceiverCodec, metadata: Any.Type, isMutating: Bool,
          isConsuming: Bool, validateClass: Bool) throws {
@@ -67,6 +86,7 @@ struct SwiftReceiverPlan: Sendable {
             throw ABIResolutionError.unsupportedDeclaration("Swift self cannot be both mutating and consuming.")
         }
         self.codec = codec
+        self.metadata = metadata
         self.isMutating = isMutating
         self.isConsuming = isConsuming
         if let objectType = metadata as? AnyClass {
@@ -83,11 +103,37 @@ struct SwiftReceiverPlan: Sendable {
 
     var trailingType: CValueType? { mode == .value ? codec.type : nil }
 
+    func encode(_ receiver: Any, asynchronous: Bool = false) throws -> NativeValueStorage {
+        let actual: NativeSwiftType
+        if let value = receiver as? NativeSwiftValue {
+            actual = value.type
+        } else if let value = receiver as? NativeSwiftBorrowedValue {
+            actual = value.type
+        } else {
+            return try codec.encode(receiver)
+        }
+        if let expected = metadata as? AnyClass, let objectType = actual.metadata as? AnyClass {
+            guard SwiftObjectType(objectType)?.isSubclass(of: expected) == true else {
+                throw ABIInvocationError.incompatibleValue(expected: String(reflecting: metadata), actual: actual.name)
+            }
+        } else if actual.metadata != metadata {
+            throw ABIInvocationError.incompatibleValue(expected: String(reflecting: metadata), actual: actual.name)
+        }
+        if let value = receiver as? NativeSwiftValue {
+            return try value.access(isConsuming ? .consuming : isMutating && mode != .object ? .inoutValue : .borrowing)
+        }
+        let value = receiver as! NativeSwiftBorrowedValue
+        guard !isConsuming && (!isMutating || mode == .object) else {
+            throw NativeSwiftValueError.valueInUse
+        }
+        return try value.borrow.access(asynchronous: asynchronous, type: value.type)
+    }
+
     func finishInvocation<Result, Receiver>(
         _ outcome: Swift.Result<Result, any Error>, storage: NativeValueStorage, invoked: Bool,
         receiver: inout Receiver, retaining owner: Any?
     ) throws -> Result {
-        if invoked && isMutating && mode != .object {
+        if invoked && isMutating && mode != .object && !(receiver is NativeSwiftValue) {
             do {
                 let value = try codec.decode(storage, owner)
                 guard let updated = value as? Receiver else {
@@ -117,11 +163,7 @@ struct SwiftReceiverPlan: Sendable {
             // Explicit pointer/AnyObject adapters need this runtime class check.
             if let expectedClass {
                 let object = Unmanaged<AnyObject>.fromOpaque(pointer).takeUnretainedValue()
-                var type: AnyClass? = Swift.type(of: object)
-                while let candidate = type {
-                    if candidate === expectedClass { return pointer }
-                    type = class_getSuperclass(candidate)
-                }
+                if SwiftObjectType(Swift.type(of: object))?.isSubclass(of: expectedClass) == true { return pointer }
                 throw ABIInvocationError.incompatibleValue(
                     expected: String(reflecting: expectedClass), actual: String(reflecting: Swift.type(of: object))
                 )

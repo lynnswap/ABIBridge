@@ -5,6 +5,7 @@ enum SwiftGenericArgument: Sendable {
     case convention(SwiftConventionCodec)
     case value(CValueType, consuming: Bool)
     case closure(SwiftGenericClosurePlan)
+    case runtimeValue(SwiftRuntimeValuePlan, convention: SwiftArgumentConvention, asynchronous: Bool)
 }
 
 protocol SwiftGenericClosureValue: SwiftClosureValue {
@@ -16,12 +17,14 @@ enum SwiftGenericResult: Sendable {
     case concrete
     case value(CValueType)
     case closure(SwiftClosureCodec)
+    case runtimeValue(SwiftRuntimeValuePlan)
 
     var type: CValueType? {
         switch self {
         case .concrete: nil
         case .value(let type): type
         case .closure(let codec): codec.type
+        case .runtimeValue(let plan): plan.type
         }
     }
 }
@@ -50,7 +53,7 @@ struct SwiftGenericCallPlan: Sendable {
     var resultType: CValueType? { result.type }
     let errorType: CValueType?
 
-    init(declaration: String, linkageName: String, genericArguments: [NativeSwiftGenericArgument],
+    init(declaration: String, linkageName: String, image: NativeImage, genericArguments: [NativeSwiftGenericArgument],
          signature: SwiftFunctionSignature, resolver: SymbolResolver,
          enclosing: SwiftGenericTypeMetadata? = nil, receiver: SwiftReceiverMode? = nil,
          declaredSignature: String? = nil) throws {
@@ -60,7 +63,7 @@ struct SwiftGenericCallPlan: Sendable {
                                                        declaredSignature: declared, caller: signature)
         let binding = try SwiftGenericBinding(declaration: declaration,
             arguments: (enclosing?.arguments ?? []) + genericArguments,
-            signature: signature, resolver: resolver, enclosing: context)
+            signature: signature, resolver: resolver, enclosing: context, image: image)
         if case .function(let arguments, let result, let failure, let isAsync) = declared?.function {
             _ = try SwiftGenericParameters(formal: arguments, actual: signature.parameters, binding: binding,
                 defaultConsuming: declaration.consumesArguments)
@@ -91,7 +94,12 @@ struct SwiftGenericCallPlan: Sendable {
         }
         parameters = try SwiftGenericParameters(formal: declaration.arguments, actual: signature.parameters, binding: binding,
             defaultConsuming: declaration.consumesArguments)
-        if binding.dependsOnParameters(declaration.result) {
+        if signature.result == NativeSwiftValue.self,
+           try binding.types(declaration.result)[0] != NativeSwiftValue.self {
+            let metadata = try binding.types(declaration.result)[0]
+            result = .runtimeValue(try binding.runtimeValuePlan(metadata: metadata,
+                type: Self.layout(declaration.result, actual: metadata, binding: binding)))
+        } else if binding.dependsOnParameters(declaration.result) {
             let nativeResult = try binding.resultType(signature.result, for: declaration.result)
             if case .function = declaration.result {
                 guard let closure = signature.result as? any SwiftGenericClosureValue.Type else {
@@ -139,9 +147,9 @@ struct SwiftGenericCallPlan: Sendable {
         func validate(_ actual: Any.Type, for formal: SwiftFormalType, using binding: SwiftGenericBinding) throws {
             if let argument = try binding.conventionArgument(actual, for: formal,
                 defaultConsuming: binding.declaration.consumesArguments) {
-                try binding.validate(argument.wrapper.wrappedType, for: argument.value)
+                try binding.validateArgument(argument.wrapper.wrappedType, for: argument.value)
             } else {
-                try binding.validate(actual, for: formal)
+                try binding.validateArgument(actual, for: formal)
             }
         }
         do {
@@ -167,6 +175,18 @@ struct SwiftGenericCallPlan: Sendable {
             let value = try Self.argument(argument.value, actual: argument.wrapper.wrappedType, binding: binding,
                                           defaultConsuming: argument.wrapper.convention == .consuming)
             return .convention(try argument.wrapper.makeArgumentCodec(generic: value))
+        }
+        if actual == NativeSwiftValue.self || actual == NativeSwiftBorrowedValue.self {
+            let metadata = try binding.types(formal)[0]
+            if metadata != actual {
+                guard actual != NativeSwiftBorrowedValue.self || !defaultConsuming else {
+                    throw ABIResolutionError.unsupportedDeclaration("A borrowed runtime value cannot be consumed.")
+                }
+                return .runtimeValue(try binding.runtimeValuePlan(metadata: metadata,
+                    type: Self.layout(formal, actual: metadata, binding: binding)),
+                    convention: defaultConsuming ? .consuming : .borrowing,
+                    asynchronous: binding.declaration.isAsync)
+            }
         }
         if case .function = formal, binding.dependsOnParameters(formal) {
             guard let closure = actual as? any SwiftGenericClosureValue.Type else {
@@ -195,6 +215,13 @@ struct SwiftGenericCallPlan: Sendable {
         for (formal, group) in zip(parameters, parameterPlan.groups) {
             switch group {
             case .pack(let range, _):
+                guard case .pack(let pattern, _) = formal else {
+                    preconditionFailure("A pack group has a pack formal type.")
+                }
+                // The callback forwarder passes element storage through unchanged.
+                for (packIndex, index) in range.enumerated() {
+                    try binding.selectingPackElement(at: packIndex).validate(signature.parameters[index], for: pattern)
+                }
                 logicalTypes.append(contentsOf: try range.map { try SwiftGenericParameters.storageType(signature.parameters[$0]) })
                 // SIL pack values have an opaque type hash, distinct from an
                 // ordinary formally indirect scalar (GenPointerAuth.cpp).
@@ -208,6 +235,9 @@ struct SwiftGenericCallPlan: Sendable {
         }
         let types = parameterPlan.types(from: logicalTypes)
         let nativeResult = try binding.resultType(signature.result, for: result)
+        if signature.result == NativeSwiftValue.self && nativeResult != signature.result {
+            throw ABIResolutionError.unsupportedDeclaration("Runtime value callback results require native value conversion at callback entry.")
+        }
         let resultType = try layout(result, actual: nativeResult, binding: binding)
         let errorType = try failure.flatMap {
             binding.dependsOnParameters($0) ? try layout($0, actual: signature.failure, binding: binding) : nil
@@ -262,6 +292,10 @@ struct SwiftGenericCallPlan: Sendable {
                                binding: SwiftGenericBinding) throws -> CValueType {
         let canonical = try binding.canonicalType(of: formal)
         if canonical != formal { return try layout(canonical, actual: actual, binding: binding) }
+        if binding.isArchetype(formal) {
+            return try binding.isClassBound(formal) ? CValueType(scalar: ABIValuePointer)
+                : SwiftGenericParameters.storageType(actual)
+        }
         func prepare<Value>(_ type: Value.Type) throws -> CValueType {
             if !binding.dependsOnParameters(formal) { return try SwiftValueCodec<Value>().type }
             if try binding.isClassBound(formal) { return try CValueType(scalar: ABIValuePointer) }
@@ -377,7 +411,7 @@ extension SwiftGenericBinding {
                 throw ABIResolutionError.signatureMismatch(.init(expected: formal.spelling + " with its Swift argument wrapper",
                     found: [String(reflecting: actual)]))
             }
-            if dependsOnParameters(convention.value) { try validate(wrapper.wrappedType, for: convention.value) }
+            if dependsOnParameters(convention.value) { try validateArgument(wrapper.wrappedType, for: convention.value) }
             return (wrapper, convention.value)
         }
         guard let wrapper = actual as? any SwiftConventionArgument.Type else { return nil }
@@ -388,7 +422,7 @@ extension SwiftGenericBinding {
         guard wrapper.convention == (defaultConsuming ? .consuming : .borrowing) else {
             throw ABIResolutionError.signatureMismatch(.init(expected: "The declaration's default argument ownership", found: [String(reflecting: actual)]))
         }
-        if dependsOnParameters(formal) { try validate(wrapper.wrappedType, for: formal) }
+        if dependsOnParameters(formal) { try validateArgument(wrapper.wrappedType, for: formal) }
         return (wrapper, formal)
     }
 
@@ -420,7 +454,7 @@ extension ABIRuntime {
         guard let declaration = DeclarationKey.demangle(symbol.linkageName, language: .swift) else {
             throw ABIResolutionError.metadataUnavailable("The Swift declaration cannot be demangled.")
         }
-        let plan = try SwiftGenericCallPlan(declaration: declaration, linkageName: symbol.linkageName, genericArguments: genericArguments,
+        let plan = try SwiftGenericCallPlan(declaration: declaration, linkageName: symbol.linkageName, image: symbol.image, genericArguments: genericArguments,
                                             signature: SwiftFunctionSignature(signature), resolver: resolver, declaredSignature: declaredSignature)
         return try NativeSwiftFunction(symbol: symbol, resolver: resolver, generic: plan)
     }

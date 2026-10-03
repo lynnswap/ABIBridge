@@ -58,7 +58,7 @@ struct NativeSwiftAsyncClosureTests {
                 try withUnsafePointer(to: &descriptor) { address in
                     let pointer = missing ? nil : ABISignSwiftAsyncClosureDescriptor(address, discriminator)
                     let value = ABISwiftClosureValue(function: pointer, context: Unmanaged.passRetained(capture).toOpaque())
-                    do { _ = try codec.makeValue(value, nil, true); Issue.record("Expected rejected descriptor") }
+                    do { _ = try codec.makeValue(value, nil, true, nil); Issue.record("Expected rejected descriptor") }
                     catch {}
                 }
             }

@@ -32,7 +32,7 @@ Untyped and concrete typed native failures are returned as ``NativeSwiftError``,
 
 Async closure arguments and results use NativeSwiftClosure with an async function signature; see <doc:SwiftClosureValues>. Inout and per-argument ownership use the same typed wrappers as synchronous calls; see <doc:SwiftArgumentConventions>. Generic signatures with hidden metadata or witness arguments require a compiled adapter. Calls require a valid async descriptor. See <doc:SwiftFunctionInvocation> for value support and <doc:SwiftErrorABI> for error inspection.
 
-Opaque some results can use NativeSwiftOpaqueValue in the async signature. Their dynamic storage is adopted only on success; see <doc:SwiftOpaqueResults>.
+Opaque some results can use NativeSwiftValue in the async signature. Their dynamic storage is adopted only on success; see <doc:SwiftOpaqueResults>.
 
 ## Entry and completion
 
@@ -50,7 +50,7 @@ The rules are grounded in Swift's [async call lowering](https://github.com/swift
 
 A `nonisolated(nonsending)` declaration accepts a hidden caller-isolation payload. In the verified Swift 6.3 lowering, this expands into two pointer-sized integer words before the explicit arguments. The payload contains an actor reference and witness/flag information; it is distinct from a SerialExecutorRef, and the compiler converts it to an executor when needed. An `@concurrent` declaration has no such prefix. Actor-isolated declarations have their own executor requirements.
 
-Enabling ApproachableConcurrency can change a default nonisolated async declaration to caller-isolated behavior without changing its source symbol name. Therefore, symbol lookup alone cannot identify the complete ABI. Explicit `@concurrent` and `nonisolated(nonsending)` annotations keep the fixtures' contracts independent of the package's feature flags. See [SE-0461](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0461-async-function-isolation.md).
+Enabling NonisolatedNonsendingByDefault changes a default nonisolated async declaration to caller-isolated behavior without changing its source symbol name. Therefore, symbol lookup alone cannot identify the complete ABI. Explicit `@concurrent` and `nonisolated(nonsending)` annotations keep the fixtures' contracts independent of the package's feature flags. See [SE-0461](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0461-async-function-isolation.md).
 
 The frontend preserves the caller's task and cancellation/task-local state, passes the selected caller-isolation convention, and resumes its Swift caller on the original executor. Any actor requirement that the selected declaration leaves to its caller remains part of the unsafe invocation contract.
 

@@ -12,6 +12,7 @@ struct SwiftGenericDeclaration: Sendable {
         case sameType(SwiftFormalType, SwiftFormalType)
         case sameShape(SwiftFormalType, SwiftFormalType)
         case superclass(SwiftFormalType, SwiftFormalType)
+        case invertedProtocols(SwiftFormalType, UInt16)
     }
     let parameters: [Parameter]
     var requirements: [Requirement]
@@ -72,18 +73,27 @@ struct SwiftDeclaredSignature {
             return value
         }
         return try SwiftFormalSyntax.fields(genericClause[clause.upperBound...]).map { field in
-            for separator in ["==", "~"] {
+            let colon = SwiftFormalSyntax.topLevelColon(in: field)
+            for separator in ["==", "~"] where separator == "==" || colon == nil {
                 if let range = field.range(of: separator) {
                     let left = try type(String(field[..<range.lowerBound]))
                     let right = try type(String(field[range.upperBound...]))
                     return separator == "==" ? .sameType(left, right) : .sameShape(left, right)
                 }
             }
-            guard let colon = SwiftFormalSyntax.topLevelColon(in: field) else {
+            guard let colon else {
                 throw ABIResolutionError.unsupportedDeclaration("Invalid declaredAs: generic requirement: " + field)
             }
             let subject = try type(String(field[..<colon]))
-            let constraint = try type(String(field[field.index(after: colon)...]))
+            let constraintText = field[field.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+            if constraintText.hasPrefix("~") {
+                switch constraintText.dropFirst().trimmingCharacters(in: .whitespaces) {
+                case "Copyable", "Swift.Copyable": return .invertedProtocols(subject, 1)
+                case "Escapable", "Swift.Escapable": return .invertedProtocols(subject, 2)
+                default: throw ABIResolutionError.unsupportedDeclaration("Unknown inverted protocol: " + constraintText)
+                }
+            }
+            let constraint = try type(constraintText)
             // Superclass requirements are encoded in the declaration. Reuse
             // that classification rather than infer it from current conformances.
             if let requirement = declaration.requirements.first(where: {

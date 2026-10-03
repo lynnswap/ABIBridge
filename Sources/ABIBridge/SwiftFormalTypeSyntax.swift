@@ -9,7 +9,13 @@ extension SwiftGenericDeclaration {
         while ["Global", "Static"].contains(entry.kind) {
             entry = try entry.requiredChild()
         }
-        var requirements = context?.requirements ?? []
+        // A nominal ~Copyable parameter may have a Copyable-only member.
+        // Swift emits that member with the default requirement; members that
+        // preserve suppression encode it in their own generic context.
+        var requirements = context?.requirements.filter {
+            if case .invertedProtocols = $0 { return false }
+            return true
+        } ?? []
         func collectContext(_ node: SwiftSyntax.Node) throws {
             for child in node.children() {
                 if child.kind == "DependentGenericSignature" {
@@ -111,8 +117,13 @@ extension SwiftGenericDeclaration {
                     throw ABIResolutionError.unsupportedDeclaration("The Swift generic layout requirement is not a class constraint.")
                 }
                 return .conformance(try SwiftFormalType(children[0]), "Swift.AnyObject")
-            case "DependentGenericParamCount", "DependentGenericParamPackMarker",
-                 "DependentGenericInverseConformanceRequirement":
+            case "DependentGenericInverseConformanceRequirement":
+                let children = node.children()
+                guard let index = children[1].index, index < 16 else {
+                    throw ABIResolutionError.unsupportedDeclaration("Unknown Swift invertible protocol.")
+                }
+                return .invertedProtocols(try SwiftFormalType(children[0]), 1 << UInt16(index))
+            case "DependentGenericParamCount", "DependentGenericParamPackMarker":
                 return nil
             default:
                 throw ABIResolutionError.unsupportedDeclaration("Cannot decode the Swift " + node.kind + " requirement.")

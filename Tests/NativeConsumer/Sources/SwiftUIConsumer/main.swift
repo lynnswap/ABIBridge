@@ -37,14 +37,14 @@ let echo = try await runtime.swiftFunction(
 let echoed = try unsafe echo.unsafeInvoke(Text(verbatim: "Generic SwiftUI value"))
 precondition(pixels(echoed) == pixels(Text(verbatim: "Generic SwiftUI value")))
 let make = try await runtime.swiftFunction(named: "SwiftUIPlugin.makeView(_:_:)",
-    as: ((String, NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftOpaqueValue).self, in: .path(library))
+    as: ((String, NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftValue).self, in: .path(library))
 let host = try await runtime.swiftFunction(named: "SwiftUIPlugin.makeHost(_:_:)",
     as: ((String, NativeSwiftClosure<(Int64) -> Int64>) -> NSView).self, in: .path(library))
 let title = "Unimportable SwiftUI provider"
 let expected = pixels(VStack { Text(verbatim: title); Text("Value: 42") }.padding().background(Color.yellow))
 private let destroyed = ReleaseFlag()
 private weak var observed: Capture?
-var opaque: NativeSwiftOpaqueValue?
+var opaque: NativeSwiftValue?
 do {
     let capture = Capture(destroyed)
     observed = capture
@@ -64,7 +64,7 @@ precondition(observed == nil)
 destroyed.state.withLock { precondition($0) }
 
 let number = try await runtime.swiftFunction(named: "SwiftUIPlugin.makeNumber()",
-    as: (() -> NativeSwiftOpaqueValue).self, in: .path(library))
+    as: (() -> NativeSwiftValue).self, in: .path(library))
 let numberResult = try unsafe number.unsafeInvoke()
 do {
     _ = try NativeSwiftView(numberResult)
@@ -72,7 +72,7 @@ do {
 } catch let error as ABIInvocationError {
     precondition(error == .incompatibleValue(expected: "any SwiftUI.View", actual: "Swift.Int64"))
 }
-numberResult.withValue { precondition($0 as? Int64 == 42) }
+try numberResult.withCopy { precondition($0 as? Int64 == 42) }
 
 var hostReference: NSView?
 weak var observedHost: NSView?

@@ -7,13 +7,14 @@ private enum ConsumerError: Error { case load(String), wrongResult, callback(Str
 private final class State: @unchecked Sendable {
     var text = ""
     var borrow: NativeSwiftBorrowedValue?
+    var owned: NativeSwiftValue?
     var error: (any Error)?
 }
 
 private struct Prepared {
     let type: NativeSwiftType
-    let text: NativeSwiftBorrowedMethod<String>
-    let cancel: NativeSwiftBorrowedMethod<Void>
+    let text: NativeSwiftMethod<() -> String>
+    let cancel: NativeSwiftMethod<() -> Void>
     let run: NativeSwiftFunction<(NativeSwiftClosure<() -> Bool>, AnyObject, String, UnsafeMutablePointer<Int32>, NativeSwiftBorrowingClosure<Void>) -> Bool>
     let reference: NativeSwiftFunction<(AnyObject, String, UnsafeMutablePointer<Int32>) -> String>
 }
@@ -25,8 +26,8 @@ private struct Prepared {
     let scope = ImageSelector.path(URL(fileURLWithPath: path))
     let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeRecord", in: scope)
     return try await Prepared(type: type,
-        text: type.borrowedGetter(named: "text", as: String.self),
-        cancel: type.borrowedMethod(named: "cancel()", as: (() -> Void).self),
+        text: type.getter(named: "text", as: (() -> String).self, receiverABI: .opaque(named: type.name)),
+        cancel: type.method(named: "cancel()", as: (() -> Void).self, receiverABI: .opaque(named: type.name)),
         run: runtime.swiftFunction(
             named: "ManagedSwiftFixtures.runAndVisitGeneric<A>(() -> A, Swift.AnyObject, Swift.String, Swift.UnsafeMutablePointer<Swift.Int32>, (ManagedSwiftFixtures.RuntimeRecord) -> ()) -> A",
             as: ((NativeSwiftClosure<() -> Bool>, AnyObject, String, UnsafeMutablePointer<Int32>, NativeSwiftBorrowingClosure<Void>) -> Bool).self,
@@ -44,6 +45,7 @@ let callback = try NativeSwiftBorrowingClosure(borrowing: prepared.type) { value
         state.text += try unsafe prepared.text.unsafeInvoke(on: value)
         try unsafe prepared.cancel.unsafeInvoke(on: value)
         state.borrow = value
+        state.owned = try value.copy()
     } catch { state.error = error }
 }
 let count = UnsafeMutablePointer<Int32>.allocate(capacity: 1)
@@ -63,4 +65,27 @@ do {
     _ = try unsafe prepared.text.unsafeInvoke(on: expired)
     throw ConsumerError.wrongResult
 } catch NativeSwiftBorrowError.expiredBorrow { }
-print("Direct generic invocation and runtime-only borrowed values passed")
+guard let owned = state.owned,
+      try unsafe prepared.text.unsafeInvoke(on: owned) == input else { throw ConsumerError.wrongResult }
+print("Direct generic invocation and ordinary members on owned and borrowed runtime values passed")
+
+let runtime = ABIRuntime()
+let source = ImageSelector.path(URL(fileURLWithPath: CommandLine.arguments[1]))
+let makeTicket = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeTicket(_:)",
+    as: ((AnyObject) -> NativeSwiftValue).self, in: source)
+let ticket = try unsafe makeTicket.unsafeInvoke(NSObject())
+let moveTicket = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.moveRuntimeValue<A where A: ~Swift.Copyable>(__owned A) -> A",
+    as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self,
+    genericArguments: [.type(ticket.type)], in: source)
+let moved = try unsafe moveTicket.unsafeInvoke(NativeSwiftConsuming(ticket))
+guard ticket.isConsumed && !moved.isCopyable else { throw ConsumerError.wrongResult }
+let readTicket = try await moved.type.method(named: "read()", as: (() -> Int64).self,
+    receiverABI: .opaque(named: moved.type.name))
+guard try unsafe readTicket.unsafeInvoke(on: moved) == 42 else { throw ConsumerError.wrongResult }
+let copyRecord = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+    as: ((NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: [.type(owned.type)], in: source)
+let copiedRecord = try unsafe copyRecord.unsafeInvoke(owned)
+guard !owned.isConsumed && copiedRecord.isCopyable,
+      try unsafe prepared.text.unsafeInvoke(on: copiedRecord) == input else { throw ConsumerError.wrongResult }
+print("Runtime-only generic arguments preserve native copying and noncopyable transfer")

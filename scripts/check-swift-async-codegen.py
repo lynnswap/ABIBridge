@@ -36,7 +36,8 @@ def main():
         provider = [*common, '-whole-module-optimization', '-enable-library-evolution',
                     '-module-name', 'ManagedSwiftFixtures',
                     str(root / 'Tests/ManagedSwiftFixtures/Errors.swift'),
-                    str(root / 'Tests/ManagedSwiftFixtures/Async.swift')]
+                    str(root / 'Tests/ManagedSwiftFixtures/Async.swift'),
+                    str(root / 'Tests/ManagedSwiftFixtures/RuntimeValues.swift')]
         run(*provider, '-emit-module', '-emit-module-path', str(directory / 'ManagedSwiftFixtures.swiftmodule'))
         provider_ir = directory / 'provider.ll'
         run(*provider, '-emit-ir', '-o', str(provider_ir))

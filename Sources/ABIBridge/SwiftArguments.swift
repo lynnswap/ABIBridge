@@ -35,6 +35,7 @@ struct SwiftArgumentCodec<Value>: Sendable {
         case explicit(SwiftConventionCodec)
         case genericValue
         case genericClosure(SwiftGenericClosurePlan)
+        case runtimeValue(SwiftRuntimeValuePlan, SwiftArgumentConvention, asynchronous: Bool)
     }
     private let encoding: Encoding
 
@@ -51,6 +52,10 @@ struct SwiftArgumentCodec<Value>: Sendable {
             type = try SwiftValueCodec<Value>().type
             consumes = defaultConsuming
             encoding = .genericClosure(plan)
+        case .runtimeValue(let plan, let convention, let asynchronous):
+            type = plan.type
+            consumes = convention == .consuming
+            encoding = .runtimeValue(plan, convention, asynchronous: asynchronous)
         case .concrete:
             if let argument = Value.self as? any SwiftConventionArgument.Type {
                 let codec = try argument.makeArgumentCodec(generic: .concrete)
@@ -70,6 +75,8 @@ struct SwiftArgumentCodec<Value>: Sendable {
         case .explicit(let codec): return try codec.encode(value, owner)
         case .genericClosure(let plan):
             return try (value as! any SwiftGenericClosureValue).encodeGenericClosure(plan: plan, retainingCode: owner)
+        case .runtimeValue(let plan, let convention, let asynchronous):
+            return try plan.encode(value, convention: convention, asynchronous: asynchronous)
         case .genericValue:
             // The callee receives Value's metadata and operates on Value itself,
             // even when Value also provides a different foreign representation.
@@ -103,9 +110,11 @@ extension NativeSwiftBorrowing: SwiftConventionArgument {
 }
 extension NativeSwiftBorrowing: Sendable where Value: Sendable {}
 
-/// Transfers an independently encoded owned copy of a Swift argument.
-/// The original Swift value remains usable. Native code owns the copy on both
-/// successful and throwing completion. Foreign value conversions cannot assert
+/// Transfers an owned Swift argument to native code.
+/// A NativeSwiftValue transfers its existing value and becomes consumed; other
+/// Swift values supply an independently encoded copy and remain usable.
+/// Native code owns the transferred value on successful or throwing completion.
+/// Foreign value conversions cannot assert
 /// Swift destruction semantics; use an actual Swift representation for this mode.
 public struct NativeSwiftConsuming<Value> {
     public let value: Value
@@ -117,7 +126,10 @@ extension NativeSwiftConsuming: SwiftConventionArgument {
     static func makeArgumentCodec(generic: SwiftGenericArgument) throws -> SwiftConventionCodec {
         let base = (Value.self as? any NativeOptionalValue.Type)?.wrappedType ?? Value.self
         let usesNativeStorage: Bool
-        if case .value = generic { usesNativeStorage = true } else { usesNativeStorage = false }
+        switch generic {
+        case .value, .runtimeValue: usesNativeStorage = true
+        default: usesNativeStorage = false
+        }
         guard usesNativeStorage || !(base is any ABIBridgeValue.Type) || Value.self is any ABIBridgeSwiftValue.Type else {
             throw ABIResolutionError.unsupportedDeclaration("Consuming arguments require an actual Swift value representation and its owned copy.")
         }
@@ -129,6 +141,8 @@ extension NativeSwiftConsuming: Sendable where Value: Sendable {}
 /// An owned typed buffer for a native Swift inout argument.
 /// Read value after a call completes, including a throwing call. Mutation is
 /// performed in this buffer and does not assign back to the original input.
+/// For NativeSwiftValue, the buffer retains the same runtime owner and grants
+/// exclusive access to its native payload instead of copying it.
 /// The caller gives native code exclusive access for the entire invocation,
 /// including suspension: do not read, write, or alias this buffer during it.
 /// This buffer is deliberately not Sendable.
@@ -168,6 +182,18 @@ extension NativeSwiftInout: SwiftConventionArgument {
     static func makeArgumentCodec(generic: SwiftGenericArgument) throws -> SwiftConventionCodec {
         // Preparing a signature must establish the pointee contract even before
         // an actual buffer is supplied.
+        if case .runtimeValue(let plan, _, let asynchronous) = generic {
+            guard Value.self == NativeSwiftValue.self else {
+                throw ABIResolutionError.unsupportedDeclaration("Inout runtime arguments require an owned NativeSwiftValue.")
+            }
+            return SwiftConventionCodec(type: try CValueType(scalar: ABIValuePointer), consumes: false) { value, _ in
+                let access = try plan.encode((value as! Self).value, convention: .inoutValue, asynchronous: asynchronous)
+                let pointer = NativeValueStorage(size: MemoryLayout<UnsafeRawPointer>.size,
+                    alignment: MemoryLayout<UnsafeRawPointer>.alignment, owner: access, codeLifetime: access.codeLifetime)
+                pointer.store(UnsafeRawPointer(access.address))
+                return pointer
+            }
+        }
         if case .value = generic {} else { try Self.validatePointee() }
         return SwiftConventionCodec(type: try CValueType(scalar: ABIValuePointer), consumes: false) { value, _ in (value as! Self).encoded() }
     }

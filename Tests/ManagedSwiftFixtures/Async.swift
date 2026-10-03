@@ -1,3 +1,17 @@
+@inline(never) public nonisolated(nonsending) func borrowRuntimeValueAsync<T: ~Copyable>(
+    _ value: borrowing T, _ gate: AsyncGate
+) async -> Int64 {
+    await gate.wait()
+    return Int64(MemoryLayout<T>.size)
+}
+
+@inline(never) public nonisolated(nonsending) func moveRuntimeValueAsync<T: ~Copyable>(
+    _ value: consuming T
+) async -> T {
+    await Task.yield()
+    return value
+}
+
 public actor AsyncGate {
     private var waiters: [CheckedContinuation<Void, Never>] = []
     private var observers: [CheckedContinuation<Void, Never>] = []
@@ -143,5 +157,12 @@ public actor AsyncCounter {
         await gate.wait()
         value += delta
         return value
+    }
+}
+
+extension RuntimeTicket {
+    public nonisolated(nonsending) func readAfter(_ gate: AsyncGate) async -> Int64 {
+        await gate.wait()
+        return number
     }
 }

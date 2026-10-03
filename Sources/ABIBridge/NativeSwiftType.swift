@@ -1,3 +1,4 @@
+import ABIBridgeCore
 import Foundation
 import ObjectiveC
 
@@ -20,7 +21,7 @@ struct SwiftMetadataResponse: BitwiseCopyable, ABIBridgeValue {
     }
 }
 
-/// A cached concrete Swift type and its retained implementation image.
+/// A concrete Swift type and its retained implementation images.
 ///
 /// Type lookup requests complete metadata without constructing an instance.
 /// Generic arguments are validated by the Swift runtime. Member lookups reuse
@@ -35,25 +36,45 @@ public actor NativeSwiftType {
     let representation: Any.Type?
     let resolver: SymbolResolver
     let genericMetadata: SwiftGenericTypeMetadata?
+    nonisolated let codeLifetime: SwiftValueCodeLifetime
+    nonisolated var codeImages: [NativeImage] { codeLifetime.images }
     var genericArguments: [NativeSwiftGenericArgument] { genericMetadata?.arguments ?? [] }
     private var cachedReceiver: SwiftReceiverCodec?
 
     init(name: String, image: NativeImage, metadata: Any.Type,
          representation: Any.Type?, resolver: SymbolResolver,
-         genericMetadata: SwiftGenericTypeMetadata? = nil) {
+         genericMetadata: SwiftGenericTypeMetadata? = nil, codeLifetime: SwiftValueCodeLifetime? = nil) {
         self.name = name
         self.image = image
         self.metadata = metadata
         self.representation = representation
         self.resolver = resolver
         self.genericMetadata = genericMetadata
+        self.codeLifetime = codeLifetime ?? SwiftValueCodeLifetime([image] + (genericMetadata?.images ?? []))
+    }
+
+    nonisolated func retainingCode(_ lifetime: SwiftValueCodeLifetime) -> NativeSwiftType {
+        NativeSwiftType(name: name, image: image, metadata: metadata, representation: representation,
+                       resolver: resolver, genericMetadata: genericMetadata, codeLifetime: lifetime)
     }
 
     func receiverPlan(mutating isMutating: Bool, consuming isConsuming: Bool = false,
-                      generic: SwiftGenericCallPlan? = nil) throws -> SwiftReceiverPlan {
+                      generic: SwiftGenericCallPlan? = nil, receiverABI: NativeType? = nil) throws -> SwiftReceiverPlan {
         let codec: SwiftReceiverCodec
-        if (representation == nil || representation == metadata), let formalType = try generic?.receiverType() {
-            codec = try SwiftReceiverCodec.make(for: metadata, formalType: formalType)
+        if let receiverABI {
+            let layout = ABISwiftGetValueLayout(unsafeBitCast(metadata, to: UnsafeRawPointer.self))
+            let formalType: CValueType
+            if let components = receiverABI.cType {
+                guard (layout.size...layout.stride).contains(components.size) else {
+                    throw ABIResolutionError.unsupportedDeclaration("Receiver ABI components must cover the native value without exceeding its stride.")
+                }
+                formalType = try CValueType(swiftComponents: components, size: layout.size, alignment: layout.alignment)
+            } else {
+                formalType = try CValueType(indirectSwiftSize: layout.size, alignment: layout.alignment)
+            }
+            codec = SwiftReceiverCodec(runtimeType: metadata, formalType: formalType)
+        } else if (representation == nil || representation == metadata), let formalType = try generic?.receiverType() {
+            codec = SwiftReceiverCodec(runtimeType: metadata, formalType: formalType)
         } else {
             if cachedReceiver == nil { cachedReceiver = try SwiftReceiverCodec.make(for: representation ?? metadata) }
             codec = cachedReceiver!
@@ -165,7 +186,7 @@ public actor NativeSwiftType {
             let runtimeName = try swiftFunctionTypeName(parent)
             ownerClass = parent
             ownerImage = try swiftClassImage(parent, named: runtimeName, resolver: resolver)
-            ownerName = try swiftClassDeclarationName(parent, in: ownerImage, suggestedName: runtimeName, resolver: resolver)
+            ownerName = try swiftTypeDeclarationName(parent, in: ownerImage, suggestedName: runtimeName, resolver: resolver)
         }
     }
 
@@ -173,21 +194,27 @@ public actor NativeSwiftType {
     ///
     /// The signature excludes self. Mutating value members require an explicit
     /// mutating flag because their source-level symbol does not encode it.
-    /// Consuming members similarly require consuming: true; the call transfers
-    /// a receiver copy and preserves the caller's original value.
+    /// Consuming members similarly require consuming: true. Typed receivers
+    /// transfer a copy; NativeSwiftValue transfers its owned value. Borrowed
+    /// views permit nonmutating, nonconsuming access within their active scope.
+    /// For runtime-only self, receiverABI supplies established fixed components
+    /// or an opaque descriptor for formally indirect self. Metadata supplies
+    /// storage dimensions, not the declaration's passing convention.
     /// - Parameters:
     ///   - name: A relative member name or a complete qualified declaration.
     ///   - signature: Explicit arguments and result.
     ///   - genericArguments: Type arguments introduced by the member.
     ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
+    ///   - receiverABI: Explicit self ABI; nil uses the type representation or generic declaration.
     ///   - isMutating: Whether a value receiver is passed inout.
-    ///   - isConsuming: Whether the member consumes its receiver copy.
+    ///   - isConsuming: Whether the member consumes its receiver.
     /// - Returns: A reusable method with an explicit receiver.
     /// - Throws: A lookup, representation, or preparation error.
     public func method<Signature>(
         named name: String, as signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument] = [],
         declaredAs declaredSignature: String? = nil,
+        receiverABI: NativeType? = nil,
         mutating isMutating: Bool = false, consuming isConsuming: Bool = false
     ) throws -> NativeSwiftMethod<Signature> {
         let symbol = try resolveMember(signature: signature, genericArguments: genericArguments,
@@ -198,7 +225,7 @@ public actor NativeSwiftType {
                 : swiftFunctionDeclaration(named: member, as: signature)
         }
         let generic = try genericPlan(symbol, signature: signature, arguments: genericArguments, declaredSignature: declaredSignature)
-        let receiver = try receiverPlan(mutating: isMutating, consuming: isConsuming, generic: generic)
+        let receiver = try receiverPlan(mutating: isMutating, consuming: isConsuming, generic: generic, receiverABI: receiverABI)
         return try NativeSwiftMethod(symbol: symbol.symbol, type: self, receiver: receiver,
             generic: generic?.includingReceiver(receiver.mode))
     }
@@ -213,45 +240,10 @@ public actor NativeSwiftType {
         guard let declaration = DeclarationKey.demangle(member.symbol.linkageName, language: .swift) else {
             throw ABIResolutionError.metadataUnavailable("The Swift member declaration cannot be demangled.")
         }
-        return try SwiftGenericCallPlan(declaration: declaration, linkageName: member.symbol.linkageName,
+        return try SwiftGenericCallPlan(declaration: declaration, linkageName: member.symbol.linkageName, image: member.symbol.image,
             genericArguments: arguments, signature: SwiftFunctionSignature(signature), resolver: resolver,
             enclosing: enclosing, receiver: receiver, declaredSignature: declaredSignature)
     }
-    /// Resolves a nonmutating member with formally indirect borrowed self.
-    ///
-    /// Use for a runtime-only resilient value received through
-    /// NativeSwiftBorrowingClosure. The caller establishes this self convention;
-    /// metadata size alone does not imply it. The signature excludes self.
-    public func borrowedMethod<Result, each Argument>(
-        named name: String, as signature: ((repeat each Argument) -> Result).Type,
-        declaredAs declaredSignature: String? = nil
-    ) throws -> NativeSwiftBorrowedMethod<Result, repeat each Argument> {
-        let symbol = try resolveMember(signature: signature, exact: SwiftMemberLookup.isQualified(name),
-            explicitSignature: SwiftMemberLookup.hasSignature(name), declaredSignature: declaredSignature) { owner, usesBinding in
-            let member = try SwiftMemberLookup.qualifiedName(name, owner: owner)
-            return try usesBinding ? NativeDeclaration(name: member, language: .swift)
-                : swiftFunctionDeclaration(named: member, as: signature)
-        }
-        return try NativeSwiftBorrowedMethod(symbol: symbol.symbol, type: self,
-            generic: genericPlan(symbol, signature: signature, receiver: .address, declaredSignature: declaredSignature))
-    }
-
-    /// Resolves a nonmutating getter with formally indirect borrowed self.
-    ///
-    /// The getter must be synchronous, nonthrowing and nonconsuming. Its value
-    /// uses the supported concrete Swift result representations.
-    public func borrowedGetter<Value>(
-        named name: String, as value: Value.Type, declaredAs declaredSignature: String? = nil
-    ) throws -> NativeSwiftBorrowedMethod<Value> {
-        let signature = (() -> Value).self
-        let symbol = try resolveMember(signature: signature, exact: SwiftMemberLookup.isQualified(name),
-            explicitSignature: SwiftMemberLookup.hasSignature(name), declaredSignature: declaredSignature) { owner, _ in
-            try accessorDeclaration(named: name, ownerName: owner, valueType: value, setter: false, isStatic: false)
-        }
-        return try NativeSwiftBorrowedMethod(symbol: symbol.symbol, type: self,
-            generic: genericPlan(symbol, signature: signature, receiver: .address, declaredSignature: declaredSignature))
-    }
-
     /// Resolves a concrete allocating initializer.
     ///
     /// Ordinary initializer arguments transfer ownership to the callee. The
@@ -330,19 +322,21 @@ public actor NativeSwiftType {
     /// Resolves a property setter that consumes its incoming value.
     ///
     /// Class receivers are references. Ordinary value setters receive self
-    /// inout; consuming setters transfer a copy. An explicitly nonmutating
+    /// inout; consuming setters transfer a typed copy or NativeSwiftValue's owned
+    /// value. An explicitly nonmutating
     /// setter can use mutating: false.
     /// - Parameters:
     ///   - name: A property name or complete relative setter declaration.
     ///   - valueType: The incoming value representation.
     ///   - declaredSignature: The formal setter type and optional canonical generic signature.
+    ///   - receiverABI: Explicit self ABI; nil uses the type representation or generic declaration.
     ///   - isMutating: An inout override. Nil selects inout unless consuming is true.
-    ///   - isConsuming: Whether the setter consumes its receiver copy.
+    ///   - isConsuming: Whether the setter consumes its receiver.
     /// - Returns: A reusable method with one explicit value argument.
     /// - Throws: A lookup or unsupported-representation error.
     public func setter<Value>(
         named name: String, as valueType: Value.Type, declaredAs declaredSignature: String? = nil,
-        mutating isMutating: Bool? = nil,
+        receiverABI: NativeType? = nil, mutating isMutating: Bool? = nil,
         consuming isConsuming: Bool = false
     ) throws -> NativeSwiftMethod<(Value) -> Void> {
         let symbol = try resolveMember(signature: ((Value) -> Void).self, exact: SwiftMemberLookup.isQualified(name),
@@ -350,7 +344,7 @@ public actor NativeSwiftType {
             try accessorDeclaration(named: name, ownerName: owner, valueType: valueType, setter: true, isStatic: false)
         }
         let generic = try genericPlan(symbol, signature: ((Value) -> Void).self, declaredSignature: declaredSignature)
-        let receiver = try receiverPlan(mutating: isMutating ?? !isConsuming, consuming: isConsuming, generic: generic)
+        let receiver = try receiverPlan(mutating: isMutating ?? !isConsuming, consuming: isConsuming, generic: generic, receiverABI: receiverABI)
         return try NativeSwiftMethod(symbol: symbol.symbol, type: self, receiver: receiver, consumesArguments: true,
             generic: generic?.includingReceiver(receiver.mode))
     }
@@ -392,11 +386,12 @@ func swiftClassImage(_ type: AnyClass, named name: String, resolver: SymbolResol
     }
 }
 
-func swiftClassDeclarationName(
-    _ type: AnyClass, in image: NativeImage, suggestedName: String, resolver: SymbolResolver
+func swiftTypeDeclarationName(
+    _ type: Any.Type, in image: NativeImage, suggestedName: String, resolver: SymbolResolver
 ) throws -> String {
-    guard let descriptor = try SwiftClassDispatch.nominalDescriptor(of: type) else { return suggestedName }
-    return try resolver.swiftNominalTypeName(at: UInt64(descriptor), in: image, suggestedName: suggestedName) ?? suggestedName
+    guard let descriptor = ABISwiftTypeDescriptor(unsafeBitCast(type, to: UnsafeRawPointer.self)) else { return suggestedName }
+    return try resolver.swiftNominalTypeName(at: UInt64(UInt(bitPattern: descriptor)),
+        in: image, suggestedName: suggestedName) ?? suggestedName
 }
 
 extension ABIRuntime {
@@ -405,7 +400,7 @@ extension ABIRuntime {
         let image = try swiftClassImage(objectType, named: runtimeName, resolver: resolver)
         let key = SwiftTypeCacheKey.metadata(ObjectIdentifier(objectType), image: image.identity)
         if let cached = swiftTypes[key] { return cached }
-        let name = try swiftClassDeclarationName(objectType, in: image, suggestedName: runtimeName, resolver: resolver)
+        let name = try swiftTypeDeclarationName(objectType, in: image, suggestedName: runtimeName, resolver: resolver)
         let type = NativeSwiftType(
             name: name, image: image, metadata: objectType, representation: nil, resolver: resolver,
             genericMetadata: try SwiftGenericTypeMetadata(metadata: objectType))
@@ -528,9 +523,12 @@ extension NativeSwiftType {
     /// type, such as "() throws(B) -> A". Getter symbols omit the formal error
     /// type; A and B refer to the enclosing declaration's generic parameters.
     /// Receiver ownership and writeback follow the ordinary member contract.
+    /// receiverABI can describe runtime-only fixed components or formally
+    /// indirect self, as for method lookup.
     public func getter<Signature>(
         named name: String, as signature: Signature.Type,
         declaredAs declaredSignature: String? = nil,
+        receiverABI: NativeType? = nil,
         mutating isMutating: Bool = false, consuming isConsuming: Bool = false
     ) throws -> NativeSwiftMethod<Signature> {
         let result = try getterResult(signature)
@@ -539,7 +537,7 @@ extension NativeSwiftType {
             try accessorDeclaration(named: name, ownerName: owner, valueType: result, setter: false, isStatic: false)
         }
         let generic = try genericPlan(symbol, signature: signature, declaredSignature: declaredSignature)
-        let receiver = try receiverPlan(mutating: isMutating, consuming: isConsuming, generic: generic)
+        let receiver = try receiverPlan(mutating: isMutating, consuming: isConsuming, generic: generic, receiverABI: receiverABI)
         return try NativeSwiftMethod(symbol: symbol.symbol, type: self, receiver: receiver,
             generic: generic?.includingReceiver(receiver.mode))
     }

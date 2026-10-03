@@ -12,7 +12,306 @@ private protocol GenericOrderingZ {}
 private struct GenericOrderingValue: GenericOrderingA, GenericOrderingZ {}
 private struct GenericOrderingOwner<Value: GenericOrderingZ> {}
 
+private final class RuntimeBorrowCopy: @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: Result<NativeSwiftValue, any Error>?
+    func accept(_ value: NativeSwiftBorrowedValue) {
+        lock.lock(); defer { lock.unlock() }
+        result = Result { try value.copy() }
+    }
+    func take() throws -> NativeSwiftValue {
+        lock.lock(); defer { result = nil; lock.unlock() }
+        return try #require(result).get()
+    }
+}
+
 struct SwiftGenericBindingTests {
+    @Test func nonescapableBorrowedValuesCannotBecomeOwnedCopies() async throws {
+        let module = "ScopedValue_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let fixture = try FixtureLibrary(swiftModule: module, swiftSource: """
+            public struct View: ~Escapable {
+                public let number: Int64
+                @_lifetime(immortal) public init(_ number: Int64) { self.number = number }
+            }
+            public func visit(_ body: (borrowing View) -> Void) { body(View(42)) }
+            public func save<Value>(_ value: Value) -> Any { value }
+            public func explicit<Value: Escapable>(_ value: Value) -> Any { value }
+            public func inspect<Value: ~Copyable & ~Escapable>(_ value: borrowing Value) -> Int64 { 42 }
+            """, linkArguments: ["-swift-version", "6", "-enable-library-evolution", "-enable-experimental-feature", "Lifetimes"])
+        defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        let type = try await runtime.swiftType(named: module + ".View", in: .path(fixture.libraryURL))
+        let metadata = await type.metadata
+        #expect(SwiftCopyability.accepts(metadata))
+        #expect(!SwiftEscapability.accepts(metadata))
+        for name in ["save", "explicit"] {
+            do {
+                _ = try await runtime.swiftFunction(named: module + "." + name + "<A>(A) -> Any",
+                    as: ((NativeSwiftBorrowedValue) -> Any).self,
+                    genericArguments: [.type(type)], in: .path(fixture.libraryURL))
+                Issue.record("A nonescapable borrow was accepted by an Escapable generic parameter")
+            } catch ABIResolutionError.signatureMismatch { }
+        }
+        let inspect = try await runtime.swiftFunction(named: module + ".inspect<A where A: ~Swift.Copyable, A: ~Swift.Escapable>(A) -> Swift.Int64",
+            as: ((NativeSwiftBorrowedValue) -> Int64).self,
+            genericArguments: [.type(type)], in: .path(fixture.libraryURL))
+        let copied = RuntimeBorrowCopy()
+        let callback = try NativeSwiftBorrowingClosure<Void>(borrowing: type) {
+            do { #expect(try unsafe inspect.unsafeInvoke($0) == 42) }
+            catch { Issue.record(error) }
+            copied.accept($0)
+        }
+        let visit = try await runtime.swiftFunction(named: module + ".visit((" + module + ".View) -> ()) -> ()",
+            as: ((NativeSwiftBorrowingClosure<Void>) -> Void).self, in: .path(fixture.libraryURL))
+        try unsafe visit.unsafeInvoke(callback)
+        do {
+            _ = try copied.take()
+            Issue.record("A nonescapable native borrow escaped into an owned runtime value")
+        } catch ABIResolutionError.unsupportedDeclaration { }
+        let plan = try SwiftRuntimeValuePlan(metadata: metadata, type: SwiftGenericParameters.storageType(metadata),
+            resolver: .shared, retaining: [type.image])
+        #expect(throws: ABIResolutionError.self) {
+            _ = try SwiftResultCodec<NativeSwiftValue>(generic: .runtimeValue(plan))
+        }
+    }
+
+    enum RuntimeDependencyOperation: CaseIterable {
+        case copiedResult, asyncMovedResult, receiverResult, asyncReceiverResult
+        case addressReceiverResult, asyncAddressReceiverResult
+        case replacedInout, throwingInout, copiedAlias, nativeCopiedAlias
+        case calleeMutation, throwingCalleeMutation, borrowedCallback, callbackMutation, asyncCallbackMutation
+        case hostCallbackMutation, hostAsyncCallbackMutation, storedHostCallbackMutation, scopedCopyMutation
+    }
+
+    @Test(.serialized, arguments: RuntimeDependencyOperation.allCases)
+    func runtimeValuesShareCodeDependenciesAcrossNativeOperations(_ operation: RuntimeDependencyOperation) async throws {
+        let module = "RuntimeOwner_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let provider = try FixtureLibrary(load: false, swiftModule: module, swiftSource: """
+            public final class Box {
+                private var body: () -> Int64
+                private var saved: ((AnyObject) throws -> Void)?
+                public init(_ body: @escaping () -> Int64) { self.body = body }
+                public func read() -> Int64 { body() }
+                public consuming func opaqueSelf() -> some AnyObject { self }
+                public nonisolated(nonsending) consuming func opaqueSelfAsync() async -> some AnyObject { self }
+                public func update(from other: Box) { body = other.body }
+                public func apply(_ callback: (AnyObject) -> Void) { callback(self) }
+                public nonisolated(nonsending) func applyAsync(_ callback: nonisolated(nonsending) (AnyObject) async -> Void) async { await callback(self) }
+                public func applyThrowing(_ callback: (AnyObject) throws -> Void) rethrows { try callback(self) }
+                public nonisolated(nonsending) func applyAsyncThrowing(_ callback: nonisolated(nonsending) (AnyObject) async throws -> Void) async rethrows { try await callback(self) }
+                public func store(_ callback: @escaping (AnyObject) throws -> Void) { saved = callback }
+                public func clear() { saved = nil }
+                public func fire() throws { try saved?(self) }
+            }
+            public func fire(_ object: AnyObject) throws { try (object as! Box).fire() }
+            public protocol Reader { func read() -> Int64 }
+            public struct Record: Reader {
+                private let body: () -> Int64
+                public init(_ body: @escaping () -> Int64) { self.body = body }
+                public func read() -> Int64 { body() }
+                public consuming func opaqueSelf() -> some Reader { self }
+                public nonisolated(nonsending) consuming func opaqueSelfAsync() async -> some Reader { self }
+            }
+            public struct Failure: Error { public init() {} }
+            public func replaceAndThrow<T: ~Copyable>(_ value: inout T, _ replacement: consuming T) throws {
+                value = replacement
+                throw Failure()
+            }
+            public func update<T>(_ value: T, _ other: T) {
+                (value as AnyObject as! Box).update(from: other as AnyObject as! Box)
+            }
+            """, linkArguments: ["-swift-version", "6", "-emit-module", "-enable-library-evolution"])
+        defer { provider.cleanup() }
+        func factory(_ suffix: String, _ value: Int64) throws -> FixtureLibrary {
+            try FixtureLibrary(load: false, swiftModule: module + suffix, swiftSource: """
+                import \(module)
+                @inline(never) private func number() -> Int64 { \(value) }
+                public func make() -> some AnyObject { Box { number() } }
+                public func makeRecord() -> some Reader { Record { number() } }
+                public func visit(_ callback: (Record) -> Void) { callback(Record { number() }) }
+                public func callback() -> (AnyObject) -> Void { { ($0 as! Box).update(from: Box { number() }) } }
+                public func asyncCallback() -> nonisolated(nonsending) (AnyObject) async -> Void {
+                    { object in await Task.yield(); (object as! Box).update(from: Box { number() }) }
+                }
+                public func update<T>(_ value: T) {
+                    (value as AnyObject as! Box).update(from: Box { number() })
+                }
+                public func updateAndThrow<T>(_ value: T) throws {
+                    update(value)
+                    throw Failure()
+                }
+                """, linkArguments: ["-swift-version", "6", "-I", provider.directory.path, provider.libraryURL.path])
+        }
+        let first = try factory("First", 41), second = try factory("Second", 42)
+        defer { first.cleanup(); second.cleanup() }
+        try first.load(); try second.load()
+        weak var argumentLease: ImageLease?
+        let runtime = ABIRuntime()
+        var preparedCopy: NativeSwiftFunction<(NativeSwiftValue) -> NativeSwiftValue>?
+        func produce() async throws -> NativeSwiftValue {
+            let factoryName = operation == .addressReceiverResult || operation == .asyncAddressReceiverResult || operation == .borrowedCallback ? "makeRecord()" : "make()"
+            let makeFirst = try await runtime.swiftFunction(named: module + "First." + factoryName, as: (() -> NativeSwiftValue).self,
+                in: .path(first.libraryURL))
+            let makeSecond = try await runtime.swiftFunction(named: module + "Second." + factoryName, as: (() -> NativeSwiftValue).self,
+                in: .path(second.libraryURL))
+            let binding = try unsafe makeFirst.unsafeInvoke()
+            let argument = try unsafe makeSecond.unsafeInvoke()
+            let images = argument.type.codeImages
+            argumentLease = try #require(images.first { $0.identity == makeSecond.symbol.image.identity }?.lease)
+            if operation == .asyncMovedResult {
+                let move = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.moveRuntimeValueAsync<A where A: ~Swift.Copyable>(__owned A) async -> A",
+                    as: ((NativeSwiftConsuming<NativeSwiftValue>) async -> NativeSwiftValue).self, genericArguments: [.type(binding.type)])
+                return try unsafe await move.unsafeInvoke(NativeSwiftConsuming(argument))
+            }
+            let receiverABI: NativeType? = factoryName == "makeRecord()" ? try .opaque(named: argument.type.name) : nil
+            switch operation {
+            case .hostCallbackMutation, .hostAsyncCallbackMutation, .storedHostCallbackMutation, .scopedCopyMutation:
+                let update = try await runtime.swiftFunction(named: module + "Second.update<A>(A) -> ()",
+                    as: ((AnyObject) -> Void).self, genericArguments: [.type(AnyObject.self)], in: .path(second.libraryURL))
+                argumentLease = update.symbol.image.lease
+                if operation == .scopedCopyMutation {
+                    try binding.withCopy { try unsafe update.unsafeInvoke($0 as AnyObject) }
+                } else if operation == .hostAsyncCallbackMutation {
+                    let body: nonisolated(nonsending) @Sendable (AnyObject) async throws -> Void = { object in
+                        await Task.yield()
+                        try unsafe update.unsafeInvoke(object)
+                    }
+                    let callback = try NativeSwiftClosure<nonisolated(nonsending) (AnyObject) async throws -> Void>(body)
+                    let apply = try await binding.type.method(named: "applyAsyncThrowing(_:)",
+                        as: (nonisolated(nonsending) (NativeSwiftClosure<nonisolated(nonsending) (AnyObject) async throws -> Void>) async throws -> Void).self)
+                    try unsafe await apply.unsafeInvoke(on: binding, callback)
+                } else {
+                    let body: @Sendable (AnyObject) throws -> Void = { object in
+                        try unsafe update.unsafeInvoke(object)
+                    }
+                    let callback = try NativeSwiftClosure<(AnyObject) throws -> Void>(body)
+                    if operation == .storedHostCallbackMutation {
+                        let store = try await binding.type.method(named: "store(_:)",
+                            as: ((NativeSwiftClosure<(AnyObject) throws -> Void>) -> Void).self)
+                        try unsafe store.unsafeInvoke(on: binding, callback)
+                        let fire = try await runtime.swiftFunction(named: module + ".fire(_:)",
+                            as: ((AnyObject) throws -> Void).self, in: .path(provider.libraryURL))
+                        let object = try binding.withCopy { $0 as AnyObject }
+                        try unsafe fire.unsafeInvoke(object)
+                        let clear = try await binding.type.method(named: "clear()", as: (() -> Void).self)
+                        try unsafe clear.unsafeInvoke(on: binding)
+                    } else {
+                        let apply = try await binding.type.method(named: "applyThrowing(_:)",
+                            as: ((NativeSwiftClosure<(AnyObject) throws -> Void>) throws -> Void).self)
+                        try unsafe apply.unsafeInvoke(on: binding, callback)
+                    }
+                }
+                return binding
+            case .callbackMutation:
+                let make = try await runtime.swiftFunction(named: module + "Second.callback()",
+                    as: (() -> NativeSwiftClosure<(AnyObject) -> Void>).self, in: .path(second.libraryURL))
+                argumentLease = make.symbol.image.lease
+                let callback = try unsafe make.unsafeInvoke()
+                let apply = try await binding.type.method(named: "apply(_:)",
+                    as: ((NativeSwiftClosure<(AnyObject) -> Void>) -> Void).self)
+                try unsafe apply.unsafeInvoke(on: binding, callback)
+                return binding
+            case .asyncCallbackMutation:
+                let make = try await runtime.swiftFunction(named: module + "Second.asyncCallback()",
+                    as: (() -> NativeSwiftClosure<nonisolated(nonsending) (AnyObject) async -> Void>).self,
+                    in: .path(second.libraryURL))
+                argumentLease = make.symbol.image.lease
+                let callback = try unsafe make.unsafeInvoke()
+                let apply = try await binding.type.method(named: "applyAsync(_:)",
+                    as: (nonisolated(nonsending) (NativeSwiftClosure<nonisolated(nonsending) (AnyObject) async -> Void>) async -> Void).self)
+                try unsafe await apply.unsafeInvoke(on: binding, callback)
+                return binding
+            case .receiverResult, .addressReceiverResult:
+                let method = try await argument.type.method(named: "opaqueSelf()", as: (() -> NativeSwiftValue).self, receiverABI: receiverABI, consuming: true)
+                return try unsafe method.unsafeInvoke(on: argument)
+            case .asyncReceiverResult, .asyncAddressReceiverResult:
+                let method = try await argument.type.method(named: "opaqueSelfAsync()", as: (() async -> NativeSwiftValue).self, receiverABI: receiverABI, consuming: true)
+                return try unsafe await method.unsafeInvoke(on: argument)
+            case .replacedInout, .throwingInout:
+                let buffer = try NativeSwiftInout(binding)
+                if operation == .throwingInout {
+                    let replace = try await runtime.swiftFunction(named: module + ".replaceAndThrow<A where A: ~Swift.Copyable>(inout A, __owned A) throws -> ()",
+                        as: ((NativeSwiftInout<NativeSwiftValue>, NativeSwiftConsuming<NativeSwiftValue>) throws -> Void).self,
+                        genericArguments: [.type(binding.type)], in: .path(provider.libraryURL))
+                    do {
+                        try unsafe replace.unsafeInvoke(buffer, NativeSwiftConsuming(argument))
+                        Issue.record("The replacement must report its native error")
+                    } catch is NativeSwiftError {}
+                } else {
+                    let replace = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.replaceRuntimeValue<A where A: ~Swift.Copyable>(inout A, __owned A) -> ()",
+                        as: ((NativeSwiftInout<NativeSwiftValue>, NativeSwiftConsuming<NativeSwiftValue>) -> Void).self,
+                        genericArguments: [.type(binding.type)])
+                    try unsafe replace.unsafeInvoke(buffer, NativeSwiftConsuming(argument))
+                }
+                return binding
+            case .borrowedCallback:
+                let copied = RuntimeBorrowCopy()
+                let callback = try NativeSwiftBorrowingClosure<Void>(borrowing: binding.type) { copied.accept($0) }
+                let visit = try await runtime.swiftFunction(named: module + "Second.visit((" + module + ".Record) -> ()) -> ()",
+                    as: ((NativeSwiftBorrowingClosure<Void>) -> Void).self, in: .path(second.libraryURL))
+                argumentLease = visit.symbol.image.lease
+                try unsafe visit.unsafeInvoke(callback)
+                return try copied.take()
+            case .calleeMutation, .throwingCalleeMutation:
+                if operation == .throwingCalleeMutation {
+                    let update = try await runtime.swiftFunction(named: module + "Second.updateAndThrow<A>(A) throws -> ()",
+                        as: ((NativeSwiftValue) throws -> Void).self,
+                        genericArguments: [.type(binding.type)], in: .path(second.libraryURL))
+                    argumentLease = update.symbol.image.lease
+                    do {
+                        try unsafe update.unsafeInvoke(binding)
+                        Issue.record("The update must report its native error")
+                    } catch is NativeSwiftError {}
+                } else {
+                    let update = try await runtime.swiftFunction(named: module + "Second.update<A>(A) -> ()",
+                        as: ((NativeSwiftValue) -> Void).self,
+                        genericArguments: [.type(binding.type)], in: .path(second.libraryURL))
+                    argumentLease = update.symbol.image.lease
+                    try unsafe update.unsafeInvoke(binding)
+                }
+                return binding
+            case .copiedAlias, .nativeCopiedAlias:
+                let alias: NativeSwiftValue
+                if operation == .copiedAlias { alias = try binding.copy() }
+                else {
+                    let copy = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+                        as: ((NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: [.type(binding.type)])
+                    alias = try unsafe copy.unsafeInvoke(binding)
+                }
+                let update = try await runtime.swiftFunction(named: module + ".update<A>(A, A) -> ()",
+                    as: ((NativeSwiftValue, NativeSwiftValue) -> Void).self,
+                    genericArguments: [.type(binding.type)], in: .path(provider.libraryURL))
+                try unsafe update.unsafeInvoke(binding, argument)
+                // Connect the same families in both directions; dropping all
+                // native handles must still release the image leases.
+                try unsafe update.unsafeInvoke(argument, binding)
+                return alias
+            case .copiedResult, .asyncMovedResult:
+                let copy = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+                    as: ((NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: [.type(binding.type)])
+                preparedCopy = copy
+                return try unsafe copy.unsafeInvoke(argument)
+            }
+        }
+        var result: NativeSwiftValue? = try await produce()
+        await runtime.removeCachedResults()
+        first.close(); second.close()
+        // Check the actual image lease before invoking code that would be unloaded.
+        guard argumentLease != nil else {
+            Issue.record("The runtime result discarded its argument's closure implementation image")
+            return
+        }
+        func inspect() async throws {
+            let receiverABI: NativeType? = operation == .addressReceiverResult || operation == .asyncAddressReceiverResult || operation == .borrowedCallback
+                ? try .opaque(named: result!.type.name) : nil
+            let read = try await result!.type.method(named: "read()", as: (() -> Int64).self, receiverABI: receiverABI)
+            #expect(try unsafe read.unsafeInvoke(on: result!) == 42)
+        }
+        try await inspect()
+        result = nil
+        await runtime.removeCachedResults()
+        withExtendedLifetime(preparedCopy) { #expect(argumentLease == nil) }
+    }
     @Test func objectConstraintMetadataFollowsSwiftSelfConformanceRules() throws {
         #expect(SwiftObjectType(AnyObject.self) != nil)
         #expect(SwiftObjectType((any NSObjectProtocol).self) != nil)

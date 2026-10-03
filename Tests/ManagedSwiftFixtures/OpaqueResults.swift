@@ -49,6 +49,10 @@ private struct HiddenGenericOpaque<Value> { let value: Value }
 @inline(never) public func makeGenericOpaque<Value>(_ value: Value) -> some Any { HiddenGenericOpaque(value: value) }
 private struct HiddenNoncopyableOpaque: ~Copyable { let value: Int64 }
 @inline(never) public func makeNoncopyableOpaque() -> some ~Copyable { HiddenNoncopyableOpaque(value: 42) }
+@inline(never) public func makeCopyableNoncopyableOpaque() -> some ~Copyable { Int64(42) }
+@inline(never) public func makeOpaqueRuntimeTicket(_ token: ErrorLifetimeToken) -> some ~Copyable {
+    RuntimeTicket(token: token, number: 42)
+}
 
 public class OpaqueBase: @unchecked Sendable {
     public let token: ErrorLifetimeToken

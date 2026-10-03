@@ -83,7 +83,7 @@ let value = try unsafe standard.unsafeInvoke()
 
 Allocating class initializers and static members receive the type metadata automatically. Initializers transfer ordinary arguments to the callee. Use NativeSwiftBorrowing for explicitly borrowed initializer arguments (`__shared` in the demangled declaration); see <doc:SwiftArgumentConventions>. A failable class initializer can use an optional class result. Initializers are resolved on the requested type; inherited allocation behavior must have its own compiler-generated initializer entry.
 
-Opaque some results use NativeSwiftOpaqueValue for functions, methods, and getters; see <doc:SwiftOpaqueResults>.
+Opaque some results use NativeSwiftValue for functions, methods, and getters; see <doc:SwiftOpaqueResults>.
 
 ## Property accessors
 

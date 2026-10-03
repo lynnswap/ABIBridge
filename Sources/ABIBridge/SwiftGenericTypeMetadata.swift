@@ -49,7 +49,7 @@ struct SwiftGenericTypeMetadata: Sendable {
         try self.init(adopting: result, arguments: arguments, images: descriptor.image.map { [$0] } ?? [])
     }
 
-    init(metadata: Any.Type) throws {
+    init(metadata: Any.Type, retaining images: [NativeImage] = []) throws {
         var failure: OpaquePointer?
         guard let result = ABICopySwiftTypeMetadata(unsafeBitCast(metadata, to: UnsafeRawPointer.self), &failure) else {
             let error = consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftMetadata")
@@ -61,7 +61,7 @@ struct SwiftGenericTypeMetadata: Sendable {
             }
             return ABISwiftTypeMetadataArgumentIsPack(result, index) ? .pack(elements) : elements[0]
         }
-        try self.init(adopting: result, arguments: arguments)
+        try self.init(adopting: result, arguments: arguments, images: images)
     }
 
     private init(adopting result: OpaquePointer, arguments: [NativeSwiftGenericArgument], images owners: [NativeImage] = []) throws {

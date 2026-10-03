@@ -31,14 +31,13 @@ Use the native declaration's calling convention to select a representation. Buil
 
 - <doc:SwiftExistentialValues>
 - <doc:SwiftOpaqueResults>
-- ``NativeSwiftOpaqueValue``
+- ``NativeSwiftValue``
 
 ### Borrowed runtime values
 
 - <doc:BorrowedSwiftValues>
 - ``NativeSwiftBorrowedValue``
 - ``NativeSwiftBorrowingClosure``
-- ``NativeSwiftBorrowedMethod``
 - ``NativeSwiftBorrowError``
 
 ## See Also

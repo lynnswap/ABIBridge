@@ -23,7 +23,7 @@ import SwiftUI
 func loadPanel(title: String) async throws -> NativeSwiftView {
     let make = try await ABIRuntime.shared.swiftFunction(
         named: "Example.makePanel(_:)",
-        as: ((String) -> NativeSwiftOpaqueValue).self
+        as: ((String) -> NativeSwiftValue).self
     )
     return try NativeSwiftView(unsafe make.unsafeInvoke(title))
 }

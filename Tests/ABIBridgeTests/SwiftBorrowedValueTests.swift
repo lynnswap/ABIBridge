@@ -13,6 +13,8 @@ private final class BorrowResults: @unchecked Sendable {
     var errors: [String] = []
     var escaped: NativeSwiftBorrowedValue?
     var returned: AnyObject?
+    var owned: NativeSwiftValue?
+    var tasks: [Task<Int64, any Error>] = []
     func record(_ body: () throws -> Void) {
         lock.lock(); defer { lock.unlock() }
         do { try body() } catch { errors.append(String(describing: error)) }
@@ -32,8 +34,8 @@ struct SwiftBorrowedValueTests {
         let runtime = ABIRuntime()
         let argument = try await runtime.swiftType(named: "ManagedSwiftFixtures.ResilientRecord")
         let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.GenericRecord", genericArguments: [.type(argument)])
-        let method = try await type.borrowedMethod(named: "measure()", as: (() -> Int64).self)
-        let getter = try await type.borrowedGetter(named: "measured", as: Int64.self)
+        let method = try await type.method(named: "measure()", as: (() -> Int64).self, receiverABI: .opaque(named: type.name))
+        let getter = try await type.getter(named: "measured", as: (() -> Int64).self, receiverABI: .opaque(named: type.name))
         let errors = BorrowResults()
         let callback = try NativeSwiftBorrowingClosure<(Int64, Int64)>(borrowing: type) { value in
             do { return try unsafe (method.unsafeInvoke(on: value), getter.unsafeInvoke(on: value)) }
@@ -50,10 +52,10 @@ struct SwiftBorrowedValueTests {
     @Test func runtimeOnlyValuesUseScopedSelfAndOwnedResults() async throws {
         let runtime = ABIRuntime.shared
         let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeRecord")
-        let text = try await type.borrowedGetter(named: "text", as: String.self)
-        let changed = try await type.borrowedGetter(named: "changed", as: AnyObject?.self)
-        let length = try await type.borrowedMethod(named: "length()", as: (() -> Int64).self)
-        let cancel = try await type.borrowedMethod(named: "cancel()", as: (() -> Void).self)
+        let text = try await type.getter(named: "text", as: (() -> String).self, receiverABI: .opaque(named: type.name))
+        let changed = try await type.getter(named: "changed", as: (() -> AnyObject?).self, receiverABI: .opaque(named: type.name))
+        let length = try await type.method(named: "length()", as: (() -> Int64).self, receiverABI: .opaque(named: type.name))
+        let cancel = try await type.method(named: "cancel()", as: (() -> Void).self, receiverABI: .opaque(named: type.name))
         let visit = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.visitRuntimeRecord(Swift.AnyObject, Swift.String, Swift.UnsafeMutablePointer<Swift.Int32>, (ManagedSwiftFixtures.RuntimeRecord) -> ()) -> ()",
             as: ((AnyObject, String, UnsafeMutablePointer<Int32>, NativeSwiftBorrowingClosure<Void>) -> Void).self)
@@ -63,6 +65,7 @@ struct SwiftBorrowedValueTests {
         let body = try NativeSwiftBorrowingClosure(borrowing: type) { record in
             results.record {
                 results.escaped = record
+                results.owned = try record.copy()
                 results.texts.append(try unsafe text.unsafeInvoke(on: record))
                 results.returned = try unsafe changed.unsafeInvoke(on: record)
                 #expect(try unsafe length.unsafeInvoke(on: record) == 700)
@@ -84,6 +87,12 @@ struct SwiftBorrowedValueTests {
             #expect(results.returned === object)
         }
         #expect(results.errors.isEmpty)
+        #expect(try unsafe text.unsafeInvoke(on: results.owned!) == input)
+        try results.owned!.withBorrowedValue { value in
+            let count = try unsafe length.unsafeInvoke(on: value)
+            #expect(count == 700)
+        }
+        results.owned = nil
         #expect(weakObject != nil)
         results.returned = nil
         #expect(weakObject == nil)
@@ -93,12 +102,42 @@ struct SwiftBorrowedValueTests {
         }
     }
 
+    @Test(arguments: [false, true]) @MainActor func aSynchronousNativeBorrowCannotBeginAnAsyncMember(_ inoutReceiver: Bool) async throws {
+        guard #available(macOS 26, iOS 26, tvOS 26, watchOS 26, visionOS 26, *) else { return }
+        let runtime = ABIRuntime.shared
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeRecord")
+        let length = try await type.method(named: "lengthAsync()", as: (() async -> Int64).self,
+            receiverABI: .opaque(named: type.name))
+        let visit = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitRuntimeRecord(Swift.AnyObject, Swift.String, Swift.UnsafeMutablePointer<Swift.Int32>, (ManagedSwiftFixtures.RuntimeRecord) -> ()) -> ()",
+            as: ((AnyObject, String, UnsafeMutablePointer<Int32>, NativeSwiftBorrowingClosure<Void>) -> Void).self)
+        let results = BorrowResults()
+        let callback = try NativeSwiftBorrowingClosure(borrowing: type) { value in
+            let box = BorrowBox(value)
+            let task = Task.immediate { @MainActor in
+                var receiver = box.value
+                if inoutReceiver { return try unsafe await length.unsafeInvoke(on: &receiver) }
+                return try unsafe await length.unsafeInvoke(on: receiver)
+            }
+            results.record { results.tasks.append(task) }
+        }
+        var cancellations: Int32 = 0
+        try withUnsafeMutablePointer(to: &cancellations) {
+            try unsafe visit.unsafeInvoke(NSObject(), "text", $0, callback)
+        }
+        #expect(results.tasks.count == 3)
+        for task in results.tasks {
+            do { _ = try await task.value; Issue.record("A synchronous native borrow escaped into an async member") }
+            catch NativeSwiftBorrowError.synchronousBorrow { }
+        }
+    }
+
     @Test func activeBorrowsRejectAnotherThreadAndDifferentNativeType() async throws {
         let runtime = ABIRuntime.shared
         let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeRecord")
-        let text = try await type.borrowedGetter(named: "text", as: String.self)
+        let text = try await type.getter(named: "text", as: (() -> String).self, receiverABI: .opaque(named: type.name))
         let other = try await runtime.swiftType(named: "Swift.String")
-        let otherMember = try await other.borrowedGetter(named: "count", as: Int.self)
+        let otherMember = try await other.getter(named: "count", as: (() -> Int).self, receiverABI: .opaque(named: other.name))
         let visit = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.visitRuntimeRecord(Swift.AnyObject, Swift.String, Swift.UnsafeMutablePointer<Swift.Int32>, (ManagedSwiftFixtures.RuntimeRecord) -> ()) -> ()",
             as: ((AnyObject, String, UnsafeMutablePointer<Int32>, NativeSwiftBorrowingClosure<Void>) -> Void).self)
@@ -130,7 +169,7 @@ struct SwiftBorrowedValueTests {
     @Test func nativeRetentionKeepsCallbackAliveAndCreatesFreshBorrows() async throws {
         let runtime = ABIRuntime.shared
         let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeRecord")
-        let text = try await type.borrowedGetter(named: "text", as: String.self)
+        let text = try await type.getter(named: "text", as: (() -> String).self, receiverABI: .opaque(named: type.name))
         let save = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.saveRuntimeCallback((ManagedSwiftFixtures.RuntimeRecord) -> ()) -> ()",
             as: ((NativeSwiftBorrowingClosure<Void>) -> Void).self)

@@ -2,40 +2,72 @@ import ABIBridgeCore
 import Foundation
 import Darwin
 
-/// A borrowed native value was accessed outside its synchronous callback.
+/// A borrowed native value was used outside its lifetime or suspension contract.
 public enum NativeSwiftBorrowError: Error, Sendable, Equatable {
-    /// The callback providing this value has returned.
+    /// The scope providing this value has returned.
     case expiredBorrow
     /// Access attempted to leave the thread executing the callback.
     case wrongThread
+    /// The native source guarantees this borrowed storage only until its synchronous callback returns.
+    case synchronousBorrow
 }
 
 final class SwiftValueBorrow {
     private let lock = NSLock()
     private let thread = pthread_self()
     private var address: UnsafeRawPointer?
+    private var storageOwner: NativeValueStorage?
 
-    init(_ address: UnsafeRawPointer) { self.address = address }
+    init(_ address: UnsafeRawPointer, retaining owner: NativeValueStorage? = nil) {
+        self.address = address
+        storageOwner = owner
+    }
 
     func withAddress<Result>(_ body: (UnsafeRawPointer) throws -> Result) throws -> Result {
+        try withStorage { address, _ in try body(address) }
+    }
+
+    private func withStorage<Result>(
+        _ body: (UnsafeRawPointer, NativeValueStorage?) throws -> Result
+    ) throws -> Result {
         lock.lock()
         guard let address else { lock.unlock(); throw NativeSwiftBorrowError.expiredBorrow }
         guard pthread_equal(thread, pthread_self()) != 0 else {
             lock.unlock(); throw NativeSwiftBorrowError.wrongThread
         }
+        let owner = storageOwner
         lock.unlock()
-        return try body(address)
+        return try withExtendedLifetime(owner) { try body(address, owner) }
     }
 
-    func expire() { lock.lock(); address = nil; lock.unlock() }
+    func access(asynchronous: Bool, type: NativeSwiftType) throws -> NativeValueStorage {
+        try withStorage { address, owner in
+            // An owned-value borrow can keep its read access through suspension.
+            // A synchronous native callback gives us no way to extend its storage.
+            guard !asynchronous || owner != nil else { throw NativeSwiftBorrowError.synchronousBorrow }
+            return NativeValueStorage(borrowing: UnsafeMutableRawPointer(mutating: address), owner: owner ?? self,
+                                      retainingResourcesOf: owner, codeLifetime: type.codeLifetime)
+        }
+    }
+
+    func expire() {
+        lock.lock()
+        address = nil
+        let owner = storageOwner
+        storageOwner = nil
+        lock.unlock()
+        withExtendedLifetime(owner) {}
+    }
 }
 
-/// A runtime-only Swift value borrowed for one synchronous callback.
+/// A scoped view of a runtime-only Swift value.
 ///
-/// Its initialized storage belongs to the native caller. This handle never
-/// copies or destroys that value. Saving the handle does not extend its borrow;
-/// member invocation after return or from another thread throws. The value is
-/// not Sendable and must satisfy the native declaration's isolation contract.
+/// The storage belongs to a native caller or NativeSwiftValue. Saving this view
+/// does not extend its scope; new access after return or from another thread
+/// throws. An owned-value borrow can keep a started async member's read access
+/// until completion. A synchronous native callback cannot extend its storage
+/// across suspension and rejects async member entry with synchronousBorrow.
+/// The value is not Sendable and retains the declaration's isolation contract.
 public struct NativeSwiftBorrowedValue {
     /// The actual native type and its retained implementation image.
     public let type: NativeSwiftType
@@ -44,6 +76,12 @@ public struct NativeSwiftBorrowedValue {
     init(type: NativeSwiftType, borrow: SwiftValueBorrow) {
         self.type = type
         self.borrow = borrow
+    }
+
+    /// Copies the native value into an independent owner while the borrow is active.
+    /// The native type must be Copyable and Escapable.
+    public func copy() throws -> NativeSwiftValue {
+        try borrow.withAddress { try NativeSwiftValue.copy(from: $0, type: type) }
     }
 }
 
@@ -57,6 +95,7 @@ public struct NativeSwiftBorrowedValue {
 /// fresh borrow. Returned runtime-typed closures are outside this subset.
 public struct NativeSwiftBorrowingClosure<Result> {
     private let storage: SwiftClosureStorage
+    private let codeLifetime: SwiftValueCodeLifetime
 
     /// Creates a callback whose argument remains owned by its native caller.
     ///
@@ -66,6 +105,8 @@ public struct NativeSwiftBorrowingClosure<Result> {
     /// same supported concrete Swift representations as NativeSwiftClosure.
     public init(borrowing type: NativeSwiftType,
                 _ body: @escaping @Sendable (NativeSwiftBorrowedValue) -> Result) throws {
+        let type = type.retainingCode(SwiftValueCodeLifetime(type.codeImages))
+        codeLifetime = type.codeLifetime
         guard !(type.metadata is AnyClass) else {
             throw ABIResolutionError.unsupportedDeclaration("A resilient value callback requires a Swift value type.")
         }
@@ -76,7 +117,8 @@ public struct NativeSwiftBorrowingClosure<Result> {
         let result = try SwiftValueCodec<Result>()
         let discriminator = swiftClosureDiscriminator(parameters: ["-indirect"], results: try swiftClosureAuthTypes(Result.self))
         let interface = try SwiftCallInterface.cached(result: result.type, parameters: [argument])
-        let callback = try SwiftClosureCallbackOwner(interface: interface, body: SwiftClosureBody(retainingCode: type) { arguments, output in
+        let callback = try SwiftClosureCallbackOwner(interface: interface, body: SwiftClosureBody(
+            retainingCode: type, codeLifetime: codeLifetime) { arguments, output in
             let borrow = SwiftValueBorrow(UnsafeRawPointer(arguments![0]!))
             defer { borrow.expire() }
             let value = body(NativeSwiftBorrowedValue(type: type, borrow: borrow))
@@ -94,49 +136,12 @@ extension NativeSwiftBorrowingClosure: SwiftClosureValue {
     static var swiftFunctionType: Any.Type { ((NativeSwiftBorrowedValue) -> Result).self }
     static var requiresExplicitDeclaration: Bool { true }
     static var supportsResult: Bool { false }
-    func encodeClosure() -> NativeValueStorage { storage.encoded() }
+    func encodeClosure() -> NativeValueStorage { storage.encoded(codeLifetime: codeLifetime) }
 
     static func makeClosureCodec() throws -> SwiftClosureCodec {
         let pointer = try CValueType(scalar: ABIValuePointer)
-        return SwiftClosureCodec(type: try CValueType(fields: [pointer, pointer])) { _, _, _ in
+        return SwiftClosureCodec(type: try CValueType(fields: [pointer, pointer])) { _, _, _, _ in
             throw ABIResolutionError.unsupportedDeclaration("Runtime-typed callbacks cannot be decoded as returned closures.")
-        }
-    }
-}
-
-/// A nonmutating, nonconsuming member using a borrowed indirect Swift self.
-///
-/// The handle retains its declaration and type image. It can be prepared before
-/// a callback and invoked synchronously during any compatible value's borrow.
-public struct NativeSwiftBorrowedMethod<Result, each Argument>: Sendable {
-    /// The selected declaration and retained implementation image.
-    public let symbol: ResolvedSymbol
-    private let type: NativeSwiftType
-    private let call: SwiftCall
-
-    init(symbol: ResolvedSymbol, type: NativeSwiftType, generic: SwiftGenericCallPlan? = nil) throws {
-        guard !(type.metadata is AnyClass) else {
-            throw ABIResolutionError.unsupportedDeclaration("Borrowed indirect self requires a Swift value type.")
-        }
-        self.symbol = symbol
-        self.type = type
-        call = try SwiftCall(signature: ((repeat each Argument) -> Result).self, generic: generic)
-    }
-
-    /// Calls a compatible member while the receiver's borrow is active.
-    ///
-    /// The native member must be synchronous, nonthrowing, nonmutating and
-    /// nonconsuming, with formally indirect self. The caller satisfies its
-    /// isolation requirements. Managed results preserve ordinary Swift ownership.
-    /// An incorrect ABI description can corrupt memory and is not recoverable.
-    @unsafe public func unsafeInvoke(on value: NativeSwiftBorrowedValue,
-                                     _ arguments: repeat each Argument) throws -> Result {
-        guard value.type.metadata == type.metadata else {
-            throw ABIInvocationError.incompatibleValue(expected: type.name, actual: value.type.name)
-        }
-        return try value.borrow.withAddress { address in
-            try unsafe call.unsafeInvoke(symbol: symbol, context: address,
-                retaining: (symbol, type), retainingCode: type.image, repeat each arguments)
         }
     }
 }
