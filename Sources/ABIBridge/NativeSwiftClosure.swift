@@ -173,7 +173,8 @@ public struct NativeSwiftClosure<Signature> {
 }
 
 extension NativeSwiftClosure: SwiftClosureValue {
-    func encodeClosure() throws -> NativeValueStorage {
+    func encodeClosure(consuming: Bool = false) throws -> NativeValueStorage {
+        if consuming, case .borrowed = call { return try copy().encodeClosure(consuming: true) }
         let native: SwiftGenericClosurePlan?
         let resolved = try call.resolved()
         switch resolved {
@@ -273,9 +274,9 @@ extension NativeSwiftClosure {
         try makeClosureCodec(generic: plan)
     }
 
-    func encodeGenericClosure(plan: SwiftGenericClosurePlan, retainingCode owner: Any?, asynchronous: Bool = false) throws -> NativeValueStorage {
-        if plan.isEscaping, case .borrowed = call {
-            return try copy().encodeGenericClosure(plan: plan, retainingCode: owner, asynchronous: asynchronous)
+    func encodeGenericClosure(plan: SwiftGenericClosurePlan, retainingCode owner: Any?, asynchronous: Bool = false, consuming: Bool = false) throws -> NativeValueStorage {
+        if plan.isEscaping || consuming, case .borrowed = call {
+            return try copy().encodeGenericClosure(plan: plan, retainingCode: owner, asynchronous: asynchronous, consuming: consuming)
         }
         if case .asynchronous = plan.transport {
             return try encodeGenericAsyncClosure(plan: plan, retainingCode: owner, asynchronous: asynchronous)

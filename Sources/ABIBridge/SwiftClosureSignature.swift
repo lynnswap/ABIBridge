@@ -140,13 +140,13 @@ protocol SwiftClosureValue: SendableMetatype {
     static var swiftFunctionType: Any.Type { get }
     static func makeClosureCodec() throws -> SwiftClosureCodec
     static func makeGenericClosureCodec(plan: SwiftGenericClosurePlan) throws -> SwiftClosureCodec
-    func encodeGenericClosure(plan: SwiftGenericClosurePlan, retainingCode owner: Any?, asynchronous: Bool) throws -> NativeValueStorage
-    func encodeClosure() throws -> NativeValueStorage
+    func encodeGenericClosure(plan: SwiftGenericClosurePlan, retainingCode owner: Any?, asynchronous: Bool, consuming: Bool) throws -> NativeValueStorage
+    func encodeClosure(consuming: Bool) throws -> NativeValueStorage
     func encodeClosureResult() throws -> NativeValueStorage
 }
 
 extension SwiftClosureValue {
-    func encodeClosureResult() throws -> NativeValueStorage { try encodeClosure() }
+    func encodeClosureResult() throws -> NativeValueStorage { try encodeClosure(consuming: false) }
 }
 
 struct SwiftClosureCodec: Sendable {

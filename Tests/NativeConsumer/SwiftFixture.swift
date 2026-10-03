@@ -33,6 +33,14 @@ public final class GenericExtensionRenderer<Value> {
 }
 
 @inline(never) public func makeAdder(_ bias: Int64) -> (Int64) -> Int64 { { $0 + bias } }
+@inline(never) public func visitOwnedClosure(
+    _ closure: @escaping (Int64) -> Int64,
+    _ body: (@escaping (Int64) -> Int64) throws -> Int64
+) rethrows -> Int64 {
+    let result = try body(closure)
+    return result + closure(1)
+}
+
 @inline(never) public func applyClosure(_ callback: (Int64) -> Int64, _ value: Int64) -> Int64 {
     callback(value)
 }

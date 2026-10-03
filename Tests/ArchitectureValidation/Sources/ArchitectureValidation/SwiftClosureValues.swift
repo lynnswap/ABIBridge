@@ -94,6 +94,76 @@ private final class NestedClosureProbeCapture: @unchecked Sendable {
         try check(try unsafe await returnedAsync.unsafeInvoke(AsyncInner(body), 35) == 42,
             "A synchronous host callback returns a callable native async closure with nested inputs")
     }
+
+    do {
+        typealias Inner = NativeSwiftClosure<(Int64) -> Int64>
+        typealias Callback = NativeSwiftClosure<(Inner) throws -> Int64>
+        let visit = try await runtime.swiftFunction(
+            named: "SwiftReplacementFixtures.visitOwnedNestedClosure(_:_:)",
+            as: ((Inner, Callback) throws -> Int64).self)
+        let destroyed = ClosureProbeCounter()
+        do {
+            let capture = ClosureProbeCapture(destroyed)
+            let original = try Inner { $0 + capture.bias }
+            let callback = try Callback { borrowed in
+                let consume = try NativeSwiftClosure<(NativeSwiftConsuming<Inner>) throws -> Int64> { value in
+                    try unsafe value.value.unsafeInvoke(35)
+                }
+                let result = try unsafe consume.unsafeInvoke(NativeSwiftConsuming(borrowed))
+                guard result == 42 else { throw ArchitectureValidationFailure(description: "Consuming a borrowed closure changed its result") }
+                return try unsafe borrowed.unsafeInvoke(35)
+            }
+            try check(try unsafe visit.unsafeInvoke(original, callback) == 50,
+                "Consuming a copied escaping borrow preserves the provider's original closure")
+        }
+        try check(destroyed.count == 1, "Consumed closure copies destroy captures exactly once")
+        let type = try await runtime.swiftType(named: "SwiftReplacementFixtures.EvaluatedIntegerClosure",
+            as: EvaluatedIntegerClosure.self)
+        let create = try await type.initializer(named: "init(_:)", as: ((Inner) -> EvaluatedIntegerClosure).self)
+        let initializerDeaths = ClosureProbeCounter()
+        do {
+            let capture = ClosureProbeCapture(initializerDeaths)
+            let value = try Inner { $0 + capture.bias }
+            try check(try unsafe create.unsafeInvoke(value).value == 42,
+                "An initializer evaluates a guaranteed closure argument")
+        }
+        try check(initializerDeaths.count == 1, "A nonescaping initializer argument releases its temporary context")
+        let stack = try await runtime.swiftFunction(named: "SwiftReplacementFixtures.visitNestedClosure(_:)",
+            as: ((Callback) throws -> Int64).self)
+        let entered = ClosureProbeCounter()
+        let stackBody = try Callback { borrowed in
+            let consume = try NativeSwiftClosure<(NativeSwiftConsuming<Inner>) -> Void> { _ in entered.increment() }
+            do {
+                try unsafe consume.unsafeInvoke(NativeSwiftConsuming(borrowed))
+                throw ArchitectureValidationFailure(description: "A consuming call accepted a nonescaping borrow")
+            } catch is ABIResolutionError {}
+            return try unsafe create.unsafeInvoke(borrowed).value
+        }
+        try check(try unsafe stack.unsafeInvoke(stackBody) == 72 && entered.count == 0,
+            "Stack borrows remain valid for initializers and fail before a consuming callback enters")
+
+        typealias Async = NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>
+        typealias AsyncVisitor = NativeSwiftClosure<nonisolated(nonsending) (Async) async throws -> Void>
+        let visitAsync = try await runtime.swiftFunction(named: "SwiftReplacementFixtures.visitEscapingNestedAsyncClosure(_:)",
+            as: (nonisolated(nonsending) (AsyncVisitor) async throws -> Void).self)
+        let asyncBody: nonisolated(nonsending) @Sendable (Async) async throws -> Void = { borrowed in
+            let synchronous = try NativeSwiftClosure<(NativeSwiftConsuming<Async>) -> Int64> { _ in 42 }
+            guard try unsafe synchronous.unsafeInvoke(NativeSwiftConsuming(borrowed)) == 42 else {
+                throw ArchitectureValidationFailure(description: "A synchronous consumer rejected an async closure")
+            }
+            let body: nonisolated(nonsending) @Sendable (NativeSwiftConsuming<Async>) async throws -> Int64 = { value in
+                await Task.yield()
+                return try unsafe await value.value.unsafeInvoke(35)
+            }
+            let consume = try NativeSwiftClosure(body)
+            guard try unsafe await consume.unsafeInvoke(NativeSwiftConsuming(borrowed)) == 42,
+                  try unsafe await borrowed.unsafeInvoke(1) == 43 else {
+                throw ArchitectureValidationFailure(description: "Async consumption lost the original borrowed context")
+            }
+        }
+        try unsafe await visitAsync.unsafeInvoke(AsyncVisitor(asyncBody))
+        try check(true, "Sync and async consumers retain an escaping async borrow across suspension")
+    }
     if #available(macOS 26, iOS 26, tvOS 26, watchOS 26, visionOS 26, *) {
         typealias Sync = NativeSwiftClosure<(Int64) -> Int64>
         typealias Async = NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>

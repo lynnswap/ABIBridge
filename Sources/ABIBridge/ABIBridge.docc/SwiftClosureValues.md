@@ -59,6 +59,8 @@ The incoming handle borrows the callback's scope, because a native nonescaping f
 
 When the native declaration marks the nested input `@escaping`, call `try input.copy()` during the callback to obtain an owned handle that remains usable after the callback returns. The copy shares the native capture state and retains its implementation code. Copying a nonescaping input fails without retaining its stack context; copying an expired input throws `NativeSwiftBorrowError.expiredBorrow`. An already owned handle can be copied without preparing another entry.
 
+Passing a borrowed handle through `NativeSwiftConsuming` obtains the same owned copy before native entry. This requires an active borrow from a native `@escaping` parameter. Initializers borrow their nonescaping closure arguments and consume their escaping closure arguments; an ordinary nonescaping initializer can therefore accept a stack borrow without copying it.
+
 Native closures can also be passed back to declarations with different generic lowering. Preparation creates the necessary adapters for inner arguments and results, including parameter packs and async functions. Each native context retains its own captures; adapters with the same native ABI reuse the existing owned entry across repeated handoffs.
 
 A host callback returning an owned `NativeSwiftClosure` uses `throws(any Error)` so invalid ownership or conversion can reach the native caller. The result transfers a context reference that native code can retain. A borrowed nonescaping input cannot be returned as an owned closure. Ordinary callbacks without nested closure values retain their existing native error contract.

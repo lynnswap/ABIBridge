@@ -1,5 +1,23 @@
 import CoreGraphics
 
+
+public final class EvaluatedIntegerClosure {
+    public let value: Int64
+    @inline(never) public init(_ body: (Int64) -> Int64) { value = body(35) }
+}
+
+@inline(never) public func visitOwnedNestedClosure(
+    _ closure: @escaping (Int64) -> Int64,
+    _ body: (@escaping (Int64) -> Int64) throws -> Int64
+) rethrows -> Int64 {
+    let result = try body(closure)
+    return result + closure(1)
+}
+
+@inline(never) public func consumeNestedClosure(_ body: consuming @escaping (Int64) -> Int64) -> Int64 {
+    body(35)
+}
+
 public final class ClosurePropertyOwner {
     public var callback: (Int64) -> Int64 = { $0 + 7 }
     public init() {}

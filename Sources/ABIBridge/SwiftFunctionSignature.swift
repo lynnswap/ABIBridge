@@ -158,8 +158,14 @@ struct SwiftCallValues: Sendable {
          result resultPlan: SwiftGenericResult = .concrete) throws {
         arguments = try signature.parameters.enumerated().map { index, type in
             func prepare<Value>(_ type: Value.Type) throws -> Argument {
-                let codec = try SwiftArgumentCodec<Value>(defaultConsuming: consumesArguments,
-                    generic: argumentPlans.isEmpty ? .concrete : argumentPlans[index], asynchronous: signature.isAsync)
+                let argument = argumentPlans.isEmpty ? .concrete : argumentPlans[index]
+                let consuming: Bool
+                // Initializers consume escaping closure arguments, but their
+                // nonescaping closure parameters are guaranteed borrows.
+                if case .closure(let plan, _) = argument { consuming = consumesArguments && plan.isEscaping }
+                else { consuming = consumesArguments }
+                let codec = try SwiftArgumentCodec<Value>(defaultConsuming: consuming,
+                    generic: argument, asynchronous: signature.isAsync)
                 return Argument(type: codec.type, consumes: codec.consumes,
                     encode: { try codec.encode($0.load(as: Value.self), retainingCode: $1) })
             }

@@ -49,6 +49,111 @@ private final class NestedClosureCapture: @unchecked Sendable {
 }
 
 struct NativeSwiftClosureTests {
+    @Test func consumingDirectInputsRetainEscapingBorrows() async throws {
+        typealias Inner = NativeSwiftClosure<(Int64) -> Int64>
+        typealias Callback = NativeSwiftClosure<(Inner) throws -> Int64>
+        let runtime = ABIRuntime.shared
+        let visit = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitOwnedNestedClosure(_:_:)",
+            as: ((Inner, Callback) throws -> Int64).self)
+        let nativeConsume = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.consumeNestedClosure(_:)",
+            as: ((NativeSwiftConsuming<Inner>) -> Int64).self)
+        let destroyed = ClosureCounter()
+        do {
+            let capture = ClosureCapture(destroyed)
+            let original = try Inner { $0 + capture.bias }
+            let callback = try Callback { borrowed in
+                let consume = try NativeSwiftClosure<(NativeSwiftConsuming<Inner>) throws -> Int64> { value in
+                    try unsafe value.value.unsafeInvoke(35)
+                }
+                let consumed = try unsafe consume.unsafeInvoke(NativeSwiftConsuming(borrowed))
+                #expect(consumed == 42)
+                #expect(try unsafe nativeConsume.unsafeInvoke(NativeSwiftConsuming(borrowed)) == 42)
+                return try unsafe borrowed.unsafeInvoke(35)
+            }
+            #expect(try unsafe visit.unsafeInvoke(original, callback) == 50)
+            #expect(try unsafe original.unsafeInvoke(35) == 42)
+        }
+        #expect(destroyed.count == 1)
+
+        let visitStack = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitNestedClosure(_:)",
+            as: ((Callback) throws -> Int64).self)
+        let entered = ClosureCounter()
+        let callback = try Callback { borrowed in
+            let reject = try NativeSwiftClosure<(NativeSwiftConsuming<Inner>) -> Void> { _ in entered.increment() }
+            do {
+                try unsafe reject.unsafeInvoke(NativeSwiftConsuming(borrowed))
+                Issue.record("A consuming input accepted a nonescaping borrowed closure")
+            } catch is ABIResolutionError {}
+            return try unsafe borrowed.unsafeInvoke(35)
+        }
+        #expect(try unsafe visitStack.unsafeInvoke(callback) == 72)
+        #expect(entered.count == 0)
+    }
+
+    @Test func consumingAsyncClosureInputsRetainEscapingBorrows() async throws {
+        typealias Inner = NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>
+        typealias Callback = NativeSwiftClosure<nonisolated(nonsending) (Inner) async throws -> Void>
+        let visit = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.visitEscapingNestedAsyncClosure(_:)",
+            as: (nonisolated(nonsending) (Callback) async throws -> Void).self)
+        let callbackBody: nonisolated(nonsending) @Sendable (Inner) async throws -> Void = { borrowed in
+            let consumeSynchronously = try NativeSwiftClosure<(NativeSwiftConsuming<Inner>) -> Int64> { _ in 42 }
+            #expect(try unsafe consumeSynchronously.unsafeInvoke(NativeSwiftConsuming(borrowed)) == 42)
+            let body: nonisolated(nonsending) @Sendable (NativeSwiftConsuming<Inner>) async throws -> Int64 = { value in
+                await Task.yield()
+                return try unsafe await value.value.unsafeInvoke(35)
+            }
+            let consume = try NativeSwiftClosure(body)
+            #expect(try unsafe await consume.unsafeInvoke(NativeSwiftConsuming(borrowed)) == 42)
+            #expect(try unsafe await borrowed.unsafeInvoke(1) == 43)
+        }
+        try unsafe await visit.unsafeInvoke(Callback(callbackBody))
+
+        typealias StackCallback = NativeSwiftClosure<nonisolated(nonsending) (Inner) async throws -> Int64>
+        let visitStack = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.visitNestedAsyncClosure(_:)",
+            as: (nonisolated(nonsending) (StackCallback) async throws -> Int64).self)
+        let entered = ClosureCounter()
+        let stackBody: nonisolated(nonsending) @Sendable (Inner) async throws -> Int64 = { borrowed in
+            let body: nonisolated(nonsending) @Sendable (NativeSwiftConsuming<Inner>) async -> Void = { _ in
+                entered.increment()
+            }
+            let consume = try NativeSwiftClosure(body)
+            await #expect(throws: ABIResolutionError.self) {
+                try unsafe await consume.unsafeInvoke(NativeSwiftConsuming(borrowed))
+            }
+            return try unsafe await borrowed.unsafeInvoke(35)
+        }
+        #expect(try unsafe await visitStack.unsafeInvoke(StackCallback(stackBody)) == 72)
+        #expect(entered.count == 0)
+    }
+
+    @Test func initializersBorrowNonescapingClosureArguments() async throws {
+        typealias Inner = NativeSwiftClosure<(Int64) -> Int64>
+        let runtime = ABIRuntime.shared
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.EvaluatedIntegerClosure",
+            as: EvaluatedIntegerClosure.self)
+        let create = try await type.initializer(named: "init(_:)", as: ((Inner) -> EvaluatedIntegerClosure).self)
+        let destroyed = ClosureCounter()
+        do {
+            let capture = ClosureCapture(destroyed)
+            let callback = try Inner { $0 + capture.bias }
+            #expect(try unsafe create.unsafeInvoke(callback).value == 42)
+        }
+        #expect(destroyed.count == 1)
+
+        typealias Callback = NativeSwiftClosure<(Inner) throws -> Int64>
+        let visit = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.visitNestedClosure(_:)",
+            as: ((Callback) throws -> Int64).self)
+        let callback = try Callback { borrowed in
+            try unsafe create.unsafeInvoke(borrowed).value
+        }
+        #expect(try unsafe visit.unsafeInvoke(callback) == 72)
+    }
+
     @Test func directHostCallsForwardNativeClosureArgumentsAndResults() async throws {
         typealias Inner = NativeSwiftClosure<(Int64) -> Int64>
         let runtime = ABIRuntime.shared

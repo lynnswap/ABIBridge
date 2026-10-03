@@ -81,10 +81,10 @@ struct SwiftArgumentCodec<Value>: Sendable {
 
     func encode(_ value: Value, retainingCode owner: Any? = nil) throws -> NativeValueStorage {
         switch encoding {
-        case .ordinary(let codec): return try codec.encode(value)
+        case .ordinary(let codec): return try codec.encode(value, consuming: consumes)
         case .explicit(let codec): return try codec.encode(value, owner)
         case .genericClosure(let plan, let asynchronous):
-            return try (value as! any SwiftClosureValue).encodeGenericClosure(plan: plan, retainingCode: owner, asynchronous: asynchronous)
+            return try (value as! any SwiftClosureValue).encodeGenericClosure(plan: plan, retainingCode: owner, asynchronous: asynchronous, consuming: consumes)
         case .runtimeValue(let plan, let convention, let asynchronous):
             let access = try plan.encode(value, convention: convention, asynchronous: asynchronous)
             guard convention == .inoutValue else { return access }

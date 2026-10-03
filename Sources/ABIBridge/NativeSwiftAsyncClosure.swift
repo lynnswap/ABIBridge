@@ -151,9 +151,6 @@ final class SwiftAsyncClosureCallbackOwner: @unchecked Sendable {
 
 extension NativeSwiftClosure {
     func encodeGenericAsyncClosure(plan: SwiftGenericClosurePlan, retainingCode owner: Any?, asynchronous: Bool) throws -> NativeValueStorage {
-        if plan.isEscaping, case .borrowed = call {
-            return try copy().encodeGenericClosure(plan: plan, retainingCode: owner, asynchronous: asynchronous)
-        }
         if case .host(let host) = call {
             return try host.factory.encode(plan: plan, retainingCode: owner, codeLifetime: host.codeLifetime)
         }

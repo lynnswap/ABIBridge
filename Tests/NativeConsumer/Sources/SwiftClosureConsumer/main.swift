@@ -82,6 +82,22 @@ func prepareClosure(_ path: String) async throws -> NativeSwiftClosure<(Int64) -
 }
 
 let callback = try await prepareClosure(CommandLine.arguments[1])
+typealias ConsumerInner = NativeSwiftClosure<(Int64) -> Int64>
+typealias ConsumerVisitor = NativeSwiftClosure<(ConsumerInner) throws -> Int64>
+let visitOwned = try await ABIRuntime.shared.swiftFunction(
+    named: "SwiftFunctionFixture.visitOwnedClosure(_:_:)",
+    as: ((ConsumerInner, ConsumerVisitor) throws -> Int64).self,
+    in: .path(URL(fileURLWithPath: CommandLine.arguments[1])))
+let consumingVisitor = try ConsumerVisitor { borrowed in
+    let consume = try NativeSwiftClosure<(NativeSwiftConsuming<ConsumerInner>) throws -> Int64> { value in
+        try unsafe value.value.unsafeInvoke(35)
+    }
+    let consumed = try unsafe consume.unsafeInvoke(NativeSwiftConsuming(borrowed))
+    precondition(consumed == 42)
+    return try unsafe borrowed.unsafeInvoke(35)
+}
+let consumedBorrow = try unsafe visitOwned.unsafeInvoke(callback, consumingVisitor)
+precondition(consumedBorrow == 50)
 let collection = try await prepareCollectionClosure(CommandLine.arguments[1])
 let absent = try unsafe collection.unsafeInvoke(nil)
 let present = try unsafe collection.unsafeInvoke("value")
