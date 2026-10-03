@@ -7,6 +7,8 @@ enum SwiftArgumentConvention: Sendable, Equatable {
 struct SwiftConventionCodec: Sendable {
     let type: CValueType
     let consumes: Bool
+    let argument: SwiftGenericArgument
+    let prepareCallback: @Sendable () throws -> SwiftCallbackDecoder
     let encode: @Sendable (Any, Any?) throws -> NativeValueStorage
 }
 protocol SwiftConventionArgument: SendableMetatype {
@@ -88,9 +90,13 @@ struct SwiftArgumentCodec<Value>: Sendable {
 }
 
 private func swiftConventionCodec<Value>(for type: Value.Type, generic: SwiftGenericArgument, consumes: Bool,
+                                        wrap: @escaping @Sendable (Value) -> Any,
                                         unwrap: @escaping @Sendable (Any) -> Value) throws -> SwiftConventionCodec {
     let codec = try SwiftArgumentCodec<Value>(defaultConsuming: consumes, generic: generic)
-    return SwiftConventionCodec(type: codec.type, consumes: consumes) { value, owner in
+    return SwiftConventionCodec(type: codec.type, consumes: consumes, argument: generic, prepareCallback: {
+        let decode = try SwiftCallbackValues.decoder(for: Value.self, generic: generic, consuming: consumes)
+        return { wrap(decode($0, $1) as! Value) }
+    }) { value, owner in
         try codec.encode(unwrap(value), retainingCode: owner)
     }
 }
@@ -105,12 +111,14 @@ extension NativeSwiftBorrowing: SwiftConventionArgument {
     static var wrappedType: Any.Type { Value.self }
     static var convention: SwiftArgumentConvention { .borrowing }
     static func makeArgumentCodec(generic: SwiftGenericArgument) throws -> SwiftConventionCodec {
-        try swiftConventionCodec(for: Value.self, generic: generic, consumes: false) { ($0 as! Self).value }
+        try swiftConventionCodec(for: Value.self, generic: generic, consumes: false, wrap: { Self($0) }) { ($0 as! Self).value }
     }
 }
 extension NativeSwiftBorrowing: Sendable where Value: Sendable {}
 
-/// Transfers an owned Swift argument to native code.
+/// Transfers an owned Swift argument across a native call or callback boundary.
+/// In a host callback, value owns the argument received from native code;
+/// a NativeSwiftValue takes the payload directly, including noncopyable types.
 /// A NativeSwiftValue transfers its existing value and becomes consumed; other
 /// Swift values supply an independently encoded copy and remain usable.
 /// Native code owns the transferred value on successful or throwing completion.
@@ -133,7 +141,7 @@ extension NativeSwiftConsuming: SwiftConventionArgument {
         guard usesNativeStorage || !(base is any ABIBridgeValue.Type) || Value.self is any ABIBridgeSwiftValue.Type else {
             throw ABIResolutionError.unsupportedDeclaration("Consuming arguments require an actual Swift value representation and its owned copy.")
         }
-        return try swiftConventionCodec(for: Value.self, generic: generic, consumes: true) { ($0 as! Self).value }
+        return try swiftConventionCodec(for: Value.self, generic: generic, consumes: true, wrap: { Self($0) }) { ($0 as! Self).value }
     }
 }
 extension NativeSwiftConsuming: Sendable where Value: Sendable {}
@@ -186,7 +194,8 @@ extension NativeSwiftInout: SwiftConventionArgument {
             guard Value.self == NativeSwiftValue.self else {
                 throw ABIResolutionError.unsupportedDeclaration("Inout runtime arguments require an owned NativeSwiftValue.")
             }
-            return SwiftConventionCodec(type: try CValueType(scalar: ABIValuePointer), consumes: false) { value, _ in
+            return SwiftConventionCodec(type: try CValueType(scalar: ABIValuePointer), consumes: false, argument: generic,
+                prepareCallback: { throw ABIResolutionError.unsupportedDeclaration("Inout callback arguments require scoped writeback.") }) { value, _ in
                 let access = try plan.encode((value as! Self).value, convention: .inoutValue, asynchronous: asynchronous)
                 let pointer = NativeValueStorage(size: MemoryLayout<UnsafeRawPointer>.size,
                     alignment: MemoryLayout<UnsafeRawPointer>.alignment, owner: access, codeLifetime: access.codeLifetime)
@@ -195,6 +204,7 @@ extension NativeSwiftInout: SwiftConventionArgument {
             }
         }
         if case .value = generic {} else { try Self.validatePointee() }
-        return SwiftConventionCodec(type: try CValueType(scalar: ABIValuePointer), consumes: false) { value, _ in (value as! Self).encoded() }
+        return SwiftConventionCodec(type: try CValueType(scalar: ABIValuePointer), consumes: false, argument: generic,
+            prepareCallback: { throw ABIResolutionError.unsupportedDeclaration("Inout callback arguments require scoped writeback.") }) { value, _ in (value as! Self).encoded() }
     }
 }

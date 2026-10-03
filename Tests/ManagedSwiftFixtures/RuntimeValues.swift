@@ -297,3 +297,23 @@ private func makeNestedPackAnswer<each Value>(_ values: repeat each Value) -> (r
 @inline(never) public func callNestedRuntimePackCaller<each Value>(
     _ values: repeat each Value, body: (@escaping (repeat each Value) -> Int64, repeat each Value) -> Int64
 ) -> Int64 { body(makeNestedPackAnswer(repeat each values), repeat each values) }
+
+@inline(never) public func visitConsumingRuntimeValue<T: ~Copyable>(
+    _ value: consuming T, _ body: (consuming T) throws -> Int64
+) rethrows -> Int64 { try body(consume value) }
+
+@inline(never) public func visitConsumingString(
+    _ value: consuming String, _ body: (consuming String) -> Int64
+) -> Int64 { body(consume value) }
+
+@inline(never) public func makeRuntimeConsumer<T: ~Copyable>(_ type: T.Type) -> (consuming T) -> Int64 {
+    { (value: consuming T) in Int64(MemoryLayout<T>.size) }
+}
+
+@inline(never) public nonisolated(nonsending) func visitConsumingRuntimeValueAsync<T: ~Copyable>(
+    _ value: consuming T, _ body: nonisolated(nonsending) (consuming T) async throws -> Int64
+) async rethrows -> Int64 { try await body(consume value) }
+
+@inline(never) public func visitNonthrowingConsumingRuntimeValue<T: ~Copyable>(
+    _ value: consuming T, _ body: (consuming T) -> Int64
+) -> Int64 { body(consume value) }

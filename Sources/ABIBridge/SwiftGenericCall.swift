@@ -2,10 +2,18 @@ import ABIBridgeCore
 
 enum SwiftGenericArgument: Sendable {
     case concrete
-    case convention(SwiftConventionCodec)
+    indirect case convention(SwiftConventionCodec)
     case value(CValueType, consuming: Bool)
     case closure(SwiftGenericClosurePlan)
     case runtimeValue(SwiftRuntimeValuePlan, convention: SwiftArgumentConvention, asynchronous: Bool)
+
+    var runtimeValue: SwiftRuntimeValuePlan? {
+        switch self {
+        case .runtimeValue(let plan, _, _): plan
+        case .convention(let codec): codec.argument.runtimeValue
+        default: nil
+        }
+    }
 }
 
 protocol SwiftGenericClosureValue: SwiftClosureValue {
@@ -84,7 +92,7 @@ final class SwiftGenericClosurePlan: Sendable {
 
     static func concrete(_ type: Any.Type) throws -> SwiftGenericClosurePlan {
         let signature = try SwiftFunctionSignature(type)
-        func layout<Value>(_ type: Value.Type) throws -> CValueType { try SwiftValueCodec<Value>().type }
+        func layout<Value>(_ type: Value.Type) throws -> CValueType { try SwiftArgumentCodec<Value>(defaultConsuming: false).type }
         let types = try signature.parameters.map { try _openExistential($0, do: layout) }
         let arguments = try signature.parameters.map { type -> SwiftGenericArgument in
             guard let closure = type as? any SwiftClosureValue.Type else { return .concrete }
@@ -109,7 +117,9 @@ final class SwiftGenericClosurePlan: Sendable {
     }
 
     var convertsArguments: Bool {
-        runtimeArguments.contains { $0 != nil } || parameters.arguments.contains { if case .closure = $0 { true } else { false } }
+        runtimeArguments.contains { $0 != nil } || parameters.arguments.contains {
+            switch $0 { case .closure, .convention: true; default: false }
+        }
     }
     var convertsValues: Bool {
         if case .runtimeValue = result { return true }
@@ -161,9 +171,9 @@ final class SwiftGenericClosurePlan: Sendable {
 
     var nativeValueTypes: [ObjectIdentifier] {
         var result: [ObjectIdentifier] = []
-        for (index, argument) in parameters.arguments.enumerated() {
+        for argument in parameters.arguments {
             if case .closure(let plan) = argument { result += plan.nativeValueTypes }
-            else if let runtime = runtimeArguments[index] { result.append(ObjectIdentifier(runtime.plan.valueType.metadata)) }
+            else if let runtime = argument.runtimeValue { result.append(ObjectIdentifier(runtime.valueType.metadata)) }
         }
         if case .closure(let codec) = self.result { result += codec.nativeValueTypes }
         result.append(ObjectIdentifier(nativeResult))
@@ -378,10 +388,10 @@ struct SwiftGenericCallPlan: Sendable {
     }
 
     static func argument(_ formal: SwiftFormalType, actual: Any.Type,
-                         binding: SwiftGenericBinding, defaultConsuming: Bool = false) throws -> SwiftGenericArgument {
+                         binding: SwiftGenericBinding, defaultConsuming: Bool = false, asynchronous: Bool? = nil) throws -> SwiftGenericArgument {
         if let argument = try binding.conventionArgument(actual, for: formal, defaultConsuming: defaultConsuming) {
             let value = try Self.argument(argument.value, actual: argument.wrapper.wrappedType, binding: binding,
-                                          defaultConsuming: argument.wrapper.convention == .consuming)
+                                          defaultConsuming: argument.wrapper.convention == .consuming, asynchronous: asynchronous)
             return .convention(try argument.wrapper.makeArgumentCodec(generic: value))
         }
         if actual == NativeSwiftValue.self || actual == NativeSwiftBorrowedValue.self {
@@ -393,7 +403,7 @@ struct SwiftGenericCallPlan: Sendable {
                 return .runtimeValue(try binding.runtimeValuePlan(metadata: metadata,
                     type: Self.layout(formal, actual: metadata, binding: binding)),
                     convention: defaultConsuming ? .consuming : .borrowing,
-                    asynchronous: binding.declaration.isAsync)
+                    asynchronous: asynchronous ?? binding.declaration.isAsync)
             }
         }
         if case .function = formal, let closure = actual as? any SwiftGenericClosureValue.Type {
@@ -440,7 +450,16 @@ struct SwiftGenericCallPlan: Sendable {
                 // ordinary formally indirect scalar (GenPointerAuth.cpp).
                 authentication.append("-")
             case .value(let index):
-                let actual = runtimeArguments[index]?.plan.valueType.metadata ?? signature.parameters[index]
+                let argument = parameterPlan.arguments[index]
+                let actual = argument.runtimeValue?.valueType.metadata ?? signature.parameters[index]
+                if case .convention(let codec) = argument {
+                    logicalTypes.append(codec.type)
+                    let underlying = formal.argumentConvention?.value ?? formal
+                    let wrapper = signature.parameters[index] as! any SwiftConventionArgument.Type
+                    authentication.append(contentsOf: try authTypes(underlying,
+                        actual: argument.runtimeValue?.valueType.metadata ?? wrapper.wrappedType, binding: binding))
+                    continue
+                }
                 if runtimeArguments[index] == nil { try binding.validateArgument(actual, for: formal) }
                 logicalTypes.append(try layout(formal, actual: actual, binding: binding))
                 authentication.append(contentsOf: try authTypes(formal, actual: actual, binding: binding))

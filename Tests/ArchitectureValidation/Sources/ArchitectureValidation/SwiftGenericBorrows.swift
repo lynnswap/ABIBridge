@@ -262,5 +262,30 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     }
     try check(unsafe await visitNestedAsync.unsafeInvoke("nested async", NestedAsyncBody(nestedAsyncBody)) == "nested async",
         "Nested async runtime closures preserve native authentication and scoped values after suspension")
+    typealias ConsumingInput = NativeSwiftClosure<(NativeSwiftConsuming<NativeSwiftValue>) -> Int64>
+    let consumeInput = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.visitNonthrowingConsumingRuntimeValue<A where A: ~Swift.Copyable>(__owned A, (__owned A) -> Swift.Int64) -> Swift.Int64",
+        as: ((NativeSwiftConsuming<NativeSwiftValue>, ConsumingInput) -> Int64).self, genericArguments: [.type(String.self)])
+    let consumed = try unsafe copyValue.unsafeInvoke("consumed")
+    let captureInput = try ConsumingInput { state.owned = $0.value; return 42 }
+    try check(unsafe consumeInput.unsafeInvoke(NativeSwiftConsuming(consumed), captureInput) == 42 && consumed.isConsumed,
+        "Consuming runtime callback input authenticates and transfers native ownership")
+    try check(state.owned!.take(as: String.self) == "consumed",
+        "Consumed callback input retains its payload after native return")
+    typealias ConsumingAsyncInput = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftConsuming<NativeSwiftValue>) async throws -> Int64>
+    let consumeAsync = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.visitConsumingRuntimeValueAsync<A where A: ~Swift.Copyable>(__owned A, nonisolated(nonsending) (__owned A) async throws -> Swift.Int64) async throws -> Swift.Int64",
+        as: (nonisolated(nonsending) (NativeSwiftConsuming<NativeSwiftValue>, ConsumingAsyncInput) async throws -> Int64).self,
+        genericArguments: [.type(String.self)])
+    let consumeOperation: nonisolated(nonsending) @Sendable (NativeSwiftConsuming<NativeSwiftValue>) async throws -> Int64 = { incoming in
+        await Task.yield()
+        state.owned = incoming.value
+        return 42
+    }
+    let suspendedInput = try unsafe copyValue.unsafeInvoke("suspended")
+    try check(unsafe await consumeAsync.unsafeInvoke(NativeSwiftConsuming(suspendedInput), ConsumingAsyncInput(consumeOperation)) == 42
+        && suspendedInput.isConsumed, "Async consuming input stays owned across suspension")
+    try check(state.owned!.take(as: String.self) == "suspended",
+        "Async consuming input retains its payload beyond callback completion")
     return checks
 }

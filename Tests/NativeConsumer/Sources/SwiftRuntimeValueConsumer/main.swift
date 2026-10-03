@@ -226,3 +226,16 @@ let nativeAsyncCall = try await runtime.swiftFunction(
 let nativeAsyncProducer = try unsafe nativeAsyncFactory.unsafeInvoke()
 guard try unsafe await nativeAsyncCall.unsafeInvoke(nativeAsyncProducer, 35) == 42 else { throw ConsumerError.wrongResult }
 print("Native async nested results retain their context through generic handback and suspension")
+
+
+typealias ConsumingInput = NativeSwiftClosure<(NativeSwiftConsuming<NativeSwiftValue>) -> Int64>
+let consumeInput = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.visitNonthrowingConsumingRuntimeValue<A where A: ~Swift.Copyable>(__owned A, (__owned A) -> Swift.Int64) -> Swift.Int64",
+    as: ((NativeSwiftConsuming<NativeSwiftValue>, ConsumingInput) -> Int64).self,
+    genericArguments: [.type(moved.type)], in: source)
+let consumedInputTicket = try unsafe makeTicket.unsafeInvoke(NSObject())
+let consumingInput = try ConsumingInput { incoming in state.owned = incoming.value; return 42 }
+guard try unsafe consumeInput.unsafeInvoke(NativeSwiftConsuming(consumedInputTicket), consumingInput) == 42,
+      consumedInputTicket.isConsumed, let received = state.owned,
+      try unsafe readTicket.unsafeInvoke(on: received) == 42 else { throw ConsumerError.wrongResult }
+print("Consuming callback inputs transfer noncopyable native ownership into retained runtime handles")

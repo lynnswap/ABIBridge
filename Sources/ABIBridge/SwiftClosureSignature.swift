@@ -93,6 +93,10 @@ func swiftClosureAuthDescription(parameters: [String], results: [String]) -> Str
 }
 
 func swiftClosureAuthTypes(_ type: Any.Type) throws -> [String] {
+    if let convention = type as? any SwiftConventionArgument.Type {
+        if convention.convention == .inoutValue { return ["-indirect"] }
+        return try swiftClosureAuthTypes(convention.wrappedType)
+    }
     if let tuple = SwiftTupleMetadata(type) {
         return try tuple.elements.flatMap { try swiftClosureAuthTypes($0.type) }
     }

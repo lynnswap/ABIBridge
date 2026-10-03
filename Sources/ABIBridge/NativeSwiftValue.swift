@@ -238,6 +238,17 @@ struct SwiftRuntimeValuePlan: Sendable {
         return NativeSwiftValue(storage: storage, type: type)
     }
 
+    func takeCallbackArgument(from address: UnsafeMutableRawPointer, type: NativeSwiftType) -> NativeSwiftValue {
+        let storage = NativeValueStorage(size: size, alignment: alignment, owner: type,
+            codeLifetime: type.codeLifetime)
+        constants.initialize(at: address)
+        ABISwiftTakeValue(unsafeBitCast(type.metadata, to: UnsafeRawPointer.self), storage.address, address)
+        storage.assumeInitialized {
+            ABISwiftDestroyValue(unsafeBitCast(type.metadata, to: UnsafeRawPointer.self), $0)
+        }
+        return NativeSwiftValue(storage: storage, type: type)
+    }
+
     func requireOwnedValue() throws {
         guard SwiftEscapability.accepts(valueType.metadata) else {
             throw ABIResolutionError.unsupportedDeclaration("An owned runtime value requires an Escapable native type.")

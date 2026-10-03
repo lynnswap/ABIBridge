@@ -74,8 +74,21 @@ def main():
             if len(candidates) != 1 or '<T where T : ~Copyable>' not in candidates[0] or convention not in candidates[0]:
                 raise RuntimeError(f'{target}: runtime value ownership changed for {name}: {candidates}')
             runtime_values[name] = candidates[0]
+        consuming_callbacks = {}
+        for name, convention in {
+            'visitConsumingRuntimeValue': '(@in τ_0_0) -> (Int64, @error any Error)',
+            'visitNonthrowingConsumingRuntimeValue': '(@in τ_0_0) -> Int64',
+            'makeRuntimeConsumer': '(@in τ_0_0) -> Int64',
+            'visitConsumingRuntimeValueAsync': '@guaranteed Builtin.ImplicitActor, @in τ_0_0) -> (Int64, @error any Error)',
+            'visitConsumingString': '(@owned String) -> Int64',
+        }.items():
+            identifier = str(len(name)) + name
+            candidates = [line for line in sil.splitlines() if line.startswith('sil [noinline]') and identifier in line]
+            if len(candidates) != 1 or convention not in candidates[0]:
+                raise RuntimeError(f'{target}: consuming callback ownership changed for {name}: {candidates}')
+            consuming_callbacks[name] = candidates[0]
         reports.append({'target':target, 'signatures':signatures, 'initializers':initializers, 'ownedGenericClosures':owned_closures,
-                        'closurePacks':pack_closures, 'closurePackInitializers':pack_initializers, 'runtimeValues':runtime_values})
+                        'closurePacks':pack_closures, 'closurePackInitializers':pack_initializers, 'runtimeValues':runtime_values, 'consumingCallbacks':consuming_callbacks})
     report = {'compiler':run('xcrun','swiftc','--version').strip(), 'runtimeTested':False, 'targets':reports}
     (output/'report.json').write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps(report,indent=2))

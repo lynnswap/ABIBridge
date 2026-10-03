@@ -50,6 +50,114 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 }
 
 @Suite struct SwiftRuntimeValueTests {
+    @Test func consumingCallbackInputsTransferNoncopyableOwnership() async throws {
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self)
+        let counts = ArgumentCounts()
+        let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
+        typealias Body = NativeSwiftClosure<(NativeSwiftConsuming<NativeSwiftValue>) throws -> Int64>
+        let visit = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitConsumingRuntimeValue<A where A: ~Swift.Copyable>(__owned A, (__owned A) throws -> Swift.Int64) throws -> Swift.Int64",
+            as: ((NativeSwiftConsuming<NativeSwiftValue>, Body) throws -> Int64).self,
+            genericArguments: [.type(value.type)])
+        let captured = RuntimeCallbackValues()
+        let body = try Body { incoming in captured.owned = incoming.value; return 42 }
+        #expect(try unsafe visit.unsafeInvoke(NativeSwiftConsuming(value), body) == 42)
+        #expect(value.isConsumed && counts.destructions == 0)
+        let read = try await value.type.method(named: "read()", as: (() -> Int64).self,
+            receiverABI: .opaque(named: value.type.name))
+        #expect(try unsafe read.unsafeInvoke(on: captured.owned!) == 42)
+        captured.owned = nil
+        #expect(counts.destructions == 1)
+        let failing = try Body { _ in throw RuntimeTicketFailure.rejected }
+        let rejected = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
+        do {
+            _ = try unsafe visit.unsafeInvoke(NativeSwiftConsuming(rejected), failing)
+            Issue.record("The callback failure must reach its native caller")
+        } catch let error as NativeSwiftError {
+            #expect(error.withUnderlyingError { $0 is RuntimeTicketFailure })
+        }
+        #expect(rejected.isConsumed && counts.destructions == 2)
+    }
+
+    @Test func nonthrowingConsumingInputsAndExplicitAsyncBorrowsShareNativeOwnership() async throws {
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self)
+        let counts = ArgumentCounts()
+        let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
+        typealias Consumer = NativeSwiftClosure<(NativeSwiftConsuming<NativeSwiftValue>) -> Int64>
+        let visit = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitNonthrowingConsumingRuntimeValue<A where A: ~Swift.Copyable>(__owned A, (__owned A) -> Swift.Int64) -> Swift.Int64",
+            as: ((NativeSwiftConsuming<NativeSwiftValue>, Consumer) -> Int64).self,
+            genericArguments: [.type(value.type)])
+        #expect(try unsafe visit.unsafeInvoke(NativeSwiftConsuming(value), Consumer { _ in 42 }) == 42)
+        #expect(value.isConsumed && counts.destructions == 1)
+        let borrowed = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
+        typealias Borrower = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftBorrowing<NativeSwiftBorrowedValue>) async throws -> Int64>
+        let inspect = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitRuntimeValueAsync<A where A: ~Swift.Copyable>(A, nonisolated(nonsending) (A) async throws -> Swift.Int64) async throws -> Swift.Int64",
+            as: (nonisolated(nonsending) (NativeSwiftValue, Borrower) async throws -> Int64).self,
+            genericArguments: [.type(borrowed.type)])
+        let read = try await borrowed.type.method(named: "readAsync()", as: (nonisolated(nonsending) () async -> Int64).self,
+            receiverABI: .opaque(named: borrowed.type.name))
+        let captured = RuntimeCallbackValues()
+        let operation: nonisolated(nonsending) @Sendable (NativeSwiftBorrowing<NativeSwiftBorrowedValue>) async throws -> Int64 = { incoming in
+            captured.borrowed = incoming.value
+            await Task.yield()
+            return try unsafe await read.unsafeInvoke(on: incoming.value)
+        }
+        #expect(try unsafe await inspect.unsafeInvoke(borrowed, Borrower(operation)) == 42)
+        #expect(!borrowed.isConsumed && counts.destructions == 1)
+        #expect(throws: NativeSwiftBorrowError.expiredBorrow) { try captured.borrowed!.copy() }
+    }
+
+    @Test func consumingConcreteAndReturnedCallbacksPreserveOwnership() async throws {
+        let runtime = ABIRuntime.shared
+        typealias TextBody = NativeSwiftClosure<(NativeSwiftConsuming<String>) -> Int64>
+        let apply = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.visitConsumingString(_:_:)",
+            as: ((NativeSwiftConsuming<String>, TextBody) -> Int64).self)
+        let text = String(repeating: "ab", count: 21)
+        let body = try TextBody { Int64($0.value.count) }
+        #expect(try unsafe apply.unsafeInvoke(NativeSwiftConsuming(text), body) == 42)
+        #expect(try unsafe body.unsafeInvoke(NativeSwiftConsuming(text)) == 42)
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self)
+        let counts = ArgumentCounts()
+        let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
+        typealias Consumer = NativeSwiftClosure<(NativeSwiftConsuming<NativeSwiftValue>) -> Int64>
+        let factory = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeConsumer<A where A: ~Swift.Copyable>(A.Type) -> (__owned A) -> Swift.Int64",
+            as: ((RuntimeTicket.Type) -> Consumer).self, genericArguments: [.type(value.type)])
+        let consumer = try unsafe factory.unsafeInvoke(RuntimeTicket.self)
+        #expect(try unsafe consumer.unsafeInvoke(NativeSwiftConsuming(value)) == MemoryLayout<RuntimeTicket>.size)
+        #expect(value.isConsumed && counts.destructions == 1)
+    }
+
+    @Test func consumingAsyncCallbackInputsStayOwnedAcrossSuspension() async throws {
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self)
+        let counts = ArgumentCounts()
+        let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
+        typealias Body = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftConsuming<NativeSwiftValue>) async throws -> Int64>
+        let visit = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitConsumingRuntimeValueAsync<A where A: ~Swift.Copyable>(__owned A, nonisolated(nonsending) (__owned A) async throws -> Swift.Int64) async throws -> Swift.Int64",
+            as: (nonisolated(nonsending) (NativeSwiftConsuming<NativeSwiftValue>, Body) async throws -> Int64).self,
+            genericArguments: [.type(value.type)])
+        let captured = RuntimeCallbackValues()
+        let operation: nonisolated(nonsending) @Sendable (NativeSwiftConsuming<NativeSwiftValue>) async throws -> Int64 = { incoming in
+            await Task.yield()
+            captured.owned = incoming.value
+            return 42
+        }
+        #expect(try unsafe await visit.unsafeInvoke(NativeSwiftConsuming(value), Body(operation)) == 42)
+        #expect(value.isConsumed && counts.destructions == 0)
+        captured.owned = nil
+        #expect(counts.destructions == 1)
+    }
+
     @Test func nestedRuntimeClosuresComposeWithParameterPacksAndAsyncBorrowScopes() async throws {
         let runtime = ABIRuntime.shared
         typealias PackBody = NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>, NativeSwiftClosure<(String) -> String>) throws -> Int64>

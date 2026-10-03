@@ -196,15 +196,23 @@ struct SwiftCallValues: Sendable {
 // borrow the entry frame; resolving them is a throwing invocation operation.
 final class SwiftCallbackScope {
     private var borrows: [SwiftValueBorrow] = []
+    private var storage: [NativeValueStorage] = []
     private let asynchronous: Bool
     init(asynchronous: Bool) { self.asynchronous = asynchronous }
-    func borrow(_ address: UnsafeRawPointer) -> SwiftValueBorrow {
-        let borrow = SwiftValueBorrow(address, allowsSuspension: asynchronous)
+    func borrow(_ address: UnsafeRawPointer, retaining storage: NativeValueStorage? = nil,
+                allowsSuspension: Bool? = nil) -> SwiftValueBorrow {
+        if let storage { self.storage.append(storage) }
+        let borrow = SwiftValueBorrow(address, allowsSuspension: allowsSuspension ?? asynchronous)
         borrows.append(borrow)
         return borrow
     }
-    deinit { for borrow in borrows { borrow.expire() } }
+    deinit {
+        for borrow in borrows { borrow.expire() }
+        withExtendedLifetime(storage) {}
+    }
 }
+
+typealias SwiftCallbackDecoder = @Sendable (UnsafeMutableRawPointer, SwiftCallbackScope) -> Any
 
 struct SwiftCallbackValues: Sendable {
     private let closures: [(@Sendable (UnsafeMutableRawPointer, SwiftCallbackScope) -> Any)?]
@@ -212,9 +220,17 @@ struct SwiftCallbackValues: Sendable {
     private let needsScope: Bool
 
     init(_ signature: SwiftFunctionSignature, arguments: [SwiftGenericArgument] = []) throws {
-        needsScope = signature.parameters.contains { $0 is any SwiftClosureValue.Type }
+        needsScope = signature.parameters.contains { $0 is any SwiftClosureValue.Type || $0 is any SwiftConventionArgument.Type }
         constants = signature.parameters.map(SwiftValueConstants.init)
         closures = try signature.parameters.enumerated().map { index, type in
+            let argument: SwiftGenericArgument = arguments.isEmpty ? .concrete : arguments[index]
+            if let convention = type as? any SwiftConventionArgument.Type {
+                let codec: SwiftConventionCodec
+                if case .convention(let prepared) = argument { codec = prepared }
+                else if case .value = argument { return nil }
+                else { codec = try convention.makeArgumentCodec(generic: argument) }
+                return try codec.prepareCallback()
+            }
             if let closure = type as? any SwiftClosureValue.Type {
                 let codec: SwiftClosureCodec
                 if !arguments.isEmpty, case .closure(let plan) = arguments[index] {
@@ -226,6 +242,49 @@ struct SwiftCallbackValues: Sendable {
                 return { borrow($1.borrow($0), SwiftValueCodeLifetime.current) }
             }
             return nil
+        }
+    }
+
+    static func decoder<Value>(for type: Value.Type, generic: SwiftGenericArgument,
+                               consuming: Bool) throws -> SwiftCallbackDecoder {
+        if case .runtimeValue(let plan, _, let asynchronous) = generic {
+            if Value.self == NativeSwiftValue.self {
+                try plan.requireOwnedValue()
+                if !consuming, !SwiftCopyability.accepts(plan.valueType.metadata) { throw NativeSwiftValueError.noncopyableType }
+            }
+            return { address, scope in
+                let lifetime = SwiftValueCodeLifetime.current ?? plan.valueType.codeLifetime
+                SwiftValueCodeLifetime.connect([lifetime, plan.valueType.codeLifetime], retaining: [])
+                let nativeType = plan.valueType.retainingCode(lifetime)
+                if consuming { return plan.takeCallbackArgument(from: address, type: nativeType) }
+                let restored = plan.restoredCallbackArgument(from: address)
+                let source = restored?.address ?? address
+                if Value.self == NativeSwiftBorrowedValue.self {
+                    return NativeSwiftBorrowedValue(type: nativeType,
+                        borrow: scope.borrow(source, retaining: restored, allowsSuspension: asynchronous))
+                }
+                return plan.copyCallbackArgument(from: source, type: nativeType)
+            }
+        }
+        if let closure = Value.self as? any SwiftClosureValue.Type {
+            guard !consuming else {
+                throw ABIResolutionError.unsupportedDeclaration("Consuming nested closures require an owned native callback input.")
+            }
+            let codec: SwiftClosureCodec
+            if case .closure(let plan) = generic { codec = try (closure as! any SwiftGenericClosureValue.Type).makeGenericClosureCodec(plan: plan) }
+            else { codec = try closure.makeClosureCodec() }
+            guard let borrow = codec.borrowValue else {
+                throw ABIResolutionError.unsupportedDeclaration("This closure representation cannot borrow native callback inputs.")
+            }
+            return { borrow($1.borrow($0), SwiftValueCodeLifetime.current) }
+        }
+        let constants = SwiftValueConstants(Value.self)
+        return { address, _ in
+            if consuming {
+                constants.initialize(at: address)
+                return address.assumingMemoryBound(to: Value.self).move()
+            }
+            return constants.load(from: address, as: Value.self)
         }
     }
 

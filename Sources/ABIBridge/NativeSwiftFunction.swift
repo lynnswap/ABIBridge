@@ -13,11 +13,14 @@ func swiftFunctionTypeName(_ type: Any.Type) throws -> String {
     let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
     if metadata.load(as: UInt.self) == 0x302 {
         let function = try SwiftFunctionSignature(type)
-        for child in function.parameters + [function.result] {
+        for child in function.parameters {
             let native = try swiftNativeTypeName(child)
-            let adapted = try swiftFunctionTypeName(child)
+            let adapted = try swiftArgumentTypeName(child, defaultConsuming: false)
             if native != adapted { name = name.replacingOccurrences(of: native, with: adapted) }
         }
+        let nativeResult = try swiftNativeTypeName(function.result)
+        let adaptedResult = try swiftFunctionTypeName(function.result)
+        if nativeResult != adaptedResult { name = name.replacingOccurrences(of: nativeResult, with: adaptedResult) }
     }
     return name
 }

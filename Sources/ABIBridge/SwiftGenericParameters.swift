@@ -27,7 +27,7 @@ struct SwiftGenericParameters: Sendable {
                 for (packIndex, position) in range.enumerated() {
                     let element = binding.selectingPackElement(at: packIndex)
                     arguments.append(try SwiftGenericCallPlan.argument(pattern, actual: actual[position], binding: element,
-                        defaultConsuming: defaultConsuming))
+                        defaultConsuming: defaultConsuming, asynchronous: asynchronous))
                 }
                 groups.append(.pack(range, try CValueType(indirectSwiftSize: count * MemoryLayout<UInt>.size,
                                                            alignment: MemoryLayout<UInt>.alignment)))
@@ -37,15 +37,12 @@ struct SwiftGenericParameters: Sendable {
                 guard index < actual.count else { throw Self.mismatch(actual.count) }
                 groups.append(.value(index))
                 arguments.append(try SwiftGenericCallPlan.argument(parameter, actual: actual[index], binding: binding,
-                    defaultConsuming: defaultConsuming))
+                    defaultConsuming: defaultConsuming, asynchronous: asynchronous))
                 index += 1
             }
         }
         guard index == actual.count else { throw Self.mismatch(actual.count) }
-        self.arguments = arguments.map {
-            guard let asynchronous, case .runtimeValue(let plan, let convention, _) = $0 else { return $0 }
-            return .runtimeValue(plan, convention: convention, asynchronous: asynchronous)
-        }
+        self.arguments = arguments
         self.groups = groups
         self.hasPacks = hasPacks
         constants = zip(actual, arguments).map { type, argument in
