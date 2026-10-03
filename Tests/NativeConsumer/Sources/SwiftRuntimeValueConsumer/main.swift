@@ -489,3 +489,51 @@ do {
     }
     print("Failed closure writeback preserves both native slots and reports the callback and conversion failures")
 }
+
+let genericOpaque = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.makeRuntimeOpaque<A>(A) -> some",
+    as: ((String) -> NativeSwiftValue).self, genericArguments: [.type(String.self)], in: source)
+let opaqueValue = try unsafe genericOpaque.unsafeInvoke("opaque")
+guard try opaqueValue.withCopy({ $0 as? String }) == "opaque" else { throw ConsumerError.wrongResult }
+let opaquePair = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.makeRuntimeOpaquePair<A, B>(A, B) -> (some, some)",
+    as: ((String, Int) -> (NativeSwiftValue, NativeSwiftValue)).self,
+    genericArguments: [.type(String.self), .type(Int.self)], in: source)
+let pairResult = try unsafe opaquePair.unsafeInvoke("pair", 42)
+guard try pairResult.0.withCopy({ $0 as? String }) == "pair",
+      try pairResult.1.withCopy({ $0 as? Int }) == 42 else { throw ConsumerError.wrongResult }
+let opaqueClosure = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.makeRuntimeOpaqueClosure<A>(A) -> () -> some",
+    as: ((String) -> NativeSwiftClosure<() -> NativeSwiftValue>).self,
+    genericArguments: [.type(String.self)], in: source)
+let closureResult = try unsafe opaqueClosure.unsafeInvoke("closure")
+guard try unsafe closureResult.unsafeInvoke().withCopy({ $0 as? String }) == "closure" else { throw ConsumerError.wrongResult }
+let opaqueOwner = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeOpaqueOwner",
+    in: source, genericArguments: [.type(String.self)])
+let ownerInit = try await opaqueOwner.initializer(named: "init(_:)", as: ((String) -> AnyObject).self)
+let instance = try unsafe ownerInit.unsafeInvoke("owner")
+let ownerGetter = try await opaqueOwner.getter(named: "opaque", as: (() -> NativeSwiftValue).self)
+guard try unsafe ownerGetter.unsafeInvoke(on: instance).withCopy({ $0 as? String }) == "owner" else { throw ConsumerError.wrongResult }
+let ownerMethod = try await opaqueOwner.method(named: "make(_:)", as: ((Int) -> NativeSwiftValue).self,
+    genericArguments: [.type(Int.self)])
+let memberResult = try unsafe ownerMethod.unsafeInvoke(on: instance, 42)
+guard try memberResult.withCopy({ ($0 as? (String, Int))?.1 }) == 42 else { throw ConsumerError.wrongResult }
+print("Generic opaque factories, nested results, and enclosing member bindings work without importing provider types")
+for name in ["makeRuntimeExtended", "makeRuntimeExtendedObject"] {
+    let protocolName = name == "makeRuntimeExtended" ? "RuntimeExtendedSource" : "RuntimeExtendedObject"
+    let call = try await runtime.swiftFunction(
+        named: "ManagedSwiftFixtures.\(name)<A>(A) -> any ManagedSwiftFixtures.\(protocolName)<Self.Element == A>",
+        as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)], in: source)
+    let value = try unsafe call.unsafeInvoke(42)
+    guard try value.withCopy({ ($0 as? any CustomStringConvertible)?.description }) == "42" else { throw ConsumerError.wrongResult }
+}
+typealias ExtendedCallback = NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Int>
+let applyExtended = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.applyRuntimeExtendedObject<A>((any ManagedSwiftFixtures.RuntimeExtendedObject<Self.Element == A>) -> Swift.Int, A) -> Swift.Int",
+    as: ((ExtendedCallback, Int) -> Int).self, genericArguments: [.type(Int.self)], in: source)
+let extendedCallback = try ExtendedCallback { value in
+    do { return try value.copy().withCopy { ($0 as? any CustomStringConvertible)?.description == "42" ? 42 : -1 } }
+    catch { return -2 }
+}
+guard try unsafe applyExtended.unsafeInvoke(extendedCallback, 42) == 42 else { throw ConsumerError.wrongResult }
+print("Runtime-only parameterized protocols preserve opaque and class payloads without compiler-emitted shapes")

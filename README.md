@@ -82,7 +82,7 @@ try unsafe setImage.unsafeInvoke(nil, false)
 
 ### Display a native SwiftUI view
 
-For a nongeneric factory returning `some View`, add the optional `ABIBridgeSwiftUI` product and use its owned wrapper on `MainActor`:
+For a native factory returning `some View`, add the optional `ABIBridgeSwiftUI` product and use its owned wrapper on `MainActor`:
 
 ```swift
 import ABIBridgeSwiftUI

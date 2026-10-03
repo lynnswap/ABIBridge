@@ -6,7 +6,7 @@ SwiftUI interoperability reuses the Swift invocation APIs. Choose a path based o
 | --- | --- | --- |
 | Compiled factory returning UIViewController or NSView | Platform SDK and the exact factory signature | Resolve and call the host factory, then embed it using normal platform containment |
 | Concrete Text, Image, Color, or AnyView | Import SwiftUI and declare the established ABI with ABIBridgeSwiftValue | Pass/return the actual Swift value; the compiler owns its reference payloads |
-| Nongeneric factory returning some View | SwiftUI and the exact arguments; the provider module need not be importable | Receive NativeSwiftValue, cast its Any value to any View, and erase with AnyView |
+| Factory returning some View | SwiftUI and the exact arguments; the provider module need not be importable | Receive NativeSwiftValue, cast its Any value to any View, and erase with AnyView |
 | Concrete Container<Text> from a resilient module | Import the provider and declare its indirect convention | Use a nongeneric factory or concrete entry |
 | Generic function constrained to View, such as `(T) -> T` | Import SwiftUI and bind the concrete content type | Use `genericArguments:` to supply metadata and existing View witnesses |
 
@@ -38,7 +38,7 @@ An AppKit provider can return NSView backed by NSHostingView. The provider compi
 
 ## An opaque result from an unimportable provider
 
-Resolve a nongeneric native factory returning some View with NativeSwiftValue. Swift's runtime can open its existing View conformance even when the concrete type is private or its module is unavailable at consumer compile time.
+Resolve a native factory returning some View with NativeSwiftValue. Swift's runtime can open its existing View conformance even when the concrete type is private or its module is unavailable at consumer compile time.
 
 ```swift
 let make = try await runtime.swiftFunction(
@@ -47,6 +47,8 @@ let make = try await runtime.swiftFunction(
 )
 let result = try unsafe make.unsafeInvoke("Native panel")
 ```
+
+Generic opaque factories use the same result representation with `genericArguments:`. Bind the factory's complete declaration, including any enclosing type arguments; see <doc:SwiftOpaqueResults>.
 
 Add the ABIBridgeSwiftUI product and create its owned NativeSwiftView on MainActor:
 
@@ -75,7 +77,7 @@ extension Color: @retroactive ABIBridgeSwiftValue {
 
 Use <doc:ExplicitSwiftValues> for the contract. Validate the actual target declaration against its SDK/compiler ABI before adding a conformance. A .pointer layout here describes an actual managed Swift value, not an arbitrary reinterpretation of a foreign object.
 
-An imported resilient Container<Text> can declare a formally indirect convention and use a concrete function signature. The architecture fixture uses the compiled `wrapText(_:)` specialization for that rendering check. The external consumer separately calls a generic `echo<Content: View>(_:) -> Content` with `genericArguments: [.type(Text.self)]` and compares its rendered result. A nongeneric factory returning some View can hide a generic composition without exposing its concrete type to the consumer.
+An imported resilient Container<Text> can declare a formally indirect convention and use a concrete function signature. The architecture fixture uses the compiled `wrapText(_:)` specialization for that rendering check. The external consumer separately calls a generic `echo<Content: View>(_:) -> Content` with `genericArguments: [.type(Text.self)]` and compares its rendered result. A factory returning some View can hide a generic composition without exposing its concrete type to the consumer.
 
 ## Isolation, updates, and lifetime
 

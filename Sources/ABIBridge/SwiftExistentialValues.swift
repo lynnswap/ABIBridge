@@ -203,6 +203,9 @@ private final class SwiftSyntheticExistentialShape: @unchecked Sendable {
             var protocols: [SwiftProtocolDescriptor] = []
             var classBound = false
             func collect(_ node: SwiftSyntax.Node) throws {
+                if node.kind == "ProtocolListWithClass" {
+                    throw ABIResolutionError.metadataUnavailable("A superclass-constrained existential requires compiler-emitted metadata or its complete provider shape.")
+                }
                 if node.kind == "ProtocolListWithAnyObject" { classBound = true }
                 if node.kind == "Protocol" {
                     let descriptor = SwiftProtocolDescriptor(try resolver.resolve(

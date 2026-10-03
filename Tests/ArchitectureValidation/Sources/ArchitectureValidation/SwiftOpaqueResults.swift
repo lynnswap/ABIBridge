@@ -229,6 +229,33 @@ private struct OpaqueWordResult: ABIBridgeValue {
     }
     await directGate.waitUntilSuspended(); await directGate.open()
     try check(try await directTask.value == 46, "Async class-constrained opaque result resumes with a direct object pointer")
+    let genericOpaque = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.makeRuntimeOpaque<A>(A) -> some",
+        as: ((String) -> NativeSwiftValue).self, genericArguments: [.type(String.self)])
+    let genericValue = try unsafe genericOpaque.unsafeInvoke("generic")
+    try check(try genericValue.withCopy { $0 as? String } == "generic", "Opaque descriptors bind function generic metadata")
+    let pair = try await runtime.swiftFunction(named: "SwiftValueFixtures.makeRuntimeOpaquePair<A, B>(A, B) -> (some, some)",
+        as: ((String, Int) -> (NativeSwiftValue, NativeSwiftValue)).self,
+        genericArguments: [.type(String.self), .type(Int.self)])
+    let pairValue = try unsafe pair.unsafeInvoke("pair", 42)
+    try check(try pairValue.0.withCopy { $0 as? String } == "pair" && pairValue.1.withCopy { $0 as? Int } == 42,
+        "Tuple results resolve independent opaque type indexes")
+    let nested = try await runtime.swiftFunction(named: "SwiftValueFixtures.makeRuntimeOpaqueClosure<A>(A) -> () -> some",
+        as: ((String) -> NativeSwiftClosure<() -> NativeSwiftValue>).self, genericArguments: [.type(String.self)])
+    let nestedValue = try unsafe nested.unsafeInvoke("nested")
+    try check(try unsafe nestedValue.unsafeInvoke().withCopy { $0 as? String } == "nested",
+        "Returned closures preserve generic opaque result metadata and authentication")
+    let genericOwner = try await runtime.swiftType(named: "SwiftValueFixtures.RuntimeOpaqueOwner", genericArguments: [.type(String.self)])
+    let genericInitializer = try await genericOwner.initializer(named: "init(_:)", as: ((String) -> AnyObject).self)
+    let genericInstance = try unsafe genericInitializer.unsafeInvoke("owner")
+    let genericGetter = try await genericOwner.getter(named: "opaque", as: (() -> NativeSwiftValue).self)
+    let getterValue = try unsafe genericGetter.unsafeInvoke(on: genericInstance)
+    try check(try getterValue.withCopy { $0 as? String } == "owner", "Opaque getters bind enclosing generic metadata")
+    let genericMethod = try await genericOwner.method(named: "make(_:)", as: ((Int) -> NativeSwiftValue).self,
+        genericArguments: [.type(Int.self)])
+    let methodValue = try unsafe genericMethod.unsafeInvoke(on: genericInstance, 42)
+    try check(try methodValue.withCopy { ($0 as? (String, Int))?.1 } == 42,
+        "Opaque members combine enclosing and introduced type bindings")
     checks += try await validateRuntimeValueArguments()
     checks += try await validateRuntimeClassArguments()
     return checks

@@ -122,3 +122,36 @@ private final class HiddenOpaqueObjC: NSObject {
     init(_ token: ErrorToken) { self.token = token }
 }
 @inline(never) public func makeOpaqueObjC(_ token: ErrorToken) -> some NSObjectProtocol { HiddenOpaqueObjC(token) }
+
+@inline(never) public func makeRuntimeOpaque<Value>(_ value: Value) -> some Any { value }
+@inline(never) public func makeRuntimeOpaquePair<First, Second>(_ first: First, _ second: Second) -> (some Any, some Any) { (first, second) }
+@inline(never) public func makeRuntimeOpaqueClosure<Value>(_ value: Value) -> () -> some Any {
+    let body: () -> Value = { value }
+    return body
+}
+public final class RuntimeOpaqueOwner<Value> {
+    let value: Value
+    public init(_ value: Value) { self.value = value }
+    public var opaque: some Any { value }
+    @inline(never) public func make<Other>(_ other: Other) -> some Any { (value, other) }
+}
+public protocol RuntimeExtendedSource<Element> { associatedtype Element }
+private struct RuntimeExtendedValue<Element>: RuntimeExtendedSource, CustomStringConvertible {
+    let value: Element
+    var description: String { String(describing: value) }
+}
+@inline(never) public func makeRuntimeExtended<Value>(_ value: Value) -> any RuntimeExtendedSource<Value> {
+    RuntimeExtendedValue(value: value)
+}
+public protocol RuntimeExtendedObject<Element>: AnyObject { associatedtype Element }
+private final class RuntimeExtendedObjectValue<Element>: RuntimeExtendedObject, CustomStringConvertible {
+    let value: Element
+    init(_ value: Element) { self.value = value }
+    var description: String { String(describing: value) }
+}
+@inline(never) public func makeRuntimeExtendedObject<Value>(_ value: Value) -> any RuntimeExtendedObject<Value> {
+    RuntimeExtendedObjectValue(value)
+}
+@inline(never) public func applyRuntimeExtendedObject<Value>(_ body: (any RuntimeExtendedObject<Value>) -> Int, _ value: Value) -> Int {
+    body(RuntimeExtendedObjectValue(value))
+}

@@ -98,3 +98,7 @@ public final class GenericOpaqueOwner<Value> {
         HiddenGenericOpaque(value: (value, other))
     }
 }
+
+@inline(never) public func makeGenericOpaquePair<First, Second>(_ first: First, _ second: Second) -> (some Any, some Any) {
+    (first, second)
+}

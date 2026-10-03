@@ -245,6 +245,16 @@ struct SwiftOpaqueResultTests {
         #expect(try await task.value == 44)
     }
 
+    @Test func genericOpaqueTupleResultsResolveEveryUnderlyingIndex() async throws {
+        let call = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.makeGenericOpaquePair<A, B>(A, B) -> (some, some)",
+            as: ((String, Int) -> (NativeSwiftValue, NativeSwiftValue)).self,
+            genericArguments: [.type(String.self), .type(Int.self)])
+        let result = try unsafe call.unsafeInvoke("tuple", 42)
+        #expect(try result.0.withCopy { $0 as? String } == "tuple")
+        #expect(try result.1.withCopy { $0 as? Int } == 42)
+    }
+
     @Test func nestedAndGenericOpaqueContractsRequireDeclarationPlanning() async throws {
         let nested = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.makeNestedOpaque() -> () -> some",
             as: (() -> NativeSwiftValue).self)
