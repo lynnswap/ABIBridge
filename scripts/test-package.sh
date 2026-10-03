@@ -20,7 +20,7 @@ hooks=(
     CoordinatedObjectiveCHookTests HookInvocationDiagnosticsTests
     ImportedFunctionHookTests ImportedFunctionMonitorTests
     ObjectiveCInitializerHookTests ObjectiveCMethodHookTests ObjectiveCReplacementTests
-    SwiftCallbackTests SwiftClassHookTests SwiftImportedFunctionHookTests
+    SwiftCallbackTests SwiftClassHookTests SwiftImportedFunctionHookTests SwiftAsyncHookTests
     SwiftImportedReplacementTests SwiftReplacementTests SwiftValueHookTests
     SwiftVirtualReplacementTests VirtualHookTests
 )

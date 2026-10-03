@@ -197,6 +197,7 @@ import Synchronization
         }
     }
     throwingHook.invalidate()
+    checks += try await validateAsyncFunctionHooks(runtime: runtime, provider: provider, caller: control)
     try check(failures.withLock { $0.isEmpty }, "No unexpected Swift callback failures")
     return ArchitectureReport(mode: "swift-function-hooks", cpuType: ABIValidationCPUType(),
         cpuSubtype: ABIValidationCPUSubtype(), pacCompiled: ABIValidationPACCompiled(),

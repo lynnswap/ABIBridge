@@ -14,3 +14,8 @@ extension GenericExtensionRenderer where Value == Int {
     @inline(never) public func constrainedScore(_ extra: Int) -> Int { value + extra }
     public var constrainedValue: Int { @inline(never) get { value } }
 }
+
+@inline(never) public nonisolated(nonsending) func importedAsyncHookInteger(_ value: Int64) async -> Int64 { await hookAsyncEcho(value) }
+@inline(never) public nonisolated(nonsending) func importedAsyncHookString(_ value: String) async -> String { await hookAsyncEcho(value) }
+@inline(never) public nonisolated(nonsending) func importedAsyncHookThrowing(_ value: Int64) async throws(NSError) -> String { try await hookAsyncThrowing(value) }
+@inline(never) public nonisolated(nonsending) func importedAsyncHookMethod(_ object: AsyncHookRenderer, _ value: String) async -> String { await object.render(value) }
