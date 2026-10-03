@@ -98,7 +98,7 @@ let count = try NativeSwiftClosure<(NativeSwiftConsuming<String>) -> Int> { inco
 
 Explicit `NativeSwiftBorrowing<NativeSwiftBorrowedValue>` inputs keep the same scoped lifetime as an ordinary borrowed input; adding an ownership marker does not extend a borrow across callback return. `NativeSwiftConsuming` also works when invoking a returned native closure.
 
-For a known `inout Value` input, use `NativeSwiftInout<Value>`. The body receives an owned local buffer. Its current value is written back before the callback completes, including throwing or async completion. A saved buffer remains independent after that writeback.
+For a known `inout Value` input, use `NativeSwiftInout<Value>`. The body receives an owned local buffer. Its current value is written back before the callback completes, including throwing or async completion. A saved buffer remains independent after that writeback. A closure or tuple with converted fields uses the same buffer type and requires `throws(any Error)` for callback writeback. The bridge prepares all converted replacements before applying them, and transfers the callback result only after writeback succeeds. See <doc:SwiftArgumentConventions> for failures and buffer state.
 
 For a runtime-only `inout T`, use `NativeSwiftBorrowedValue` as the callback input. The containing native declaration grants exclusive mutable access to the caller's payload, including noncopyable values. Invoke ordinary mutating member handles on the view, or pass `NativeSwiftInout(view)` to a prepared inout function. The view cannot be consumed, ordinary borrowed inputs remain read-only, and overlapping access fails with `NativeSwiftValueError.valueInUse`. A mutation already performed remains visible when the body throws. Mutable views expire when their callback completes, just like read-only views.
 
@@ -115,6 +115,33 @@ let produce = try await ABIRuntime.shared.swiftFunction(
 ```
 
 Prepare a Sendable body that obtains an owned value and returns it, then pass that callback to `produce.unsafeInvoke`. A host callback returning a runtime handle cannot use a nonthrowing or narrower typed-error native declaration: those channels cannot represent handle conversion failures. This restriction does not apply to calling a returned native closure, where `unsafeInvoke` already has a bridge-error channel.
+
+## Combine closures and runtime values in tuples
+
+Use an ordinary Swift tuple for a native tuple argument or result. Its elements can include `NativeSwiftValue`, `NativeSwiftBorrowedValue` in a callback scope, and `NativeSwiftClosure<Signature>`, including inside nested tuples. Each element follows the same ownership contract as a standalone value.
+
+For a provider with a resilient `Record` and `func makeSnapshot() -> (record: Record, callback: (Int64) -> Int64)`:
+
+```swift
+let runtime = ABIRuntime.shared
+let recordType = try await runtime.swiftType(named: "Example.Record")
+typealias Callback = NativeSwiftClosure<(Int64) -> Int64>
+typealias Snapshot = (record: NativeSwiftValue, callback: Callback)
+
+let makeSnapshot = try await runtime.swiftFunction(
+    named: "Example.makeSnapshot() -> (record: Example.Record, callback: (Swift.Int64) -> Swift.Int64)",
+    as: (() -> Snapshot).self,
+    valueABIs: [recordType: .opaque(named: recordType.name)]
+)
+let snapshot = try unsafe makeSnapshot.unsafeInvoke()
+let result = try unsafe snapshot.callback.unsafeInvoke(35)
+```
+
+The complete native declaration identifies `Record`, whose name differs from the host handle's name. Preserve the tuple's labels and element order in `as:`. `declaredAs:` supplies preparation details after symbol lookup; it cannot supply a missing native name during lookup. This example uses `.opaque` because `Record` is passed indirectly. A fixed-layout value needs its established native components, as described in <doc:BorrowedSwiftValues>.
+
+The returned record and closure own their native values and required code dependencies. A callback receiving the same native tuple can use `NativeSwiftBorrowedValue` for its record field. Its borrowed record and closure fields expire with that callback invocation; putting them in a tuple does not extend their scope. A consuming tuple argument transfers its runtime payloads and closure contexts according to the declaration's ownership convention.
+
+A host callback returning converted runtime-value or closure fields uses `throws(any Error)` so field-conversion failures can reach the native caller. Result ownership transfers only after all fields are prepared successfully. Ordinary tuples containing only native Swift values keep their declared nonthrowing or typed-error contract. Function and member calls use the same tuple representations; <doc:SwiftArgumentConventions> describes mutable tuple and closure buffers.
 
 ## Throwing callbacks and returned closures
 
@@ -185,6 +212,7 @@ The synchronous and async wrappers support ordinary guaranteed arguments and own
 | Pointer values | UnsafePointer, UnsafeMutablePointer, UnsafeRawPointer, UnsafeMutableRawPointer, OpaquePointer, Selector, and their optional forms |
 | Standard value layouts | CGPoint, CGSize, CGRect, NSRange |
 | Explicit Swift layouts | ABIBridgeSwiftValue conformances with established fixed or formally indirect lowering, including concrete generic nominal values |
+| Tuples | Ordinary labeled or nested tuples of supported values, including runtime value and closure representations |
 | Empty values | Zero arguments, explicit empty-tuple arguments, and Void results |
 
 An array's element type can itself be a managed struct, enum, optional, or another array without requiring direct-call support for that element. The compiler manages elements through the buffer's value operations. This does not make a standalone element value a supported callback argument. String and Array optionals preserve nil separately from empty payloads; nested optional containers still require an adapter.

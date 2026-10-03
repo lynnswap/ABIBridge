@@ -127,7 +127,7 @@ public actor NativeSwiftType: Hashable {
             let owner: Any.Type = ownerClass ?? metadata
             let enclosing = try owner == metadata ? genericMetadata : SwiftGenericTypeMetadata(metadata: owner)
             let usesBinding = try signature != nil && (!(enclosing?.arguments.isEmpty ?? true) || !genericArguments.isEmpty
-                || declaredSignature != nil || !valueABIs.isEmpty || SwiftFunctionSignature(signature!).requiresClosureDeclaration)
+                || declaredSignature != nil || !valueABIs.isEmpty || SwiftFunctionSignature(signature!).requiresValueDeclaration)
             let request = try declaration(ownerName, usesBinding)
             if originalRequest == nil { originalRequest = request }
             let belongs = !exact || SwiftMemberLookup.belongs(request.name, to: ownerName)
@@ -241,7 +241,7 @@ public actor NativeSwiftType: Hashable {
     ) throws -> SwiftGenericCallPlan? {
         let enclosing = try member.metadata == metadata ? genericMetadata : SwiftGenericTypeMetadata(metadata: member.metadata)
         guard try !(enclosing?.arguments.isEmpty ?? true) || !arguments.isEmpty || declaredSignature != nil || !valueABIs.isEmpty
-            || SwiftFunctionSignature(signature).requiresClosureDeclaration else { return nil }
+            || SwiftFunctionSignature(signature).requiresValueDeclaration else { return nil }
         return try SwiftGenericCallPlan(symbol: member.symbol,
             genericArguments: arguments, signature: SwiftFunctionSignature(signature), resolver: resolver,
             enclosing: enclosing, receiver: receiver, declaredSignature: declaredSignature, valueABIs: valueABIs)

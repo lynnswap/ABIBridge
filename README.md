@@ -63,7 +63,7 @@ let echo = try await runtime.swiftFunction(
 let message = try unsafe echo.unsafeInvoke("Hello")
 ```
 
-See [Swift generic calls](https://lynnswap.github.io/ABIBridge/documentation/abibridge/genericswiftvalues) for constraints, packs, generic types, and members.
+See [Swift generic calls](https://lynnswap.github.io/ABIBridge/documentation/abibridge/genericswiftvalues) for constraints, packs, generic types, and members. Ordinary tuples can combine runtime value handles and closures. Use `NativeSwiftInout` to replace a closure or tuple through a native call; see [Swift closure values](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftclosurevalues) and [argument conventions](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftargumentconventions).
 
 ### Call an existing Objective-C instance
 

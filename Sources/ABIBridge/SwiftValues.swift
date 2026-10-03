@@ -20,11 +20,18 @@ struct SwiftValueCodec<Value>: Sendable {
     private let cValue: CValueCodec<Value>?
     private let objectResult: Bool
     private let closure: SwiftClosureCodec?
+    private let tuple: SwiftTupleValuePlan?
     private let constants = SwiftValueConstants(Value.self)
 
     init() throws {
         guard !(Value.self is any SwiftConventionArgument.Type) else {
             throw ABIResolutionError.unsupportedDeclaration("Swift argument convention markers require the invocation argument path; results and managed callbacks cannot use them.")
+        }
+        let preparedTuple = try SwiftGenericCallPlan.concreteTuple(Value.self)
+        tuple = preparedTuple?.needsConversion == true ? preparedTuple : nil
+        if let tuple {
+            type = tuple.type; closure = nil; cValue = nil; objectResult = false
+            return
         }
         if let closureType = Value.self as? any SwiftClosureValue.Type {
             let codec = try closureType.makeClosureCodec()
@@ -99,11 +106,23 @@ struct SwiftValueCodec<Value>: Sendable {
     }
 
     func makeStorage() -> NativeValueStorage {
-        NativeValueStorage(size: cValue == nil && closure == nil ? MemoryLayout<Value>.stride : type.size,
+        if let tuple { return tuple.makeResultStorage() }
+        return NativeValueStorage(size: cValue == nil && closure == nil ? MemoryLayout<Value>.stride : type.size,
                            alignment: type.alignment, codeLifetime: closure == nil ? nil : SwiftValueCodeLifetime([]))
     }
 
     func encode(_ value: Value, consuming: Bool = false) throws -> NativeValueStorage {
+        if let tuple {
+            let initialize = try withUnsafePointer(to: value) {
+                try tuple.prepareNativeCopy(fromHost: $0)
+            }
+            let storage = tuple.makeResultStorage()
+            initialize(storage.address)
+            storage.assumeInitialized {
+                ABISwiftDestroyValue(unsafeBitCast(tuple.nativeMetadata, to: UnsafeRawPointer.self), $0)
+            }
+            return storage
+        }
         if closure != nil { return try (value as! any SwiftClosureValue).encodeClosure(consuming: consuming) }
         if Value.self == Void.self { return NativeValueStorage(size: 0, alignment: 1) }
         if let cValue { return try cValue.encode(value) }
@@ -113,6 +132,10 @@ struct SwiftValueCodec<Value>: Sendable {
     }
 
     func copy(from storage: NativeValueStorage, retaining owner: Any?) throws -> Value {
+        if let tuple {
+            return try tuple.copyNativeValue(from: storage.address, retainingCode: owner,
+                codeLifetime: storage.codeLifetime, as: Value.self)
+        }
         if let closure { return try closure.makeValue(storage.address.load(as: ABISwiftClosureValue.self), owner, false, storage.codeLifetime) as! Value }
         if let cValue { return try cValue.decode(storage, retaining: owner) }
         if objectResult, !(Value.self is any NativeOptionalValue.Type), storage.address.load(as: UnsafeRawPointer?.self) == nil {
@@ -122,6 +145,14 @@ struct SwiftValueCodec<Value>: Sendable {
     }
 
     func copyNativeStorage(_ storage: NativeValueStorage) throws -> NativeValueStorage {
+        if let tuple {
+            let result = tuple.makeResultStorage()
+            ABISwiftCopyValue(unsafeBitCast(tuple.nativeMetadata, to: UnsafeRawPointer.self), result.address, storage.address)
+            result.assumeInitialized {
+                ABISwiftDestroyValue(unsafeBitCast(tuple.nativeMetadata, to: UnsafeRawPointer.self), $0)
+            }
+            return result
+        }
         if closure != nil {
             return SwiftClosureStorage.copy(storage.address.load(as: ABISwiftClosureValue.self), retaining: storage,
                                             codeLifetime: storage.codeLifetime)
@@ -135,11 +166,18 @@ struct SwiftValueCodec<Value>: Sendable {
     }
 
     func destroyNativeValue(at address: UnsafeMutableRawPointer) {
+        if let tuple {
+            ABISwiftDestroyValue(unsafeBitCast(tuple.nativeMetadata, to: UnsafeRawPointer.self), address)
+            return
+        }
         if closure != nil { SwiftClosureStorage.destroy(address); return }
         if cValue == nil { address.assumingMemoryBound(to: Value.self).deinitialize(count: 1) }
     }
 
     func decode(_ storage: NativeValueStorage, retaining owner: Any?, retainingCode codeOwner: Any? = nil) throws -> Value {
+        if let tuple {
+            return try tuple.decodeResult(storage, retaining: owner, retainingCode: codeOwner, as: Value.self)
+        }
         // Receiver/argument storage can belong to the object receiving this
         // closure later. Only code dependencies belong in its escaping context.
         if let closure { return try closure.makeValue(storage.address.load(as: ABISwiftClosureValue.self), codeOwner, true, storage.codeLifetime) as! Value }

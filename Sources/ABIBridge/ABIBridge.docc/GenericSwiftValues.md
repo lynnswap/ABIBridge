@@ -55,7 +55,7 @@ let echo = try await runtime.swiftFunction(
 let values = try unsafe echo.unsafeInvoke(42, "answer")
 ```
 
-For a pattern such as `repeat () -> each T`, supply one `NativeSwiftClosure<Signature>` per expanded argument. Each closure uses its element's generic calling and ownership convention. Short member names keep the source labels, such as `apply(_:)`, even when the caller's concrete signature contains several arguments.
+For a pattern such as `repeat () -> each T`, supply one `NativeSwiftClosure<Signature>` per expanded argument. Each closure uses its element's generic calling and ownership convention. Short member names keep the source labels, such as `apply(_:)`, even when the caller's concrete signature contains several arguments. Tuple patterns use ordinary tuple values for each expanded element, with runtime value and closure handles in their corresponding fields. An empty pack contributes no arguments; a single element keeps its own type, including when that element is a tuple.
 
 Pack expansion preserves the formal element pattern and shape. A nominal type such as `Bundle<repeat each T>` uses the same `.pack` spelling when requesting its type. Metadata and witness packs retain their ordered elements; transformed patterns and fixed prefix/suffix elements do not substitute for the declaration's hidden arguments.
 
@@ -125,7 +125,7 @@ Use ``NativeSwiftClosure`` for callback parameters and returned closures. The br
 
 For a synchronous nonescaping callback with caller-isolated state, use `NativeSwiftClosure.withUnsafeNonescaping`. Neither the native callee nor the use body may retain that callback.
 
-Concrete argument and result positions retain the ordinary Swift adapter contract when `named:` supplies the complete native declaration. Direct `T` values use the bound type's actual Swift storage and compiler-generated value operations. An explicitly bound wrapper type is itself the native `T`; its `ABIBridgeValue` conversion is not applied. Use ``NativeSwiftBorrowing``, ``NativeSwiftConsuming``, or ``NativeSwiftInout`` to express the declaration's argument convention around the actual value. Initializers and setters retain their normal ownership defaults. Inout writeback and cleanup run on native error paths as well. See <doc:SwiftArgumentConventions>.
+Concrete argument and result positions retain the ordinary Swift adapter contract when `named:` supplies the complete native declaration. Direct `T` values use the bound type's actual Swift storage and compiler-generated value operations. An explicitly bound wrapper type, including a tuple of bridge wrappers, is itself the native `T`; its conversion to another native representation is not applied. A native tuple whose declared fields are runtime values or functions instead converts each field through its corresponding handle, as described in <doc:SwiftClosureValues>. Use ``NativeSwiftBorrowing``, ``NativeSwiftConsuming``, or ``NativeSwiftInout`` to express the declaration's argument convention around the actual value. Initializers and setters retain their normal ownership defaults. Inout writeback and cleanup run on native error paths as well. See <doc:SwiftArgumentConventions>.
 
 ## Validation and value boundaries
 
@@ -133,4 +133,4 @@ The macOS runtime tests compare these bindings with separately compiled Swift im
 
 Compiler probes check formal argument/result conventions, hidden metadata and witness arguments, and pointer-authentication discriminators for arm64, x86_64, arm64e, and arm64_32. Compilation evidence does not establish runtime execution on the other architectures.
 
-Generic metadata establishes a type's identity and storage operations. Passing a concrete nominal value directly still requires its native call representation; use <doc:ExplicitSwiftValues> for imported values and <doc:ManagedSwiftValues> for compiler-owned storage adapters. Runtime-only value ownership and nested callback composition are tracked in [the value API follow-up](https://github.com/lynnswap/ABIBridge/issues/285); generic hooks and replacement frontends are tracked in [the hook API follow-up](https://github.com/lynnswap/ABIBridge/issues/286).
+Generic metadata establishes a type's identity and storage operations. Passing a concrete nominal value directly still requires its native call representation; use <doc:ExplicitSwiftValues> for imported values and <doc:ManagedSwiftValues> for compiler-owned storage adapters. Runtime-only ownership and composed callback values are described in <doc:BorrowedSwiftValues> and <doc:SwiftClosureValues>. Generic hooks and replacement frontends are tracked in [the hook API follow-up](https://github.com/lynnswap/ABIBridge/issues/286).

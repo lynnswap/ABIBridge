@@ -41,7 +41,10 @@ def main():
         directory = output / target
         directory.mkdir(parents=True, exist_ok=True)
         sdk = run("xcrun", "--sdk", sdk_name, "--show-sdk-path").strip()
-        common = ["xcrun", "swiftc", "-swift-version", "6", "-parse-as-library", "-Onone", "-target", target, "-sdk", sdk]
+        common = ["xcrun", "swiftc", "-swift-version", "6",
+                  "-enable-upcoming-feature", "ApproachableConcurrency",
+                  "-enable-upcoming-feature", "NonisolatedNonsendingByDefault",
+                  "-parse-as-library", "-Onone", "-target", target, "-sdk", sdk]
         declared_base = directory / "DeclaredBase.swift"
         declared_base.write_text("public protocol Score { static func score() -> Int }\nopen class Base {}\n")
         run(*common, "-module-name", "DeclaredBase", "-emit-module", str(declared_base),
@@ -84,6 +87,35 @@ def main():
         run(*adapter, "-emit-ir", "-o", str(ir_path))
         run(*adapter, "-emit-sil", "-o", str(sil_path))
         ir, sil = ir_path.read_text(), sil_path.read_text()
+        weak_callbacks = {}
+        weak_conventions = {
+            "probeBorrowedWeakTuple": "(Int8, @in_guaranteed RuntimeWeakRecord, Int64)",
+            "probeConsumedWeakTuple": "(Int8, @in RuntimeWeakRecord, Int64)",
+            "probeResilientWeakTuple": "(Int8, @in_guaranteed RuntimeResilientWeakRecord, Int64)",
+        }
+        for name, convention in weak_conventions.items():
+            entry = next(line for line in sil.splitlines() if line.startswith("sil ") and name in line)
+            require(convention in entry, f"{target}: weak tuple fields must preserve their indirect ownership")
+            call = next(line.strip() for line in body(ir, name).splitlines()
+                        if "call swiftcc" in line and "swiftself" in line)
+            require("call swiftcc i64" in call and "i8 " in call and "ptr noalias" in call,
+                    f"{target}: a weak field uses its own address between direct scalar fields")
+            weak_callbacks[name] = call
+        require("@swift_unknownObjectWeakCopyInit" in ir and "@swift_unknownObjectWeakTakeInit" in ir,
+                f"{target}: weak fields require compiler copy and take operations")
+        weak_results = {}
+        for name in ["probeWeakTupleResult", "probeAsyncWeakTupleResult"]:
+            entry = next(line for line in sil.splitlines() if line.startswith("sil ") and name in line)
+            require("(Int8, @out RuntimeWeakRecord, Int64, @error any Error)" in entry,
+                    f"{target}: weak tuple results mix an initialized field output with scalar results")
+            weak_results[name] = entry
+        tuple_pack_body = body(ir, "probeTuplePackCallback")
+        tuple_pack_call = next(line.strip() for line in tuple_pack_body.splitlines()
+                               if "call swiftcc" in line and "swiftself" in line)
+        require("@swift_getTupleTypeMetadata3" in tuple_pack_body and "InitializeWithCopy" in tuple_pack_body,
+                f"{target}: each tuple pack element uses its aggregate metadata and copy witness")
+        require(len(re.findall(r"\bptr\b", tuple_pack_call)) == 2,
+                f"{target}: a tuple-pattern pack callback receives one element-address vector and its context")
         error_substitutions = {}
         for name in ["probeNeverError", "probeExistentialError", "probeNeverErrorCallback", "probeExistentialErrorCallback"]:
             call = next(line.strip() for line in body(ir, name).splitlines()
@@ -269,7 +301,9 @@ def main():
                         "nestedSource": nested_source, "superclassSource": superclass_source,
                         "metatypeCallbacks": metatypes, "packSources": pack_sources,
                         "associatedStorage": associated_storage, "getterErrors": getter_errors,
-                        "errorSubstitutions": error_substitutions, "witnessEntries": witness_entries, "providerImportEntries": declared_entries})
+                        "errorSubstitutions": error_substitutions, "witnessEntries": witness_entries, "providerImportEntries": declared_entries,
+                        "weakTupleCallbacks": weak_callbacks, "weakTupleResults": weak_results,
+                        "tuplePackCallback": tuple_pack_call})
     report = {"compiler": run("xcrun", "swiftc", "--version").strip(), "runtimeTested": False,
               "demanglerRevision": upstream["revision"], "targets": targets}
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")

@@ -794,6 +794,7 @@ struct SwiftClosureHandler {
     bool (*invokeThrowing)(void *, void *const *, void *, void *) = nullptr;
     void *(*copyCodeOwner)(void *) = nullptr;
     void *(*copyBodyOwner)(void *) = nullptr;
+    ABISwiftResultInitializer initializeResult = nullptr;
     void (*releaseContext)(void *) = nullptr;
     void *context = nullptr;
     ~SwiftClosureHandler() { if (releaseContext) releaseContext(context); }
@@ -858,6 +859,7 @@ static ABISwiftClosureCallback *createSwiftClosureCallback(ABISwiftCallInterface
     entry.closure->releaseContext = throwing.invoke ? throwing.releaseContext : normal.releaseContext;
     entry.closure->copyCodeOwner = throwing.invoke ? throwing.copyCodeOwner : normal.copyCodeOwner;
     entry.closure->copyBodyOwner = throwing.invoke ? throwing.copyBodyOwner : normal.copyBodyOwner;
+    entry.closure->initializeResult = throwing.invoke ? throwing.initializeResult : normal.initializeResult;
     entry.closure->usesNativeContext = throwing.invoke ? throwing.usesNativeContext : normal.usesNativeContext;
     entry.closure->context = context;
     return callback.release();
@@ -1014,13 +1016,20 @@ void packRegisters(const Layout &layout, TypeStorage &type, CallFrame &frame, co
         std::memcpy(destination, static_cast<const uint8_t *>(value) + component.offset, std::min(component.size, available));
     }
 }
-void packResult(const ABISwiftCallInterface &interface, CallFrame &frame, const void *value,
-                void *const *outputs = nullptr) {
-    auto copyOutput = [](TypeStorage &type, void *destination, const void *source) {
-        if (!type.swiftPack) { std::memcpy(destination, source, type.size()); return; }
+void packResult(const ABISwiftCallInterface &interface, CallFrame &frame, void *value,
+                void *const *outputs = nullptr, ABISwiftResultInitializer initializeResult = nullptr,
+                void *context = nullptr) {
+    auto initialize = [&](void *destination, void *source, size_t logicalOffset, size_t size) {
+        if (!size) return;
+        if (initializeResult) initializeResult(context, logicalOffset, size, destination, source);
+        else std::memcpy(destination, source, size);
+    };
+    auto copyOutput = [&](TypeStorage &type, void *destination, void *source, size_t logicalOffset) {
+        if (!type.swiftPack) { initialize(destination, source, logicalOffset, type.size()); return; }
         auto **elements = static_cast<void **>(destination);
         for (size_t index = 0; index < type.fields.size(); ++index)
-            std::memcpy(elements[index], static_cast<const uint8_t *>(source) + type.offsets[index], type.fields[index]->size());
+            initialize(elements[index], static_cast<uint8_t *>(source) + type.offsets[index],
+                       logicalOffset + type.offsets[index], type.fields[index]->size());
     };
     for (size_t index = 0; index < interface.indirectResults.size(); ++index) {
         void *destination = nullptr;
@@ -1032,24 +1041,35 @@ void packResult(const ABISwiftCallInterface &interface, CallFrame &frame, const 
             std::memcpy(&destination, source, sizeof(destination));
         }
         const auto &field = interface.indirectResults[index];
-        copyOutput(*field.type, destination, static_cast<const uint8_t *>(value) + field.offset);
+        copyOutput(*field.type, destination, static_cast<uint8_t *>(value) + field.offset, field.offset);
     }
     if (interface.directResult->swiftPack) {
         const auto offset = interface.resultCopies.empty() ? 0 : interface.resultCopies[0].logical;
         copyOutput(*interface.directResult, reinterpret_cast<void *>(frame.indirectResult),
-                   static_cast<const uint8_t *>(value) + offset);
+                   static_cast<uint8_t *>(value) + offset, offset);
         return;
     }
-    SwiftResultStorage storage(interface, const_cast<void *>(value));
+    if (interface.resultLayout.indirect) {
+        auto *destination = reinterpret_cast<uint8_t *>(frame.indirectResult);
+        if (interface.resultCopies.empty()) {
+            initialize(destination, value, 0, interface.directResult->size());
+        } else {
+            // A tuple can have an ABI-only aggregate for its direct fields.
+            // Move its complete logical fields; its padded carrier has no metadata.
+            for (const auto &copy : interface.resultCopies) {
+                auto *source = static_cast<uint8_t *>(value) + copy.logical;
+                if (copy.optionalSingleton) packOptionalSingleton(destination + copy.direct, source);
+                else initialize(destination + copy.direct, source, copy.logical, copy.size);
+            }
+        }
+        return;
+    }
+    SwiftResultStorage storage(interface, value);
     if (storage.temporary) for (const auto &copy : interface.resultCopies) {
         auto destination = static_cast<uint8_t *>(storage.direct) + copy.direct;
         auto source = static_cast<const uint8_t *>(value) + copy.logical;
         if (copy.optionalSingleton) packOptionalSingleton(destination, source);
         else std::memcpy(destination, source, copy.size);
-    }
-    if (interface.resultLayout.indirect) {
-        std::memcpy(reinterpret_cast<void *>(frame.indirectResult), storage.direct, interface.directResult->size());
-        return;
     }
     packRegisters(interface.resultLayout, *interface.directResult, frame, storage.direct);
 }
@@ -1140,7 +1160,9 @@ extern "C" SwiftAsyncTransfer *ABIPrepareSwiftAsyncCallback(
     bridge->invocation = invocation;
     bridge->executor = swift_task_getCurrentExecutor();
     invocation->nativeContext = incoming->context;
-    unpackArguments(*callback->interface.entry, *incoming, invocation->storage, invocation->arguments);
+    // The native caller's async argument borrows end at completion, not at this
+    // entry prologue. Preserve indirect addresses through the suspended body.
+    unpackArguments(*callback->interface.entry, *incoming, invocation->storage, invocation->arguments, nullptr, true);
     size_t index = 0;
     auto pointer = [&]() {
         uintptr_t value;
@@ -1212,7 +1234,13 @@ extern "C" void ABIFinishSwiftAsyncCallback(SwiftAsyncCallbackContext *bridge, S
     transfer->values.error = completion.errorResult ? 0 : invocation->nativeContext;
     if (invocation->didThrow)
         packError(completion, transfer->values, invocation->error.data(), invocation->indirectError);
-    else packResult(completion, transfer->values, invocation->result.data(), invocation->outputs.data());
+    else {
+        auto &callback = invocation->callback;
+        auto *context = callback.functions.usesNativeContext
+            ? reinterpret_cast<void *>(invocation->nativeContext) : callback.context;
+        packResult(completion, transfer->values, invocation->result.data(), invocation->outputs.data(),
+                   callback.functions.initializeResult, context);
+    }
     auto resume = reinterpret_cast<ABIUnmanagedFunction>(bridge->header.resume);
     std::memcpy(&transfer->function, &resume, sizeof(resume));
     transfer->asyncContext = reinterpret_cast<uintptr_t>(bridge);
@@ -1294,7 +1322,7 @@ extern "C" __attribute__((visibility("hidden"))) void ABIDispatchSwiftCallback(A
         } else {
             callback->closure->invoke(context, arguments.data(), result.data());
         }
-        packResult(interface, *frame, result.data());
+        packResult(interface, *frame, result.data(), nullptr, callback->closure->initializeResult, context);
         return; // The native caller owns the selected result or error.
     }
     std::shared_ptr<SwiftHandler> handler;

@@ -26,6 +26,64 @@ private final class RuntimeBorrowCopy: @unchecked Sendable {
 }
 
 struct SwiftGenericBindingTests {
+    @Test func functionMetadataPreservesCompilerTypeIdentity() throws {
+        typealias Borrowing = (borrowing Int64) -> Int64
+        typealias Shared = (__shared Int64) -> Int64
+        typealias Consuming = (consuming Int64) -> Int64
+        typealias Caller = nonisolated(nonsending) (Int64) async -> Int64
+        typealias Sending = (sending Int64) -> sending Int64
+        let declaration = SwiftGenericDeclaration(parameters: [], requirements: [], arguments: [],
+            result: .tuple([]), failure: nil, isAsync: false, consumesArguments: false)
+        let binding = try SwiftGenericBinding(declaration: declaration, arguments: [],
+            signature: SwiftFunctionSignature(((Int64, ScalarFailure, MainActor.Type) -> Void).self), resolver: .shared)
+        let cases: [(String, Any.Type)] = [
+            ("(Swift.Int64) -> Swift.Int64", ((Int64) -> Int64).self),
+            ("(borrowing Swift.Int64) -> Swift.Int64", Borrowing.self),
+            ("(__shared Swift.Int64) -> Swift.Int64", Shared.self),
+            ("(inout Swift.Int64) -> Swift.Int64", ((inout Int64) -> Int64).self),
+            ("(consuming Swift.Int64) -> Swift.Int64", Consuming.self),
+            ("@Sendable (Swift.Int64) -> Swift.Int64", (@Sendable (Int64) -> Int64).self),
+            ("@concurrent (Swift.Int64) async -> Swift.Int64", (@concurrent (Int64) async -> Int64).self),
+            ("nonisolated(nonsending) (Swift.Int64) async -> Swift.Int64", Caller.self),
+            ("(Swift.Int64) throws -> Swift.Int64", ((Int64) throws -> Int64).self),
+            ("(Swift.Int64) throws(ManagedSwiftFixtures.ScalarFailure) -> Swift.Int64", ((Int64) throws(ScalarFailure) -> Int64).self),
+            ("(Swift.Int64) throws(Swift.Never) -> Swift.Int64", ((Int64) throws(Never) -> Int64).self),
+            ("(Swift.Int64) throws(any Error) -> Swift.Int64", ((Int64) throws(any Error) -> Int64).self),
+            ("@Swift.MainActor (Swift.Int64) -> Swift.Int64", (@MainActor (Int64) -> Int64).self),
+            ("@isolated(any) (Swift.Int64) async -> Swift.Int64", (@isolated(any) (Int64) async -> Int64).self),
+            ("(sending Swift.Int64) -> sending Swift.Int64", Sending.self),
+            ("@Sendable @Swift.MainActor (inout Swift.Int64) async throws(ManagedSwiftFixtures.ScalarFailure) -> Swift.Int64",
+             (@Sendable @MainActor (inout Int64) async throws(ScalarFailure) -> Int64).self),
+            ("((Swift.Int64) -> Swift.Int64) -> Swift.Int64", (((Int64) -> Int64) -> Int64).self),
+            ("(@escaping (Swift.Int64) -> Swift.Int64) -> Swift.Int64", ((@escaping (Int64) -> Int64) -> Int64).self),
+            ("(inout (Swift.Int64) -> Swift.Int64) -> Swift.Int64", ((inout (Int64) -> Int64) -> Int64).self),
+        ]
+        for (source, expected) in cases {
+            #expect(try binding.types(SwiftFormalType(source))[0] == expected, "\(source)")
+        }
+    }
+
+    @Test func nativeFunctionSyntaxRetainsMetadataAttributes() throws {
+        typealias Caller = nonisolated(nonsending) (Int) async -> Int
+        typealias Sending = (sending String) -> sending String
+        let declaration = SwiftGenericDeclaration(parameters: [], requirements: [], arguments: [],
+            result: .tuple([]), failure: nil, isAsync: false, consumesArguments: false)
+        let binding = try SwiftGenericBinding(declaration: declaration, arguments: [],
+            signature: SwiftFunctionSignature(((Int, String, MainActor.Type) -> Void).self), resolver: .shared)
+        let cases: [(String, Any.Type)] = [
+            ("$s13ABIAttributes8sendableyyS2iYbcF", (@Sendable (Int) -> Int).self),
+            ("$s13ABIAttributes6calleryyS2iYaYCcF", Caller.self),
+            ("$s13ABIAttributes10concurrentyyS2iYaYbcF", (@Sendable @concurrent (Int) async -> Int).self),
+            ("$s13ABIAttributes6globalyyS2iYbScMYccF", (@MainActor (Int) -> Int).self),
+            ("$s13ABIAttributes6erasedyyS2iYaYAcF", (@isolated(any) (Int) async -> Int).self),
+            ("$s13ABIAttributes7sendingyyS2SnYuYTcF", Sending.self),
+        ]
+        for (symbol, expected) in cases {
+            let function = try SwiftGenericDeclaration(linkageName: symbol).arguments[0]
+            #expect(try binding.types(function)[0] == expected, "\(symbol)")
+        }
+    }
+
     @Test func nonescapableBorrowedValuesCannotBecomeOwnedCopies() async throws {
         let module = "ScopedValue_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
         let fixture = try FixtureLibrary(swiftModule: module, swiftSource: """
@@ -725,7 +783,7 @@ struct SwiftGenericBindingTests {
         #expect(transform.parameters.map(\.name) == ["A", "B"])
         #expect(transform.arguments[0] == .nominal("Swift.Array", [.named("A", [])]))
         #expect(transform.arguments[1] == .function([.named("A", [])], .named("B", []),
-            failure: .nominal("Swift.Error", []), isAsync: false))
+            failure: .nominal("Swift.Error", [])))
         #expect(transform.result == .nominal("Swift.Array", [.named("B", [])]))
         #expect(transform.failure == .nominal("Swift.Error", []))
         let suspended = try SwiftGenericDeclaration(linkageName:

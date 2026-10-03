@@ -329,7 +329,7 @@ extension ABIRuntime {
     ) throws -> NativeSwiftFunction<Signature> {
         let description = try SwiftFunctionSignature(signature)
         let usesBinding = !genericArguments.isEmpty || declaredSignature != nil || !valueABIs.isEmpty
-            || description.requiresClosureDeclaration
+            || description.requiresValueDeclaration
         guard usesBinding else {
             let declaration = try swiftFunctionDeclaration(named: name, as: signature)
             return try NativeSwiftFunction(symbol: resolve(declaration), resolver: resolver)

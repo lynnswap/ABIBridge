@@ -4,6 +4,34 @@ import ManagedSwiftFixtures
     _ body: (RuntimeRecord) -> (Int64, Int64), _ value: RuntimeRecord
 ) -> (Int64, Int64) { body(value) }
 
+@inline(never) public func probeBorrowedWeakTuple(
+    _ body: (borrowing (Int8, RuntimeWeakRecord, Int64)) -> Int64,
+    _ value: borrowing (Int8, RuntimeWeakRecord, Int64)
+) -> Int64 { body(value) }
+
+@inline(never) public func probeConsumedWeakTuple(
+    _ body: (consuming (Int8, RuntimeWeakRecord, Int64)) -> Int64,
+    _ value: consuming (Int8, RuntimeWeakRecord, Int64)
+) -> Int64 { body(value) }
+
+@inline(never) public func probeResilientWeakTuple(
+    _ body: (borrowing (Int8, RuntimeResilientWeakRecord, Int64)) -> Int64,
+    _ value: borrowing (Int8, RuntimeResilientWeakRecord, Int64)
+) -> Int64 { body(value) }
+
+@inline(never) public func probeWeakTupleResult(
+    _ body: () throws -> (Int8, RuntimeWeakRecord, Int64)
+) rethrows -> (Int8, RuntimeWeakRecord, Int64) { try body() }
+
+@inline(never) public nonisolated(nonsending) func probeAsyncWeakTupleResult(
+    _ body: nonisolated(nonsending) () async throws -> (Int8, RuntimeWeakRecord, Int64)
+) async rethrows -> (Int8, RuntimeWeakRecord, Int64) { try await body() }
+
+@inline(never) public func probeTuplePackCallback<each Value>(
+    _ body: (repeat (Int8, each Value, Int64)) -> Int64,
+    _ values: repeat (Int8, each Value, Int64)
+) -> Int64 { body(repeat each values) }
+
 @inline(never) public func probeNeverError() -> Int64 { genericErrorType(Never.self) }
 @inline(never) public func probeExistentialError() throws -> Int64 { try genericErrorType((any Error).self) }
 @inline(never) public func probeNeverErrorCallback(_ body: () -> Int64) -> Int64 { genericErrorCallback(body) }
