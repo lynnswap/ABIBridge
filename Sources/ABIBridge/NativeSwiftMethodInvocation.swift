@@ -103,7 +103,7 @@ extension NativeSwiftMethod {
             throw ABIResolutionError.unsupportedDeclaration("Managed hooks cannot yet return native Swift errors.")
         }
         let receiverView = SwiftHookReceiverView(self)
-        let prepared = try SwiftHookCallbackSignature<Result, repeat each Argument>()
+        let prepared = try SwiftHookCallbackSignature<Result, repeat each Argument>(declaration: call.generic)
         let signature = try prepared.erased(consumingArguments: consumesArguments, receiver: receiver, retaining: self)
         let handler = prepareSwiftMethodHandler(method: self, prepared: prepared, receiver: receiverView,
             requiresMainActor: requiresMainActor, onFailure: onFailure, body: body)

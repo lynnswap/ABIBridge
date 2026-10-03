@@ -69,7 +69,7 @@ final class SwiftAsyncCall: Sendable {
     private let values: SwiftCallValues
     let errorPlan: SwiftErrorPlan?
     private let hasTrailingValue: Bool
-    private let generic: SwiftGenericCallPlan?
+    let generic: SwiftGenericCallPlan?
     let closure: SwiftGenericClosurePlan?
     private var parameters: SwiftGenericParameters? { generic?.parameters ?? closure?.parameters }
 

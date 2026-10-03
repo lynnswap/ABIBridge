@@ -23,7 +23,7 @@ public struct NativeSwiftMethod<Signature>: Sendable {
     let receiver: SwiftReceiverPlan
     let consumesArguments: Bool
     var errorPlan: SwiftErrorPlan? { call.errorPlan }
-    private let call: SwiftCallablePlan
+    let call: SwiftCallablePlan
 
     init(symbol: ResolvedSymbol, type: NativeSwiftType, receiver: SwiftReceiverPlan,
          consumesArguments: Bool = false, generic: SwiftGenericCallPlan? = nil) throws {

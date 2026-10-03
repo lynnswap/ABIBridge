@@ -122,6 +122,13 @@ enum SwiftCallablePlan: Sendable {
         }
     }
 
+    var generic: SwiftGenericCallPlan? {
+        switch self {
+        case .synchronous(let call): call.generic
+        case .asynchronous(let call, _): call.generic
+        }
+    }
+
     var errorPlan: SwiftErrorPlan? {
         switch self {
         case .synchronous(let call): call.errorPlan

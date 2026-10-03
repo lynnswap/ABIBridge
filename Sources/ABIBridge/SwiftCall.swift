@@ -5,7 +5,7 @@ final class SwiftCall: Sendable {
     let errorPlan: SwiftErrorPlan?
     private let values: SwiftCallValues
     private let hasTrailingValue: Bool
-    private let generic: SwiftGenericCallPlan?
+    let generic: SwiftGenericCallPlan?
     let closure: SwiftGenericClosurePlan?
     private var parameters: SwiftGenericParameters? { generic?.parameters ?? closure?.parameters }
 

@@ -217,7 +217,7 @@ public struct NativeSwiftFunction<Signature>: Sendable {
     public let symbol: ResolvedSymbol
 
     private var implementation: SwiftImplementation?
-    private let call: SwiftCallablePlan
+    let call: SwiftCallablePlan
     private let context: UInt
     private let typeOwner: NativeSwiftType?
     let consumesArguments: Bool

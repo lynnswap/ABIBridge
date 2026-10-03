@@ -78,7 +78,21 @@ public struct NativeSwiftFunctionInvocation<Result, each Argument>: CustomString
 struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
     let result: SwiftValueCodec<Result>
     let arguments: (repeat SwiftValueCodec<each Argument>)
-    init() throws {
+    init(declaration: SwiftGenericCallPlan? = nil) throws {
+        if let declaration {
+            guard declaration.binding.declaration.parameters.isEmpty else {
+                throw ABIResolutionError.unsupportedDeclaration("Generic hooks require polymorphic incoming arguments and metadata; use direct invocation.")
+            }
+            let convertsResult: Bool
+            switch declaration.result {
+            case .runtimeValue: convertsResult = true
+            case .closure(let codec): convertsResult = codec.nativePlan?.convertsValues == true
+            default: convertsResult = false
+            }
+            guard !convertsResult, !declaration.arguments.contains(where: { $0.runtimeValue != nil }) else {
+                throw ABIResolutionError.unsupportedDeclaration("Managed hooks require declaration-based runtime value conversion; use direct invocation.")
+            }
+        }
         for type in repeat (each Argument).self {
             if type is any SwiftClosureValue.Type {
                 // A native nonescaping closure can carry a stack context that
