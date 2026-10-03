@@ -49,6 +49,44 @@ private final class NestedClosureCapture: @unchecked Sendable {
 }
 
 struct NativeSwiftClosureTests {
+    @Test func directHostCallsForwardNativeClosureArgumentsAndResults() async throws {
+        typealias Inner = NativeSwiftClosure<(Int64) -> Int64>
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeNoncapturingClosure()", as: (() -> Inner).self)
+        let makeGeneric = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeClosureGeneric<A>(A) -> (A) -> A",
+            as: ((Int64) -> Inner).self, genericArguments: [.type(Int64.self)])
+        let receive = try NativeSwiftClosure<(Inner) throws -> Int64> { value in
+            try unsafe value.unsafeInvoke(21)
+        }
+        let saved = NestedClosureCapture()
+        let produce = try NativeSwiftClosure<() throws -> Inner> { saved.value! }
+        for native in [try unsafe make.unsafeInvoke(), try unsafe makeGeneric.unsafeInvoke(42)] {
+            #expect(try unsafe receive.unsafeInvoke(native) == 42)
+            saved.value = native
+            let returned = try unsafe produce.unsafeInvoke()
+            #expect(try unsafe returned.unsafeInvoke(21) == 42)
+        }
+    }
+
+    @Test func directSynchronousHostCallsForwardNativeAsyncClosures() async throws {
+        typealias Inner = NativeSwiftClosure<nonisolated(nonsending) @Sendable (Int64) async -> Int64>
+        final class Owner: @unchecked Sendable {
+            let value: Inner
+            init(_ value: Inner) { self.value = value }
+        }
+        let make = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.makeAsyncClosureGeneric<A where A: Swift.Sendable>(A) -> nonisolated(nonsending) @Sendable (A) async -> A",
+            as: ((Int64) -> Inner).self, genericArguments: [.type(Int64.self)])
+        let owner = Owner(try unsafe make.unsafeInvoke(42))
+        let receive = try NativeSwiftClosure<(Inner) -> Int64> { _ in 42 }
+        #expect(try unsafe receive.unsafeInvoke(owner.value) == 42)
+        let produce = try NativeSwiftClosure<() throws -> Inner> { owner.value }
+        let returned = try unsafe produce.unsafeInvoke()
+        #expect(try unsafe await returned.unsafeInvoke(21) == 42)
+    }
+
     @Test func nativeNestedResultsOwnTheirCaptureAfterBothOuterCallsReturn() async throws {
         typealias Inner = NativeSwiftClosure<(Int64) -> Int64>
         typealias Producer = NativeSwiftClosure<() -> Inner>

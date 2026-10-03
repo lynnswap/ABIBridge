@@ -181,9 +181,8 @@ extension NativeSwiftClosure: SwiftClosureValue {
         case .asynchronous(_, let prepared): native = prepared.closure
         case .host, .borrowed, .failure: preconditionFailure("Resolving a closure produces a native call.")
         }
-        guard native == nil else {
-            throw ABIResolutionError.signatureMismatch(.init(
-                expected: "The runtime closure's native value declaration", found: [String(reflecting: Signature.self)]))
+        if native != nil {
+            return try encodeGenericClosure(plan: SwiftGenericClosurePlan.concrete(Signature.self), retainingCode: nil)
         }
         return try resolved.encoded()
     }

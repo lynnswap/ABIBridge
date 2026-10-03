@@ -55,6 +55,45 @@ private final class NestedClosureProbeCapture: @unchecked Sendable {
         guard value else { throw ArchitectureValidationFailure(description: message) }
         checks.append(message)
     }
+    do {
+        typealias Inner = NativeSwiftClosure<(Int64) -> Int64>
+        let make = try await runtime.swiftFunction(
+            named: "SwiftValueFixtures.makeConcreteNestedProducer()",
+            as: (() -> NativeSwiftClosure<() -> Inner>).self)
+        let native = try unsafe make.unsafeInvoke().unsafeInvoke()
+        let receive = try NativeSwiftClosure<(Inner) throws -> Int64> { value in
+            try unsafe value.unsafeInvoke(35)
+        }
+        try check(try unsafe receive.unsafeInvoke(native) == 42,
+            "Direct host callback arguments forward a compatible native closure")
+        let owner = NestedClosureProbeCapture()
+        owner.value = native
+        let produce = try NativeSwiftClosure<() throws -> Inner> { owner.value! }
+        let returned = try unsafe produce.unsafeInvoke()
+        try check(try unsafe returned.unsafeInvoke(35) == 42,
+            "Direct host callback results forward a compatible native closure")
+
+        typealias AsyncInner = NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>
+        typealias AsyncCaller = NativeSwiftClosure<nonisolated(nonsending) (AsyncInner, Int64) async -> Int64>
+        final class AsyncOwner: @unchecked Sendable {
+            let value: AsyncCaller
+            init(_ value: AsyncCaller) { self.value = value }
+        }
+        let makeAsync = try await runtime.swiftFunction(
+            named: "SwiftValueFixtures.makeConcreteNestedAsyncCaller()", as: (() -> AsyncCaller).self)
+        let asyncOwner = AsyncOwner(try unsafe makeAsync.unsafeInvoke())
+        let receiveAsync = try NativeSwiftClosure<(AsyncCaller) -> Int64> { _ in 42 }
+        try check(try unsafe receiveAsync.unsafeInvoke(asyncOwner.value) == 42,
+            "A synchronous host callback accepts a native async closure with nested inputs")
+        let produceAsync = try NativeSwiftClosure<() throws -> AsyncCaller> { asyncOwner.value }
+        let returnedAsync = try unsafe produceAsync.unsafeInvoke()
+        let body: nonisolated(nonsending) @Sendable (Int64) async -> Int64 = { value in
+            await Task.yield()
+            return value + 7
+        }
+        try check(try unsafe await returnedAsync.unsafeInvoke(AsyncInner(body), 35) == 42,
+            "A synchronous host callback returns a callable native async closure with nested inputs")
+    }
     if #available(macOS 26, iOS 26, tvOS 26, watchOS 26, visionOS 26, *) {
         typealias Sync = NativeSwiftClosure<(Int64) -> Int64>
         typealias Async = NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>
