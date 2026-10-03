@@ -222,6 +222,8 @@ The `swift-opaque` mode verifies hidden aligned managed results, complete metada
 
 The `swift-existentials` mode verifies Any and protocol compositions, inline/out-of-line payload ownership, class-constrained layouts, generated/returned callbacks, optional class/error authentication, and async existential results. All 14 checks passed in a Release arm64e build on iPhone Air (iOS 27, build 24A435), with pointer authentication enabled. Its report is `Documents/architecture-swift-existentials.json`.
 
+On October 3, 2026, the expanded mode passed all 23 checks on iPhone Air / iOS 27.0.1 (24A446), built with Xcode 27.0 / Swift 6.4 in Release for arm64e (`cpuSubtype: 0x80000002`, `pacCompiled: true`). The added checks cover two parameterized class protocols, a shared inherited associated type, typed and runtime-only parameterized existential metatypes, and an authenticated metatype callback. The macOS probe also passed those 23 checks with Xcode 26.6 / Swift 6.3.3.
+
 The `swift-arguments` mode verifies typed inout storage, managed/scalar writeback on success and failure, consumed indirect-value lifetimes, mixed initializer ownership, and async suspension/cancellation. All nine checks passed in a Release arm64e build on iPhone Air (iOS 27, build 24A435), with pointer authentication enabled. Its report is `Documents/architecture-swift-arguments.json`.
 
 The `swift-async-closures` mode exercises caller-isolated and concurrent generated callbacks, typed direct/indirect errors, independent owned result storage, stack arguments, returned descriptors, repeated native handoffs, escaping captures and final release, and original-task cancellation.

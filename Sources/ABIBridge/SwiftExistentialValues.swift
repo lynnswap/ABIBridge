@@ -38,7 +38,7 @@ struct SwiftExtendedExistentialShapeLayout {
             guard requirement.loadUnaligned(as: UInt32.self) & 0x9f == 0x80 else { continue }
             guard let handle = ABICopySwiftGenericRequirementTypeSyntax(requirement, false) else { return nil }
             var subject = SwiftSyntax(adopting: handle).root
-            while subject.kind == "Type" || subject.kind == "DependentMemberType" {
+            while subject.kind == "Type" {
                 guard let child = subject.children().first else { return nil }
                 subject = child
             }
@@ -163,6 +163,33 @@ struct SwiftObjectType {
 /// Uses the provider's generalized shape when the caller has no concrete
 /// existential metadata. The descriptor owns the signature and witness order.
 struct SwiftExtendedExistentialMetadata {
+    static func formalType(_ metadata: Any.Type) throws -> SwiftFormalType {
+        guard let handle = ABICopySwiftExtendedExistentialTypeSyntax(unsafeBitCast(metadata, to: UnsafeRawPointer.self)) else {
+            throw ABIResolutionError.metadataUnavailable("The extended existential's type expression is unavailable.")
+        }
+        let generalized = try SwiftFormalType(SwiftSyntax(adopting: handle).root)
+        let arguments = try SwiftGenericTypeMetadata(metadata: metadata).arguments
+        let substitutions = try Dictionary(uniqueKeysWithValues: arguments.enumerated().map { index, argument in
+            guard case .type(let type, _) = argument.storage else {
+                throw ABIResolutionError.metadataUnavailable("The extended existential has a non-scalar generalization parameter.")
+            }
+            return (SwiftFormalType.parameterName(depth: 0, index: index), try SwiftFormalType(swiftNativeTypeName(type)))
+        })
+        func substitute(_ type: SwiftFormalType) throws -> SwiftFormalType {
+            switch type {
+            case .existentialMetatype(let instance): return .existentialMetatype(try substitute(instance))
+            case .constrainedExistential(let base, let constraints, let shape):
+                return .constrainedExistential(base: base, constraints: try constraints.map {
+                    .init(subject: $0.subject, value: try substitute($0.value))
+                }, shape: shape)
+            case .named(let name, let parameters) where parameters.isEmpty:
+                return substitutions[name] ?? type
+            default: return type
+            }
+        }
+        return try substitute(generalized)
+    }
+
     let value: Any.Type
 
     static func metadata(shape: String, constraints: [SwiftFormalType.ExistentialConstraint],
@@ -174,23 +201,15 @@ struct SwiftExtendedExistentialMetadata {
         value = try unsafe descriptor.withUnsafeAddress { address in
             // The non-unique descriptor prefixes the shape with its cache ref.
             let shape = address.advanced(by: 4)
-            let flags = shape.loadUnaligned(as: UInt32.self)
-            let reqParameters = Int(shape.loadUnaligned(fromByteOffset: 8, as: UInt16.self))
-            let reqRequirements = Int(shape.loadUnaligned(fromByteOffset: 10, as: UInt16.self))
-            let hasGeneralization = flags & 0x100 != 0
-            let parameterCount = hasGeneralization ? Int(shape.loadUnaligned(fromByteOffset: 16, as: UInt16.self)) : 0
-            let requirementCount = hasGeneralization ? Int(shape.loadUnaligned(fromByteOffset: 18, as: UInt16.self)) : 0
-            let keyCount = hasGeneralization ? Int(shape.loadUnaligned(fromByteOffset: 20, as: UInt16.self)) : 0
-            var offset = 16 + (hasGeneralization ? 8 : 0)
-            if flags & 0x200 != 0 { offset += 4 }
-            if flags & 0x400 != 0 { offset += 4 }
-            if flags & 0x800 == 0 { offset += reqParameters }
+            let layout = SwiftExtendedExistentialShapeLayout(shape)
+            let flags = layout.flags
+            let parameterCount = layout.genericParameterCount
+            let requirementCount = layout.genericRequirementCount
+            let keyCount = layout.genericKeyCount
             let parameters = (0..<parameterCount).map { index in
-                flags & 0x1000 != 0 ? UInt8(0x80) : shape.load(fromByteOffset: offset + index, as: UInt8.self)
+                flags & 0x1000 != 0 ? UInt8(0x80) : shape.load(fromByteOffset: layout.genericParametersOffset + index, as: UInt8.self)
             }
-            if flags & 0x1000 == 0 { offset += parameterCount }
-            offset = (offset + 3) & ~3
-            offset += reqRequirements * 12
+            let offset = layout.requirementsOffset + layout.requirementCount * 12
             let requirements = try (0..<requirementCount).map { index in
                 try SwiftMetadataRequirement(shape.advanced(by: offset + index * 12))
             }

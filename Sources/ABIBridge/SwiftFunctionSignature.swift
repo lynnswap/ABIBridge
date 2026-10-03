@@ -9,6 +9,7 @@ struct SwiftFunctionSignature: Sendable {
     let isAsync: Bool
     let inheritsCallerIsolation: Bool
     let parameterConventions: [SwiftArgumentConvention]
+    let attributes: SwiftFunctionAttributes
 
     init(_ type: Any.Type, nativeConventions: Bool = false) throws {
         let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
@@ -67,6 +68,9 @@ struct SwiftFunctionSignature: Sendable {
         }
         isAsync = flags & 0x20000000 != 0
         inheritsCallerIsolation = extended & 0x0e == 4
+        attributes = SwiftFunctionAttributes(isAsync: isAsync, isEscaping: flags & 0x04000000 != 0,
+            isSendable: flags & 0x40000000 != 0, isolation: inheritsCallerIsolation ? .caller : .none,
+            hasSendingResult: extended & 0x10 != 0)
     }
 
     func makeErrorPlan(genericType: CValueType? = nil) throws -> SwiftErrorPlan? {

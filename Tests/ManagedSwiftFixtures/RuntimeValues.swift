@@ -557,7 +557,11 @@ private struct RuntimeExtendedBoth: RuntimeExtendedLeft, RuntimeExtendedRight, C
 
 public protocol RuntimeClassLeft<Element>: AnyObject { associatedtype Element }
 public protocol RuntimeClassRight<Element>: AnyObject { associatedtype Element }
-public final class RuntimeClassBoth<Element>: RuntimeClassLeft, RuntimeClassRight {
+public protocol RuntimeClassFirst<First>: AnyObject { associatedtype First }
+public protocol RuntimeClassSecond<Second>: AnyObject { associatedtype Second }
+public final class RuntimeClassBoth<Element>: RuntimeClassLeft, RuntimeClassRight, RuntimeClassFirst, RuntimeClassSecond {
+    public typealias First = Element
+    public typealias Second = Element
     public let value: Element
     public init(_ value: Element) { self.value = value }
 }
@@ -565,7 +569,18 @@ public final class RuntimeClassBoth<Element>: RuntimeClassLeft, RuntimeClassRigh
     RuntimeClassBoth(value)
 }
 @inline(never) public func echoRuntimeClassComposition<Element>(_ value: any RuntimeClassLeft<Element> & RuntimeClassRight<Element>) -> any RuntimeClassLeft<Element> & RuntimeClassRight<Element> { value }
+@inline(never) public func makeRuntimeDistinctClassComposition<Element>(_ value: Element) -> any RuntimeClassFirst<Element> & RuntimeClassSecond<Element> {
+    RuntimeClassBoth(value)
+}
+@inline(never) public func echoRuntimeDistinctClassComposition<Element>(_ value: any RuntimeClassFirst<Element> & RuntimeClassSecond<Element>) -> any RuntimeClassFirst<Element> & RuntimeClassSecond<Element> { value }
 @inline(never) public func echoRuntimeParameterizedMetatype<Element>(_ value: any RuntimeClassLeft<Element>.Type) -> any RuntimeClassLeft<Element>.Type { value }
+@inline(never) public func makeRuntimeParameterizedMetatype<Element>(_ value: Element) -> any RuntimeClassLeft<Element>.Type { RuntimeClassBoth<Element>.self }
+@inline(never) public func applyRuntimeParameterizedMetatype<Element>(_ body: (any RuntimeClassLeft<Element>.Type) -> any RuntimeClassLeft<Element>.Type, _ value: Element) -> any RuntimeClassLeft<Element>.Type {
+    body(RuntimeClassBoth<Element>.self)
+}
+@inline(never) public func echoRuntimeParameterizedMetatypeTuple<Element>(_ value: (any RuntimeClassLeft<Element>.Type, Int)) -> (any RuntimeClassLeft<Element>.Type, Int) { value }
+@inline(never) public func echoRuntimeOptionalParameterizedMetatype<Element>(_ value: (any RuntimeClassLeft<Element>.Type)?) -> (any RuntimeClassLeft<Element>.Type)? { value }
+@inline(never) public func replaceRuntimeParameterizedMetatype<Element>(_ value: inout any RuntimeClassLeft<Element>.Type, _ replacement: any RuntimeClassLeft<Element>.Type) { value = replacement }
 
 public protocol RuntimeSharedBase<Element> { associatedtype Element; var value: Element { get } }
 public protocol RuntimeSharedLeft: RuntimeSharedBase {}
