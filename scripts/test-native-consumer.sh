@@ -31,7 +31,7 @@ xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_root/.build/native-consumer" SwiftAsyncConsumer
 
-xcrun swiftc -parse-as-library -emit-library -emit-module -enable-library-evolution \
+xcrun swiftc -parse-as-library -emit-library -emit-module -enable-library-evolution -enable-experimental-feature Lifetimes \
     -module-name ManagedSwiftFixtures -emit-module-path "$task_fixture/ManagedSwiftFixtures.swiftmodule" \
     "$task_root/Tests/ManagedSwiftFixtures/Values.swift" "$task_root/Tests/ManagedSwiftFixtures/Generics.swift" \
     "$task_root/Tests/ManagedSwiftFixtures/RuntimeValues.swift" "$task_root/Tests/ManagedSwiftFixtures/GenericCalls.swift" \

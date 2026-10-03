@@ -577,3 +577,30 @@ let superclassClosure = try await runtime.swiftFunction(
     as: ((Int) -> NativeSwiftClosure<() -> NativeSwiftValue>).self, genericArguments: [.type(Int.self)], in: source)
 guard try unsafe superclassClosure.unsafeInvoke(43).unsafeInvoke().withCopy({ ($0 as? any CustomStringConvertible)?.description }) == "43" else { throw ConsumerError.wrongResult }
 print("Generic superclass existentials retain constraints and witnesses across calls and closures without importing provider types")
+
+let scopedOwnerFactory = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeScopedOwner(_:)",
+    as: ((Int64) -> NativeSwiftValue).self, in: source)
+let scopedOwner = try unsafe scopedOwnerFactory.unsafeInvoke(42)
+let scopedCounts = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.runtimeScopedDestructions(_:)",
+    as: ((NativeSwiftValue) -> Int).self, in: source)
+let scopedType = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeScopedResult", in: source)
+let scopedRead = try await scopedType.method(named: "read()", as: (() -> Int64).self, receiverABI: .opaque(named: scopedType.name))
+let scopedMake = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeScoped(_:_:)",
+    as: ((NativeSwiftValue, Bool) throws -> NativeSwiftBorrowedValue).self, in: source)
+var escapedScoped: NativeSwiftBorrowedValue?
+let scopedNumber = try unsafe scopedMake.unsafeInvoke(scopedOwner, false, withResult: { value in
+    escapedScoped = value
+    return try unsafe scopedRead.unsafeInvoke(on: value)
+})
+guard scopedNumber == 42, try unsafe scopedCounts.unsafeInvoke(scopedOwner) == 1 else { throw ConsumerError.wrongResult }
+do {
+    _ = try unsafe scopedRead.unsafeInvoke(on: escapedScoped!)
+    throw ConsumerError.wrongResult
+} catch NativeSwiftBorrowError.expiredBorrow { }
+let scopedMethod = try await scopedOwner.type.method(named: "scopedAsync()", as: (() async -> NativeSwiftBorrowedValue).self)
+let asyncScopedNumber = try unsafe await scopedMethod.unsafeInvoke(on: scopedOwner, withResult: { value in
+    await Task.yield()
+    return try unsafe scopedRead.unsafeInvoke(on: value)
+})
+guard asyncScopedNumber == 42, try unsafe scopedCounts.unsafeInvoke(scopedOwner) == 2 else { throw ConsumerError.wrongResult }
+print("Scoped nonescapable results work through functions and async members without importing provider types")

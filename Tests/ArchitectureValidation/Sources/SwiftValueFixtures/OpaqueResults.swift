@@ -210,3 +210,45 @@ private struct RuntimeExtendedBoth: RuntimeExtendedLeft, RuntimeExtendedRight, C
 }
 @inline(never) public func makeLeftConstrainedComposition() -> any RuntimeExtendedLeft<Int> & RuntimeExtendedRight { RuntimeExtendedBoth() }
 @inline(never) public func makeRightConstrainedComposition() -> any RuntimeExtendedLeft & RuntimeExtendedRight<Int> { RuntimeExtendedBoth() }
+
+public enum RuntimeTicketFailure: Error { case rejected }
+#if hasFeature(Lifetimes)
+public protocol RuntimeScopedReadable: ~Copyable, ~Escapable {
+    borrowing func read() -> Int64
+}
+public final class RuntimeScopedOwner {
+    public var number: Int64
+    public let counts: ArgumentCounts
+    public init(_ number: Int64, _ counts: ArgumentCounts) { self.number = number; self.counts = counts }
+    @_lifetime(borrow self)
+    @inline(never) public func scoped() -> some RuntimeScopedReadable & ~Copyable & ~Escapable {
+        RuntimeScopedResult(self)
+    }
+    @_lifetime(borrow self)
+    @inline(never) public nonisolated(nonsending) func scopedAsync() async -> some RuntimeScopedReadable & ~Copyable & ~Escapable {
+        await Task.yield()
+        return RuntimeScopedResult(self)
+    }
+}
+public struct RuntimeScopedResult: ~Copyable, ~Escapable, RuntimeScopedReadable {
+    private let owner: Unmanaged<RuntimeScopedOwner>
+    private let counts: ArgumentCounts
+    @_lifetime(borrow owner)
+    public init(_ owner: borrowing RuntimeScopedOwner) {
+        self.owner = .passUnretained(owner); counts = owner.counts
+    }
+    public borrowing func read() -> Int64 { owner.takeUnretainedValue().number }
+    deinit { counts.destroyed() }
+}
+@_lifetime(borrow owner)
+@inline(never) public func makeRuntimeScoped(_ owner: borrowing RuntimeScopedOwner, _ fail: Bool) throws -> some RuntimeScopedReadable & ~Copyable & ~Escapable {
+    if fail { throw RuntimeTicketFailure.rejected }
+    return RuntimeScopedResult(owner)
+}
+@_lifetime(borrow owner)
+@inline(never) public nonisolated(nonsending) func makeRuntimeScopedAsync(_ owner: borrowing RuntimeScopedOwner, _ fail: Bool) async throws -> some RuntimeScopedReadable & ~Copyable & ~Escapable {
+    await Task.yield()
+    if fail || Task.isCancelled { throw RuntimeTicketFailure.rejected }
+    return RuntimeScopedResult(owner)
+}
+#endif

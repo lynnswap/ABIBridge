@@ -106,6 +106,17 @@ public struct NativeSwiftMethod<Signature>: Sendable {
         _ storage: NativeValueStorage, didInvoke: (() -> Void)? = nil, _ values: repeat each Argument
     ) throws -> Result {
         guard case .synchronous(let call) = call else { preconditionFailure("A synchronous signature has a synchronous call plan.") }
+        try call.values.requireIndependentResult()
+        return try unsafe invoke(storage, didInvoke: didInvoke, repeat each values) {
+            try call.values.decode($0, retaining: $1, retainingCode: $2)
+        }
+    }
+
+    @unsafe private func invoke<Output: ~Copyable, each Argument>(
+        _ storage: NativeValueStorage, didInvoke: (() -> Void)? = nil, _ values: repeat each Argument,
+        processingResult: (NativeValueStorage, Any?, Any?) throws -> Output
+    ) throws -> Output {
+        guard case .synchronous(let call) = call else { preconditionFailure("A synchronous signature has a synchronous call plan.") }
         defer { withExtendedLifetime(storage) {} }
         let context = try unsafe receiver.context(for: storage)
         // Typed and raw-pointer receivers need a separate +1. An owned runtime
@@ -114,14 +125,14 @@ public struct NativeSwiftMethod<Signature>: Sendable {
             ? Unmanaged<AnyObject>.fromOpaque(context!).retain() : nil
         var invoked = false
         defer { if !invoked { consumedObject?.release() } }
-        return try unsafe call.unsafeInvoke(
+        return try unsafe call.invoke(
             symbol: symbol, context: context,
             trailingValue: receiver.mode == .value ? storage : nil, receiverStorage: storage,
             retaining: (symbol, type, storage.ownerForResult), retainingCode: type.image, didInvoke: {
                 invoked = true
                 if receiver.isConsuming && (receiver.mode != .object || storage.transfersOwnership) { storage.relinquishValue() }
                 didInvoke?()
-            }, implementation: implementation, repeat each values
+            }, implementation: implementation, repeat each values, processingResult: processingResult
         )
     }
 }
@@ -253,6 +264,17 @@ extension NativeSwiftMethod {
     @unsafe private nonisolated(nonsending) func invokeAsync<Result, each Argument>(
         _ storage: NativeValueStorage, didInvoke: (() -> Void)? = nil, _ values: repeat each Argument
     ) async throws -> Result {
+        guard case .asynchronous(let call, _) = call else { preconditionFailure("An async signature has an async call plan.") }
+        try call.values.requireIndependentResult()
+        return try unsafe await invokeAsync(storage, didInvoke: didInvoke, repeat each values) {
+            try call.values.decode($0, retaining: $1, retainingCode: $2)
+        }
+    }
+
+    @unsafe private nonisolated(nonsending) func invokeAsync<Output: ~Copyable, each Argument>(
+        _ storage: NativeValueStorage, didInvoke: (() -> Void)? = nil, _ values: repeat each Argument,
+        processingResult: (NativeValueStorage, Any?, Any?) async throws -> Output
+    ) async throws -> Output {
         guard case .asynchronous(let call, let implementation) = call else { preconditionFailure("An async signature has an async call plan.") }
         defer { withExtendedLifetime(storage) {} }
         let context = try unsafe receiver.context(for: storage)
@@ -260,13 +282,13 @@ extension NativeSwiftMethod {
             ? Unmanaged<AnyObject>.fromOpaque(context!).retain() : nil
         var invoked = false
         defer { if !invoked { consumedObject?.release() } }
-        return try unsafe await call.unsafeInvoke(implementation: implementation, context: context,
+        return try unsafe await call.invoke(implementation: implementation, context: context,
             trailingValue: receiver.mode == .value ? storage : nil, receiverStorage: storage, retaining: (implementation, type, storage.ownerForResult),
             retainingCode: type.image, didInvoke: {
                 invoked = true
                 if receiver.isConsuming && (receiver.mode != .object || storage.transfersOwnership) { storage.relinquishValue() }
                 didInvoke?()
-            }, repeat each values)
+            }, repeat each values, processingResult: processingResult)
     }
 }
 
@@ -354,4 +376,233 @@ extension NativeSwiftMethod {
             retaining: storage.writebackOwner(retaining: [symbol.image, type.image]))
     }
 
+}
+
+extension NativeSwiftMethod {
+
+    @unsafe public func unsafeInvoke<Receiver, Output: ~Copyable, Failure: Error, each Argument>(
+        on receiver: Receiver, _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) throws -> Output
+    ) throws -> Output where Signature == (repeat each Argument) throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe invokeScoped(on: receiver, repeat each values, withResult: body)
+    }
+
+
+    @unsafe public func unsafeInvoke<Receiver, Output: ~Copyable, Failure: Error, each Argument>(
+        on receiver: Receiver, _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) throws -> Output
+    ) throws -> Output where Signature == @Sendable (repeat each Argument) throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe invokeScoped(on: receiver, repeat each values, withResult: body)
+    }
+
+
+    @unsafe public func unsafeInvoke<Receiver, Output: ~Copyable, Failure: Error, each Argument>(
+        on receiver: inout Receiver, _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) throws -> Output
+    ) throws -> Output where Signature == (repeat each Argument) throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe invokeScoped(on: &receiver, repeat each values, withResult: body)
+    }
+
+
+    @unsafe public func unsafeInvoke<Receiver, Output: ~Copyable, Failure: Error, each Argument>(
+        on receiver: inout Receiver, _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) throws -> Output
+    ) throws -> Output where Signature == @Sendable (repeat each Argument) throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe invokeScoped(on: &receiver, repeat each values, withResult: body)
+    }
+
+    @unsafe private func invokeScoped<Receiver, Output: ~Copyable, each Argument>(
+        on receiver: Receiver, _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) throws -> Output
+    ) throws -> Output {
+        guard case .synchronous(let call) = call else { preconditionFailure("The signature has a matching call plan.") }
+        let plan = try call.values.scopedResult()
+
+        guard !self.receiver.isMutating || self.receiver.mode == .object || receiver is NativeSwiftValue || receiver is NativeSwiftBorrowedValue else {
+            throw ABIResolutionError.unsupportedDeclaration("A mutating Swift value member requires an inout receiver.")
+        }
+
+        let storage = try self.receiver.encode(receiver)
+
+        return try unsafe invoke(storage, repeat each values) { output, _, _ in
+            try plan.withBorrowedResult(output, body)
+        }
+
+    }
+
+    @unsafe private func invokeScoped<Receiver, Output: ~Copyable, each Argument>(
+        on receiver: inout Receiver, _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) throws -> Output
+    ) throws -> Output {
+        guard case .synchronous(let call) = call else { preconditionFailure("The signature has a matching call plan.") }
+        let plan = try call.values.scopedResult()
+
+        let storage = try self.receiver.encode(receiver)
+
+        var invoked = false
+        let outcome: Swift.Result<Output, any Error>
+        do {
+            outcome = .success(try unsafe invoke(storage, didInvoke: { invoked = true }, repeat each values) { output, _, _ in
+                try plan.withBorrowedResult(output, body)
+            })
+        } catch { outcome = .failure(error) }
+        return try self.receiver.finishInvocation(outcome, storage: storage, invoked: invoked, receiver: &receiver,
+            retaining: (storage.writebackOwner(retaining: [symbol.image, type.image]), implementation))
+
+    }
+
+    @_transparent
+    @unsafe public nonisolated(nonsending) func unsafeInvoke<Receiver, Output: ~Copyable, Failure: Error, each Argument>(
+        on receiver: Receiver, _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output where Signature == (repeat each Argument) async throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe await invokeScopedAsync(on: receiver, repeat each values, withResult: body)
+    }
+
+    @_transparent
+    @unsafe public nonisolated(nonsending) func unsafeInvoke<Receiver, Output: ~Copyable, Failure: Error, each Argument>(
+        on receiver: Receiver, _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output where Signature == @Sendable (repeat each Argument) async throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe await invokeScopedAsync(on: receiver, repeat each values, withResult: body)
+    }
+
+    @_transparent
+    @unsafe public nonisolated(nonsending) func unsafeInvoke<Receiver, Output: ~Copyable, Failure: Error, each Argument>(
+        on receiver: Receiver, _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output where Signature == @concurrent (repeat each Argument) async throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe await invokeScopedAsync(on: receiver, repeat each values, withResult: body)
+    }
+
+    @_transparent
+    @unsafe public nonisolated(nonsending) func unsafeInvoke<Receiver, Output: ~Copyable, Failure: Error, each Argument>(
+        on receiver: Receiver, _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output where Signature == @Sendable @concurrent (repeat each Argument) async throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe await invokeScopedAsync(on: receiver, repeat each values, withResult: body)
+    }
+
+    @_transparent
+    @unsafe public nonisolated(nonsending) func unsafeInvoke<Receiver, Output: ~Copyable, Failure: Error, each Argument>(
+        on receiver: inout Receiver, _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output where Signature == (repeat each Argument) async throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe await invokeScopedAsync(on: &receiver, repeat each values, withResult: body)
+    }
+
+    @_transparent
+    @unsafe public nonisolated(nonsending) func unsafeInvoke<Receiver, Output: ~Copyable, Failure: Error, each Argument>(
+        on receiver: inout Receiver, _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output where Signature == @Sendable (repeat each Argument) async throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe await invokeScopedAsync(on: &receiver, repeat each values, withResult: body)
+    }
+
+    @_transparent
+    @unsafe public nonisolated(nonsending) func unsafeInvoke<Receiver, Output: ~Copyable, Failure: Error, each Argument>(
+        on receiver: inout Receiver, _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output where Signature == @concurrent (repeat each Argument) async throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe await invokeScopedAsync(on: &receiver, repeat each values, withResult: body)
+    }
+
+    @_transparent
+    @unsafe public nonisolated(nonsending) func unsafeInvoke<Receiver, Output: ~Copyable, Failure: Error, each Argument>(
+        on receiver: inout Receiver, _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output where Signature == @Sendable @concurrent (repeat each Argument) async throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe await invokeScopedAsync(on: &receiver, repeat each values, withResult: body)
+    }
+
+    @unsafe @usableFromInline nonisolated(nonsending) func invokeScopedAsync<Receiver, Output: ~Copyable, each Argument>(
+        on receiver: Receiver, _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output {
+        guard case .asynchronous(let call, _) = call else { preconditionFailure("The signature has a matching call plan.") }
+        let plan = try call.values.scopedResult()
+
+        guard !self.receiver.isMutating || self.receiver.mode == .object || receiver is NativeSwiftValue || receiver is NativeSwiftBorrowedValue else {
+            throw ABIResolutionError.unsupportedDeclaration("A mutating Swift value member requires an inout receiver.")
+        }
+
+        let storage = try self.receiver.encode(receiver, asynchronous: true)
+
+        return try unsafe await invokeAsync(storage, repeat each values) { output, _, _ in
+            try await plan.withBorrowedResult(output, body)
+        }
+
+    }
+
+    @unsafe @usableFromInline nonisolated(nonsending) func invokeScopedAsync<Receiver, Output: ~Copyable, each Argument>(
+        on receiver: inout Receiver, _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output {
+        guard case .asynchronous(let call, _) = call else { preconditionFailure("The signature has a matching call plan.") }
+        let plan = try call.values.scopedResult()
+
+        let storage = try self.receiver.encode(receiver, asynchronous: true)
+
+        var invoked = false
+        let outcome: Swift.Result<Output, any Error>
+        do {
+            outcome = .success(try unsafe await invokeAsync(storage, didInvoke: { invoked = true }, repeat each values) { output, _, _ in
+                try await plan.withBorrowedResult(output, body)
+            })
+        } catch { outcome = .failure(error) }
+        return try self.receiver.finishInvocation(outcome, storage: storage, invoked: invoked, receiver: &receiver,
+            retaining: (storage.writebackOwner(retaining: [symbol.image, type.image]), implementation))
+
+    }
+
+}
+
+extension NativeBoundSwiftMethod {
+
+    @unsafe public func unsafeInvoke<Output: ~Copyable, Failure: Error, each Argument>(
+        _ values: repeat each Argument, withResult body: (NativeSwiftBorrowedValue) throws -> Output
+    ) throws -> Output where Signature == (repeat each Argument) throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe method.unsafeInvoke(on: binding.receiver!, repeat each values, withResult: body)
+    }
+
+
+    @unsafe public func unsafeInvoke<Output: ~Copyable, Failure: Error, each Argument>(
+        _ values: repeat each Argument, withResult body: (NativeSwiftBorrowedValue) throws -> Output
+    ) throws -> Output where Signature == @Sendable (repeat each Argument) throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe method.unsafeInvoke(on: binding.receiver!, repeat each values, withResult: body)
+    }
+
+    @_transparent
+    @unsafe public nonisolated(nonsending) func unsafeInvoke<Output: ~Copyable, Failure: Error, each Argument>(
+        _ values: repeat each Argument, withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output where Signature == (repeat each Argument) async throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe await invokeScopedAsync(repeat each values, withResult: body)
+    }
+
+    @_transparent
+    @unsafe public nonisolated(nonsending) func unsafeInvoke<Output: ~Copyable, Failure: Error, each Argument>(
+        _ values: repeat each Argument, withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output where Signature == @Sendable (repeat each Argument) async throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe await invokeScopedAsync(repeat each values, withResult: body)
+    }
+
+    @_transparent
+    @unsafe public nonisolated(nonsending) func unsafeInvoke<Output: ~Copyable, Failure: Error, each Argument>(
+        _ values: repeat each Argument, withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output where Signature == @concurrent (repeat each Argument) async throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe await invokeScopedAsync(repeat each values, withResult: body)
+    }
+
+    @_transparent
+    @unsafe public nonisolated(nonsending) func unsafeInvoke<Output: ~Copyable, Failure: Error, each Argument>(
+        _ values: repeat each Argument, withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output where Signature == @Sendable @concurrent (repeat each Argument) async throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe await invokeScopedAsync(repeat each values, withResult: body)
+    }
+
+    @unsafe @usableFromInline nonisolated(nonsending) func invokeScopedAsync<Output: ~Copyable, each Argument>(
+        _ values: repeat each Argument, withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output {
+        try unsafe await method.invokeScopedAsync(on: binding.receiver!, repeat each values, withResult: body)
+    }
 }

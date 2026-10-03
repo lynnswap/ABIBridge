@@ -2,7 +2,7 @@ import ABIBridgeCore
 import Synchronization
 
 func swiftFunctionTypeName(_ type: Any.Type) throws -> String {
-    if type == NativeSwiftValue.self { return "some" }
+    if type == NativeSwiftValue.self || type == NativeSwiftBorrowedValue.self { return "some" }
     if let closure = type as? any SwiftClosureValue.Type {
         return try swiftFunctionTypeName(closure.swiftFunctionType)
     }

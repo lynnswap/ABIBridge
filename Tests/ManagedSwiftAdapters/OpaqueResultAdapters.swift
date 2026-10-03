@@ -24,3 +24,15 @@ import ManagedSwiftFixtures
 @inline(never) @concurrent public func eraseOpaqueClassAsyncReference(_ gate: AsyncGate, _ token: ErrorLifetimeToken) async -> any Sendable {
     await makeOpaqueClassAsync(gate, token)
 }
+
+#if hasFeature(Lifetimes)
+@inline(never) public func readScopedReference(_ owner: RuntimeScopedOwner, _ fail: Bool) throws -> Int64 {
+    let result = try makeRuntimeScoped(owner, fail)
+    return result.read()
+}
+@inline(never) public nonisolated(nonsending) func readScopedAsyncReference(_ owner: RuntimeScopedOwner, _ fail: Bool) async throws -> Int64 {
+    let result = try await makeRuntimeScopedAsync(owner, fail)
+    await Task.yield()
+    return result.read()
+}
+#endif
