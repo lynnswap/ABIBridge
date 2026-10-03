@@ -426,6 +426,28 @@ struct SwiftImportedFunctionHookTests {
         #expect(observed.value == nil)
     }
 
+    @Test func savedAdapterDoesNotRetainUnforwardedRuntimeInputs() async throws {
+        let fixture = try CompiledSwiftReplacementFixture()
+        defer { fixture.cleanup() }
+        let type = try await fixture.runtime.swiftType(named: fixture.module + ".HookTicket", in: fixture.providerScope)
+        let target = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookDiscardTicket<A where A: ~Swift.Copyable>(__owned A, Swift.UnsafeMutableRawPointer?) -> Swift.Int64",
+            as: ((NativeSwiftConsuming<NativeSwiftValue>, OptionalHookPointer?) -> Int64).self,
+            genericArguments: [.type(type)], in: fixture.providerScope)
+        let caller = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".callDiscardTicket(_:)",
+            as: ((UnsafeMutableRawPointer?) -> Int64).self, in: fixture.callerScope)
+        let counts = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookTicketCounts()",
+            as: (() -> (Int64, Int64)).self, in: fixture.providerScope)
+        let saved = SavedRuntimeHookValues()
+        let hook = try unsafe await target.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { Issue.record($0) }) { _, _, value in saved.adapter = value; return 100 }
+        defer { hook.invalidate() }
+        let pointer = UnsafeMutableRawPointer.allocate(byteCount: 1, alignment: 1)
+        defer { pointer.deallocate() }
+        #expect(try unsafe caller.unsafeInvoke(pointer) == 100)
+        #expect(saved.adapter!.marker == 42)
+        #expect(try unsafe counts.unsafeInvoke() == (0, 1))
+    }
+
     @Test func runtimeValuesNestedClosuresAndInoutComposeThroughHooks() async throws {
         let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
         @inline(never) public func runtimeHookEcho<Value>(_ value: Value) -> Value { value }

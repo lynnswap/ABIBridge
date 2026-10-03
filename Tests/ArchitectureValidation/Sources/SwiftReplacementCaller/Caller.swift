@@ -107,3 +107,5 @@ open class CallerOverridingRenderer: ReplacementRenderer {
     hookAdapterWriteback(value, &body)
     return body()
 }
+
+@inline(never) public func callDiscardTicket(_ pointer: UnsafeMutableRawPointer?) -> Int64 { hookDiscardTicket(HookTicket(42), pointer) }

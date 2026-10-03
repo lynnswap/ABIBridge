@@ -219,3 +219,5 @@ open class HookTicketRenderer {
 @inline(never) public func consumeHookTuple<Value>(_ value: consuming (Value, Int64)) -> Int64 { value.1 }
 
 @inline(never) public func hookAdapterWriteback(_ value: UnsafeMutableRawPointer?, _ body: inout () -> Int64) {}
+
+@inline(never) public func hookDiscardTicket<Value: ~Copyable>(_ value: consuming Value, _ pointer: UnsafeMutableRawPointer?) -> Int64 { 0 }
