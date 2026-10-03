@@ -583,6 +583,26 @@ struct SwiftGenericCallPlan: Sendable {
                 sources.append(.init(index: index, expected: expected, isMetatype: false))
             }
         }
+        func add(_ tuple: SwiftTupleValuePlan, at start: Int) {
+            var index = start
+            for group in tuple.parameters.groups {
+                switch group {
+                case .pack: index += 1
+                case .value(let logical):
+                    let field = tuple.fields[logical]
+                    if let nested = SwiftGenericParameters.expandedTuple(field.argument) {
+                        add(nested, at: index)
+                        index += nested.argumentTypes.count
+                    } else {
+                        switch field.argument {
+                        case .concrete: break
+                        default: add(field.nativeType, layout: field.type, at: index)
+                        }
+                        index += 1
+                    }
+                }
+            }
+        }
         for (formal, group) in zip(binding.declaration.arguments, parameters.groups) {
             switch group {
             case .pack: nativeIndex += 1
@@ -592,9 +612,7 @@ struct SwiftGenericCallPlan: Sendable {
                 defer { nativeIndex += tuple?.argumentTypes.count ?? 1 }
                 guard argument.convention != .inoutValue, binding.dependsOnParameters(formal) else { continue }
                 if let tuple {
-                    for (index, leaf) in tuple.leaves.enumerated() {
-                        add(leaf.nativeType, layout: leaf.type, at: nativeIndex + index)
-                    }
+                    add(tuple, at: nativeIndex)
                 } else {
                     let native = try binding.types(formal)[0]
                     add(native, layout: try Self.layout(formal, actual: native, binding: binding), at: nativeIndex)
