@@ -77,8 +77,23 @@ public struct NativeSwiftFunctionInvocation<Result, each Argument>: CustomString
 
 struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
     let result: SwiftValueCodec<Result>
+    private let resultType: CValueType
     let arguments: (repeat SwiftValueCodec<each Argument>)
-    init() throws {
+    init(declaration: SwiftGenericCallPlan? = nil) throws {
+        if let declaration {
+            guard declaration.binding.declaration.parameters.isEmpty else {
+                throw ABIResolutionError.unsupportedDeclaration("Generic hooks require polymorphic incoming arguments and metadata; use direct invocation.")
+            }
+            let convertsResult: Bool
+            switch declaration.result {
+            case .runtimeValue: convertsResult = true
+            case .closure(let codec): convertsResult = codec.nativePlan?.convertsValues == true
+            default: convertsResult = false
+            }
+            guard !convertsResult, !declaration.arguments.contains(where: { $0.runtimeValue != nil }) else {
+                throw ABIResolutionError.unsupportedDeclaration("Managed hooks require declaration-based runtime value conversion; use direct invocation.")
+            }
+        }
         for type in repeat (each Argument).self {
             if type is any SwiftClosureValue.Type {
                 // A native nonescaping closure can carry a stack context that
@@ -89,6 +104,9 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
             }
         }
         result = try SwiftValueCodec()
+        // An opaque result can use indirect native return storage even when its
+        // known payload has an ordinary scalar or reference representation.
+        resultType = declaration?.result.type ?? result.type
         arguments = (repeat try SwiftValueCodec<each Argument>())
     }
     func encodeArguments(_ values: repeat each Argument) throws -> [NativeValueStorage] {
@@ -108,7 +126,7 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
         var types: [CValueType] = [], identities: [ObjectIdentifier] = [ObjectIdentifier(Result.self)]
         for codec in repeat each arguments { types.append(codec.type) }
         for type in repeat (each Argument).self { identities.append(ObjectIdentifier(type)) }
-        return try SwiftHookSignature(result: result.type, arguments: types, identities: identities,
+        return try SwiftHookSignature(result: resultType, arguments: types, identities: identities,
             consumesArguments: consumingArguments, receiver: receiver, owner: owner, cloneArguments: { storage in
                 var index = 0, result: [NativeValueStorage] = []
                 for codec in repeat each arguments {

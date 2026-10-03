@@ -131,7 +131,7 @@ struct SwiftGenericReceiverTests {
                 _ = try await object.method(named: "unsupportedRead(_:)", as: ((String) -> String).self)
                 Issue.record("Expected the unsupported candidate's preparation error")
             } catch ABIResolutionError.unsupportedDeclaration(let reason) {
-                #expect(reason.contains("OpaqueReturnType"))
+                #expect(reason.contains("Generic opaque results require enclosing metadata"))
             }
         }
     }

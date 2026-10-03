@@ -4,12 +4,22 @@ import Synchronization
 func swiftFunctionTypeName(_ type: Any.Type) throws -> String {
     if type == NativeSwiftValue.self { return "some" }
     if let closure = type as? any SwiftClosureValue.Type {
-        guard !closure.requiresExplicitDeclaration else {
-            throw ABIResolutionError.unsupportedDeclaration("Runtime-typed callbacks require a complete source-level declaration.")
-        }
         return try swiftFunctionTypeName(closure.swiftFunctionType)
     }
-    return try swiftNativeTypeName(type)
+    var name = try swiftNativeTypeName(type)
+    let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
+    if metadata.load(as: UInt.self) == 0x302 {
+        let function = try SwiftFunctionSignature(type)
+        for child in function.parameters {
+            let native = try swiftNativeTypeName(child)
+            let adapted = try swiftArgumentTypeName(child, defaultConsuming: false)
+            if native != adapted { name = name.replacingOccurrences(of: native, with: adapted) }
+        }
+        let nativeResult = try swiftNativeTypeName(function.result)
+        let adaptedResult = try swiftFunctionTypeName(function.result)
+        if nativeResult != adaptedResult { name = name.replacingOccurrences(of: nativeResult, with: adaptedResult) }
+    }
+    return name
 }
 
 func swiftNativeTypeName(_ type: Any.Type) throws -> String {
@@ -114,6 +124,16 @@ func swiftOuterSignature(_ declaration: String) -> (text: String, result: Substr
 
 final class SwiftCallInterface: @unchecked Sendable {
     let handle: OpaquePointer
+    private let callback = Mutex<SwiftClosureCallbackOwner?>(nil)
+
+    func closureEntry() throws -> SwiftClosureCallbackOwner {
+        try callback.withLock { cached in
+            if let cached { return cached }
+            let entry = try SwiftClosureCallbackOwner(interface: self)
+            cached = entry
+            return entry
+        }
+    }
 
     init(result: CValueType, parameters: [CValueType], errorPlan: SwiftErrorPlan? = nil) throws {
         let handles: [OpaquePointer?] = parameters.map(\.handle)
@@ -197,7 +217,7 @@ public struct NativeSwiftFunction<Signature>: Sendable {
     public let symbol: ResolvedSymbol
 
     private var implementation: SwiftImplementation?
-    private let call: SwiftCallablePlan
+    let call: SwiftCallablePlan
     private let context: UInt
     private let typeOwner: NativeSwiftType?
     let consumesArguments: Bool
@@ -209,7 +229,7 @@ public struct NativeSwiftFunction<Signature>: Sendable {
          generic: SwiftGenericCallPlan? = nil) throws {
         self.symbol = symbol
         self.consumesArguments = consumesArguments
-        isGeneric = generic != nil
+        isGeneric = generic?.binding.declaration.parameters.isEmpty == false
         context = metadata.map { unsafeBitCast($0, to: UInt.self) } ?? 0
         typeOwner = owner
         call = try SwiftCallablePlan(signature: Signature.self, symbol: symbol, resolver: resolver ?? owner?.resolver,
@@ -307,6 +327,7 @@ extension ABIRuntime {
     ///   - signature: The complete Swift function type, including native error and async isolation conventions.
     ///   - scope: Images to search; automatic scope considers only loaded images.
     ///   - genericArguments: Scalar types and packs in declaration parameter order.
+    ///   - valueABIs: Formal ABIs for runtime-only closed nominal values in this lookup.
     ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
     ///   - loading: Whether an explicit image may be acquired and initialized.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
@@ -316,15 +337,16 @@ extension ABIRuntime {
         as signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument] = [],
         declaredAs declaredSignature: String? = nil,
+        valueABIs: [NativeSwiftType: NativeType] = [:],
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftFunction<Signature> {
         let declaration = try genericArguments.isEmpty ? swiftFunctionDeclaration(named: name, as: signature)
             : NativeDeclaration(name: name, language: .swift)
         let symbol = try resolve(declaration, in: scope, loading: loading)
-        if !genericArguments.isEmpty || declaredSignature != nil {
+        if try !genericArguments.isEmpty || declaredSignature != nil || !valueABIs.isEmpty || SwiftFunctionSignature(signature).requiresClosureDeclaration {
             return try preparedGenericFunction(symbol: symbol, signature: signature, genericArguments: genericArguments,
-                                               declaredSignature: declaredSignature)
+                                               declaredSignature: declaredSignature, valueABIs: valueABIs)
         }
         return try NativeSwiftFunction(symbol: symbol, resolver: resolver)
     }
@@ -336,6 +358,7 @@ extension ABIRuntime {
     ///   - signature: The complete Swift function type, including native error and async isolation conventions.
     ///   - image: An image whose symbol index is reused.
     ///   - genericArguments: Scalar types and packs in declaration parameter order.
+    ///   - valueABIs: Formal ABIs for runtime-only closed nominal values in this lookup.
     ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
@@ -345,15 +368,16 @@ extension ABIRuntime {
         as signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument] = [],
         declaredAs declaredSignature: String? = nil,
+        valueABIs: [NativeSwiftType: NativeType] = [:],
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftFunction<Signature> {
         let declaration = try genericArguments.isEmpty ? swiftFunctionDeclaration(named: name, as: signature)
             : NativeDeclaration(name: name, language: .swift)
         let symbol = try resolve(declaration, in: image, loading: loading)
-        if !genericArguments.isEmpty || declaredSignature != nil {
+        if try !genericArguments.isEmpty || declaredSignature != nil || !valueABIs.isEmpty || SwiftFunctionSignature(signature).requiresClosureDeclaration {
             return try preparedGenericFunction(symbol: symbol, signature: signature, genericArguments: genericArguments,
-                                               declaredSignature: declaredSignature)
+                                               declaredSignature: declaredSignature, valueABIs: valueABIs)
         }
         return try NativeSwiftFunction(symbol: symbol, resolver: resolver)
     }

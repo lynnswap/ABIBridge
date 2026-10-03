@@ -223,6 +223,32 @@ struct SwiftRuntimeValuePlan: Sendable {
                            codeLifetime: SwiftValueCodeLifetime(valueType.codeImages))
     }
 
+    func restoredCallbackArgument(from address: UnsafeRawPointer) -> NativeValueStorage? {
+        constants.isEmpty ? nil : constants.copyStorage(from: address)
+    }
+
+    // Callback preparation establishes Copyable and Escapable before publication.
+    func copyCallbackArgument(from address: UnsafeRawPointer, type: NativeSwiftType) -> NativeSwiftValue {
+        let storage = NativeValueStorage(size: size, alignment: alignment, owner: type,
+            codeLifetime: type.codeLifetime)
+        ABISwiftCopyValue(unsafeBitCast(type.metadata, to: UnsafeRawPointer.self), storage.address, address)
+        storage.assumeInitialized {
+            ABISwiftDestroyValue(unsafeBitCast(type.metadata, to: UnsafeRawPointer.self), $0)
+        }
+        return NativeSwiftValue(storage: storage, type: type)
+    }
+
+    func takeCallbackArgument(from address: UnsafeMutableRawPointer, type: NativeSwiftType) -> NativeSwiftValue {
+        let storage = NativeValueStorage(size: size, alignment: alignment, owner: type,
+            codeLifetime: type.codeLifetime)
+        constants.initialize(at: address)
+        ABISwiftTakeValue(unsafeBitCast(type.metadata, to: UnsafeRawPointer.self), storage.address, address)
+        storage.assumeInitialized {
+            ABISwiftDestroyValue(unsafeBitCast(type.metadata, to: UnsafeRawPointer.self), $0)
+        }
+        return NativeSwiftValue(storage: storage, type: type)
+    }
+
     func requireOwnedValue() throws {
         guard SwiftEscapability.accepts(valueType.metadata) else {
             throw ABIResolutionError.unsupportedDeclaration("An owned runtime value requires an Escapable native type.")
@@ -260,9 +286,7 @@ struct SwiftRuntimeValuePlan: Sendable {
             throw ABIInvocationError.incompatibleValue(expected: valueType.name, actual: actual.name)
         }
         if let owned = value as? NativeSwiftValue { return try owned.access(convention) }
-        guard convention == .borrowing else {
-            throw ABIResolutionError.unsupportedDeclaration("A borrowed runtime value cannot be mutated or consumed.")
-        }
-        return try (value as! NativeSwiftBorrowedValue).borrow.access(asynchronous: asynchronous, type: actual)
+        return try (value as! NativeSwiftBorrowedValue).borrow.access(
+            asynchronous: asynchronous, type: actual, convention: convention)
     }
 }

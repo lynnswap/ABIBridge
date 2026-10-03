@@ -1,5 +1,16 @@
 import ABIBridgeCore
 
+func explicitSwiftValueType(_ metadata: Any.Type, abi: NativeType) throws -> CValueType {
+    let layout = ABISwiftGetValueLayout(unsafeBitCast(metadata, to: UnsafeRawPointer.self))
+    if let components = abi.cType {
+        guard (layout.size...layout.stride).contains(components.size) else {
+            throw ABIResolutionError.unsupportedDeclaration("Swift ABI components must cover the native value without exceeding its stride.")
+        }
+        return try CValueType(swiftComponents: components, size: layout.size, alignment: layout.alignment)
+    }
+    return try CValueType(indirectSwiftSize: layout.size, alignment: layout.alignment)
+}
+
 // Array's frozen representation holds one buffer reference regardless of Element.
 protocol SwiftArrayValue {}
 extension Array: SwiftArrayValue {}
@@ -92,8 +103,8 @@ struct SwiftValueCodec<Value>: Sendable {
                            alignment: type.alignment, codeLifetime: closure == nil ? nil : SwiftValueCodeLifetime([]))
     }
 
-    func encode(_ value: Value) throws -> NativeValueStorage {
-        if closure != nil { return (value as! any SwiftClosureValue).encodeClosure() }
+    func encode(_ value: Value, consuming: Bool = false) throws -> NativeValueStorage {
+        if closure != nil { return try (value as! any SwiftClosureValue).encodeClosure(consuming: consuming) }
         if Value.self == Void.self { return NativeValueStorage(size: 0, alignment: 1) }
         if let cValue { return try cValue.encode(value) }
         let storage = makeStorage()

@@ -2,7 +2,7 @@ import ABIBridgeCore
 
 final class SwiftOpaqueResultPlan: Sendable {
     let type: CValueType
-    private let value: SwiftRuntimeValuePlan
+    let value: SwiftRuntimeValuePlan
 
     private init(metadata: Any.Type, classBound: Bool, owners: [ResolvedSymbol], resolver: SymbolResolver) throws {
         let layout = ABISwiftGetValueLayout(unsafeBitCast(metadata, to: UnsafeRawPointer.self))
@@ -16,6 +16,10 @@ final class SwiftOpaqueResultPlan: Sendable {
     static func make(for result: Any.Type, symbol: ResolvedSymbol,
                              resolver: SymbolResolver?) throws -> SwiftOpaqueResultPlan? {
         guard result == NativeSwiftValue.self else { return nil }
+        return try resolve(symbol: symbol, resolver: resolver)
+    }
+
+    static func resolve(symbol: ResolvedSymbol, resolver: SymbolResolver?) throws -> SwiftOpaqueResultPlan {
         guard let resolver else {
             throw ABIResolutionError.unsupportedDeclaration("Opaque results require source declaration lookup.")
         }
@@ -130,13 +134,7 @@ struct SwiftResultCodec<Value>: Sendable {
             ordinary = nil; self.opaque = nil
             return
         }
-        if let closure = Value.self as? any SwiftClosureValue.Type, !closure.supportsResult {
-            throw ABIResolutionError.unsupportedDeclaration("Runtime-typed callbacks are supported as inputs, not returned closures.")
-        }
-        if Value.self == NativeSwiftValue.self {
-            guard let opaque else {
-                throw ABIResolutionError.unsupportedDeclaration("Opaque result handles require an opaque-return declaration.")
-            }
+        if let opaque {
             self.opaque = opaque
             ordinary = nil
             type = opaque.type

@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import Synchronization
 
 @_silgen_name("ABIInvokeSwiftAsync")
 nonisolated(nonsending) func invokeSwiftAsync(_ invocation: OpaquePointer) async
@@ -38,6 +39,16 @@ final class SwiftAsyncEntry: @unchecked Sendable {
 
 final class SwiftAsyncCallInterface: @unchecked Sendable {
     let handle: OpaquePointer
+    private let callback = Mutex<SwiftAsyncClosureCallbackOwner?>(nil)
+
+    func closureEntry() throws -> SwiftAsyncClosureCallbackOwner {
+        try callback.withLock { cached in
+            if let cached { return cached }
+            let entry = try SwiftAsyncClosureCallbackOwner(interface: self)
+            cached = entry
+            return entry
+        }
+    }
     init(result: CValueType, parameters: [CValueType], errorPlan: SwiftErrorPlan?, inheritsCallerIsolation: Bool) throws {
         let handles: [OpaquePointer?] = parameters.map(\.handle)
         var failure: OpaquePointer?
@@ -53,25 +64,29 @@ final class SwiftAsyncCallInterface: @unchecked Sendable {
     deinit { ABIReleaseSwiftAsyncCallInterface(handle) }
 }
 
-struct SwiftAsyncCall: Sendable {
+final class SwiftAsyncCall: Sendable {
     let interface: SwiftAsyncCallInterface
     private let values: SwiftCallValues
     let errorPlan: SwiftErrorPlan?
     private let hasTrailingValue: Bool
-    private let generic: SwiftGenericCallPlan?
+    let generic: SwiftGenericCallPlan?
+    let closure: SwiftGenericClosurePlan?
+    private var parameters: SwiftGenericParameters? { generic?.parameters ?? closure?.parameters }
 
     init(signature: Any.Type, trailingType: CValueType? = nil, consumesArguments: Bool = false,
-         errorPlan: SwiftErrorPlan? = nil, inheritsCallerIsolation: Bool, opaqueResult: SwiftOpaqueResultPlan? = nil, generic: SwiftGenericCallPlan? = nil) throws {
+         errorPlan: SwiftErrorPlan? = nil, inheritsCallerIsolation: Bool, opaqueResult: SwiftOpaqueResultPlan? = nil, generic: SwiftGenericCallPlan? = nil, closure: SwiftGenericClosurePlan? = nil) throws {
         try generic?.validateMetadataArguments()
         values = try SwiftCallValues(signature: SwiftFunctionSignature(signature), consumesArguments: consumesArguments,
-            opaqueResult: opaqueResult, generic: generic)
+            opaqueResult: opaqueResult, arguments: generic?.arguments ?? closure?.parameters.arguments ?? [],
+            result: generic?.result ?? closure?.result ?? .concrete)
         let logical = values.arguments.map(\.type)
-        var types = generic?.parameters.types(from: logical) ?? logical
+        var types = (generic?.parameters ?? closure?.parameters)?.types(from: logical) ?? logical
         if let trailingType { types.append(trailingType) }
         if let generic {
             types += Array(repeating: try CValueType(scalar: ABIValuePointer), count: generic.metadata.count)
         }
         self.generic = generic
+        self.closure = closure
         interface = try SwiftAsyncCallInterface(result: values.result.type, parameters: types,
             errorPlan: errorPlan, inheritsCallerIsolation: inheritsCallerIsolation)
         self.errorPlan = errorPlan
@@ -97,9 +112,9 @@ struct SwiftAsyncCall: Sendable {
         _ values: repeat each Argument
     ) async throws -> Result {
         precondition(hasTrailingValue == (trailingValue != nil))
-        let logicalStorage = try self.values.encode(repeat each values, retainingCode: (codeOwner, generic))
+        let logicalStorage = try self.values.encode(repeat each values, retainingCode: (codeOwner, generic, closure))
         let logicalAddresses: [UnsafeMutableRawPointer?] = logicalStorage.map(\.address)
-        let encoded = generic?.parameters.encode(logicalAddresses)
+        let encoded = parameters?.encode(logicalAddresses)
         var addresses = encoded?.addresses ?? logicalAddresses
         if let trailingValue { addresses.append(trailingValue.address) }
         if let generic { addresses.append(contentsOf: generic.metadata.addresses) }
@@ -108,7 +123,7 @@ struct SwiftAsyncCall: Sendable {
             + [SwiftValueCodeLifetime.current].compactMap { $0 }
         let lifetime = SwiftValueCodeLifetime.connect(lifetimes,
             retaining: images + (generic?.binding.images ?? []) + (generic?.binding.typeOwners.flatMap(\.codeImages) ?? []))
-        let codeOwners: Any = (codeOwner, generic, lifetime)
+        let codeOwners: Any = (codeOwner, generic, closure, lifetime)
         let nativeError = errorPlan?.makeStorage()
         var failure: OpaquePointer?
         let invocation = addresses.withUnsafeBufferPointer {

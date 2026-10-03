@@ -94,7 +94,7 @@ extension SwiftGenericBinding {
 extension SwiftFormalType {
     func substituting(_ substitutions: [String: Self]) -> Self {
         switch self {
-        case .objectiveCClass: return self
+        case .objectiveCClass, .opaqueResult: return self
         case .named(let name, let arguments):
             if arguments.isEmpty {
                 if let value = substitutions[name] { return value }
@@ -119,9 +119,9 @@ extension SwiftFormalType {
         case .inoutValue(let value): return .inoutValue(value.substituting(substitutions))
         case .metatype(let value): return .metatype(value.substituting(substitutions))
         case .existentialMetatype(let value): return .existentialMetatype(value.substituting(substitutions))
-        case .function(let parameters, let result, let failure, let isAsync):
+        case .function(let parameters, let result, let failure, let isAsync, let isEscaping):
             return .function(parameters.map { $0.substituting(substitutions) }, result.substituting(substitutions),
-                failure: failure?.substituting(substitutions), isAsync: isAsync)
+                failure: failure?.substituting(substitutions), isAsync: isAsync, isEscaping: isEscaping)
         case .foreignFunction(let convention, let parameters, let result):
             return .foreignFunction(convention, parameters.map { $0.substituting(substitutions) }, result.substituting(substitutions))
         }

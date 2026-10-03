@@ -8,6 +8,18 @@ import Testing
 
 struct SwiftExistentialValueTests {
 #if DEBUG
+    @Test func declarationCallbackAuthenticationPreservesClassExistentialIdentity() async throws {
+        typealias Signature = (NativeSwiftClosure<(ManyObjectProtocols) -> ManyObjectProtocols>, ManyObjectProtocols) -> ManyObjectProtocols
+        let function = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.applyManyClassExistentialClosure(_:_:)", as: Signature.self)
+        let plan = try SwiftGenericCallPlan(symbol: function.symbol, genericArguments: [],
+            signature: SwiftFunctionSignature(Signature.self), resolver: .shared)
+        let closure = try #require(plan.arguments.first?.closure)
+        // The arm64e compiler fixture hashes the formally class-based type,
+        // despite passing this many object/witness components indirectly.
+        #expect(closure.discriminator == 59948)
+    }
+
     @Test func metadataKindsAndAuthenticationKeepDistinctContracts() throws {
         #expect(SwiftExistentialRepresentation((any ExistentialValue).Type.self) == nil)
         #expect(SwiftExistentialRepresentation((any ExistentialValue.Type).self) == nil)

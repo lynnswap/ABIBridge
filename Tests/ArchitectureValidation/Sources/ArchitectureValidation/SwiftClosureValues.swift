@@ -43,6 +43,11 @@ private final class ClosureProbeCapture: Sendable {
     deinit { counter.increment() }
 }
 
+private final class NestedClosureProbeCapture: @unchecked Sendable {
+    var value: NativeSwiftClosure<(Int64) -> Int64>?
+    var asyncValue: NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>?
+}
+
 @MainActor func validateSwiftClosureValues() async throws -> [String] {
     let runtime = ABIRuntime()
     var checks: [String] = []
@@ -50,6 +55,280 @@ private final class ClosureProbeCapture: Sendable {
         guard value else { throw ArchitectureValidationFailure(description: message) }
         checks.append(message)
     }
+    do {
+        typealias Inner = NativeSwiftClosure<(Int64) -> Int64>
+        let make = try await runtime.swiftFunction(
+            named: "SwiftValueFixtures.makeConcreteNestedProducer()",
+            as: (() -> NativeSwiftClosure<() -> Inner>).self)
+        let native = try unsafe make.unsafeInvoke().unsafeInvoke()
+        let receive = try NativeSwiftClosure<(Inner) throws -> Int64> { value in
+            try unsafe value.unsafeInvoke(35)
+        }
+        try check(try unsafe receive.unsafeInvoke(native) == 42,
+            "Direct host callback arguments forward a compatible native closure")
+        let owner = NestedClosureProbeCapture()
+        owner.value = native
+        let produce = try NativeSwiftClosure<() throws -> Inner> { owner.value! }
+        let returned = try unsafe produce.unsafeInvoke()
+        try check(try unsafe returned.unsafeInvoke(35) == 42,
+            "Direct host callback results forward a compatible native closure")
+
+        typealias AsyncInner = NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>
+        typealias AsyncCaller = NativeSwiftClosure<nonisolated(nonsending) (AsyncInner, Int64) async -> Int64>
+        final class AsyncOwner: @unchecked Sendable {
+            let value: AsyncCaller
+            init(_ value: AsyncCaller) { self.value = value }
+        }
+        let makeAsync = try await runtime.swiftFunction(
+            named: "SwiftValueFixtures.makeConcreteNestedAsyncCaller()", as: (() -> AsyncCaller).self)
+        let asyncOwner = AsyncOwner(try unsafe makeAsync.unsafeInvoke())
+        let receiveAsync = try NativeSwiftClosure<(AsyncCaller) -> Int64> { _ in 42 }
+        try check(try unsafe receiveAsync.unsafeInvoke(asyncOwner.value) == 42,
+            "A synchronous host callback accepts a native async closure with nested inputs")
+        let produceAsync = try NativeSwiftClosure<() throws -> AsyncCaller> { asyncOwner.value }
+        let returnedAsync = try unsafe produceAsync.unsafeInvoke()
+        let body: nonisolated(nonsending) @Sendable (Int64) async -> Int64 = { value in
+            await Task.yield()
+            return value + 7
+        }
+        try check(try unsafe await returnedAsync.unsafeInvoke(AsyncInner(body), 35) == 42,
+            "A synchronous host callback returns a callable native async closure with nested inputs")
+    }
+
+    do {
+        typealias Inner = NativeSwiftClosure<(Int64) -> Int64>
+        typealias Callback = NativeSwiftClosure<(Inner) throws -> Int64>
+        let visit = try await runtime.swiftFunction(
+            named: "SwiftReplacementFixtures.visitOwnedNestedClosure(_:_:)",
+            as: ((Inner, Callback) throws -> Int64).self)
+        let destroyed = ClosureProbeCounter()
+        do {
+            let capture = ClosureProbeCapture(destroyed)
+            let original = try Inner { $0 + capture.bias }
+            let callback = try Callback { borrowed in
+                let consume = try NativeSwiftClosure<(NativeSwiftConsuming<Inner>) throws -> Int64> { value in
+                    try unsafe value.value.unsafeInvoke(35)
+                }
+                let result = try unsafe consume.unsafeInvoke(NativeSwiftConsuming(borrowed))
+                guard result == 42 else { throw ArchitectureValidationFailure(description: "Consuming a borrowed closure changed its result") }
+                return try unsafe borrowed.unsafeInvoke(35)
+            }
+            try check(try unsafe visit.unsafeInvoke(original, callback) == 50,
+                "Consuming a copied escaping borrow preserves the provider's original closure")
+        }
+        try check(destroyed.count == 1, "Consumed closure copies destroy captures exactly once")
+        let type = try await runtime.swiftType(named: "SwiftReplacementFixtures.EvaluatedIntegerClosure",
+            as: EvaluatedIntegerClosure.self)
+        let create = try await type.initializer(named: "init(_:)", as: ((Inner) -> EvaluatedIntegerClosure).self)
+        let initializerDeaths = ClosureProbeCounter()
+        do {
+            let capture = ClosureProbeCapture(initializerDeaths)
+            let value = try Inner { $0 + capture.bias }
+            try check(try unsafe create.unsafeInvoke(value).value == 42,
+                "An initializer evaluates a guaranteed closure argument")
+        }
+        try check(initializerDeaths.count == 1, "A nonescaping initializer argument releases its temporary context")
+        let stack = try await runtime.swiftFunction(named: "SwiftReplacementFixtures.visitNestedClosure(_:)",
+            as: ((Callback) throws -> Int64).self)
+        let entered = ClosureProbeCounter()
+        let stackBody = try Callback { borrowed in
+            let consume = try NativeSwiftClosure<(NativeSwiftConsuming<Inner>) -> Void> { _ in entered.increment() }
+            do {
+                try unsafe consume.unsafeInvoke(NativeSwiftConsuming(borrowed))
+                throw ArchitectureValidationFailure(description: "A consuming call accepted a nonescaping borrow")
+            } catch is ABIResolutionError {}
+            return try unsafe create.unsafeInvoke(borrowed).value
+        }
+        try check(try unsafe stack.unsafeInvoke(stackBody) == 72 && entered.count == 0,
+            "Stack borrows remain valid for initializers and fail before a consuming callback enters")
+
+        typealias Async = NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>
+        typealias AsyncVisitor = NativeSwiftClosure<nonisolated(nonsending) (Async) async throws -> Void>
+        let visitAsync = try await runtime.swiftFunction(named: "SwiftReplacementFixtures.visitEscapingNestedAsyncClosure(_:)",
+            as: (nonisolated(nonsending) (AsyncVisitor) async throws -> Void).self)
+        let asyncBody: nonisolated(nonsending) @Sendable (Async) async throws -> Void = { borrowed in
+            let synchronous = try NativeSwiftClosure<(NativeSwiftConsuming<Async>) -> Int64> { _ in 42 }
+            guard try unsafe synchronous.unsafeInvoke(NativeSwiftConsuming(borrowed)) == 42 else {
+                throw ArchitectureValidationFailure(description: "A synchronous consumer rejected an async closure")
+            }
+            let body: nonisolated(nonsending) @Sendable (NativeSwiftConsuming<Async>) async throws -> Int64 = { value in
+                await Task.yield()
+                return try unsafe await value.value.unsafeInvoke(35)
+            }
+            let consume = try NativeSwiftClosure(body)
+            guard try unsafe await consume.unsafeInvoke(NativeSwiftConsuming(borrowed)) == 42,
+                  try unsafe await borrowed.unsafeInvoke(1) == 43 else {
+                throw ArchitectureValidationFailure(description: "Async consumption lost the original borrowed context")
+            }
+        }
+        try unsafe await visitAsync.unsafeInvoke(AsyncVisitor(asyncBody))
+        try check(true, "Sync and async consumers retain an escaping async borrow across suspension")
+    }
+    if #available(macOS 26, iOS 26, tvOS 26, watchOS 26, visionOS 26, *) {
+        typealias Sync = NativeSwiftClosure<(Int64) -> Int64>
+        typealias Async = NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>
+        let visitSync = try await runtime.swiftFunction(named: "SwiftReplacementFixtures.visitClosureSynchronously(_:)",
+            as: ((NativeSwiftClosure<(Sync) -> Void>) -> Void).self)
+        let visitAsync = try await runtime.swiftFunction(named: "SwiftReplacementFixtures.visitAsyncClosureSynchronously(_:)",
+            as: ((NativeSwiftClosure<(Async) -> Void>) -> Void).self)
+        let forwardSync = try await runtime.swiftFunction(named: "SwiftReplacementFixtures.applyBorrowedClosureAsync(_:_:)",
+            as: (nonisolated(nonsending) (Sync, Int64) async -> Int64).self)
+        let forwardAsync = try await runtime.swiftFunction(named: "SwiftReplacementFixtures.applyBorrowedAsyncClosure(_:_:)",
+            as: (nonisolated(nonsending) (Async, Int64) async -> Int64).self)
+        let inspect = try await runtime.swiftFunction(named: "SwiftReplacementFixtures.inspectAsyncClosureSynchronously(_:)",
+            as: ((Async) -> Int64).self)
+        var syncTask: Task<Int64, any Error>?
+        try unsafe NativeSwiftClosure<(Sync) -> Void>.withUnsafeNonescaping({ value in
+            syncTask = Task.immediate { @MainActor in try unsafe await forwardSync.unsafeInvoke(value, 20) }
+        }) { try unsafe visitSync.unsafeInvoke($0) }
+        do { _ = try await syncTask!.value; throw ArchitectureValidationFailure(description: "A synchronous closure borrow crossed suspension") }
+        catch NativeSwiftBorrowError.synchronousBorrow { checks.append("Synchronous closure forwarding rejects a synchronous source borrow before async native entry") }
+        var asyncTask: Task<Int64, any Error>?
+        var directTask: Task<Int64, any Error>?
+        let directBody: nonisolated(nonsending) @Sendable (Async, Int64) async throws -> Int64 = { value, number in
+            try unsafe await value.unsafeInvoke(number)
+        }
+        let direct = try NativeSwiftClosure<nonisolated(nonsending) (Async, Int64) async throws -> Int64>(directBody)
+        var inspectionResult: Int64?
+        var inspectionError: (any Error)?
+        try unsafe NativeSwiftClosure<(Async) -> Void>.withUnsafeNonescaping({ value in
+            do { inspectionResult = try unsafe inspect.unsafeInvoke(value) }
+            catch { inspectionError = error }
+            asyncTask = Task.immediate { @MainActor in try unsafe await forwardAsync.unsafeInvoke(value, 20) }
+            directTask = Task.immediate { @MainActor in try unsafe await direct.unsafeInvoke(value, 20) }
+        }) { try unsafe visitAsync.unsafeInvoke($0) }
+        if let inspectionError { throw inspectionError }
+        try check(inspectionResult == 42, "A synchronous native call can receive an async closure borrowed from a synchronous scope")
+        do { _ = try await asyncTask!.value; throw ArchitectureValidationFailure(description: "An async closure borrow crossed its synchronous source scope") }
+        catch NativeSwiftBorrowError.synchronousBorrow { checks.append("Async closure forwarding rejects a synchronous source borrow before async native entry") }
+        do { _ = try await directTask!.value; throw ArchitectureValidationFailure(description: "A direct async call accepted a synchronous source borrow") }
+        catch NativeSwiftBorrowError.synchronousBorrow { checks.append("Direct async closure invocation checks the lifetime of closure inputs") }
+
+        typealias Callback = NativeSwiftClosure<nonisolated(nonsending) (Async) async throws -> Int64>
+        let visitSuspending = try await runtime.swiftFunction(named: "SwiftReplacementFixtures.visitNestedAsyncClosure(_:)",
+            as: (nonisolated(nonsending) (Callback) async throws -> Int64).self)
+        let body: nonisolated(nonsending) @Sendable (Async) async throws -> Int64 = { value in
+            try unsafe await forwardAsync.unsafeInvoke(value, 20)
+        }
+        try check(try unsafe await visitSuspending.unsafeInvoke(Callback(body)) == 42,
+            "Async closure forwarding preserves a valid suspending native borrow")
+        let forwardSyncBody: nonisolated(nonsending) @Sendable (Sync) async throws -> Int64 = { value in
+            try unsafe await forwardSync.unsafeInvoke(value, 20)
+        }
+        let receiveSync = try NativeSwiftClosure<nonisolated(nonsending) (Sync) async throws -> Int64>(forwardSyncBody)
+        try check(try unsafe await receiveSync.unsafeInvoke(Sync { $0 + 22 }) == 42,
+            "A synchronous closure borrowed in an async scope can be forwarded across suspension")
+    }
+    let nested = try await runtime.swiftFunction(
+        named: "SwiftReplacementFixtures.visitNestedClosure(_:)",
+        as: ((NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>) throws -> Int64>) throws -> Int64).self)
+    let saved = NestedClosureProbeCapture()
+    let nestedInputBody = try NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>) throws -> Int64> { value in
+        saved.value = value
+        return try unsafe value.unsafeInvoke(20)
+    }
+    try check(try unsafe nested.unsafeInvoke(nestedInputBody) == 42,
+              "Nested Swift closure authenticates and borrows a stack capture")
+    do { _ = try unsafe saved.value!.unsafeInvoke(1); throw ArchitectureValidationFailure(description: "A nested borrow escaped") }
+    catch NativeSwiftBorrowError.expiredBorrow { checks.append("Nested closure expires with its native callback scope") }
+    typealias NestedAsync = NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>
+    typealias NestedAsyncBody = NativeSwiftClosure<nonisolated(nonsending) (NestedAsync) async throws -> Int64>
+    let nestedAsync = try await runtime.swiftFunction(
+        named: "SwiftReplacementFixtures.visitNestedAsyncClosure(_:)",
+        as: (nonisolated(nonsending) (NestedAsyncBody) async throws -> Int64).self)
+    let asyncBody: nonisolated(nonsending) @Sendable (NestedAsync) async throws -> Int64 = { value in
+        saved.asyncValue = value
+        await Task.yield()
+        return try unsafe await value.unsafeInvoke(20)
+    }
+    try check(try unsafe await nestedAsync.unsafeInvoke(NestedAsyncBody(asyncBody)) == 42,
+              "Nested async closure authenticates and preserves its borrow across suspension")
+    do { _ = try unsafe await saved.asyncValue!.unsafeInvoke(1); throw ArchitectureValidationFailure(description: "An async nested borrow escaped") }
+    catch NativeSwiftBorrowError.expiredBorrow { checks.append("Nested async closure expires after native completion") }
+    let produceClosure = try await runtime.swiftFunction(
+        named: "SwiftReplacementFixtures.callClosureProducer(_:)",
+        as: ((NativeSwiftClosure<() throws -> NativeSwiftClosure<(Int64) -> Int64>>) throws -> Int64).self)
+    let producer = try NativeSwiftClosure<() throws -> NativeSwiftClosure<(Int64) -> Int64>> {
+        try NativeSwiftClosure { (value: Int64) in value + 7 }
+    }
+    try check(try unsafe produceClosure.unsafeInvoke(producer) == 42,
+              "Nested closure result transfers its owned authenticated context to native code")
+    typealias NativeInner = NativeSwiftClosure<(Int64) -> Int64>
+    typealias NativeCaller = NativeSwiftClosure<(NativeInner, Int64) -> Int64>
+    typealias NativeProducer = NativeSwiftClosure<() -> NativeInner>
+    let concreteFactory = try await runtime.swiftFunction(named: "SwiftValueFixtures.makeConcreteNestedCaller()", as: (() -> NativeCaller).self)
+    let genericCall = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.callNestedRuntimeCaller<A>(((A) -> A, A) -> A, A) -> A",
+        as: ((NativeCaller, Int64) -> Int64).self, genericArguments: [.type(Int64.self)])
+    let concreteCaller = try unsafe concreteFactory.unsafeInvoke()
+    try check(try unsafe genericCall.unsafeInvoke(concreteCaller, 42) == 42,
+        "Native nested concrete input reabstracts a generic callback and authenticates both entries")
+    let genericFactory = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.makeNestedRuntimeCaller<A>(A.Type) -> ((A) -> A, A) -> A",
+        as: ((Int64.Type) -> NativeCaller).self, genericArguments: [.type(Int64.self)])
+    let concreteCall = try await runtime.swiftFunction(named: "SwiftValueFixtures.callConcreteNestedCaller(_:)", as: ((NativeCaller) -> Int64).self)
+    try check(try unsafe concreteCall.unsafeInvoke(genericFactory.unsafeInvoke(Int64.self)) == 42,
+        "Native nested generic input reabstracts a concrete callback")
+    let concreteProducer = try await runtime.swiftFunction(named: "SwiftValueFixtures.makeConcreteNestedProducer()", as: (() -> NativeProducer).self)
+    let genericProduce = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.callNonthrowingNestedRuntimeProducer<A>(() -> (A) -> A, A) -> A",
+        as: ((NativeProducer, Int64) -> Int64).self, genericArguments: [.type(Int64.self)])
+    try check(try unsafe genericProduce.unsafeInvoke(concreteProducer.unsafeInvoke(), 35) == 42,
+        "Native nested concrete result transfers a generic authenticated closure")
+    let genericProducer = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.makeNestedRuntimeProducer<A>(A.Type) -> () -> (A) -> A",
+        as: ((Int64.Type) -> NativeProducer).self, genericArguments: [.type(Int64.self)])
+    let concreteProduce = try await runtime.swiftFunction(named: "SwiftValueFixtures.callConcreteNestedProducer(_:)", as: ((NativeProducer) -> Int64).self)
+    try check(try unsafe concreteProduce.unsafeInvoke(genericProducer.unsafeInvoke(Int64.self)) == 42,
+        "Native nested generic result transfers a concrete authenticated closure")
+    typealias NativeAsyncCaller = NativeSwiftClosure<nonisolated(nonsending) (NestedAsync, Int64) async -> Int64>
+    let concreteAsyncFactory = try await runtime.swiftFunction(named: "SwiftValueFixtures.makeConcreteNestedAsyncCaller()", as: (() -> NativeAsyncCaller).self)
+    let genericAsyncCall = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.callNestedRuntimeAsyncCaller<A>(nonisolated(nonsending) (nonisolated(nonsending) (A) async -> A, A) async -> A, A) async -> A",
+        as: (nonisolated(nonsending) (NativeAsyncCaller, Int64) async -> Int64).self, genericArguments: [.type(Int64.self)])
+    let concreteAsyncCaller = try unsafe concreteAsyncFactory.unsafeInvoke()
+    try check(try unsafe await genericAsyncCall.unsafeInvoke(concreteAsyncCaller, 42) == 42,
+        "Native nested async concrete input reabstracts a generic callback across suspension")
+    let genericAsyncFactory = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.makeNestedRuntimeAsyncCaller<A>(A.Type) -> nonisolated(nonsending) (nonisolated(nonsending) (A) async -> A, A) async -> A",
+        as: ((Int64.Type) -> NativeAsyncCaller).self, genericArguments: [.type(Int64.self)])
+    let concreteAsyncCall = try await runtime.swiftFunction(named: "SwiftValueFixtures.callConcreteNestedAsyncCaller(_:)",
+        as: (nonisolated(nonsending) (NativeAsyncCaller) async -> Int64).self)
+    let genericAsyncCaller = try unsafe genericAsyncFactory.unsafeInvoke(Int64.self)
+    try check(try unsafe await concreteAsyncCall.unsafeInvoke(genericAsyncCaller) == 42,
+        "Native nested async generic input reabstracts a concrete callback across suspension")
+    typealias NativeAsyncProducer = NativeSwiftClosure<nonisolated(nonsending) () async -> NestedAsync>
+    let asyncProducerFactory = try await runtime.swiftFunction(named: "SwiftValueFixtures.makeConcreteNestedAsyncProducer()", as: (() -> NativeAsyncProducer).self)
+    let genericAsyncProduce = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.callNestedRuntimeAsyncProducer<A>(nonisolated(nonsending) () async -> nonisolated(nonsending) (A) async -> A, A) async -> A",
+        as: (nonisolated(nonsending) (NativeAsyncProducer, Int64) async -> Int64).self, genericArguments: [.type(Int64.self)])
+    let asyncProducer = try unsafe asyncProducerFactory.unsafeInvoke()
+    try check(try unsafe await genericAsyncProduce.unsafeInvoke(asyncProducer, 35) == 42,
+        "Native nested async result transfers its authenticated generic descriptor")
+    typealias NativePackInner = NativeSwiftClosure<(Int64, String) -> Int64>
+    typealias NativePackCaller = NativeSwiftClosure<(NativePackInner, Int64, String) -> Int64>
+    let packFactory = try await runtime.swiftFunction(named: "SwiftValueFixtures.makeConcreteNestedPackCaller()", as: (() -> NativePackCaller).self)
+    let packCall = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.callNestedRuntimePackCaller<each A>(_: repeat A, body: ((repeat A) -> Swift.Int64, repeat A) -> Swift.Int64) -> Swift.Int64",
+        as: ((Int64, String, NativePackCaller) -> Int64).self, genericArguments: [.pack([.type(Int64.self), .type(String.self)])])
+    try check(try unsafe packCall.unsafeInvoke(35, "pack", packFactory.unsafeInvoke()) == 42,
+        "Native nested pack callback reabstracts its inner address vector and authentication")
+    let copiedInputs = NestedClosureProbeCapture()
+    typealias CopyInput = NativeSwiftClosure<(NativeInner) throws -> Void>
+    let visitEscaping = try await runtime.swiftFunction(named: "SwiftReplacementFixtures.visitEscapingNestedClosure(_:)",
+        as: ((CopyInput) throws -> Void).self)
+    try unsafe visitEscaping.unsafeInvoke(CopyInput { copiedInputs.value = try $0.copy() })
+    try check(try unsafe copiedInputs.value!.unsafeInvoke(35) == 42,
+        "Copying a native escaping input owns its context after the synchronous callback returns")
+    typealias CopyAsyncInput = NativeSwiftClosure<nonisolated(nonsending) (NestedAsync) async throws -> Void>
+    let visitAsyncEscaping = try await runtime.swiftFunction(named: "SwiftReplacementFixtures.visitEscapingNestedAsyncClosure(_:)",
+        as: (nonisolated(nonsending) (CopyAsyncInput) async throws -> Void).self)
+    let copyAsyncBody: nonisolated(nonsending) @Sendable (NestedAsync) async throws -> Void = { value in
+        await Task.yield(); copiedInputs.asyncValue = try value.copy()
+    }
+    try unsafe await visitAsyncEscaping.unsafeInvoke(CopyAsyncInput(copyAsyncBody))
+    try check(try unsafe await copiedInputs.asyncValue!.unsafeInvoke(35) == 42,
+        "Copying a native escaping async input owns its descriptor and context after suspension")
     let apply = try await runtime.swiftFunction(
         named: "SwiftReplacementFixtures.callClosureValue(_:_:)",
         as: ((NativeSwiftClosure<(Int64) -> Int64>, Int64) -> Int64).self

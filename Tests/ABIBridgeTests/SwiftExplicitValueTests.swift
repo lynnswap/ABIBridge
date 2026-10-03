@@ -159,9 +159,16 @@ struct SwiftExplicitValueTests {
         receiver = nil
     }
 
-    @Test func invalidStorageExtentFailsBeforePublishingACallback() {
-        #expect(throws: ABIResolutionError.self) {
-            _ = try NativeSwiftClosure<(UndersizedSwiftValue) -> UndersizedSwiftValue> { $0 }
+    @Test func invalidStorageExtentFailsBeforeInvokingACallback() throws {
+        var invoked = false
+        try unsafe NativeSwiftClosure<(UndersizedSwiftValue) -> UndersizedSwiftValue>.withUnsafeNonescaping({ value in
+            invoked = true
+            return value
+        }) { callback in
+            #expect(throws: ABIResolutionError.self) {
+                try unsafe callback.unsafeInvoke(UndersizedSwiftValue(first: 1, second: 2)) as UndersizedSwiftValue
+            }
         }
+        #expect(!invoked)
     }
 }

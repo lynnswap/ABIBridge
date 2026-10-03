@@ -68,13 +68,32 @@ struct SwiftFunctionSignature: Sendable {
         return try SwiftErrorPlan.make(error, genericType: genericType)
     }
 
+    var requiresClosureDeclaration: Bool {
+        func containsClosure(_ type: Any.Type) -> Bool {
+            if type is any SwiftClosureValue.Type { return true }
+            if let convention = type as? any SwiftConventionArgument.Type { return containsClosure(convention.wrappedType) }
+            if let tuple = SwiftTupleMetadata(type) { return tuple.elements.contains { containsClosure($0.type) } }
+            return false
+        }
+        return (parameters + [result]).contains(where: containsClosure)
+    }
+
     func closureDiscriminator() throws -> UInt16 {
+        let (parameters, results) = try closureAuthTypes()
+        return swiftClosureDiscriminator(parameters: parameters, results: results)
+    }
+
+    func closureAuthDescription() throws -> String {
+        let (parameters, results) = try closureAuthTypes()
+        return swiftClosureAuthDescription(parameters: parameters, results: results)
+    }
+
+    private func closureAuthTypes() throws -> ([String], [String]) {
         var parameters = isAsync && inheritsCallerIsolation ? ["-class"] : []
         for type in self.parameters {
             parameters.append(contentsOf: try swiftClosureAuthTypes(type))
         }
-        return swiftClosureDiscriminator(parameters: parameters,
-            results: try swiftClosureAuthTypes(result))
+        return (parameters, try swiftClosureAuthTypes(result))
     }
 }
 
@@ -103,6 +122,13 @@ enum SwiftCallablePlan: Sendable {
         }
     }
 
+    var generic: SwiftGenericCallPlan? {
+        switch self {
+        case .synchronous(let call): call.generic
+        case .asynchronous(let call, _): call.generic
+        }
+    }
+
     var errorPlan: SwiftErrorPlan? {
         switch self {
         case .synchronous(let call): call.errorPlan
@@ -128,18 +154,25 @@ struct SwiftCallValues: Sendable {
     let result: Result
 
     init(signature: SwiftFunctionSignature, consumesArguments: Bool,
-         opaqueResult: SwiftOpaqueResultPlan?, generic: SwiftGenericCallPlan? = nil) throws {
+         opaqueResult: SwiftOpaqueResultPlan?, arguments argumentPlans: [SwiftGenericArgument] = [],
+         result resultPlan: SwiftGenericResult = .concrete) throws {
         arguments = try signature.parameters.enumerated().map { index, type in
             func prepare<Value>(_ type: Value.Type) throws -> Argument {
-                let codec = try SwiftArgumentCodec<Value>(defaultConsuming: consumesArguments,
-                    generic: generic?.arguments[index] ?? .concrete)
+                let argument = argumentPlans.isEmpty ? .concrete : argumentPlans[index]
+                let consuming: Bool
+                // Initializers consume escaping closure arguments, but their
+                // nonescaping closure parameters are guaranteed borrows.
+                if case .closure(let plan, _) = argument { consuming = consumesArguments && plan.isEscaping }
+                else { consuming = consumesArguments }
+                let codec = try SwiftArgumentCodec<Value>(defaultConsuming: consuming,
+                    generic: argument, asynchronous: signature.isAsync)
                 return Argument(type: codec.type, consumes: codec.consumes,
                     encode: { try codec.encode($0.load(as: Value.self), retainingCode: $1) })
             }
             return try _openExistential(type, do: prepare)
         }
         func prepareResult<Value>(_ type: Value.Type) throws -> Result {
-            let codec = try SwiftResultCodec<Value>(opaque: opaqueResult, generic: generic?.result ?? .concrete)
+            let codec = try SwiftResultCodec<Value>(opaque: opaqueResult, generic: resultPlan)
             return Result(type: codec.type, makeStorage: { codec.makeStorage() },
                 initialize: { storage, owner, codeOwner, output in
                     let value = try codec.decode(storage, retaining: owner, retainingCode: codeOwner)
@@ -169,5 +202,146 @@ struct SwiftCallValues: Sendable {
 
     func relinquishConsumed(_ storage: [NativeValueStorage]) {
         for (argument, value) in zip(arguments, storage) where argument.consumes { value.relinquishValue() }
+    }
+}
+
+// Native function parameters can contain stack closure contexts. Their handles
+// borrow the entry frame; resolving them is a throwing invocation operation.
+final class SwiftCallbackScope {
+    private var borrows: [SwiftValueBorrow] = []
+    private var storage: [NativeValueStorage] = []
+    private var writebacks: [() -> Void] = []
+    private let asynchronous: Bool
+    init(asynchronous: Bool) { self.asynchronous = asynchronous }
+    func writeback(_ body: @escaping () -> Void) { writebacks.append(body) }
+    func borrow(_ address: UnsafeRawPointer, retaining storage: NativeValueStorage? = nil,
+                allowsSuspension: Bool? = nil, allowsMutation: Bool = false) -> SwiftValueBorrow {
+        if let storage { self.storage.append(storage) }
+        let borrow = SwiftValueBorrow(address, allowsSuspension: allowsSuspension ?? asynchronous, allowsMutation: allowsMutation)
+        borrows.append(borrow)
+        return borrow
+    }
+    deinit {
+        for writeback in writebacks { writeback() }
+        for borrow in borrows { borrow.expire() }
+        withExtendedLifetime(storage) {}
+    }
+}
+
+typealias SwiftCallbackDecoder = @Sendable (UnsafeMutableRawPointer, SwiftCallbackScope) -> Any
+
+struct SwiftCallbackValues: Sendable {
+    private let decoders: [SwiftCallbackDecoder?]
+    private let constants: [SwiftValueConstants]
+    private let needsScope: Bool
+
+    init(_ signature: SwiftFunctionSignature, arguments: [SwiftGenericArgument] = []) throws {
+        constants = signature.parameters.map(SwiftValueConstants.init)
+        decoders = try signature.parameters.enumerated().map { index, type in
+            let argument: SwiftGenericArgument = arguments.isEmpty ? .concrete : arguments[index]
+            if case .value = argument { return nil }
+            if case .runtimeValue = argument {
+                if type == NativeSwiftBorrowedValue.self {
+                    return try Self.decoder(for: NativeSwiftBorrowedValue.self, generic: argument, consuming: false)
+                }
+                return try Self.decoder(for: NativeSwiftValue.self, generic: argument, consuming: false)
+            }
+            if let convention = type as? any SwiftConventionArgument.Type {
+                let codec: SwiftConventionCodec
+                if case .convention(let prepared) = argument { codec = prepared }
+                else { codec = try convention.makeArgumentCodec(generic: argument) }
+                return try codec.prepareCallback()
+            }
+            if let closure = type as? any SwiftClosureValue.Type {
+                let codec: SwiftClosureCodec
+                if !arguments.isEmpty, case .closure(let plan, _) = arguments[index] {
+                    codec = try closure.makeGenericClosureCodec(plan: plan)
+                } else { codec = try closure.makeClosureCodec() }
+                guard let borrow = codec.borrowValue else {
+                    throw ABIResolutionError.unsupportedDeclaration("This closure representation cannot borrow native callback inputs.")
+                }
+                return { borrow($1.borrow($0), SwiftValueCodeLifetime.current) }
+            }
+            return nil
+        }
+        needsScope = decoders.contains { $0 != nil }
+    }
+
+    static func decoder<Value>(for type: Value.Type, generic: SwiftGenericArgument,
+                               consuming: Bool) throws -> SwiftCallbackDecoder {
+        if case .runtimeValue(let plan, let convention, let asynchronous) = generic {
+            if Value.self == NativeSwiftValue.self {
+                try plan.requireOwnedValue()
+                if !consuming, !SwiftCopyability.accepts(plan.valueType.metadata) { throw NativeSwiftValueError.noncopyableType }
+            }
+            return { address, scope in
+                let lifetime = SwiftValueCodeLifetime.current ?? plan.valueType.codeLifetime
+                SwiftValueCodeLifetime.connect([lifetime, plan.valueType.codeLifetime], retaining: [])
+                let nativeType = plan.valueType
+                if consuming { return plan.takeCallbackArgument(from: address, type: nativeType) }
+                let restored = convention == .inoutValue ? nil : plan.restoredCallbackArgument(from: address)
+                let source = convention == .inoutValue
+                    ? address.load(as: UnsafeMutableRawPointer.self) : restored?.address ?? address
+                if Value.self == NativeSwiftBorrowedValue.self {
+                    return NativeSwiftBorrowedValue(type: nativeType,
+                        borrow: scope.borrow(source, retaining: restored, allowsSuspension: asynchronous,
+                            allowsMutation: convention == .inoutValue))
+                }
+                return plan.copyCallbackArgument(from: source, type: nativeType)
+            }
+        }
+        let usesSwiftStorage = if case .value = generic { true } else { false }
+        if !usesSwiftStorage, let closure = Value.self as? any SwiftClosureValue.Type {
+            let codec: SwiftClosureCodec
+            if case .closure(let plan, _) = generic { codec = try closure.makeGenericClosureCodec(plan: plan) }
+            else { codec = try closure.makeClosureCodec() }
+            if consuming {
+                guard let take = codec.takeValue else {
+                    throw ABIResolutionError.unsupportedDeclaration("This closure representation cannot own native callback inputs.")
+                }
+                return { address, _ in take(address.load(as: ABISwiftClosureValue.self), SwiftValueCodeLifetime.current) }
+            }
+            guard let borrow = codec.borrowValue else {
+                throw ABIResolutionError.unsupportedDeclaration("This closure representation cannot borrow native callback inputs.")
+            }
+            return { borrow($1.borrow($0), SwiftValueCodeLifetime.current) }
+        }
+        let constants = SwiftValueConstants(Value.self)
+        return { address, _ in
+            if consuming {
+                constants.initialize(at: address)
+                return address.assumingMemoryBound(to: Value.self).move()
+            }
+            return constants.load(from: address, as: Value.self)
+        }
+    }
+
+    func makeScope(asynchronous: Bool) -> SwiftCallbackScope? {
+        needsScope ? SwiftCallbackScope(asynchronous: asynchronous) : nil
+    }
+
+    func decode<Value>(_ address: UnsafeMutableRawPointer, at index: Int, scope: SwiftCallbackScope?, as type: Value.Type) -> Value {
+        if let decode = decoders[index] { return decode(address, scope!) as! Value }
+        return constants[index].load(from: address, as: type)
+    }
+}
+
+struct SwiftCallbackResult<Value>: Sendable {
+    private let closure: Bool
+    private let encode: (@Sendable (Any, Any?) throws -> NativeValueStorage)?
+    init(failure: Any.Type, generic: SwiftGenericResult = .concrete) throws {
+        if case .closure(let codec) = generic { encode = codec.encodeValue } else { encode = nil }
+        if case .value = generic { closure = false }
+        else { closure = Value.self is any SwiftClosureValue.Type }
+        if closure && failure != (any Error).self {
+            throw ABIResolutionError.unsupportedDeclaration("A host callback returning a closure requires throws(any Error) to report ownership and conversion failures.")
+        }
+    }
+    func initialize(_ value: Value, at output: UnsafeMutableRawPointer) throws {
+        guard closure else { output.initializeMemory(as: Value.self, repeating: value, count: 1); return }
+        let encoded = try encode?(value, nil) ?? (value as! any SwiftClosureValue).encodeClosureResult()
+        output.copyMemory(from: encoded.address, byteCount: MemoryLayout<ABISwiftClosureValue>.size)
+        SwiftValueCodeLifetime.connect([SwiftValueCodeLifetime.current, encoded.codeLifetime].compactMap { $0 }, retaining: [])
+        encoded.relinquishValue()
     }
 }

@@ -39,11 +39,13 @@ struct SwiftGenericBinding: Sendable {
     }
 
     let declaration: SwiftGenericDeclaration
+    let opaqueResult: SwiftRuntimeValuePlan?
     let arguments: [String: BoundArgument]
     let conformances: [Conformance]
     let typeOwners: [NativeSwiftType]
     private let boundTypes = SwiftBoundTypeStorage()
     private let knownTypes: [[UInt8]: Any.Type]
+    private let valueABIs: [ObjectIdentifier: NativeType]
     private let resolver: SymbolResolver
     private var packElementIndex: Int?
 
@@ -64,16 +66,19 @@ struct SwiftGenericBinding: Sendable {
 
     init(declaration: SwiftGenericDeclaration, arguments: [NativeSwiftGenericArgument],
          signature: SwiftFunctionSignature, resolver: SymbolResolver,
-         enclosing context: SwiftGenericTypeContext? = nil, image: NativeImage? = nil) throws {
+         enclosing context: SwiftGenericTypeContext? = nil, image: NativeImage? = nil,
+         valueABIs: [NativeSwiftType: NativeType] = [:], opaqueResult: SwiftRuntimeValuePlan? = nil) throws {
         guard arguments.count == declaration.parameters.count else {
             throw ABIResolutionError.signatureMismatch(.init(
                 expected: "\(declaration.parameters.count) generic arguments", found: ["\(arguments.count) generic arguments"]))
         }
         self.declaration = declaration
+        self.opaqueResult = opaqueResult
         self.resolver = resolver
+        self.valueABIs = Dictionary(uniqueKeysWithValues: valueABIs.map { (ObjectIdentifier($0.key.metadata), $0.value) })
         if let image { images.append(image) }
         var bound: [String: BoundArgument] = [:]
-        var owners: [NativeSwiftType] = []
+        var owners = Array(valueABIs.keys)
         var known: [[UInt8]: Any.Type] = [:]
         func remember(_ type: Any.Type) throws {
             known[try Self.key(swiftNativeTypeName(type))] = type
@@ -89,6 +94,7 @@ struct SwiftGenericBinding: Sendable {
                 try remember(function.result)
             }
         }
+        for type in valueABIs.keys { try remember(type.metadata) }
         for (parameter, argument) in zip(declaration.parameters, arguments) {
             let types: [Any.Type]
             switch argument.storage {
@@ -588,6 +594,11 @@ struct SwiftGenericBinding: Sendable {
             }
         }
         switch type {
+        case .opaqueResult:
+            guard let opaqueResult else {
+                throw ABIResolutionError.unsupportedDeclaration("An opaque result requires its resolved runtime value representation.")
+            }
+            return [opaqueResult.valueType.metadata]
         case .metatype(let instance), .existentialMetatype(let instance):
             let metadata = unsafeBitCast(try types(instance, packIndex: packIndex)[0], to: UnsafeRawPointer.self)
             let result: UnsafeRawPointer?
@@ -660,7 +671,7 @@ struct SwiftGenericBinding: Sendable {
         var counts: [Int] = []
         func visit(_ type: SwiftFormalType) {
             switch type {
-            case .objectiveCClass: break
+            case .objectiveCClass, .opaqueResult: break
             case .named(let name, let parameters):
                 if let argument = arguments[String(name.prefix { $0 != "." })], argument.isPack {
                     counts.append(argument.types.count)
@@ -670,7 +681,7 @@ struct SwiftGenericBinding: Sendable {
             case .nested(let parent, _, let parameters): visit(parent); parameters.forEach(visit)
             case .associated(let base, _, _): visit(base)
             case .tuple(let fields, _), .packValue(let fields): fields.forEach(visit)
-            case .function(let parameters, let result, let failure, _):
+            case .function(let parameters, let result, let failure, _, _):
                 parameters.forEach(visit); visit(result); if let failure { visit(failure) }
             case .foreignFunction(_, let parameters, let result):
                 parameters.forEach(visit); visit(result)
@@ -689,6 +700,7 @@ struct SwiftGenericBinding: Sendable {
         let packIndex = packIndex ?? packElementIndex
         switch type {
         case .objectiveCClass(let name): return name
+        case .opaqueResult: return "some"
         case .named(let name, let parameters):
             if parameters.isEmpty && arguments[String(name.prefix { $0 != "." })] != nil {
                 let resolved = try types(type, packIndex: packIndex)
@@ -718,7 +730,7 @@ struct SwiftGenericBinding: Sendable {
         case .inoutValue(let value), .borrowing(let value), .consuming(let value): return try spelling(value, packIndex: packIndex)
         case .metatype, .existentialMetatype:
             return try swiftNativeTypeName(types(type, packIndex: packIndex)[0])
-        case .function(let values, let result, let failure, let isAsync):
+        case .function(let values, let result, let failure, let isAsync, _):
             let error = try failure.map { try spelling($0, packIndex: packIndex) }
             return "(" + (try values.map { try spelling($0, packIndex: packIndex) }).joined(separator: ", ") + ")" + (isAsync ? " async" : "")
                 + (error.map { $0 == "Swift.Never" ? "" : $0 == "Swift.Error" ? " throws" : " throws(" + $0 + ")" } ?? "")
@@ -732,6 +744,10 @@ struct SwiftGenericBinding: Sendable {
 
     func resultType(_ actual: Any.Type, for formal: SwiftFormalType) throws -> Any.Type {
         if actual == NativeSwiftValue.self { return try types(formal)[0] }
+        if case .function = formal, actual is any SwiftClosureValue.Type {
+            try validateArgument(actual, for: formal)
+            return actual
+        }
         let optional = actual as? any NativeOptionalValue.Type
         if (optional?.wrappedType ?? actual) == AnyObject.self {
             let native = try types(formal)[0]
@@ -744,11 +760,13 @@ struct SwiftGenericBinding: Sendable {
     }
 
     func validate(_ type: Any.Type, for formal: SwiftFormalType, packIndex: Int? = nil) throws {
-        if case .objectiveCClass = formal {
+        switch formal {
+        case .objectiveCClass, .opaqueResult:
             guard try type == types(formal)[0] else {
                 throw ABIResolutionError.signatureMismatch(.init(expected: formal.spelling, found: [String(reflecting: type)]))
             }
             return
+        default: break
         }
         if let convention = formal.argumentConvention {
             guard let argument = type as? any SwiftConventionArgument.Type, argument.convention == convention.convention else {
@@ -766,13 +784,19 @@ struct SwiftGenericBinding: Sendable {
         }
     }
 
+    func explicitValueType(_ type: Any.Type) throws -> CValueType? {
+        try valueABIs[ObjectIdentifier(type)].map { try explicitSwiftValueType(type, abi: $0) }
+    }
+
     func runtimeValuePlan(metadata: Any.Type, type: CValueType) throws -> SwiftRuntimeValuePlan {
         try SwiftRuntimeValuePlan(metadata: metadata, type: type, resolver: resolver,
             retaining: images + typeOwners.flatMap(\.codeImages))
     }
 
     func validateArgument(_ actual: Any.Type, for formal: SwiftFormalType) throws {
-        if actual == NativeSwiftValue.self || actual == NativeSwiftBorrowedValue.self {
+        if case .function = formal, let closure = actual as? any SwiftClosureValue.Type {
+            _ = try SwiftGenericCallPlan.closure(formal, signature: SwiftFunctionSignature(closure.swiftFunctionType), binding: self)
+        } else if actual == NativeSwiftValue.self || actual == NativeSwiftBorrowedValue.self {
             _ = try types(formal)
         } else {
             try validate(actual, for: formal)

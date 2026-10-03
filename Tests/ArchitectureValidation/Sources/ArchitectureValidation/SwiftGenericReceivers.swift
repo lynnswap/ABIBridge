@@ -337,13 +337,13 @@ private struct BindingBoolAdapter: ABIBridgeValue {
     let measure = try await borrowedType.method(named: "measure()", as: (() -> Int64).self, receiverABI: .opaque(named: borrowedType.name))
     let measured = try await borrowedType.getter(named: "measured", as: (() -> Int64).self, receiverABI: .opaque(named: borrowedType.name))
     let callbackFailure = Mutex<(any Error)?>(nil)
-    let callback = try NativeSwiftBorrowingClosure<(Int64, Int64)>(borrowing: borrowedType) { value in
+    let callback = try NativeSwiftClosure<(NativeSwiftBorrowedValue) -> (Int64, Int64)> { value in
         do { return try unsafe (measure.unsafeInvoke(on: value), measured.unsafeInvoke(on: value)) }
         catch { callbackFailure.withLock { $0 = error }; return (-1, -1) }
     }
     let visit = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.visitBindingBorrowedRecord(Swift.Int64, (SwiftValueFixtures.BindingBorrowedRecord<SwiftValueFixtures.GenericReceiverNumber>) -> (Swift.Int64, Swift.Int64)) -> (Swift.Int64, Swift.Int64)",
-        as: ((Int64, NativeSwiftBorrowingClosure<(Int64, Int64)>) -> (Int64, Int64)).self)
+        as: ((Int64, NativeSwiftClosure<(NativeSwiftBorrowedValue) -> (Int64, Int64)>) -> (Int64, Int64)).self, valueABIs: [borrowedType: .opaque(named: borrowedType.name)])
     let borrowedResult = try unsafe visit.unsafeInvoke(42, callback)
     if let error = callbackFailure.withLock({ $0 }) { throw error }
     try check(borrowedResult == (2, 2),

@@ -1,5 +1,14 @@
 import ManagedSwiftFixtures
 
+public struct GuaranteedClosureInitializer {
+    public let value: Int64
+    public init(_ body: IntegerClosure) { value = body(35) }
+}
+
+@inline(never) public func consumeEscapingClosure(_ body: consuming @escaping IntegerClosure) -> Int64 {
+    body(35)
+}
+
 @_cdecl("ABIIntegerClosureApply")
 public func integerClosureApply(_ input: UnsafeRawPointer, _ value: Int64) -> Int64 {
     applyIntegerClosure(input.load(as: IntegerClosure.self), value)

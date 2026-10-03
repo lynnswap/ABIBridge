@@ -74,8 +74,52 @@ def main():
             if len(candidates) != 1 or '<T where T : ~Copyable>' not in candidates[0] or convention not in candidates[0]:
                 raise RuntimeError(f'{target}: runtime value ownership changed for {name}: {candidates}')
             runtime_values[name] = candidates[0]
+        consuming_callbacks = {}
+        for name, convention in {
+            'visitConsumingRuntimeValue': '(@in τ_0_0) -> (Int64, @error any Error)',
+            'visitNonthrowingConsumingRuntimeValue': '(@in τ_0_0) -> Int64',
+            'makeRuntimeConsumer': '(@in τ_0_0) -> Int64',
+            'visitConsumingRuntimeValueAsync': '@guaranteed Builtin.ImplicitActor, @in τ_0_0) -> (Int64, @error any Error)',
+            'visitConsumingString': '(@owned String) -> Int64',
+            'visitOwnedNested': '(@owned @callee_guaranteed @substituted',
+            'visitOwnedNestedThrowing': '(@owned @callee_guaranteed @substituted',
+            'visitOwnedNestedAsync': '@owned @async @callee_guaranteed @substituted',
+            'makeConcreteOwnedNestedCaller': '(@owned @callee_guaranteed (Int64) -> Int64, Int64)',
+            'makeOwnedNestedRuntimeCaller': '(@owned @callee_guaranteed @substituted',
+            'callOwnedNestedRuntimeCaller': '(@owned @callee_guaranteed @substituted',
+            'callConcreteOwnedNestedCaller': '(@owned @callee_guaranteed (Int64) -> Int64, Int64)',
+            'makeConcreteOwnedNestedAsyncCaller': '@owned @async @callee_guaranteed',
+            'callOwnedNestedRuntimeAsyncCaller': '@owned @async @callee_guaranteed @substituted',
+        }.items():
+            identifier = str(len(name)) + name
+            candidates = [line for line in sil.splitlines() if line.startswith('sil [noinline]') and identifier in line]
+            if len(candidates) != 1 or convention not in candidates[0]:
+                raise RuntimeError(f'{target}: consuming callback ownership changed for {name}: {candidates}')
+            consuming_callbacks[name] = candidates[0]
+        fixed_callbacks = {}
+        for name, convention in {
+            'makeRuntimeFixedPair': '(Int64, Int64) -> RuntimeFixedPair',
+            'inspectRuntimeFixedPair': '(RuntimeFixedPair, @guaranteed @noescape @callee_guaranteed (RuntimeFixedPair) -> Int64) -> Int64',
+        }.items():
+            identifier = str(len(name)) + name
+            candidates = [line for line in sil.splitlines() if line.startswith('sil [noinline]') and identifier in line]
+            if len(candidates) != 1 or convention not in candidates[0]:
+                raise RuntimeError(f'{target}: fixed callback ABI changed for {name}: {candidates}')
+            fixed_callbacks[name] = candidates[0]
+        inout_callbacks = {}
+        for name, convention in {
+            'visitRuntimeInout': '(@inout τ_0_0) -> @error any Error',
+            'visitRuntimeInoutAsync': '@guaranteed Builtin.ImplicitActor, @inout τ_0_0) -> @error any Error',
+            'makeRuntimeSwap': '(@inout τ_0_0, @inout τ_0_1) -> ()',
+            'visitStringInout': '(@inout String) -> ()',
+        }.items():
+            identifier = str(len(name)) + name
+            candidates = [line for line in sil.splitlines() if line.startswith('sil [noinline]') and identifier in line]
+            if len(candidates) != 1 or convention not in candidates[0]:
+                raise RuntimeError(f'{target}: inout callback ownership changed for {name}: {candidates}')
+            inout_callbacks[name] = candidates[0]
         reports.append({'target':target, 'signatures':signatures, 'initializers':initializers, 'ownedGenericClosures':owned_closures,
-                        'closurePacks':pack_closures, 'closurePackInitializers':pack_initializers, 'runtimeValues':runtime_values})
+                        'closurePacks':pack_closures, 'closurePackInitializers':pack_initializers, 'runtimeValues':runtime_values, 'consumingCallbacks':consuming_callbacks, 'inoutCallbacks':inout_callbacks, 'fixedCallbacks':fixed_callbacks})
     report = {'compiler':run('xcrun','swiftc','--version').strip(), 'runtimeTested':False, 'targets':reports}
     (output/'report.json').write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps(report,indent=2))

@@ -82,6 +82,22 @@ func prepareClosure(_ path: String) async throws -> NativeSwiftClosure<(Int64) -
 }
 
 let callback = try await prepareClosure(CommandLine.arguments[1])
+typealias ConsumerInner = NativeSwiftClosure<(Int64) -> Int64>
+typealias ConsumerVisitor = NativeSwiftClosure<(ConsumerInner) throws -> Int64>
+let visitOwned = try await ABIRuntime.shared.swiftFunction(
+    named: "SwiftFunctionFixture.visitOwnedClosure(_:_:)",
+    as: ((ConsumerInner, ConsumerVisitor) throws -> Int64).self,
+    in: .path(URL(fileURLWithPath: CommandLine.arguments[1])))
+let consumingVisitor = try ConsumerVisitor { borrowed in
+    let consume = try NativeSwiftClosure<(NativeSwiftConsuming<ConsumerInner>) throws -> Int64> { value in
+        try unsafe value.value.unsafeInvoke(35)
+    }
+    let consumed = try unsafe consume.unsafeInvoke(NativeSwiftConsuming(borrowed))
+    precondition(consumed == 42)
+    return try unsafe borrowed.unsafeInvoke(35)
+}
+let consumedBorrow = try unsafe visitOwned.unsafeInvoke(callback, consumingVisitor)
+precondition(consumedBorrow == 50)
 let collection = try await prepareCollectionClosure(CommandLine.arguments[1])
 let absent = try unsafe collection.unsafeInvoke(nil)
 let present = try unsafe collection.unsafeInvoke("value")
@@ -91,6 +107,20 @@ for value: Int64 in [0, 35, 100] {
     let result = try unsafe callback.unsafeInvoke(value)
     precondition(result == value + 7)
 }
+private final class DirectClosureOwner: @unchecked Sendable {
+    let value: NativeSwiftClosure<(Int64) -> Int64>
+    init(_ value: NativeSwiftClosure<(Int64) -> Int64>) { self.value = value }
+}
+let receive = try NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>) throws -> Int64> { value in
+    try unsafe value.unsafeInvoke(35)
+}
+let received = try unsafe receive.unsafeInvoke(callback)
+precondition(received == 42)
+private let directOwner = DirectClosureOwner(callback)
+let produce = try NativeSwiftClosure<() throws -> NativeSwiftClosure<(Int64) -> Int64>> { directOwner.value }
+let produced = try unsafe produce.unsafeInvoke()
+let producedResult = try unsafe produced.unsafeInvoke(35)
+precondition(producedResult == 42)
 let foreignPath = CommandLine.arguments[2]
 var stored: StoredForeignClosure? = try await prepareEscapingForeignClosure(foreignPath)
 precondition(isLoaded(foreignPath), "The escaping native copy must retain its entry image")

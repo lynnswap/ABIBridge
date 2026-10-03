@@ -14,19 +14,29 @@ typedef struct ABISwiftClosureCallback ABISwiftClosureCallback;
 /// this nonthrowing Swift boundary.
 typedef struct ABISwiftClosureCallbackFunctions {
     void (*invoke)(void *context, void *const *arguments, void *result);
+    /// Dispatch using the native Swift context instead of the registration context.
+    /// The native context must own this callback's entry through its final call.
+    bool usesNativeContext;
     void (*releaseContext)(void *context);
     /// Returns a retained Swift class instance holding code leases, or null.
     /// It must not retain callback captures. The caller uses swift_release.
     void *(*copyCodeOwner)(void *context);
+    /// Optional retained Swift owner for preparing this body with another ABI.
+    /// Unlike code leases, it may retain captures and belongs only to live closures.
+    void *(*copyBodyOwner)(void *context);
 } ABISwiftClosureCallbackFunctions;
 
 /// Returns true after initializing an owned error, false after initializing
 /// the ordinary result. Error storage is null for a nonthrowing interface.
 typedef struct ABISwiftThrowingClosureCallbackFunctions {
     bool (*invoke)(void *context, void *const *arguments, void *result, void *errorResult);
+    bool usesNativeContext;
     void (*releaseContext)(void *context);
     /// Same code-only ownership contract as ABISwiftClosureCallbackFunctions.
     void *(*copyCodeOwner)(void *context);
+    /// Optional retained Swift owner for preparing this body with another ABI.
+    /// Unlike code leases, it may retain captures and belongs only to live closures.
+    void *(*copyBodyOwner)(void *context);
 } ABISwiftThrowingClosureCallbackFunctions;
 ABISwiftClosureCallback *ABICreateSwiftThrowingClosureCallback(ABISwiftCallInterface *interface,
     ABISwiftThrowingClosureCallbackFunctions functions, void *context, ABIResolutionFailure **error);
@@ -44,7 +54,8 @@ void ABIReleaseSwiftClosureCallback(ABISwiftClosureCallback *callback);
 bool ABIIsSwiftClosureCallbackFunction(ABIUnmanagedFunction function);
 /// Copies a callback's code-only Swift owner, if supplied. The live native
 /// closure must remain retained during this operation. Release with swift_release.
-void *ABICopySwiftClosureCallbackCodeOwner(ABIUnmanagedFunction function);
+void *ABICopySwiftClosureCallbackCodeOwner(ABIUnmanagedFunction function, void *nativeContext);
+void *ABICopySwiftClosureCallbackBodyOwner(ABIUnmanagedFunction function, void *nativeContext);
 
 typedef struct ABISwiftAsyncClosureCallback ABISwiftAsyncClosureCallback;
 typedef struct ABISwiftAsyncClosureCallbackFunctions {
@@ -55,8 +66,12 @@ typedef struct ABISwiftAsyncClosureCallbackFunctions {
     /// All borrowed argument storage remains live through that completion.
     ABISwiftClosureValue (*createBody)(void *context, void *const *arguments,
                                       void *result, void *errorResult, bool *didThrow);
+    bool usesNativeContext;
     void (*releaseContext)(void *context);
     void *(*copyCodeOwner)(void *context);
+    /// Optional retained Swift owner for preparing this body with another ABI.
+    /// Unlike code leases, it may retain captures and belongs only to live closures.
+    void *(*copyBodyOwner)(void *context);
 } ABISwiftAsyncClosureCallbackFunctions;
 /// Success consumes context; failure consumes neither context nor its release
 /// responsibility. Native closure contexts keep the callback alive through all calls.
@@ -65,7 +80,8 @@ ABISwiftAsyncClosureCallback *ABICreateSwiftAsyncClosureCallback(ABISwiftAsyncCa
 const void *ABISwiftAsyncClosureCallbackDescriptor(const ABISwiftAsyncClosureCallback *callback);
 void ABIReleaseSwiftAsyncClosureCallback(ABISwiftAsyncClosureCallback *callback);
 bool ABIIsSwiftAsyncClosureCallbackFunction(ABIUnmanagedFunction function);
-void *ABICopySwiftAsyncClosureCallbackCodeOwner(ABIUnmanagedFunction function);
+void *ABICopySwiftAsyncClosureCallbackCodeOwner(ABIUnmanagedFunction function, void *nativeContext);
+void *ABICopySwiftAsyncClosureCallbackBodyOwner(ABIUnmanagedFunction function, void *nativeContext);
 
 /// Functions describing one callback and its native value ownership. None may
 /// throw a language exception through this C boundary. The borrowed invocation

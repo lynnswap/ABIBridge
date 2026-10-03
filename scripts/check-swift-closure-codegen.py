@@ -63,6 +63,13 @@ def main():
                 f"{target}: re-evaluate generic closure argument/result lowering")
         require("@noescape" in reverse, f"{target}: nonescaping fixture lost its contract")
         require("@owned @callee_guaranteed" in returned, f"{target}: missing owned closure result")
+        consumed = function(sil, "sil", "consumeEscapingClosure")
+        require("@owned @callee_guaranteed" in consumed.splitlines()[0] and "strong_release" in consumed,
+                f"{target}: consuming closure must receive and release an owned context")
+        initialized = next(line for line in sil.splitlines()
+                           if line.startswith("sil ") and "GuaranteedClosureInitializer" in line and "@noescape" in line)
+        require("@guaranteed @noescape @callee_guaranteed" in initialized,
+                f"{target}: nonescaping initializer closure must remain guaranteed")
 
         apply = next(line for line in ir.splitlines() if line.startswith("declare ") and "applyIntegerClosure" in line)
         factory = next(line for line in ir.splitlines() if line.startswith("declare ") and "makeIntegerClosure" in line)

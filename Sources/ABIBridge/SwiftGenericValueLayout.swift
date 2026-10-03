@@ -55,7 +55,7 @@ extension SwiftFormalType {
     func qualifyingAssociatedTypes(using conformances: [SwiftGenericBinding.Conformance]) throws -> Self {
         func qualify(_ type: Self) throws -> Self { try type.qualifyingAssociatedTypes(using: conformances) }
         switch self {
-        case .objectiveCClass: return self
+        case .objectiveCClass, .opaqueResult: return self
         case .associated(let base, let member, let protocolName):
             var names: Set<String> = []
             if let protocolName { names.insert(protocolName) }
@@ -82,8 +82,8 @@ extension SwiftFormalType {
         case .borrowing(let value): return .borrowing(try qualify(value))
         case .consuming(let value): return .consuming(try qualify(value))
         case .inoutValue(let value): return .inoutValue(try qualify(value))
-        case .function(let values, let result, let failure, let isAsync):
-            return .function(try values.map(qualify), try qualify(result), failure: try failure.map(qualify), isAsync: isAsync)
+        case .function(let values, let result, let failure, let isAsync, let isEscaping):
+            return .function(try values.map(qualify), try qualify(result), failure: try failure.map(qualify), isAsync: isAsync, isEscaping: isEscaping)
         case .foreignFunction(let convention, let values, let result):
             return .foreignFunction(convention, try values.map(qualify), try qualify(result))
         }

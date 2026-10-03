@@ -14,7 +14,8 @@ struct SwiftGenericParameters: Sendable {
     private let constants: [SwiftValueConstants]
     var needsEncoding: Bool { hasPacks || constants.contains { !$0.isEmpty } }
 
-    init(formal: [SwiftFormalType], actual: [Any.Type], binding: SwiftGenericBinding, defaultConsuming: Bool = false) throws {
+    init(formal: [SwiftFormalType], actual: [Any.Type], binding: SwiftGenericBinding, defaultConsuming: Bool = false,
+         asynchronous: Bool? = nil, callback: Bool = false) throws {
         var arguments: [SwiftGenericArgument] = []
         var groups: [Group] = []
         var index = 0
@@ -27,7 +28,7 @@ struct SwiftGenericParameters: Sendable {
                 for (packIndex, position) in range.enumerated() {
                     let element = binding.selectingPackElement(at: packIndex)
                     arguments.append(try SwiftGenericCallPlan.argument(pattern, actual: actual[position], binding: element,
-                        defaultConsuming: defaultConsuming))
+                        defaultConsuming: defaultConsuming, asynchronous: asynchronous, callback: callback))
                 }
                 groups.append(.pack(range, try CValueType(indirectSwiftSize: count * MemoryLayout<UInt>.size,
                                                            alignment: MemoryLayout<UInt>.alignment)))
@@ -37,7 +38,7 @@ struct SwiftGenericParameters: Sendable {
                 guard index < actual.count else { throw Self.mismatch(actual.count) }
                 groups.append(.value(index))
                 arguments.append(try SwiftGenericCallPlan.argument(parameter, actual: actual[index], binding: binding,
-                    defaultConsuming: defaultConsuming))
+                    defaultConsuming: defaultConsuming, asynchronous: asynchronous, callback: callback))
                 index += 1
             }
         }
@@ -45,6 +46,18 @@ struct SwiftGenericParameters: Sendable {
         self.arguments = arguments
         self.groups = groups
         self.hasPacks = hasPacks
+        constants = zip(actual, arguments).map { type, argument in
+            if case .runtimeValue(let plan, let convention, _) = argument {
+                return SwiftValueConstants(convention == .inoutValue ? UnsafeRawPointer.self : plan.valueType.metadata)
+            }
+            return SwiftValueConstants(type)
+        }
+    }
+
+    init(actual: [Any.Type], arguments: [SwiftGenericArgument]) {
+        self.arguments = arguments
+        groups = actual.indices.map { .value($0) }
+        hasPacks = false
         constants = actual.map(SwiftValueConstants.init)
     }
 
