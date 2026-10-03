@@ -561,3 +561,19 @@ let extendedCallback = try ExtendedCallback { value in
 }
 guard try unsafe applyExtended.unsafeInvoke(extendedCallback, 42) == 42 else { throw ConsumerError.wrongResult }
 print("Runtime-only parameterized protocols preserve opaque and class payloads without compiler-emitted shapes")
+
+let superclassName = "any ManagedSwiftFixtures.RuntimeExtendedSuperclass<A> & ManagedSwiftFixtures.RuntimeExtendedObject<Self.Element == A>"
+let makeSuperclass = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.makeRuntimeExtendedSuperclass<A>(A) -> " + superclassName,
+    as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)], in: source)
+let superclassValue = try unsafe makeSuperclass.unsafeInvoke(42)
+guard try superclassValue.withCopy({ ($0 as? any CustomStringConvertible)?.description }) == "42" else { throw ConsumerError.wrongResult }
+let applySuperclass = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.applyRuntimeExtendedSuperclass<A>((" + superclassName + ") -> Swift.Int, A) -> Swift.Int",
+    as: ((ExtendedCallback, Int) -> Int).self, genericArguments: [.type(Int.self)], in: source)
+guard try unsafe applySuperclass.unsafeInvoke(extendedCallback, 42) == 42 else { throw ConsumerError.wrongResult }
+let superclassClosure = try await runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.makeRuntimeExtendedSuperclassClosure<A>(A) -> () -> " + superclassName,
+    as: ((Int) -> NativeSwiftClosure<() -> NativeSwiftValue>).self, genericArguments: [.type(Int.self)], in: source)
+guard try unsafe superclassClosure.unsafeInvoke(43).unsafeInvoke().withCopy({ ($0 as? any CustomStringConvertible)?.description }) == "43" else { throw ConsumerError.wrongResult }
+print("Generic superclass existentials retain constraints and witnesses across calls and closures without importing provider types")

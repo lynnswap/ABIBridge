@@ -183,7 +183,8 @@ final class SwiftSyntax: @unchecked Sendable {
         }
 
         func makeExtendedExistentialShape(protocols: [UnsafeRawPointer?], written: [String],
-                                           declaring: [String], classBound: Bool) throws -> UnsafeMutableRawPointer {
+                                           declaring: [String], classBound: Bool,
+                                           superclass: Any.Type?) throws -> UnsafeMutableRawPointer {
             let writtenStrings = written.map { Array($0.utf8CString) }
             let declaringStrings = declaring.map { Array($0.utf8CString) }
             func pointers<Result>(_ strings: [[CChar]], _ body: ([UnsafePointer<CChar>?]) throws -> Result) rethrows -> Result {
@@ -205,7 +206,8 @@ final class SwiftSyntax: @unchecked Sendable {
                             try written.withUnsafeBufferPointer { written in
                                 try declaring.withUnsafeBufferPointer { declaring in
                                     guard let value = ABICreateSwiftExtendedExistentialShape(pointer, protocols.baseAddress,
-                                        protocols.count, written.baseAddress, declaring.baseAddress, written.count, classBound) else {
+                                        protocols.count, written.baseAddress, declaring.baseAddress, written.count, classBound,
+                                        superclass.map { unsafeBitCast($0, to: UnsafeRawPointer.self) }) else {
                                         throw ABIResolutionError.metadataUnavailable("Cannot form the extended existential shape.")
                                     }
                                     return value
