@@ -377,6 +377,32 @@ struct SwiftImportedFunctionHookTests {
         #expect(observed == nil)
     }
 
+    @Test func consumingWholeTupleRuntimeHandlesCompleteTheirTransfer() async throws {
+        let fixture = try CompiledSwiftReplacementFixture()
+        defer { fixture.cleanup() }
+        let target = try await fixture.runtime.swiftFunction(named: fixture.module + ".consumeHookTuple(_:)",
+            as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self,
+            genericArguments: [.type(NSObject.self)], in: fixture.providerScope)
+        let caller = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".callConsumeHookTuple(_:)",
+            as: ((NSObject) -> Int64).self, in: fixture.callerScope)
+        let saved = SavedRuntimeHookValues()
+        let hook = try unsafe await target.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { Issue.record($0) }) { call, value in
+                saved.input = value.value
+                #expect(try value.value.withCopy { ($0 as? (NSObject, Int64))?.1 } == 42)
+                return try call.proceed(value)
+            }
+        defer { hook.invalidate() }
+        weak var observed: NSObject?
+        do {
+            let object = NSObject()
+            observed = object
+            #expect(try unsafe caller.unsafeInvoke(object) == 42)
+            #expect(saved.input!.isConsumed)
+        }
+        #expect(observed == nil)
+    }
+
     @Test func runtimeValuesNestedClosuresAndInoutComposeThroughHooks() async throws {
         let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
         @inline(never) public func runtimeHookEcho<Value>(_ value: Value) -> Value { value }

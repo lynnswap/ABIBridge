@@ -454,6 +454,11 @@ struct SwiftRuntimeValuePlan: Sendable {
         let vector = NativeValueStorage(size: addresses.count * MemoryLayout<UnsafeMutableRawPointer?>.stride,
             alignment: MemoryLayout<UnsafeMutableRawPointer?>.alignment, owner: access, codeLifetime: access.codeLifetime,
             didRelinquish: convention == .consuming ? { access.relinquishValue() } : nil)
+        if convention == .consuming {
+            vector.destroyTransferredCopy = {
+                ABISwiftDestroyValue(unsafeBitCast(valueType.metadata, to: UnsafeRawPointer.self), access.address)
+            }
+        }
         for (index, address) in addresses.enumerated() {
             vector.address.storeBytes(of: address,
                 toByteOffset: index * MemoryLayout<UnsafeMutableRawPointer?>.stride, as: UnsafeMutableRawPointer?.self)
