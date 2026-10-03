@@ -67,3 +67,17 @@ open class CallerOverridingRenderer: ReplacementRenderer {
     let value = moveHookTicket(HookTicket(number))
     return value.read()
 }
+
+@inline(never) public func callVirtualMoveTicket(_ number: Int64) -> Int64 {
+    let value = makeHookTicketRenderer().move(HookTicket(number))
+    return value.read()
+}
+
+@inline(never) @concurrent public func callAsyncMoveTicket(_ number: Int64) async -> Int64 {
+    let value = await moveAsyncHookTicket(HookTicket(number))
+    return value.read()
+}
+
+@inline(never) public func callConsumeAnyErrorTicket(_ number: Int64) throws -> Int64 {
+    try consumeAnyErrorHookTicket(HookTicket(number))
+}

@@ -106,14 +106,7 @@ public struct NativeSwiftMethodInvocation<Signature>: CustomStringConvertible {
     }
 
     @usableFromInline nonisolated(nonsending) func invokeAsync<Result, each Argument>(_ values: repeat each Argument) async throws -> Result {
-        do {
-            return try await frame.useAsync { operation in
-                let storage = try frame.recovery.map { scope in try scope.withTransfer { try prepared.encode(repeat each values, retainingCode: nil) } }
-                    ?? prepared.encode(repeat each values, retainingCode: nil)
-                let result = try await operation(storage)
-                return try prepared.decode(result, retaining: result, retainingCode: nil)
-            }
-        } catch let error as SwiftHookCompletedResultError { throw error.underlying }
+        try await frame.invokeAsync(prepared: prepared, repeat each values)
     }
 
     private func invoke<Result, each Argument>(_ values: repeat each Argument) throws -> Result {

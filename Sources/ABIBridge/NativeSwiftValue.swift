@@ -146,17 +146,28 @@ final class SwiftRuntimeValueOwner {
         }
         if writes { exclusive = true } else { readers += 1 }
         lock.unlock()
-        let access = SwiftRuntimeValueAccess(storage: storage) { consumed in
+        let access = SwiftRuntimeValueAccess(storage: storage, resume: {
+            self.lock.lock(); defer { self.lock.unlock() }
+            guard self.storage != nil else { throw NativeSwiftValueError.consumedValue }
+            guard !self.exclusive, !writes || self.readers == 0 else { throw NativeSwiftValueError.valueInUse }
+            if writes { self.exclusive = true } else { self.readers += 1 }
+        }, release: {
             self.lock.lock()
-            if consumed {
-                storage.relinquishValue()
-                self.storage = nil
-            }
             if writes { self.exclusive = false } else { self.readers -= 1 }
             self.lock.unlock()
-        }
-        return NativeValueStorage(borrowing: storage.address, owner: access, retainingResourcesOf: storage,
+        }, consume: {
+            self.lock.lock()
+            storage.relinquishValue()
+            self.storage = nil
+            self.lock.unlock()
+        })
+        let result = NativeValueStorage(borrowing: storage.address, owner: access, retainingResourcesOf: storage,
                                   didRelinquish: convention == .consuming ? { access.consume() } : nil)
+        if convention == .consuming {
+            result.suspendHookAccess = { access.suspend() }
+            result.resumeHookAccess = { try access.resume() }
+        }
+        return result
     }
 }
 
@@ -197,18 +208,34 @@ enum SwiftEscapability {
 
 private final class SwiftRuntimeValueAccess {
     let storage: NativeValueStorage
-    private let finish: (Bool) -> Void
+    private let resumeAccess: () throws -> Void
+    private let releaseAccess: () -> Void
+    private let consumeValue: () -> Void
+    private var active = true
     private var consumed = false
-    init(storage: NativeValueStorage, finish: @escaping (Bool) -> Void) {
-        self.storage = storage
-        self.finish = finish
+    init(storage: NativeValueStorage, resume: @escaping () throws -> Void,
+         release: @escaping () -> Void, consume: @escaping () -> Void) {
+        self.storage = storage; resumeAccess = resume; releaseAccess = release; consumeValue = consume
+    }
+    // A downstream hook runs before native execution. Its canonical owner may
+    // be inspected while this forwarding lease retains storage for a later call.
+    func suspend() {
+        guard active else { return }
+        active = false
+        releaseAccess()
+    }
+    func resume() throws {
+        guard !active else { return }
+        try resumeAccess()
+        active = true
     }
     func consume() {
         guard !consumed else { return }
         consumed = true
-        finish(true)
+        consumeValue()
+        suspend()
     }
-    deinit { if !consumed { finish(false) } }
+    deinit { if active { releaseAccess() } }
 }
 
 /// Native metadata owns value operations; the formal declaration owns ABI placement.

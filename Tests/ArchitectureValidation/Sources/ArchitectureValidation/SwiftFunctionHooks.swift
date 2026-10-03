@@ -197,9 +197,119 @@ import Synchronization
         }
     }
     throwingHook.invalidate()
+    checks += try await validateRuntimeHookOwnership(runtime: runtime, provider: provider, caller: control)
     checks += try await validateAsyncFunctionHooks(runtime: runtime, provider: provider, caller: control)
     try check(failures.withLock { $0.isEmpty }, "No unexpected Swift callback failures")
     return ArchitectureReport(mode: "swift-function-hooks", cpuType: ABIValidationCPUType(),
         cpuSubtype: ABIValidationCPUSubtype(), pacCompiled: ABIValidationPACCompiled(),
         checks: checks, allocationTag: nil)
+}
+
+private final class RuntimeHookOwnershipState: @unchecked Sendable {
+    var input: NativeSwiftValue?
+    var output: NativeSwiftValue?
+}
+private struct RuntimeHookProbeError: Error {}
+
+@MainActor private func validateRuntimeHookOwnership(runtime: ABIRuntime, provider: ImageSelector,
+    caller: ImageSelector) async throws -> [String] {
+    let type = try await runtime.swiftType(named: "SwiftImportProvider.HookTicket", in: provider)
+    let consume = try await runtime.swiftFunction(named: "SwiftImportProvider.consumeHookTicket(_:)",
+        as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self, genericArguments: [.type(type)], in: provider)
+    let move = try await runtime.swiftFunction(named: "SwiftImportProvider.moveHookTicket(_:)",
+        as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self, genericArguments: [.type(type)], in: provider)
+    let consumeCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.callConsumeTicket(_:)",
+        as: ((Int64) -> Int64).self, in: caller)
+    let moveCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.callMoveTicket(_:)",
+        as: ((Int64) -> Int64).self, in: caller)
+    let counts = try await runtime.swiftFunction(named: "SwiftImportProvider.hookTicketCounts()",
+        as: (() -> (Int64, Int64)).self, in: provider)
+    let state = RuntimeHookOwnershipState()
+    let failures = Mutex(0)
+    var checks: [String] = []
+    let first = try unsafe await consume.hookImportedCalls(in: caller, using: runtime, onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value in
+        state.input = value.value
+        do {
+            _ = try unsafe consume.unsafeInvoke(value)
+            throw ArchitectureValidationFailure(description: "An independent transfer bypassed recovery ownership")
+        } catch NativeSwiftValueError.valueInUse {}
+        return try call.proceed(value) + 10
+    }
+    guard try unsafe consumeCaller.unsafeInvoke(42) == 52, state.input!.isConsumed,
+          try unsafe counts.unsafeInvoke() == (1, 1) else {
+        throw ArchitectureValidationFailure(description: "Noncopyable input forwarding or destruction failed")
+    }
+    checks.append("Runtime hook inputs reserve recovery ownership and proceed consumes every saved alias")
+    first.invalidate()
+    let second = try unsafe await move.hookImportedCalls(in: caller, using: runtime, onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value in
+        state.output = try call.proceed(value)
+        do {
+            _ = try unsafe consume.unsafeInvoke(NativeSwiftConsuming(state.output!))
+            throw ArchitectureValidationFailure(description: "A completed result lost its recovery reservation")
+        } catch NativeSwiftValueError.valueInUse {}
+        return state.output!
+    }
+    guard try unsafe moveCaller.unsafeInvoke(43) == 43, state.output!.isConsumed,
+          try unsafe counts.unsafeInvoke() == (2, 2) else {
+        throw ArchitectureValidationFailure(description: "Noncopyable result publication did not transfer its canonical owner")
+    }
+    checks.append("Noncopyable hook results share native publication ownership without an extra copy")
+    second.invalidate()
+    let third = try unsafe await move.hookImportedCalls(in: caller, using: runtime, onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value in
+        state.output = try call.proceed(value)
+        throw RuntimeHookProbeError()
+    }
+    guard try unsafe moveCaller.unsafeInvoke(44) == 44, state.output!.isConsumed,
+          try unsafe counts.unsafeInvoke() == (3, 3), failures.withLock({ $0 }) == 1 else {
+        throw ArchitectureValidationFailure(description: "Hook failure replayed native effects or lost noncopyable ownership")
+    }
+    checks.append("A body failure preserves the latest noncopyable native result and executes its effects once")
+    third.invalidate()
+    let fourth = try unsafe await consume.hookImportedCalls(in: caller, using: runtime, onFailure: { _ in failures.withLock { $0 += 1 } }) { _, value in
+        state.input = value.value
+        throw RuntimeHookProbeError()
+    }
+    guard try unsafe consumeCaller.unsafeInvoke(45) == 45, state.input!.isConsumed,
+          try unsafe counts.unsafeInvoke() == (4, 4), failures.withLock({ $0 }) == 2 else {
+        throw ArchitectureValidationFailure(description: "Failure before continuation lost its incoming owned value")
+    }
+    checks.append("Failure before continuation forwards the original noncopyable input exactly once")
+    fourth.invalidate()
+    let renderer = try await runtime.swiftType(named: "SwiftImportProvider.HookTicketRenderer", in: provider)
+    let virtualMove = try await renderer.method(named: "move(_:)",
+        as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self, genericArguments: [.type(type)])
+    let virtualCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.callVirtualMoveTicket(_:)",
+        as: ((Int64) -> Int64).self, in: caller)
+    let virtual = try unsafe await virtualMove.hookVirtualCalls(onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value in
+        _ = try call.receiver(as: AnyObject.self)
+        state.output = try call.proceed(value)
+        return state.output!
+    }
+    defer { virtual.invalidate() }
+    guard try unsafe virtualCaller.unsafeInvoke(46) == 46, state.output!.isConsumed,
+          try unsafe counts.unsafeInvoke() == (5, 5), failures.withLock({ $0 }) == 2 else {
+        throw ArchitectureValidationFailure(description: "Virtual runtime ownership did not match imported hooks")
+    }
+    checks.append("Virtual generic methods use the same noncopyable ownership plan and authenticated continuation")
+    virtual.invalidate()
+    let asyncMove = try await runtime.swiftFunction(named: "SwiftImportProvider.moveAsyncHookTicket(_:)",
+        as: (@concurrent (NativeSwiftConsuming<NativeSwiftValue>) async -> NativeSwiftValue).self,
+        genericArguments: [.type(type)], in: provider)
+    let asyncCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.callAsyncMoveTicket(_:)",
+        as: (@concurrent (Int64) async -> Int64).self, in: caller)
+    let asyncHook = try unsafe await asyncMove.hookImportedCalls(in: caller, using: runtime,
+        onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value in
+            state.input = value.value
+            await Task.yield()
+            state.output = try await call.proceed(value)
+            await Task.yield()
+            throw RuntimeHookProbeError()
+        }
+    defer { asyncHook.invalidate() }
+    guard try unsafe await asyncCaller.unsafeInvoke(47) == 47, state.input!.isConsumed, state.output!.isConsumed,
+          try unsafe counts.unsafeInvoke() == (6, 6), failures.withLock({ $0 }) == 3 else {
+        throw ArchitectureValidationFailure(description: "Async runtime recovery lost ownership across suspension")
+    }
+    checks.append("Async runtime hooks transfer noncopyable inputs and recover completed results through suspension")
+    return checks
 }

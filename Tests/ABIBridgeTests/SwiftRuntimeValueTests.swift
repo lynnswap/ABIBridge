@@ -53,17 +53,16 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
 @Suite struct SwiftRuntimeValueTests {
 
-    @Test func ordinaryRuntimeResultsRequireAnOwnedRepresentation() async throws {
+    @Test func ordinaryRuntimeResultsRequireScopedInvocation() async throws {
         let runtime = ABIRuntime.shared
-        await #expect(throws: ABIResolutionError.self) {
-            _ = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
-                as: ((Int64) -> NativeSwiftBorrowedValue).self, genericArguments: [.type(Int64.self)])
-        }
+        let copy = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+            as: ((Int64) -> NativeSwiftBorrowedValue).self, genericArguments: [.type(Int64.self)])
+        #expect(throws: ABIResolutionError.self) { try unsafe copy.unsafeInvoke(42) }
         typealias Producer = NativeSwiftClosure<() -> NativeSwiftBorrowedValue>
-        await #expect(throws: ABIResolutionError.self) {
-            _ = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeProducer<A>(A) -> () -> A",
-                as: ((Int64) -> Producer).self, genericArguments: [.type(Int64.self)])
-        }
+        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeProducer<A>(A) -> () -> A",
+            as: ((Int64) -> Producer).self, genericArguments: [.type(Int64.self)])
+        let producer = try unsafe make.unsafeInvoke(42)
+        #expect(throws: ABIResolutionError.self) { try unsafe producer.unsafeInvoke() }
     }
 
     @Test func composedTuplesUseNativeFieldLayoutsAndOwnership() async throws {

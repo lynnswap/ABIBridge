@@ -90,9 +90,19 @@ struct SwiftImportedFunctionHookTests {
                 }
                 return result
             }
+        let outer = try unsafe await move.hookImportedCalls(in: fixture.callerScope, using: runtime,
+            onFailure: { Issue.record($0) }) { call, incoming in
+                let read = try incoming.value.withBorrowedValue { view in
+                    #expect(!incoming.value.isConsumed)
+                    return view.type.name
+                }
+                #expect(read == type.name)
+                return try call.proceed(incoming)
+            }
         #expect(try unsafe caller.unsafeInvoke(42) == 42)
         #expect(saved.input!.isConsumed && saved.output!.isConsumed)
         #expect(try unsafe counts.unsafeInvoke() == (1, 1))
+        outer.invalidate()
         hook.invalidate()
         let fallback = try unsafe await move.hookImportedCalls(in: fixture.callerScope, using: runtime,
             onFailure: { _ in failures.withLock { $0 += 1 } }) { call, incoming in
@@ -104,6 +114,95 @@ struct SwiftImportedFunctionHookTests {
         #expect(saved.output!.isConsumed)
         #expect(try unsafe counts.unsafeInvoke() == (2, 2))
         #expect(failures.withLock { $0 } == 1)
+    }
+
+    @Test func virtualHooksTransferTheSameNoncopyableRuntimeOwner() async throws {
+        let fixture = try CompiledSwiftReplacementFixture()
+        defer { fixture.cleanup() }
+        let runtime = fixture.runtime
+        let valueType = try await runtime.swiftType(named: fixture.module + ".HookTicket", in: fixture.providerScope)
+        let type = try await runtime.swiftType(named: fixture.module + ".HookTicketRenderer", in: fixture.providerScope)
+        let move = try await type.method(named: "move(_:)",
+            as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self, genericArguments: [.type(valueType)])
+        let caller = try await runtime.swiftFunction(named: fixture.callerModule + ".callVirtualMoveTicket(_:)",
+            as: ((Int64) -> Int64).self, in: fixture.callerScope)
+        let counts = try await runtime.swiftFunction(named: fixture.module + ".hookTicketCounts()",
+            as: (() -> (Int64, Int64)).self, in: fixture.providerScope)
+        let saved = SavedRuntimeHookValues()
+        let hook = try unsafe await move.hookVirtualCalls(onFailure: { Issue.record($0) }) { call, value in
+            _ = try call.receiver(as: AnyObject.self)
+            saved.input = value.value
+            let result = try call.proceed(value)
+            saved.output = result
+            return result
+        }
+        defer { hook.invalidate() }
+        #expect(try unsafe caller.unsafeInvoke(42) == 42)
+        #expect(saved.input!.isConsumed && saved.output!.isConsumed)
+        #expect(try unsafe counts.unsafeInvoke() == (1, 1))
+    }
+
+    @MainActor @Test func asyncHooksComposeRuntimeOwnershipAcrossSuspension() async throws {
+        let fixture = try CompiledSwiftReplacementFixture()
+        defer { fixture.cleanup() }
+        let runtime = fixture.runtime
+        let type = try await runtime.swiftType(named: fixture.module + ".HookTicket", in: fixture.providerScope)
+        let move = try await runtime.swiftFunction(named: fixture.module + ".moveAsyncHookTicket(_:)",
+            as: (@concurrent (NativeSwiftConsuming<NativeSwiftValue>) async -> NativeSwiftValue).self,
+            genericArguments: [.type(type)], in: fixture.providerScope)
+        let caller = try await runtime.swiftFunction(named: fixture.callerModule + ".callAsyncMoveTicket(_:)",
+            as: (@concurrent (Int64) async -> Int64).self, in: fixture.callerScope)
+        let counts = try await runtime.swiftFunction(named: fixture.module + ".hookTicketCounts()",
+            as: (() -> (Int64, Int64)).self, in: fixture.providerScope)
+        let saved = SavedRuntimeHookValues()
+        let failures = Mutex(0)
+        let hook = try unsafe await move.hookImportedCalls(in: fixture.callerScope, using: runtime,
+            onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value in
+                saved.input = value.value
+                await Task.yield()
+                saved.output = try await call.proceed(value)
+                #expect(value.value.isConsumed)
+                await Task.yield()
+                throw RuntimeHookBodyFailure()
+            }
+        defer { hook.invalidate() }
+        #expect(try unsafe await caller.unsafeInvoke(42) == 42)
+        #expect(saved.input!.isConsumed && saved.output!.isConsumed)
+        #expect(try unsafe counts.unsafeInvoke() == (1, 1))
+        #expect(failures.withLock { $0 } == 1)
+    }
+
+    @Test func untypedErrorsDoNotReserveNoncopyableRecoveryInputs() async throws {
+        let fixture = try CompiledSwiftReplacementFixture()
+        defer { fixture.cleanup() }
+        let runtime = fixture.runtime
+        let type = try await runtime.swiftType(named: fixture.module + ".HookTicket", in: fixture.providerScope)
+        let target = try await runtime.swiftFunction(named: fixture.module + ".consumeAnyErrorHookTicket(_:)",
+            as: ((NativeSwiftConsuming<NativeSwiftValue>) throws -> Int64).self,
+            genericArguments: [.type(type)], in: fixture.providerScope)
+        let consume = try await runtime.swiftFunction(named: fixture.module + ".consumeHookTicket(_:)",
+            as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self,
+            genericArguments: [.type(type)], in: fixture.providerScope)
+        let caller = try await runtime.swiftFunction(named: fixture.callerModule + ".callConsumeAnyErrorTicket(_:)",
+            as: ((Int64) throws -> Int64).self, in: fixture.callerScope)
+        let counts = try await runtime.swiftFunction(named: fixture.module + ".hookTicketCounts()",
+            as: (() -> (Int64, Int64)).self, in: fixture.providerScope)
+        let saved = SavedRuntimeHookValues()
+        let hook = try unsafe await target.hookImportedCalls(in: fixture.callerScope, using: runtime,
+            onFailure: { Issue.record($0) }) { _, incoming in
+                saved.input = incoming.value
+                #expect(try unsafe consume.unsafeInvoke(incoming) == 42)
+                throw RuntimeHookBodyFailure()
+            }
+        defer { hook.invalidate() }
+        do {
+            _ = try unsafe caller.unsafeInvoke(42)
+            Issue.record("Expected the native untyped error channel")
+        } catch let error as NativeSwiftError {
+            error.withUnderlyingError { #expect($0 is RuntimeHookBodyFailure) }
+        }
+        #expect(saved.input!.isConsumed)
+        #expect(try unsafe counts.unsafeInvoke() == (1, 1))
     }
 
     @Test func runtimeValuesNestedClosuresAndInoutComposeThroughHooks() async throws {

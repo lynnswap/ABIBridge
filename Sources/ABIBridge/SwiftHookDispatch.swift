@@ -55,6 +55,7 @@ private final class SwiftHookExecution: @unchecked Sendable {
     }
     func invoke(_ count: Int, arguments: [NativeValueStorage], recovery: SwiftHookRecoveryScope? = nil) throws -> NativeValueStorage {
         guard count != 0 else { return try signature.proceed(call, arguments: arguments, recovery: recovery) }
+        for value in arguments { value.suspendHookAccess?() }
         let handler = handlers[count - 1]
         if handler.requiresMainActor && !Thread.isMainThread {
             handler.failure(NativeSwiftHookInvocationError.wrongThread)
@@ -95,6 +96,7 @@ private final class SwiftHookExecution: @unchecked Sendable {
     }
     nonisolated(nonsending) func invokeAsync(_ count: Int, arguments: [NativeValueStorage], recovery: SwiftHookRecoveryScope? = nil) async throws -> NativeValueStorage {
         guard count != 0 else { return try await signature.proceedAsync(call, arguments: arguments, recovery: recovery) }
+        for value in arguments { value.suspendHookAccess?() }
         let handler = handlers[count - 1]
         let recovery = SwiftHookRecoveryScope(protectsOwnership: signature.errorPlan == nil || signature.errorPlan!.isTyped)
         for value in arguments {
@@ -106,7 +108,7 @@ private final class SwiftHookExecution: @unchecked Sendable {
             do {
                 let result = try await invokeAsync(count - 1, arguments: signature.preservingReceiver(values, from: arguments), recovery: recovery)
                 step.record(.success(result))
-            if signature.takeResult != nil { recovery.retainResult(result) }
+                if signature.takeResult != nil { recovery.retainResult(result) }
                 return try signature.cloneResult(result)
             } catch let error as SwiftHookCompletedResultError {
                 step.record(.failure(error)); throw error

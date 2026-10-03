@@ -171,3 +171,23 @@ public struct HookTicket: ~Copyable, HookTicketReadable {
     return value
 }
 @inline(never) public func hookTicketCounts() -> (Int64, Int64) { ticketState.withLock { ($0.entries, $0.destructions) } }
+
+open class HookTicketRenderer {
+    public init() {}
+    @inline(never) open func move<Value: ~Copyable>(_ value: consuming Value) -> Value {
+        ticketState.withLock { $0.entries += 1 }
+        return value
+    }
+}
+@inline(never) public func makeHookTicketRenderer() -> HookTicketRenderer { HookTicketRenderer() }
+
+@inline(never) @concurrent public func moveAsyncHookTicket<Value: ~Copyable>(_ value: consuming Value) async -> Value {
+    ticketState.withLock { $0.entries += 1 }
+    await Task.yield()
+    return value
+}
+
+@inline(never) public func consumeAnyErrorHookTicket<Value: HookTicketReadable & ~Copyable>(_ value: consuming Value) throws -> Int64 {
+    ticketState.withLock { $0.entries += 1 }
+    return value.read()
+}
