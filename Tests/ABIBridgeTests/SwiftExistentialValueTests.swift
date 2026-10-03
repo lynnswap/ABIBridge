@@ -86,6 +86,23 @@ struct SwiftExistentialValueTests {
         #expect(try objectValue.withCopy { ($0 as? any CustomStringConvertible)?.description } == "43")
     }
 
+    @Test func compositionShapesKeepAssociatedTypeProtocolIdentity() async throws {
+        let runtime = ABIRuntime.shared
+        let left = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeLeftConstrainedComposition() -> any ManagedSwiftFixtures.RuntimeExtendedLeft & ManagedSwiftFixtures.RuntimeExtendedRight<Self.ManagedSwiftFixtures.RuntimeExtendedLeft.Element == Swift.Int>",
+            as: (() -> NativeSwiftValue).self)
+        let right = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeRightConstrainedComposition() -> any ManagedSwiftFixtures.RuntimeExtendedLeft & ManagedSwiftFixtures.RuntimeExtendedRight<Self.ManagedSwiftFixtures.RuntimeExtendedRight.Element == Swift.Int>",
+            as: (() -> NativeSwiftValue).self)
+        let first = try unsafe left.unsafeInvoke()
+        let second = try unsafe right.unsafeInvoke()
+        #expect(first.type != second.type)
+        #expect(first.type.name.contains("RuntimeExtendedLeft.Element == Swift.Int"))
+        #expect(second.type.name.contains("RuntimeExtendedRight.Element == Swift.Int"))
+        #expect(try first.withCopy { ($0 as? any CustomStringConvertible)?.description } == "both")
+        #expect(try second.withCopy { ($0 as? any CustomStringConvertible)?.description } == "both")
+    }
+
     @Test func extendedExistentialCallbacksUseTheirContainerConvention() async throws {
         let runtime = ABIRuntime.shared
         typealias Source = NativeSwiftClosure<(any ExistentialSource<Int>) -> any ExistentialSource<Int>>

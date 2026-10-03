@@ -92,5 +92,15 @@ import SwiftValueFixtures
     }
     try check(try unsafe applyExtended.unsafeInvoke(callback, 42) == 42,
         "Runtime-only class-constrained existential callbacks preserve their authenticated convention")
+    let leftComposition = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.makeLeftConstrainedComposition() -> any SwiftValueFixtures.RuntimeExtendedLeft & SwiftValueFixtures.RuntimeExtendedRight<Self.SwiftValueFixtures.RuntimeExtendedLeft.Element == Swift.Int>",
+        as: (() -> NativeSwiftValue).self)
+    let rightComposition = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.makeRightConstrainedComposition() -> any SwiftValueFixtures.RuntimeExtendedLeft & SwiftValueFixtures.RuntimeExtendedRight<Self.SwiftValueFixtures.RuntimeExtendedRight.Element == Swift.Int>",
+        as: (() -> NativeSwiftValue).self)
+    let leftValue = try unsafe leftComposition.unsafeInvoke()
+    let rightValue = try unsafe rightComposition.unsafeInvoke()
+    try check(leftValue.type != rightValue.type,
+        "Parameterized compositions retain the declaring protocol of same-named associated types")
     return checks
 }

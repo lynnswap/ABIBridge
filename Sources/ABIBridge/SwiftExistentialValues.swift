@@ -182,7 +182,11 @@ struct SwiftExtendedExistentialMetadata {
 // Swift interns metadata by shape and keeps that shape's references permanently.
 // Only synthesized descriptors and their protocol images share that lifetime.
 private final class SwiftSyntheticExistentialShape: @unchecked Sendable {
-    private static let shapes = Mutex<[String: SwiftSyntheticExistentialShape]>([:])
+    private struct Key: Hashable {
+        let name: [UInt8]
+        let subjects: [[UInt8]]
+    }
+    private static let shapes = Mutex<[Key: SwiftSyntheticExistentialShape]>([:])
     let address: UnsafeMutableRawPointer
     let images: [NativeImage]
 
@@ -194,8 +198,9 @@ private final class SwiftSyntheticExistentialShape: @unchecked Sendable {
 
     static func metadata(shape name: String, constraints: [SwiftFormalType.ExistentialConstraint],
                          arguments: [Any.Type], resolver: SymbolResolver) throws -> Any.Type {
+        let key = Key(name: Array(name.utf8), subjects: constraints.map { Array($0.subject.utf8) })
         let shape: SwiftSyntheticExistentialShape
-        if let cached = shapes.withLock({ $0[name] }) { shape = cached }
+        if let cached = shapes.withLock({ $0[key] }) { shape = cached }
         else {
             let syntax = try SwiftSyntax(symbol: name)
             let existential = try syntax.root.requiredChild().requiredChild()
@@ -247,8 +252,8 @@ private final class SwiftSyntheticExistentialShape: @unchecked Sendable {
             let candidate = try SwiftSyntheticExistentialShape(address: existential.makeExtendedExistentialShape(
                 protocols: addresses, written: written, declaring: declaring, classBound: classBound), images: images)
             shape = shapes.withLock { values in
-                if let cached = values[name] { return cached }
-                values[name] = candidate
+                if let cached = values[key] { return cached }
+                values[key] = candidate
                 return candidate
             }
         }

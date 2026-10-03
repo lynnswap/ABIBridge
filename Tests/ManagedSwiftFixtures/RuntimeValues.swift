@@ -545,3 +545,12 @@ private final class RuntimeExtendedObjectValue<Element>: RuntimeExtendedObject, 
 @inline(never) public func applyRuntimeExtendedObject<Value>(_ body: (any RuntimeExtendedObject<Value>) -> Int, _ value: Value) -> Int {
     body(RuntimeExtendedObjectValue(value))
 }
+
+public protocol RuntimeExtendedLeft<Element> { associatedtype Element }
+public protocol RuntimeExtendedRight<Element> { associatedtype Element }
+private struct RuntimeExtendedBoth: RuntimeExtendedLeft, RuntimeExtendedRight, CustomStringConvertible {
+    typealias Element = Int
+    var description: String { "both" }
+}
+@inline(never) public func makeLeftConstrainedComposition() -> any RuntimeExtendedLeft<Int> & RuntimeExtendedRight { RuntimeExtendedBoth() }
+@inline(never) public func makeRightConstrainedComposition() -> any RuntimeExtendedLeft & RuntimeExtendedRight<Int> { RuntimeExtendedBoth() }

@@ -164,12 +164,19 @@ char *ABICopySwiftConstrainedExistentialShapeName(const ABISwiftSyntaxNode *node
     if (source->getKind() != Node::Kind::ConstrainedExistential || source->getNumChildren() != 2)
         return nullptr;
     NodeFactory factory;
+    auto countProtocols = [&](auto &&visit, NodePointer node) -> size_t {
+        if (node->getKind() == Node::Kind::ProtocolList)
+            return node->getChild(0)->getNumChildren();
+        for (auto child : *node) if (auto count = visit(visit, child)) return count;
+        return 0;
+    };
+    const bool singleProtocol = countProtocols(countProtocols, source->getChild(0)) == 1;
     auto copySubject = [&](auto &&copy, NodePointer node) -> NodePointer {
         NodePointer result = node->hasText() ? factory.createNode(node->getKind(), node->getText())
             : node->hasIndex() ? factory.createNode(node->getKind(), node->getIndex())
             : factory.createNode(node->getKind());
         for (auto child : *node) {
-            if (node->getKind() == Node::Kind::DependentAssociatedTypeRef
+            if (singleProtocol && node->getKind() == Node::Kind::DependentAssociatedTypeRef
                 && child->getKind() != Node::Kind::Identifier) continue;
             result->addChild(copy(copy, child), factory);
         }
