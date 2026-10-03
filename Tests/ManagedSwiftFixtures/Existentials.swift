@@ -109,3 +109,15 @@ public final class FreshExistentialClassValue<Element>: FreshExistentialClass, C
 @inline(never) public func makeFreshExistentialClass<Element>(_ value: Element) -> any FreshExistentialClass<Element> {
     FreshExistentialClassValue(value)
 }
+
+open class ExistentialSuperclass<Value> {
+    public let element: Value
+    public init(_ element: Value) { self.element = element }
+}
+public final class ExistentialSuperclassValue<Value>: ExistentialSuperclass<Value>, ExistentialSource {}
+@inline(never) public func echoGenericSuperclass<Value>(
+    _ value: any ExistentialSuperclass<Value> & ExistentialSource<Value>
+) -> any ExistentialSuperclass<Value> & ExistentialSource<Value> { value }
+@inline(never) public func makeGenericSuperclass<Value>(
+    _ value: Value
+) -> any ExistentialSuperclass<Value> & ExistentialSource<Value> { ExistentialSuperclassValue(value) }

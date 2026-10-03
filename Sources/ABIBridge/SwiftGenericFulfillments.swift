@@ -95,8 +95,8 @@ extension SwiftFormalType {
     func substituting(_ substitutions: [String: Self]) -> Self {
         switch self {
         case .objectiveCClass, .opaqueResult: return self
-        case .constrainedExistential(let base, let constraints, let shape):
-            return .constrainedExistential(base: base, constraints: constraints.map {
+        case .constrainedExistential(let base, let superclass, let constraints, let shape):
+            return .constrainedExistential(base: base, superclass: superclass?.substituting(substitutions), constraints: constraints.map {
                 .init(subject: $0.subject, value: $0.value.substituting(substitutions))
             }, shape: shape)
         case .named(let name, let arguments):

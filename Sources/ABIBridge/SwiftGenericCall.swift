@@ -1215,7 +1215,8 @@ extension SwiftGenericBinding {
     func dependsOnParameters(_ type: SwiftFormalType) -> Bool {
         return switch type {
         case .objectiveCClass, .opaqueResult: false
-        case .constrainedExistential(_, let constraints, _): constraints.contains { dependsOnParameters($0.value) }
+        case .constrainedExistential(_, let superclass, let constraints, _):
+            (superclass.map(dependsOnParameters) ?? false) || constraints.contains { dependsOnParameters($0.value) }
         case .named(let name, let parameters):
             (parameters.isEmpty && arguments[String(name.prefix { $0 != "." })] != nil) || parameters.contains(where: dependsOnParameters)
         case .nominal(_, let parameters), .reference(_, let parameters): parameters.contains(where: dependsOnParameters)

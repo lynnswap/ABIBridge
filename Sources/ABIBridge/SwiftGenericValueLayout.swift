@@ -56,8 +56,8 @@ extension SwiftFormalType {
         func qualify(_ type: Self) throws -> Self { try type.qualifyingAssociatedTypes(using: conformances) }
         switch self {
         case .objectiveCClass, .opaqueResult: return self
-        case .constrainedExistential(let base, let constraints, let shape):
-            return .constrainedExistential(base: base, constraints: try constraints.map {
+        case .constrainedExistential(let base, let superclass, let constraints, let shape):
+            return .constrainedExistential(base: base, superclass: try superclass.map(qualify), constraints: try constraints.map {
                 .init(subject: $0.subject, value: try qualify($0.value))
             }, shape: shape)
         case .associated(let base, let member, let protocolName):

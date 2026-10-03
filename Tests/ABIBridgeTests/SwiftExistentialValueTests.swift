@@ -67,6 +67,26 @@ struct SwiftExistentialValueTests {
         }
     }
 
+    @Test func genericSuperclassBindsTypedExistentialMetadata() async throws {
+        typealias Value = any ExistentialSuperclass<Int> & ExistentialSource<Int>
+        let native = "any ManagedSwiftFixtures.ExistentialSuperclass<A> & ManagedSwiftFixtures.ExistentialSource<Self.Element == A>"
+        let echo = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.echoGenericSuperclass<A>(" + native + ") -> " + native,
+            as: ((Value) -> Value).self, genericArguments: [.type(Int.self)])
+        let value = ExistentialSuperclassValue(42)
+        let result = try unsafe echo.unsafeInvoke(value)
+        #expect(result === value && result.element == 42)
+        let make = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.makeGenericSuperclass<A>(A) -> " + native,
+            as: ((Int) -> Value).self, genericArguments: [.type(Int.self)])
+        #expect(try unsafe make.unsafeInvoke(43).element == 43)
+        await #expect(throws: ABIResolutionError.self) {
+            _ = try await ABIRuntime.shared.swiftFunction(
+                named: "ManagedSwiftFixtures.echoGenericSuperclass<A>(" + native + ") -> " + native,
+                as: ((Value) -> Value).self, genericArguments: [.type(String.self)])
+        }
+    }
+
     @Test func runtimeOnlyExistentialsConstructMissingProviderShapes() async throws {
         let call = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.makeFreshExistential<A>(A) -> any ManagedSwiftFixtures.FreshExistentialSource<Self.Element == A>",

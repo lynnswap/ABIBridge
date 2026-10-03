@@ -593,18 +593,20 @@ struct SwiftGenericBinding: Sendable {
             }
         }
         switch type {
-        case .constrainedExistential(let base, let constraints, let shape):
+        case .constrainedExistential(let base, let superclass, let constraints, let shape):
             // Swift 6.3 cannot instantiate the textual constrained existential
             // form. Reuse compiler-emitted metadata supplied by the signature
             // after checking the complete bound same-type requirements.
             // MetadataLookup.cpp: createConstrainedExistentialType.
             let expected = try constraints.map { try types($0.value, packIndex: packIndex)[0] }
+            let expectedSuperclass = try superclass.map { try types($0, packIndex: packIndex)[0] }
             for metadata in knownTypes.values {
                 guard unsafeBitCast(metadata, to: UnsafeRawPointer.self).load(as: UInt.self) == 0x307,
                       let name = _mangledTypeName(metadata) else { continue }
                 let syntax = try name.withCString { try unsafe SwiftSyntax(typeReference: $0, length: name.utf8.count) }
-                guard case .constrainedExistential(let actualBase, let actualConstraints, _) = try SwiftFormalType(syntax.root),
-                      try Self.key(base) == Self.key(actualBase), constraints.count == actualConstraints.count else { continue }
+                guard case .constrainedExistential(let actualBase, let actualSuperclass, let actualConstraints, _) = try SwiftFormalType(syntax.root),
+                      try Self.key(base) == Self.key(actualBase), constraints.count == actualConstraints.count,
+                      try actualSuperclass.map({ try types($0, packIndex: packIndex)[0] }) == expectedSuperclass else { continue }
                 let matches = try zip(constraints, expected).allSatisfy { constraint, expected in
                     let candidates = actualConstraints.filter { actual in
                         actual.subject == constraint.subject
@@ -795,7 +797,9 @@ struct SwiftGenericBinding: Sendable {
         func visit(_ type: SwiftFormalType) {
             switch type {
             case .objectiveCClass, .opaqueResult: break
-            case .constrainedExistential(_, let constraints, _): constraints.forEach { visit($0.value) }
+            case .constrainedExistential(_, let superclass, let constraints, _):
+                if let superclass { visit(superclass) }
+                constraints.forEach { visit($0.value) }
             case .named(let name, let parameters):
                 if let argument = arguments[String(name.prefix { $0 != "." })], argument.isPack {
                     counts.append(argument.types.count)
