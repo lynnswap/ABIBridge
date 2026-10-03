@@ -293,7 +293,10 @@ struct SwiftRuntimeValuePlan: Sendable {
         return NativeSwiftValue(storage: storage, type: type)
     }
 
-    func requireOwnedValue() throws {
+    func requireOwnedValue(as representation: Any.Type = NativeSwiftValue.self) throws {
+        guard representation != NativeSwiftBorrowedValue.self else {
+            throw ABIResolutionError.unsupportedDeclaration("A borrowed runtime result requires a scoped result lifetime.")
+        }
         guard SwiftEscapability.accepts(valueType.metadata) else {
             throw ABIResolutionError.unsupportedDeclaration("An owned runtime value requires an Escapable native type.")
         }
