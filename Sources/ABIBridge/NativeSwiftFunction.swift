@@ -54,7 +54,7 @@ func swiftFunctionDeclaration(
     var declaration = name
     // A full demangled declaration is useful when a foreign wrapper's Swift
     // type name differs from the native type. Label-only names infer types.
-    if !name.contains("->"), name.last == ")", let opening = name.lastIndex(of: "(") {
+    if SwiftFormalSyntax.topLevelArrow(in: name) == nil, name.last == ")", let opening = name.lastIndex(of: "(") {
         let text = name[name.index(after: opening)..<name.index(before: name.endIndex)]
         let labels = text.split(separator: ":").map(String.init)
         let labelsOnly = text.isEmpty || (text.last == ":" && labels.allSatisfy {
@@ -105,7 +105,7 @@ func swiftOuterSignature(_ declaration: String) -> (text: String, result: Substr
         let character = declaration[index]
         let previous = index > declaration.startIndex ? declaration.index(before: index) : nil
         let arrow = character == ">" && previous.map { declaration[$0] == "-" } == true
-        if parentheses == 0, generics == 0, arrow {
+        if parentheses == 0, generics == 0, arrow, SwiftFormalSyntax.isResultArrow(in: declaration, at: previous!) {
             result = declaration[declaration.index(after: index)...]
             text.removeAll(keepingCapacity: true)
             index = previous!
@@ -320,6 +320,44 @@ public struct NativeSwiftFunction<Signature>: Sendable {
 }
 
 extension ABIRuntime {
+    private func prepareSwiftFunction<Signature>(
+        named name: String, as signature: Signature.Type,
+        genericArguments: [NativeSwiftGenericArgument], declaredSignature: String?,
+        valueABIs: [NativeSwiftType: NativeType],
+        resolve: (NativeDeclaration) throws -> ResolvedSymbol,
+        candidates: (NativeDeclaration) throws -> [ResolvedSymbol]
+    ) throws -> NativeSwiftFunction<Signature> {
+        let description = try SwiftFunctionSignature(signature)
+        let usesBinding = !genericArguments.isEmpty || declaredSignature != nil || !valueABIs.isEmpty
+            || description.requiresClosureDeclaration
+        guard usesBinding else {
+            let declaration = try swiftFunctionDeclaration(named: name, as: signature)
+            return try NativeSwiftFunction(symbol: resolve(declaration), resolver: resolver)
+        }
+        let declaration = NativeDeclaration(name: name, language: .swift)
+        if SwiftMemberLookup.hasSignature(name) {
+            return try preparedGenericFunction(symbol: resolve(declaration), signature: signature,
+                genericArguments: genericArguments, declaredSignature: declaredSignature, valueABIs: valueABIs)
+        }
+        var preparationFailure: (any Error)?
+        let matches = try candidates(declaration).compactMap { symbol -> (ResolvedSymbol, SwiftGenericCallPlan)? in
+            do {
+                let plan = try SwiftGenericCallPlan(symbol: symbol, genericArguments: genericArguments,
+                    signature: description, resolver: resolver, declaredSignature: declaredSignature, valueABIs: valueABIs)
+                return try plan.matches(description) ? (symbol, plan) : nil
+            } catch ABIResolutionError.signatureMismatch { return nil }
+            catch { preparationFailure = error; return nil }
+        }
+        if matches.count > 1 {
+            throw ABIResolutionError.ambiguousDeclaration(declaration, candidates: matches.map { $0.0.linkageName })
+        }
+        if let (symbol, plan) = matches.first {
+            return try NativeSwiftFunction(symbol: symbol, resolver: resolver, generic: plan)
+        }
+        if let preparationFailure { throw preparationFailure }
+        throw ABIResolutionError.declarationNotFound(declaration)
+    }
+
     /// Resolves a concrete Swift free function by its source-level name.
     ///
     /// - Parameters:
@@ -341,14 +379,10 @@ extension ABIRuntime {
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftFunction<Signature> {
-        let declaration = try genericArguments.isEmpty ? swiftFunctionDeclaration(named: name, as: signature)
-            : NativeDeclaration(name: name, language: .swift)
-        let symbol = try resolve(declaration, in: scope, loading: loading)
-        if try !genericArguments.isEmpty || declaredSignature != nil || !valueABIs.isEmpty || SwiftFunctionSignature(signature).requiresClosureDeclaration {
-            return try preparedGenericFunction(symbol: symbol, signature: signature, genericArguments: genericArguments,
-                                               declaredSignature: declaredSignature, valueABIs: valueABIs)
-        }
-        return try NativeSwiftFunction(symbol: symbol, resolver: resolver)
+        try prepareSwiftFunction(named: name, as: signature, genericArguments: genericArguments,
+            declaredSignature: declaredSignature, valueABIs: valueABIs,
+            resolve: { try resolve($0, in: scope, loading: loading) },
+            candidates: { try resolver.swiftDeclarationCandidates($0, in: scope, loading: loading) })
     }
 
     /// Resolves a concrete Swift free function in an already retained image.
@@ -372,13 +406,9 @@ extension ABIRuntime {
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftFunction<Signature> {
-        let declaration = try genericArguments.isEmpty ? swiftFunctionDeclaration(named: name, as: signature)
-            : NativeDeclaration(name: name, language: .swift)
-        let symbol = try resolve(declaration, in: image, loading: loading)
-        if try !genericArguments.isEmpty || declaredSignature != nil || !valueABIs.isEmpty || SwiftFunctionSignature(signature).requiresClosureDeclaration {
-            return try preparedGenericFunction(symbol: symbol, signature: signature, genericArguments: genericArguments,
-                                               declaredSignature: declaredSignature, valueABIs: valueABIs)
-        }
-        return try NativeSwiftFunction(symbol: symbol, resolver: resolver)
+        try prepareSwiftFunction(named: name, as: signature, genericArguments: genericArguments,
+            declaredSignature: declaredSignature, valueABIs: valueABIs,
+            resolve: { try resolve($0, in: image, loading: loading) },
+            candidates: { try resolver.swiftDeclarationCandidates($0, in: image, loading: loading) })
     }
 }

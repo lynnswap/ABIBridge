@@ -349,6 +349,14 @@ enum SwiftMemberLookup {
 }
 
 enum SwiftFormalSyntax {
+    static func isResultArrow(in text: String, at dash: String.Index) -> Bool {
+        let end = text.index(after: dash)
+        guard text[dash] == "-", end < text.endIndex, text[end] == ">" else { return false }
+        if dash > text.startIndex, SwiftGenericSyntax.isOperatorHead(text[text.index(before: dash)]) { return false }
+        let next = text.index(after: end)
+        return next == text.endIndex || !SwiftGenericSyntax.isOperatorHead(text[next])
+    }
+
     static func fields(_ text: Substring) -> [String] {
         text.trimmingCharacters(in: .whitespaces).isEmpty ? [] : SwiftGenericSyntax.split(text)
     }
@@ -392,7 +400,8 @@ enum SwiftFormalSyntax {
             else if character == "[" { brackets += 1 }
             else if character == "]" { brackets -= 1 }
             else if character == "<", SwiftGenericSyntax.opensGeneric(in: text, at: index) { generics += 1 }
-            else if character == ">", previous == "-", parentheses == 0, generics == 0, brackets == 0 {
+            else if character == ">", previous == "-", parentheses == 0, generics == 0, brackets == 0,
+                    isResultArrow(in: text, at: text.index(before: index)) {
                 return text.index(before: index)..<text.index(after: index)
             } else if character == ">", previous != "-", generics > 0 { generics -= 1 }
             previous = character

@@ -94,7 +94,7 @@ public actor NativeSwiftType: Hashable {
         catch ABIResolutionError.declarationNotFound {
             if exact {
                 let key = DeclarationKey.make(declaration.name, language: .swift)
-                let matches = try resolver.swiftMemberCandidates(declaration, in: nil, extensionsOnly: true).filter {
+                let matches = try resolver.swiftDeclarationCandidates(declaration, in: nil, extensionsOnly: true).filter {
                     let name = $0.declaration.name
                     return DeclarationKey.make(name, language: .swift) == key
                         || SymbolIndex.extensionMemberName(name).map { DeclarationKey.make($0, language: .swift) == key } == true
@@ -150,7 +150,7 @@ public actor NativeSwiftType: Hashable {
             if belongs && usesBinding && !exact, let signature {
                 do {
                     for extensionsOnly in [false, true] {
-                        let candidates = try resolver.swiftMemberCandidates(request,
+                        let candidates = try resolver.swiftDeclarationCandidates(request,
                             in: extensionsOnly ? nil : ownerImage, extensionsOnly: extensionsOnly)
                         let matches = candidates.filter { symbol in
                             if explicitSignature,

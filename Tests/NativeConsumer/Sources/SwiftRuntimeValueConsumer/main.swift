@@ -210,7 +210,7 @@ typealias NativeNestedCaller = NativeSwiftClosure<(SavedInner, Int64) -> Int64>
 let nativeNestedFactory = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeConcreteNestedCaller()",
     as: (() -> NativeNestedCaller).self, in: source)
 let nativeNestedCall = try await runtime.swiftFunction(
-    named: "ManagedSwiftFixtures.callNestedRuntimeCaller<A>(((A) -> A, A) -> A, A) -> A",
+    named: "ManagedSwiftFixtures.callNestedRuntimeCaller(_:_:)",
     as: ((NativeNestedCaller, Int64) -> Int64).self, genericArguments: [.type(Int64.self)], in: source)
 let nativeNestedCaller = try unsafe nativeNestedFactory.unsafeInvoke()
 guard try unsafe nativeNestedCall.unsafeInvoke(nativeNestedCaller, 42) == 42 else { throw ConsumerError.wrongResult }
@@ -277,7 +277,7 @@ let pairType = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeF
 let pairABI = try NativeType.structure(named: pairType.name, fields: [.int64, .int64])
 let pairABIs = [pairType: pairABI]
 let makePair = try await runtime.swiftFunction(
-    named: "ManagedSwiftFixtures.makeRuntimeFixedPair(Swift.Int64, Swift.Int64) -> ManagedSwiftFixtures.RuntimeFixedPair",
+    named: "ManagedSwiftFixtures.makeRuntimeFixedPair(_:_:)",
     as: ((Int64, Int64) -> NativeSwiftValue).self, valueABIs: pairABIs, in: source)
 let pair = try unsafe makePair.unsafeInvoke(35, 7)
 let sumPair = try await pairType.method(named: "sum()", as: (() -> Int64).self, receiverABI: pairABI)
@@ -293,6 +293,11 @@ let pairBody = try PairBody { value in
 guard try unsafe inspectPair.unsafeInvoke(pair, pairBody) == 42, pairABIs[pair.type] == pairABI else { throw ConsumerError.wrongResult }
 if let error = state.error { throw error }
 print("Explicit fixed Swift components compose runtime-only values and callbacks without importing their type")
+
+let arrow = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.-->(_:_:)",
+    as: ((Int64, Int64) -> Int64).self, in: source)
+guard try unsafe arrow.unsafeInvoke(35, 7) == 42 else { throw ConsumerError.wrongResult }
+print("Label-only lookup preserves arrow-containing operator names")
 
 
 typealias ClosureData = NativeSwiftClosure<() -> Int64>
