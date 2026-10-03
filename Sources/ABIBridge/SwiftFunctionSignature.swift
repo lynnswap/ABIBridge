@@ -284,7 +284,8 @@ struct SwiftCallbackValues: Sendable {
                 return plan.copyCallbackArgument(from: source, type: nativeType)
             }
         }
-        if let closure = Value.self as? any SwiftClosureValue.Type {
+        let usesSwiftStorage = if case .value = generic { true } else { false }
+        if !usesSwiftStorage, let closure = Value.self as? any SwiftClosureValue.Type {
             let codec: SwiftClosureCodec
             if case .closure(let plan) = generic { codec = try closure.makeGenericClosureCodec(plan: plan) }
             else { codec = try closure.makeClosureCodec() }

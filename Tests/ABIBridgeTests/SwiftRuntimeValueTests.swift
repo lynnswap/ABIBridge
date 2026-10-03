@@ -8,7 +8,7 @@ import Testing
 private final class RuntimeValueDeaths: Sendable {
     let count = Mutex(0)
 }
-private final class RuntimeValueLife {
+private final class RuntimeValueLife: Sendable {
     let deaths: RuntimeValueDeaths
     init(_ deaths: RuntimeValueDeaths) { self.deaths = deaths }
     deinit { deaths.count.withLock { $0 += 1 } }
@@ -132,6 +132,46 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         let value = try unsafe make.unsafeInvoke(35, 7)
         let sum = try await type.method(named: "sum()", as: (() -> Int64).self, receiverABI: abi)
         #expect(try unsafe sum.unsafeInvoke(on: value) == 42)
+    }
+
+    @Test func ownershipWrappersPreserveNativeGenericClosureData() async throws {
+        typealias Value = NativeSwiftClosure<() -> Int64>
+        typealias Consume = NativeSwiftClosure<(NativeSwiftConsuming<Value>) -> Int64>
+        typealias Borrow = NativeSwiftClosure<(NativeSwiftBorrowing<Value>) throws -> Int64>
+        typealias AsyncBorrow = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftBorrowing<Value>) async throws -> Int64>
+        let runtime = ABIRuntime.shared
+        let consume = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitNonthrowingConsumingRuntimeValue<A where A: ~Swift.Copyable>(__owned A, (__owned A) -> Swift.Int64) -> Swift.Int64",
+            as: ((NativeSwiftConsuming<Value>, Consume) -> Int64).self, genericArguments: [.type(Value.self)])
+        let borrow = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitRuntimeValue<A where A: ~Swift.Copyable>(A, (A) throws -> Swift.Int64) throws -> Swift.Int64",
+            as: ((Value, Borrow) throws -> Int64).self, genericArguments: [.type(Value.self)])
+        let borrowAsync = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.visitRuntimeValueAsync<A where A: ~Swift.Copyable>(A, nonisolated(nonsending) (A) async throws -> Swift.Int64) async throws -> Swift.Int64",
+            as: (nonisolated(nonsending) (Value, AsyncBorrow) async throws -> Int64).self, genericArguments: [.type(Value.self)])
+        let deaths = RuntimeValueDeaths()
+        do {
+            let life = RuntimeValueLife(deaths)
+            let value = try Value { withExtendedLifetime(life) { Int64(42) } }
+            let owned = try Consume { incoming in
+                do { return try unsafe incoming.value.copy().unsafeInvoke() }
+                catch { Issue.record(error); return -1 }
+            }
+            let borrowed = try Borrow { incoming in try unsafe incoming.value.copy().unsafeInvoke() }
+            for _ in 0..<20 {
+                #expect(try unsafe consume.unsafeInvoke(NativeSwiftConsuming(value), owned) == 42)
+                #expect(try unsafe borrow.unsafeInvoke(value, borrowed) == 42)
+            }
+            #expect(try unsafe value.unsafeInvoke() == 42)
+            #expect(deaths.count.withLock { $0 } == 0)
+        }
+        #expect(deaths.count.withLock { $0 } == 1)
+        let value = try Value { Int64(42) }
+        let operation: nonisolated(nonsending) @Sendable (NativeSwiftBorrowing<Value>) async throws -> Int64 = { incoming in
+            await Task.yield()
+            return try unsafe incoming.value.copy().unsafeInvoke()
+        }
+        #expect(try unsafe await borrowAsync.unsafeInvoke(value, AsyncBorrow(operation)) == 42)
     }
 
     @Test func consumingNestedInputsRemainOwnedAfterNonthrowingCallbacks() async throws {

@@ -80,14 +80,33 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     let copiedClosureData = try unsafe copyClosureData.unsafeInvoke(closureIdentity, closureData)
     try check(try unsafe copiedClosureData.unsafeInvoke() == 42,
         "Callbacks copy and return a closure wrapper bound as native generic data")
-    typealias AsyncClosureDataReader = NativeSwiftClosure<nonisolated(nonsending) (ClosureData) async throws -> Int64>
+    typealias ConsumingClosureDataReader = NativeSwiftClosure<(NativeSwiftConsuming<ClosureData>) -> Int64>
+    let consumeClosureData = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.visitNonthrowingConsumingRuntimeValue<A where A: ~Swift.Copyable>(__owned A, (__owned A) -> Swift.Int64) -> Swift.Int64",
+        as: ((NativeSwiftConsuming<ClosureData>, ConsumingClosureDataReader) -> Int64).self,
+        genericArguments: [.type(ClosureData.self)])
+    let consumeClosureBody = try ConsumingClosureDataReader { value in
+        do { return try unsafe value.value.copy().unsafeInvoke() }
+        catch { return -1 }
+    }
+    try check(unsafe consumeClosureData.unsafeInvoke(NativeSwiftConsuming(closureData), consumeClosureBody) == 42,
+        "Consuming callback inputs preserve closure wrappers bound as ordinary generic data")
+    typealias BorrowingClosureDataReader = NativeSwiftClosure<(NativeSwiftBorrowing<ClosureData>) throws -> Int64>
+    let borrowClosureData = try await runtime.swiftFunction(
+        named: "SwiftValueFixtures.visitRuntimeCallback<A where A: ~Swift.Copyable>(A, (A) throws -> Swift.Int64) throws -> Swift.Int64",
+        as: ((ClosureData, BorrowingClosureDataReader) throws -> Int64).self,
+        genericArguments: [.type(ClosureData.self)])
+    let borrowClosureBody = try BorrowingClosureDataReader { try unsafe $0.value.copy().unsafeInvoke() }
+    try check(unsafe borrowClosureData.unsafeInvoke(closureData, borrowClosureBody) == 42,
+        "Borrowing callback inputs preserve closure wrappers bound as ordinary generic data")
+    typealias AsyncClosureDataReader = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftBorrowing<ClosureData>) async throws -> Int64>
     let readClosureData = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.visitRuntimeCallbackAsync<A where A: ~Swift.Copyable>(A, nonisolated(nonsending) (A) async throws -> Swift.Int64) async throws -> Swift.Int64",
         as: (nonisolated(nonsending) (ClosureData, AsyncClosureDataReader) async throws -> Int64).self,
         genericArguments: [.type(ClosureData.self)])
-    let readClosureBody: nonisolated(nonsending) @Sendable (ClosureData) async throws -> Int64 = { value in
+    let readClosureBody: nonisolated(nonsending) @Sendable (NativeSwiftBorrowing<ClosureData>) async throws -> Int64 = { value in
         await Task.yield()
-        return try unsafe value.copy().unsafeInvoke()
+        return try unsafe value.value.copy().unsafeInvoke()
     }
     try check(try unsafe await readClosureData.unsafeInvoke(closureData, AsyncClosureDataReader(readClosureBody)) == 42,
         "Async callbacks preserve owned closure wrappers used as generic data across suspension")
