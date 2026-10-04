@@ -619,13 +619,47 @@ struct SwiftGenericBinding: Sendable {
             }
         }
         func constrainedMetadata(base: String, superclass: SwiftFormalType?, constraints: [SwiftFormalType.ExistentialConstraint],
-                                 shape: String, metatypeDepth: Int = 0) throws -> Any.Type {
+                                 shape: String?, metatypeDepth: Int = 0) throws -> Any.Type {
             // Swift 6.3 cannot instantiate the textual constrained existential
             // form. Reuse compiler-emitted metadata supplied by the signature
             // after checking the complete bound same-type requirements.
             // MetadataLookup.cpp: createConstrainedExistentialType.
             let expected = try constraints.map { try types($0.value, packIndex: packIndex)[0] }
             let expectedSuperclass = try superclass.map { try types($0, packIndex: packIndex)[0] }
+            guard let shape else {
+                let references: [(UnsafeRawPointer, Any)] = try String(base.dropFirst(4)).split(separator: "&").map { value in
+                    let name = value.trimmingCharacters(in: .whitespaces)
+                    if let protocolValue = NSProtocolFromString(name.hasPrefix("__C.") ? String(name.dropFirst(4)) : name) {
+                        let reference = UInt(bitPattern: unsafeBitCast(protocolValue, to: UnsafeRawPointer.self)) | 1
+                        return (UnsafeRawPointer(bitPattern: reference)!, protocolValue)
+                    }
+                    let descriptor = try SwiftProtocolDescriptor(resolver.resolve(
+                        .init(name: "protocol descriptor for " + name, language: .swift, kind: .data),
+                        in: .automatic, loading: .loadedOnly))
+                    return (unsafe descriptor.withUnsafeAddress { $0 }, descriptor)
+                }
+                let addresses = references.map { Optional($0.0) }
+                var metadata = withExtendedLifetime(references) {
+                    addresses.withUnsafeBufferPointer {
+                        unsafeBitCast(ABISwiftSuperclassExistentialMetadata(
+                            expectedSuperclass.map { unsafeBitCast($0, to: UnsafeRawPointer.self) }, $0.baseAddress, $0.count)!, to: Any.Type.self)
+                    }
+                }
+                for _ in 0..<metatypeDepth {
+                    metadata = unsafeBitCast(ABISwiftExistentialMetatypeMetadata(unsafeBitCast(metadata, to: UnsafeRawPointer.self))!, to: Any.Type.self)
+                }
+                var images = try references.compactMap { reference -> NativeImage? in
+                    if let descriptor = reference.1 as? SwiftProtocolDescriptor { return descriptor.image }
+                    if let protocolValue = reference.1 as? Protocol { return try SwiftObjectiveCProtocol(protocolValue).image }
+                    return nil
+                }
+                if let expectedSuperclass {
+                    images += try SwiftGenericTypeMetadata(metadata: expectedSuperclass).images
+                }
+                let retained = try SwiftGenericTypeMetadata(metadata: metadata, retaining: images)
+                boundTypes.metadata.withLock { $0[ObjectIdentifier(metadata)] = retained }
+                return metadata
+            }
             for metadata in knownTypes.values {
                 guard unsafeBitCast(metadata, to: UnsafeRawPointer.self).load(as: UInt.self) == 0x307 else { continue }
                 var actual = try SwiftExtendedExistentialMetadata.formalType(metadata)

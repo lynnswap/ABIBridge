@@ -1,3 +1,5 @@
+import Foundation
+
 public protocol ExistentialValue: Sendable { var number: Int64 { get } }
 public protocol ExistentialLabel: Sendable { var label: String { get } }
 public protocol ExistentialObjectValue: AnyObject, Sendable { var number: Int64 { get } }
@@ -5,6 +7,20 @@ public protocol ExistentialObjectA: AnyObject {}
 public protocol ExistentialObjectB: AnyObject {}
 public protocol ExistentialObjectC: AnyObject {}
 public protocol ExistentialObjectD: AnyObject {}
+public protocol ExistentialPackMarker: AnyObject { var number: Int64 { get } }
+public class ExistentialPackBase<each Value> {
+    public let number: Int64
+    public init(_ number: Int64) { self.number = number }
+}
+extension ExistentialPackBase: ExistentialPackMarker {}
+@inline(never) public func makeSuperclassPackExistential<each Value>(_ number: Int64) -> any ExistentialPackBase<repeat each Value> & ExistentialPackMarker {
+    ExistentialPackBase<repeat each Value>(number)
+}
+@inline(never) public func echoSuperclassPackExistential<each Value>(_ value: any ExistentialPackBase<repeat each Value> & ExistentialPackMarker) -> any ExistentialPackBase<repeat each Value> & ExistentialPackMarker { value }
+@inline(never) public func applySuperclassPackExistential<each Value>(_ value: any ExistentialPackBase<repeat each Value> & ExistentialPackMarker,
+    _ body: (any ExistentialPackBase<repeat each Value> & ExistentialPackMarker) throws -> any ExistentialPackBase<repeat each Value> & ExistentialPackMarker
+) rethrows -> any ExistentialPackBase<repeat each Value> & ExistentialPackMarker { try body(value) }
+@inline(never) public func echoNSObjectCopying<Value>(_ value: any NSObject & NSCopying, _ tag: Value) -> any NSObject & NSCopying { value }
 
 @frozen public struct InlineExistentialValue: ExistentialValue, ExistentialLabel {
     public let number: Int64

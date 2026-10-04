@@ -36,6 +36,9 @@ const void *ABISwiftProtocolRequirementObjectiveCProtocol(const void *reference)
 const void *ABISwiftConformance(const void *metadata, const void *protocol);
 /// Canonical existential metadata for one valid Swift protocol descriptor.
 const void *ABISwiftProtocolTypeMetadata(const void *protocol);
+/// Canonical class-bound existential metadata for a concrete superclass.
+const void *ABISwiftSuperclassExistentialMetadata(const void *superclass,
+    const void *const *protocols, size_t protocolCount);
 /// Authenticates the shape reference in complete extended existential metadata.
 const void *ABISwiftExtendedExistentialShape(const void *metadata);
 /// Binds a compiler-emitted non-unique shape with validated generalization arguments.

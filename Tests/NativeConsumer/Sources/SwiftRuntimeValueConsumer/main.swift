@@ -41,6 +41,21 @@ private let prepared = try await prepare(CommandLine.arguments[1])
 // The provider's concrete type is not imported. Preparation's runtime and
 // original loader reference have ended; the public handles retain their images.
 private let state = State()
+let superclassPackFactory = try await ABIRuntime.shared.swiftFunction(
+    named: "ManagedSwiftFixtures.makeSuperclassPackExistential(_:)",
+    as: ((Int64) -> NativeSwiftValue).self,
+    genericArguments: [.pack([.type(Int.self), .type(String.self)])]
+)
+let superclassPackEcho = try await ABIRuntime.shared.swiftFunction(
+    named: "ManagedSwiftFixtures.echoSuperclassPackExistential(_:)",
+    as: ((NativeSwiftValue) -> NativeSwiftValue).self,
+    genericArguments: [.pack([.type(Int.self), .type(String.self)])]
+)
+let superclassPackValue = try unsafe superclassPackFactory.unsafeInvoke(42)
+let superclassPackResult = try unsafe superclassPackEcho.unsafeInvoke(superclassPackValue)
+let superclassPackObject = try superclassPackResult.withCopy { $0 as AnyObject }
+let superclassPackRead = try await ABIRuntime.shared.object(superclassPackObject).getter(named: "number", as: (() -> Int64).self)
+guard try unsafe superclassPackRead.unsafeInvoke() == 42 else { throw ConsumerError.wrongResult }
 let callback = try NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Void> { value in
     do {
         state.text += try unsafe prepared.text.unsafeInvoke(on: value)
