@@ -702,11 +702,12 @@ BOOL ABIInvokeVariadicObjCDispatch(ABIObjCInvocation *plan, ABICallInterface *in
     if (error) *error = nil;
     if (!validateDispatchReceiver(plan, receiver, error)) return NO;
     Method method = class_getInstanceMethod(object_getClass(receiver), plan->selector);
-    if (!method) {
+    IMP implementation = method ? method_getImplementation(method) : nullptr;
+    if (!implementation || isForwardingImplementation(implementation)) {
         fail(error, ABIFailureUnsupportedDeclaration, @"A variadic message requires a concrete method; NSInvocation cannot forward its anonymous tail.");
         return NO;
     }
-    return invokeCImplementation(plan, interface, receiver, method_getImplementation(method), result, arguments, error);
+    return invokeCImplementation(plan, interface, receiver, implementation, result, arguments, error);
 }
 
 BOOL ABIInvokeVariadicObjCInvocation(ABIObjCInvocation *plan, ABICallInterface *interface,

@@ -70,6 +70,21 @@ struct ObjectiveCImplementationTests {
         #expect(try unsafe captured.unsafeInvoke(on: receiver, 2, 20, 22) == 42)
     }
 
+    @Test func variadicMessagesRejectForwardingImplementationsBeforeNativeEntry() throws {
+        let runtime = ABIRuntime()
+        let receiver = ABIVariadicFixture()
+        let message = try runtime.object(receiver).method(selector: "sum:",
+            as: ((Int, Int, Int) -> Int).self, variadicFrom: 1)
+        let captured = try runtime.objcImplementation(on: ABIVariadicFixture.self, selector: "sum:",
+            as: ((Int, Int, Int) -> Int).self, variadicFrom: 1)
+        let method = try #require(class_getInstanceMethod(ABIVariadicFixture.self, NSSelectorFromString("sum:")))
+        let original = method_setImplementation(method, ABIHookForwardingImplementation())
+        defer { method_setImplementation(method, original) }
+        #expect(throws: ABIResolutionError.self) { try unsafe message.unsafeInvoke(2, 20, 22) }
+        #expect(throws: ABIResolutionError.self) { try unsafe message.method.unsafeInvoke(on: receiver, 2, 20, 22) }
+        #expect(try unsafe captured.unsafeInvoke(on: receiver, 2, 20, 22) == 42)
+    }
+
     @Test func variadicBoundariesMustMatchTheRuntimeFixedPrefix() throws {
         #expect(throws: ABIResolutionError.self) {
             try ABIRuntime().object(NSString.self as AnyObject).method(selector: "stringWithFormat:",
