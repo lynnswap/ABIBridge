@@ -15,15 +15,30 @@ xcodebuild docbuild \
 
 # Validate this package strictly without treating dependency documentation
 # warnings as failures of ABIBridge's catalog.
+task_symbol_graphs() {
+  local task_module=$1
+  local task_graphs
+  for task_graphs in "$task_derived/Build/Intermediates.noindex/ABIBridge.build/Debug/$task_module.build/symbol-graph" \
+                     "$task_derived/Build/Intermediates.noindex/ABIBridge.build/Debug/$task_module-t.build/symbol-graph"; do
+    if [[ -d "$task_graphs" ]]; then
+      echo "$task_graphs"
+      return
+    fi
+  done
+  echo "Missing symbol graphs for $task_module in $task_derived" >&2
+  return 1
+}
+task_core_graphs=$(task_symbol_graphs ABIBridge)
+task_swiftui_graphs=$(task_symbol_graphs ABIBridgeSwiftUI)
 xcrun docc convert Sources/ABIBridge/ABIBridge.docc \
-  --additional-symbol-graph-dir "$task_derived/Build/Intermediates.noindex/ABIBridge.build/Debug/ABIBridge.build/symbol-graph" \
+  --additional-symbol-graph-dir "$task_core_graphs" \
   --fallback-display-name ABIBridge \
   --fallback-bundle-identifier ABIBridge \
   --warnings-as-errors \
   --output-dir "$task_derived/ABIBridge.doccarchive"
 
 xcrun docc convert Sources/ABIBridgeSwiftUI/ABIBridgeSwiftUI.docc \
-  --additional-symbol-graph-dir "$task_derived/Build/Intermediates.noindex/ABIBridge.build/Debug/ABIBridgeSwiftUI.build/symbol-graph" \
+  --additional-symbol-graph-dir "$task_swiftui_graphs" \
   --fallback-display-name ABIBridgeSwiftUI \
   --fallback-bundle-identifier ABIBridgeSwiftUI \
   --warnings-as-errors \
