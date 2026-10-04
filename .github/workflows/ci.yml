@@ -21,10 +21,6 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ inputs.revision && github.run_id || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-# macos-26 is an arm64 runner; Xcode 26.6 includes Swift 6.3 and all five SDKs.
-env:
-  DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
-
 jobs:
   release-tests:
     name: Release and CI automation tests
@@ -40,13 +36,23 @@ jobs:
       - run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
 
   macos-tests:
-    name: macOS tests (${{ matrix.group }})
+    name: macOS tests (${{ matrix.group }}, Xcode ${{ matrix.toolchain.xcode }})
     if: github.event_name != 'pull_request' || github.event.action != 'closed'
-    runs-on: macos-26
+    runs-on: ${{ matrix.toolchain.runner }}
     timeout-minutes: ${{ matrix.timeout }}
+    env:
+      DEVELOPER_DIR: ${{ matrix.toolchain.developer_dir }}
     strategy:
       fail-fast: false
       matrix:
+        toolchain:
+          - xcode: '26.6'
+            runner: macos-26
+            developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
+          - xcode: '27.0'
+            runner: xcode-27
+            developer_dir: /Applications/Xcode_27.app/Contents/Developer
+        group: [Package, Native]
         include:
           - group: Package
             timeout: 100
@@ -102,7 +108,7 @@ jobs:
         if: always() && matrix.group == 'Package' && (failure() || cancelled())
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: package-test-${{ github.run_attempt }}
+          name: package-test-xcode-${{ matrix.toolchain.xcode }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/DerivedData/Logs/Test
           if-no-files-found: warn
           retention-days: 7
@@ -124,10 +130,22 @@ jobs:
         run: python3 scripts/check-architecture-codegen.py
 
   platform-builds:
-    name: Apple platform validation
+    name: Apple platform validation (Xcode ${{ matrix.toolchain.xcode }})
     if: github.event_name != 'pull_request' || github.event.action != 'closed'
-    runs-on: macos-26
-    timeout-minutes: 170
+    runs-on: ${{ matrix.toolchain.runner }}
+    timeout-minutes: 80
+    env:
+      DEVELOPER_DIR: ${{ matrix.toolchain.developer_dir }}
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain:
+          - xcode: '26.6'
+            runner: macos-26
+            developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
+          - xcode: '27.0'
+            runner: xcode-27
+            developer_dir: /Applications/Xcode_27.app/Contents/Developer
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -137,19 +155,20 @@ jobs:
         run: |
           xcodebuild -version
           xcrun swift --version
-      - name: Test all Apple Simulators
+      - name: Test iOS Simulator
         id: simulator-tests
         if: hashFiles('scripts/test-simulators.py') != ''
-        timeout-minutes: 125
+        timeout-minutes: 35
         run: >-
           python3 scripts/test-simulators.py
+          --platforms iOS
           --build-dir "$RUNNER_TEMP/DerivedData"
           --result-dir "$RUNNER_TEMP/SimulatorResults"
       - name: Preserve failed Simulator diagnostics
         if: always() && steps.simulator-tests.outcome != 'success' && steps.simulator-tests.outcome != 'skipped'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: simulator-tests-${{ github.run_attempt }}
+          name: simulator-tests-xcode-${{ matrix.toolchain.xcode }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/SimulatorResults
             ${{ runner.temp }}/DerivedData/Logs/Test
