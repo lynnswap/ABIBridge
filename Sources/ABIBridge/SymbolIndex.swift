@@ -200,7 +200,7 @@ struct SwiftModuleFilter {
 
     init?(_ declaration: String) {
         var name = declaration.trimmingCharacters(in: .whitespacesAndNewlines)
-        for marker in ["nominal type descriptor for ", "type metadata accessor for ", "type metadata for ", "static "] {
+        for marker in ["nominal type descriptor for ", "protocol descriptor for ", "type metadata accessor for ", "type metadata for ", "static "] {
             if name.hasPrefix(marker) { name.removeFirst(marker.count); break }
         }
         guard let dot = name.firstIndex(of: ".") else { return nil }
@@ -555,6 +555,13 @@ final class SymbolIndex {
             return exactSymbols(named: name, key: query.key)
         }
         if declaration.language == .swift {
+            if declaration.name.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("protocol descriptor for ") {
+                // Mp identifies a protocol descriptor in Swift's stable mangling.
+                // Keep the full source buckets for subsequent non-descriptor queries.
+                let candidates = symbols(for: query, swiftBucket: .literal) + symbols(for: query, swiftBucket: .fallback)
+                return Self.matching(candidates.filter { $0.name.hasSuffix("Mp") }, query: query,
+                    extensionsOnly: extensionsOnly, genericContext: genericContext, unsupported: &unsupported)
+            }
             return indexedMatches(query, extensionsOnly: extensionsOnly, swiftBucket: .literal, genericContext: genericContext, unsupported: &unsupported)
                 + indexedMatches(query, extensionsOnly: extensionsOnly, swiftBucket: .fallback, genericContext: genericContext, unsupported: &unsupported)
         }

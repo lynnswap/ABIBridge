@@ -31,11 +31,33 @@ private final class Capture: Sendable {
 // swiftmodule. Only the loaded binary and the declared ABI are available.
 let library = URL(fileURLWithPath: CommandLine.arguments[1])
 let runtime = ABIRuntime()
+let measurePreparation = CommandLine.arguments.dropFirst(2).contains("--measure-preparation")
+let preparationStart = ContinuousClock.now
 let echo = try await runtime.swiftFunction(
     named: "SwiftUIPlugin.echo<A where A: SwiftUI.View>(A) -> A",
     as: ((Text) -> Text).self, genericArguments: [.type(Text.self)], in: .path(library))
+let firstPreparation = preparationStart.duration(to: .now)
 let echoed = try unsafe echo.unsafeInvoke(Text(verbatim: "Generic SwiftUI value"))
+if measurePreparation {
+    let repeatedStart = ContinuousClock.now
+    let repeated = try await runtime.swiftFunction(
+        named: "SwiftUIPlugin.echo<A where A: SwiftUI.View>(A) -> A",
+        as: ((Text) -> Text).self, genericArguments: [.type(Text.self)], in: .path(library))
+    let repeatedPreparation = repeatedStart.duration(to: .now)
+    let repeatedValue = try unsafe repeated.unsafeInvoke(Text(verbatim: "Generic SwiftUI value"))
+    let expected = pixels(Text(verbatim: "Generic SwiftUI value"))
+    precondition(pixels(echoed) == expected)
+    precondition(pixels(repeatedValue) == expected)
+    print("SwiftUI generic preparation: first=\(firstPreparation), repeated=\(repeatedPreparation)")
+    exit(EXIT_SUCCESS)
+}
 precondition(pixels(echoed) == pixels(Text(verbatim: "Generic SwiftUI value")))
+do {
+    _ = try await runtime.swiftFunction(
+        named: "SwiftUIPlugin.echo<A where A: SwiftUI.View>(A) -> A",
+        as: ((Int64) -> Int64).self, genericArguments: [.type(Int64.self)], in: .path(library))
+    fatalError("Expected the View constraint to reject Int64")
+} catch ABIResolutionError.signatureMismatch {}
 let make = try await runtime.swiftFunction(named: "SwiftUIPlugin.makeView(_:_:)",
     as: ((String, NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftValue).self, in: .path(library))
 let host = try await runtime.swiftFunction(named: "SwiftUIPlugin.makeHost(_:_:)",
@@ -83,4 +105,4 @@ try autoreleasepool {
 precondition(hostReference != nil)
 hostReference = nil
 precondition(observedHost == nil)
-print("SwiftUI consumer passed: provider without a module, opaque View rendering, callback lifetime, and compiled host adapter")
+print("SwiftUI consumer passed: provider without a module, generic View constraint validation, opaque View rendering, callback lifetime, and compiled host adapter")

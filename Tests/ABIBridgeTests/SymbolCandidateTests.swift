@@ -4,6 +4,20 @@ import Foundation
 import Testing
 
 struct SymbolCandidateTests {
+    @Test func protocolDescriptorCandidatesKeepModuleAndFallbackCoverage() {
+        let query = SymbolQuery(.init(name: "protocol descriptor for First.Readable", language: .swift, kind: .data))
+        func accepts(_ name: String) -> Bool { name.withCString(query.acceptsCandidate) }
+        #expect(query.candidateScope == .swiftModule("First"))
+        #expect(accepts("_$s5First8ReadableMp"))
+        #expect(accepts("$S5First8ReadableMp"))
+        #expect(!accepts("_$s6Second8ReadableMp"))
+        #expect(accepts("_$s03FooA08ReadableMp"))
+        #expect(accepts("_$sSQMp"))
+        let conformance = SymbolQuery(.init(
+            name: "protocol conformance descriptor for First.Value : Second.Readable in First", language: .swift, kind: .data))
+        #expect(conformance.candidateScope == .language(.swift))
+    }
+
     @Test func exactSharedCacheCoverageDoesNotHideOtherNamesOrKinds() async throws {
         let fixture = try FixtureLibrary()
         defer { fixture.cleanup() }
