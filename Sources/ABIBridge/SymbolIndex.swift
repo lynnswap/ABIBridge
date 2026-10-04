@@ -200,7 +200,7 @@ struct SwiftModuleFilter {
 
     init?(_ declaration: String) {
         var name = declaration.trimmingCharacters(in: .whitespacesAndNewlines)
-        for marker in ["nominal type descriptor for ", "type metadata accessor for ", "type metadata for ", "static "] {
+        for marker in ["nominal type descriptor for ", "protocol descriptor for ", "type metadata accessor for ", "type metadata for ", "static "] {
             if name.hasPrefix(marker) { name.removeFirst(marker.count); break }
         }
         guard let dot = name.firstIndex(of: ".") else { return nil }
