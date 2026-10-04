@@ -32,7 +32,7 @@ struct PointerNormalizationTests {
     private func run(_ arguments: [String]) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        process.environment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("DYLD_") }
+        process.environment = FixtureLibrary.toolEnvironment
         process.arguments = arguments
         try process.run()
         process.waitUntilExit()

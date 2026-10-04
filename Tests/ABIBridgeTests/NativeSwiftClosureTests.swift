@@ -592,9 +592,7 @@ struct NativeSwiftClosureTests {
             process.arguments = arguments
             // The test runner's injected Xcode frameworks belong to its process,
             // not to the xcrun-selected compiler and SDK tools.
-            process.environment = ProcessInfo.processInfo.environment.filter {
-                !$0.key.hasPrefix("DYLD_") && $0.key != "SDKROOT"
-            }
+            process.environment = FixtureLibrary.toolEnvironment.filter { $0.key != "SDKROOT" }
             process.standardOutput = output; process.standardError = output
             try process.run()
             let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
