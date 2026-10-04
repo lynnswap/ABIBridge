@@ -36,6 +36,7 @@ xcrun swiftc -parse-as-library -emit-library -emit-module -enable-library-evolut
     "$task_root/Tests/ManagedSwiftFixtures/Values.swift" "$task_root/Tests/ManagedSwiftFixtures/Generics.swift" \
     "$task_root/Tests/ManagedSwiftFixtures/Errors.swift" "$task_root/Tests/ManagedSwiftFixtures/Async.swift" \
     "$task_root/Tests/ManagedSwiftFixtures/ParameterConventions.swift" \
+    "$task_root/Tests/ManagedSwiftFixtures/Existentials.swift" \
     "$task_root/Tests/ManagedSwiftFixtures/RuntimeValues.swift" "$task_root/Tests/ManagedSwiftFixtures/GenericCalls.swift" \
     "$task_root/Tests/ManagedSwiftFixtures/ExplicitValues.swift" "$task_root/Tests/ManagedSwiftFixtures/ClosureValues.swift" \
     -o "$task_fixture/libManagedSwiftFixtures.dylib"

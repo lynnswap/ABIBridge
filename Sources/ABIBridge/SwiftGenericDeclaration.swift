@@ -140,7 +140,7 @@ indirect enum SwiftFormalType: Sendable, Equatable {
         let subject: String
         let value: SwiftFormalType
     }
-    case constrainedExistential(base: String, superclass: SwiftFormalType?, constraints: [ExistentialConstraint], shape: String)
+    case constrainedExistential(base: String, superclass: SwiftFormalType?, constraints: [ExistentialConstraint], shape: String?)
     case objectiveCClass(String)
     case opaqueResult(index: Int)
     case nested(SwiftFormalType, String, [SwiftFormalType])
@@ -323,7 +323,8 @@ indirect enum SwiftFormalType: Sendable, Equatable {
         case .named(let name, let arguments), .nominal(let name, let arguments):
             name + (arguments.isEmpty ? "" : "<" + arguments.map(\.spelling).joined(separator: ", ") + ">")
         case .constrainedExistential(let base, let superclass, let constraints, _):
-            (superclass.map { "any " + $0.spelling + " & " + String(base.dropFirst(4)) } ?? base) + "<" + constraints.map { $0.subject + " == " + $0.value.spelling }.joined(separator: ", ") + ">"
+            (superclass.map { "any " + $0.spelling + " & " + String(base.dropFirst(4)) } ?? base)
+                + (constraints.isEmpty ? "" : "<" + constraints.map { $0.subject + " == " + $0.value.spelling }.joined(separator: ", ") + ">")
         case .objectiveCClass(let name): name
         case .opaqueResult: "some"
         case .reference(let descriptor, let arguments):

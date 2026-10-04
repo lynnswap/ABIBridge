@@ -1,3 +1,4 @@
+import Foundation
 import ABIBridge
 import SwiftValueFixtures
 
@@ -151,5 +152,29 @@ import SwiftValueFixtures
         as: ((NativeSwiftClosure<(Metatype) -> Metatype>, Int) -> Metatype).self, genericArguments: [.type(Int.self)])
     try check(ObjectIdentifier(try unsafe metatypeApply.unsafeInvoke(.init { $0 }, 42)) == ObjectIdentifier(RuntimeClassBoth<Int>.self),
         "Parameterized metatype callbacks authenticate their native entry")
+    for (index, arguments) in [[NativeSwiftGenericArgument.pack([])], [.pack([.type(Int.self), .type(String.self)])]].enumerated() {
+        let make = try await runtime.swiftFunction(named: "SwiftValueFixtures.makeSuperclassPackExistential(_:)",
+            as: ((Int64) -> NativeSwiftValue).self, genericArguments: arguments)
+        let echo = try await runtime.swiftFunction(named: "SwiftValueFixtures.echoSuperclassPackExistential(_:)",
+            as: ((NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: arguments)
+        let value = try unsafe make.unsafeInvoke(42)
+        let copied = try unsafe echo.unsafeInvoke(value)
+        try check(try copied.withCopy { ($0 as? any ExistentialPackMarker)?.number } == 42,
+            "Superclass existential resolves and preserves a type pack in case \(index)")
+    }
+    typealias PackValue = any ExistentialPackBase<Int, String> & ExistentialPackMarker
+    typealias PackBody = NativeSwiftClosure<(PackValue) throws -> PackValue>
+    let makePack = try await runtime.swiftFunction(named: "SwiftValueFixtures.makeSuperclassPackExistential(_:)",
+        as: ((Int64) -> PackValue).self, genericArguments: [.pack([.type(Int.self), .type(String.self)])])
+    let applyPack = try await runtime.swiftFunction(named: "SwiftValueFixtures.applySuperclassPackExistential(_:_:)",
+        as: ((PackValue, PackBody) throws -> PackValue).self, genericArguments: [.pack([.type(Int.self), .type(String.self)])])
+    let packValue = try unsafe makePack.unsafeInvoke(43)
+    try check(try unsafe applyPack.unsafeInvoke(packValue, .init { $0 }).number == 43,
+        "Superclass type-pack callback preserves its class and protocol witness")
+    let copying = try await runtime.swiftFunction(named: "SwiftValueFixtures.echoNSObjectCopying(_:_:)",
+        as: ((any NSObject & NSCopying, Int) -> any NSObject & NSCopying).self, genericArguments: [.type(Int.self)])
+    let string = "copying" as NSString
+    try check(try unsafe copying.unsafeInvoke(string, 42) === string,
+        "Ordinary superclass existential resolves tagged Objective-C protocol references")
     return checks
 }

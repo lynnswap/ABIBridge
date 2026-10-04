@@ -40,6 +40,8 @@ let selected = try unsafe select.unsafeInvoke("fallback", ["first"])
 
 The supplied arguments must satisfy the declaration's conformance, same-type, superclass, and pack-shape requirements. Class constraints include `AnyObject` and Objective-C-compatible existential compositions, following Swift's self-conformance rules. Binding uses Swift's existing metadata and conformances; it does not create new conformances. Unsatisfied arguments fail preparation before native invocation.
 
+Ordinary superclass/protocol compositions preserve the superclass's bound arguments, including an empty or mixed type pack. Their runtime-only values and callbacks use canonical class-bound existential metadata. A superclass plus primary-associated-type constraints instead requires extended metadata; compiler/runtime failures for those shapes remain a separate boundary described in <doc:SwiftExistentialValues>.
+
 ## Parameter packs
 
 Use one `.pack` argument for each declared type pack, including an empty array for an empty pack. Scalar parameters remain separate entries:

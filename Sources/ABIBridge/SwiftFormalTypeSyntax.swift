@@ -210,6 +210,8 @@ extension SwiftFormalType {
             case .reference(let descriptor, _): self = .reference(descriptor, arguments)
             case .nominal(let name, _): self = .nominal(name, arguments)
             case .nested(let parent, let name, _): self = .nested(parent, name, arguments)
+            // Objective-C lightweight generics share their unspecialized runtime class.
+            case .objectiveCClass: self = base
             default: throw ABIResolutionError.unsupportedDeclaration("The bound Swift nominal type has no declaration.")
             }
         case "TypeSymbolicReference":
@@ -268,7 +270,10 @@ extension SwiftFormalType {
             }
             self = .function(parameters.map(\.type), try Self(node.requiredChild(kind: "ReturnType")),
                 failure: failure, attributes: attributes)
-        case "ProtocolList", "ProtocolListWithAnyObject", "ProtocolListWithClass", "BuiltinTypeName":
+        case "ProtocolListWithClass":
+            self = .constrainedExistential(base: "any " + (try node.requiredChild(kind: "ProtocolList").name()),
+                superclass: try Self(node.requiredChild(kind: "Type")), constraints: [], shape: nil)
+        case "ProtocolList", "ProtocolListWithAnyObject", "BuiltinTypeName":
             self = .nominal(try node.name(), [])
         case "SugaredOptional": self = .nominal("Swift.Optional", [try Self(node.requiredChild())])
         case "SugaredArray": self = .nominal("Swift.Array", [try Self(node.requiredChild())])
