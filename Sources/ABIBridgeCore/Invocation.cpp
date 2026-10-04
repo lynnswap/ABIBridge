@@ -2,6 +2,7 @@
 #include "NativeValueType.hpp"
 #include <ptrauth.h>
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <climits>
 #include <cstddef>
@@ -250,10 +251,21 @@ bool ABIUnsafeInvokeCCallInterface(
         fail(error, ABIFailureInvalidRequest, "A call interface, function, and value storage are required.");
         return false;
     }
-    std::vector<void*> values;
+    std::array<void*, 16> localValues;
+    std::vector<void*> overflowValues;
+    void **values = localValues.data();
+    if (interface->parameters.size() > localValues.size()) {
+        overflowValues.resize(interface->parameters.size());
+        values = overflowValues.data();
+    }
     union PromotedValue { int32_t integer; double real; };
-    std::vector<PromotedValue> promoted(interface->fixedParameterCount ? interface->parameters.size() : 0);
-    values.reserve(interface->parameters.size());
+    std::array<PromotedValue, 16> localPromoted;
+    std::vector<PromotedValue> overflowPromoted;
+    PromotedValue *promoted = localPromoted.data();
+    if (interface->fixedParameterCount && interface->parameters.size() > localPromoted.size()) {
+        overflowPromoted.resize(interface->parameters.size());
+        promoted = overflowPromoted.data();
+    }
     for (size_t index = 0; index < interface->parameters.size(); ++index) {
         if (!arguments[index]) {
             fail(error, ABIFailureInvalidRequest, "Each parameter requires value storage.");
@@ -285,13 +297,18 @@ bool ABIUnsafeInvokeCCallInterface(
             default: break;
             }
         }
-        values.push_back(address);
+        values[index] = address;
     }
     const size_t size = interface->result->size();
     const size_t capacity = std::max(size, sizeof(ffi_arg));
-    std::vector<std::max_align_t> storage(
-        (capacity + sizeof(std::max_align_t) - 1) / sizeof(std::max_align_t));
-    ffi_call(&interface->cif, function, size ? storage.data() : nullptr, values.data());
-    if (size) std::memcpy(result, storage.data(), size);
+    std::array<std::max_align_t, 4> localResult{};
+    std::vector<std::max_align_t> overflowResult;
+    std::max_align_t *storage = localResult.data();
+    if (capacity > sizeof(localResult)) {
+        overflowResult.resize((capacity + sizeof(std::max_align_t) - 1) / sizeof(std::max_align_t));
+        storage = overflowResult.data();
+    }
+    ffi_call(&interface->cif, function, size ? storage : nullptr, values);
+    if (size) std::memcpy(result, storage, size);
     return true;
 }

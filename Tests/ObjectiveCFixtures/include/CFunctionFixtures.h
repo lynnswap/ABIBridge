@@ -4,6 +4,8 @@
 #include <stdint.h>
 
 NS_ASSUME_NONNULL_BEGIN
+typedef struct ABICWideResult { uint64_t values[12]; } ABICWideResult;
+FOUNDATION_EXPORT ABICWideResult ABICMakeWideResult(uint64_t seed);
 FOUNDATION_EXPORT int32_t ABICAnswer(void);
 FOUNDATION_EXPORT int8_t ABICNegative(void);
 FOUNDATION_EXPORT bool ABICNegate(bool value);

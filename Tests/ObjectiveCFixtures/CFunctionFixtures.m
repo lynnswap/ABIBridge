@@ -15,6 +15,12 @@ ABICXXNestedRecord ABICTransformNestedRecord(ABICXXNestedRecord value) {
     return value;
 }
 
+ABICWideResult ABICMakeWideResult(uint64_t seed) {
+    ABICWideResult result = {0};
+    for (uint64_t index = 0; index < 12; ++index) result.values[index] = seed + index * index;
+    return result;
+}
+
 int32_t ABICAnswer(void) { return 42; }
 int8_t ABICNegative(void) { return -42; }
 bool ABICNegate(bool value) { return !value; }
