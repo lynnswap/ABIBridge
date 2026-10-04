@@ -311,9 +311,10 @@ final class SymbolIndex {
     private lazy var exportTrie = macho.exportTrie
     private var localSymbols: [IndexedSymbol] = []
     private var swiftTableIndices: [Int]?
+    private enum DescriptorKind: UInt8 { case nominalType = 110, protocolType = 112 }
     private struct SourceScope: Hashable {
         let candidates: SymbolCandidateScope
-        let protocolDescriptorsOnly: Bool
+        let descriptorKind: DescriptorKind?
     }
     private var sourceSymbols: [SourceScope: [IndexedSymbol]] = [:]
     private var sharedCacheScopes: Set<SymbolCandidateScope> = []
@@ -496,21 +497,21 @@ final class SymbolIndex {
         return nil
     }
 
-    private func symbols(for query: SymbolQuery, swiftBucket: SwiftBucket?, protocolDescriptorsOnly: Bool = false) -> [IndexedSymbol] {
+    private func symbols(for query: SymbolQuery, swiftBucket: SwiftBucket?, descriptorKind: DescriptorKind? = nil) -> [IndexedSymbol] {
         let scope = SourceScope(candidates: swiftBucket == .fallback ? .swiftFallback : query.candidateScope,
-                                protocolDescriptorsOnly: protocolDescriptorsOnly)
+                                descriptorKind: descriptorKind)
         if let cached = sourceSymbols[scope] { return cached }
         let prefixes = DeclarationKey.symbolPrefixes(for: query.declaration.language)
         let accepts: (UnsafePointer<CChar>) -> Bool = { raw in
-            if protocolDescriptorsOnly {
+            if let descriptorKind {
                 let count = strlen(raw)
-                guard count >= 2, raw[count - 2] == 77, raw[count - 1] == 112 else { return false }
+                guard count >= 2, raw[count - 2] == 77, raw[count - 1] == CChar(descriptorKind.rawValue) else { return false }
             }
             guard query.acceptsCandidate(raw) else { return false }
             guard let swiftBucket else { return true }
             return SwiftModuleFilter.literalModulePrefix(raw) == (swiftBucket == .literal)
         }
-        var symbols = query.declaration.language == .swift && !protocolDescriptorsOnly
+        var symbols = query.declaration.language == .swift && descriptorKind == nil
             ? swiftSymbols(matching: accepts) : tableSymbols(matching: accepts)
         if let trie = exportTrie {
             symbols += filteredExports(in: trie, prefixes: prefixes, query: query, swiftBucket: swiftBucket, accepts: accepts)
@@ -566,11 +567,14 @@ final class SymbolIndex {
             return exactSymbols(named: name, key: query.key)
         }
         if declaration.language == .swift {
-            if declaration.name.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("protocol descriptor for ") {
-                // Mp identifies a protocol descriptor in Swift's stable mangling.
+            let name = declaration.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let descriptor: DescriptorKind? = name.hasPrefix("protocol descriptor for ") ? .protocolType
+                : name.hasPrefix("nominal type descriptor for ") ? .nominalType : nil
+            if let descriptor {
+                // Mp and Mn identify descriptors in Swift's stable mangling.
                 // Descriptor coverage must not hide later ordinary declarations.
-                let candidates = symbols(for: query, swiftBucket: .literal, protocolDescriptorsOnly: true)
-                    + symbols(for: query, swiftBucket: .fallback, protocolDescriptorsOnly: true)
+                let candidates = symbols(for: query, swiftBucket: .literal, descriptorKind: descriptor)
+                    + symbols(for: query, swiftBucket: .fallback, descriptorKind: descriptor)
                 return Self.matching(candidates, query: query,
                     extensionsOnly: extensionsOnly, genericContext: genericContext, unsupported: &unsupported)
             }
@@ -805,8 +809,9 @@ final class SymbolIndex {
         at address: UInt64, matching query: SymbolQuery, source: ResolvedSymbol.Source
     ) throws -> String? {
         let candidates = query.swiftModule == nil
-            ? symbols(for: query, swiftBucket: nil)
-            : symbols(for: query, swiftBucket: .literal) + symbols(for: query, swiftBucket: .fallback)
+            ? symbols(for: query, swiftBucket: nil, descriptorKind: .nominalType)
+            : symbols(for: query, swiftBucket: .literal, descriptorKind: .nominalType)
+                + symbols(for: query, swiftBucket: .fallback, descriptorKind: .nominalType)
         let marker = "nominal type descriptor for "
         var names = Set<String>()
         for candidate in candidates where candidate.address == address && candidate.source == source {
