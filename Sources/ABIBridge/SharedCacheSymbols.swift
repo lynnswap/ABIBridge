@@ -91,10 +91,15 @@ final class SharedCacheSymbols {
         header: DyldCacheHeader, offset: UInt64, record: (UnsafePointer<CChar>, UInt64) -> Void
     ) {
         if filesByCache[header.uuid] == nil {
-            filesByCache[header.uuid] = Self.symbolFileURLs().compactMap { url in
+            filesByCache[header.uuid] = []
+            for url in Self.symbolFileURLs() {
                 guard let file = try? DyldCache(subcacheUrl: url, mainCacheHeader: header),
-                      file.header.uuid == header.symbolFileUUID else { return nil }
-                return SymbolFile(file)
+                      file.header.uuid == header.symbolFileUUID,
+                      let symbols = SymbolFile(file) else { continue }
+                // Several Cryptex paths can expose the same symbol file. Its
+                // UUID identifies the complete table, so read it only once.
+                filesByCache[header.uuid] = [symbols]
+                break
             }
         }
         for file in filesByCache[header.uuid] ?? [] {
