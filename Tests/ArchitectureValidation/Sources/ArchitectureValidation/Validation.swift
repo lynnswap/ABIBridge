@@ -413,6 +413,7 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
                   "Preserve original pointer and vptr tags")
         try check(candidate.offset == 0 && candidate.slotAddress == UInt(bitPattern: allocation),
                   "Preserve source slot location")
+        checks += try validatePointerSearchTiming()
     case "tamper":
         let returned = ABIValidateTamperedFunction()
         throw ArchitectureValidationFailure(description: returned ? "Tampered PAC was accepted" : "Tamper control unavailable")
@@ -434,4 +435,43 @@ private final class ArchitecturePrivateCounter: ArchitecturePrivateBase {
         @inline(never) set { storage = newValue }
     }
     @inline(never) func adding(_ value: Int) -> Int { self.value + value }
+}
+
+@MainActor private func validatePointerSearchTiming() throws -> [String] {
+    guard let counter = ABIValidationCreateCounter() else {
+        throw ArchitectureValidationFailure(description: "Counter allocation failed")
+    }
+    defer { ABIValidationDeleteCounter(counter) }
+    let signedTable = counter.load(as: UInt.self)
+    var checks: [String] = []
+    for byteCount in [1_048_576, 16_777_216] {
+        let count = byteCount / MemoryLayout<UInt>.size
+        var slots = [UInt](repeating: 0, count: count)
+        slots[count - 1] = UInt(bitPattern: counter)
+        try slots.withUnsafeBytes { storage in
+            let region = try NativeMemoryRegion(address: UInt(bitPattern: storage.baseAddress!), byteCount: byteCount)
+            var samples: [Double] = []
+            for _ in 0..<5 {
+                let start = ContinuousClock.now
+                let result = try region.pointers(toVTable: signedTable)
+                let elapsed = start.duration(to: .now).components
+                samples.append(Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18)
+                guard result.isComplete, result.visitedCount == count,
+                      result.distinctCount == 1, result.candidates.count == 1,
+                      let candidate = result.uniqueCandidate,
+                      candidate.offset == byteCount - MemoryLayout<UInt>.size,
+                      candidate.pointerBits == UInt(bitPattern: counter), candidate.vptrBits == signedTable else {
+                    throw ArchitectureValidationFailure(description: "Sparse pointer scan changed authenticated candidate evidence")
+                }
+            }
+            samples.sort()
+            let hint = try region.pointers(toVTable: signedTable,
+                options: .init(policy: .first, hintOffset: byteCount - MemoryLayout<UInt>.size))
+            guard hint.visitedCount == 1, hint.candidates.first?.vptrBits == signedTable else {
+                throw ArchitectureValidationFailure(description: "Pointer hint failed to revalidate the signed vptr")
+            }
+            checks.append("Sparse pointer scan \(byteCount) bytes with native vptr: \(samples[2]) s (median of 5); candidate and hint validated")
+        }
+    }
+    return checks
 }
