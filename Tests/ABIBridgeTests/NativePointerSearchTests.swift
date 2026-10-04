@@ -25,6 +25,71 @@ private final class DiscoveryOwner {
 }
 
 struct NativePointerSearchTests {
+    @Test func multiPagePackedScansPreserveIndividualReadEvidence() throws {
+        let page = Int(getpagesize())
+        let count = page * 3
+        let bytes = try #require(mmap(nil, count, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0))
+        try #require(bytes != MAP_FAILED)
+        defer { munmap(bytes, count) }
+        bytes.initializeMemory(as: UInt8.self, repeating: 0, count: count)
+        let owner = try DiscoveryOwner()
+        for offset in [1, page / 2 + 1, page * 2 + 1] {
+            var address = owner.objectAddress
+            withUnsafeBytes(of: &address) { source in
+                bytes.advanced(by: offset).copyMemory(from: source.baseAddress!, byteCount: source.count)
+            }
+        }
+        try #require(mprotect(bytes.advanced(by: page), page, PROT_NONE) == 0)
+        let region = try NativeMemoryRegion(address: UInt(bitPattern: bytes), byteCount: count, retaining: owner)
+        let table = try owner.addressPoint
+        let result = try region.pointers(toVTable: table, options: .init(firstOffset: 1, alignment: 1))
+        var matches: [Int] = []
+        var failures: [NativePointerSearchFailure] = []
+        for offset in stride(from: 1, through: count - MemoryLayout<UInt>.size, by: MemoryLayout<UInt>.size) {
+            do {
+                if try region.pointer(at: offset, toVTable: table) != nil { matches.append(offset) }
+            } catch let failure as NativePointerSearchFailure { failures.append(failure) }
+        }
+        #expect(result.candidates.map(\.offset) == matches)
+        #expect(result.candidates.count == 3 && result.distinctCount == 1)
+        #expect(!result.isComplete && result.uniqueCandidate == nil)
+        #expect(result.visitedCount == (count - 1) / MemoryLayout<UInt>.size)
+        #expect(result.failures.count == failures.count)
+        for (actual, expected) in zip(result.failures, failures) {
+            #expect(actual.offset == expected.offset && actual.stage == expected.stage)
+            #expect(actual.address == expected.address && actual.status == expected.status)
+            #expect(actual.copiedByteCount == expected.copiedByteCount)
+            #expect(actual.systemErrorCode == expected.systemErrorCode)
+        }
+        #expect(failures.contains { $0.status == .partial && $0.copiedByteCount > 0 })
+    }
+
+
+    @Test func sparseScansPreserveTailAndHintVisitCounts() throws {
+        let owner = try DiscoveryOwner()
+        let word = MemoryLayout<UInt>.size
+        for count in [3, 4, 5, 511, 512, 513] {
+            let slots = UnsafeMutablePointer<UInt>.allocate(capacity: count)
+            slots.initialize(repeating: 0, count: count)
+            defer { slots.deinitialize(count: count); slots.deallocate() }
+            let region = try NativeMemoryRegion(address: UInt(bitPattern: slots), byteCount: count * word)
+            let table = try owner.addressPoint
+            #expect(try region.pointers(toVTable: table).visitedCount == count)
+            for match in Set([0, count / 2, count - 1]) {
+                slots[match] = owner.objectAddress
+                for hint in [nil, 0, (count - 1) * word] as [Int?] {
+                    let all = try region.pointers(toVTable: table, options: .init(hintOffset: hint))
+                    #expect(all.isComplete && all.visitedCount == count && all.candidates.count == 1)
+                    #expect(all.uniqueCandidate?.offset == match * word)
+                    let first = try region.pointers(toVTable: table, options: .init(policy: .first, hintOffset: hint))
+                    let expected = hint == match * word ? 1 : match + 1 + ((hint ?? -1) > match * word ? 1 : 0)
+                    #expect(first.visitedCount == expected && first.candidates.first?.offset == match * word)
+                }
+                slots[match] = 0
+            }
+        }
+    }
+
     @Test func automaticAndRawInspectionPreserveOriginalEvidence() throws {
         let owner = try DiscoveryOwner()
         owner.slots[1] = owner.objectAddress
