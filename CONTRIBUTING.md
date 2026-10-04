@@ -86,6 +86,17 @@ python3 scripts/test-simulators.py
 
 Use `--platforms iOS tvOS` to select platforms. The helper prefers a runtime matching the selected Xcode SDK, shares `.build/simulator-tests`, and retains result bundles in `.build/simulator-results`. It runs the portable package tests and builds the optional SwiftUI product; host compiler fixtures remain macOS-only. Device builds stay separate because Simulator execution does not verify device ABI or pointer authentication. Older release targets without this helper retain their original device build checks.
 
+## Runtime performance measurements
+
+Build and run the standalone Release consumer outside the CI test timing window:
+
+```sh
+bash scripts/benchmark-runtime.sh calls
+bash scripts/benchmark-runtime.sh search
+```
+
+`calls` uses independently compiled Swift and Objective-C++ providers and checks results while measuring prepared calls and callbacks. `search` builds C/C++ and Swift images with 100, 1,000, and 10,000 declarations, measures first and repeated lookup, demangles representative declarations, and scans controlled pointer regions from 1 KiB to 16 MiB. It checks candidates, aliases, completeness, visited counts, and offset hints. Providers build before timing. Keep other builds/tests outside the measurement window and record the selected Xcode, machine, configuration, and workload with results. These microbenchmarks do not establish a workload-specific latency budget or physical-device performance.
+
 ## Managed Swift value adapters
 
 `ManagedSwiftValueTests` uses the public C frontend and NativeValue storage with separately compiled Swift adapters. The fixture module enables library evolution; the adapter module imports it, so resilient calls exercise a real cross-module boundary. The fixtures cover managed structs, value Optionals, copied/moved storage, runtime-only handles, and failed conversions. Neither fixture target is part of the ABIBridge product.
