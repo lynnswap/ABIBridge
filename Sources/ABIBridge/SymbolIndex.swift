@@ -555,6 +555,13 @@ final class SymbolIndex {
             return exactSymbols(named: name, key: query.key)
         }
         if declaration.language == .swift {
+            if declaration.name.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("protocol descriptor for ") {
+                // Mp identifies a protocol descriptor in Swift's stable mangling.
+                // Keep the full source buckets for subsequent non-descriptor queries.
+                let candidates = symbols(for: query, swiftBucket: .literal) + symbols(for: query, swiftBucket: .fallback)
+                return Self.matching(candidates.filter { $0.name.hasSuffix("Mp") }, query: query,
+                    extensionsOnly: extensionsOnly, genericContext: genericContext, unsupported: &unsupported)
+            }
             return indexedMatches(query, extensionsOnly: extensionsOnly, swiftBucket: .literal, genericContext: genericContext, unsupported: &unsupported)
                 + indexedMatches(query, extensionsOnly: extensionsOnly, swiftBucket: .fallback, genericContext: genericContext, unsupported: &unsupported)
         }

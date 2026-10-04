@@ -6,6 +6,32 @@ import MachOKit
 import Testing
 
 struct SwiftSymbolIndexTests {
+    @Test func protocolDescriptorsPreserveCompressedNamesAmbiguityAndOtherLookups() async throws {
+        let fixture = try FixtureLibrary(cxxSource: """
+        extern "C" int first asm("_$s5First8ReadableMp") = 1;
+        extern "C" int second asm("_$s6Second8ReadableMp") = 2;
+        extern "C" int compressed asm("_$s03FooA08ReadableMp") = 3;
+        extern "C" int literal asm("_$s6FooFoo8ReadableMp") = 4;
+        extern "C" void echo() asm("_$s5First4echoyyF");
+        void echo() {}
+        """)
+        defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        let image = try #require(try await runtime.images(matching: .path(fixture.libraryURL)).first)
+        let index = SymbolIndex(image: image)
+        let first = NativeDeclaration(name: "protocol descriptor for First.Readable", language: .swift, kind: .data)
+        let second = NativeDeclaration(name: "protocol descriptor for Second.Readable", language: .swift, kind: .data)
+        let function = NativeDeclaration(name: "First.echo() -> ()", language: .swift)
+        for declaration in [first, function, second, first] {
+            let symbol = try #require(try index.resolve(declaration, source: .image))
+            #expect(symbol.image.identity == image.identity)
+        }
+        do {
+            _ = try index.resolve(.init(name: "protocol descriptor for FooFoo.Readable", language: .swift, kind: .data), source: .image)
+            Issue.record("Literal and compressed protocol descriptors at different addresses must remain ambiguous")
+        } catch ABIResolutionError.ambiguousDeclaration(_, let candidates) { #expect(candidates.count == 2) }
+    }
+
     @Test func protocolDescriptorQueriesPruneUnrelatedLiteralModules() throws {
         let query = SymbolQuery(.init(name: "  protocol descriptor for SwiftUI.View\n", language: .swift, kind: .data))
         let filter = try #require(query.swiftModule)
