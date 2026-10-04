@@ -144,6 +144,29 @@ struct SymbolResolutionTests {
         try unsafe function.unsafeInvoke()
     }
 
+    @Test func protocolDescriptorsKeepWholeProcessAmbiguityAndRetainedImages() async throws {
+        let module = "Descriptor_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+        let source = "public protocol Value {}"
+        let first = try FixtureLibrary(swiftModule: module, swiftSource: source)
+        let second = try FixtureLibrary(swiftModule: module, swiftSource: source)
+        defer { first.cleanup(); second.cleanup() }
+        let runtime = ABIRuntime()
+        let declaration = NativeDeclaration(name: "protocol descriptor for " + module + ".Value", language: .swift, kind: .data)
+        do {
+            _ = try await runtime.resolve(declaration, loading: .loadedOnly)
+            Issue.record("Protocol descriptors in both loaded images must remain ambiguous")
+        } catch ABIResolutionError.ambiguousDeclaration(_, let candidates) { #expect(candidates.count == 2) }
+        let identity = try #require(try await runtime.images(matching: .path(first.libraryURL)).first).identity
+        let symbol = try await runtime.resolve(declaration, in: .path(first.libraryURL), loading: .loadedOnly)
+        #expect(symbol.image.identity == identity)
+        first.close()
+        await runtime.removeCachedResults()
+        #expect(unsafe symbol.withUnsafeAddress { address in
+            var info = Dl_info()
+            return dladdr(address, &info) != 0
+        })
+    }
+
     @Test func batchLookupPreservesOrderFallbackAliasesAndLifetime() async throws {
         let first = try FixtureLibrary()
         let other = try FixtureLibrary()

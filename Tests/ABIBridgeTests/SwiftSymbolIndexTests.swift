@@ -32,6 +32,46 @@ struct SwiftSymbolIndexTests {
         } catch ABIResolutionError.ambiguousDeclaration(_, let candidates) { #expect(candidates.count == 2) }
     }
 
+    @Test func protocolDescriptorQueriesPruneUnrelatedLiteralModules() throws {
+        let query = SymbolQuery(.init(name: "  protocol descriptor for SwiftUI.View\n", language: .swift, kind: .data))
+        let filter = try #require(query.swiftModule)
+        #expect(query.candidateScope == .swiftModule("SwiftUI"))
+        #expect("_$s7SwiftUI4ViewMp".withCString(query.acceptsCandidate))
+        #expect(!"_$s7Combine9PublisherMp".withCString(query.acceptsCandidate))
+        #expect(filter.matches("_$s7SwiftUI", partial: true))
+        #expect(!filter.matches("_$s7Combine", partial: true))
+        for name in ["_$s03FooA05ValueMp", "_$sSQMp"] {
+            #expect(name.withCString(query.acceptsCandidate))
+        }
+    }
+
+    @Test func protocolDescriptorsKeepCompressedFallbackAndAmbiguity() async throws {
+        let fixture = try FixtureLibrary(cxxSource: """
+        #include <cstdint>
+        extern "C" {
+        int descriptors[2] = {1, 2};
+        uintptr_t ABIFixtureAddress(int kind) { return reinterpret_cast<uintptr_t>(&descriptors[kind]); }
+        }
+        """)
+        defer { fixture.cleanup() }
+        let image = try #require(try await ABIRuntime().images(matching: .path(fixture.libraryURL)).first)
+        let query = SymbolQuery(.init(name: "protocol descriptor for FooFoo.Value", language: .swift, kind: .data))
+        let compressed = IndexedSymbol(name: "_$s03FooA05ValueMp", address: UInt64(try fixture.address(kind: 0)), source: .sharedCache)
+        let literal = IndexedSymbol(name: "_$s6FooFoo5ValueMp", address: UInt64(try fixture.address(kind: 1)), source: .sharedCache)
+        for symbol in [compressed, literal] {
+            let index = SymbolIndex(image: image)
+            index.appendSharedCacheSymbols([symbol], matching: query)
+            let resolved = try #require(try index.resolve(query, source: .sharedCache))
+            #expect(resolved.linkageName == symbol.name)
+        }
+        let index = SymbolIndex(image: image)
+        index.appendSharedCacheSymbols([compressed, literal], matching: query)
+        do {
+            _ = try index.resolve(query, source: .sharedCache)
+            Issue.record("Literal and compressed protocol descriptors at different addresses must remain ambiguous")
+        } catch ABIResolutionError.ambiguousDeclaration(_, let candidates) { #expect(candidates.count == 2) }
+    }
+
     @Test func mappedLocalNamesRespectRangesAndTableBounds() throws {
         let names = Array("_plain\0_$s5First4echoyyF\0unterminated".utf8)
         var data = Data(repeating: 0, count: 7)
