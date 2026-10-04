@@ -178,6 +178,7 @@ int main(int argc, char** argv) {
             auto greet = runtime.cxx_function<std::string(std::string)>(
                 abi_bridge::declaration("ABIBridgeFixture::greet(" + stringType + ")"), scope);
             assert(greet.unsafe_invoke("world") == "Hello, world");
+            assert(greet.unsafe_invoke({"world"}) == "Hello, world");
             auto consume = runtime.cxx_function<std::string(std::string&&)>(
                 abi_bridge::declaration("ABIBridgeFixture::consume(" + stringType + "&&)"), scope);
             std::string input = "native value";

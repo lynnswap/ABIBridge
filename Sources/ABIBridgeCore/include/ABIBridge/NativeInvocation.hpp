@@ -8,48 +8,64 @@
 
 namespace abi_bridge {
 
-template <typename Signature> class function;
-
 /// A concrete C/C++ function signature, lowered by the consumer's compiler.
 /// Fixed and variadic signatures use ordinary function types. A handle may outlive
 /// its runtime; target thread-safety and argument lifetimes remain caller-owned.
+template <typename Signature> class function;
+
+namespace detail {
 template <typename Signature>
-class function final {
-    static_assert(std::is_function_v<Signature>, "A native function requires a function signature.");
+class function_target {
 public:
-    /// Takes a retained C/C++ function symbol without repeating lookup.
-    /// Data, vtables, and other source-language calling conventions are rejected.
-    /// This checks declaration metadata, not the caller-supplied ABI signature.
-    explicit function(resolved_symbol symbol) : symbol_(std::move(symbol)) {
+    explicit function_target(resolved_symbol symbol) : symbol_(std::move(symbol)) {
         if (!symbol_ || ABIResolvedSymbolKind(symbol_.native_handle()) != ABISymbolFunction ||
             (ABIResolvedSymbolLanguage(symbol_.native_handle()) != ABILanguageC &&
              ABIResolvedSymbolLanguage(symbol_.native_handle()) != ABILanguageCXX)) {
             throw resolution_error(ABIFailureInvalidRequest, "Expected a retained C/C++ function symbol.");
         }
     }
-
-    /// Calls using the supplied signature. The caller must ensure that argument
-    /// and result types, calling convention, and ownership match the definition.
-    /// Name resolution alone cannot validate this ABI contract.
-    template <typename... Arguments>
-    decltype(auto) unsafe_invoke(Arguments&&... arguments) const {
-        using signature = Signature;
-        using pointer = signature*;
+    Signature* pointer() const {
         void* address = const_cast<void*>(symbol_.unsafe_address());
 #if __has_feature(ptrauth_calls)
-        address = ptrauth_sign_unauthenticated(
-            address, ptrauth_key_function_pointer,
-            ptrauth_function_pointer_type_discriminator(signature));
+        address = ptrauth_sign_unauthenticated(address, ptrauth_key_function_pointer,
+            ptrauth_function_pointer_type_discriminator(Signature));
 #endif
-        return reinterpret_cast<pointer>(address)(std::forward<Arguments>(arguments)...);
+        return reinterpret_cast<Signature*>(address);
     }
-
     const resolved_symbol& symbol() const noexcept { return symbol_; }
-
 private:
     resolved_symbol symbol_;
 };
+}
 
+template <typename Result, typename... Arguments>
+class function<Result(Arguments...)> final {
+    detail::function_target<Result(Arguments...)> target_;
+public:
+    /// Takes a retained C/C++ function symbol. The supplied signature is the
+    /// caller's ABI and ownership contract, not information proven by lookup.
+    explicit function(resolved_symbol symbol) : target_(std::move(symbol)) {}
+    /// Calls with the declared fixed parameter types and native ownership.
+    Result unsafe_invoke(Arguments... arguments) const {
+        return target_.pointer()(std::forward<Arguments>(arguments)...);
+    }
+    const resolved_symbol& symbol() const noexcept { return target_.symbol(); }
+};
+
+template <typename Result, typename... Arguments>
+class function<Result(Arguments..., ...)> final {
+    detail::function_target<Result(Arguments..., ...)> target_;
+public:
+    explicit function(resolved_symbol symbol) : target_(std::move(symbol)) {}
+    /// The compiler promotes anonymous arguments. Their types must match the
+    /// implementation's va_arg operations; pointer/resource lifetimes are borrowed.
+    template <typename... VariadicArguments>
+    Result unsafe_invoke(Arguments... arguments, VariadicArguments&&... tail) const {
+        return target_.pointer()(std::forward<Arguments>(arguments)...,
+            std::forward<VariadicArguments>(tail)...);
+    }
+    const resolved_symbol& symbol() const noexcept { return target_.symbol(); }
+};
 
 namespace detail {
 template <typename Signature> struct method_signature;
