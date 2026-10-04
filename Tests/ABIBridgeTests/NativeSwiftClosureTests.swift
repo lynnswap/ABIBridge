@@ -1048,7 +1048,8 @@ struct NativeSwiftClosureTests {
         #expect(destroyed.count == 1)
     }
 
-    @Test func repeatedNativeHandoffsPreserveOneOwningEntry() async throws {
+    @Test(arguments: [false, true])
+    func repeatedNativeHandoffsPreserveOneOwningEntry(_ throughHostResult: Bool) async throws {
         let echo = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.echoClosure(_:)",
             as: ((NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftClosure<(Int64) -> Int64>)
@@ -1059,6 +1060,11 @@ struct NativeSwiftClosureTests {
         do {
             let capture = ClosureCapture(destroyed)
             observed = capture
+            let saved = NestedClosureCapture()
+            let producer = try NativeSwiftClosure {
+                () throws -> NativeSwiftClosure<(Int64) -> Int64> in
+                try #require(saved.value)
+            }
             var callback = try NativeSwiftClosure { (value: Int64) in value + capture.bias }
             callback = try unsafe echo.unsafeInvoke(callback)
             #if DEBUG
@@ -1074,6 +1080,11 @@ struct NativeSwiftClosureTests {
             let originalContext = try #require(try context(of: callback))
             #endif
             for _ in 0..<8 {
+                if throughHostResult {
+                    saved.value = callback
+                    callback = try unsafe producer.unsafeInvoke()
+                    saved.value = nil
+                }
                 callback = try unsafe echo.unsafeInvoke(callback)
                 #if DEBUG
                 #expect(try context(of: callback) == originalContext)

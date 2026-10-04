@@ -468,7 +468,7 @@ extension NativeSwiftClosure {
         if let native = prepared.closure {
             try native.validateNativeValues(for: plan)
             if native.hasSameNativeABI(as: plan) { return original.encoded() }
-        } else if !plan.convertsValues, interface === prepared.interface {
+        } else if !plan.convertsValues, interface.runtime === prepared.interface.runtime {
             return original.encoded()
         }
         if let factory = original.callbackFactory, factory.signature == Signature.self {

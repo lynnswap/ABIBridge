@@ -18,6 +18,8 @@ check_swiftui() {
         -o "$task_fixture/libSwiftUIPlugin.dylib"
     xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
         --scratch-path "$task_build" SwiftUIConsumer "$task_fixture/libSwiftUIPlugin.dylib"
+    xcrun swift build --package-path "$task_root/Tests/NativeConsumer" \
+        --scratch-path "$task_build" --product CInspectionConsumer
     local task_bin
     task_bin=$(xcrun swift build --package-path "$task_root/Tests/NativeConsumer" \
         --scratch-path "$task_build" --show-bin-path)
