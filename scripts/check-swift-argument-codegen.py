@@ -93,7 +93,8 @@ def main():
         }.items():
             identifier = str(len(name)) + name
             candidates = [line for line in sil.splitlines() if line.startswith('sil [noinline]') and identifier in line]
-            if len(candidates) != 1 or convention not in candidates[0]:
+            # Caller isolation is independent of the callback's ownership convention.
+            if len(candidates) != 1 or convention not in candidates[0].replace('@caller_isolated ', ''):
                 raise RuntimeError(f'{target}: consuming callback ownership changed for {name}: {candidates}')
             consuming_callbacks[name] = candidates[0]
         fixed_callbacks = {}
