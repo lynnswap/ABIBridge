@@ -192,8 +192,8 @@ struct SymbolQuery {
     }
 }
 
-/// Rejects only an explicitly spelled, different root module. Compressed,
-/// substituted and other mangling forms still reach the full demangler.
+/// Rejects known different root modules, including standard abbreviations.
+/// Compressed and other uncertain roots still reach the full demangler.
 struct SwiftModuleFilter {
     let module: String
     private let prefix: String
@@ -210,15 +210,16 @@ struct SwiftModuleFilter {
         prefix = String(module.utf8.count) + module
     }
 
-    // Nil also describes an incomplete trie edge. Only a literal root can be
-    // excluded from the conservative bucket without interpreting substitutions.
-    static func literalModulePrefix(_ name: UnsafePointer<CChar>) -> Bool? {
+    // Nil also describes an incomplete trie edge. Standard module and type
+    // substitutions have known roots; compressed identifiers stay conservative.
+    static func knownModulePrefix(_ name: UnsafePointer<CChar>) -> Bool? {
         var body = name
         if body.pointee == 95 { body += 1 }
         guard body.pointee == 36, body[1] == 115 || body[1] == 83 else { return nil }
         body += 2
         guard body.pointee != 0 else { return nil }
-        return body.pointee >= 49 && body.pointee <= 57
+        if body.pointee == 83 { return body[1] == 0 ? nil : true }
+        return body.pointee == 115 || (body.pointee >= 49 && body.pointee <= 57)
     }
 
     func matches(_ raw: String) -> Bool {
@@ -230,6 +231,15 @@ struct SwiftModuleFilter {
         if body.pointee == 95 { body += 1 }
         guard body.pointee == 36, body[1] == 115 || body[1] == 83 else { return true }
         body += 2
+        if body.pointee == 115 { return module == "Swift" }
+        if body.pointee == 83 {
+            // S alone can be an unfinished trie edge. So and SC are modules;
+            // other standard substitutions name types from the Swift module.
+            guard body[1] != 0 else { return true }
+            if body[1] == 111 { return module == "__C" }
+            if body[1] == 67 { return module == "__C_Synthesized" }
+            return module == "Swift"
+        }
         guard body.pointee >= 49 && body.pointee <= 57 else { return true }
         return prefix.withCString { expected in
             let count = partial ? min(strlen(body), prefix.utf8.count) : prefix.utf8.count
@@ -318,7 +328,7 @@ final class SymbolIndex {
     }
     private var sourceSymbols: [SourceScope: [IndexedSymbol]] = [:]
     private var sharedCacheScopes: Set<SymbolCandidateScope> = []
-    private enum SwiftBucket { case literal, fallback }
+    private enum SwiftBucket { case knownModule, fallback }
     private struct Scope: Hashable, Sendable {
         let language: NativeLanguage
         let fragments: [String]
@@ -366,7 +376,7 @@ final class SymbolIndex {
         case .swiftModule: return sharedCacheScopes.contains(.language(.swift))
         case .cxxOwner: return sharedCacheScopes.contains(.language(.cxx))
         case .exact(let name):
-            if hasSharedSwiftFallback, query.exactName?.withCString({ SwiftModuleFilter.literalModulePrefix($0) == false }) == true { return true }
+            if hasSharedSwiftFallback, query.exactName?.withCString({ SwiftModuleFilter.knownModulePrefix($0) == false }) == true { return true }
             return [NativeLanguage.swift, .cxx].contains { language in
                 sharedCacheScopes.contains(.language(language))
                     && DeclarationKey.symbolPrefixes(for: language).contains { name.starts(with: $0.utf8) }
@@ -380,10 +390,10 @@ final class SymbolIndex {
         // The first Swift module read already includes all uncertain roots.
         // Concurrent or broader reads must not append that same payload again.
         let additions = hasFallback ? more.filter {
-            $0.name.withCString { SwiftModuleFilter.literalModulePrefix($0) != false }
+            $0.name.withCString { SwiftModuleFilter.knownModulePrefix($0) != false }
         } : more
         let changesFallback = !hasFallback && additions.contains {
-            $0.name.withCString { SwiftModuleFilter.literalModulePrefix($0) == false }
+            $0.name.withCString { SwiftModuleFilter.knownModulePrefix($0) == false }
         }
         sharedCacheScopes.insert(query.candidateScope)
         switch query.candidateScope {
@@ -509,7 +519,7 @@ final class SymbolIndex {
             }
             guard query.acceptsCandidate(raw) else { return false }
             guard let swiftBucket else { return true }
-            return SwiftModuleFilter.literalModulePrefix(raw) == (swiftBucket == .literal)
+            return SwiftModuleFilter.knownModulePrefix(raw) == (swiftBucket == .knownModule)
         }
         var symbols = query.declaration.language == .swift && descriptorKind == nil
             ? swiftSymbols(matching: accepts) : tableSymbols(matching: accepts)
@@ -526,7 +536,7 @@ final class SymbolIndex {
     }
 
     // An owner substring can occur later in a C++ name, so only Swift's proven
-    // module prefix may prune a subtree. Other filters apply at terminals.
+    // known module prefix may prune a subtree. Other filters apply at terminals.
     private func filteredExports(in trie: MachOImage.ExportTrie, prefixes: [String], query: SymbolQuery,
                                  swiftBucket: SwiftBucket?, accepts: (UnsafePointer<CChar>) -> Bool) -> [IndexedSymbol] {
         var symbols: [IndexedSymbol] = []
@@ -547,8 +557,8 @@ final class SymbolIndex {
                 guard prefixes.contains(where: { name.hasPrefix($0) || $0.hasPrefix(name) }),
                       name.withCString({ query.swiftModule?.matches($0, partial: true) ?? true }),
                       let next = Int(exactly: child.offset) else { continue }
-                if let swiftBucket, let literal = name.withCString(SwiftModuleFilter.literalModulePrefix),
-                   literal != (swiftBucket == .literal) { continue }
+                if let swiftBucket, let known = name.withCString(SwiftModuleFilter.knownModulePrefix),
+                   known != (swiftBucket == .knownModule) { continue }
                 pending.append((name, next))
             }
         }
@@ -573,12 +583,12 @@ final class SymbolIndex {
             if let descriptor {
                 // Mp and Mn identify descriptors in Swift's stable mangling.
                 // Descriptor coverage must not hide later ordinary declarations.
-                let candidates = symbols(for: query, swiftBucket: .literal, descriptorKind: descriptor)
+                let candidates = symbols(for: query, swiftBucket: .knownModule, descriptorKind: descriptor)
                     + symbols(for: query, swiftBucket: .fallback, descriptorKind: descriptor)
                 return Self.matching(candidates, query: query,
                     extensionsOnly: extensionsOnly, genericContext: genericContext, unsupported: &unsupported)
             }
-            return indexedMatches(query, extensionsOnly: extensionsOnly, swiftBucket: .literal, genericContext: genericContext, unsupported: &unsupported)
+            return indexedMatches(query, extensionsOnly: extensionsOnly, swiftBucket: .knownModule, genericContext: genericContext, unsupported: &unsupported)
                 + indexedMatches(query, extensionsOnly: extensionsOnly, swiftBucket: .fallback, genericContext: genericContext, unsupported: &unsupported)
         }
         return indexedMatches(query, extensionsOnly: extensionsOnly, swiftBucket: nil, genericContext: genericContext, unsupported: &unsupported)
@@ -631,7 +641,7 @@ final class SymbolIndex {
                                extensionsOnly: Bool) -> [ResolvedSymbol] {
         guard let key = SwiftMemberLookup.key(query.declaration.name) else { return [] }
         var symbols: [IndexedSymbol] = []
-        for bucket in [SwiftBucket.literal, .fallback] {
+        for bucket in [SwiftBucket.knownModule, .fallback] {
             let scope = bucket == .fallback ? Self.swiftFallbackScope
                 : Scope(language: .swift, fragments: query.swiftModule.map { [$0.module] } ?? [], swiftFallback: false)
             if swiftMembers[scope] == nil {
@@ -810,7 +820,7 @@ final class SymbolIndex {
     ) throws -> String? {
         let candidates = query.swiftModule == nil
             ? symbols(for: query, swiftBucket: nil, descriptorKind: .nominalType)
-            : symbols(for: query, swiftBucket: .literal, descriptorKind: .nominalType)
+            : symbols(for: query, swiftBucket: .knownModule, descriptorKind: .nominalType)
                 + symbols(for: query, swiftBucket: .fallback, descriptorKind: .nominalType)
         let marker = "nominal type descriptor for "
         var names = Set<String>()

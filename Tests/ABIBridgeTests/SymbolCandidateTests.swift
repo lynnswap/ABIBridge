@@ -12,7 +12,7 @@ struct SymbolCandidateTests {
         #expect(accepts("$S5First8ReadableMp"))
         #expect(!accepts("_$s6Second8ReadableMp"))
         #expect(accepts("_$s03FooA08ReadableMp"))
-        #expect(accepts("_$sSQMp"))
+        #expect(!accepts("_$sSQMp"))
         let conformance = SymbolQuery(.init(
             name: "protocol conformance descriptor for First.Value : Second.Readable in First", language: .swift, kind: .data))
         #expect(conformance.candidateScope == .language(.swift))

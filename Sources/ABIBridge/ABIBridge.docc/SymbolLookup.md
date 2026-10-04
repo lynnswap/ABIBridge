@@ -17,6 +17,25 @@ Image enumeration is always loaded-only. Automatic enumeration includes images w
 
 A `NativeImage` retains its loaded image. Reuse that handle to resolve several declarations in the same scope. The runtime caches raw symbol data and decoded declaration indexes; C++ members with a plain qualified owner reuse that owner's index.
 
+## Keep repeated lookup work small
+
+Automatic lookup works without configuration. When you know which framework provides a declaration, specify it to reduce the images searched, especially when probing for optional APIs that may be absent:
+
+```swift
+let decorate = try await runtime.swiftFunction(
+    named: "Example.decorate(_:)", as: ((String) -> String).self,
+    in: .framework(named: "Example")
+)
+let first = try unsafe decorate.unsafeInvoke("Hello")
+let second = try unsafe decorate.unsafeInvoke("Again")
+```
+
+Retain the callable handle and invoke it repeatedly to avoid resolving the same declaration on each call. When resolving other declarations from the same image, pass the retained `NativeImage` to the corresponding `in:` overload. Use `loading: .loadedOnly` when the target must already be loaded; the loading policy does not change the search scope.
+
+A Swift module name does not necessarily identify its containing framework: a statically linked module can live in the executable, and a framework can contain several modules. Select the image that actually supplies the declaration. An explicit framework scope does not search its dependencies or fall back to the whole process. If the provider can vary, list its possible frameworks in a ``NativeSymbolRequest``. Append `.automatic` only when a final process-wide search is needed.
+
+An automatic search must check every available image to establish absence or detect ambiguity. Its first lookup can therefore cost substantially more than a framework-scoped lookup. The runtime reuses indexes and caches automatic results while the loaded-image catalog is unchanged. Keep those caches between lookups; `removeCachedResults()` makes subsequent lookups rebuild them. Batch requests also reuse their image scopes, as described below.
+
 ## Describe the declaration
 
 A `NativeDeclaration` combines a source-level name with its language and required storage kind:

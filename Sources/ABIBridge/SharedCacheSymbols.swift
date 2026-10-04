@@ -33,7 +33,7 @@ final class SharedCacheSymbols {
         func record(_ name: UnsafePointer<CChar>, _ value: UInt64) {
             guard let address = SymbolIndex.slid(value, by: image.identity.slide) else { return }
             foundDefinitions = true
-            if query.acceptsCandidate(name), includingSwiftFallback || SwiftModuleFilter.literalModulePrefix(name) != false {
+            if query.acceptsCandidate(name), includingSwiftFallback || SwiftModuleFilter.knownModulePrefix(name) != false {
                 result.append(IndexedSymbol(name: String(cString: name), address: address, source: .sharedCache))
             }
         }

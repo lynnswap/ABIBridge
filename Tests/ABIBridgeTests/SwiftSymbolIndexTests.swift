@@ -6,6 +6,52 @@ import MachOKit
 import Testing
 
 struct SwiftSymbolIndexTests {
+    @Test func abbreviatedModuleRootsPreserveQueryOrder() async throws {
+        let fixture = try FixtureLibrary(cxxSource: """
+        extern "C" void swiftModule() asm("_$ss5probeyyF");
+        void swiftModule() {}
+        extern "C" void swiftType() asm("_$sSi5probeyyF");
+        void swiftType() {}
+        extern "C" void objcModule() asm("_$sSo7FixtureC5probeyyF");
+        void objcModule() {}
+        extern "C" void clangModule() asm("_$sSC7FixtureV5probeyyF");
+        void clangModule() {}
+        extern "C" void compressed() asm("_$s03FooA04echoyyF");
+        void compressed() {}
+        """)
+        defer { fixture.cleanup() }
+        let image = try #require(try await ABIRuntime().images(matching: .path(fixture.libraryURL)).first)
+        let names = ["Swift.probe() -> ()", "Swift.Int.probe() -> ()", "__C.Fixture.probe() -> ()",
+                     "__C_Synthesized.Fixture.probe() -> ()", "FooFoo.echo() -> ()"]
+        for order in [names, Array(names.reversed())] {
+            let index = SymbolIndex(image: image)
+            #expect(try index.resolve(.init(name: "Absent.missing() -> ()", language: .swift), source: .image) == nil)
+            for name in order {
+                #expect(try index.resolve(.init(name: name, language: .swift), source: .image) != nil, "\(name)")
+            }
+        }
+    }
+
+    @Test func knownAbbreviationsKeepSharedCacheCoverageSeparate() async throws {
+        let fixture = try FixtureLibrary()
+        defer { fixture.cleanup() }
+        let image = try #require(try await ABIRuntime().images(matching: .path(fixture.libraryURL)).first)
+        let address = UInt64(try fixture.address(kind: 0))
+        let index = SymbolIndex(image: image)
+        let foo = SymbolQuery(.init(name: "FooFoo.echo() -> ()", language: .swift))
+        let swift = SymbolQuery(.init(name: "Swift.Int.probe() -> ()", language: .swift))
+        let compressed = IndexedSymbol(name: "_$s03FooA04echoyyF", address: address, source: .sharedCache)
+        let standard = IndexedSymbol(name: "_$sSi5probeyyF", address: address, source: .sharedCache)
+        index.appendSharedCacheSymbols([compressed], matching: foo)
+        #expect(try index.resolve(foo, source: .sharedCache) != nil)
+        #expect(!index.hasSharedCacheSymbols(for: swift))
+        #expect(try index.resolve(swift, source: .sharedCache) == nil)
+        index.appendSharedCacheSymbols([standard], matching: swift)
+        #expect(try index.resolve(swift, source: .sharedCache) != nil)
+        #expect(try index.resolve(foo, source: .sharedCache) != nil)
+        #expect(try index.resolve(.init(machOName: standard.name, language: .swift), source: .sharedCache) != nil)
+    }
+
     @Test func nominalDescriptorsKeepOtherDescriptorAndFunctionLookups() async throws {
         let fixture = try FixtureLibrary(cxxSource: """
         extern "C" int value asm("_$s5First5ValueVMn") = 1;
@@ -63,9 +109,9 @@ struct SwiftSymbolIndexTests {
         #expect(!"_$s7Combine9PublisherMp".withCString(query.acceptsCandidate))
         #expect(filter.matches("_$s7SwiftUI", partial: true))
         #expect(!filter.matches("_$s7Combine", partial: true))
-        for name in ["_$s03FooA05ValueMp", "_$sSQMp"] {
-            #expect(name.withCString(query.acceptsCandidate))
-        }
+        #expect(!"_$sSQMp".withCString(query.acceptsCandidate))
+        #expect(filter.matches("_$sS", partial: true))
+        #expect("_$s03FooA05ValueMp".withCString(query.acceptsCandidate))
     }
 
     @Test(arguments: ["Mp", "VMn"])
