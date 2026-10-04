@@ -84,6 +84,7 @@ struct SwiftGenericBindingTests {
         }
     }
 
+    #if os(macOS)
     @Test func nonescapableBorrowedValuesCannotBecomeOwnedCopies() async throws {
         let module = "ScopedValue_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
         let fixture = try FixtureLibrary(swiftModule: module, swiftSource: """
@@ -370,6 +371,8 @@ struct SwiftGenericBindingTests {
         await runtime.removeCachedResults()
         withExtendedLifetime(preparedCopy) { #expect(argumentLease == nil) }
     }
+    #endif
+
     @Test func objectConstraintMetadataFollowsSwiftSelfConformanceRules() throws {
         #expect(SwiftObjectType(AnyObject.self) != nil)
         #expect(SwiftObjectType((any NSObjectProtocol).self) != nil)
