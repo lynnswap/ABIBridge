@@ -7,6 +7,11 @@ NS_ASSUME_NONNULL_BEGIN
 FOUNDATION_EXPORT int32_t ABICAnswer(void);
 FOUNDATION_EXPORT int8_t ABICNegative(void);
 FOUNDATION_EXPORT bool ABICNegate(bool value);
+FOUNDATION_EXPORT double ABICVariadicMix(float prefix, int32_t count, ...);
+FOUNDATION_EXPORT double ABICVariadicMixOracle(float prefix, int32_t count, int8_t signedValue,
+    uint16_t unsignedValue, bool boolean, float real, const void * _Nullable pointer, CGPoint point);
+FOUNDATION_EXPORT double ABICVariadicSum(int32_t count, ...);
+FOUNDATION_EXPORT double ABICVariadicStackOracle(void);
 FOUNDATION_EXPORT double ABICMixed(int8_t a, uint16_t b, int32_t c, uint64_t d,
     float e, double f, bool g, const void * _Nullable h, int64_t i, double j, uintptr_t k, int32_t l);
 FOUNDATION_EXPORT CGRect ABICRect(CGRect value);

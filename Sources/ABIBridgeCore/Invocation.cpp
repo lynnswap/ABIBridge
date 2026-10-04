@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <limits>
 #include <string>
 #include <vector>
@@ -44,7 +45,19 @@ struct ABICallInterface {
     std::shared_ptr<TypeStorage> result;
     std::vector<std::shared_ptr<TypeStorage>> parameters;
     std::vector<ffi_type*> nativeParameters;
+    std::optional<size_t> fixedParameterCount;
 };
+
+namespace {
+ffi_type *promotedParameter(ffi_type *type) {
+    switch (type->type) {
+    case FFI_TYPE_FLOAT: return &ffi_type_double;
+    case FFI_TYPE_SINT8: case FFI_TYPE_UINT8:
+    case FFI_TYPE_SINT16: case FFI_TYPE_UINT16: return &ffi_type_sint32;
+    default: return type;
+    }
+}
+}
 
 ABIValueType *ABICreateScalarType(int32_t kind, ABIResolutionFailure **error) {
     if (error) *error = nullptr;
@@ -111,31 +124,51 @@ bool ABIValueTypeIsPointer(const ABIValueType *type) { return type->storage->nat
 size_t ABIValueTypeFieldCount(const ABIValueType *type) { return type->storage->offsets.size(); }
 size_t ABIValueTypeFieldOffset(const ABIValueType *type, size_t index) { return type->storage->offsets[index]; }
 
-ABICallInterface *ABICreateCCallInterface(
+static ABICallInterface *createCCallInterface(
     const ABIValueType *result, const ABIValueType *const *parameters,
-    size_t count, ABIResolutionFailure **error)
+    size_t count, std::optional<size_t> fixedCount, ABIResolutionFailure **error)
 {
     if (error) *error = nullptr;
     if (!result || result->storage->swiftIndirect || (count && !parameters) || count > UINT_MAX) {
         fail(error, ABIFailureInvalidRequest, "A result and a representable parameter list are required.");
         return nullptr;
     }
+    if (fixedCount && (*fixedCount == 0 || *fixedCount > count)) {
+        fail(error, ABIFailureInvalidRequest, "A variadic call requires a nonempty fixed prefix within its argument list.");
+        return nullptr;
+    }
     auto interface = std::make_unique<ABICallInterface>();
     interface->result = result->storage;
+    interface->fixedParameterCount = fixedCount;
     for (size_t index = 0; index < count; ++index) {
         if (!parameters[index] || parameters[index]->storage->swiftIndirect || parameters[index]->storage->native()->type == FFI_TYPE_VOID) {
             fail(error, ABIFailureInvalidRequest, "A parameter must have a non-void value type.");
             return nullptr;
         }
         interface->parameters.push_back(parameters[index]->storage);
-        interface->nativeParameters.push_back(parameters[index]->storage->native());
+        auto *type = parameters[index]->storage->native();
+        interface->nativeParameters.push_back(fixedCount && index >= *fixedCount ? promotedParameter(type) : type);
     }
-    if (ffi_prep_cif(&interface->cif, FFI_DEFAULT_ABI, static_cast<unsigned int>(count),
-                    interface->result->native(), interface->nativeParameters.data()) != FFI_OK) {
+    auto status = fixedCount
+        ? ffi_prep_cif_var(&interface->cif, FFI_DEFAULT_ABI, static_cast<unsigned int>(*fixedCount),
+            static_cast<unsigned int>(count), interface->result->native(), interface->nativeParameters.data())
+        : ffi_prep_cif(&interface->cif, FFI_DEFAULT_ABI, static_cast<unsigned int>(count),
+            interface->result->native(), interface->nativeParameters.data());
+    if (status != FFI_OK) {
         fail(error, ABIFailureUnsupportedDeclaration, "The signature cannot be represented by the platform C ABI.");
         return nullptr;
     }
     return interface.release();
+}
+
+ABICallInterface *ABICreateCCallInterface(const ABIValueType *result,
+    const ABIValueType *const *parameters, size_t count, ABIResolutionFailure **error) {
+    return createCCallInterface(result, parameters, count, std::nullopt, error);
+}
+
+ABICallInterface *ABICreateVariadicCCallInterface(const ABIValueType *result,
+    const ABIValueType *const *parameters, size_t count, size_t fixedCount, ABIResolutionFailure **error) {
+    return createCCallInterface(result, parameters, count, fixedCount, error);
 }
 
 void ABIRetainCallInterface(ABICallInterface *interface) { ++interface->references; }
@@ -217,13 +250,41 @@ bool ABIUnsafeInvokeCCallInterface(
         return false;
     }
     std::vector<void*> values;
+    union PromotedValue { int32_t integer; double real; };
+    std::vector<PromotedValue> promoted(interface->fixedParameterCount ? interface->parameters.size() : 0);
     values.reserve(interface->parameters.size());
     for (size_t index = 0; index < interface->parameters.size(); ++index) {
         if (!arguments[index]) {
             fail(error, ABIFailureInvalidRequest, "Each parameter requires value storage.");
             return false;
         }
-        values.push_back(arguments[index]);
+        void *address = arguments[index];
+        if (interface->fixedParameterCount && index >= *interface->fixedParameterCount) {
+            switch (interface->parameters[index]->native()->type) {
+            case FFI_TYPE_FLOAT:
+                promoted[index].real = *static_cast<const float *>(address);
+                address = &promoted[index].real;
+                break;
+            case FFI_TYPE_SINT8:
+                promoted[index].integer = *static_cast<const int8_t *>(address);
+                address = &promoted[index].integer;
+                break;
+            case FFI_TYPE_UINT8:
+                promoted[index].integer = *static_cast<const uint8_t *>(address);
+                address = &promoted[index].integer;
+                break;
+            case FFI_TYPE_SINT16:
+                promoted[index].integer = *static_cast<const int16_t *>(address);
+                address = &promoted[index].integer;
+                break;
+            case FFI_TYPE_UINT16:
+                promoted[index].integer = *static_cast<const uint16_t *>(address);
+                address = &promoted[index].integer;
+                break;
+            default: break;
+            }
+        }
+        values.push_back(address);
     }
     const size_t size = interface->result->size();
     const size_t capacity = std::max(size, sizeof(ffi_arg));

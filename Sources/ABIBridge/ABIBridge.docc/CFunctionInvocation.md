@@ -46,7 +46,35 @@ The Swift function type describes the native ABI. A C linker name has no type in
 
 For example, a C `int` uses `Int32`, while a pointer-sized integer uses `Int`. Ordinary Swift strings, objects, arbitrary structures, and optional scalars do not have an implicit C representation in this API.
 
-There is no fixed argument-count limit. These handles describe fixed signatures; C variadic functions need a distinct call contract and are not supported here. A Swift function using the Swift calling convention cannot be invoked through this C ABI entry point.
+There is no fixed argument-count limit. A Swift function using the Swift calling convention cannot be invoked through this C ABI entry point.
+
+## Call a variadic function
+
+Include every concrete argument in `as:` and set `variadicFrom:` to the zero-based index of the first anonymous argument. For `int printf(const char *format, ...)`, the fixed prefix has one parameter:
+
+```swift
+let printValue = try await runtime.cFunction(
+    named: "printf",
+    as: ((UnsafePointer<CChar>, Float) -> Int32).self,
+    variadicFrom: 1
+)
+try "value: %.1f\n".withCString { format in
+    _ = try unsafe printValue.unsafeInvoke(format, 1.5)
+}
+```
+
+The backend promotes anonymous Float values to Double and Bool, Int8, UInt8, Int16, and UInt16 values to C int. Fixed arguments keep their declared representation. Other scalars, pointers, and naturally laid-out aggregates retain their normal C representation. The caller still supplies the actual widths and types required by the native consumer, such as each format conversion or `va_arg` operation.
+
+Use ``NativeSignature`` when layouts are known at runtime. Its `parameters:` list describes the fixed prefix, and `variadicParameters:` describes this call's tail. An empty tail still denotes a variadic call; omitting it denotes a fixed declaration:
+
+```swift
+let signature = NativeSignature(
+    parameters: [.pointer], variadicParameters: [.float], returns: .int32
+)
+let printValue = try await runtime.cFunction(named: "printf", signature: signature)
+```
+
+Each handle prepares one concrete call shape and may be reused concurrently with that shape. Prepare another handle for a different tail. The libffi path requires at least one fixed parameter; native C++ `function<Signature>` wrappers use the consumer compiler's variadic function type directly. Callback interfaces likewise require a known concrete tail for every entry; an import name does not reveal arbitrary callers' argument counts or types.
 
 ## Keep pointers and images alive
 

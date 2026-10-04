@@ -21,7 +21,7 @@ A constructor rejects empty handles, data/vtable symbols, and declarations marke
 
 ## Supply the actual signature
 
-`function<Result(Arguments...)>` preserves C++ reference categories and lets the compiler lower register arguments, stack arguments, and indirect or nontrivial results. Variadic signatures are not supported. The caller must use types with the same ABI, layout, standard-library ABI, and ownership as the target definition. Compiler support for a type does not make an unknown private type's layout inferable.
+`function<Result(Arguments...)>` preserves C++ reference categories and lets the compiler lower register arguments, stack arguments, and indirect or nontrivial results. Use `function<Result(FixedArguments..., ...)>` for a variadic declaration; the consumer compiler applies its standard promotions to anonymous arguments. Const and nonconst member signatures can also include the ellipsis. The caller must use types with the same ABI, layout, standard-library ABI, and ownership as the target definition. Compiler support for a type does not make an unknown private type's layout inferable.
 
 On an authenticated call ABI, the handle signs the resolved address for the supplied function-pointer type. This is not authentication of an original signed pointer. The resolver establishes executable storage and image lifetime; it cannot prove that the supplied signature, receiver, argument lifetime, or calling thread is correct.
 

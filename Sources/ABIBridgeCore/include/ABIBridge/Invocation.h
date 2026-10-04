@@ -43,12 +43,20 @@ size_t ABIValueTypeFieldOffset(const ABIValueType *type, size_t index);
 ABICallInterface *ABICreateCCallInterface(
     const ABIValueType *result, const ABIValueType *const *parameters,
     size_t count, ABIResolutionFailure **error);
+/// Prepares one concrete variadic call. The nonempty fixed prefix ends at
+/// fixedCount. Anonymous Float and narrow integers undergo C promotions;
+/// invocation storage still uses the supplied input representations.
+ABICallInterface *ABICreateVariadicCCallInterface(
+    const ABIValueType *result, const ABIValueType *const *parameters,
+    size_t count, size_t fixedCount, ABIResolutionFailure **error);
 void ABIReleaseCallInterface(ABICallInterface *interface);
 void ABIRetainCallInterface(ABICallInterface *interface);
 
 /// Internal callback transport. Context and argument storage remain borrowed;
 /// the callback writes the interface's result representation. This does not
 /// manage Objective-C ownership or allow exceptions to cross the C boundary.
+/// Variadic entries require every caller to use the prepared tail. Anonymous
+/// callback arguments use their promoted C representations.
 typedef void (*ABICallClosureHandler)(void *context, void *result, void *const *arguments);
 /// Retains the prepared interface. A failed creation publishes no callable code.
 ABICallClosure *ABICreateCallClosure(ABICallInterface *interface,
