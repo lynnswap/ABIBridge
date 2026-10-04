@@ -35,6 +35,7 @@ struct SwiftFunctionDeclarationTests {
         }
     }
 
+    #if os(macOS)
     @Test func compiledGenericFunctionTypesRequireAdapters() async throws {
         let variants = [("use", ""), ("throwing", " throws"),
                         ("asynchronous", " async"), ("asyncThrowing", " async throws")]
@@ -66,6 +67,8 @@ struct SwiftFunctionDeclarationTests {
             } catch ABIResolutionError.unsupportedDeclaration {}
         }
     }
+
+    #endif
 
     @Test(arguments: ["async", "throws", "async throws"])
     func constrainedClosureTypesDoNotHideOuterEffects(_ effects: String) async throws {

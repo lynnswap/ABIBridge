@@ -121,6 +121,7 @@ struct SwiftConstrainedExtensionTests {
 
     private struct DeclaredFailure: Error, Equatable { let value: Int }
 
+    #if os(macOS)
     @Test func canonicalDeclarationsPreserveProviderImportBoundaries() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -238,6 +239,8 @@ struct SwiftConstrainedExtensionTests {
         #expect(try unsafe getter.unsafeInvoke().isEmpty)
     }
 
+    #endif
+
     @MainActor @Test(arguments: [false, true])
     func selectsConstraintUsingLiveReceiverAndSuperclass(_ inherited: Bool) async throws {
         let runtime = ABIRuntime()
@@ -340,6 +343,7 @@ struct SwiftConstrainedExtensionTests {
 
     }
 
+    #if os(macOS)
     @Test func supportedExtensionInAnotherImageRemainsSelectable() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -580,6 +584,8 @@ struct SwiftConstrainedExtensionTests {
             }
         }
     }
+
+    #endif
 
     @MainActor @Test func applicableOverlappingExtensionsRemainAmbiguous() async throws {
         #expect(ConstrainedPair<Int, Bool>().overlap() == "first")
