@@ -6,6 +6,29 @@ import MachOKit
 import Testing
 
 struct SwiftSymbolIndexTests {
+    @Test func nominalDescriptorsKeepOtherDescriptorAndFunctionLookups() async throws {
+        let fixture = try FixtureLibrary(cxxSource: """
+        extern "C" int value asm("_$s5First5ValueVMn") = 1;
+        extern "C" int other asm("_$s6Second5ValueVMn") = 2;
+        extern "C" int readable asm("_$s5First8ReadableMp") = 3;
+        extern "C" void echo() asm("_$s5First4echoyyF");
+        void echo() {}
+        """)
+        defer { fixture.cleanup() }
+        let image = try #require(try await ABIRuntime().images(matching: .path(fixture.libraryURL)).first)
+        let index = SymbolIndex(image: image)
+        let nominal = NativeDeclaration(name: "nominal type descriptor for First.Value", language: .swift, kind: .data)
+        let other = NativeDeclaration(name: "nominal type descriptor for Second.Value", language: .swift, kind: .data)
+        let proto = NativeDeclaration(name: "protocol descriptor for First.Readable", language: .swift, kind: .data)
+        let function = NativeDeclaration(name: "First.echo() -> ()", language: .swift)
+        for declaration in [nominal, proto, function, other, nominal, function] {
+            #expect(try index.resolve(declaration, source: .image) != nil)
+        }
+        let resolved = try #require(try index.resolve(nominal, source: .image))
+        #expect(try index.swiftNominalTypeName(at: resolved.address,
+            matching: SymbolQuery(nominal), source: .image) == "First.Value")
+    }
+
     @Test func protocolDescriptorsPreserveCompressedNamesAmbiguityAndOtherLookups() async throws {
         let fixture = try FixtureLibrary(cxxSource: """
         extern "C" int first asm("_$s5First8ReadableMp") = 1;
@@ -45,7 +68,8 @@ struct SwiftSymbolIndexTests {
         }
     }
 
-    @Test func protocolDescriptorsKeepCompressedFallbackAndAmbiguity() async throws {
+    @Test(arguments: ["Mp", "VMn"])
+    func descriptorsKeepCompressedFallbackAndAmbiguity(_ suffix: String) async throws {
         let fixture = try FixtureLibrary(cxxSource: """
         #include <cstdint>
         extern "C" {
@@ -55,9 +79,10 @@ struct SwiftSymbolIndexTests {
         """)
         defer { fixture.cleanup() }
         let image = try #require(try await ABIRuntime().images(matching: .path(fixture.libraryURL)).first)
-        let query = SymbolQuery(.init(name: "protocol descriptor for FooFoo.Value", language: .swift, kind: .data))
-        let compressed = IndexedSymbol(name: "_$s03FooA05ValueMp", address: UInt64(try fixture.address(kind: 0)), source: .sharedCache)
-        let literal = IndexedSymbol(name: "_$s6FooFoo5ValueMp", address: UInt64(try fixture.address(kind: 1)), source: .sharedCache)
+        let marker = suffix == "Mp" ? "protocol descriptor for " : "nominal type descriptor for "
+        let query = SymbolQuery(.init(name: marker + "FooFoo.Value", language: .swift, kind: .data))
+        let compressed = IndexedSymbol(name: "_$s03FooA05Value" + suffix, address: UInt64(try fixture.address(kind: 0)), source: .sharedCache)
+        let literal = IndexedSymbol(name: "_$s6FooFoo5Value" + suffix, address: UInt64(try fixture.address(kind: 1)), source: .sharedCache)
         for symbol in [compressed, literal] {
             let index = SymbolIndex(image: image)
             index.appendSharedCacheSymbols([symbol], matching: query)
