@@ -172,6 +172,7 @@ ABICallInterface *ABICreateVariadicCCallInterface(const ABIValueType *result,
 }
 
 void ABIRetainCallInterface(ABICallInterface *interface) { ++interface->references; }
+size_t ABICallInterfaceParameterCount(const ABICallInterface *interface) { return interface->parameters.size(); }
 void ABIReleaseCallInterface(ABICallInterface *interface) {
     if (interface && --interface->references == 0) delete interface;
 }

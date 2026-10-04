@@ -6,9 +6,10 @@ extension NativeObject {
     public func method<Result, each Argument>(
         selector: Selector,
         as signature: ((repeat each Argument) -> Result).Type,
+        variadicFrom: Int? = nil,
         options: NativeMethodOptions = .init()
     ) throws -> NativeBoundObjCMethod<Result, repeat each Argument> {
-        try method(selector: NSStringFromSelector(selector), as: signature, options: options)
+        try method(selector: NSStringFromSelector(selector), as: signature, variadicFrom: variadicFrom, options: options)
     }
 
     /// Accepts a Selector with the same dispatch, ownership, and isolation contract.
@@ -37,20 +38,22 @@ extension ABIRuntime {
     public nonisolated func objcMethod<Result, each Argument>(
         on type: AnyClass, selector: Selector,
         as signature: ((repeat each Argument) -> Result).Type,
+        variadicFrom: Int? = nil,
         classMethod: Bool = false, options: NativeMethodOptions = .init(),
         retaining owner: Any? = nil
     ) throws -> NativeObjCMethod<Result, repeat each Argument> {
-        try objcMethod(on: type, selector: NSStringFromSelector(selector), as: signature, classMethod: classMethod, options: options, retaining: owner)
+        try objcMethod(on: type, selector: NSStringFromSelector(selector), as: signature, variadicFrom: variadicFrom, classMethod: classMethod, options: options, retaining: owner)
     }
 
     /// Accepts a Selector with the same dispatch, ownership, and isolation contract.
     public nonisolated func objcImplementation<Result, each Argument>(
         on type: AnyClass, selector: Selector,
         as signature: ((repeat each Argument) -> Result).Type,
+        variadicFrom: Int? = nil,
         classMethod: Bool = false, options: NativeMethodOptions = .init(),
         retaining owner: Any? = nil
     ) throws -> NativeObjCImplementation<Result, repeat each Argument> {
-        try objcImplementation(on: type, selector: NSStringFromSelector(selector), as: signature, classMethod: classMethod, options: options, retaining: owner)
+        try objcImplementation(on: type, selector: NSStringFromSelector(selector), as: signature, variadicFrom: variadicFrom, classMethod: classMethod, options: options, retaining: owner)
     }
 
     /// Accepts a Selector with the same dispatch, ownership, and isolation contract.

@@ -12,6 +12,44 @@ struct ObjCValueCodec<Value> {
     private let signedBoolean: Bool
     private let aggregateType: CValueType?
 
+    init(anonymousParameter type: Value.Type) throws {
+        let base = (Value.self as? any NativeOptionalValue.Type)?.wrappedType ?? Value.self
+        let encoding: String
+        let size: Int
+        if Self.isBlockType(base) { encoding = "@?"; size = MemoryLayout<UnsafeRawPointer>.size }
+        else if base == AnyClass.self { encoding = "#"; size = MemoryLayout<UnsafeRawPointer>.size }
+        else if base is AnyClass || base == AnyObject.self || base == String.self {
+            encoding = "@"; size = MemoryLayout<UnsafeRawPointer>.size
+        } else if base == Selector.self { encoding = ":"; size = MemoryLayout<UnsafeRawPointer>.size }
+        else if base is any NativePointerValue.Type { encoding = "^v"; size = MemoryLayout<UnsafeRawPointer>.size }
+        else {
+            size = MemoryLayout<Value>.size
+            switch Value.self {
+            case is Bool.Type: encoding = "B"
+            case is Int8.Type: encoding = "c"
+            case is UInt8.Type: encoding = "C"
+            case is Int16.Type: encoding = "s"
+            case is UInt16.Type: encoding = "S"
+            case is Int32.Type: encoding = "i"
+            case is UInt32.Type: encoding = "I"
+            case is Int64.Type: encoding = "q"
+            case is UInt64.Type: encoding = "Q"
+            case is Int.Type: encoding = size == 8 ? "q" : "i"
+            case is UInt.Type: encoding = size == 8 ? "Q" : "I"
+            case is Float.Type: encoding = "f"
+            case is Double.Type: encoding = "d"
+            case is CGFloat.Type: encoding = size == 8 ? "d" : "f"
+            case is CGPoint.Type: encoding = String(cString: ABIObjCEncodingPoint())
+            case is CGSize.Type: encoding = String(cString: ABIObjCEncodingSize())
+            case is CGRect.Type: encoding = String(cString: ABIObjCEncodingRect())
+            case is NSRange.Type: encoding = String(cString: ABIObjCEncodingRange())
+            default:
+                throw ABIResolutionError.unsupportedDeclaration("Anonymous Objective-C arguments require a concrete C scalar, pointer, object, block, or standard imported structure.")
+            }
+        }
+        try self.init(encoding: encoding, size: size)
+    }
+
     init(encoding: String, size: Int) throws {
         guard let decoded = ObjCTypeDecoder.decode(encoding) else {
             throw ABIResolutionError.metadataUnavailable("Invalid Objective-C type encoding: \(encoding)")

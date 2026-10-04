@@ -19,6 +19,78 @@ private final class ImplementationCodeOwner {}
 
 @Suite(.serialized)
 struct ObjectiveCImplementationTests {
+    @Test func variadicClassMessagesAndCapturedImplementationsPreserveResults() throws {
+        let runtime = ABIRuntime()
+        typealias Signature = (NSString, Float, Int8, NSString) -> NSString
+        let receiver: AnyObject = NSString.self
+        let message = try runtime.object(receiver).method(selector: "stringWithFormat:", as: Signature.self, variadicFrom: 1)
+        let captured = try runtime.objcImplementation(on: NSString.self, selector: "stringWithFormat:",
+            as: Signature.self, variadicFrom: 1, classMethod: true)
+        let format = "%.1f/%d/%@" as NSString
+        #expect(try unsafe message.unsafeInvoke(format, 1.5, -3, "value") == "1.5/-3/value")
+        #expect(try unsafe captured.unsafeInvoke(on: receiver, format, 1.5, -3, "value") == "1.5/-3/value")
+        let unbound = message.method
+        #expect(try unsafe unbound.unsafeInvoke(on: receiver, format, 2.5, -4, "other") == "2.5/-4/other")
+        let rebound = try unbound.bind(to: receiver)
+        #expect(try unsafe rebound.unsafeInvoke(format, 3.5, -5, "bound") == "3.5/-5/bound")
+    }
+
+    @Test func variadicObjectTailsRetainTheirResultAndAllowNilTermination() throws {
+        let runtime = ABIRuntime()
+        let receiver: AnyObject = NSArray.self
+        let make = try runtime.object(receiver).method(selector: "arrayWithObjects:",
+            as: ((NSObject?, NSObject?, NSObject?) -> NSArray).self, variadicFrom: 1)
+        let first = NSObject(), second = NSObject()
+        let value = try unsafe make.unsafeInvoke(first, second, nil)
+        #expect(value.count == 2)
+        #expect(value[0] as AnyObject === first && value[1] as AnyObject === second)
+        let emptyTail = try runtime.object(NSString.self as AnyObject).method(selector: "stringWithFormat:",
+            as: ((NSString) -> NSString).self, variadicFrom: 1)
+        #expect(try unsafe emptyTail.unsafeInvoke("literal") == "literal")
+    }
+
+    @Test func variadicMessagesObserveReplacementWhileCapturedImplementationsKeepTheirEntry() throws {
+        let runtime = ABIRuntime()
+        let receiver = ABIVariadicFixture()
+        let selector = NSSelectorFromString("sum:")
+        let current = try runtime.object(receiver).method(selector: selector,
+            as: ((Int, Int, Int) -> Int).self, variadicFrom: 1)
+        let captured = try runtime.objcImplementation(on: ABIVariadicFixture.self, selector: selector,
+            as: ((Int, Int, Int) -> Int).self, variadicFrom: 1)
+        let unbound = try runtime.objcMethod(on: ABIVariadicFixture.self, selector: selector,
+            as: ((Int, Int, Int) -> Int).self, variadicFrom: 1)
+        #expect(try unsafe current.unsafeInvoke(2, 20, 22) == ABIVariadicCompilerOracle(receiver))
+        let method = try #require(class_getInstanceMethod(ABIVariadicFixture.self, selector))
+        let replacement = try #require(class_getInstanceMethod(ABIVariadicFixture.self, NSSelectorFromString("replacementSum:")))
+        let original = method_setImplementation(method, method_getImplementation(replacement))
+        defer { method_setImplementation(method, original) }
+        #expect(try unsafe current.unsafeInvoke(2, 20, 22) == ABIVariadicCompilerOracle(receiver))
+        #expect(try unsafe current.method.unsafeInvoke(on: receiver, 2, 20, 22) == 1042)
+        #expect(try unsafe unbound.bind(to: receiver).unsafeInvoke(2, 20, 22) == 1042)
+        #expect(try unsafe captured.unsafeInvoke(on: receiver, 2, 20, 22) == 42)
+    }
+
+    @Test func variadicMessagesRejectForwardingImplementationsBeforeNativeEntry() throws {
+        let runtime = ABIRuntime()
+        let receiver = ABIVariadicFixture()
+        let message = try runtime.object(receiver).method(selector: "sum:",
+            as: ((Int, Int, Int) -> Int).self, variadicFrom: 1)
+        let captured = try runtime.objcImplementation(on: ABIVariadicFixture.self, selector: "sum:",
+            as: ((Int, Int, Int) -> Int).self, variadicFrom: 1)
+        let method = try #require(class_getInstanceMethod(ABIVariadicFixture.self, NSSelectorFromString("sum:")))
+        let original = method_setImplementation(method, ABIHookForwardingImplementation())
+        defer { method_setImplementation(method, original) }
+        #expect(throws: ABIResolutionError.self) { try unsafe message.unsafeInvoke(2, 20, 22) }
+        #expect(throws: ABIResolutionError.self) { try unsafe message.method.unsafeInvoke(on: receiver, 2, 20, 22) }
+        #expect(try unsafe captured.unsafeInvoke(on: receiver, 2, 20, 22) == 42)
+    }
+
+    @Test func variadicBoundariesMustMatchTheRuntimeFixedPrefix() throws {
+        #expect(throws: ABIResolutionError.self) {
+            try ABIRuntime().object(NSString.self as AnyObject).method(selector: "stringWithFormat:",
+                as: ((NSString, Float) -> NSString).self, variadicFrom: 0)
+        }
+    }
     @Test func extractedMessagesReleaseTheirOriginalReceiverAndKeepCurrentDispatch() throws {
         let runtime = ABIRuntime.shared
         weak var observedOriginal: ImplementationReceiver?

@@ -70,6 +70,17 @@ FOUNDATION_EXPORT BOOL ABIInvokeObjCImplementation(
     ABIObjCInvocation *invocation, ABICallInterface *interface, id receiver,
     void * _Nullable result, const void * _Nonnull const * _Nullable arguments,
     NSError * _Nullable * _Nullable error);
+/// Sends a concrete variadic message through the current IMP, using a prepared
+/// receiver/selector/fixed-prefix/tail interface. Forwarding-only selectors
+/// cannot carry a variadic tail through NSInvocation.
+FOUNDATION_EXPORT BOOL ABIInvokeVariadicObjCDispatch(
+    ABIObjCInvocation *invocation, ABICallInterface *interface, id receiver,
+    void * _Nullable result, const void * _Nonnull const * _Nullable arguments,
+    NSError * _Nullable * _Nullable error);
+FOUNDATION_EXPORT BOOL ABIInvokeVariadicObjCInvocation(
+    ABIObjCInvocation *invocation, ABICallInterface *interface,
+    void * _Nullable result, const void * _Nonnull const * _Nullable arguments,
+    NSError * _Nullable * _Nullable error);
 
 /// Copies a live Objective-C block to owned heap/global storage. Returns null
 /// for a non-block object. The input must be a valid live Objective-C object;

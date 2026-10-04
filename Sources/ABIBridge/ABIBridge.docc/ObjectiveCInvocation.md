@@ -36,9 +36,26 @@ let append = try runtime.objcMethod(
 
 A compiler-checked selector confirms the declaration's spelling; the supplied function type and ownership contract still describe the native call.
 
+## Call a variadic method
+
+Describe the concrete anonymous tail in the Swift signature and set `variadicFrom:` to the number of named arguments. Bound messages, receiver-independent messages, and captured implementations share this contract:
+
+```swift
+let format = try runtime.object(NSString.self as AnyObject).method(
+    selector: "stringWithFormat:",
+    as: ((NSString, Float, Int8, NSString) -> NSString).self,
+    variadicFrom: 1
+)
+let text = try unsafe format.unsafeInvoke("%.1f/%d/%@", 1.5, -3, "value")
+```
+
+ABIBridge applies C's default argument promotions to the anonymous tail. Object, class, block, selector, pointer, scalar, and standard CoreGraphics/Foundation structure representations can be inferred from their Swift types. For other anonymous aggregates, use the native C++ frontend so the compiler supplies the layout. The runtime encoding supplies only the named prefix; the caller must select the actual tail, including any sentinel required by the method.
+
+Variadic messages resolve the receiver's current concrete IMP on each call; captured implementations keep their original IMP. Forwarding through `NSInvocation` cannot carry an anonymous tail. Fixed signatures retain their existing forwarding behavior.
+
 ## Prepare a message without retaining a receiver
 
-Use `ABIRuntime.objcMethod(on:selector:as:classMethod:options:retaining:)` when a coordinator or other owner needs to cache a signature independently of the objects receiving its messages:
+Use `ABIRuntime.objcMethod(on:selector:as:variadicFrom:classMethod:options:retaining:)` when a coordinator or other owner needs to cache a signature independently of the objects receiving its messages:
 
 ```swift
 let append = try runtime.objcMethod(
@@ -85,7 +102,7 @@ The prepared message retains its class image and any explicitly supplied code ow
 
 ## Capture an implementation for original calls
 
-Use `objcImplementation(on:selector:as:classMethod:options:retaining:)` when a method replacement needs to call the implementation selected before replacement:
+Use `objcImplementation(on:selector:as:variadicFrom:classMethod:options:retaining:)` when a method replacement needs to call the implementation selected before replacement:
 
 ```swift
 let original = try ABIRuntime.shared.objcImplementation(
@@ -172,7 +189,7 @@ let result = try unsafe adjusted.unsafeInvoke(insets)
 
 The unsafe caller guarantees that the selected Swift type's field offsets, representation, alignment, and ownership are compatible with the native value. It may be an imported SDK type or a caller-defined byte-compatible structure. Type names do not need to match. The native extent must cover the Swift value without exceeding its stride, so native tail padding does not require artificial Swift fields. A size check protects storage bounds; it does not prove ABI compatibility.
 
-C variadic tails, incomplete structure encodings, bitfields, unions, and nontrivial C++ values still need an appropriate native adapter. Long-double fields use the platform's double representation on Apple ARM; x86_64 x87 long-double fields require a native adapter.
+Incomplete structure encodings, bitfields, unions, and nontrivial C++ values still need an appropriate native adapter. Long-double fields use the platform's double representation on Apple ARM; x86_64 x87 long-double fields require a native adapter.
 
 Class arguments are checked before native dispatch, so an instance supplied for a `Class` parameter throws a value-conversion error. Class results remain metatypes during Swift conversion and cannot masquerade as instances. These conversions happen during invocation; lookup does not introspect Swift metatype metadata.
 
@@ -237,6 +254,6 @@ Core Foundation values use their pointer representation through `Unmanaged<T>`, 
 
 ## Preserve the receiver's execution requirements
 
-Selector lookup and invocation are synchronous and stay in the caller's isolation domain. Call `method(selector:as:options:)` without `await`; the Swift ABI `method(named:as:consuming:)` overload remains asynchronous. Handles retain their receiver but do not make it thread-safe or actor-independent. For a main-actor UI object, perform lookup and invocation on the main actor.
+Selector lookup and invocation are synchronous and stay in the caller's isolation domain. Call `method(selector:as:variadicFrom:options:)` without `await`; the Swift ABI `method(named:as:consuming:)` overload remains asynchronous. Handles retain their receiver but do not make it thread-safe or actor-independent. For a main-actor UI object, perform lookup and invocation on the main actor.
 
 The unsafe call contract includes argument nullability, class constraints, pointer validity, ownership annotations, and any requirements that runtime encodings cannot express. Foundation signature-construction failures are reported as lookup errors. Exceptions from the invoked Objective-C or C++ implementation are not converted to Swift errors. Keep dynamically loaded receiver classes and method implementations available for as long as the object and its handles are used.

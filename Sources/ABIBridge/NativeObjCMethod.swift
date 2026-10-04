@@ -11,9 +11,9 @@ public struct NativeObjCMethod<Result, each Argument> {
     private let binding: ObjCInvocationBinding
     private let signature: ObjCMethodSignature<Result, repeat each Argument>
 
-    init(binding: ObjCInvocationBinding) throws {
+    init(binding: ObjCInvocationBinding, variadicFrom: Int? = nil) throws {
         self.binding = binding
-        signature = try ObjCMethodSignature(handle: binding.handle, declaration: binding.declaration)
+        signature = try ObjCMethodSignature(handle: binding.handle, declaration: binding.declaration, variadicFrom: variadicFrom)
     }
 
     init(binding: ObjCInvocationBinding, signature: ObjCMethodSignature<Result, repeat each Argument>) {
@@ -31,7 +31,10 @@ public struct NativeObjCMethod<Result, each Argument> {
             try signature.invoke(repeat each values, using: { addresses, output in
                 var error: NSError?
                 let success = addresses.withUnsafeBufferPointer {
-                    ABIInvokeObjCDispatch(binding.handle, receiver, output, $0.baseAddress, &error)
+                    if let interface = signature.variadicInterface {
+                        return ABIInvokeVariadicObjCDispatch(binding.handle, interface.handle, receiver, output, $0.baseAddress, &error)
+                    }
+                    return ABIInvokeObjCDispatch(binding.handle, receiver, output, $0.baseAddress, &error)
                 }
                 guard success else { throw objcResolutionError(error, declaration: binding.declaration) }
             })
@@ -67,12 +70,14 @@ extension ABIRuntime {
     ///   - type: The class declaring the instance or class method.
     ///   - selector: A selector name, including argument colons.
     ///   - signature: Explicit arguments and result, excluding self and _cmd.
+    ///   - variadicFrom: Index of the first anonymous argument, or nil for a fixed signature.
     ///   - classMethod: Whether calls accept class objects instead of instances.
     ///   - options: Ownership overrides absent from runtime encodings.
     ///   - owner: Optional lifetime owner for generated classes or code.
     public nonisolated func objcMethod<Result, each Argument>(
         on type: AnyClass, selector: String,
         as signature: ((repeat each Argument) -> Result).Type,
+        variadicFrom: Int? = nil,
         classMethod: Bool = false, options: NativeMethodOptions = .init(),
         retaining owner: Any? = nil
     ) throws -> NativeObjCMethod<Result, repeat each Argument> {
@@ -87,7 +92,7 @@ extension ABIRuntime {
         }
         guard let handle else { throw objcResolutionError(error, declaration: declaration) }
         return try NativeObjCMethod(
-            binding: ObjCInvocationBinding(handle, declaration: declaration, retaining: owner)
+            binding: ObjCInvocationBinding(handle, declaration: declaration, retaining: owner), variadicFrom: variadicFrom
         )
     }
 }

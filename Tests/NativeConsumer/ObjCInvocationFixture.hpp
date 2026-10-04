@@ -289,6 +289,20 @@ inline void checkReusableCapturedImplementation() {
 }
 
 inline void checkPublicObjCInvocation() {
+    @autoreleasepool {
+        using namespace abi_bridge;
+        bound_objc_implementation<NSString *(NSString *, ...)> format([NSString class], "stringWithFormat:");
+        NSString *value = format.unsafe_invoke(@"%.1f/%d/%@", 1.5f, int8_t(-3), @"value");
+        assert([value isEqualToString:@"1.5/-3/value"]);
+        auto captured = format.implementation();
+        NSString *second = captured.unsafe_invoke([NSString class], @"%.1f/%d", 2.5f, int16_t(-4));
+        assert([second isEqualToString:@"2.5/-4"]);
+        auto rebound = captured.bind([NSString class]);
+        assert([rebound.unsafe_invoke(@"literal") isEqualToString:@"literal"]);
+        bound_objc_implementation<NSArray *(id, ...)> objects([NSArray class], "arrayWithObjects:");
+        NSArray *array = objects.unsafe_invoke(@"first", @"second", nil);
+        assert(array.count == 2 && [array[1] isEqual:@"second"]);
+    }
     checkConsumedArguments();
     checkAssignmentReentry(false);
     checkAssignmentReentry(true);

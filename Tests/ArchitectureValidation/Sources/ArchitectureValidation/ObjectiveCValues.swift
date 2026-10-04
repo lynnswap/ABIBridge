@@ -37,6 +37,15 @@ import UIKit
         guard condition else { throw ArchitectureValidationFailure(description: message) }
         checks.append(message)
     }
+    let format = "%.1f/%d/%@" as NSString
+    let variadic = try runtime.object(NSString.self as AnyObject).method(selector: "stringWithFormat:",
+        as: ((NSString, Float, Int8, NSString) -> NSString).self, variadicFrom: 1)
+    try check(try unsafe variadic.unsafeInvoke(format, 1.5, -3, "device") == "1.5/-3/device",
+        "Variadic Objective-C current dispatch promotes scalar and object tails with PAC")
+    let capturedFormat = try runtime.objcImplementation(on: NSString.self, selector: "stringWithFormat:",
+        as: ((NSString, Float, Int8, NSString) -> NSString).self, variadicFrom: 1, classMethod: true)
+    try check(try unsafe capturedFormat.unsafeInvoke(on: NSString.self as AnyObject, format, 2.5, -4, "captured") == "2.5/-4/captured",
+        "Variadic captured IMP preserves its authenticated pointer")
     let ownership = ABIValidationOwnershipFixture()
     let options = NativeMethodOptions(consumedArguments: [0])
     let consume = try runtime.object(ownership).method(selector: "consume:",

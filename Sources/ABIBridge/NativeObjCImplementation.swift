@@ -16,9 +16,9 @@ public struct NativeObjCImplementation<Result, each Argument> {
     private let interface: CCallInterface
     private let codeOwner: Any?
 
-    init(binding: ObjCInvocationBinding, retaining owner: Any?) throws {
+    init(binding: ObjCInvocationBinding, retaining owner: Any?, variadicFrom: Int? = nil) throws {
         self.binding = binding
-        signature = try ObjCMethodSignature(handle: binding.handle, declaration: binding.declaration)
+        signature = try ObjCMethodSignature(handle: binding.handle, declaration: binding.declaration, variadicFrom: variadicFrom)
         interface = try signature.callInterface()
         codeOwner = owner
     }
@@ -62,6 +62,7 @@ extension ABIRuntime {
     ///   - type: The class whose instance or class method should be captured.
     ///   - selector: The selector, including argument colons.
     ///   - signature: A supported synchronous function-type metatype.
+    ///   - variadicFrom: Index of the first anonymous argument, or nil for a fixed signature.
     ///   - classMethod: Whether to capture a class method; defaults to false.
     ///   - options: Ownership overrides absent from runtime encodings.
     ///   - owner: An optional owner keeping generated code or a dynamic class valid.
@@ -70,6 +71,7 @@ extension ABIRuntime {
     public nonisolated func objcImplementation<Result, each Argument>(
         on type: AnyClass, selector: String,
         as signature: ((repeat each Argument) -> Result).Type,
+        variadicFrom: Int? = nil,
         classMethod: Bool = false, options: NativeMethodOptions = .init(),
         retaining owner: Any? = nil
     ) throws -> NativeObjCImplementation<Result, repeat each Argument> {
@@ -85,6 +87,6 @@ extension ABIRuntime {
         guard let handle else {
             throw objcResolutionError(error, declaration: declaration)
         }
-        return try NativeObjCImplementation(binding: ObjCInvocationBinding(handle, declaration: declaration), retaining: owner)
+        return try NativeObjCImplementation(binding: ObjCInvocationBinding(handle, declaration: declaration), retaining: owner, variadicFrom: variadicFrom)
     }
 }
