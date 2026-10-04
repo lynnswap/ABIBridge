@@ -13,6 +13,12 @@ extension ABIRuntime {
     /// failure preserves the already initialized native result without reinitializing.
     /// `onFailure` runs synchronously on the original caller's thread.
     ///
+    /// Explicit `ns_consumed` arguments are supported. Set
+    /// ``NativeMethodOptions/consumedArguments`` to their zero-based positions,
+    /// excluding the receiver and selector. The entry owns the incoming references
+    /// until completion and transfers independent references for the final native
+    /// initialization, including transformed arguments.
+    ///
     /// - Parameters:
     ///   - type: The class whose concrete instance initializer is intercepted.
     ///   - selector: The initializer selector, including argument colons.
@@ -20,6 +26,7 @@ extension ABIRuntime {
     ///     Use an optional result when initialization may return nil.
     ///   - options: Overrides for a nonstandard declaration with consumed self and
     ///     a retained object result; nil values infer Objective-C method families.
+    ///     Also identifies explicit `ns_consumed` arguments.
     ///   - owner: Keeps generated original code or a dynamic class alive when the
     ///     method's process-lived dispatcher is first created.
     ///   - onFailure: Handles callback and conversion errors without unwinding into native code.
@@ -31,8 +38,8 @@ extension ABIRuntime {
     /// - Throws: A lookup, signature, ownership, preparation, or displacement error.
     ///
     /// The caller honors declaration ownership, pointer/block lifetimes, execution
-    /// isolation, and external-writer coordination. Explicit consumed parameters,
-    /// foreign exceptions, cancellation, arbitrary replacement construction, and
+    /// isolation, and external-writer coordination. Foreign exceptions,
+    /// cancellation, arbitrary replacement construction, and
     /// repeated initialization are outside this operation. See <doc:ObjectiveCInitializerHooks>.
     @unsafe public nonisolated func hookInitializer<Result, each Argument>(
         on type: AnyClass, selector: String, as signature: ((repeat each Argument) -> Result).Type,
