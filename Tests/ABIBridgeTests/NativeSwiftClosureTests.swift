@@ -592,9 +592,7 @@ struct NativeSwiftClosureTests {
             process.arguments = arguments
             // The test runner's injected Xcode frameworks belong to its process,
             // not to the xcrun-selected compiler and SDK tools.
-            process.environment = ProcessInfo.processInfo.environment.filter {
-                !$0.key.hasPrefix("DYLD_") && $0.key != "SDKROOT"
-            }
+            process.environment = FixtureLibrary.toolEnvironment.filter { $0.key != "SDKROOT" }
             process.standardOutput = output; process.standardError = output
             try process.run()
             let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
@@ -698,17 +696,31 @@ struct NativeSwiftClosureTests {
         #expect(try unsafe callback.unsafeInvoke(()) == 42)
     }
 
-    @Test func incomingNonescapingHooksRequireAScopedClosureRepresentation() async throws {
-        let function = try await ABIRuntime.shared.swiftFunction(
-            named: "ManagedSwiftFixtures.applyIntegerClosure(_:_:)",
-            as: ((NativeSwiftClosure<(Int64) -> Int64>, Int64) -> Int64).self
-        )
-        await #expect(throws: ABIResolutionError.unsupportedDeclaration(
-            "Incoming Swift closure hook arguments require a scoped nonescaping representation."
-        )) {
-            try await unsafe function.hookImportedCalls(in: .automatic, onFailure: { _ in }) { _, _, value in value }
-        }
+    #if os(macOS) && DEBUG
+    @Test func incomingNonescapingHooksExpireTheirBorrowedClosures() async throws {
+        let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
+        @inline(never) public func hookIntegerBody(_ body: (Int64) -> Int64, _ value: Int64) -> Int64 { body(value) }
+        """, callerExtra: """
+        @inline(never) public func callHookIntegerBody(_ value: Int64) -> Int64 { hookIntegerBody({ $0 + 1 }, value) }
+        """)
+        defer { fixture.cleanup() }
+        typealias Body = NativeSwiftClosure<(Int64) -> Int64>
+        let function = try await fixture.runtime.swiftFunction(named: fixture.module + ".hookIntegerBody(_:_:)",
+            as: ((Body, Int64) -> Int64).self, in: fixture.providerScope)
+        let caller = try await fixture.runtime.swiftFunction(named: fixture.callerModule + ".callHookIntegerBody(_:)",
+            as: ((Int64) -> Int64).self, in: fixture.callerScope)
+        let saved = SavedIncomingIntegerClosure()
+        let hook = try unsafe await function.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            onFailure: { Issue.record($0) }) { call, body, value in
+                saved.value = body
+                return try call.proceed(body, value) + 10
+            }
+        defer { hook.invalidate() }
+        #expect(try unsafe caller.unsafeInvoke(31) == 42)
+        #expect(throws: NativeSwiftBorrowError.expiredBorrow) { try unsafe saved.value!.unsafeInvoke(1) }
     }
+
+    #endif
 
     @Test func rejectsFallibleCustomConversionsBeforeInvokingACallback() throws {
         let calls = ClosureCounter()
@@ -936,4 +948,8 @@ struct NativeSwiftClosureTests {
         #expect(destroyed.count == 1)
     }
 #endif
+}
+
+private final class SavedIncomingIntegerClosure: @unchecked Sendable {
+    var value: NativeSwiftClosure<(Int64) -> Int64>?
 }

@@ -151,3 +151,80 @@ open class AsyncHookRenderer {
     }
 }
 @inline(never) public func makeAsyncHookRenderer() -> AsyncHookRenderer { AsyncHookRenderer() }
+
+
+import Synchronization
+private let ticketState = Mutex((entries: Int64(0), destructions: Int64(0)))
+public protocol HookTicketReadable: ~Copyable { borrowing func read() -> Int64 }
+public struct HookTicket: ~Copyable, HookTicketReadable {
+    public var number: Int64
+    public init(_ number: Int64) { self.number = number }
+    public borrowing func read() -> Int64 { number }
+    deinit { ticketState.withLock { $0.destructions += 1 } }
+}
+@inline(never) public func consumeHookTicket<Value: HookTicketReadable & ~Copyable>(_ value: consuming Value) -> Int64 {
+    ticketState.withLock { $0.entries += 1 }
+    return value.read()
+}
+@inline(never) public func moveHookTicket<Value: ~Copyable>(_ value: consuming Value) -> Value {
+    ticketState.withLock { $0.entries += 1 }
+    return value
+}
+@inline(never) public func hookTicketCounts() -> (Int64, Int64) { ticketState.withLock { ($0.entries, $0.destructions) } }
+
+open class HookTicketRenderer {
+    public init() {}
+    @inline(never) open func move<Value: ~Copyable>(_ value: consuming Value) -> Value {
+        ticketState.withLock { $0.entries += 1 }
+        return value
+    }
+}
+@inline(never) public func makeHookTicketRenderer() -> HookTicketRenderer { HookTicketRenderer() }
+
+@inline(never) @concurrent public func moveAsyncHookTicket<Value: ~Copyable>(_ value: consuming Value) async -> Value {
+    ticketState.withLock { $0.entries += 1 }
+    await Task.yield()
+    return value
+}
+
+@inline(never) public func consumeAnyErrorHookTicket<Value: HookTicketReadable & ~Copyable>(_ value: consuming Value) throws -> Int64 {
+    ticketState.withLock { $0.entries += 1 }
+    return value.read()
+}
+
+@inline(never) public func hookOptionalPointer(_ value: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? { value }
+@inline(never) public func consumeHookObject(_ value: consuming NSObject) -> Int64 { 42 }
+
+@inline(never) public func hookBorrowedPointer(_ value: borrowing UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? { copy value }
+@inline(never) public func moveHookTicketWithBody<Value: ~Copyable>(_ value: consuming Value, _ body: inout () -> Int64, _ borrowed: () -> Int64) -> Value {
+    _ = borrowed()
+    ticketState.withLock { $0.entries += 1 }
+    let number = body()
+    body = { number + 1 }
+    return value
+}
+@inline(never) @concurrent public func moveAsyncHookTicketWithBody<Value: ~Copyable>(_ value: consuming Value, _ body: inout () -> Int64, _ borrowed: () -> Int64) async -> Value {
+    _ = borrowed()
+    ticketState.withLock { $0.entries += 1 }
+    await Task.yield()
+    let number = body()
+    body = { number + 1 }
+    return value
+}
+
+@inline(never) public func hookPointerAndBorrow(_ value: UnsafeMutableRawPointer?, _ body: () -> String) -> UnsafeMutableRawPointer? {
+    _ = body()
+    return value
+}
+@inline(never) public func consumeHookTuple<Value>(_ value: consuming (Value, Int64)) -> Int64 { value.1 }
+
+@inline(never) public func hookAdapterWriteback(_ value: UnsafeMutableRawPointer?, _ body: inout () -> Int64) {}
+
+@inline(never) public func hookDiscardTicket<Value: ~Copyable>(_ value: consuming Value, _ pointer: UnsafeMutableRawPointer?) -> Int64 { 0 }
+
+@inline(never) public func consumeHookClosure(_ value: consuming @escaping () -> Int64) -> Int64 { value() }
+@concurrent @inline(never) public func consumeAsyncHookClosure(_ value: consuming @escaping () -> Int64) async -> Int64 {
+    await Task.yield()
+    return value()
+}
+@inline(never) public func hookBorrowedTupleAndAdapter<Value>(_ value: (Value, Int64), _ pointer: UnsafeMutableRawPointer?) -> Int64 { value.1 }

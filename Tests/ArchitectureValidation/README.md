@@ -228,6 +228,8 @@ On October 3, 2026, the expanded mode passed all 23 checks on iPhone Air / iOS 2
 
 The generic superclass follow-up passed all 27 checks on the same iPhone Air configuration. Its additional cases cover runtime-only factories, authenticated callbacks, returned closures, and typed generic superclass metadata. A fresh `architecture-swift-existentials.json` recorded `pacCompiled: true` and CPU subtype `0x80000002` for that Release build.
 
+On October 4, 2026, the runtime ownership follow-up passed all 44 `swift-function-hooks` checks on iPhone Air (iOS 27.0.1, 24A446), using Xcode 27.0 / Swift 6.4 in a Release arm64e build. The ownership cases cover consuming noncopyable inputs, shared result publication, recovery before/after continuation, virtual generic methods, async suspension, object cleanup, Optional adapters, failed inout conversion, and consuming runtime closures with authenticated dispatch and capture release. Newly written completed reports recorded PAC enabled and CPU subtype `0x80000002`. The same build also passed the 83-check `swift-opaque` regression probe.
+
 The `swift-arguments` mode verifies typed inout storage, managed/scalar writeback on success and failure, consumed indirect-value lifetimes, mixed initializer ownership, and async suspension/cancellation. All nine checks passed in a Release arm64e build on iPhone Air (iOS 27, build 24A435), with pointer authentication enabled. Its report is `Documents/architecture-swift-arguments.json`.
 
 The `swift-async-closures` mode exercises caller-isolated and concurrent generated callbacks, typed direct/indirect errors, independent owned result storage, stack arguments, returned descriptors, repeated native handoffs, escaping captures and final release, and original-task cancellation.

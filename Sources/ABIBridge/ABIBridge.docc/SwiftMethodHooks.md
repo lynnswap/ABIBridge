@@ -89,7 +89,7 @@ Preparation failures publish nothing. A failed virtual installation throws `Nati
 
 This interface requires initialized instances and a known Swift calling convention. Initializers, deinitializers, yielding accessors and unestablished class metadata layouts require separate support. Async function signatures select the async descriptor convention. Property getter names and ordinary getter descriptors do not encode throwing effects; supply the getter's source contract, including `declaredAs:` when generic metadata needs it.
 
-The class interface preserves the selected method's receiver representation and requires a compatible class for typed receiver reads. Bound generic declarations and native errors follow the same selection and recovery contract as imported functions. Runtime value and nested callback conversion, explicit argument ownership wrappers, and noncopyable recovery are tracked in [#296](https://github.com/lynnswap/ABIBridge/issues/296). The low-level compiled replacement interfaces remain available for separately established ABI contracts.
+The class interface preserves the selected method's receiver representation and requires a compatible class for typed receiver reads. Bound generic declarations and native errors follow the same selection and recovery contract as imported functions. Runtime values, converted tuples, nested callbacks, and explicit argument ownership wrappers use the same value and recovery plans as function hooks; see <doc:SwiftFunctionHooks>. Noncopyable argument/result ownership transfers through `proceed` and publication without an extra native copy. The low-level compiled replacement interfaces remain available for separately established ABI contracts.
 
 ## Validation boundary
 

@@ -88,6 +88,27 @@ struct SymbolResolutionTests {
         #expect(unsafe alias.withUnsafeAddress { $0.load(as: Int32.self) } == 32)
     }
 
+    @Test func fixtureCompilerMatchesTheTestToolchain() async throws {
+        let module = "Compiler_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let fixture = try FixtureLibrary(swiftModule: module, swiftSource: """
+        public func compilerGeneration() -> Int32 {
+            #if compiler(>=6.4)
+            return 64
+            #else
+            return 63
+            #endif
+        }
+        """)
+        defer { fixture.cleanup() }
+        let function = try await ABIRuntime().swiftFunction(named: module + ".compilerGeneration()",
+            as: (() -> Int32).self, in: .path(fixture.libraryURL))
+        #if compiler(>=6.4)
+        #expect(try unsafe function.unsafeInvoke() == 64)
+        #else
+        #expect(try unsafe function.unsafeInvoke() == 63)
+        #endif
+    }
+
     @Test func exactSwiftSpellingsUseTheSameRetainedImage() async throws {
         let module = "Exact_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
         let fixture = try FixtureLibrary(swiftModule: module)
@@ -661,6 +682,7 @@ final class FixtureLibrary {
     let directory: URL
     let libraryURL: URL
     let namespace: String
+    private let buildArguments: [String]
     private var handle: UnsafeMutableRawPointer?
 
     init(namespace: String? = nil, load: Bool = true, swiftModule: String? = nil, swiftSource: String? = nil, threadLocal: Bool = false, stripped: Bool = false,
@@ -703,15 +725,32 @@ final class FixtureLibrary {
         if let swiftModule {
             let target = "\(architecture)-apple-macosx15.4"
             try (swiftSource ?? "public func echo() {}").write(to: source, atomically: true, encoding: .utf8)
-            try Self.run(["--sdk", "macosx", "swiftc", "-module-name", swiftModule, "-target", target,
-                          "-emit-library", source.path, "-o", libraryURL.path] + linkArguments)
+            buildArguments = ["--sdk", "macosx", "swiftc", "-module-name", swiftModule, "-target", target,
+                              "-emit-library", source.path, "-o", libraryURL.path] + linkArguments
         } else {
             try cxxSource.write(to: source, atomically: true, encoding: .utf8)
-            try Self.run(["--sdk", "macosx", "clang++", "-arch", architecture, "-std=c++20", "-mmacosx-version-min=15.4",
-                          "-dynamiclib", source.path, "-o", libraryURL.path] + linkArguments)
+            buildArguments = ["--sdk", "macosx", "clang++", "-arch", architecture, "-std=c++20", "-mmacosx-version-min=15.4",
+                              "-dynamiclib", source.path, "-o", libraryURL.path] + linkArguments
         }
+        try Self.run(buildArguments)
         if stripped { try Self.run(["--sdk", "macosx", "strip", "-u", "-r", libraryURL.path]) }
         if load { try self.load() }
+    }
+
+    static var toolEnvironment: [String: String] {
+        var environment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("DYLD_") }
+        // xcodebuild removes DEVELOPER_DIR from the test host's environment.
+        // The selected host still identifies the Xcode used for this test run.
+        if environment["DEVELOPER_DIR"] == nil,
+           let executable = Bundle.main.executableURL?.path,
+           let developer = executable.range(of: "/Contents/Developer/") {
+            environment["DEVELOPER_DIR"] = String(executable[..<developer.upperBound].dropLast())
+        }
+        return environment
+    }
+
+    func rebuild(linkingWith arguments: [String]) throws {
+        try Self.run(buildArguments + arguments)
     }
 
     static func run(_ arguments: [String]) throws {
@@ -719,7 +758,7 @@ final class FixtureLibrary {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
         // XCTest injects loader paths for its own Xcode. A child compiler must
         // resolve its own libraries, even when xcode-select points elsewhere.
-        process.environment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("DYLD_") }
+        process.environment = toolEnvironment
         process.arguments = arguments
         try process.run()
         process.waitUntilExit()
@@ -729,7 +768,7 @@ final class FixtureLibrary {
     func exportedSymbols() throws -> [String] {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        process.environment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("DYLD_") }
+        process.environment = Self.toolEnvironment
         process.arguments = ["--sdk", "macosx", "nm", "-gUj", libraryURL.path]
         let output = Pipe()
         process.standardOutput = output

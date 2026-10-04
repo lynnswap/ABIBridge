@@ -77,6 +77,7 @@ func finishSwiftInvocation<Output: ~Copyable>(
 
 final class NativeValueStorage {
     let address: UnsafeMutableRawPointer
+    weak var runtimeValueOwner: SwiftRuntimeValueOwner?
     private(set) var owner: AnyObject?
     private var destroyValue: ((UnsafeMutableRawPointer) -> Void)?
     private let ownsAllocation: Bool
@@ -87,6 +88,10 @@ final class NativeValueStorage {
     private var didRelinquish: (() -> Void)?
     var transfersOwnership: Bool { didRelinquish != nil }
     var prepareWriteback: SwiftWritebackPreparation?
+    var suspendHookAccess: (() -> Void)?
+    var resumeHookAccess: (() throws -> Void)?
+    var transferHookOwnership: (() throws -> NativeValueStorage)?
+    var destroyTransferredCopy: (() -> Void)?
 
     init(borrowing address: UnsafeMutableRawPointer, owner: AnyObject,
          retainingResourcesOf storage: NativeValueStorage? = nil, codeLifetime: SwiftValueCodeLifetime? = nil,
@@ -96,6 +101,7 @@ final class NativeValueStorage {
         self.didRelinquish = didRelinquish
         // Escaping results retain the value's resources, not its active access.
         resultStorage = storage?.ownerForResult
+        runtimeValueOwner = storage?.runtimeValueOwner
         self.codeLifetime = codeLifetime ?? storage?.codeLifetime
         ownsAllocation = false
     }

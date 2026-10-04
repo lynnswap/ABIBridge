@@ -79,6 +79,32 @@ let hook = try await unsafe echo.hookImportedCalls(
 
 Each registration applies to its bound native types. Registrations for different substitutions can share an import. Incoming metadata, pack shapes, and types supplied by class arguments or receivers select the matching callbacks before any bound value storage is read. Other substitutions continue through the original native entry. `proceed` preserves the caller's conformance witnesses.
 
+## Runtime values and ownership
+
+Use NativeSwiftValue for an owned runtime value and NativeSwiftBorrowedValue for an incoming scoped borrow. Explicit NativeSwiftConsuming and NativeSwiftInout arguments follow the native declaration, including generic bindings. Converted tuple fields and nested closure values use the same plans as ordinary calls. Borrowed views expire after the callback; independently owned copies keep their normal lifetime.
+
+For a provider declaring `consume<T: Readable & ~Copyable>(_ value: consuming T) -> Int64`, prepare its binding and any member handles before registration:
+
+```swift
+let consume = try await runtime.swiftFunction(
+    named: "Provider.consume(_:)",
+    as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self,
+    genericArguments: [.type(ticketType)]
+)
+let hook = try await unsafe consume.hookImportedCalls(
+    in: callerImage, onFailure: { error in report(error) }
+) { call, incoming in
+    let number = try unsafe readNumber.unsafeInvoke(on: incoming.value)
+    return try call.proceed(incoming) + number
+}
+```
+
+When recovery needs a noncopyable incoming value or completed result, the callback reserves its ownership. Reads and valid inout operations remain available. An independent `take(as:)` or consuming native call throws NativeSwiftValueError.valueInUse before transferring that value. `proceed` and final result publication perform the authorized transfer. A declaration with `throws(any Error)` can report every bridge error through its native channel and requires no recovery reservation.
+
+Saved handles share one ownership state. Forwarding an incoming value or publishing a returned value leaves all its aliases consumed; saving a result from `proceed` does not create another native copy. If the callback keeps an input without forwarding it, the saved owner becomes available for independent consumption after the callback ends. A failure after native continuation uses the latest completed result or error and executes no additional native effects.
+
+These rules also apply across an async callback's suspension. The shared continuation completes argument writeback on success and failure, and transfers consumed arguments only after the predecessor has run. Supply the established receiver and value ABI overrides where the declaration does not establish a native layout.
+
 ## Lifetime and partial installation
 
 Keep the returned `NativeSwiftImportedFunctionHook` to retain its behavior. `invalidate()` is idempotent and releases its closure captures after in-flight snapshots finish. Releasing the registration also invalidates it. Published dispatcher code, importing/provider images, and explicit generated-code owners remain retained for process lifetime so saved native pointers remain callable. Logical invalidation leaves a stable pass-through entry and does not overwrite another writer's pointer.
@@ -89,7 +115,7 @@ Inspect `slots` for current displacement and per-registration publication outcom
 
 The declared ABI, ownership, and isolation must match the native entry. Source names and Swift metatypes do not prove those contracts. Hooks accept synchronous and asynchronous signatures using scalars, pointers, object references, String, tuples with native representations, returned concrete closures, and established Swift value adapters. Generic substitutions use the original declaration's argument and result conventions.
 
-Runtime-only values, converted tuple elements, incoming closure arguments, explicit argument ownership wrappers, and noncopyable recovery need the shared callback conversion work tracked in [#296](https://github.com/lynnswap/ABIBridge/issues/296). These interfaces do not publish a callback when its value plan cannot represent the declaration. Yielding accessors require their separate native convention.
+Runtime-only values, converted tuples, nested closures, and borrowing, consuming, and inout arguments use the shared declaration and callback plans. These interfaces do not publish a callback when its value plan cannot represent the declaration. Yielding accessors require their separate native convention.
 
 For an opaque result whose concrete payload is known, resolve its full `-> some` declaration with a matching `declaredAs:` signature and the concrete payload in `as:`. The hook and `proceed` preserve that declaration's return convention, including indirect results for scalar and String payloads.
 
@@ -100,3 +126,5 @@ This interface operates on function imports. Swift receiver and metadata-dispatc
 The compiled macOS tests cover typed object mutation, scalar and owned String chains, zero/stack arguments, Void and indirect results, returned-closure ownership, native errors, multiple generic bindings and pack shapes, callback recovery, MainActor/background entry, concurrent invalidation, saved entries, and failed-installation recovery. The external public-product consumer also exercises generic selection and typed-error recovery in an optimized build. On October 3, 2026, the signed `swift-function-hooks` fixture passed 22 checks on iPhone Air / iOS 27.0.1 (24A446), using Xcode 27.0 (27A266a) / Swift 6.4 and Release arm64e. The checks cover concrete and generic imports, indirect class substitutions, unmatched generic forwarding, returned generic closures with pointer authentication, typed native and callback errors, and invalidation. arm64e.x1 runtime execution still requires matching hardware.
 
 Async fixtures additionally cover generic mismatch pass-through, typed errors and indirect results, MainActor and caller-isolated resumption, concurrent and reentrant calls, task-local values, cancellation, and capture release after invalidation. The optimized external consumer exercises async import chains and virtual descriptor pass-through with owned String results.
+
+On October 4, 2026, the expanded signed fixture passed all 44 checks on the same iPhone Air configuration. Runtime ownership cases additionally cover noncopyable input/result aliases, recovery without replayed effects, authenticated virtual continuations, failed inout conversion, and consuming runtime closures with capture release across sync and async calls. The same build passed all 83 opaque-result checks. Both newly written completed reports recorded `pacCompiled: true` and CPU subtype `0x80000002`.

@@ -1351,6 +1351,9 @@ extern "C" void ABIFinishSwiftAsyncCallback(SwiftAsyncCallbackContext *bridge, S
 
 size_t ABISwiftIncomingArgumentCount(const ABISwiftIncomingCall *call) { return call->arguments.size(); }
 const void *ABISwiftIncomingContext(const ABISwiftIncomingCall *call) { return call->receiver; }
+void *ABISwiftIncomingPreparedContext(ABISwiftIncomingCall *call) {
+    return checkIncoming(call, nullptr) && call->prepared ? call->handler->context : nullptr;
+}
 bool ABISwiftIncomingReadPointer(ABISwiftIncomingCall *call, const ABISwiftCallInterface *interface,
     size_t index, uintptr_t *value, ABIResolutionFailure **error) {
     if (!checkIncoming(call, error)) return false;
@@ -1495,6 +1498,20 @@ bool ABISwiftIncomingDidThrow(const ABISwiftIncomingCall *call) {
 }
 void *ABISwiftIncomingResultAddress(ABISwiftIncomingCall *call) {
     return checkIncoming(call, nullptr) && call->completed ? call->completed->value.data() : nullptr;
+}
+bool ABISwiftIncomingTakeResult(ABISwiftIncomingCall *call, void *output, size_t size, ABIResolutionFailure **error) {
+    if (!checkIncoming(call, error)) return false;
+    if (!call->completed || !call->completed->initialized || call->completed->isError
+        || size != call->interface.result->size() || (size && !output)) {
+        fail(error, ABIFailureInvalidRequest, "An owned completed result and matching output storage are required."); return false;
+    }
+    if (size) {
+        if (auto initialize = call->handler->functions.initializeResult)
+            initialize(call->handler->context, 0, size, output, call->completed->value.data());
+        else std::memcpy(output, call->completed->value.data(), size);
+    }
+    call->completed->initialized = false;
+    return true;
 }
 bool ABISwiftIncomingCopyError(ABISwiftIncomingCall *call, void *output, size_t size, ABIResolutionFailure **error) {
     if (!checkIncoming(call, error)) return false;

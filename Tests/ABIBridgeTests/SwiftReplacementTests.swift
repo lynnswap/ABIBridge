@@ -20,7 +20,19 @@ final class CompiledSwiftReplacementFixture {
             .appendingPathComponent("ArchitectureValidation/Sources")
         let source = try String(contentsOf: root.appendingPathComponent("SwiftReplacementFixtures/Provider.swift"), encoding: .utf8)
         provider = try FixtureLibrary(load: false, swiftModule: module, swiftSource: source + "\n" + providerExtra,
-            linkArguments: ["-O", "-swift-version", "6", "-emit-module"] + writableFlags + (interposable ? ["-Xlinker", "-interposable"] : []))
+            linkArguments: ["-O", "-swift-version", "6", "-emit-module"] + writableFlags)
+        if interposable {
+            let declaration = module + ".scalar(Swift.Int64) -> Swift.Int64"
+            let symbols = try provider.exportedSymbols().filter {
+                DeclarationKey.demangle(String($0.dropFirst()), language: .swift) == declaration
+            }
+            let symbol = try #require(symbols.count == 1 ? symbols.first : nil)
+            let list = provider.directory.appendingPathComponent("interposable-symbols.txt")
+            try (symbol + "\n").write(to: list, atomically: true, encoding: .utf8)
+            // Whole-image interposition also binds hidden Swift witness thunks
+            // that the linker does not export. This control only interposes scalar.
+            try provider.rebuild(linkingWith: ["-Xlinker", "-interposable_list", "-Xlinker", list.path])
+        }
         // swiftc places a module next to the output library when no path is given.
         let callerSource = try String(contentsOf: root.appendingPathComponent("SwiftReplacementCaller/Caller.swift"), encoding: .utf8)
             .replacingOccurrences(of: "SwiftReplacementFixtures", with: module)

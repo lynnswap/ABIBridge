@@ -604,3 +604,32 @@ let asyncScopedNumber = try unsafe await scopedMethod.unsafeInvoke(on: scopedOwn
 })
 guard asyncScopedNumber == 42, try unsafe scopedCounts.unsafeInvoke(scopedOwner) == 2 else { throw ConsumerError.wrongResult }
 print("Scoped nonescapable results work through functions and async members without importing provider types")
+
+let hookRoot = URL(fileURLWithPath: CommandLine.arguments[2])
+let providerPath = hookRoot.appendingPathComponent("SwiftImportProvider.framework/SwiftImportProvider")
+let callerPath = hookRoot.appendingPathComponent("SwiftImportCallerControl.framework/SwiftImportCallerControl")
+guard let providerLoader = dlopen(providerPath.path, RTLD_NOW | RTLD_LOCAL) else { throw ConsumerError.load(String(cString: dlerror())) }
+defer { dlclose(providerLoader) }
+guard let callerLoader = dlopen(callerPath.path, RTLD_NOW | RTLD_LOCAL) else { throw ConsumerError.load(String(cString: dlerror())) }
+defer { dlclose(callerLoader) }
+let providerScope = ImageSelector.path(providerPath)
+let callerScope = ImageSelector.path(callerPath)
+let ticketType = try await runtime.swiftType(named: "SwiftImportProvider.HookTicket", in: providerScope)
+let ticketMove = try await runtime.swiftFunction(named: "SwiftImportProvider.moveHookTicket(_:)",
+    as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self,
+    genericArguments: [.type(ticketType)], in: providerScope)
+let ticketCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.callMoveTicket(_:)",
+    as: ((Int64) -> Int64).self, in: callerScope)
+let ticketCounts = try await runtime.swiftFunction(named: "SwiftImportProvider.hookTicketCounts()",
+    as: (() -> (Int64, Int64)).self, in: providerScope)
+private let hookState = State()
+let runtimeHook = try unsafe await ticketMove.hookImportedCalls(in: callerScope, using: runtime,
+    onFailure: { hookState.error = $0 }) { call, value in
+        let result = try call.proceed(value)
+        hookState.owned = result
+        return result
+    }
+guard try unsafe ticketCaller.unsafeInvoke(42) == 42, hookState.owned!.isConsumed,
+      try unsafe ticketCounts.unsafeInvoke() == (1, 1), hookState.error == nil else { throw ConsumerError.wrongResult }
+runtimeHook.invalidate()
+print("Synchronous hooks transfer noncopyable runtime values without importing provider types")

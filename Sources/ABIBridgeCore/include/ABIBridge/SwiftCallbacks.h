@@ -157,6 +157,8 @@ void ABIReleaseSwiftCallback(ABISwiftCallback *callback);
 
 size_t ABISwiftIncomingArgumentCount(const ABISwiftIncomingCall *call);
 const void *ABISwiftIncomingContext(const ABISwiftIncomingCall *call);
+/// Borrows the context selected by IncomingPrepare for the active invocation.
+void *ABISwiftIncomingPreparedContext(ABISwiftIncomingCall *call);
 /// Reads a directly passed pointer word using the candidate's physical plan.
 /// It never dereferences the pointer or any unrelated argument.
 bool ABISwiftIncomingReadPointer(ABISwiftIncomingCall *call, const ABISwiftCallInterface *interface,
@@ -194,6 +196,11 @@ bool ABISwiftIncomingDidThrow(const ABISwiftIncomingCall *call);
 /// Borrows the latest completed result or error without relocating its storage.
 /// The address remains live until another predecessor completes or invoke returns.
 void *ABISwiftIncomingResultAddress(ABISwiftIncomingCall *call);
+/// Moves the completed ordinary result into matching owned storage. Success
+/// relinquishes the invocation's result ownership; the caller must assign an
+/// owned result or error before returning from the hook.
+bool ABISwiftIncomingTakeResult(ABISwiftIncomingCall *call, void *output, size_t size,
+    ABIResolutionFailure **error);
 /// Copies borrowed native error bits under the same ownership contract as CopyResult.
 bool ABISwiftIncomingCopyError(ABISwiftIncomingCall *call, void *output, size_t size,
     ABIResolutionFailure **error);
