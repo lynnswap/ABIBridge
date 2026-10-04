@@ -1,11 +1,14 @@
 #include <ABIBridge/PointerSearch.h>
 #include <algorithm>
+#include <array>
+#include <cstring>
 #include <memory>
 #include <new>
 #include <stdexcept>
 #include <unordered_set>
 #include <vector>
 #if defined(__arm64__) && defined(__LP64__)
+#include <arm_neon.h>
 #include <sys/sysctl.h>
 #endif
 
@@ -65,18 +68,11 @@ bool valid(const ABIPointerSearchOptions& o) {
         (o.policy == ABIPointerSearchAll || o.policy == ABIPointerSearchFirst);
 }
 
-ABIPointerInspectionResult inspectSlot(
+ABIPointerInspectionResult inspectPointer(
     uintptr_t address, size_t offset, size_t vptrOffset, uintptr_t expected,
-    int32_t normalization) {
+    int32_t normalization, uintptr_t bits) {
     ABIPointerInspectionResult result{};
     const auto slot = address + offset;
-    uintptr_t bits = 0;
-    const auto slotRead = ABIReadMemory(slot, sizeof(bits), &bits);
-    if (slotRead.status != ABIMemoryReadComplete) {
-        result.status = ABIPointerInspectionReadFailed;
-        result.failure = {offset, ABIPointerSearchSlotRead, slot, slotRead};
-        return result;
-    }
     const auto target = normalize(bits, normalization);
     if (target == 0) return result;
     if (vptrOffset > UINTPTR_MAX - target) {
@@ -98,13 +94,49 @@ ABIPointerInspectionResult inspectSlot(
     return result;
 }
 
+ABIPointerInspectionResult inspectSlot(
+    uintptr_t address, size_t offset, size_t vptrOffset, uintptr_t expected,
+    int32_t normalization) {
+    uintptr_t bits = 0;
+    const auto slotRead = ABIReadMemory(address + offset, sizeof(bits), &bits);
+    if (slotRead.status != ABIMemoryReadComplete) {
+        ABIPointerInspectionResult result{};
+        result.status = ABIPointerInspectionReadFailed;
+        result.failure = {offset, ABIPointerSearchSlotRead, address + offset, slotRead};
+        return result;
+    }
+    return inspectPointer(address, offset, vptrOffset, expected, normalization, bits);
+}
+
 std::unique_ptr<ABIPointerSearchResult> search(const ABIPointerSearchOptions& o) {
     auto result = std::make_unique<ABIPointerSearchResult>();
     std::unordered_set<uintptr_t> distinct;
     const auto expected = normalize(o.vtableAddressPoint, o.normalization);
-    const auto visit = [&](size_t offset) {
+    std::array<unsigned char, 4096> source;
+    size_t sourceOffset = 0, sourceCount = 0;
+    bool sourceComplete = false;
+    const auto readSource = [&](size_t offset) {
+        if (offset < sourceOffset || offset - sourceOffset > sourceCount ||
+            sizeof(uintptr_t) > sourceCount - (offset - sourceOffset)) {
+            sourceOffset = offset;
+            sourceCount = std::min(source.size(), o.byteCount - offset);
+            const auto read = ABIReadMemory(o.address + offset, sourceCount, source.data());
+            sourceComplete = read.status == ABIMemoryReadComplete;
+        }
+        return sourceComplete;
+    };
+    const auto visit = [&](size_t offset, bool individual = false) {
         ++result->visitedCount;
-        const auto inspection = inspectSlot(o.address, offset, o.vptrOffset, expected, o.normalization);
+        ABIPointerInspectionResult inspection;
+        if (!individual && readSource(offset)) {
+            uintptr_t bits;
+            std::memcpy(&bits, source.data() + offset - sourceOffset, sizeof(bits));
+            inspection = inspectPointer(o.address, offset, o.vptrOffset, expected, o.normalization, bits);
+        } else {
+            // Failed bulk reads cannot describe a particular slot's readable
+            // prefix. Re-read that slot to preserve its exact failure evidence.
+            inspection = inspectSlot(o.address, offset, o.vptrOffset, expected, o.normalization);
+        }
         if (inspection.status == ABIPointerInspectionReadFailed) {
             result->failures.push_back(inspection.failure);
             return false;
@@ -122,12 +154,29 @@ std::unique_ptr<ABIPointerSearchResult> search(const ABIPointerSearchOptions& o)
     };
     const bool hintFits = o.hintOffset != SIZE_MAX && slotFits(o.hintOffset);
     bool stopped = false;
-    if (hintFits && visit(o.hintOffset) && o.policy == ABIPointerSearchFirst) {
+    if (hintFits && visit(o.hintOffset, true) && o.policy == ABIPointerSearchFirst) {
         stopped = true;
     }
     if (!stopped && slotFits(o.firstOffset)) {
         const auto last = o.byteCount - sizeof(uintptr_t);
         for (size_t offset = o.firstOffset;;) {
+#if defined(__arm64__) && defined(__LP64__)
+            // Four null slots require no pointee reads or PAC normalization.
+            // Load only copied bytes, and leave hinted slots' visit counts alone.
+            constexpr size_t width = 4 * sizeof(uintptr_t);
+            if (o.stride == sizeof(uintptr_t) && (offset - o.firstOffset) % width == 0 &&
+                last - offset >= width - sizeof(uintptr_t) &&
+                (!hintFits || o.hintOffset < offset || o.hintOffset - offset >= width) &&
+                readSource(offset) && sourceCount - (offset - sourceOffset) >= width) {
+                const auto *bytes = source.data() + offset - sourceOffset;
+                if (vmaxvq_u8(vorrq_u8(vld1q_u8(bytes), vld1q_u8(bytes + 16))) == 0) {
+                    result->visitedCount += 4;
+                    if (width > last - offset) break;
+                    offset += width;
+                    continue;
+                }
+            }
+#endif
             if ((!hintFits || offset != o.hintOffset) && visit(offset) && o.policy == ABIPointerSearchFirst) {
                 stopped = true;
                 break;
