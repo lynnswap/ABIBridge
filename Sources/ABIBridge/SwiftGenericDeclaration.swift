@@ -133,10 +133,8 @@ struct SwiftDeclaredSignature {
 }
 
 struct SwiftFunctionAttributes: Sendable, Equatable {
-    enum Isolation: UInt32, Sendable { case none = 0, isolatedAny = 2, caller = 4 }
-    enum Differentiability: UInt, Sendable {
-        case none = 0, forward = 1, reverse = 2, normal = 3, linear = 4
-    }
+    typealias Isolation = RuntimeFunctionMetadata.Isolation
+    typealias Differentiability = RuntimeFunctionMetadata.Differentiability
     var isAsync = false
     var isEscaping = false
     var isSendable = false

@@ -104,6 +104,17 @@ extension NativeSymbolRequest {
     }
 }
 extension NativePointerAuthentication {
+    var runtimeValue: RuntimePointerAuthentication {
+        switch self {
+        case .unsigned: .unsigned
+        case .signed(let key, let discriminator, let diversity):
+            .signed(
+                key: .init(rawValue: key.rawValue)!,
+                discriminator: discriminator,
+                addressDiversity: diversity
+            )
+        }
+    }
     init(_ value: RuntimePointerAuthentication) {
         self =
             switch value {

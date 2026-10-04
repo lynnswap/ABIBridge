@@ -610,19 +610,8 @@ func swiftClassImage(
     named name: String,
     resolver: SymbolResolver
 ) throws -> NativeImage {
-    // A live class has one defining image. Retaining that image also prevents
-    // class-address reuse; this does not cache user-supplied filesystem selectors.
-    try resolver.image(forSwiftClass: type) {
-        guard let path = class_getImageName(type) else {
-            throw ABIResolutionError.declarationNotFound(
-                .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data)
-            )
-        }
-        let images = try resolver.images(
-            matching: .path(URL(fileURLWithPath: String(cString: path)))
-        )
-        guard let image = images.first else { throw ABIResolutionError.imageNotLoaded }
-        return image
+    try withRuntimeErrors {
+        NativeImage(try runtimeClassImage(type, named: name, resolver: resolver.runtime))
     }
 }
 
@@ -632,13 +621,14 @@ func swiftTypeDeclarationName(
     suggestedName: String,
     resolver: SymbolResolver
 ) throws -> String {
-    guard let descriptor = ABISwiftTypeDescriptor(unsafeBitCast(type, to: UnsafeRawPointer.self))
-    else { return suggestedName }
-    return try resolver.swiftNominalTypeName(
-        at: UInt64(UInt(bitPattern: descriptor)),
-        in: image,
-        suggestedName: suggestedName
-    ) ?? suggestedName
+    try withRuntimeErrors {
+        try runtimeTypeDeclarationName(
+            type,
+            in: image.runtimeValue,
+            suggestedName: suggestedName,
+            resolver: resolver.runtime
+        )
+    }
 }
 
 extension ABIRuntime {

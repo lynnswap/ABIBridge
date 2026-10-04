@@ -1,27 +1,20 @@
+import ABIBridgeRuntime
 import ABIBridgeCore
 
 // The backend owns all types and permits concurrent use of a prepared interface.
 // Each invocation supplies independent argument and result storage.
-final class CCallInterface: @unchecked Sendable {
-    let handle: OpaquePointer
-
+final class CCallInterface: Sendable {
+    let runtime: RuntimeCCallInterface
+    var handle: OpaquePointer { runtime.handle }
     init(result: CValueType, parameters: [CValueType], fixedParameterCount: Int? = nil) throws {
-        let handles: [OpaquePointer?] = parameters.map(\.handle)
-        var failure: OpaquePointer?
-        // Borrowed handles must outlive preparation, which retains their native storage.
-        let handle = withExtendedLifetime((result, parameters)) {
-            handles.withUnsafeBufferPointer {
-                if let fixedParameterCount {
-                    return ABICreateVariadicCCallInterface(result.handle, $0.baseAddress, $0.count, fixedParameterCount, &failure)
-                }
-                return ABICreateCCallInterface(result.handle, $0.baseAddress, $0.count, &failure)
-            }
+        runtime = try withRuntimeErrors {
+            try RuntimeCCallInterface(
+                result: result.runtime,
+                parameters: parameters.map(\.runtime),
+                fixedParameterCount: fixedParameterCount
+            )
         }
-        guard let handle else { throw consumeNativeCallFailure(failure) }
-        self.handle = handle
     }
-
-    deinit { ABIReleaseCallInterface(handle) }
 }
 
 // Shares the typed marshalling path between free functions and bound methods.
@@ -39,15 +32,26 @@ struct CFunctionCall<Result, each Argument>: Sendable {
         let result = try CValueCodec<Result>()
         var types: [CValueType] = []
         if hiddenPointerCount > 0 {
-            types = Array(repeating: try CValueType(scalar: ABIValuePointer), count: hiddenPointerCount)
+            types = Array(
+                repeating: try CValueType(scalar: ABIValuePointer),
+                count: hiddenPointerCount
+            )
         }
         for codec in repeat each arguments { types.append(codec.type) }
         argumentCount = types.count
         if let variadicFrom, variadicFrom < 0 || variadicFrom > types.count - hiddenPointerCount {
-            throw ABIResolutionError.signatureMismatch(.init(expected: "A variadic boundary within the explicit argument list", found: [String(variadicFrom)]))
+            throw ABIResolutionError.signatureMismatch(
+                .init(
+                    expected: "A variadic boundary within the explicit argument list",
+                    found: [String(variadicFrom)]
+                )
+            )
         }
-        interface = try CCallInterface(result: result.type, parameters: types,
-            fixedParameterCount: variadicFrom.map { $0 + hiddenPointerCount })
+        interface = try CCallInterface(
+            result: result.type,
+            parameters: types,
+            fixedParameterCount: variadicFrom.map { $0 + hiddenPointerCount }
+        )
         self.arguments = arguments
         self.result = result
     }
@@ -78,7 +82,11 @@ struct CFunctionCall<Result, each Argument>: Sendable {
             var failure: OpaquePointer?
             let success = addresses.withUnsafeBufferPointer {
                 ABIUnsafeInvokeCCallInterface(
-                    interface.handle, function, output.address, $0.baseAddress, &failure
+                    interface.handle,
+                    function,
+                    output.address,
+                    $0.baseAddress,
+                    &failure
                 )
             }
             guard success else { throw consumeNativeCallFailure(failure) }
@@ -144,7 +152,10 @@ extension ABIRuntime {
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeFunction<Result, repeat each Argument> {
-        try NativeFunction(symbol: resolve(.init(name: name, language: .c), in: scope, loading: loading), variadicFrom: variadicFrom)
+        try NativeFunction(
+            symbol: resolve(.init(name: name, language: .c), in: scope, loading: loading),
+            variadicFrom: variadicFrom
+        )
     }
 
     /// Resolves a C function in an already retained image.
@@ -164,7 +175,10 @@ extension ABIRuntime {
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeFunction<Result, repeat each Argument> {
-        try NativeFunction(symbol: resolve(.init(name: name, language: .c), in: image, loading: loading), variadicFrom: variadicFrom)
+        try NativeFunction(
+            symbol: resolve(.init(name: name, language: .c), in: image, loading: loading),
+            variadicFrom: variadicFrom
+        )
     }
 
     /// Resolves a C++ free or static function with C-compatible value representations.
@@ -187,7 +201,10 @@ extension ABIRuntime {
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeFunction<Result, repeat each Argument> {
-        try NativeFunction(symbol: resolve(.init(name: name, language: .cxx), in: scope, loading: loading), variadicFrom: variadicFrom)
+        try NativeFunction(
+            symbol: resolve(.init(name: name, language: .cxx), in: scope, loading: loading),
+            variadicFrom: variadicFrom
+        )
     }
 
     /// Resolves a C-compatible C++ function in an already retained image.
@@ -207,6 +224,9 @@ extension ABIRuntime {
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeFunction<Result, repeat each Argument> {
-        try NativeFunction(symbol: resolve(.init(name: name, language: .cxx), in: image, loading: loading), variadicFrom: variadicFrom)
+        try NativeFunction(
+            symbol: resolve(.init(name: name, language: .cxx), in: image, loading: loading),
+            variadicFrom: variadicFrom
+        )
     }
 }

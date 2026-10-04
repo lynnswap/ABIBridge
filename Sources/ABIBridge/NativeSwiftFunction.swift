@@ -8,8 +8,7 @@ func swiftFunctionTypeName(_ type: Any.Type) throws -> String {
         return try swiftFunctionTypeName(closure.swiftFunctionType)
     }
     var name = try swiftNativeTypeName(type)
-    let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
-    if metadata.load(as: UInt.self) == 0x302 {
+    if runtimeMetadataKind(type) == .function {
         let function = try SwiftFunctionSignature(type)
         for child in function.parameters {
             let native = try swiftNativeTypeName(child)
@@ -169,110 +168,43 @@ func swiftOuterSignature(_ declaration: String) -> (text: String, result: Substr
 }
 
 final class SwiftCallInterface: @unchecked Sendable {
-    let handle: OpaquePointer
-    private let callback = Mutex<SwiftClosureCallbackOwner?>(nil)
+    let runtime: RuntimeSwiftCallInterface
+    var handle: OpaquePointer { runtime.handle }
+    init(_ runtime: RuntimeSwiftCallInterface) { self.runtime = runtime }
 
     func closureEntry() throws -> SwiftClosureCallbackOwner {
-        try callback.withLock { cached in
-            if let cached { return cached }
-            let entry = try SwiftClosureCallbackOwner(interface: self)
-            cached = entry
-            return entry
-        }
+        try SwiftClosureCallbackOwner(interface: self)
     }
 
     init(result: CValueType, parameters: [CValueType], errorPlan: SwiftErrorPlan? = nil) throws {
-        let handles: [OpaquePointer?] = parameters.map(\.handle)
-        var failure: OpaquePointer?
-        let handle = withExtendedLifetime((result, parameters, errorPlan)) {
-            handles.withUnsafeBufferPointer { handles in
-                if let errorPlan {
-                    return ABICreateSwiftThrowingCallInterface(
-                        result.handle,
-                        handles.baseAddress,
-                        handles.count,
-                        errorPlan.type.handle,
-                        errorPlan.isTyped,
-                        &failure
-                    )
+        runtime = try withRuntimeErrors {
+            try RuntimeSwiftCallInterface(
+                result: result.runtime,
+                parameters: parameters.map(\.runtime),
+                errorPlan: errorPlan.map {
+                    RuntimeErrorConvention(type: $0.type.runtime, isTyped: $0.isTyped)
                 }
-                return ABICreateSwiftCallInterface(
-                    result.handle,
-                    handles.baseAddress,
-                    handles.count,
-                    &failure
-                )
-            }
+            )
         }
-        guard let handle else {
-            throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftInvocation")
-        }
-        self.handle = handle
     }
-    deinit { ABIReleaseSwiftCallInterface(handle) }
 }
 
 extension SwiftCallInterface {
-    private struct Entry: Sendable {
-        let result: CValueType
-        let parameters: [CValueType]
-        let error: CValueType?
-        let typedError: Bool
-        let interface: SwiftCallInterface
-
-        func matches(
-            result: CValueType,
-            parameters: [CValueType],
-            errorPlan: SwiftErrorPlan?
-        ) -> Bool {
-            guard Self.equal(self.result, result), self.parameters.count == parameters.count,
-                typedError == (errorPlan?.isTyped ?? false)
-            else { return false }
-            switch (error, errorPlan?.type) {
-            case (.none, .none): break
-            case (.some(let first), .some(let second)):
-                guard Self.equal(first, second) else { return false }
-            default: return false
-            }
-            return zip(self.parameters, parameters).allSatisfy(Self.equal)
-        }
-
-        private static func equal(_ first: CValueType, _ second: CValueType) -> Bool {
-            first === second || ABIValueTypesEqual(first.handle, second.handle)
-        }
-    }
-
-    // Only native layouts are cached: no Swift metatypes, codecs, images or
-    // callback bodies. Active handles retain interfaces independently of eviction.
-    private static let cache = Mutex<[Entry]>([])
-
     static func cached(
         result: CValueType,
         parameters: [CValueType],
         errorPlan: SwiftErrorPlan? = nil
     ) throws -> SwiftCallInterface {
-        try cache.withLock { entries in
-            if let entry = entries.last(where: {
-                $0.matches(result: result, parameters: parameters, errorPlan: errorPlan)
-            }) {
-                return entry.interface
-            }
-            let interface = try SwiftCallInterface(
-                result: result,
-                parameters: parameters,
-                errorPlan: errorPlan
-            )
-            if entries.count == 64 { entries.removeFirst() }
-            entries.append(
-                Entry(
-                    result: result,
-                    parameters: parameters,
-                    error: errorPlan?.type,
-                    typedError: errorPlan?.isTyped ?? false,
-                    interface: interface
+        try withRuntimeErrors {
+            SwiftCallInterface(
+                try RuntimeSwiftCallInterface.cached(
+                    result: result.runtime,
+                    parameters: parameters.map(\.runtime),
+                    errorPlan: errorPlan.map {
+                        RuntimeErrorConvention(type: $0.type.runtime, isTyped: $0.isTyped)
+                    }
                 )
             )
-            return interface
         }
     }
 }

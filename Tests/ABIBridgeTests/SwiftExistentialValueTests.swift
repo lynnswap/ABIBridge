@@ -1,3 +1,4 @@
+import ABIBridgeRuntime
 #if DEBUG
 @testable import ABIBridge
 #else
@@ -13,10 +14,16 @@ struct SwiftExistentialValueTests {
         let runtime = ABIRuntime()
         for pack in [[], [Int.self, String.self]] as [[Any.Type]] {
             let bindings: [NativeSwiftGenericArgument] = [.pack(pack.map { .type($0) })]
-            let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeSuperclassPackExistential(_:)",
-                as: ((Int64) -> NativeSwiftValue).self, genericArguments: bindings)
-            let echo = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.echoSuperclassPackExistential(_:)",
-                as: ((NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: bindings)
+            let make = try await runtime.swiftFunction(
+                named: "ManagedSwiftFixtures.makeSuperclassPackExistential(_:)",
+                as: ((Int64) -> NativeSwiftValue).self,
+                genericArguments: bindings
+            )
+            let echo = try await runtime.swiftFunction(
+                named: "ManagedSwiftFixtures.echoSuperclassPackExistential(_:)",
+                as: ((NativeSwiftValue) -> NativeSwiftValue).self,
+                genericArguments: bindings
+            )
             let value = try unsafe make.unsafeInvoke(42)
             let result = try unsafe echo.unsafeInvoke(value)
             #expect(try result.withCopy { ($0 as? any ExistentialPackMarker)?.number } == 42)
@@ -25,43 +32,70 @@ struct SwiftExistentialValueTests {
     @Test func linkedSuperclassPackValuesAndCallbacksShareMetadata() async throws {
         typealias Value = any ExistentialPackBase<Int, String> & ExistentialPackMarker
         let bindings: [NativeSwiftGenericArgument] = [.pack([.type(Int.self), .type(String.self)])]
-        let make = try await ABIRuntime().swiftFunction(named: "ManagedSwiftFixtures.makeSuperclassPackExistential(_:)",
-            as: ((Int64) -> Value).self, genericArguments: bindings)
+        let make = try await ABIRuntime().swiftFunction(
+            named: "ManagedSwiftFixtures.makeSuperclassPackExistential(_:)",
+            as: ((Int64) -> Value).self,
+            genericArguments: bindings
+        )
         let value = try unsafe make.unsafeInvoke(42)
         #expect(value.number == 42)
         typealias Body = NativeSwiftClosure<(NativeSwiftValue) throws -> NativeSwiftValue>
-        let apply = try await ABIRuntime().swiftFunction(named: "ManagedSwiftFixtures.applySuperclassPackExistential(_:_:)",
-            as: ((NativeSwiftValue, Body) throws -> NativeSwiftValue).self, genericArguments: bindings)
-        let owner = try await ABIRuntime().swiftFunction(named: "ManagedSwiftFixtures.makeSuperclassPackExistential(_:)",
-            as: ((Int64) -> NativeSwiftValue).self, genericArguments: bindings)
+        let apply = try await ABIRuntime().swiftFunction(
+            named: "ManagedSwiftFixtures.applySuperclassPackExistential(_:_:)",
+            as: ((NativeSwiftValue, Body) throws -> NativeSwiftValue).self,
+            genericArguments: bindings
+        )
+        let owner = try await ABIRuntime().swiftFunction(
+            named: "ManagedSwiftFixtures.makeSuperclassPackExistential(_:)",
+            as: ((Int64) -> NativeSwiftValue).self,
+            genericArguments: bindings
+        )
         let callback = try Body { try $0.copy() }
         let result = try unsafe apply.unsafeInvoke(try unsafe owner.unsafeInvoke(43), callback)
         #expect(try result.withCopy { ($0 as? Value)?.number } == 43)
     }
     @Test func objcSuperclassProtocolCompositionsPreserveTheirReferences() async throws {
         typealias Value = any NSObject & NSCopying
-        let function = try await ABIRuntime().swiftFunction(named: "ManagedSwiftFixtures.echoNSObjectCopying(_:_:)",
-            as: ((Value, Int) -> Value).self, genericArguments: [.type(Int.self)])
+        let function = try await ABIRuntime().swiftFunction(
+            named: "ManagedSwiftFixtures.echoNSObjectCopying(_:_:)",
+            as: ((Value, Int) -> Value).self,
+            genericArguments: [.type(Int.self)]
+        )
         let value: Value = NSString(string: "value")
         #expect(try unsafe function.unsafeInvoke(value, 0) === value)
     }
     @Test func objcLightweightGenericSuperclassUsesItsRuntimeClass() async throws {
         typealias Value = any NSCache<NSString, NSObject> & ExistentialPackMarker
-        let function = try await ABIRuntime().swiftFunction(named: "ManagedSwiftFixtures.echoObjCCacheExistential(_:_:)",
-            as: ((Value, Int) -> Value).self, genericArguments: [.type(Int.self)])
+        let function = try await ABIRuntime().swiftFunction(
+            named: "ManagedSwiftFixtures.echoObjCCacheExistential(_:_:)",
+            as: ((Value, Int) -> Value).self,
+            genericArguments: [.type(Int.self)]
+        )
         let value: Value = ExistentialCache()
         #expect(try unsafe function.unsafeInvoke(value, 0) === echoObjCCacheExistential(value, 0))
-        let runtimeFunction = try await ABIRuntime().swiftFunction(named: "ManagedSwiftFixtures.echoObjCCacheExistential(_:_:)",
-            as: ((NativeSwiftValue, Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
-        let erased = try await ABIRuntime().swiftFunction(named: "ManagedSwiftFixtures.echoObjCCacheExistential(_:_:)",
-            as: ((Value, Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+        let runtimeFunction = try await ABIRuntime().swiftFunction(
+            named: "ManagedSwiftFixtures.echoObjCCacheExistential(_:_:)",
+            as: ((NativeSwiftValue, Int) -> NativeSwiftValue).self,
+            genericArguments: [.type(Int.self)]
+        )
+        let erased = try await ABIRuntime().swiftFunction(
+            named: "ManagedSwiftFixtures.echoObjCCacheExistential(_:_:)",
+            as: ((Value, Int) -> NativeSwiftValue).self,
+            genericArguments: [.type(Int.self)]
+        )
         let runtimeValue = try unsafe erased.unsafeInvoke(value, 0)
-        #expect(try unsafe runtimeFunction.unsafeInvoke(runtimeValue, 0).withCopy { ($0 as? Value) === value })
+        #expect(
+            try unsafe runtimeFunction.unsafeInvoke(runtimeValue, 0).withCopy {
+                ($0 as? Value) === value
+            }
+        )
     }
     @Test func functionAssociatedTypesKeepCanonicalLookupNames() async throws {
         typealias Value = any Collection<(Int) -> Int>
-        let echo = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoRuntimeFunctionCollection(_:)",
-            as: ((Value) -> Value).self)
+        let echo = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.echoRuntimeFunctionCollection(_:)",
+            as: ((Value) -> Value).self
+        )
         let value: Value = [{ $0 + 2 }]
         let result = try unsafe echo.unsafeInvoke(value)
         #expect(Array(result)[0](40) == 42)
@@ -69,8 +103,10 @@ struct SwiftExistentialValueTests {
 
     @MainActor @Test func actorFunctionConstraintsKeepCanonicalAttributeOrder() async throws {
         typealias Value = any Collection<@MainActor @Sendable (Int) -> Int>
-        let echo = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoRuntimeActorFunctionCollection(_:)",
-            as: ((Value) -> Value).self)
+        let echo = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.echoRuntimeActorFunctionCollection(_:)",
+            as: ((Value) -> Value).self
+        )
         let value: Value = [{ $0 + 2 }]
         let result = try unsafe echo.unsafeInvoke(value)
         #expect(Array(result)[0](40) == 42)
@@ -78,43 +114,64 @@ struct SwiftExistentialValueTests {
 
     @Test func tupleMetatypesKeepCanonicalGrouping() async throws {
         typealias Value = (any Collection<Int>, Int).Type
-        let echo = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoRuntimeCollectionTupleMetatype(_:)",
-            as: ((Value) -> Value).self)
-        #expect(ObjectIdentifier(try unsafe echo.unsafeInvoke((any Collection<Int>, Int).self)) == ObjectIdentifier((any Collection<Int>, Int).self))
+        let echo = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.echoRuntimeCollectionTupleMetatype(_:)",
+            as: ((Value) -> Value).self
+        )
+        #expect(
+            ObjectIdentifier(try unsafe echo.unsafeInvoke((any Collection<Int>, Int).self))
+                == ObjectIdentifier((any Collection<Int>, Int).self)
+        )
     }
 
-#if DEBUG
+    #if DEBUG
     @Test func metadataTypeSyntaxMatchesTheRuntimePrinter() throws {
         typealias Body = @MainActor @Sendable (Int) -> Int
-        let types: [Any.Type] = [(any Collection<Int>).self, (any Collection<Body>).self,
+        let types: [Any.Type] = [
+            (any Collection<Int>).self, (any Collection<Body>).self,
             (any Collection<(Int) -> Int>).self, ((any Collection<Int>, Int).Type).self,
             ((any Collection<Int>)?).self, ((any Collection<Int>, Int)).self,
-            (@MainActor @Sendable (any Collection<Int>) -> Int).self]
+            (@MainActor @Sendable (any Collection<Int>) -> Int).self,
+        ]
         for type in types {
             let name = try #require(_mangledTypeName(type))
             let reference = try name.utf8CString.withUnsafeBufferPointer {
-                try unsafe SwiftSyntax(typeReference: $0.baseAddress!, length: $0.count - 1).root.name()
+                try unsafe SwiftSyntax(typeReference: $0.baseAddress!, length: $0.count - 1).root
+                    .name()
             }
             #expect(try swiftNativeTypeName(type) == reference)
         }
     }
-#endif
+    #endif
 
     @Test func classParameterizedCompositionsKeepBothWitnesses() async throws {
         typealias Value = any RuntimeClassFirst<Int> & RuntimeClassSecond<Int>
-        let make = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeDistinctClassComposition(_:)",
-            as: ((Int) -> Value).self, genericArguments: [.type(Int.self)])
+        let make = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeDistinctClassComposition(_:)",
+            as: ((Int) -> Value).self,
+            genericArguments: [.type(Int.self)]
+        )
         let value = try unsafe make.unsafeInvoke(42)
         #expect((value as? RuntimeClassBoth<Int>)?.value == 42)
-        let echo = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoRuntimeDistinctClassComposition(_:)",
-            as: ((Value) -> Value).self, genericArguments: [.type(Int.self)])
+        let echo = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.echoRuntimeDistinctClassComposition(_:)",
+            as: ((Value) -> Value).self,
+            genericArguments: [.type(Int.self)]
+        )
         #expect(try unsafe echo.unsafeInvoke(value) === value)
-        let runtimeOnly = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeDistinctClassComposition(_:)",
-            as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
-        #expect(try unsafe runtimeOnly.unsafeInvoke(43).withCopy { ($0 as? RuntimeClassBoth<Int>)?.value } == 43)
+        let runtimeOnly = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeDistinctClassComposition(_:)",
+            as: ((Int) -> NativeSwiftValue).self,
+            genericArguments: [.type(Int.self)]
+        )
+        #expect(
+            try unsafe runtimeOnly.unsafeInvoke(43).withCopy {
+                ($0 as? RuntimeClassBoth<Int>)?.value
+            } == 43
+        )
     }
 
-#if DEBUG
+    #if DEBUG
     @Test func redundantRequirementParametersDoNotRemoveWitnesses() throws {
         typealias Value = any RuntimeClassLeft<Int> & RuntimeClassRight<Int>
         let pointer = unsafeBitCast(Value.self, to: UnsafeRawPointer.self)
@@ -129,76 +186,139 @@ struct SwiftExistentialValueTests {
             #expect(try SwiftValueCodec<Value>().type.size == nativeSize)
         }
     }
-#endif
+    #endif
 
     @Test func sharedInheritedAssociatedTypesHaveOneDeclaringProtocol() async throws {
-        let make = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeSharedComposition(_:)",
-            as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
-        #expect(try unsafe make.unsafeInvoke(42).withCopy { ($0 as? any RuntimeSharedBase<Int>)?.value } == 42)
+        let make = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeSharedComposition(_:)",
+            as: ((Int) -> NativeSwiftValue).self,
+            genericArguments: [.type(Int.self)]
+        )
+        #expect(
+            try unsafe make.unsafeInvoke(42).withCopy { ($0 as? any RuntimeSharedBase<Int>)?.value }
+                == 42
+        )
     }
 
     @Test func parameterizedExistentialMetatypesUseTheirExtendedShape() async throws {
         typealias Value = any RuntimeClassLeft<Int>.Type
-        let echo = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoRuntimeParameterizedMetatype(_:)",
-            as: ((Value) -> Value).self, genericArguments: [.type(Int.self)])
-        #expect(ObjectIdentifier(try unsafe echo.unsafeInvoke(RuntimeClassBoth<Int>.self)) == ObjectIdentifier(RuntimeClassBoth<Int>.self))
-        let make = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeParameterizedMetatype(_:)",
-            as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+        let echo = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.echoRuntimeParameterizedMetatype(_:)",
+            as: ((Value) -> Value).self,
+            genericArguments: [.type(Int.self)]
+        )
+        #expect(
+            ObjectIdentifier(try unsafe echo.unsafeInvoke(RuntimeClassBoth<Int>.self))
+                == ObjectIdentifier(RuntimeClassBoth<Int>.self)
+        )
+        let make = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeParameterizedMetatype(_:)",
+            as: ((Int) -> NativeSwiftValue).self,
+            genericArguments: [.type(Int.self)]
+        )
         let value = try unsafe make.unsafeInvoke(42)
-        #expect(try value.withCopy { ($0 as? Value).map(ObjectIdentifier.init) } == ObjectIdentifier(RuntimeClassBoth<Int>.self))
-        let erasedEcho = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoRuntimeParameterizedMetatype(_:)",
-            as: ((NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
-        #expect(try unsafe erasedEcho.unsafeInvoke(value).withCopy { ($0 as? Value).map(ObjectIdentifier.init) } == ObjectIdentifier(RuntimeClassBoth<Int>.self))
+        #expect(
+            try value.withCopy { ($0 as? Value).map(ObjectIdentifier.init) }
+                == ObjectIdentifier(RuntimeClassBoth<Int>.self)
+        )
+        let erasedEcho = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.echoRuntimeParameterizedMetatype(_:)",
+            as: ((NativeSwiftValue) -> NativeSwiftValue).self,
+            genericArguments: [.type(Int.self)]
+        )
+        #expect(
+            try unsafe erasedEcho.unsafeInvoke(value).withCopy {
+                ($0 as? Value).map(ObjectIdentifier.init)
+            } == ObjectIdentifier(RuntimeClassBoth<Int>.self)
+        )
     }
 
     @Test func nestedParameterizedMetatypesKeepTheirNamesAndWitnesses() async throws {
         typealias Value = any RuntimeClassLeft<Int>.Type
-        let tuple = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoRuntimeParameterizedMetatypeTuple(_:)",
-            as: (((Value, Int)) -> (Value, Int)).self, genericArguments: [.type(Int.self)])
+        let tuple = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.echoRuntimeParameterizedMetatypeTuple(_:)",
+            as: (((Value, Int)) -> (Value, Int)).self,
+            genericArguments: [.type(Int.self)]
+        )
         let result = try unsafe tuple.unsafeInvoke((RuntimeClassBoth<Int>.self, 42))
         #expect(ObjectIdentifier(result.0) == ObjectIdentifier(RuntimeClassBoth<Int>.self))
         #expect(result.1 == 42)
-        let optional = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoRuntimeOptionalParameterizedMetatype(_:)",
-            as: ((Value?) -> Value?).self, genericArguments: [.type(Int.self)])
+        let optional = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.echoRuntimeOptionalParameterizedMetatype(_:)",
+            as: ((Value?) -> Value?).self,
+            genericArguments: [.type(Int.self)]
+        )
         #expect(try unsafe optional.unsafeInvoke(nil) == nil)
-        #expect(try unsafe optional.unsafeInvoke(RuntimeClassBoth<Int>.self).map(ObjectIdentifier.init) == ObjectIdentifier(RuntimeClassBoth<Int>.self))
-        let callback = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.applyRuntimeParameterizedMetatype(_:_:)",
-            as: ((NativeSwiftClosure<(Value) -> Value>, Int) -> Value).self, genericArguments: [.type(Int.self)])
+        #expect(
+            try unsafe optional.unsafeInvoke(RuntimeClassBoth<Int>.self).map(ObjectIdentifier.init)
+                == ObjectIdentifier(RuntimeClassBoth<Int>.self)
+        )
+        let callback = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.applyRuntimeParameterizedMetatype(_:_:)",
+            as: ((NativeSwiftClosure<(Value) -> Value>, Int) -> Value).self,
+            genericArguments: [.type(Int.self)]
+        )
         let body = try NativeSwiftClosure<(Value) -> Value> { $0 }
-        #expect(ObjectIdentifier(try unsafe callback.unsafeInvoke(body, 42)) == ObjectIdentifier(RuntimeClassBoth<Int>.self))
-        let replace = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.replaceRuntimeParameterizedMetatype(_:_:)",
-            as: ((NativeSwiftInout<Value>, Value) -> Void).self, genericArguments: [.type(Int.self)])
+        #expect(
+            ObjectIdentifier(try unsafe callback.unsafeInvoke(body, 42))
+                == ObjectIdentifier(RuntimeClassBoth<Int>.self)
+        )
+        let replace = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.replaceRuntimeParameterizedMetatype(_:_:)",
+            as: ((NativeSwiftInout<Value>, Value) -> Void).self,
+            genericArguments: [.type(Int.self)]
+        )
         let slot = NativeSwiftInout<Value>(RuntimeClassBoth<Int>.self)
         try unsafe replace.unsafeInvoke(slot, RuntimeClassBoth<Int>.self)
         #expect(ObjectIdentifier(slot.value) == ObjectIdentifier(RuntimeClassBoth<Int>.self))
     }
 
-#if DEBUG
+    #if DEBUG
     @Test func missingMetatypeShapesCanBeSynthesized() throws {
         typealias Value = any RuntimeClassLeft<Int>.Type
         let formal = try SwiftExtendedExistentialMetadata.formalType(Value.self)
-        guard case .existentialMetatype(.constrainedExistential(_, _, let constraints, let shape?)) = formal else {
+        guard
+            case .existentialMetatype(.constrainedExistential(_, _, let constraints, let shape?)) =
+                formal
+        else {
             Issue.record("Expected a parameterized existential metatype.")
             return
         }
         let syntax = try SwiftSyntax(symbol: shape)
-        let node = try syntax.root.requiredChild().requiredChild().requiredChild(kind: "Type").requiredChild()
+        let node = try syntax.root.requiredChild().requiredChild().requiredChild(kind: "Type")
+            .requiredChild()
         let name = try node.constrainedExistentialShapeName(metatypeDepth: 1)
-        let metadata = try SwiftExtendedExistentialMetadata.metadata(shape: name, constraints: constraints,
-            arguments: [Int.self], superclass: nil, resolver: .shared)
+        let metadata = try SwiftExtendedExistentialMetadata.metadata(
+            shape: name,
+            constraints: constraints,
+            arguments: [Int.self],
+            superclass: nil,
+            resolver: .shared
+        )
         #expect(try swiftNativeTypeName(metadata) == swiftNativeTypeName(Value.self))
         #expect(SwiftMetatypeMetadata(metadata)?.witnessCount == 1)
-        #expect(ABISwiftGetValueLayout(unsafeBitCast(metadata, to: UnsafeRawPointer.self)).size == MemoryLayout<Value>.size)
+        #expect(
+            ABISwiftGetValueLayout(unsafeBitCast(metadata, to: UnsafeRawPointer.self)).size
+                == MemoryLayout<Value>.size
+        )
     }
-#endif
+    #endif
 
-#if DEBUG
+    #if DEBUG
     @Test func declarationCallbackAuthenticationPreservesClassExistentialIdentity() async throws {
-        typealias Signature = (NativeSwiftClosure<(ManyObjectProtocols) -> ManyObjectProtocols>, ManyObjectProtocols) -> ManyObjectProtocols
+        typealias Signature = (
+            NativeSwiftClosure<(ManyObjectProtocols) -> ManyObjectProtocols>, ManyObjectProtocols
+        ) -> ManyObjectProtocols
         let function = try await ABIRuntime.shared.swiftFunction(
-            named: "ManagedSwiftFixtures.applyManyClassExistentialClosure(_:_:)", as: Signature.self)
-        let plan = try SwiftGenericCallPlan(symbol: function.symbol, genericArguments: [],
-            signature: SwiftFunctionSignature(Signature.self), resolver: .shared)
+            named: "ManagedSwiftFixtures.applyManyClassExistentialClosure(_:_:)",
+            as: Signature.self
+        )
+        let plan = try SwiftGenericCallPlan(
+            symbol: function.symbol,
+            genericArguments: [],
+            signature: SwiftFunctionSignature(Signature.self),
+            resolver: .shared
+        )
         let closure = try #require(plan.arguments.first?.closure)
         // The arm64e compiler fixture hashes the formally class-based type,
         // despite passing this many object/witness components indirectly.
@@ -209,37 +329,73 @@ struct SwiftExistentialValueTests {
         #expect(SwiftExistentialRepresentation((any ExistentialValue).Type.self) == nil)
         #expect(SwiftExistentialRepresentation((any ExistentialValue.Type).self) == nil)
         #expect(SwiftExistentialRepresentation((any Collection<Int>).self) != nil)
-        #expect(try SwiftValueCodec<any Collection<Int>>().type.size == MemoryLayout<any Collection<Int>>.size)
+        #expect(
+            try SwiftValueCodec<any Collection<Int>>().type.size
+                == MemoryLayout<any Collection<Int>>.size
+        )
         // Swift 6.3 reports one word of generic storage for this composition,
         // while its native declaration uses object and witness pointers.
-        #expect(throws: ABIResolutionError.self) { _ = try SwiftValueCodec<(any Error & AnyObject)>() }
+        #expect(throws: ABIResolutionError.self) {
+            _ = try SwiftValueCodec<(any Error & AnyObject)>()
+        }
         #expect(try swiftClosureAuthType(Any.self) == "-indirect")
         #expect(try swiftClosureAuthType(ManyObjectProtocols.self) == "-class")
-        #expect(swiftClosureDiscriminator(parameters: [try swiftClosureAuthType(Any.self)], result: try swiftClosureAuthType(Any.self)) == 55683)
-        #expect(swiftClosureDiscriminator(parameters: [try swiftClosureAuthType((any ExistentialObjectValue)?.self)], result: try swiftClosureAuthType((any ExistentialObjectValue)?.self)) == 30130)
-        #expect(swiftClosureDiscriminator(parameters: [try swiftClosureAuthType((any Error)?.self)], result: try swiftClosureAuthType((any Error)?.self)) == 1845)
+        #expect(
+            swiftClosureDiscriminator(
+                parameters: [try swiftClosureAuthType(Any.self)],
+                result: try swiftClosureAuthType(Any.self)
+            ) == 55683
+        )
+        #expect(
+            swiftClosureDiscriminator(
+                parameters: [try swiftClosureAuthType((any ExistentialObjectValue)?.self)],
+                result: try swiftClosureAuthType((any ExistentialObjectValue)?.self)
+            ) == 30130
+        )
+        #expect(
+            swiftClosureDiscriminator(
+                parameters: [try swiftClosureAuthType((any Error)?.self)],
+                result: try swiftClosureAuthType((any Error)?.self)
+            ) == 1845
+        )
     }
-#endif
+    #endif
     @Test func extendedExistentialsKeepAssociatedTypeConstraints() async throws {
         let runtime = ABIRuntime.shared
-        let collection = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.echoExtendedCollection(_:)",
-            as: ((any Collection<Int>) -> any Collection<Int>).self)
+        let collection = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.echoExtendedCollection(_:)",
+            as: ((any Collection<Int>) -> any Collection<Int>).self
+        )
         let ordinaryResult: any Collection<Int> = try unsafe collection.unsafeInvoke([1, 2, 3])
         #expect(Array(ordinaryResult) == [1, 2, 3])
-        let source = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.echoExtendedSource(_:)",
-            as: ((any ExistentialSource<Int>) -> any ExistentialSource<Int>).self)
+        let source = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.echoExtendedSource(_:)",
+            as: ((any ExistentialSource<Int>) -> any ExistentialSource<Int>).self
+        )
         let value = ExistentialIntSource(42)
         #expect(try unsafe source.unsafeInvoke(value) === value)
-        let generic = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.echoGenericExtendedCollection<A>(any Swift.Collection<Self.Element == A>) -> any Swift.Collection<Self.Element == A>",
-            as: ((any Collection<Int>) -> any Collection<Int>).self, genericArguments: [.type(Int.self)])
+        let generic = try await runtime.swiftFunction(
+            named:
+                "ManagedSwiftFixtures.echoGenericExtendedCollection<A>(any Swift.Collection<Self.Element == A>) -> any Swift.Collection<Self.Element == A>",
+            as: ((any Collection<Int>) -> any Collection<Int>).self,
+            genericArguments: [.type(Int.self)]
+        )
         let genericResult: any Collection<Int> = try unsafe generic.unsafeInvoke([40, 2])
         #expect(Array(genericResult) == [40, 2])
-        let made = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeGenericExtendedCollection<A>(A) -> any Swift.Collection<Self.Element == A>",
-            as: ((Int) -> any Collection<Int>).self, genericArguments: [.type(Int.self)])
+        let made = try await runtime.swiftFunction(
+            named:
+                "ManagedSwiftFixtures.makeGenericExtendedCollection<A>(A) -> any Swift.Collection<Self.Element == A>",
+            as: ((Int) -> any Collection<Int>).self,
+            genericArguments: [.type(Int.self)]
+        )
         let madeResult: any Collection<Int> = try unsafe made.unsafeInvoke(42)
         #expect(Array(madeResult) == [42])
-        let runtimeOnly = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeGenericExtendedCollection<A>(A) -> any Swift.Collection<Self.Element == A>",
-            as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+        let runtimeOnly = try await runtime.swiftFunction(
+            named:
+                "ManagedSwiftFixtures.makeGenericExtendedCollection<A>(A) -> any Swift.Collection<Self.Element == A>",
+            as: ((Int) -> NativeSwiftValue).self,
+            genericArguments: [.type(Int.self)]
+        )
         let owned = try unsafe runtimeOnly.unsafeInvoke(42)
         let copied = try owned.withCopy { value -> [Int]? in
             guard let collection = value as? any Collection<Int> else { return nil }
@@ -247,73 +403,117 @@ struct SwiftExistentialValueTests {
         }
         #expect(copied == [42])
         await #expect(throws: ABIResolutionError.self) {
-            _ = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.echoGenericExtendedCollection<A>(any Swift.Collection<Self.Element == A>) -> any Swift.Collection<Self.Element == A>",
-                as: ((any Collection<Int>) -> any Collection<Int>).self, genericArguments: [.type(String.self)])
+            _ = try await runtime.swiftFunction(
+                named:
+                    "ManagedSwiftFixtures.echoGenericExtendedCollection<A>(any Swift.Collection<Self.Element == A>) -> any Swift.Collection<Self.Element == A>",
+                as: ((any Collection<Int>) -> any Collection<Int>).self,
+                genericArguments: [.type(String.self)]
+            )
         }
     }
 
     @Test func genericSuperclassBindsTypedExistentialMetadata() async throws {
         typealias Value = any ExistentialSuperclass<Int> & ExistentialSource<Int>
-        let native = "any ManagedSwiftFixtures.ExistentialSuperclass<A> & ManagedSwiftFixtures.ExistentialSource<Self.Element == A>"
+        let native =
+            "any ManagedSwiftFixtures.ExistentialSuperclass<A> & ManagedSwiftFixtures.ExistentialSource<Self.Element == A>"
         let echo = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.echoGenericSuperclass<A>(" + native + ") -> " + native,
-            as: ((Value) -> Value).self, genericArguments: [.type(Int.self)])
+            as: ((Value) -> Value).self,
+            genericArguments: [.type(Int.self)]
+        )
         let value = ExistentialSuperclassValue(42)
         let result = try unsafe echo.unsafeInvoke(value)
         #expect(result === value && result.element == 42)
         let make = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.makeGenericSuperclass<A>(A) -> " + native,
-            as: ((Int) -> Value).self, genericArguments: [.type(Int.self)])
+            as: ((Int) -> Value).self,
+            genericArguments: [.type(Int.self)]
+        )
         #expect(try unsafe make.unsafeInvoke(43).element == 43)
         await #expect(throws: ABIResolutionError.self) {
             _ = try await ABIRuntime.shared.swiftFunction(
                 named: "ManagedSwiftFixtures.echoGenericSuperclass<A>(" + native + ") -> " + native,
-                as: ((Value) -> Value).self, genericArguments: [.type(String.self)])
+                as: ((Value) -> Value).self,
+                genericArguments: [.type(String.self)]
+            )
         }
     }
 
     @Test func runtimeOnlyExistentialsConstructMissingProviderShapes() async throws {
         let call = try await ABIRuntime.shared.swiftFunction(
-            named: "ManagedSwiftFixtures.makeFreshExistential<A>(A) -> any ManagedSwiftFixtures.FreshExistentialSource<Self.Element == A>",
-            as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+            named:
+                "ManagedSwiftFixtures.makeFreshExistential<A>(A) -> any ManagedSwiftFixtures.FreshExistentialSource<Self.Element == A>",
+            as: ((Int) -> NativeSwiftValue).self,
+            genericArguments: [.type(Int.self)]
+        )
         let result = try unsafe call.unsafeInvoke(42)
         #expect(try result.withCopy { ($0 as? any CustomStringConvertible)?.description } == "42")
         #expect(result.type.name.contains("FreshExistentialSource"))
         let pair = try await ABIRuntime.shared.swiftFunction(
-            named: "ManagedSwiftFixtures.makeFreshExistentialPair<A, B>(A, B) -> any ManagedSwiftFixtures.FreshExistentialPair<Self.First == A, Self.Second == B>",
-            as: ((Int, String) -> NativeSwiftValue).self, genericArguments: [.type(Int.self), .type(String.self)])
+            named:
+                "ManagedSwiftFixtures.makeFreshExistentialPair<A, B>(A, B) -> any ManagedSwiftFixtures.FreshExistentialPair<Self.First == A, Self.Second == B>",
+            as: ((Int, String) -> NativeSwiftValue).self,
+            genericArguments: [.type(Int.self), .type(String.self)]
+        )
         let paired = try unsafe pair.unsafeInvoke(42, "value")
-        #expect(try paired.withCopy { ($0 as? any CustomStringConvertible)?.description } == "42:value")
+        #expect(
+            try paired.withCopy { ($0 as? any CustomStringConvertible)?.description } == "42:value"
+        )
         let object = try await ABIRuntime.shared.swiftFunction(
-            named: "ManagedSwiftFixtures.makeFreshExistentialClass<A>(A) -> any ManagedSwiftFixtures.FreshExistentialClass<Self.Element == A>",
-            as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+            named:
+                "ManagedSwiftFixtures.makeFreshExistentialClass<A>(A) -> any ManagedSwiftFixtures.FreshExistentialClass<Self.Element == A>",
+            as: ((Int) -> NativeSwiftValue).self,
+            genericArguments: [.type(Int.self)]
+        )
         let objectValue = try unsafe object.unsafeInvoke(43)
-        #expect(try objectValue.withCopy { ($0 as? any CustomStringConvertible)?.description } == "43")
+        #expect(
+            try objectValue.withCopy { ($0 as? any CustomStringConvertible)?.description } == "43"
+        )
     }
 
     @Test func runtimeOnlySuperclassExistentialsPreserveGenericArguments() async throws {
-        let valueType = "any ManagedSwiftFixtures.ExistentialSuperclass<A> & ManagedSwiftFixtures.FreshExistentialClass<Self.Element == A>"
+        let valueType =
+            "any ManagedSwiftFixtures.ExistentialSuperclass<A> & ManagedSwiftFixtures.FreshExistentialClass<Self.Element == A>"
         let make = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.makeFreshSuperclass<A>(A) -> " + valueType,
-            as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+            as: ((Int) -> NativeSwiftValue).self,
+            genericArguments: [.type(Int.self)]
+        )
         let value = try unsafe make.unsafeInvoke(42)
         #expect(try value.withCopy { ($0 as? any CustomStringConvertible)?.description } == "42")
         let echo = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.echoFreshSuperclass<A>(" + valueType + ") -> " + valueType,
-            as: ((NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
-        #expect(try unsafe echo.unsafeInvoke(value).withCopy { ($0 as? any CustomStringConvertible)?.description } == "42")
+            as: ((NativeSwiftValue) -> NativeSwiftValue).self,
+            genericArguments: [.type(Int.self)]
+        )
+        #expect(
+            try unsafe echo.unsafeInvoke(value).withCopy {
+                ($0 as? any CustomStringConvertible)?.description
+            } == "42"
+        )
     }
 
     @Test func superclassConformanceWitnessesRespectTheCompilerStorageBoundary() async throws {
         typealias Value = any ExistentialHashSuperclass<Int> & FreshExistentialClass<Int>
-        let compatible = ABISwiftGetValueLayout(unsafeBitCast(Value.self, to: UnsafeRawPointer.self)).size == MemoryLayout<Value>.size
-        let valueType = "any ManagedSwiftFixtures.ExistentialHashSuperclass<A> & ManagedSwiftFixtures.FreshExistentialClass<Self.Element == A>"
+        let compatible =
+            ABISwiftGetValueLayout(unsafeBitCast(Value.self, to: UnsafeRawPointer.self)).size
+            == MemoryLayout<Value>.size
+        let valueType =
+            "any ManagedSwiftFixtures.ExistentialHashSuperclass<A> & ManagedSwiftFixtures.FreshExistentialClass<Self.Element == A>"
         do {
             let make = try await ABIRuntime.shared.swiftFunction(
-                named: "ManagedSwiftFixtures.makeFreshHashSuperclass<A where A: Swift.Hashable>(A) -> " + valueType,
-                as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+                named:
+                    "ManagedSwiftFixtures.makeFreshHashSuperclass<A where A: Swift.Hashable>(A) -> "
+                    + valueType,
+                as: ((Int) -> NativeSwiftValue).self,
+                genericArguments: [.type(Int.self)]
+            )
             #expect(compatible)
-            #expect(try unsafe make.unsafeInvoke(43).withCopy { ($0 as? any CustomStringConvertible)?.description } == "43")
+            #expect(
+                try unsafe make.unsafeInvoke(43).withCopy {
+                    ($0 as? any CustomStringConvertible)?.description
+                } == "43"
+            )
         } catch ABIResolutionError.unsupportedDeclaration(let reason) {
             #expect(!compatible && reason.hasPrefix("Unsupported Swift storage layout"))
         }
@@ -321,20 +521,36 @@ struct SwiftExistentialValueTests {
 
     @Test func nestedSuperclassArgumentsUseTheirDeclarationOrder() async throws {
         let nested = try await ABIRuntime.shared.swiftFunction(
-            named: "ManagedSwiftFixtures.makeFreshNestedSuperclass<A, B>(A, B) -> any ManagedSwiftFixtures.ExistentialOuter<A>.Inner<B> & ManagedSwiftFixtures.FreshExistentialClass<Self.Element == B>",
-            as: ((String, Int) -> NativeSwiftValue).self, genericArguments: [.type(String.self), .type(Int.self)])
-        #expect(try unsafe nested.unsafeInvoke("nested", 44).withCopy { ($0 as? any CustomStringConvertible)?.description } == "nested:44")
+            named:
+                "ManagedSwiftFixtures.makeFreshNestedSuperclass<A, B>(A, B) -> any ManagedSwiftFixtures.ExistentialOuter<A>.Inner<B> & ManagedSwiftFixtures.FreshExistentialClass<Self.Element == B>",
+            as: ((String, Int) -> NativeSwiftValue).self,
+            genericArguments: [.type(String.self), .type(Int.self)]
+        )
+        #expect(
+            try unsafe nested.unsafeInvoke("nested", 44).withCopy {
+                ($0 as? any CustomStringConvertible)?.description
+            } == "nested:44"
+        )
     }
 
     @Test func superclassSameTypeConstraintsKeepEveryWrittenArgument() async throws {
         typealias Value = any ExistentialPairSuperclass<[Int], Int> & FreshExistentialClass<Int>
-        let compatible = ABISwiftGetValueLayout(unsafeBitCast(Value.self, to: UnsafeRawPointer.self)).size == MemoryLayout<Value>.size
+        let compatible =
+            ABISwiftGetValueLayout(unsafeBitCast(Value.self, to: UnsafeRawPointer.self)).size
+            == MemoryLayout<Value>.size
         do {
             let make = try await ABIRuntime.shared.swiftFunction(
-                named: "ManagedSwiftFixtures.makeFreshPairSuperclass<A where A: Swift.Collection>(A) -> any ManagedSwiftFixtures.ExistentialPairSuperclass<A, A.Element> & ManagedSwiftFixtures.FreshExistentialClass<A.Element == A.Element>",
-                as: (([Int]) -> NativeSwiftValue).self, genericArguments: [.type([Int].self)])
+                named:
+                    "ManagedSwiftFixtures.makeFreshPairSuperclass<A where A: Swift.Collection>(A) -> any ManagedSwiftFixtures.ExistentialPairSuperclass<A, A.Element> & ManagedSwiftFixtures.FreshExistentialClass<A.Element == A.Element>",
+                as: (([Int]) -> NativeSwiftValue).self,
+                genericArguments: [.type([Int].self)]
+            )
             #expect(compatible)
-            #expect(try unsafe make.unsafeInvoke([42, 43]).withCopy { ($0 as? any CustomStringConvertible)?.description } == "[42, 43]")
+            #expect(
+                try unsafe make.unsafeInvoke([42, 43]).withCopy {
+                    ($0 as? any CustomStringConvertible)?.description
+                } == "[42, 43]"
+            )
         } catch ABIResolutionError.unsupportedDeclaration(let reason) {
             #expect(!compatible && reason.hasPrefix("Unsupported Swift storage layout"))
         }
@@ -343,27 +559,42 @@ struct SwiftExistentialValueTests {
     @Test func genericSuperclassCallbacksUseTheNativeContainer() async throws {
         typealias Value = any ExistentialSuperclass<Int> & ExistentialSource<Int>
         typealias Callback = NativeSwiftClosure<(Value) -> Value>
-        let native = "any ManagedSwiftFixtures.ExistentialSuperclass<A> & ManagedSwiftFixtures.ExistentialSource<Self.Element == A>"
+        let native =
+            "any ManagedSwiftFixtures.ExistentialSuperclass<A> & ManagedSwiftFixtures.ExistentialSource<Self.Element == A>"
         let apply = try await ABIRuntime.shared.swiftFunction(
-            named: "ManagedSwiftFixtures.applyGenericSuperclass<A>((" + native + ") -> " + native + ", " + native + ") -> " + native,
-            as: ((Callback, Value) -> Value).self, genericArguments: [.type(Int.self)])
+            named: "ManagedSwiftFixtures.applyGenericSuperclass<A>((" + native + ") -> " + native
+                + ", " + native + ") -> " + native,
+            as: ((Callback, Value) -> Value).self,
+            genericArguments: [.type(Int.self)]
+        )
         let object = ExistentialSuperclassValue(42)
         #expect(try unsafe apply.unsafeInvoke(.init { $0 }, object) === object)
         let make = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.makeGenericSuperclassClosure<A>(A) -> () -> " + native,
-            as: ((Int) -> NativeSwiftClosure<() -> Value>).self, genericArguments: [.type(Int.self)])
+            as: ((Int) -> NativeSwiftClosure<() -> Value>).self,
+            genericArguments: [.type(Int.self)]
+        )
         #expect(try unsafe make.unsafeInvoke(43).unsafeInvoke().element == 43)
     }
 
     @Test func superclassAssociatedTypeConformancesRetainTheirQualification() async throws {
         typealias Value = any ExistentialCollectionSuperclass<[Int]> & FreshExistentialClass<Int>
-        let compatible = ABISwiftGetValueLayout(unsafeBitCast(Value.self, to: UnsafeRawPointer.self)).size == MemoryLayout<Value>.size
+        let compatible =
+            ABISwiftGetValueLayout(unsafeBitCast(Value.self, to: UnsafeRawPointer.self)).size
+            == MemoryLayout<Value>.size
         do {
             let make = try await ABIRuntime.shared.swiftFunction(
-                named: "ManagedSwiftFixtures.makeFreshCollectionSuperclass<A where A: Swift.Collection, A.Element: Swift.Hashable>(A) -> any ManagedSwiftFixtures.ExistentialCollectionSuperclass<A> & ManagedSwiftFixtures.FreshExistentialClass<A.Element == A.Element>",
-                as: (([Int]) -> NativeSwiftValue).self, genericArguments: [.type([Int].self)])
+                named:
+                    "ManagedSwiftFixtures.makeFreshCollectionSuperclass<A where A: Swift.Collection, A.Element: Swift.Hashable>(A) -> any ManagedSwiftFixtures.ExistentialCollectionSuperclass<A> & ManagedSwiftFixtures.FreshExistentialClass<A.Element == A.Element>",
+                as: (([Int]) -> NativeSwiftValue).self,
+                genericArguments: [.type([Int].self)]
+            )
             #expect(compatible)
-            #expect(try unsafe make.unsafeInvoke([42]).withCopy { ($0 as? any CustomStringConvertible)?.description } == "[42]")
+            #expect(
+                try unsafe make.unsafeInvoke([42]).withCopy {
+                    ($0 as? any CustomStringConvertible)?.description
+                } == "[42]"
+            )
         } catch ABIResolutionError.unsupportedDeclaration(let reason) {
             #expect(!compatible && reason.hasPrefix("Unsupported Swift storage layout"))
         }
@@ -372,11 +603,15 @@ struct SwiftExistentialValueTests {
     @Test func compositionShapesKeepAssociatedTypeProtocolIdentity() async throws {
         let runtime = ABIRuntime.shared
         let left = try await runtime.swiftFunction(
-            named: "ManagedSwiftFixtures.makeLeftConstrainedComposition() -> any ManagedSwiftFixtures.RuntimeExtendedLeft & ManagedSwiftFixtures.RuntimeExtendedRight<Self.ManagedSwiftFixtures.RuntimeExtendedLeft.Element == Swift.Int>",
-            as: (() -> NativeSwiftValue).self)
+            named:
+                "ManagedSwiftFixtures.makeLeftConstrainedComposition() -> any ManagedSwiftFixtures.RuntimeExtendedLeft & ManagedSwiftFixtures.RuntimeExtendedRight<Self.ManagedSwiftFixtures.RuntimeExtendedLeft.Element == Swift.Int>",
+            as: (() -> NativeSwiftValue).self
+        )
         let right = try await runtime.swiftFunction(
-            named: "ManagedSwiftFixtures.makeRightConstrainedComposition() -> any ManagedSwiftFixtures.RuntimeExtendedLeft & ManagedSwiftFixtures.RuntimeExtendedRight<Self.ManagedSwiftFixtures.RuntimeExtendedRight.Element == Swift.Int>",
-            as: (() -> NativeSwiftValue).self)
+            named:
+                "ManagedSwiftFixtures.makeRightConstrainedComposition() -> any ManagedSwiftFixtures.RuntimeExtendedLeft & ManagedSwiftFixtures.RuntimeExtendedRight<Self.ManagedSwiftFixtures.RuntimeExtendedRight.Element == Swift.Int>",
+            as: (() -> NativeSwiftValue).self
+        )
         let first = try unsafe left.unsafeInvoke()
         let second = try unsafe right.unsafeInvoke()
         #expect(first.type != second.type)
@@ -388,14 +623,20 @@ struct SwiftExistentialValueTests {
 
     @Test func extendedExistentialCallbacksUseTheirContainerConvention() async throws {
         let runtime = ABIRuntime.shared
-        typealias Source = NativeSwiftClosure<(any ExistentialSource<Int>) -> any ExistentialSource<Int>>
-        let source = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.applyExtendedSource(_:_:)",
-            as: ((Source, any ExistentialSource<Int>) -> any ExistentialSource<Int>).self)
+        typealias Source = NativeSwiftClosure<
+            (any ExistentialSource<Int>) -> any ExistentialSource<Int>
+        >
+        let source = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.applyExtendedSource(_:_:)",
+            as: ((Source, any ExistentialSource<Int>) -> any ExistentialSource<Int>).self
+        )
         let value = ExistentialIntSource(42)
         #expect(try unsafe source.unsafeInvoke(.init { $0 }, value) === value)
         typealias CollectionBody = NativeSwiftClosure<(any Collection<Int>) -> any Collection<Int>>
-        let collection = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.applyExtendedCollection(_:_:)",
-            as: ((CollectionBody, any Collection<Int>) -> any Collection<Int>).self)
+        let collection = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.applyExtendedCollection(_:_:)",
+            as: ((CollectionBody, any Collection<Int>) -> any Collection<Int>).self
+        )
         let callback = try CollectionBody { $0 }
         let result: any Collection<Int> = try unsafe collection.unsafeInvoke(callback, [42])
         #expect(Array(result) == [42])
@@ -403,12 +644,21 @@ struct SwiftExistentialValueTests {
 
     @Test func anyAndProtocolContainersOpenInlineAndBoxedValues() async throws {
         let runtime = ABIRuntime.shared
-        let any = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.echoAny(_:)", as: ((Any) -> Any).self)
-        let echo = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.echoExistential(_:)",
-            as: ((any ExistentialValue) -> any ExistentialValue).self)
-        let open = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.openExistential(_:)",
-            as: ((any ExistentialValue) -> Int64).self)
-        let values: [any ExistentialValue] = [InlineExistentialValue(41), BoxedExistentialValue(ErrorLifetimeToken(), 42)]
+        let any = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.echoAny(_:)",
+            as: ((Any) -> Any).self
+        )
+        let echo = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.echoExistential(_:)",
+            as: ((any ExistentialValue) -> any ExistentialValue).self
+        )
+        let open = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.openExistential(_:)",
+            as: ((any ExistentialValue) -> Int64).self
+        )
+        let values: [any ExistentialValue] = [
+            InlineExistentialValue(41), BoxedExistentialValue(ErrorLifetimeToken(), 42),
+        ]
         for value in values {
             let erased = try unsafe any.unsafeInvoke(value)
             #expect((erased as? any ExistentialValue)?.number == value.number)
@@ -420,7 +670,10 @@ struct SwiftExistentialValueTests {
     }
 
     @Test func ownedResultsKeepBoxedPayloadsAliveUntilFinalRelease() async throws {
-        let call = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoAny(_:)", as: ((Any) -> Any).self)
+        let call = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.echoAny(_:)",
+            as: ((Any) -> Any).self
+        )
         let counts = ArgumentCounts()
         weak var observed: ErrorLifetimeToken?
         var result: Any?
@@ -438,9 +691,14 @@ struct SwiftExistentialValueTests {
     }
 
     @Test func compositionsKeepEveryProtocolWitness() async throws {
-        let call = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoComposition(_:)",
-            as: ((any ExistentialValue & ExistentialLabel) -> any ExistentialValue & ExistentialLabel).self)
-        for value: any ExistentialValue & ExistentialLabel in [InlineExistentialValue(41), BoxedExistentialValue(ErrorLifetimeToken(), 42)] {
+        let call = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.echoComposition(_:)",
+            as: ((any ExistentialValue & ExistentialLabel) -> any ExistentialValue
+                & ExistentialLabel).self
+        )
+        for value: any ExistentialValue & ExistentialLabel in [
+            InlineExistentialValue(41), BoxedExistentialValue(ErrorLifetimeToken(), 42),
+        ] {
             let result = try unsafe call.unsafeInvoke(value)
             #expect(result.number == value.number && result.label == value.label)
         }
@@ -448,32 +706,49 @@ struct SwiftExistentialValueTests {
 
     @Test func classConstrainedContainersUseDirectAndLargeIndirectLayouts() async throws {
         let runtime = ABIRuntime.shared
-        let small = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.echoClassExistential(_:)",
-            as: ((any ExistentialObjectValue) -> any ExistentialObjectValue).self)
-        let large = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.echoManyClassExistential(_:)",
-            as: ((ManyObjectProtocols) -> ManyObjectProtocols).self)
+        let small = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.echoClassExistential(_:)",
+            as: ((any ExistentialObjectValue) -> any ExistentialObjectValue).self
+        )
+        let large = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.echoManyClassExistential(_:)",
+            as: ((ManyObjectProtocols) -> ManyObjectProtocols).self
+        )
         let object = ExistentialObject(ErrorLifetimeToken(), 42)
         #expect(try unsafe small.unsafeInvoke(object) === object)
         #expect(try unsafe large.unsafeInvoke(object) === object)
     }
 
     @Test func errorExistentialPreservesItsBoxAndPayload() async throws {
-        let call = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoErrorExistential(_:)",
-            as: ((any Error) -> any Error).self)
+        let call = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.echoErrorExistential(_:)",
+            as: ((any Error) -> any Error).self
+        )
         let token = ErrorLifetimeToken()
         let result = try unsafe call.unsafeInvoke(ManagedFailure(token, 42))
-        #expect((result as? ManagedFailure)?.token === token && (result as? ManagedFailure)?.code == 42)
+        #expect(
+            (result as? ManagedFailure)?.token === token && (result as? ManagedFailure)?.code == 42
+        )
     }
 
     @Test func optionalContainersDistinguishNilFromPayloads() async throws {
         let runtime = ABIRuntime.shared
-        let any = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.echoOptionalAny(_:)", as: ((Any?) -> Any?).self)
-        let value = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.echoOptionalExistential(_:)",
-            as: (((any ExistentialValue)?) -> (any ExistentialValue)?).self)
-        let object = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.echoOptionalClass(_:)",
-            as: (((any ExistentialObjectValue)?) -> (any ExistentialObjectValue)?).self)
-        let error = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.echoOptionalError(_:)",
-            as: (((any Error)?) -> (any Error)?).self)
+        let any = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.echoOptionalAny(_:)",
+            as: ((Any?) -> Any?).self
+        )
+        let value = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.echoOptionalExistential(_:)",
+            as: (((any ExistentialValue)?) -> (any ExistentialValue)?).self
+        )
+        let object = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.echoOptionalClass(_:)",
+            as: (((any ExistentialObjectValue)?) -> (any ExistentialObjectValue)?).self
+        )
+        let error = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.echoOptionalError(_:)",
+            as: (((any Error)?) -> (any Error)?).self
+        )
         #expect(try unsafe any.unsafeInvoke(nil) == nil)
         #expect(try unsafe any.unsafeInvoke("value") as? String == "value")
         #expect(try unsafe value.unsafeInvoke(nil) == nil)
@@ -487,24 +762,40 @@ struct SwiftExistentialValueTests {
 
     @Test func consumingAndInoutPreserveFailureSemantics() async throws {
         let runtime = ABIRuntime.shared
-        let consume = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.consumeExistential(_:_:)",
-            as: ((NativeSwiftConsuming<any ExistentialValue>, Bool) throws(ScalarFailure) -> Int64).self)
-        let replace = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.replaceExistential(_:_:_:)",
-            as: ((NativeSwiftInout<any ExistentialValue>, any ExistentialValue, Bool) throws(ScalarFailure) -> Void).self)
+        let consume = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.consumeExistential(_:_:)",
+            as: ((NativeSwiftConsuming<any ExistentialValue>, Bool) throws(ScalarFailure) -> Int64)
+                .self
+        )
+        let replace = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.replaceExistential(_:_:_:)",
+            as: ((NativeSwiftInout<any ExistentialValue>, any ExistentialValue, Bool)
+                throws(ScalarFailure) -> Void).self
+        )
         let value: any ExistentialValue = BoxedExistentialValue(ErrorLifetimeToken(), 42)
         #expect(try unsafe consume.unsafeInvoke(.init(value), false) == 42)
-        do { _ = try unsafe consume.unsafeInvoke(.init(value), true); Issue.record("Expected failure") }
-        catch let error as NativeSwiftError { error.withUnderlyingError { #expect(($0 as? ScalarFailure)?.code == 42) } }
+        do {
+            _ = try unsafe consume.unsafeInvoke(.init(value), true);
+            Issue.record("Expected failure")
+        } catch let error as NativeSwiftError {
+            error.withUnderlyingError { #expect(($0 as? ScalarFailure)?.code == 42) }
+        }
         #expect(value.number == 42)
         let buffer = NativeSwiftInout<any ExistentialValue>(InlineExistentialValue(1))
-        do { try unsafe replace.unsafeInvoke(buffer, value, true); Issue.record("Expected failure") }
-        catch let error as NativeSwiftError { error.withUnderlyingError { #expect(($0 as? ScalarFailure)?.code == 42) } }
+        do {
+            try unsafe replace.unsafeInvoke(buffer, value, true); Issue.record("Expected failure")
+        } catch let error as NativeSwiftError {
+            error.withUnderlyingError { #expect(($0 as? ScalarFailure)?.code == 42) }
+        }
         #expect(buffer.value.number == 42 && buffer.value is BoxedExistentialValue)
     }
 
     @Test func asyncContainersRetainValuesAcrossSuspensionAndCancellation() async throws {
-        let call = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.asyncExistential(_:_:_:)",
-            as: (@concurrent (AsyncGate, any ExistentialValue, Bool) async throws(ScalarFailure) -> any ExistentialValue).self)
+        let call = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.asyncExistential(_:_:_:)",
+            as: (@concurrent (AsyncGate, any ExistentialValue, Bool) async throws(ScalarFailure) ->
+                any ExistentialValue).self
+        )
         for cancel in [false, true] {
             let gate = AsyncGate()
             let counts = ArgumentCounts()
@@ -520,8 +811,9 @@ struct SwiftExistentialValueTests {
             #expect(observed != nil)
             if cancel { task.cancel() }
             await gate.open()
-            do { #expect(try await task.value.number == 42 && !cancel) }
-            catch let error as NativeSwiftError {
+            do { #expect(try await task.value.number == 42 && !cancel) } catch let error
+                as NativeSwiftError
+            {
                 error.withUnderlyingError { #expect(cancel && ($0 as? ScalarFailure)?.code == 42) }
                 #expect(observed == nil && counts.destructions == 1)
             }
@@ -531,55 +823,97 @@ struct SwiftExistentialValueTests {
     @Test func generatedAndReturnedClosuresCarryOpaqueContainers() async throws {
         typealias Callback = NativeSwiftClosure<(any ExistentialValue) -> any ExistentialValue>
         let runtime = ABIRuntime.shared
-        let apply = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.applyExistentialClosure(_:_:)",
-            as: ((Callback, any ExistentialValue) -> any ExistentialValue).self)
+        let apply = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.applyExistentialClosure(_:_:)",
+            as: ((Callback, any ExistentialValue) -> any ExistentialValue).self
+        )
         let callback = try Callback { InlineExistentialValue($0.number + 1) }
-        #expect(try unsafe apply.unsafeInvoke(callback, BoxedExistentialValue(ErrorLifetimeToken(), 41)).number == 42)
-        let factory = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeExistentialClosure(_:)",
-            as: ((any ExistentialValue) -> Callback).self)
-        let stored = try unsafe factory.unsafeInvoke(BoxedExistentialValue(ErrorLifetimeToken(), 42))
+        #expect(
+            try unsafe apply.unsafeInvoke(callback, BoxedExistentialValue(ErrorLifetimeToken(), 41))
+                .number == 42
+        )
+        let factory = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeExistentialClosure(_:)",
+            as: ((any ExistentialValue) -> Callback).self
+        )
+        let stored = try unsafe factory.unsafeInvoke(
+            BoxedExistentialValue(ErrorLifetimeToken(), 42)
+        )
         #expect(try unsafe stored.unsafeInvoke(InlineExistentialValue(0)).number == 42)
         #expect(try unsafe stored.unsafeInvoke(InlineExistentialValue(7)).number == 7)
 
-        let applyAny = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.applyAnyExistentialClosure(_:_:)",
-            as: ((NativeSwiftClosure<(Any) -> Any>, Any) -> Any).self)
-        #expect(try unsafe applyAny.unsafeInvoke(NativeSwiftClosure<(Any) -> Any> { $0 }, "value") as? String == "value")
+        let applyAny = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.applyAnyExistentialClosure(_:_:)",
+            as: ((NativeSwiftClosure<(Any) -> Any>, Any) -> Any).self
+        )
+        #expect(
+            try unsafe applyAny.unsafeInvoke(NativeSwiftClosure<(Any) -> Any> { $0 }, "value")
+                as? String == "value"
+        )
     }
 
     @Test func generatedClassAndErrorCallbacksUseTheirDistinctConventions() async throws {
         let runtime = ABIRuntime.shared
-        let apply = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.applyClassExistentialClosure(_:_:)",
-            as: ((NativeSwiftClosure<(any ExistentialObjectValue) -> any ExistentialObjectValue>, any ExistentialObjectValue) -> any ExistentialObjectValue).self)
-        let large = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.applyManyClassExistentialClosure(_:_:)",
-            as: ((NativeSwiftClosure<(ManyObjectProtocols) -> ManyObjectProtocols>, ManyObjectProtocols) -> ManyObjectProtocols).self)
-        let error = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.applyErrorExistentialClosure(_:_:)",
-            as: ((NativeSwiftClosure<(any Error) -> any Error>, any Error) -> any Error).self)
+        let apply = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.applyClassExistentialClosure(_:_:)",
+            as: ((
+                NativeSwiftClosure<(any ExistentialObjectValue) -> any ExistentialObjectValue>,
+                any ExistentialObjectValue
+            ) -> any ExistentialObjectValue).self
+        )
+        let large = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.applyManyClassExistentialClosure(_:_:)",
+            as: ((
+                NativeSwiftClosure<(ManyObjectProtocols) -> ManyObjectProtocols>,
+                ManyObjectProtocols
+            ) -> ManyObjectProtocols).self
+        )
+        let error = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.applyErrorExistentialClosure(_:_:)",
+            as: ((NativeSwiftClosure<(any Error) -> any Error>, any Error) -> any Error).self
+        )
         let object = ExistentialObject(ErrorLifetimeToken(), 42)
         #expect(try unsafe apply.unsafeInvoke(.init { $0 }, object) === object)
         #expect(try unsafe large.unsafeInvoke(.init { $0 }, object) === object)
-        #expect((try unsafe error.unsafeInvoke(.init { $0 }, ScalarFailure(42)) as? ScalarFailure)?.code == 42)
+        #expect(
+            (try unsafe error.unsafeInvoke(.init { $0 }, ScalarFailure(42)) as? ScalarFailure)?.code
+                == 42
+        )
     }
 
     @Test func optionalCallbacksPreserveNilAndAuthentication() async throws {
         let runtime = ABIRuntime.shared
-        typealias Object = NativeSwiftClosure<((any ExistentialObjectValue)?) -> (any ExistentialObjectValue)?>
+        typealias Object = NativeSwiftClosure<
+            ((any ExistentialObjectValue)?) -> (any ExistentialObjectValue)?
+        >
         typealias Failure = NativeSwiftClosure<((any Error)?) -> (any Error)?>
-        let object = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.applyOptionalClassClosure(_:_:)",
-            as: ((Object, (any ExistentialObjectValue)?) -> (any ExistentialObjectValue)?).self)
-        let error = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.applyOptionalErrorClosure(_:_:)",
-            as: ((Failure, (any Error)?) -> (any Error)?).self)
+        let object = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.applyOptionalClassClosure(_:_:)",
+            as: ((Object, (any ExistentialObjectValue)?) -> (any ExistentialObjectValue)?).self
+        )
+        let error = try await runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.applyOptionalErrorClosure(_:_:)",
+            as: ((Failure, (any Error)?) -> (any Error)?).self
+        )
         #expect(try unsafe object.unsafeInvoke(.init { $0 }, nil) == nil)
         #expect(try unsafe error.unsafeInvoke(.init { $0 }, nil) == nil)
     }
 
     @Test func asyncGeneratedCallbackReturnsAnOwnedExistential() async throws {
-        typealias Callback = NativeSwiftClosure<@Sendable @concurrent (any ExistentialValue) async -> any ExistentialValue>
+        typealias Callback = NativeSwiftClosure<
+            @Sendable @concurrent (any ExistentialValue) async -> any ExistentialValue
+        >
         let body: @Sendable (any ExistentialValue) async -> any ExistentialValue = { value in
             await Task.yield()
             return InlineExistentialValue(value.number + 1)
         }
-        let apply = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.applyAsyncExistentialClosure(_:_:)",
-            as: (@concurrent (Callback, any ExistentialValue) async -> any ExistentialValue).self)
-        #expect(try unsafe await apply.unsafeInvoke(Callback(body), InlineExistentialValue(41)).number == 42)
+        let apply = try await ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.applyAsyncExistentialClosure(_:_:)",
+            as: (@concurrent (Callback, any ExistentialValue) async -> any ExistentialValue).self
+        )
+        #expect(
+            try unsafe await apply.unsafeInvoke(Callback(body), InlineExistentialValue(41)).number
+                == 42
+        )
     }
 }

@@ -1,3 +1,4 @@
+import ABIBridgeRuntime
 import ABIBridgeTestSupport
 #if DEBUG
 @testable import ABIBridge
@@ -1160,8 +1161,14 @@ struct NativeSwiftClosureTests {
         let word = try CValueType(scalar: ABIValueInt64)
         let direct = try SwiftCallInterface.cached(result: word, parameters: [word])
         let indirect = try CValueType(indirectSwiftSize: 8, alignment: 8)
-        #expect(try SwiftCallInterface.cached(result: indirect, parameters: [word]) !== direct)
-        #expect(try SwiftCallInterface.cached(result: word, parameters: [indirect]) !== direct)
+        #expect(
+            try SwiftCallInterface.cached(result: indirect, parameters: [word]).runtime
+                !== direct.runtime
+        )
+        #expect(
+            try SwiftCallInterface.cached(result: word, parameters: [indirect]).runtime
+                !== direct.runtime
+        )
         let typed = try SwiftCallInterface.cached(
             result: word,
             parameters: [word],
@@ -1172,7 +1179,10 @@ struct NativeSwiftClosureTests {
             parameters: [word],
             errorPlan: SwiftErrorPlan.make((any Error).self)
         )
-        #expect(typed !== untyped && typed !== direct && untyped !== direct)
+        #expect(
+            typed.runtime !== untyped.runtime && typed.runtime !== direct.runtime
+                && untyped.runtime !== direct.runtime
+        )
         let callback = try NativeSwiftClosure { (value: Int64) in value + 1 }
         for size in 1...80 {
             _ = try SwiftCallInterface.cached(

@@ -48,8 +48,8 @@ final class SwiftSyntax: @unchecked Sendable {
 
     static func extendedMetadataType(_ type: Any.Type) throws -> Node? {
         let pointer = unsafeBitCast(type, to: UnsafeRawPointer.self)
-        let kind = pointer.load(as: UInt.self)
-        if kind == 0x307 {
+        let kind = runtimeMetadataKind(type)
+        if kind == .extendedExistential {
             guard let handle = ABICopySwiftExtendedExistentialTypeSyntax(pointer) else {
                 throw ABIResolutionError.metadataUnavailable(
                     "The extended existential's type expression is unavailable."
@@ -74,7 +74,7 @@ final class SwiftSyntax: @unchecked Sendable {
         if let metatype = SwiftMetatypeMetadata(type), let instance = metatype.instance,
             let wrapped = try extendedMetadataType(instance)
         {
-            return try containerType(kind: UInt32(kind), elements: [wrapped])
+            return try containerType(kind: UInt32(kind!.rawValue), elements: [wrapped])
         }
         if let tuple = SwiftTupleMetadata(type) {
             let extended = try tuple.elements.map { try extendedMetadataType($0.type) }
@@ -84,7 +84,7 @@ final class SwiftSyntax: @unchecked Sendable {
             }
             return try containerType(kind: 0x301, elements: elements, labels: tuple.labels)
         }
-        if kind == 0x302 {
+        if kind == .function {
             let info = try SwiftFunctionMetadata(type)
             let types = [info.result] + info.parameters
             let extended = try types.map(extendedMetadataType)

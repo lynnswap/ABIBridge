@@ -939,7 +939,7 @@ struct SwiftGenericBinding: Sendable {
             }
             for metadata in knownTypes.values {
                 guard
-                    unsafeBitCast(metadata, to: UnsafeRawPointer.self).load(as: UInt.self) == 0x307
+                    runtimeMetadataKind(metadata) == .extendedExistential
                 else { continue }
                 var actual = try SwiftExtendedExistentialMetadata.formalType(metadata)
                 var actualDepth = 0

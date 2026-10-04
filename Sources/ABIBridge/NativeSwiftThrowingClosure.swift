@@ -5,17 +5,33 @@ final class SwiftThrowingClosureBody {
     let codeOwner: SwiftClosureCodeOwner?
     let callbackFactory: SwiftClosureBodyFactory?
     let initializeResult: SwiftResultInitializer?
-    let invoke: (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer, UnsafeMutableRawPointer?) -> Bool
-    init(retainingCode codeOwner: Any? = nil, codeLifetime: SwiftValueCodeLifetime? = nil, callbackFactory: SwiftClosureBodyFactory? = nil,
-         initializeResult: SwiftResultInitializer? = nil,
-         _ invoke: @escaping (UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer, UnsafeMutableRawPointer?) -> Bool) {
+    let invoke:
+        (
+            UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer,
+            UnsafeMutableRawPointer?
+        ) -> Bool
+    init(
+        retainingCode codeOwner: Any? = nil,
+        codeLifetime: SwiftValueCodeLifetime? = nil,
+        callbackFactory: SwiftClosureBodyFactory? = nil,
+        initializeResult: SwiftResultInitializer? = nil,
+        _ invoke:
+            @escaping (
+                UnsafePointer<UnsafeMutableRawPointer?>?, UnsafeMutableRawPointer,
+                UnsafeMutableRawPointer?
+            ) -> Bool
+    ) {
         self.callbackFactory = callbackFactory
         self.codeOwner = SwiftClosureCodeOwner(codeOwner, codeLifetime: codeLifetime)
         if let initialize = initializeResult {
             self.initializeResult = { @Sendable offset, size, destination, source in
-                SwiftValueCodeLifetime.withCurrent(codeLifetime) { initialize(offset, size, destination, source) }
+                SwiftValueCodeLifetime.withCurrent(codeLifetime) {
+                    initialize(offset, size, destination, source)
+                }
             }
-        } else { self.initializeResult = nil }
+        } else {
+            self.initializeResult = nil
+        }
         self.invoke = { arguments, result, error in
             SwiftValueCodeLifetime.withCurrent(codeLifetime) { invoke(arguments, result, error) }
         }
@@ -33,15 +49,25 @@ final class SwiftClosureContext {
     }
 
     func value(discriminator: UInt16) -> ABISwiftClosureValue {
-        ABISwiftClosureValue(function: ABISignSwiftClosureFunction(function, discriminator),
-            context: Unmanaged.passUnretained(self).toOpaque())
+        ABISwiftClosureValue(
+            function: ABISignSwiftClosureFunction(function, discriminator),
+            context: Unmanaged.passUnretained(self).toOpaque()
+        )
     }
 
-    func storage(discriminator: UInt16, codeLifetime: SwiftValueCodeLifetime? = nil) throws -> SwiftClosureStorage {
+    func storage(
+        discriminator: UInt16,
+        codeLifetime: SwiftValueCodeLifetime? = nil
+    ) throws -> SwiftClosureStorage {
         let value = value(discriminator: discriminator)
         ABIRetainSwiftClosureContext(value.context)
-        return try SwiftClosureStorage(adopting: value, discriminator: discriminator, retaining: nil,
-            codeLifetime: codeLifetime, implementation: entry.implementation)
+        return try SwiftClosureStorage(
+            adopting: value,
+            discriminator: discriminator,
+            retaining: nil,
+            codeLifetime: codeLifetime,
+            implementation: entry.implementation
+        )
     }
 }
 
@@ -50,26 +76,34 @@ extension SwiftClosureCallbackOwner {
         var functions = ABISwiftThrowingClosureCallbackFunctions()
         functions.usesNativeContext = true
         functions.invoke = { context, arguments, result, error in
-            Unmanaged<SwiftClosureContext>.fromOpaque(context!).takeUnretainedValue().body.invoke(arguments, result!, error)
+            Unmanaged<SwiftClosureContext>.fromOpaque(context!).takeUnretainedValue().body.invoke(
+                arguments,
+                result!,
+                error
+            )
         }
         functions.initializeResult = { context, offset, size, destination, source in
-            let body = Unmanaged<SwiftClosureContext>.fromOpaque(context!).takeUnretainedValue().body
-            if let initialize = body.initializeResult { initialize(offset, size, destination!, source!) }
-            else { destination!.copyMemory(from: source!, byteCount: size) }
+            let body = Unmanaged<SwiftClosureContext>.fromOpaque(context!).takeUnretainedValue()
+                .body
+            if let initialize = body.initializeResult {
+                initialize(offset, size, destination!, source!)
+            } else {
+                destination!.copyMemory(from: source!, byteCount: size)
+            }
         }
         functions.copyCodeOwner = { context in
-            let owner = Unmanaged<SwiftClosureContext>.fromOpaque(context!).takeUnretainedValue().body.codeOwner
+            let owner = Unmanaged<SwiftClosureContext>.fromOpaque(context!).takeUnretainedValue()
+                .body.codeOwner
             return owner.map { Unmanaged.passRetained($0).toOpaque() }
         }
         functions.copyBodyOwner = { context in
-            let factory = Unmanaged<SwiftClosureContext>.fromOpaque(context!).takeUnretainedValue().body.callbackFactory
+            let factory = Unmanaged<SwiftClosureContext>.fromOpaque(context!).takeUnretainedValue()
+                .body.callbackFactory
             return factory.map { Unmanaged.passRetained($0).toOpaque() }
         }
-        var failure: OpaquePointer?
-        guard let handle = ABICreateSwiftThrowingClosureCallback(interface.handle, functions, nil, &failure) else {
-            throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftClosure")
-        }
-        try self.init(handle: handle)
+        self.init(
+            try withRuntimeErrors { try interface.runtime.closureEntry(functions: functions) }
+        )
     }
 }
 
@@ -77,29 +111,54 @@ extension SwiftClosureCallbackOwner {
 // that declaration's value plans directly, without an intermediate host ABI call.
 final class SwiftClosureBodyFactory {
     enum Preparation {
-        case synchronous((SwiftGenericClosurePlan?, SwiftClosureBodyFactory, Any?) throws -> SwiftThrowingClosureBody)
-        case asynchronous((SwiftGenericClosurePlan?, SwiftClosureBodyFactory, Any?) throws -> SwiftAsyncClosureBody)
+        case synchronous(
+            (SwiftGenericClosurePlan?, SwiftClosureBodyFactory, Any?) throws ->
+                SwiftThrowingClosureBody
+        )
+        case asynchronous(
+            (SwiftGenericClosurePlan?, SwiftClosureBodyFactory, Any?) throws ->
+                SwiftAsyncClosureBody
+        )
     }
     let signature: Any.Type
     private let preparation: Preparation
-    init(signature: Any.Type, synchronous: @escaping (SwiftGenericClosurePlan?, SwiftClosureBodyFactory, Any?) throws -> SwiftThrowingClosureBody) {
+    init(
+        signature: Any.Type,
+        synchronous:
+            @escaping (SwiftGenericClosurePlan?, SwiftClosureBodyFactory, Any?) throws ->
+            SwiftThrowingClosureBody
+    ) {
         self.signature = signature
         preparation = .synchronous(synchronous)
     }
-    init(signature: Any.Type, asynchronous: @escaping (SwiftGenericClosurePlan?, SwiftClosureBodyFactory, Any?) throws -> SwiftAsyncClosureBody) {
+    init(
+        signature: Any.Type,
+        asynchronous:
+            @escaping (SwiftGenericClosurePlan?, SwiftClosureBodyFactory, Any?) throws ->
+            SwiftAsyncClosureBody
+    ) {
         self.signature = signature
         preparation = .asynchronous(asynchronous)
     }
-    func synchronous(plan: SwiftGenericClosurePlan?, retainingCode owner: Any?) throws -> SwiftThrowingClosureBody {
-        guard case .synchronous(let prepare) = preparation else { preconditionFailure("The callback's effects agree with its native plan.") }
+    func synchronous(
+        plan: SwiftGenericClosurePlan?,
+        retainingCode owner: Any?
+    ) throws -> SwiftThrowingClosureBody {
+        guard case .synchronous(let prepare) = preparation else {
+            preconditionFailure("The callback's effects agree with its native plan.")
+        }
         return try prepare(plan, self, owner)
     }
-    func asynchronous(plan: SwiftGenericClosurePlan?, retainingCode owner: Any?) throws -> SwiftAsyncClosureBody {
-        guard case .asynchronous(let prepare) = preparation else { preconditionFailure("The callback's effects agree with its native plan.") }
+    func asynchronous(
+        plan: SwiftGenericClosurePlan?,
+        retainingCode owner: Any?
+    ) throws -> SwiftAsyncClosureBody {
+        guard case .asynchronous(let prepare) = preparation else {
+            preconditionFailure("The callback's effects agree with its native plan.")
+        }
         return try prepare(plan, self, owner)
     }
 }
-
 
 // A host body can bind directly to a native declaration. Its canonical native
 // value is prepared only when used, and never owns this holder through its body.
@@ -110,8 +169,11 @@ final class SwiftClosureHost {
     private let prepare: () throws -> SwiftClosureCall
     private var native: SwiftClosureCall?
 
-    init(factory: SwiftClosureBodyFactory, codeLifetime: SwiftValueCodeLifetime,
-         prepare: @escaping () throws -> SwiftClosureCall) {
+    init(
+        factory: SwiftClosureBodyFactory,
+        codeLifetime: SwiftValueCodeLifetime,
+        prepare: @escaping () throws -> SwiftClosureCall
+    ) {
         self.factory = factory; self.codeLifetime = codeLifetime; self.prepare = prepare
     }
 
@@ -131,20 +193,33 @@ final class SwiftClosureHost {
 }
 
 extension SwiftClosureBodyFactory {
-    func encode(plan: SwiftGenericClosurePlan, retainingCode owner: Any?,
-                codeLifetime: SwiftValueCodeLifetime?) throws -> NativeValueStorage {
+    func encode(
+        plan: SwiftGenericClosurePlan,
+        retainingCode owner: Any?,
+        codeLifetime: SwiftValueCodeLifetime?
+    ) throws -> NativeValueStorage {
         try plan.validateCallbackConversion()
         switch plan.transport {
         case .synchronous(let interface):
-            let context = try SwiftClosureContext(interface: interface,
-                body: synchronous(plan: plan, retainingCode: owner))
-            return SwiftClosureStorage.copy(context.value(discriminator: plan.discriminator),
-                retaining: context, codeLifetime: codeLifetime)
+            let context = try SwiftClosureContext(
+                interface: interface,
+                body: synchronous(plan: plan, retainingCode: owner)
+            )
+            return SwiftClosureStorage.copy(
+                context.value(discriminator: plan.discriminator),
+                retaining: context,
+                codeLifetime: codeLifetime
+            )
         case .asynchronous(let interface, _):
-            let context = try SwiftAsyncClosureContext(interface: interface,
-                body: asynchronous(plan: plan, retainingCode: owner))
-            return SwiftClosureStorage.copy(context.value(discriminator: plan.discriminator),
-                retaining: context, codeLifetime: codeLifetime)
+            let context = try SwiftAsyncClosureContext(
+                interface: interface,
+                body: asynchronous(plan: plan, retainingCode: owner)
+            )
+            return SwiftClosureStorage.copy(
+                context.value(discriminator: plan.discriminator),
+                retaining: context,
+                codeLifetime: codeLifetime
+            )
         }
     }
 }

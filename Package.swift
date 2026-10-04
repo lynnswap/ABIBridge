@@ -42,8 +42,6 @@ let package = Package(
             name: "ABIBridge",
             dependencies: [
                 "ABIBridgeCore", "ABIBridgeObjCXX", "ABIBridgeRuntime",
-                .product(name: "MachOKit", package: "MachOKit"),
-                .product(name: "ObjCDump", package: "swift-objc-dump"),
             ],
             swiftSettings: strictSwiftSettings
         ),
@@ -104,7 +102,10 @@ let package = Package(
         ),
         .testTarget(
             name: "ABIBridgeRuntimeTests",
-            dependencies: ["ABIBridgeRuntime", "ABIBridgeTestSupport", "ObjectiveCFixtures"],
+            dependencies: [
+                "ABIBridgeRuntime", "ABIBridgeTestSupport", "ObjectiveCFixtures",
+                "ManagedSwiftFixtures", "ManagedSwiftAdapters",
+            ],
             swiftSettings: strictSwiftSettings
         ),
         .testTarget(
