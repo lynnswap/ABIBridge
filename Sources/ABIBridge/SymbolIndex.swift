@@ -311,7 +311,11 @@ final class SymbolIndex {
     private lazy var exportTrie = macho.exportTrie
     private var localSymbols: [IndexedSymbol] = []
     private var swiftTableIndices: [Int]?
-    private var sourceSymbols: [SymbolCandidateScope: [IndexedSymbol]] = [:]
+    private struct SourceScope: Hashable {
+        let candidates: SymbolCandidateScope
+        let protocolDescriptorsOnly: Bool
+    }
+    private var sourceSymbols: [SourceScope: [IndexedSymbol]] = [:]
     private var sharedCacheScopes: Set<SymbolCandidateScope> = []
     private enum SwiftBucket { case literal, fallback }
     private struct Scope: Hashable, Sendable {
@@ -386,7 +390,7 @@ final class SymbolIndex {
         default: break
         }
         guard !additions.isEmpty else { return }
-        let fallback = (sourceSymbols[.swiftFallback], decoded[Self.swiftFallbackScope], swiftExtensions[Self.swiftFallbackScope], swiftMembers[Self.swiftFallbackScope])
+        let fallback = (sourceSymbols.filter { $0.key.candidates == .swiftFallback }, decoded[Self.swiftFallbackScope], swiftExtensions[Self.swiftFallbackScope], swiftMembers[Self.swiftFallbackScope])
         localSymbols += additions
         sourceSymbols.removeAll()
         decoded.removeAll()
@@ -394,7 +398,7 @@ final class SymbolIndex {
         swiftMembers.removeAll()
         linkerNames.removeAll()
         if !changesFallback {
-            sourceSymbols[.swiftFallback] = fallback.0
+            sourceSymbols = fallback.0
             decoded[Self.swiftFallbackScope] = fallback.1
             swiftExtensions[Self.swiftFallbackScope] = fallback.2
             swiftMembers[Self.swiftFallbackScope] = fallback.3
@@ -410,8 +414,10 @@ final class SymbolIndex {
     private func tableSymbols(matching predicate: (UnsafePointer<CChar>) -> Bool) -> [IndexedSymbol] {
         if let table = macho.symbols64 {
             var result: [IndexedSymbol] = []
-            for index in 0..<table.numberOfSymbols {
+            var index = 0
+            while index < table.numberOfSymbols {
                 let entry = table.symbols[index]
+                index += 1
                 guard Int32(entry.n_type) & N_TYPE == N_SECT else { continue }
                 let name = table.stringBase.advanced(by: Int(entry.n_un.n_strx))
                 guard predicate(name) else { continue }
@@ -490,16 +496,21 @@ final class SymbolIndex {
         return nil
     }
 
-    private func symbols(for query: SymbolQuery, swiftBucket: SwiftBucket?) -> [IndexedSymbol] {
-        let scope = swiftBucket == .fallback ? SymbolCandidateScope.swiftFallback : query.candidateScope
+    private func symbols(for query: SymbolQuery, swiftBucket: SwiftBucket?, protocolDescriptorsOnly: Bool = false) -> [IndexedSymbol] {
+        let scope = SourceScope(candidates: swiftBucket == .fallback ? .swiftFallback : query.candidateScope,
+                                protocolDescriptorsOnly: protocolDescriptorsOnly)
         if let cached = sourceSymbols[scope] { return cached }
         let prefixes = DeclarationKey.symbolPrefixes(for: query.declaration.language)
         let accepts: (UnsafePointer<CChar>) -> Bool = { raw in
+            if protocolDescriptorsOnly {
+                let count = strlen(raw)
+                guard count >= 2, raw[count - 2] == 77, raw[count - 1] == 112 else { return false }
+            }
             guard query.acceptsCandidate(raw) else { return false }
             guard let swiftBucket else { return true }
             return SwiftModuleFilter.literalModulePrefix(raw) == (swiftBucket == .literal)
         }
-        var symbols = query.declaration.language == .swift
+        var symbols = query.declaration.language == .swift && !protocolDescriptorsOnly
             ? swiftSymbols(matching: accepts) : tableSymbols(matching: accepts)
         if let trie = exportTrie {
             symbols += filteredExports(in: trie, prefixes: prefixes, query: query, swiftBucket: swiftBucket, accepts: accepts)
@@ -557,9 +568,10 @@ final class SymbolIndex {
         if declaration.language == .swift {
             if declaration.name.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("protocol descriptor for ") {
                 // Mp identifies a protocol descriptor in Swift's stable mangling.
-                // Keep the full source buckets for subsequent non-descriptor queries.
-                let candidates = symbols(for: query, swiftBucket: .literal) + symbols(for: query, swiftBucket: .fallback)
-                return Self.matching(candidates.filter { $0.name.hasSuffix("Mp") }, query: query,
+                // Descriptor coverage must not hide later ordinary declarations.
+                let candidates = symbols(for: query, swiftBucket: .literal, protocolDescriptorsOnly: true)
+                    + symbols(for: query, swiftBucket: .fallback, protocolDescriptorsOnly: true)
+                return Self.matching(candidates, query: query,
                     extensionsOnly: extensionsOnly, genericContext: genericContext, unsupported: &unsupported)
             }
             return indexedMatches(query, extensionsOnly: extensionsOnly, swiftBucket: .literal, genericContext: genericContext, unsupported: &unsupported)

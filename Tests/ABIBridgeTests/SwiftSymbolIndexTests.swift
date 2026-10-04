@@ -22,7 +22,7 @@ struct SwiftSymbolIndexTests {
         let first = NativeDeclaration(name: "protocol descriptor for First.Readable", language: .swift, kind: .data)
         let second = NativeDeclaration(name: "protocol descriptor for Second.Readable", language: .swift, kind: .data)
         let function = NativeDeclaration(name: "First.echo() -> ()", language: .swift)
-        for declaration in [first, function, second, first] {
+        for declaration in [first, function, second, first, function] {
             let symbol = try #require(try index.resolve(declaration, source: .image))
             #expect(symbol.image.identity == image.identity)
         }
@@ -65,7 +65,9 @@ struct SwiftSymbolIndexTests {
             #expect(resolved.linkageName == symbol.name)
         }
         let index = SymbolIndex(image: image)
-        index.appendSharedCacheSymbols([compressed, literal], matching: query)
+        index.appendSharedCacheSymbols([compressed], matching: query)
+        #expect(try index.resolve(query, source: .sharedCache)?.linkageName == compressed.name)
+        index.appendSharedCacheSymbols([literal], matching: query)
         do {
             _ = try index.resolve(query, source: .sharedCache)
             Issue.record("Literal and compressed protocol descriptors at different addresses must remain ambiguous")
