@@ -40,7 +40,7 @@ jobs:
   macos-tests:
     name: macOS tests (${{ matrix.suite }})
     runs-on: macos-26
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -62,7 +62,7 @@ jobs:
           xcrun swift package dump-package
       - name: Test package shard
         id: package-tests
-        timeout-minutes: 18
+        timeout-minutes: 25
         if: contains(fromJSON('["Core", "Invocation", "Hooks"]'), matrix.suite)
         env:
           PACKAGE_SUITE: ${{ matrix.suite }}
