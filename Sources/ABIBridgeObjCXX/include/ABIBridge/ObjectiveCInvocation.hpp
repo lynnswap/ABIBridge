@@ -31,6 +31,31 @@ template <typename Result, typename... Arguments>
 struct is_objc_block<Result (^)(Arguments...)> : std::true_type {};
 }
 
+namespace detail {
+template <bool Variadic, typename Result, typename... Arguments> struct objc_function_types;
+template <typename Result, typename... Arguments>
+struct objc_function_types<false, Result, Arguments...> {
+    using borrowed = Result (*)(id, SEL, Arguments...);
+    typedef Result (*consumed)(id __attribute__((ns_consumed)), SEL, Arguments...);
+};
+template <typename Result, typename... Arguments>
+struct objc_function_types<true, Result, Arguments...> {
+    using borrowed = Result (*)(id, SEL, Arguments..., ...);
+    typedef Result (*consumed)(id __attribute__((ns_consumed)), SEL, Arguments..., ...);
+};
+template <bool Variadic, typename Result, typename... Arguments> struct objc_retained_function_types;
+template <typename Result, typename... Arguments>
+struct objc_retained_function_types<false, Result, Arguments...> {
+    typedef Result (*retained)(id, SEL, Arguments...) __attribute__((ns_returns_retained));
+    typedef Result (*consumed_retained)(id __attribute__((ns_consumed)), SEL, Arguments...) __attribute__((ns_returns_retained));
+};
+template <typename Result, typename... Arguments>
+struct objc_retained_function_types<true, Result, Arguments...> {
+    typedef Result (*retained)(id, SEL, Arguments..., ...) __attribute__((ns_returns_retained));
+    typedef Result (*consumed_retained)(id __attribute__((ns_consumed)), SEL, Arguments..., ...) __attribute__((ns_returns_retained));
+};
+}
+
 template <typename Signature> class bound_objc_implementation;
 template <typename Signature> class objc_implementation;
 
@@ -55,6 +80,11 @@ public:
     /// Target isolation, argument lifetimes, and the actual ABI remain caller contracts.
     /// Object and block results follow ordinary +0 return semantics under ARC/MRC.
     Result unsafe_invoke(__unsafe_unretained id receiver, Arguments... arguments) const {
+        return invoke_with_tail<false>(receiver, std::forward<Arguments>(arguments)...);
+    }
+private:
+    template <bool Variadic, typename... Tail>
+    Result invoke_with_tail(__unsafe_unretained id receiver, Arguments... arguments, Tail&&... tail) const {
         const auto implementation = implementation_;
         NSError* error = nil;
         if (!ABIValidateObjCImplementationReceiver(implementation.get(), receiver, &error)) {
@@ -63,19 +93,21 @@ public:
         std::array<bool, sizeof...(Arguments)> parameters{};
         for (std::size_t index = 0; index < parameters.size(); ++index)
             parameters[index] = ABIObjCImplementationConsumesParameter(implementation.get(), index);
-        return invoke_owned(receiver, ABIObjCImplementationSelector(implementation.get()),
+        return invoke_owned<Variadic>(receiver, ABIObjCImplementationSelector(implementation.get()),
             ABIObjCImplementationIMP(implementation.get()),
             ABIObjCImplementationConsumesReceiver(implementation.get()),
-            ABIObjCImplementationReturnsRetained(implementation.get()), parameters, std::forward<Arguments>(arguments)...);
+            ABIObjCImplementationReturnsRetained(implementation.get()), parameters, std::forward<Arguments>(arguments)..., std::forward<Tail>(tail)...);
     }
 
+public:
     /// Retains another receiver without repeating lookup or changing the IMP.
     bound_objc_implementation<signature> bind(__unsafe_unretained id receiver) const {
         return bound_objc_implementation<signature>(*this, receiver);
     }
 
 private:
-    friend class bound_objc_implementation<signature>;
+    template <typename> friend class bound_objc_implementation;
+    template <typename> friend class objc_implementation;
     explicit objc_implementation(ABIObjCImplementation* owned)
         : implementation_(owned, ABIReleaseObjCImplementation) {}
 
@@ -126,61 +158,53 @@ private:
         }
     };
 
+    template <bool Variadic = false, typename... Tail>
     static Result invoke_owned(id receiver, SEL selector, IMP implementation, bool consumed, bool retained,
-                               const std::array<bool, sizeof...(Arguments)>& parameters, Arguments... arguments) {
+                               const std::array<bool, sizeof...(Arguments)>& parameters, Arguments... arguments, Tail&&... tail) {
         if (std::none_of(parameters.begin(), parameters.end(), [](bool value) { return value; }))
-            return invoke_prepared(receiver, selector, implementation, consumed, retained,
-                                   std::forward<Arguments>(arguments)...);
+            return invoke_prepared<Variadic>(receiver, selector, implementation, consumed, retained,
+                                   std::forward<Arguments>(arguments)..., std::forward<Tail>(tail)...);
         owned_arguments owned(std::forward<Arguments>(arguments)...);
         owned.prepare(parameters, std::index_sequence_for<Arguments...>{});
         owned.transferred = true;
         return std::apply([&](auto... values) {
-            return invoke_prepared(receiver, selector, implementation, consumed, retained, values...);
+            return invoke_prepared<Variadic>(receiver, selector, implementation, consumed, retained, values..., std::forward<Tail>(tail)...);
         }, owned.values);
     }
 
+    template <bool Variadic = false, typename... Tail>
     static Result invoke_prepared(id receiver, SEL selector, IMP implementation, bool consumed, bool retained,
-                                 Arguments... arguments) {
+                                 Arguments... arguments, Tail&&... tail) {
         if constexpr (detail::is_objc_result<Result>::value) {
             if (retained) {
-                return consumed ? invoke<true, true>(receiver, selector, implementation, std::forward<Arguments>(arguments)...)
-                                : invoke<false, true>(receiver, selector, implementation, std::forward<Arguments>(arguments)...);
+                return consumed ? invoke<true, true, Variadic>(receiver, selector, implementation, std::forward<Arguments>(arguments)..., std::forward<Tail>(tail)...)
+                                : invoke<false, true, Variadic>(receiver, selector, implementation, std::forward<Arguments>(arguments)..., std::forward<Tail>(tail)...);
             }
         }
-        return consumed ? invoke<true, false>(receiver, selector, implementation, std::forward<Arguments>(arguments)...)
-                        : invoke<false, false>(receiver, selector, implementation, std::forward<Arguments>(arguments)...);
+        return consumed ? invoke<true, false, Variadic>(receiver, selector, implementation, std::forward<Arguments>(arguments)..., std::forward<Tail>(tail)...)
+                        : invoke<false, false, Variadic>(receiver, selector, implementation, std::forward<Arguments>(arguments)..., std::forward<Tail>(tail)...);
     }
 
-    template <bool Consumed, bool Retained>
-    static Result invoke(id receiver, SEL selector, IMP implementation, Arguments... arguments) {
+    template <bool Consumed, bool Retained, bool Variadic = false, typename... Tail>
+    static Result invoke(id receiver, SEL selector, IMP implementation, Arguments... arguments, Tail&&... tail) {
 #if !__has_feature(objc_arc)
         if constexpr (Consumed) [receiver retain];
 #endif
+        using types = detail::objc_function_types<Variadic, Result, Arguments...>;
         if constexpr (Retained) {
-            Result result;
-            if constexpr (Consumed) {
-                typedef Result (*Function)(id __attribute__((ns_consumed)), SEL, Arguments...)
-                    __attribute__((ns_returns_retained));
-                result = reinterpret_cast<Function>(implementation)(
-                    receiver, selector, std::forward<Arguments>(arguments)...);
-            } else {
-                typedef Result (*Function)(id, SEL, Arguments...) __attribute__((ns_returns_retained));
-                result = reinterpret_cast<Function>(implementation)(
-                    receiver, selector, std::forward<Arguments>(arguments)...);
-            }
+            using retained_types = detail::objc_retained_function_types<Variadic, Result, Arguments...>;
+            using Function = std::conditional_t<Consumed, typename retained_types::consumed_retained, typename retained_types::retained>;
+            Result result = reinterpret_cast<Function>(implementation)(receiver, selector,
+                std::forward<Arguments>(arguments)..., std::forward<Tail>(tail)...);
 #if !__has_feature(objc_arc)
             return [result autorelease];
 #else
             return result;
 #endif
-        } else if constexpr (Consumed) {
-            typedef Result (*Function)(id __attribute__((ns_consumed)), SEL, Arguments...);
-            return reinterpret_cast<Function>(implementation)(
-                receiver, selector, std::forward<Arguments>(arguments)...);
         } else {
-            using Function = Result (*)(id, SEL, Arguments...);
-            return reinterpret_cast<Function>(implementation)(
-                receiver, selector, std::forward<Arguments>(arguments)...);
+            using Function = std::conditional_t<Consumed, typename types::consumed, typename types::borrowed>;
+            return reinterpret_cast<Function>(implementation)(receiver, selector,
+                std::forward<Arguments>(arguments)..., std::forward<Tail>(tail)...);
         }
     }
 
@@ -201,24 +225,31 @@ public:
 
     /// Calls the implementation captured at construction with the retained receiver.
     Result unsafe_invoke(Arguments... arguments) const {
+        return invoke_with_tail<false>(std::forward<Arguments>(arguments)...);
+    }
+private:
+    template <bool Variadic, typename... Tail>
+    Result invoke_with_tail(Arguments... arguments, Tail&&... tail) const {
         const auto method = method_;
         __unsafe_unretained id receiver = (__bridge id)ABIObjCMethodReceiverAddress(method.get());
         std::array<bool, sizeof...(Arguments)> parameters{};
         for (std::size_t index = 0; index < parameters.size(); ++index)
             parameters[index] = ABIObjCMethodConsumesParameter(method.get(), index);
-        return implementation_type::invoke_owned(receiver,
+        return implementation_type::template invoke_owned<Variadic>(receiver,
             ABIObjCMethodSelector(method.get()), ABIObjCMethodImplementation(method.get()),
             ABIObjCMethodConsumesReceiver(method.get()), ABIObjCMethodReturnsRetained(method.get()), parameters,
-            std::forward<Arguments>(arguments)...);
+            std::forward<Arguments>(arguments)..., std::forward<Tail>(tail)...);
     }
 
+public:
     /// Copies the captured implementation without retaining this receiver binding.
     implementation_type implementation() const {
         return implementation_type(ABICopyObjCMethodImplementation(method_.get()));
     }
 
 private:
-    friend class objc_implementation<signature>;
+    template <typename> friend class objc_implementation;
+    template <typename> friend class bound_objc_implementation;
     bound_objc_implementation(const implementation_type& implementation, __unsafe_unretained id receiver)
         : method_(copy_binding(implementation, receiver), ABIReleaseObjCMethod) {}
     static ABIObjCMethod* copy_binding(const implementation_type& implementation, __unsafe_unretained id receiver) {
@@ -230,6 +261,45 @@ private:
         return method;
     }
     std::shared_ptr<ABIObjCMethod> method_;
+};
+
+/// A variadic IMP using runtime-validated fixed arguments and compiler promotions.
+template <typename Result, typename... Arguments>
+class objc_implementation<Result(Arguments..., ...)> final {
+    using fixed_type = objc_implementation<Result(Arguments...)>;
+    using signature = Result(Arguments..., ...);
+    fixed_type fixed_;
+public:
+    objc_implementation(id prototype, SEL selector, objc_method_options options = {}) : fixed_(prototype, selector, options) {}
+    objc_implementation(id prototype, std::string_view name, objc_method_options options = {}) : fixed_(prototype, name, options) {}
+    template <typename... Tail>
+    Result unsafe_invoke(__unsafe_unretained id receiver, Arguments... arguments, Tail&&... tail) const {
+        return fixed_.template invoke_with_tail<true>(receiver, std::forward<Arguments>(arguments)..., std::forward<Tail>(tail)...);
+    }
+    bound_objc_implementation<signature> bind(__unsafe_unretained id receiver) const {
+        return bound_objc_implementation<signature>(fixed_.bind(receiver));
+    }
+private:
+    friend class bound_objc_implementation<signature>;
+    explicit objc_implementation(fixed_type fixed) : fixed_(std::move(fixed)) {}
+};
+
+template <typename Result, typename... Arguments>
+class bound_objc_implementation<Result(Arguments..., ...)> final {
+    using signature = Result(Arguments..., ...);
+    using fixed_type = bound_objc_implementation<Result(Arguments...)>;
+    fixed_type fixed_;
+public:
+    bound_objc_implementation(id receiver, SEL selector, objc_method_options options = {}) : fixed_(receiver, selector, options) {}
+    bound_objc_implementation(id receiver, std::string_view name, objc_method_options options = {}) : fixed_(receiver, name, options) {}
+    template <typename... Tail>
+    Result unsafe_invoke(Arguments... arguments, Tail&&... tail) const {
+        return fixed_.template invoke_with_tail<true>(std::forward<Arguments>(arguments)..., std::forward<Tail>(tail)...);
+    }
+    objc_implementation<signature> implementation() const { return objc_implementation<signature>(fixed_.implementation()); }
+private:
+    friend class objc_implementation<signature>;
+    explicit bound_objc_implementation(fixed_type fixed) : fixed_(std::move(fixed)) {}
 };
 
 } // namespace abi_bridge

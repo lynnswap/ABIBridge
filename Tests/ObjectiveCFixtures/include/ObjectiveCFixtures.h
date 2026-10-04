@@ -9,6 +9,12 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@interface ABIVariadicFixture : NSObject
+- (NSInteger)sum:(NSInteger)count, ...;
+- (NSInteger)replacementSum:(NSInteger)count, ...;
+@end
+FOUNDATION_EXPORT NSInteger ABIVariadicCompilerOracle(ABIVariadicFixture *receiver);
+
 typedef struct ABIInsetsFixture { double top, left, bottom, right; } ABIInsetsFixture;
 typedef struct ABINestedAggregate {
     ABIInsetsFixture insets;

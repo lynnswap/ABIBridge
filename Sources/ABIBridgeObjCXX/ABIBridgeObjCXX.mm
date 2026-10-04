@@ -635,16 +635,21 @@ BOOL ABIInvokeObjCDispatch(
     return invokeMessage(plan, receiver, result, arguments, error);
 }
 
-BOOL ABIInvokeObjCImplementation(
-    ABIObjCInvocation *plan, ABICallInterface *interface, id receiver,
+static BOOL invokeCImplementation(
+    ABIObjCInvocation *plan, ABICallInterface *interface, id receiver, IMP implementation,
     void *result, const void *const *arguments, NSError **error) {
     if (error) *error = nil;
-    if (!plan->implementation || !receiver || !interface) {
+    if (!implementation || !receiver || !interface) {
         fail(error, ABIFailureInvalidRequest, @"A captured implementation and live receiver are required.");
         return NO;
     }
-    if (!validateReceiver(plan, receiver, error)) return NO;
-    const size_t count = ABIObjCInvocationParameterCount(plan);
+    const size_t fixedCount = ABIObjCInvocationParameterCount(plan);
+    const size_t interfaceCount = ABICallInterfaceParameterCount(interface);
+    if (interfaceCount < fixedCount + 2) {
+        fail(error, ABIFailureInvalidRequest, @"The C interface must include receiver, selector, and the method's fixed arguments.");
+        return NO;
+    }
+    const size_t count = interfaceCount - 2;
     if ((ABIObjCInvocationResultSize(plan) && !result) || (count && !arguments)) {
         fail(error, ABIFailureInvalidRequest, @"Argument and result storage are required.");
         return NO;
@@ -661,12 +666,12 @@ BOOL ABIInvokeObjCImplementation(
     ABIObjCArgumentOwnership ownership(plan);
     if (!ownership.retain(arguments, error)) return NO;
     for (size_t index = 0; index < count; ++index)
-        values.push_back(const_cast<void *>(ownership.arguments()[index]));
+        values.push_back(const_cast<void *>(index < fixedCount ? ownership.arguments()[index] : arguments[index]));
     if (plan->ownership.consumed) CFRetain((__bridge CFTypeRef)receiver);
     ABIResolutionFailure *failure = nullptr;
     // Keep the IMP as a function pointer; the compiler preserves/resigns its
     // authentication when converting it to the generic C function-pointer ABI.
-    const auto function = reinterpret_cast<ABIUnmanagedFunction>(plan->implementation);
+    const auto function = reinterpret_cast<ABIUnmanagedFunction>(implementation);
     ownership.transfer();
     const bool success = ABIUnsafeInvokeCCallInterface(interface, function, result, values.data(), &failure);
     if (!success) {
@@ -683,6 +688,31 @@ BOOL ABIInvokeObjCImplementation(
         if (object && !plan->ownership.retained) CFRetain(object);
     }
     return YES;
+}
+
+BOOL ABIInvokeObjCImplementation(ABIObjCInvocation *plan, ABICallInterface *interface,
+    id receiver, void *result, const void *const *arguments, NSError **error) {
+    if (error) *error = nil;
+    if (!validateReceiver(plan, receiver, error)) return NO;
+    return invokeCImplementation(plan, interface, receiver, plan->implementation, result, arguments, error);
+}
+
+BOOL ABIInvokeVariadicObjCDispatch(ABIObjCInvocation *plan, ABICallInterface *interface,
+    id receiver, void *result, const void *const *arguments, NSError **error) {
+    if (error) *error = nil;
+    if (!validateDispatchReceiver(plan, receiver, error)) return NO;
+    Method method = class_getInstanceMethod(object_getClass(receiver), plan->selector);
+    if (!method) {
+        fail(error, ABIFailureUnsupportedDeclaration, @"A variadic message requires a concrete method; NSInvocation cannot forward its anonymous tail.");
+        return NO;
+    }
+    return invokeCImplementation(plan, interface, receiver, method_getImplementation(method), result, arguments, error);
+}
+
+BOOL ABIInvokeVariadicObjCInvocation(ABIObjCInvocation *plan, ABICallInterface *interface,
+    void *result, const void *const *arguments, NSError **error) {
+    return ABIInvokeVariadicObjCDispatch(plan->parent ? plan->parent : plan, interface,
+        (__bridge id)plan->receiver, result, arguments, error);
 }
 
 void *ABICopyObjCBlock(const void *pointer) {

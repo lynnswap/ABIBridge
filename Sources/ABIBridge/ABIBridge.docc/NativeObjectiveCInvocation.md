@@ -75,3 +75,17 @@ The lower-level interface returns an owned `ABIObjCMethod *` or an NSError in `A
 `ABICopyObjCMethodImplementation` returns an owned `ABIObjCImplementation *` independently of an existing `ABIObjCMethod` binding. `ABIRetainObjCImplementation` adds a reference and `ABIReleaseObjCImplementation` releases it. Selector/IMP/ownership getters borrow their values from that live handle; keep it alive through invocation. The IMP getter preserves its signed function-pointer representation.
 
 `ABIValidateObjCImplementationReceiver` checks a live receiver's class and method kind. `ABICopyBoundObjCMethod` creates an owned retained-receiver binding to the same captured implementation, reporting incompatible receivers through NSError. Releasing a binding destroys its receiver before releasing the implementation plan's images. These C functions do not establish a different invocation signature or infer ownership annotations.
+
+## Invoke a variadic implementation
+
+Use an ellipsis in the C++ signature for a variadic native method. The fixed prefix is validated against its runtime encoding, and each call's tail uses the compiler's C argument promotions:
+
+```objective-c++
+auto format = abi_bridge::objc_implementation<NSString *(NSString *, ...)>(
+    NSString.class, @selector(stringWithFormat:));
+NSString *text = format.unsafe_invoke(NSString.class, @"%.1f/%d", 1.5f, -3);
+auto bound = format.bind(NSString.class);
+NSString *literal = bound.unsafe_invoke(@"literal");
+```
+
+Receiver binding, captured IMP identity, ARC/MRC ownership, and code owners follow the fixed-signature contract. The caller supplies the method's required sentinel and a C-compatible anonymous tail; Objective-C metadata does not encode those arguments.

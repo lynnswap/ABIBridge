@@ -1,6 +1,22 @@
 #import "ObjectiveCFixtures.h"
 #import <objc/runtime.h>
 
+@implementation ABIVariadicFixture
+- (NSInteger)sum:(NSInteger)count, ... {
+    va_list values; va_start(values, count);
+    NSInteger result = 0;
+    for (NSInteger index = 0; index < count; ++index) result += va_arg(values, NSInteger);
+    va_end(values); return result;
+}
+- (NSInteger)replacementSum:(NSInteger)count, ... {
+    va_list values; va_start(values, count);
+    NSInteger result = 1000;
+    for (NSInteger index = 0; index < count; ++index) result += va_arg(values, NSInteger);
+    va_end(values); return result;
+}
+@end
+NSInteger ABIVariadicCompilerOracle(ABIVariadicFixture *receiver) { return [receiver sum:2, (NSInteger)20, (NSInteger)22]; }
+
 @implementation ABIAggregateFixture
 - (ABILongDoubleAggregate)transformLongDouble:(ABILongDoubleAggregate)value {
     value.value += 1.5L; value.tag += 2;

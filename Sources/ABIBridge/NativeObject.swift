@@ -183,13 +183,15 @@ public final class NativeObject {
     ///
     /// - Parameters:
     ///   - selector: The Objective-C selector, including argument colons.
-    ///   - signature: A fixed, synchronous Swift function type.
+    ///   - signature: Explicit arguments, including any anonymous tail, and the result.
+    ///   - variadicFrom: Index of the first anonymous argument, or nil for a fixed signature.
     ///   - options: Overrides for ownership annotations absent from runtime metadata.
     /// - Returns: A method retaining this receiver.
     /// - Throws: A resolution error for a missing selector or incompatible signature.
     public func method<Result, each Argument>(
         selector: String,
         as signature: ((repeat each Argument) -> Result).Type,
+        variadicFrom: Int? = nil,
         options: NativeMethodOptions = .init()
     ) throws -> NativeBoundObjCMethod<Result, repeat each Argument> {
         let receiverType = object_getClass(receiver!)!
@@ -206,7 +208,7 @@ public final class NativeObject {
         guard let handle else {
             throw objcResolutionError(error, declaration: declaration)
         }
-        return try NativeBoundObjCMethod(binding: ObjCInvocationBinding(handle, declaration: declaration))
+        return try NativeBoundObjCMethod(binding: ObjCInvocationBinding(handle, declaration: declaration), variadicFrom: variadicFrom)
     }
 }
 
@@ -256,9 +258,9 @@ public struct NativeBoundObjCMethod<Result, each Argument> {
         )
     }
 
-    init(binding: ObjCInvocationBinding) throws {
+    init(binding: ObjCInvocationBinding, variadicFrom: Int? = nil) throws {
         self.binding = binding
-        signature = try ObjCMethodSignature(handle: binding.handle, declaration: binding.declaration)
+        signature = try ObjCMethodSignature(handle: binding.handle, declaration: binding.declaration, variadicFrom: variadicFrom)
     }
 
     init(binding: ObjCInvocationBinding, signature: ObjCMethodSignature<Result, repeat each Argument>) {
@@ -280,7 +282,10 @@ public struct NativeBoundObjCMethod<Result, each Argument> {
         try signature.invoke(repeat each values, using: { addresses, output in
             var error: NSError?
             let success = addresses.withUnsafeBufferPointer {
-                ABIInvokeObjCInvocation(binding.handle, output, $0.baseAddress, &error)
+                if let interface = signature.variadicInterface {
+                    return ABIInvokeVariadicObjCInvocation(binding.handle, interface.handle, output, $0.baseAddress, &error)
+                }
+                return ABIInvokeObjCInvocation(binding.handle, output, $0.baseAddress, &error)
             }
             guard success else {
                 throw objcResolutionError(error, declaration: binding.declaration)
@@ -293,11 +298,13 @@ struct ObjCMethodSignature<Result, each Argument> {
     let arguments: (repeat ObjCValueCodec<each Argument>)
     let result: ObjCValueCodec<Result>
     private let argumentCount: Int
+    let variadicInterface: CCallInterface?
 
-    init(handle: OpaquePointer, declaration: NativeDeclaration) throws {
+    init(handle: OpaquePointer, declaration: NativeDeclaration, variadicFrom: Int? = nil) throws {
         var count = 0
         for _ in repeat (each Argument).self { count += 1 }
-        guard count == ABIObjCInvocationParameterCount(handle) else {
+        let fixedCount = ABIObjCInvocationParameterCount(handle)
+        guard variadicFrom.map({ $0 == fixedCount && count >= $0 }) ?? (count == fixedCount) else {
             throw ABIResolutionError.signatureMismatch(.init(
                 declaration: declaration, position: .argumentCount,
                 expected: "\(count) arguments",
@@ -309,6 +316,7 @@ struct ObjCMethodSignature<Result, each Argument> {
         func makeCodec<Value>(_ type: Value.Type) throws -> ObjCValueCodec<Value> {
             defer { index += 1 }
             do {
+                if let variadicFrom, index >= variadicFrom { return try .init(anonymousParameter: type) }
                 return try .init(
                     encoding: String(cString: ABIObjCInvocationParameterType(handle, index)),
                     size: ABIObjCInvocationParameterSize(handle, index)
@@ -329,11 +337,20 @@ struct ObjCMethodSignature<Result, each Argument> {
         } catch let ABIResolutionError.signatureMismatch(mismatch) {
             throw ABIResolutionError.signatureMismatch(mismatch.inContext(declaration, at: .result))
         }
+        let variadicInterface: CCallInterface?
+        if let variadicFrom {
+            var parameters = [try CValueType(scalar: ABIValuePointer), try CValueType(scalar: ABIValuePointer)]
+            for codec in repeat each arguments { parameters.append(try codec.cType()) }
+            variadicInterface = try CCallInterface(result: result.cType(), parameters: parameters,
+                fixedParameterCount: variadicFrom + 2)
+        } else { variadicInterface = nil }
         self.arguments = arguments
         self.result = result
+        self.variadicInterface = variadicInterface
     }
 
     func callInterface() throws -> CCallInterface {
+        if let variadicInterface { return variadicInterface }
         var parameters = [try CValueType(scalar: ABIValuePointer), try CValueType(scalar: ABIValuePointer)]
         for codec in repeat each arguments { parameters.append(try codec.cType()) }
         return try CCallInterface(result: result.cType(), parameters: parameters)

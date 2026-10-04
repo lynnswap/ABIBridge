@@ -51,6 +51,7 @@ ABICallInterface *ABICreateVariadicCCallInterface(
     size_t count, size_t fixedCount, ABIResolutionFailure **error);
 void ABIReleaseCallInterface(ABICallInterface *interface);
 void ABIRetainCallInterface(ABICallInterface *interface);
+size_t ABICallInterfaceParameterCount(const ABICallInterface *interface);
 
 /// Internal callback transport. Context and argument storage remain borrowed;
 /// the callback writes the interface's result representation. This does not
