@@ -210,6 +210,8 @@ extension SwiftFormalType {
             case .reference(let descriptor, _): self = .reference(descriptor, arguments)
             case .nominal(let name, _): self = .nominal(name, arguments)
             case .nested(let parent, let name, _): self = .nested(parent, name, arguments)
+            // Objective-C lightweight generics share their unspecialized runtime class.
+            case .objectiveCClass: self = base
             default: throw ABIResolutionError.unsupportedDeclaration("The bound Swift nominal type has no declaration.")
             }
         case "TypeSymbolicReference":

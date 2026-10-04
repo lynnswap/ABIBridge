@@ -22,6 +22,10 @@ extension ExistentialPackBase: ExistentialPackMarker {}
 ) rethrows -> any ExistentialPackBase<repeat each Value> & ExistentialPackMarker { try body(value) }
 @inline(never) public func echoNSObjectCopying<Value>(_ value: any NSObject & NSCopying, _ tag: Value) -> any NSObject & NSCopying { value }
 
+public final class ExistentialCache: NSCache<NSString, NSObject>, ExistentialPackMarker { public var number: Int64 { 42 } }
+@inline(never) public func echoObjCCacheExistential<Value>(_ value: any NSCache<NSString, NSObject> & ExistentialPackMarker,
+    _ tag: Value) -> any NSCache<NSString, NSObject> & ExistentialPackMarker { value }
+
 @frozen public struct InlineExistentialValue: ExistentialValue, ExistentialLabel {
     public let number: Int64
     public var label: String { "inline:\(number)" }

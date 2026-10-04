@@ -45,6 +45,19 @@ struct SwiftExistentialValueTests {
         let value: Value = NSString(string: "value")
         #expect(try unsafe function.unsafeInvoke(value, 0) === value)
     }
+    @Test func objcLightweightGenericSuperclassUsesItsRuntimeClass() async throws {
+        typealias Value = any NSCache<NSString, NSObject> & ExistentialPackMarker
+        let function = try await ABIRuntime().swiftFunction(named: "ManagedSwiftFixtures.echoObjCCacheExistential(_:_:)",
+            as: ((Value, Int) -> Value).self, genericArguments: [.type(Int.self)])
+        let value: Value = ExistentialCache()
+        #expect(try unsafe function.unsafeInvoke(value, 0) === echoObjCCacheExistential(value, 0))
+        let runtimeFunction = try await ABIRuntime().swiftFunction(named: "ManagedSwiftFixtures.echoObjCCacheExistential(_:_:)",
+            as: ((NativeSwiftValue, Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+        let erased = try await ABIRuntime().swiftFunction(named: "ManagedSwiftFixtures.echoObjCCacheExistential(_:_:)",
+            as: ((Value, Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)])
+        let runtimeValue = try unsafe erased.unsafeInvoke(value, 0)
+        #expect(try unsafe runtimeFunction.unsafeInvoke(runtimeValue, 0).withCopy { ($0 as? Value) === value })
+    }
     @Test func functionAssociatedTypesKeepCanonicalLookupNames() async throws {
         typealias Value = any Collection<(Int) -> Int>
         let echo = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.echoRuntimeFunctionCollection(_:)",
