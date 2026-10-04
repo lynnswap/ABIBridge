@@ -4,7 +4,47 @@ import Foundation
 import ObjectiveCFixtures
 import Testing
 
+
+@_cdecl("ABICWeightedTwentyArguments")
+public func cWeightedTwentyArguments(
+    _ a0: Int32, _ a1: Int32, _ a2: Int32, _ a3: Int32, _ a4: Int32,
+    _ a5: Int32, _ a6: Int32, _ a7: Int32, _ a8: Int32, _ a9: Int32,
+    _ a10: Int32, _ a11: Int32, _ a12: Int32, _ a13: Int32, _ a14: Int32,
+    _ a15: Int32, _ a16: Int32, _ a17: Int32, _ a18: Int32, _ a19: Int32
+) -> Int32 {
+    let values = [a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19]
+    return values.enumerated().reduce(Int32(0)) { $0 + $1.element * Int32($1.offset + 1) }
+}
+
 struct CFunctionInvocationTests {
+    @Test func twentyFixedArgumentsPreserveValuesAndOrder() async throws {
+        let call = try await ABIRuntime().cFunction(named: "ABICWeightedTwentyArguments",
+            as: ((Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32,
+                  Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32) -> Int32).self)
+        #expect(try unsafe call.unsafeInvoke(1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                           11, 12, 13, 14, 15, 16, 17, 18, 19, 20) == 2870)
+    }
+
+    @Test func twentyVariadicFloatsPreserveDefaultPromotions() async throws {
+        let signature = NativeSignature(parameters: [.int32],
+            variadicParameters: Array(repeating: .float, count: 20), returns: .double)
+        let call = try await ABIRuntime().cFunction(named: "ABICVariadicSum", signature: signature)
+        let values = [try NativeValue(copying: Int32(20), as: .int32)]
+            + (try (1...20).map { try NativeValue(copying: Float($0), as: .float) })
+        #expect(try unsafe call.unsafeInvoke(with: values).read(as: Double.self) == 210)
+    }
+
+    @Test func wideAggregateResultsPreserveEveryField() async throws {
+        let result = try NativeType.structure(named: "ABICWideResult", fields: Array(repeating: .uint64, count: 12))
+        let call = try await ABIRuntime().cFunction(named: "ABICMakeWideResult",
+            signature: .init(parameters: [.uint64], returns: result))
+        let value = try unsafe call.unsafeInvoke(with: [try .init(copying: UInt64(40), as: .uint64)])
+        for index in 0..<12 {
+            #expect(try unsafe value.read(as: UInt64.self, at: index * MemoryLayout<UInt64>.stride)
+                == 40 + UInt64(index * index))
+        }
+    }
+
     @Test func variadicPromotionsMatchNativeCalls() async throws {
         let call = try await ABIRuntime().cFunction(named: "ABICVariadicMix",
             as: ((Float, Int32, Int8, UInt16, Bool, Float, UnsafeRawPointer?, CGPoint) -> Double).self,
