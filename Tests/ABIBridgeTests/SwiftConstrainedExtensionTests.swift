@@ -391,6 +391,7 @@ struct SwiftConstrainedExtensionTests {
     }
 
     @MainActor @Test func mismatchedConstraintsRemainAbsent() async throws {
+        let runtime = ABIRuntime()
         let inputs: [(AnyObject, String)] = [
             (ConstrainedBox(1.5), "title(_:)"),
             (ConstrainedPair<Int, String>(), "equal()"),
@@ -402,12 +403,12 @@ struct SwiftConstrainedExtensionTests {
         for (receiver, member) in inputs {
             do {
                 if member == "title(_:)" {
-                    _ = try await ABIRuntime().object(receiver).method(
+                    _ = try await runtime.object(receiver).method(
                         named: member,
                         as: ((String) -> String).self
                     )
                 } else {
-                    _ = try await ABIRuntime().object(receiver).method(
+                    _ = try await runtime.object(receiver).method(
                         named: member,
                         as: (() -> String).self
                     )
@@ -418,6 +419,7 @@ struct SwiftConstrainedExtensionTests {
     }
 
     @MainActor @Test func dependentConstraintsUseRuntimeConformancesAndSubstitution() async throws {
+        let runtime = ABIRuntime()
         #expect(ConstrainedBox(42).needsWitness() == "42")
         #expect(ConstrainedPair<[Int], String>().associated() == "associated")
         #expect(ConstrainedPair<Int, [Int]>().substituted() == "substituted")
@@ -429,7 +431,7 @@ struct SwiftConstrainedExtensionTests {
             (ConstrainedPair<String, [String: Int]>(), "dictionary()", "dictionary"),
         ]
         for (receiver, member, expected) in inputs {
-            let method = try await ABIRuntime().object(receiver).method(
+            let method = try await runtime.object(receiver).method(
                 named: member,
                 as: (() -> String).self
             )

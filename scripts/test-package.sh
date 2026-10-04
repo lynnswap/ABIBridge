@@ -1,48 +1,23 @@
 #!/bin/bash
 set -euo pipefail
 
-if [[ $# -lt 1 ]]; then
-    echo "Usage: $0 <all|core|invocation|hooks> [xcodebuild options...]" >&2
-    exit 2
-fi
-shard=$1
-shift
-root=$(cd "$(dirname "$0")/.." && pwd)
-
-invocation=(
-    CFunctionInvocationTests CXXObjectInvocationTests CallerDescribedValueTests NativeRuntimeTests
-    ObjectiveCAggregateTests ObjectiveCBlockTests ObjectiveCImplementationTests ObjectiveCInvocationTests ObjectiveCSelectorTests
-    ObjectiveCIvarTests SwiftCallBoundaryTests SwiftFunctionInvocationTests
-    SwiftMemberInvocationTests SwiftGenericReceiverTests SwiftGenericValueReceiverTests SwiftConstrainedExtensionTests SwiftArgumentConventionTests SwiftExistentialValueTests SwiftOpaqueResultTests ManagedSwiftValueTests SwiftClosureABITests NativeSwiftClosureTests
-    SwiftBorrowedValueTests SwiftGenericCallTests SwiftCollectionValueTests SwiftGenericMetadataTests SwiftExplicitValueTests SwiftIndirectValueTests SwiftErrorABITests SwiftThrowingInvocationTests SwiftThrowingClosureTests SwiftAsyncABITests SwiftAsyncClosureABITests SwiftAsyncInvocationTests SwiftAsyncTransportTests NativeSwiftAsyncClosureTests
-)
-hooks=(
-    CoordinatedObjectiveCHookTests HookInvocationDiagnosticsTests
-    ImportedFunctionHookTests ImportedFunctionMonitorTests
-    ObjectiveCInitializerHookTests ObjectiveCMethodHookTests ObjectiveCReplacementTests
-    SwiftCallbackTests SwiftClassHookTests SwiftImportedFunctionHookTests SwiftAsyncHookTests
-    SwiftImportedReplacementTests SwiftReplacementTests SwiftValueHookTests
-    SwiftVirtualReplacementTests VirtualHookTests
-)
-
-arguments=(test -workspace "$root/ABIBridge.xcworkspace" -scheme ABIBridge
-    -destination 'platform=macOS,arch=arm64'
-    -derivedDataPath "${ABI_TEST_BUILD_DIR:-$root/.build/package-tests/$shard}")
-case "$shard" in
-    all) ;;
-    core)
-        # The complement includes every unassigned suite, including future tests.
-        # Use exactly the same selectors as the two explicit shards below.
-        for suite in "${invocation[@]}" "${hooks[@]}"; do
-            arguments+=("-skip-testing:ABIBridgeTests/$suite")
-        done
-        ;;
-    invocation)
-        for suite in "${invocation[@]}"; do arguments+=("-only-testing:ABIBridgeTests/$suite"); done
-        ;;
-    hooks)
-        for suite in "${hooks[@]}"; do arguments+=("-only-testing:ABIBridgeTests/$suite"); done
-        ;;
-    *) echo "Unknown package test shard: $shard" >&2; exit 2 ;;
+task_suite=${1:-all}
+if [[ $# -gt 0 ]]; then shift; fi
+task_root=$(cd "$(dirname "$0")/.." && pwd)
+case "$task_suite" in
+    runtime) task_schemes=(ABIBridgeRuntime) ;;
+    api) task_schemes=(ABIBridge) ;;
+    local) task_schemes=(ABIBridgeLocal) ;;
+    all) task_schemes=(ABIBridgeRuntime ABIBridge ABIBridgeLocal) ;;
+    *) echo "Usage: $0 [all|runtime|api|local] [xcodebuild options...]" >&2; exit 2 ;;
 esac
-exec xcodebuild "${arguments[@]}" "$@"
+
+task_status=0
+for task_scheme in "${task_schemes[@]}"; do
+    if ! xcodebuild test -workspace "$task_root/ABIBridge.xcworkspace" -scheme "$task_scheme" \
+        -destination 'platform=macOS,arch=arm64' \
+        -derivedDataPath "${ABI_TEST_BUILD_DIR:-$task_root/.build/package-tests/$task_suite}" "$@"; then
+        task_status=1
+    fi
+done
+exit "$task_status"

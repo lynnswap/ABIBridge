@@ -30,13 +30,12 @@
       shouldAutocreateTestPlan = "YES">
       <Testables>
          <TestableReference
-            skipped = "NO"
-            parallelizable = "NO">
+            skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "ABIBridgeTests"
-               BuildableName = "ABIBridgeTests"
-               BlueprintName = "ABIBridgeTests"
+               BlueprintIdentifier = "ABIBridgeLocalTests"
+               BuildableName = "ABIBridgeLocalTests"
+               BlueprintName = "ABIBridgeLocalTests"
                ReferencedContainer = "container:">
             </BuildableReference>
          </TestableReference>

@@ -97,7 +97,9 @@ let package = Package(
         .target(name: "ABIBridgeTestSupport", path: "Tests/ABIBridgeTestSupport"),
         .testTarget(
             name: "ABIBridgeCoreTests",
-            dependencies: ["ABIBridgeCore", "ABIBridgeRuntime", "ObjectiveCFixtures"],
+            dependencies: [
+                "ABIBridgeCore", "ABIBridgeObjCXX", "ABIBridgeRuntime", "ObjectiveCFixtures",
+            ],
             swiftSettings: strictSwiftSettings
         ),
         .testTarget(
@@ -106,6 +108,11 @@ let package = Package(
                 "ABIBridgeRuntime", "ABIBridgeTestSupport", "ObjectiveCFixtures",
                 "ManagedSwiftFixtures", "ManagedSwiftAdapters",
             ],
+            swiftSettings: strictSwiftSettings
+        ),
+        .testTarget(
+            name: "ABIBridgeLocalTests",
+            dependencies: ["ABIBridge", "ObjectiveCFixtures", "ManagedSwiftFixtures"],
             swiftSettings: strictSwiftSettings
         ),
         .testTarget(

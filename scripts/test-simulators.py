@@ -56,7 +56,8 @@ def cleanup(device):
     return failures
 
 
-def run_platform(platform, root, build_dir, result_dir, test_minutes, only_testing=()):
+def run_platform(platform, root, build_dir, result_dir, test_minutes, only_testing=(),
+                 scheme="ABIBridge", build_swiftui=True):
     failures = []
     device = None
     try:
@@ -72,14 +73,14 @@ def run_platform(platform, root, build_dir, result_dir, test_minutes, only_testi
                   '-derivedDataPath', str(build_dir), 'WATCHOS_DEPLOYMENT_TARGET=11.4',
                   'CODE_SIGNING_ALLOWED=NO']
         try:
-            subprocess.run([*common, 'test', '-scheme', 'ABIBridge',
+            subprocess.run([*common, 'test', '-scheme', scheme,
                             '-parallel-testing-enabled', 'NO',
                             '-resultBundlePath', str(result_dir / f'{name}.xcresult'),
                             *[f'-only-testing:{selection}' for selection in only_testing]],
                            cwd=root, check=True, timeout=test_minutes * 60)
         except Exception as error:
             failures.append(f'{platform} tests: {error}')
-        if any((root / 'Sources/ABIBridgeSwiftUI').glob('*.swift')):
+        if build_swiftui and any((root / 'Sources/ABIBridgeSwiftUI').glob('*.swift')):
             try:
                 subprocess.run([*common, 'build', '-scheme', 'ABIBridgeSwiftUI'],
                                cwd=root, check=True, timeout=5 * 60)
@@ -101,12 +102,15 @@ def main():
     parser.add_argument('--result-dir', type=Path, default=root / '.build/simulator-results')
     parser.add_argument('--test-minutes', type=int, default=25)
     parser.add_argument('--only-testing', action='append', default=[])
+    parser.add_argument('--scheme', default='ABIBridge')
+    parser.add_argument('--skip-swiftui-build', action='store_true')
     args = parser.parse_args()
     args.result_dir.mkdir(parents=True, exist_ok=True)
     failures = []
     for platform in args.platforms:
         failures.extend(run_platform(platform, root, args.build_dir.resolve(),
-                                     args.result_dir.resolve(), args.test_minutes, args.only_testing))
+                                     args.result_dir.resolve(), args.test_minutes, args.only_testing,
+                                     args.scheme, not args.skip_swiftui_build))
     for failure in failures:
         print(failure, file=sys.stderr)
     return 1 if failures else 0

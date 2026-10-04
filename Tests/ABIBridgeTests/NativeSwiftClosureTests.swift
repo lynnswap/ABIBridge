@@ -1060,7 +1060,25 @@ struct NativeSwiftClosureTests {
             let capture = ClosureCapture(destroyed)
             observed = capture
             var callback = try NativeSwiftClosure { (value: Int64) in value + capture.bias }
-            for _ in 0..<10_000 { callback = try unsafe echo.unsafeInvoke(callback) }
+            callback = try unsafe echo.unsafeInvoke(callback)
+            #if DEBUG
+            func context(
+                of callback: NativeSwiftClosure<(Int64) -> Int64>
+            ) throws -> UnsafeMutableRawPointer? {
+                guard case .synchronous(let storage, _) = try callback.call.resolved() else {
+                    Issue.record("Expected a synchronous native closure")
+                    return nil
+                }
+                return storage.value.context
+            }
+            let originalContext = try #require(try context(of: callback))
+            #endif
+            for _ in 0..<8 {
+                callback = try unsafe echo.unsafeInvoke(callback)
+                #if DEBUG
+                #expect(try context(of: callback) == originalContext)
+                #endif
+            }
             #expect(try unsafe callback.unsafeInvoke(35) == 42)
         }
         #expect(observed == nil)

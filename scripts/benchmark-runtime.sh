@@ -5,8 +5,14 @@ task_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 task_mode=${1:-calls}
 task_build=${ABI_BENCHMARK_BUILD_DIR:-"$task_root/.build/runtime-benchmarks"}
 case "$task_mode" in
+  hooks)
+    exec xcodebuild test -workspace "$task_root/ABIBridge.xcworkspace" \
+      -scheme ABIBridgeLocal -configuration Release \
+      -destination 'platform=macOS,arch=arm64' -derivedDataPath "$task_build/hooks" \
+      -only-testing:ABIBridgeLocalTests/ObjectiveCHookBenchmarks
+    ;;
   calls|search) ;;
-  *) echo "Usage: $0 [calls|search]" >&2; exit 2 ;;
+  *) echo "Usage: $0 [calls|search|hooks]" >&2; exit 2 ;;
 esac
 
 xcrun swift build --package-path "$task_root/Tools/RuntimeBenchmarks" \

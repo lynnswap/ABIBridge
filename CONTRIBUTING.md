@@ -38,33 +38,28 @@ For code changes, run the package tests and the additional checks relevant to th
 
 ### Package tests
 
-The package suite is split into three groups, each running in a separate test process:
+The package has separate schemes for runtime contracts, public API behavior, and local workloads:
 
 ```sh
-bash scripts/test-package.sh core
-bash scripts/test-package.sh invocation
-bash scripts/test-package.sh hooks
+bash scripts/test-package.sh runtime
+bash scripts/test-package.sh api
+bash scripts/test-package.sh local
 ```
 
-`core` covers lookup, images, memory, and any tests not assigned to the other groups. `invocation` covers calling native code and transferring values. `hooks` covers callbacks, replacement, and hook lifetimes. Keep the invocation and hook lists in [test-package.sh](scripts/test-package.sh) disjoint when moving suites.
+`runtime` runs `ABIBridgeCoreTests` and `ABIBridgeRuntimeTests` under the `ABIBridgeRuntime` scheme. `api` runs `ABIBridgeTests` under `ABIBridge`. `local` runs hook benchmarks and closure handoff stress tests under `ABIBridgeLocal`. Use `all`, or omit the argument, to run all three schemes sequentially, including local workloads.
 
-Each group uses its own directory under `.build/package-tests`, so these commands can run concurrently. Set `ABI_TEST_BUILD_DIR` to choose another directory, but do not share it between simultaneous builds. The script forwards extra arguments to `xcodebuild`; `all` runs the full suite in one process.
+Each selection uses its own directory under `.build/package-tests`. Set `ABI_TEST_BUILD_DIR` to reuse another directory across sequential runs; do not share it between simultaneous builds. The script forwards extra arguments to `xcodebuild`.
 
-During development, select a single suite with `xcodebuild`:
+The Runtime and public API test bundles disable parallel execution in their shared schemes. They load and unload libraries in the process-wide image catalog; an absence check needs that catalog to remain stable while it runs. Individual tests still exercise concurrent operations where that is the contract. A suite's `serialized` trait does not isolate it from unrelated suites; see [Swift Testing parallelization](https://developer.apple.com/documentation/testing/parallelization).
+
+During development, select a single suite:
 
 ```sh
-xcodebuild test -scheme ABIBridge \
-  -destination 'platform=macOS,arch=arm64' \
+bash scripts/test-package.sh api \
   -only-testing:ABIBridgeTests/ManagedSwiftValueTests
 ```
 
-For changes to Swift value handling, ownership, or calling conventions, also run the affected suites with `-configuration Release`. CI separately checks that the native C entry points remain linkable in an optimized build:
-
-```sh
-xcodebuild test -configuration Release -scheme ABIBridge \
-  -destination 'platform=macOS,arch=arm64' \
-  -only-testing:ABIBridgeTests/NativeRuntimeTests
-```
+For changes to value handling, ownership, or calling conventions, also run the affected suites with `-configuration Release`. The focused external consumer check below verifies native C linkage in Release.
 
 ### Native consumers and ABI checks
 
@@ -75,6 +70,8 @@ bash scripts/test-native-consumer.sh
 ```
 
 This builds C, C++, Objective-C++, and Swift clients of the public product. It also runs the Swift compiler probes, which inspect generated code for argument passing, results, ownership, and pointer authentication across architectures.
+
+For the subset used by CI, run `bash scripts/test-native-consumer.sh focused`. It checks external headers, optimized C linkage, and compiler-sensitive Swift entry points. `bash scripts/test-native-consumer.sh swiftui` runs the public SwiftUI consumer and its contract check. Set `ABI_CONSUMER_BUILD_DIR` to choose a separate build directory for another toolchain.
 
 Run the architecture fixtures and the trampoline comparison when changing ABI handling:
 
@@ -91,13 +88,14 @@ The comparison checks arm64 and arm64e by default and writes its output to `.bui
 
 ### iOS Simulator and platform builds
 
-Run the portable package tests on an installed iOS Simulator runtime:
+Run the lower runtime contracts on an installed iOS Simulator runtime:
 
 ```sh
-python3 scripts/test-simulators.py --platforms iOS
+python3 scripts/test-simulators.py --platforms iOS \
+  --scheme ABIBridgeRuntime --skip-swiftui-build
 ```
 
-The helper creates a dedicated device, runs tests without parallel destination clones, builds `ABIBridgeSwiftUI`, and deletes the device afterward. It prefers a runtime matching the selected Xcode SDK and saves builds in `.build/simulator-tests` and results in `.build/simulator-results`. Tests that compile temporary libraries on the host run only on macOS.
+The helper creates a dedicated device, runs tests without parallel destination clones, and deletes the device afterward. Omitting `--scheme` selects the public `ABIBridge` suite; omitting `--skip-swiftui-build` also builds `ABIBridgeSwiftUI`. It prefers a runtime matching the selected Xcode SDK and saves builds in `.build/simulator-tests` and results in `.build/simulator-results`. Tests that compile temporary libraries on the host run only on macOS.
 
 Use `--platforms iOS tvOS` to choose another combination. Omitting `--platforms` runs all four Simulator platforms sequentially; CI selects only iOS.
 
@@ -124,29 +122,27 @@ Older `actionlint` versions do not recognize GitHub's [official `xcode-27` runne
 
 ## What CI runs
 
-[CI](.github/workflows/ci.yml) runs the same checks with both toolchains:
+[CI](.github/workflows/ci.yml) runs Core and Runtime together in four environment entries:
 
-| Xcode | Runner | Runtime tests | Device builds |
+| Xcode | Runner | Runtime environments | Additional checks |
 | --- | --- | --- | --- |
-| 26.6 | `macos-26` | macOS and iOS Simulator | iOS, visionOS, watchOS, tvOS |
-| 27.0 | `xcode-27` | macOS and iOS Simulator | iOS, visionOS, watchOS, tvOS |
+| 26.6 | `macos-26` | macOS and iOS Simulator | Focused external consumers on macOS |
+| 27.0 | `xcode-27` | macOS and iOS Simulator | Public API suite and focused external/SwiftUI consumers on macOS |
 
-ABIBridge reads Swift metadata, implements calling conventions, and contains workarounds for Swift 6.3 compiler behavior. Running both toolchains checks those assumptions against each compiler. The iOS run also exercises Simulator-specific image loading. The `xcode-27` runner runs macOS 27 and is currently in public preview.
+The public API suite runs once in the macOS/Xcode 27 job, reusing the runtime build directory. A separate Xcode 27 job builds both products for the iOS, visionOS, watchOS, and tvOS device SDKs. Timing loops, long repetition, full external integration combinations, and architecture probes remain local checks.
 
-For each toolchain, CI runs three jobs:
+The matrix checks compiler and OS assumptions in metadata, calling conventions, and image loading. Focused external Swift clients also exercise generic public entry points that contain compiler workarounds. The `xcode-27` runner runs macOS 27 and is currently in public preview. Simulator execution does not verify device pointer authentication.
 
-- Package tests, followed by the optimized bridge check.
-- Native consumers and architecture checks.
-- iOS Simulator tests, followed by device builds.
+Independent checks continue after failures. CI keeps failed package and Simulator diagnostics for seven days. Pull requests and releases require every CI job to succeed; closing a pull request cancels its superseded validation. Older release targets without the runtime target use their original package and consumer suites. DocC builds run separately with Xcode 27.0 when `main` changes.
 
-Package groups run sequentially within their job and reuse a build directory. Independent checks continue after failures. CI keeps failed package and Simulator diagnostics for seven days.
-
-Pull requests and releases require every CI job to succeed. Closing a pull request cancels its superseded validation. When validating an older release target, CI uses fallback commands for helpers absent from that revision. DocC builds run separately with Xcode 27.0 when `main` changes.
+See [Runtime boundaries and CI coverage](Docs/RuntimeArchitecture.md) for module responsibilities, ownership, and the test contracts behind this split.
 
 ## Find the relevant fixtures
 
 | Location | Purpose |
 | --- | --- |
+| [Tests/ABIBridgeCoreTests](Tests/ABIBridgeCoreTests) and [Tests/ABIBridgeRuntimeTests](Tests/ABIBridgeRuntimeTests) | Environment-dependent native and Swift runtime contracts |
+| [Tests/ABIBridgeLocalTests](Tests/ABIBridgeLocalTests) | Local hook benchmarks and closure stress |
 | [Tests/ABIBridgeTests](Tests/ABIBridgeTests) | Package tests organized by API and behavior |
 | [Tests/NativeConsumer](Tests/NativeConsumer) | External clients that import and link the public product |
 | [Tests/ManagedSwiftFixtures](Tests/ManagedSwiftFixtures) and [Tests/ManagedSwiftAdapters](Tests/ManagedSwiftAdapters) | Separately compiled Swift types and adapters, including library-evolution boundaries |
@@ -197,9 +193,10 @@ Run the Release benchmarks without other builds or tests competing for resources
 ```sh
 bash scripts/benchmark-runtime.sh calls
 bash scripts/benchmark-runtime.sh search
+bash scripts/benchmark-runtime.sh hooks
 ```
 
-`calls` measures prepared native calls and callbacks. `search` measures lookup, demangling, and pointer discovery over generated fixtures. Record Xcode, machine, configuration, and workload with the results. These benchmarks do not establish application latency or physical-device performance.
+`calls` measures prepared native calls and callbacks. `search` measures lookup, demangling, and pointer discovery over generated fixtures. `hooks` measures Objective-C managed hooks and replacement entries through the local test scheme. Record Xcode, machine, configuration, and workload with the results. These benchmarks do not establish application latency or physical-device performance.
 
 ## Submit a pull request
 

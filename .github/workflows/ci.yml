@@ -35,29 +35,33 @@ jobs:
           persist-credentials: false
       - run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
 
-  macos-tests:
-    name: macOS tests (${{ matrix.group }}, Xcode ${{ matrix.toolchain.xcode }})
+  runtime-tests:
+    name: Runtime (${{ matrix.platform }}, Xcode ${{ matrix.xcode }})
     if: github.event_name != 'pull_request' || github.event.action != 'closed'
-    runs-on: ${{ matrix.toolchain.runner }}
-    timeout-minutes: ${{ matrix.timeout }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     env:
-      DEVELOPER_DIR: ${{ matrix.toolchain.developer_dir }}
+      DEVELOPER_DIR: ${{ matrix.developer_dir }}
     strategy:
       fail-fast: false
       matrix:
-        toolchain:
-          - xcode: '26.6'
+        include:
+          - platform: macOS
+            xcode: '26.6'
             runner: macos-26
             developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
-          - xcode: '27.0'
+          - platform: iOS
+            xcode: '26.6'
+            runner: macos-26
+            developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
+          - platform: macOS
+            xcode: '27.0'
             runner: xcode-27
             developer_dir: /Applications/Xcode_27.app/Contents/Developer
-        group: [Package, Native]
-        include:
-          - group: Package
-            timeout: 100
-          - group: Native
-            timeout: 50
+          - platform: iOS
+            xcode: '27.0'
+            runner: xcode-27
+            developer_dir: /Applications/Xcode_27.app/Contents/Developer
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -69,83 +73,70 @@ jobs:
           xcodebuild -version
           xcrun swift --version
           echo "ABI_TEST_BUILD_DIR=$RUNNER_TEMP/DerivedData" >> "$GITHUB_ENV"
+          echo "ABI_CONSUMER_BUILD_DIR=$RUNNER_TEMP/NativeConsumer" >> "$GITHUB_ENV"
       - name: Check whitespace and manifest
-        if: matrix.group == 'Package'
+        if: matrix.platform == 'macOS' && matrix.xcode == '27.0'
         run: |
           git diff --check HEAD^ HEAD
           xcrun swift package dump-package
-      - name: Test core package shard
-        if: ${{ !cancelled() && matrix.group == 'Package' }}
+      - name: Test Core and Runtime on macOS
+        if: ${{ !cancelled() && matrix.platform == 'macOS' }}
         timeout-minutes: 25
         run: |
-          if [[ -f scripts/test-package.sh ]]; then
-            bash scripts/test-package.sh core
+          if [[ -d Sources/ABIBridgeRuntime ]]; then
+            bash scripts/test-package.sh runtime
           else
-            # Release targets can predate the shard script.
+            # Older release targets keep their original package suite.
             xcodebuild test -scheme ABIBridge \
               -destination 'platform=macOS,arch=arm64' \
               -derivedDataPath "$ABI_TEST_BUILD_DIR"
           fi
-      - name: Test invocation package shard
-        if: ${{ !cancelled() && matrix.group == 'Package' && hashFiles('scripts/test-package.sh') != '' }}
+      - name: Test public API behavior
+        if: ${{ !cancelled() && matrix.platform == 'macOS' && matrix.xcode == '27.0' && hashFiles('Sources/ABIBridgeRuntime/*.swift') != '' }}
         timeout-minutes: 25
-        run: bash scripts/test-package.sh invocation
-      - name: Test hooks package shard
-        if: ${{ !cancelled() && matrix.group == 'Package' && hashFiles('scripts/test-package.sh') != '' }}
+        run: bash scripts/test-package.sh api
+      - name: Test public compiler boundaries and optimized native linkage
+        if: ${{ !cancelled() && matrix.platform == 'macOS' }}
         timeout-minutes: 25
-        run: bash scripts/test-package.sh hooks
-      - name: Test optimized native bridge
-        if: ${{ !cancelled() && matrix.group == 'Package' }}
-        timeout-minutes: 15
-        run: >-
-          xcodebuild test
-          -configuration Release
-          -scheme ABIBridge
-          -destination 'platform=macOS,arch=arm64'
-          -derivedDataPath "$ABI_TEST_BUILD_DIR"
-          -only-testing:ABIBridgeTests/NativeRuntimeTests
-      - name: Preserve failed package test diagnostics
-        if: always() && matrix.group == 'Package' && (failure() || cancelled())
+        run: |
+          if [[ -d Sources/ABIBridgeRuntime ]]; then
+            bash scripts/test-native-consumer.sh focused
+          else
+            bash scripts/test-native-consumer.sh
+          fi
+      - name: Test SwiftUI public consumer
+        if: ${{ !cancelled() && matrix.platform == 'macOS' && matrix.xcode == '27.0' && hashFiles('Sources/ABIBridgeRuntime/*.swift') != '' }}
+        timeout-minutes: 10
+        run: bash scripts/test-native-consumer.sh swiftui
+      - name: Test Core and Runtime on iOS Simulator
+        if: ${{ !cancelled() && matrix.platform == 'iOS' && hashFiles('scripts/test-simulators.py') != '' }}
+        timeout-minutes: 35
+        run: |
+          task_options=()
+          if [[ -d Sources/ABIBridgeRuntime ]]; then
+            task_options+=(--scheme ABIBridgeRuntime --skip-swiftui-build)
+          fi
+          python3 scripts/test-simulators.py --platforms iOS \
+            --build-dir "$ABI_TEST_BUILD_DIR" \
+            --result-dir "$RUNNER_TEMP/SimulatorResults" "${task_options[@]}"
+      - name: Preserve failed test diagnostics
+        if: always() && (failure() || cancelled())
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: package-test-xcode-${{ matrix.toolchain.xcode }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/DerivedData/Logs/Test
+          name: tests-${{ matrix.platform }}-xcode-${{ matrix.xcode }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/SimulatorResults
+            ${{ runner.temp }}/DerivedData/Logs/Test
           if-no-files-found: warn
           retention-days: 7
-      - name: Test native consumers
-        if: ${{ !cancelled() && matrix.group == 'Native' }}
-        timeout-minutes: 25
-        run: bash scripts/test-native-consumer.sh
-      - name: Test architecture fixtures on macOS
-        if: ${{ !cancelled() && matrix.group == 'Native' }}
-        timeout-minutes: 15
-        working-directory: Tests/ArchitectureValidation
-        run: >-
-          xcodebuild test
-          -scheme ArchitectureValidation-Package
-          -destination 'platform=macOS,arch=arm64'
-          -derivedDataPath "$RUNNER_TEMP/ArchitectureValidation"
-      - name: Check arm64 and arm64e code generation
-        if: ${{ !cancelled() && matrix.group == 'Native' }}
-        run: python3 scripts/check-architecture-codegen.py
 
   platform-builds:
-    name: Apple platform validation (Xcode ${{ matrix.toolchain.xcode }})
+    name: Apple device SDK builds (Xcode 27.0)
     if: github.event_name != 'pull_request' || github.event.action != 'closed'
-    runs-on: ${{ matrix.toolchain.runner }}
-    timeout-minutes: 80
+    runs-on: xcode-27
+    timeout-minutes: 40
     env:
-      DEVELOPER_DIR: ${{ matrix.toolchain.developer_dir }}
-    strategy:
-      fail-fast: false
-      matrix:
-        toolchain:
-          - xcode: '26.6'
-            runner: macos-26
-            developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
-          - xcode: '27.0'
-            runner: xcode-27
-            developer_dir: /Applications/Xcode_27.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -155,25 +146,6 @@ jobs:
         run: |
           xcodebuild -version
           xcrun swift --version
-      - name: Test iOS Simulator
-        id: simulator-tests
-        if: hashFiles('scripts/test-simulators.py') != ''
-        timeout-minutes: 35
-        run: >-
-          python3 scripts/test-simulators.py
-          --platforms iOS
-          --build-dir "$RUNNER_TEMP/DerivedData"
-          --result-dir "$RUNNER_TEMP/SimulatorResults"
-      - name: Preserve failed Simulator diagnostics
-        if: always() && steps.simulator-tests.outcome != 'success' && steps.simulator-tests.outcome != 'skipped'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: simulator-tests-xcode-${{ matrix.toolchain.xcode }}-${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/SimulatorResults
-            ${{ runner.temp }}/DerivedData/Logs/Test
-          if-no-files-found: warn
-          retention-days: 7
       - name: Build all Apple platforms
         if: ${{ !cancelled() }}
         timeout-minutes: 35

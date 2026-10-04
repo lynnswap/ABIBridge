@@ -14,7 +14,7 @@
             <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="ABIBridgeCoreTests" BuildableName="ABIBridgeCoreTests" BlueprintName="ABIBridgeCoreTests" ReferencedContainer="container:">
             </BuildableReference>
          </TestableReference>
-         <TestableReference skipped="NO">
+         <TestableReference skipped="NO" parallelizable="NO">
             <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="ABIBridgeRuntimeTests" BuildableName="ABIBridgeRuntimeTests" BlueprintName="ABIBridgeRuntimeTests" ReferencedContainer="container:">
             </BuildableReference>
          </TestableReference>
