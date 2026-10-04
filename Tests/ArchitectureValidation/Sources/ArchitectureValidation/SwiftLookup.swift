@@ -54,5 +54,15 @@ import SwiftReplacementFixtures
             } catch ABIResolutionError.declarationNotFound(let declaration) where declaration == absent {}
         }
     }
+    await runtime.removeCachedResults()
+    let scopedAbsent = NativeDeclaration(name: "ABIBridgeAbsentScoped.missing() -> ()", language: .swift)
+    for pass in ["cold", "warm"] {
+        try await measure("absent module in Foundation \(pass)", repetitions: pass == "warm" ? 100 : 1) {
+            do {
+                _ = try await runtime.resolve(scopedAbsent, in: .framework(named: "Foundation"), loading: .loadedOnly)
+                throw ArchitectureValidationFailure(description: "Absent module unexpectedly resolved in Foundation")
+            } catch ABIResolutionError.declarationNotFound(let declaration) where declaration == scopedAbsent {}
+        }
+    }
     return checks
 }
