@@ -27,7 +27,7 @@ env:
 
 jobs:
   release-tests:
-    name: Release automation tests
+    name: Release and CI automation tests
     if: github.event_name != 'pull_request' || github.event.action != 'closed'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -37,7 +37,7 @@ jobs:
           # Test the dispatching automation, including for older release targets.
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
-      - run: python3 -m unittest discover -s scripts -p 'test_release.py' -v
+      - run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
 
   macos-tests:
     name: macOS tests (${{ matrix.group }})
@@ -124,10 +124,10 @@ jobs:
         run: python3 scripts/check-architecture-codegen.py
 
   platform-builds:
-    name: Apple platform builds
+    name: Apple platform validation
     if: github.event_name != 'pull_request' || github.event.action != 'closed'
     runs-on: macos-26
-    timeout-minutes: 35
+    timeout-minutes: 170
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -137,7 +137,27 @@ jobs:
         run: |
           xcodebuild -version
           xcrun swift --version
+      - name: Test all Apple Simulators
+        id: simulator-tests
+        if: hashFiles('scripts/test-simulators.py') != ''
+        timeout-minutes: 125
+        run: >-
+          python3 scripts/test-simulators.py
+          --build-dir "$RUNNER_TEMP/DerivedData"
+          --result-dir "$RUNNER_TEMP/SimulatorResults"
+      - name: Preserve failed Simulator diagnostics
+        if: always() && steps.simulator-tests.outcome != 'success' && steps.simulator-tests.outcome != 'skipped'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: simulator-tests-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/SimulatorResults
+            ${{ runner.temp }}/DerivedData/Logs/Test
+          if-no-files-found: warn
+          retention-days: 7
       - name: Build all Apple platforms
+        if: ${{ !cancelled() }}
+        timeout-minutes: 35
         run: |
           task_status=0
           for task_platform in iOS visionOS watchOS tvOS; do
