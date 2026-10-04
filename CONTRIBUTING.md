@@ -14,6 +14,17 @@ xcrun swift --version
 
 For Xcode 26.6, use `/Applications/Xcode_26.6.app/Contents/Developer`. Adjust the path if your local installation has a different name.
 
+## Format Swift code
+
+Use the formatter included with Xcode. The repository's `.swift-format` configures both formatting and linting with four-space indentation. Multiline argument lists use one argument per line.
+
+```sh
+xcrun swift format --in-place path/to/File.swift
+xcrun swift format lint --strict path/to/File.swift
+```
+
+Format the Swift files you change before submitting a pull request. Unicode identifiers remain allowed for ABI fixtures, and explicit initializers are retained when they define access across module boundaries.
+
 ## Test a change
 
 Start with the manifest and whitespace checks:

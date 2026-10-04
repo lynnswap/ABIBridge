@@ -1,9 +1,15 @@
+import ABIBridgeRuntime
 import ABIBridgeCore
 import Foundation
 import ObjectiveC
 
 enum SwiftTypeCacheKey: Hashable {
-    case declaration(name: String, image: NativeImageIdentity, representation: ObjectIdentifier?, arguments: [NativeSwiftGenericArgument.Identity])
+    case declaration(
+        name: String,
+        image: NativeImageIdentity,
+        representation: ObjectIdentifier?,
+        arguments: [NativeSwiftGenericArgument.Identity]
+    )
     case metadata(ObjectIdentifier, image: NativeImageIdentity)
 }
 
@@ -11,7 +17,8 @@ struct SwiftMetadataResponse: BitwiseCopyable, ABIBridgeValue {
     let address: UInt
     let state: UInt
     static let abiType = try! NativeType.structure(
-        named: "Swift.MetadataResponse", fields: [.uint, .uint]
+        named: "Swift.MetadataResponse",
+        fields: [.uint, .uint]
     )
     init(nativeValue: NativeValue) throws {
         self = try unsafe nativeValue.read(as: Self.self)
@@ -50,58 +57,94 @@ public actor NativeSwiftType: Hashable {
     var genericArguments: [NativeSwiftGenericArgument] { genericMetadata?.arguments ?? [] }
     private var cachedReceiver: SwiftReceiverCodec?
 
-    init(name: String, image: NativeImage, metadata: Any.Type,
-         representation: Any.Type?, resolver: SymbolResolver,
-         genericMetadata: SwiftGenericTypeMetadata? = nil, codeLifetime: SwiftValueCodeLifetime? = nil) {
+    init(
+        name: String,
+        image: NativeImage,
+        metadata: Any.Type,
+        representation: Any.Type?,
+        resolver: SymbolResolver,
+        genericMetadata: SwiftGenericTypeMetadata? = nil,
+        codeLifetime: SwiftValueCodeLifetime? = nil
+    ) {
         self.name = name
         self.image = image
         self.metadata = metadata
         self.representation = representation
         self.resolver = resolver
         self.genericMetadata = genericMetadata
-        self.codeLifetime = codeLifetime ?? SwiftValueCodeLifetime([image] + (genericMetadata?.images ?? []))
+        self.codeLifetime =
+            codeLifetime ?? SwiftValueCodeLifetime([image] + (genericMetadata?.images ?? []))
     }
 
     nonisolated func retainingCode(_ lifetime: SwiftValueCodeLifetime) -> NativeSwiftType {
-        NativeSwiftType(name: name, image: image, metadata: metadata, representation: representation,
-                       resolver: resolver, genericMetadata: genericMetadata, codeLifetime: lifetime)
+        NativeSwiftType(
+            name: name,
+            image: image,
+            metadata: metadata,
+            representation: representation,
+            resolver: resolver,
+            genericMetadata: genericMetadata,
+            codeLifetime: lifetime
+        )
     }
 
-    func receiverPlan(mutating isMutating: Bool, consuming isConsuming: Bool = false,
-                      generic: SwiftGenericCallPlan? = nil, receiverABI: NativeType? = nil) throws -> SwiftReceiverPlan {
+    func receiverPlan(
+        mutating isMutating: Bool,
+        consuming isConsuming: Bool = false,
+        generic: SwiftGenericCallPlan? = nil,
+        receiverABI: NativeType? = nil
+    ) throws -> SwiftReceiverPlan {
         let codec: SwiftReceiverCodec
         if let receiverABI {
             let formalType = try explicitSwiftValueType(metadata, abi: receiverABI)
             codec = SwiftReceiverCodec(runtimeType: metadata, formalType: formalType)
-        } else if (representation == nil || representation == metadata), let formalType = try generic?.receiverType() {
+        } else if (representation == nil || representation == metadata),
+            let formalType = try generic?.receiverType()
+        {
             codec = SwiftReceiverCodec(runtimeType: metadata, formalType: formalType)
         } else {
-            if cachedReceiver == nil { cachedReceiver = try SwiftReceiverCodec.make(for: representation ?? metadata) }
+            if cachedReceiver == nil {
+                cachedReceiver = try SwiftReceiverCodec.make(for: representation ?? metadata)
+            }
             codec = cachedReceiver!
         }
         return try SwiftReceiverPlan(
-            codec: codec, metadata: metadata, isMutating: isMutating, isConsuming: isConsuming,
+            codec: codec,
+            metadata: metadata,
+            isMutating: isMutating,
+            isConsuming: isConsuming,
             validateClass: representation != nil && representation != metadata
         )
     }
 
     private func resolveDeclaredMember(
-        _ declaration: NativeDeclaration, in image: NativeImage,
+        _ declaration: NativeDeclaration,
+        in image: NativeImage,
         exact: Bool = false,
         genericContext: () throws -> SwiftGenericContext? = { nil }
     ) throws -> ResolvedSymbol {
-        do { return try resolver.resolve(declaration, in: image, loading: .loadedOnly) }
-        catch ABIResolutionError.declarationNotFound {
+        do {
+            return try resolver.resolve(declaration, in: image, loading: .loadedOnly)
+        } catch ABIResolutionError.declarationNotFound {
             if exact {
                 let key = DeclarationKey.make(declaration.name, language: .swift)
-                let matches = try resolver.swiftDeclarationCandidates(declaration, in: nil, extensionsOnly: true).filter {
+                let matches = try resolver.swiftDeclarationCandidates(
+                    declaration,
+                    in: nil,
+                    extensionsOnly: true
+                ).filter {
                     let name = $0.declaration.name
                     return DeclarationKey.make(name, language: .swift) == key
-                        || SymbolIndex.extensionMemberName(name).map { DeclarationKey.make($0, language: .swift) == key } == true
+                        || SymbolIndex.extensionMemberName(name).map {
+                            DeclarationKey.make($0, language: .swift) == key
+                        } == true
                 }
                 guard matches.count == 1 else {
                     if matches.isEmpty { throw ABIResolutionError.declarationNotFound(declaration) }
-                    throw ABIResolutionError.ambiguousDeclaration(declaration, candidates: matches.map(\.linkageName))
+                    throw ABIResolutionError.ambiguousDeclaration(
+                        declaration,
+                        candidates: matches.map(\.linkageName)
+                    )
                 }
                 return matches[0]
             }
@@ -112,8 +155,12 @@ public actor NativeSwiftType: Hashable {
     // Generic packs expand caller arguments without changing the source labels.
     // Their requests keep those labels until declaration binding determines arity.
     private func resolveMember(
-        signature: Any.Type? = nil, genericArguments: [NativeSwiftGenericArgument] = [], inherited: Bool = true,
-        exact: Bool = false, explicitSignature: Bool = false, declaredSignature: String? = nil,
+        signature: Any.Type? = nil,
+        genericArguments: [NativeSwiftGenericArgument] = [],
+        inherited: Bool = true,
+        exact: Bool = false,
+        explicitSignature: Bool = false,
+        declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:],
         _ declaration: (String, Bool) throws -> NativeDeclaration
     ) throws -> (symbol: ResolvedSymbol, metadata: Any.Type) {
@@ -125,9 +172,13 @@ public actor NativeSwiftType: Hashable {
         var preparationFailure: (any Error)?
         while true {
             let owner: Any.Type = ownerClass ?? metadata
-            let enclosing = try owner == metadata ? genericMetadata : SwiftGenericTypeMetadata(metadata: owner)
-            let usesBinding = try signature != nil && (!(enclosing?.arguments.isEmpty ?? true) || !genericArguments.isEmpty
-                || declaredSignature != nil || !valueABIs.isEmpty || SwiftFunctionSignature(signature!).requiresValueDeclaration)
+            let enclosing =
+                try owner == metadata ? genericMetadata : SwiftGenericTypeMetadata(metadata: owner)
+            let usesBinding =
+                try signature != nil
+                && (!(enclosing?.arguments.isEmpty ?? true) || !genericArguments.isEmpty
+                    || declaredSignature != nil || !valueABIs.isEmpty
+                    || SwiftFunctionSignature(signature!).requiresValueDeclaration)
             let request = try declaration(ownerName, usesBinding)
             if originalRequest == nil { originalRequest = request }
             let belongs = !exact || SwiftMemberLookup.belongs(request.name, to: ownerName)
@@ -137,7 +188,13 @@ public actor NativeSwiftType: Hashable {
                         try ownerClass.flatMap { try SwiftGenericContext($0, owner: ownerName) }
                     }
                     if usesBinding, let signature {
-                        _ = try genericPlan((symbol, owner), signature: signature, arguments: genericArguments, declaredSignature: declaredSignature, valueABIs: valueABIs)
+                        _ = try genericPlan(
+                            (symbol, owner),
+                            signature: signature,
+                            arguments: genericArguments,
+                            declaredSignature: declaredSignature,
+                            valueABIs: valueABIs
+                        )
                     }
                     return (symbol, owner)
                 } catch ABIResolutionError.declarationNotFound {
@@ -150,27 +207,45 @@ public actor NativeSwiftType: Hashable {
             if belongs && usesBinding && !exact, let signature {
                 do {
                     for extensionsOnly in [false, true] {
-                        let candidates = try resolver.swiftDeclarationCandidates(request,
-                            in: extensionsOnly ? nil : ownerImage, extensionsOnly: extensionsOnly)
+                        let candidates = try resolver.swiftDeclarationCandidates(
+                            request,
+                            in: extensionsOnly ? nil : ownerImage,
+                            extensionsOnly: extensionsOnly
+                        )
                         let matches = candidates.filter { symbol in
                             if explicitSignature,
-                               ![symbol.declaration.name, SymbolIndex.operatorAlias(symbol.declaration.name)].compactMap({ $0 }).contains(where: {
-                                   SwiftMemberLookup.signatureKey($0) == SwiftMemberLookup.signatureKey(request.name)
-                               }) {
+                                ![
+                                    symbol.declaration.name,
+                                    SymbolIndex.operatorAlias(symbol.declaration.name),
+                                ].compactMap({ $0 }).contains(where: {
+                                    SwiftMemberLookup.signatureKey($0)
+                                        == SwiftMemberLookup.signatureKey(request.name)
+                                })
+                            {
                                 return false
                             }
                             do {
-                                guard let plan = try genericPlan((symbol, owner), signature: signature,
-                                    arguments: genericArguments, declaredSignature: declaredSignature, valueABIs: valueABIs) else { return false }
-                                return try explicitSignature || plan.matches(SwiftFunctionSignature(signature))
-                            } catch ABIResolutionError.signatureMismatch { return false }
-                            catch {
+                                guard
+                                    let plan = try genericPlan(
+                                        (symbol, owner),
+                                        signature: signature,
+                                        arguments: genericArguments,
+                                        declaredSignature: declaredSignature,
+                                        valueABIs: valueABIs
+                                    )
+                                else { return false }
+                                return try explicitSignature
+                                    || plan.matches(SwiftFunctionSignature(signature))
+                            } catch ABIResolutionError.signatureMismatch { return false } catch {
                                 preparationFailure = error
                                 return false
                             }
                         }
                         if matches.count > 1 {
-                            throw ABIResolutionError.ambiguousDeclaration(request, candidates: matches.map(\.linkageName))
+                            throw ABIResolutionError.ambiguousDeclaration(
+                                request,
+                                candidates: matches.map(\.linkageName)
+                            )
                         }
                         if let symbol = matches.first { return (symbol, owner) }
                     }
@@ -180,7 +255,8 @@ public actor NativeSwiftType: Hashable {
                     preparationFailure = ABIResolutionError.unsupportedDeclaration(reason)
                 }
             }
-            guard inherited, let current = ownerClass, let parent = class_getSuperclass(current) else {
+            guard inherited, let current = ownerClass, let parent = class_getSuperclass(current)
+            else {
                 if hasUnavailableExtensions { throw ABIResolutionError.imageUnavailable }
                 if let preparationFailure { throw preparationFailure }
                 throw ABIResolutionError.declarationNotFound(originalRequest!)
@@ -188,7 +264,12 @@ public actor NativeSwiftType: Hashable {
             let runtimeName = try swiftFunctionTypeName(parent)
             ownerClass = parent
             ownerImage = try swiftClassImage(parent, named: runtimeName, resolver: resolver)
-            ownerName = try swiftTypeDeclarationName(parent, in: ownerImage, suggestedName: runtimeName, resolver: resolver)
+            ownerName = try swiftTypeDeclarationName(
+                parent,
+                in: ownerImage,
+                suggestedName: runtimeName,
+                resolver: resolver
+            )
         }
     }
 
@@ -214,37 +295,75 @@ public actor NativeSwiftType: Hashable {
     /// - Returns: A reusable method with an explicit receiver.
     /// - Throws: A lookup, representation, or preparation error.
     public func method<Signature>(
-        named name: String, as signature: Signature.Type,
+        named name: String,
+        as signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument] = [],
         declaredAs declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:],
         receiverABI: NativeType? = nil,
-        mutating isMutating: Bool = false, consuming isConsuming: Bool = false
+        mutating isMutating: Bool = false,
+        consuming isConsuming: Bool = false
     ) throws -> NativeSwiftMethod<Signature> {
-        let symbol = try resolveMember(signature: signature, genericArguments: genericArguments,
+        let symbol = try resolveMember(
+            signature: signature,
+            genericArguments: genericArguments,
             exact: SwiftMemberLookup.isQualified(name),
-            explicitSignature: SwiftMemberLookup.hasSignature(name), declaredSignature: declaredSignature, valueABIs: valueABIs) { owner, usesBinding in
+            explicitSignature: SwiftMemberLookup.hasSignature(name),
+            declaredSignature: declaredSignature,
+            valueABIs: valueABIs
+        ) { owner, usesBinding in
             let member = try SwiftMemberLookup.qualifiedName(name, owner: owner)
-            return try usesBinding ? NativeDeclaration(name: member, language: .swift)
+            return try usesBinding
+                ? NativeDeclaration(name: member, language: .swift)
                 : swiftFunctionDeclaration(named: member, as: signature)
         }
-        let generic = try genericPlan(symbol, signature: signature, arguments: genericArguments, declaredSignature: declaredSignature, valueABIs: valueABIs)
-        let receiver = try receiverPlan(mutating: isMutating, consuming: isConsuming, generic: generic, receiverABI: receiverABI)
-        return try NativeSwiftMethod(symbol: symbol.symbol, type: self, receiver: receiver,
-            generic: generic?.includingReceiver(receiver.mode))
+        let generic = try genericPlan(
+            symbol,
+            signature: signature,
+            arguments: genericArguments,
+            declaredSignature: declaredSignature,
+            valueABIs: valueABIs
+        )
+        let receiver = try receiverPlan(
+            mutating: isMutating,
+            consuming: isConsuming,
+            generic: generic,
+            receiverABI: receiverABI
+        )
+        return try NativeSwiftMethod(
+            symbol: symbol.symbol,
+            type: self,
+            receiver: receiver,
+            generic: generic?.includingReceiver(receiver.mode)
+        )
     }
 
     private func genericPlan(
-        _ member: (symbol: ResolvedSymbol, metadata: Any.Type), signature: Any.Type,
-        arguments: [NativeSwiftGenericArgument] = [], receiver: SwiftReceiverMode? = nil,
-        declaredSignature: String? = nil, valueABIs: [NativeSwiftType: NativeType] = [:]
+        _ member: (symbol: ResolvedSymbol, metadata: Any.Type),
+        signature: Any.Type,
+        arguments: [NativeSwiftGenericArgument] = [],
+        receiver: SwiftReceiverMode? = nil,
+        declaredSignature: String? = nil,
+        valueABIs: [NativeSwiftType: NativeType] = [:]
     ) throws -> SwiftGenericCallPlan? {
-        let enclosing = try member.metadata == metadata ? genericMetadata : SwiftGenericTypeMetadata(metadata: member.metadata)
-        guard try !(enclosing?.arguments.isEmpty ?? true) || !arguments.isEmpty || declaredSignature != nil || !valueABIs.isEmpty
-            || SwiftFunctionSignature(signature).requiresValueDeclaration else { return nil }
-        return try SwiftGenericCallPlan(symbol: member.symbol,
-            genericArguments: arguments, signature: SwiftFunctionSignature(signature), resolver: resolver,
-            enclosing: enclosing, receiver: receiver, declaredSignature: declaredSignature, valueABIs: valueABIs)
+        let enclosing =
+            try member.metadata == metadata
+            ? genericMetadata : SwiftGenericTypeMetadata(metadata: member.metadata)
+        guard
+            try !(enclosing?.arguments.isEmpty ?? true) || !arguments.isEmpty
+                || declaredSignature != nil || !valueABIs.isEmpty
+                || SwiftFunctionSignature(signature).requiresValueDeclaration
+        else { return nil }
+        return try SwiftGenericCallPlan(
+            symbol: member.symbol,
+            genericArguments: arguments,
+            signature: SwiftFunctionSignature(signature),
+            resolver: resolver,
+            enclosing: enclosing,
+            receiver: receiver,
+            declaredSignature: declaredSignature,
+            valueABIs: valueABIs
+        )
     }
     /// Resolves a concrete allocating initializer.
     ///
@@ -261,25 +380,52 @@ public actor NativeSwiftType: Hashable {
     /// - Returns: A reusable initializer retaining its type and implementation.
     /// - Throws: A lookup, representation, or preparation error.
     public func initializer<Signature>(
-        named name: String, as signature: Signature.Type,
+        named name: String,
+        as signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument] = [],
         declaredAs declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) throws -> NativeSwiftFunction<Signature> {
         guard name.hasPrefix("init(") || name.hasPrefix("init<") else {
-            throw ABIResolutionError.unsupportedDeclaration("An initializer name must start with init( or init<.")
+            throw ABIResolutionError.unsupportedDeclaration(
+                "An initializer name must start with init( or init<."
+            )
         }
         let member = metadata is AnyClass ? "__allocating_" + name : name
-        let resultName = try SwiftFunctionSignature(signature).result is any NativeOptionalValue.Type ? "Swift.Optional<" + self.name + ">" : self.name
-        let symbol = try resolveMember(signature: signature, genericArguments: genericArguments, inherited: false,
-            explicitSignature: SwiftMemberLookup.hasSignature(name), declaredSignature: declaredSignature, valueABIs: valueABIs) { owner, usesBinding in
-            try usesBinding ? NativeDeclaration(name: owner + "." + member, language: .swift)
-                : swiftFunctionDeclaration(named: owner + "." + member, as: signature,
-                    resultName: resultName, defaultConsuming: true)
+        let resultName =
+            try SwiftFunctionSignature(signature).result is any NativeOptionalValue.Type
+            ? "Swift.Optional<" + self.name + ">" : self.name
+        let symbol = try resolveMember(
+            signature: signature,
+            genericArguments: genericArguments,
+            inherited: false,
+            explicitSignature: SwiftMemberLookup.hasSignature(name),
+            declaredSignature: declaredSignature,
+            valueABIs: valueABIs
+        ) { owner, usesBinding in
+            try usesBinding
+                ? NativeDeclaration(name: owner + "." + member, language: .swift)
+                : swiftFunctionDeclaration(
+                    named: owner + "." + member,
+                    as: signature,
+                    resultName: resultName,
+                    defaultConsuming: true
+                )
         }
-        return try NativeSwiftFunction(symbol: symbol.symbol, metadata: metadata, owner: self, consumesArguments: true,
-            generic: genericPlan(symbol, signature: signature, arguments: genericArguments,
-                                 receiver: metadata is AnyClass ? .object : nil, declaredSignature: declaredSignature, valueABIs: valueABIs))
+        return try NativeSwiftFunction(
+            symbol: symbol.symbol,
+            metadata: metadata,
+            owner: self,
+            consumesArguments: true,
+            generic: genericPlan(
+                symbol,
+                signature: signature,
+                arguments: genericArguments,
+                receiver: metadata is AnyClass ? .object : nil,
+                declaredSignature: declaredSignature,
+                valueABIs: valueABIs
+            )
+        )
     }
 
     /// Resolves a concrete static or class implementation.
@@ -294,35 +440,61 @@ public actor NativeSwiftType: Hashable {
     /// - Returns: A reusable function retaining its type and implementation.
     /// - Throws: A lookup, representation, or preparation error.
     public func staticMethod<Signature>(
-        named name: String, as signature: Signature.Type,
+        named name: String,
+        as signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument] = [],
         declaredAs declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) throws -> NativeSwiftFunction<Signature> {
-        let symbol = try resolveMember(signature: signature, genericArguments: genericArguments,
+        let symbol = try resolveMember(
+            signature: signature,
+            genericArguments: genericArguments,
             exact: SwiftMemberLookup.isQualified(name),
-            explicitSignature: SwiftMemberLookup.hasSignature(name), declaredSignature: declaredSignature, valueABIs: valueABIs) { owner, usesBinding in
+            explicitSignature: SwiftMemberLookup.hasSignature(name),
+            declaredSignature: declaredSignature,
+            valueABIs: valueABIs
+        ) { owner, usesBinding in
             let member = try SwiftMemberLookup.qualifiedName(name, owner: owner, isStatic: true)
-            return try usesBinding ? NativeDeclaration(name: member, language: .swift)
+            return try usesBinding
+                ? NativeDeclaration(name: member, language: .swift)
                 : swiftFunctionDeclaration(named: member, as: signature)
         }
-        return try NativeSwiftFunction(symbol: symbol.symbol, metadata: metadata, owner: self,
-            generic: genericPlan(symbol, signature: signature, arguments: genericArguments,
-                                 receiver: symbol.metadata is AnyClass ? .object : nil, declaredSignature: declaredSignature, valueABIs: valueABIs))
+        return try NativeSwiftFunction(
+            symbol: symbol.symbol,
+            metadata: metadata,
+            owner: self,
+            generic: genericPlan(
+                symbol,
+                signature: signature,
+                arguments: genericArguments,
+                receiver: symbol.metadata is AnyClass ? .object : nil,
+                declaredSignature: declaredSignature,
+                valueABIs: valueABIs
+            )
+        )
     }
 
     private func accessorDeclaration(
-        named name: String, ownerName: String, valueType: Any.Type, setter: Bool, isStatic: Bool
+        named name: String,
+        ownerName: String,
+        valueType: Any.Type,
+        setter: Bool,
+        isStatic: Bool
     ) throws -> NativeDeclaration {
         let accessor = setter ? ".setter : " : ".getter : "
         let member: String
         if name.contains(accessor) {
             member = name
         } else {
-            let valueName = valueType == (representation ?? metadata) ? self.name : try swiftFunctionTypeName(valueType)
+            let valueName =
+                valueType == (representation ?? metadata)
+                ? self.name : try swiftFunctionTypeName(valueType)
             member = name + accessor + valueName
         }
-        return .init(name: try SwiftMemberLookup.qualifiedName(member, owner: ownerName, isStatic: isStatic), language: .swift)
+        return .init(
+            name: try SwiftMemberLookup.qualifiedName(member, owner: ownerName, isStatic: isStatic),
+            language: .swift
+        )
     }
 
     /// Resolves a property setter that consumes its incoming value.
@@ -342,19 +514,48 @@ public actor NativeSwiftType: Hashable {
     /// - Returns: A reusable method with one explicit value argument.
     /// - Throws: A lookup or unsupported-representation error.
     public func setter<Value>(
-        named name: String, as valueType: Value.Type, declaredAs declaredSignature: String? = nil,
+        named name: String,
+        as valueType: Value.Type,
+        declaredAs declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:],
-        receiverABI: NativeType? = nil, mutating isMutating: Bool? = nil,
+        receiverABI: NativeType? = nil,
+        mutating isMutating: Bool? = nil,
         consuming isConsuming: Bool = false
     ) throws -> NativeSwiftMethod<(Value) -> Void> {
-        let symbol = try resolveMember(signature: ((Value) -> Void).self, exact: SwiftMemberLookup.isQualified(name),
-            explicitSignature: SwiftMemberLookup.hasSignature(name), declaredSignature: declaredSignature, valueABIs: valueABIs) { owner, _ in
-            try accessorDeclaration(named: name, ownerName: owner, valueType: valueType, setter: true, isStatic: false)
+        let symbol = try resolveMember(
+            signature: ((Value) -> Void).self,
+            exact: SwiftMemberLookup.isQualified(name),
+            explicitSignature: SwiftMemberLookup.hasSignature(name),
+            declaredSignature: declaredSignature,
+            valueABIs: valueABIs
+        ) { owner, _ in
+            try accessorDeclaration(
+                named: name,
+                ownerName: owner,
+                valueType: valueType,
+                setter: true,
+                isStatic: false
+            )
         }
-        let generic = try genericPlan(symbol, signature: ((Value) -> Void).self, declaredSignature: declaredSignature, valueABIs: valueABIs)
-        let receiver = try receiverPlan(mutating: isMutating ?? !isConsuming, consuming: isConsuming, generic: generic, receiverABI: receiverABI)
-        return try NativeSwiftMethod(symbol: symbol.symbol, type: self, receiver: receiver, consumesArguments: true,
-            generic: generic?.includingReceiver(receiver.mode))
+        let generic = try genericPlan(
+            symbol,
+            signature: ((Value) -> Void).self,
+            declaredSignature: declaredSignature,
+            valueABIs: valueABIs
+        )
+        let receiver = try receiverPlan(
+            mutating: isMutating ?? !isConsuming,
+            consuming: isConsuming,
+            generic: generic,
+            receiverABI: receiverABI
+        )
+        return try NativeSwiftMethod(
+            symbol: symbol.symbol,
+            type: self,
+            receiver: receiver,
+            consumesArguments: true,
+            generic: generic?.includingReceiver(receiver.mode)
+        )
     }
 
     /// Resolves a static property setter that consumes its incoming value.
@@ -367,21 +568,48 @@ public actor NativeSwiftType: Hashable {
     /// - Returns: A one-argument function with bound type metadata.
     /// - Throws: A lookup or unsupported-representation error.
     public func staticSetter<Value>(
-        named name: String, as valueType: Value.Type, declaredAs declaredSignature: String? = nil,
+        named name: String,
+        as valueType: Value.Type,
+        declaredAs declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) throws -> NativeSwiftFunction<(Value) -> Void> {
-        let symbol = try resolveMember(signature: ((Value) -> Void).self, exact: SwiftMemberLookup.isQualified(name),
-            explicitSignature: SwiftMemberLookup.hasSignature(name), declaredSignature: declaredSignature, valueABIs: valueABIs) { owner, _ in
-            try accessorDeclaration(named: name, ownerName: owner, valueType: valueType, setter: true, isStatic: true)
+        let symbol = try resolveMember(
+            signature: ((Value) -> Void).self,
+            exact: SwiftMemberLookup.isQualified(name),
+            explicitSignature: SwiftMemberLookup.hasSignature(name),
+            declaredSignature: declaredSignature,
+            valueABIs: valueABIs
+        ) { owner, _ in
+            try accessorDeclaration(
+                named: name,
+                ownerName: owner,
+                valueType: valueType,
+                setter: true,
+                isStatic: true
+            )
         }
-        return try NativeSwiftFunction(symbol: symbol.symbol, metadata: metadata, owner: self, consumesArguments: true,
-            generic: genericPlan(symbol, signature: ((Value) -> Void).self,
-                                 receiver: symbol.metadata is AnyClass ? .object : nil, declaredSignature: declaredSignature, valueABIs: valueABIs))
+        return try NativeSwiftFunction(
+            symbol: symbol.symbol,
+            metadata: metadata,
+            owner: self,
+            consumesArguments: true,
+            generic: genericPlan(
+                symbol,
+                signature: ((Value) -> Void).self,
+                receiver: symbol.metadata is AnyClass ? .object : nil,
+                declaredSignature: declaredSignature,
+                valueABIs: valueABIs
+            )
+        )
     }
 
 }
 
-func swiftClassImage(_ type: AnyClass, named name: String, resolver: SymbolResolver) throws -> NativeImage {
+func swiftClassImage(
+    _ type: AnyClass,
+    named name: String,
+    resolver: SymbolResolver
+) throws -> NativeImage {
     // A live class has one defining image. Retaining that image also prevents
     // class-address reuse; this does not cache user-supplied filesystem selectors.
     try resolver.image(forSwiftClass: type) {
@@ -390,18 +618,27 @@ func swiftClassImage(_ type: AnyClass, named name: String, resolver: SymbolResol
                 .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data)
             )
         }
-        let images = try resolver.images(matching: .path(URL(fileURLWithPath: String(cString: path))))
+        let images = try resolver.images(
+            matching: .path(URL(fileURLWithPath: String(cString: path)))
+        )
         guard let image = images.first else { throw ABIResolutionError.imageNotLoaded }
         return image
     }
 }
 
 func swiftTypeDeclarationName(
-    _ type: Any.Type, in image: NativeImage, suggestedName: String, resolver: SymbolResolver
+    _ type: Any.Type,
+    in image: NativeImage,
+    suggestedName: String,
+    resolver: SymbolResolver
 ) throws -> String {
-    guard let descriptor = ABISwiftTypeDescriptor(unsafeBitCast(type, to: UnsafeRawPointer.self)) else { return suggestedName }
-    return try resolver.swiftNominalTypeName(at: UInt64(UInt(bitPattern: descriptor)),
-        in: image, suggestedName: suggestedName) ?? suggestedName
+    guard let descriptor = ABISwiftTypeDescriptor(unsafeBitCast(type, to: UnsafeRawPointer.self))
+    else { return suggestedName }
+    return try resolver.swiftNominalTypeName(
+        at: UInt64(UInt(bitPattern: descriptor)),
+        in: image,
+        suggestedName: suggestedName
+    ) ?? suggestedName
 }
 
 extension ABIRuntime {
@@ -410,10 +647,20 @@ extension ABIRuntime {
         let image = try swiftClassImage(objectType, named: runtimeName, resolver: resolver)
         let key = SwiftTypeCacheKey.metadata(ObjectIdentifier(objectType), image: image.identity)
         if let cached = swiftTypes[key] { return cached }
-        let name = try swiftTypeDeclarationName(objectType, in: image, suggestedName: runtimeName, resolver: resolver)
+        let name = try swiftTypeDeclarationName(
+            objectType,
+            in: image,
+            suggestedName: runtimeName,
+            resolver: resolver
+        )
         let type = NativeSwiftType(
-            name: name, image: image, metadata: objectType, representation: nil, resolver: resolver,
-            genericMetadata: try SwiftGenericTypeMetadata(metadata: objectType))
+            name: name,
+            image: image,
+            metadata: objectType,
+            representation: nil,
+            resolver: resolver,
+            genericMetadata: try SwiftGenericTypeMetadata(metadata: objectType)
+        )
         swiftTypes[key] = type
         return type
     }
@@ -428,13 +675,21 @@ extension ABIRuntime {
     /// - Returns: A reusable type handle retaining its defining image.
     /// - Throws: A lookup error or unavailable/unsupported metadata.
     public func swiftType(
-        named name: String, in scope: ImageSelector = .automatic,
+        named name: String,
+        in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded,
         genericArguments: [NativeSwiftGenericArgument] = []
     ) throws -> NativeSwiftType {
-        try makeSwiftType(named: name, descriptor: resolver.resolve(
-            .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data), in: scope, loading: loading
-        ), representation: nil, genericArguments: genericArguments)
+        try makeSwiftType(
+            named: name,
+            descriptor: resolver.resolve(
+                .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data),
+                in: scope,
+                loading: loading
+            ),
+            representation: nil,
+            genericArguments: genericArguments
+        )
     }
 
     /// Resolves a concrete Swift type within an already retained image.
@@ -447,12 +702,21 @@ extension ABIRuntime {
     /// - Returns: A reusable type handle retaining the image.
     /// - Throws: A lookup error or unavailable/unsupported metadata.
     public func swiftType(
-        named name: String, in image: NativeImage, loading: ImageLoadingPolicy = .ifNeeded,
+        named name: String,
+        in image: NativeImage,
+        loading: ImageLoadingPolicy = .ifNeeded,
         genericArguments: [NativeSwiftGenericArgument] = []
     ) throws -> NativeSwiftType {
-        try makeSwiftType(named: name, descriptor: resolver.resolve(
-            .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data), in: image, loading: loading
-        ), representation: nil, genericArguments: genericArguments)
+        try makeSwiftType(
+            named: name,
+            descriptor: resolver.resolve(
+                .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data),
+                in: image,
+                loading: loading
+            ),
+            representation: nil,
+            genericArguments: genericArguments
+        )
     }
 
     /// Resolves a Swift type with an explicit receiver representation.
@@ -469,14 +733,22 @@ extension ABIRuntime {
     /// - Returns: A reusable type handle with the chosen receiver representation.
     /// - Throws: A lookup error or unavailable/unsupported metadata.
     public func swiftType<Representation>(
-        named name: String, as representation: Representation.Type,
+        named name: String,
+        as representation: Representation.Type,
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded,
         genericArguments: [NativeSwiftGenericArgument] = []
     ) throws -> NativeSwiftType {
-        try makeSwiftType(named: name, descriptor: resolver.resolve(
-            .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data), in: scope, loading: loading
-        ), representation: representation, genericArguments: genericArguments)
+        try makeSwiftType(
+            named: name,
+            descriptor: resolver.resolve(
+                .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data),
+                in: scope,
+                loading: loading
+            ),
+            representation: representation,
+            genericArguments: genericArguments
+        )
     }
 
     /// Resolves a Swift type and receiver adapter within a retained image.
@@ -490,35 +762,59 @@ extension ABIRuntime {
     /// - Returns: A reusable type handle with the chosen representation.
     /// - Throws: A lookup error or unavailable/unsupported metadata.
     public func swiftType<Representation>(
-        named name: String, as representation: Representation.Type, in image: NativeImage,
+        named name: String,
+        as representation: Representation.Type,
+        in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded,
         genericArguments: [NativeSwiftGenericArgument] = []
     ) throws -> NativeSwiftType {
-        try makeSwiftType(named: name, descriptor: resolver.resolve(
-            .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data), in: image, loading: loading
-        ), representation: representation, genericArguments: genericArguments)
+        try makeSwiftType(
+            named: name,
+            descriptor: resolver.resolve(
+                .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data),
+                in: image,
+                loading: loading
+            ),
+            representation: representation,
+            genericArguments: genericArguments
+        )
     }
 
     private func makeSwiftType(
-        named name: String, descriptor: ResolvedSymbol, representation: Any.Type?,
+        named name: String,
+        descriptor: ResolvedSymbol,
+        representation: Any.Type?,
         genericArguments: [NativeSwiftGenericArgument]
     ) throws -> NativeSwiftType {
         let key = SwiftTypeCacheKey.declaration(
-            name: name, image: descriptor.image.identity,
+            name: name,
+            image: descriptor.image.identity,
             representation: representation.map(ObjectIdentifier.init),
-            arguments: genericArguments.map(\.identity))
+            arguments: genericArguments.map(\.identity)
+        )
         if let cached = swiftTypes[key],
-           zip(cached.genericMetadata?.arguments ?? [], genericArguments)
-            .allSatisfy({ $0.retainsOwners(of: $1) }) {
+            zip(cached.genericMetadata?.arguments ?? [], genericArguments)
+                .allSatisfy({ $0.retainsOwners(of: $1) })
+        {
             return cached
         }
         guard descriptor.sectionRange.upperBound - descriptor.address >= 4 else {
-            throw ABIResolutionError.metadataUnavailable("Incomplete Swift type descriptor for " + name)
+            throw ABIResolutionError.metadataUnavailable(
+                "Incomplete Swift type descriptor for " + name
+            )
         }
-        let metadata = try SwiftGenericTypeMetadata(descriptor: descriptor, arguments: genericArguments)
+        let metadata = try SwiftGenericTypeMetadata(
+            descriptor: descriptor,
+            arguments: genericArguments
+        )
         let type = NativeSwiftType(
-            name: name, image: descriptor.image, metadata: metadata.value,
-            representation: representation, resolver: resolver, genericMetadata: metadata)
+            name: name,
+            image: descriptor.image,
+            metadata: metadata.value,
+            representation: representation,
+            resolver: resolver,
+            genericMetadata: metadata
+        )
         swiftTypes[key] = type
         return type
     }
@@ -537,21 +833,48 @@ extension NativeSwiftType {
     /// receiverABI can describe runtime-only fixed components or formally
     /// indirect self, as for method lookup.
     public func getter<Signature>(
-        named name: String, as signature: Signature.Type,
+        named name: String,
+        as signature: Signature.Type,
         declaredAs declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:],
         receiverABI: NativeType? = nil,
-        mutating isMutating: Bool = false, consuming isConsuming: Bool = false
+        mutating isMutating: Bool = false,
+        consuming isConsuming: Bool = false
     ) throws -> NativeSwiftMethod<Signature> {
         let result = try getterResult(signature)
-        let symbol = try resolveMember(signature: signature, exact: SwiftMemberLookup.isQualified(name),
-            explicitSignature: SwiftMemberLookup.hasSignature(name), declaredSignature: declaredSignature, valueABIs: valueABIs) { owner, _ in
-            try accessorDeclaration(named: name, ownerName: owner, valueType: result, setter: false, isStatic: false)
+        let symbol = try resolveMember(
+            signature: signature,
+            exact: SwiftMemberLookup.isQualified(name),
+            explicitSignature: SwiftMemberLookup.hasSignature(name),
+            declaredSignature: declaredSignature,
+            valueABIs: valueABIs
+        ) { owner, _ in
+            try accessorDeclaration(
+                named: name,
+                ownerName: owner,
+                valueType: result,
+                setter: false,
+                isStatic: false
+            )
         }
-        let generic = try genericPlan(symbol, signature: signature, declaredSignature: declaredSignature, valueABIs: valueABIs)
-        let receiver = try receiverPlan(mutating: isMutating, consuming: isConsuming, generic: generic, receiverABI: receiverABI)
-        return try NativeSwiftMethod(symbol: symbol.symbol, type: self, receiver: receiver,
-            generic: generic?.includingReceiver(receiver.mode))
+        let generic = try genericPlan(
+            symbol,
+            signature: signature,
+            declaredSignature: declaredSignature,
+            valueABIs: valueABIs
+        )
+        let receiver = try receiverPlan(
+            mutating: isMutating,
+            consuming: isConsuming,
+            generic: generic,
+            receiverABI: receiverABI
+        )
+        return try NativeSwiftMethod(
+            symbol: symbol.symbol,
+            type: self,
+            receiver: receiver,
+            generic: generic?.includingReceiver(receiver.mode)
+        )
     }
 
     /// Resolves a static getter using its complete zero-argument function type.
@@ -559,23 +882,50 @@ extension NativeSwiftType {
     /// Throwing generic getters also require their source type in declaredAs.
     /// valueABIs supplies formal ABIs for runtime-only closed nominal values.
     public func staticGetter<Signature>(
-        named name: String, as signature: Signature.Type, declaredAs declaredSignature: String? = nil,
+        named name: String,
+        as signature: Signature.Type,
+        declaredAs declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) throws -> NativeSwiftFunction<Signature> {
         let result = try getterResult(signature)
-        let symbol = try resolveMember(signature: signature, exact: SwiftMemberLookup.isQualified(name),
-            explicitSignature: SwiftMemberLookup.hasSignature(name), declaredSignature: declaredSignature, valueABIs: valueABIs) { owner, _ in
-            try accessorDeclaration(named: name, ownerName: owner, valueType: result, setter: false, isStatic: true)
+        let symbol = try resolveMember(
+            signature: signature,
+            exact: SwiftMemberLookup.isQualified(name),
+            explicitSignature: SwiftMemberLookup.hasSignature(name),
+            declaredSignature: declaredSignature,
+            valueABIs: valueABIs
+        ) { owner, _ in
+            try accessorDeclaration(
+                named: name,
+                ownerName: owner,
+                valueType: result,
+                setter: false,
+                isStatic: true
+            )
         }
-        return try NativeSwiftFunction(symbol: symbol.symbol, metadata: metadata, owner: self,
-            generic: genericPlan(symbol, signature: signature, receiver: symbol.metadata is AnyClass ? .object : nil,
-                                 declaredSignature: declaredSignature, valueABIs: valueABIs))
+        return try NativeSwiftFunction(
+            symbol: symbol.symbol,
+            metadata: metadata,
+            owner: self,
+            generic: genericPlan(
+                symbol,
+                signature: signature,
+                receiver: symbol.metadata is AnyClass ? .object : nil,
+                declaredSignature: declaredSignature,
+                valueABIs: valueABIs
+            )
+        )
     }
 
     private func getterResult(_ signature: Any.Type) throws -> Any.Type {
         let description = try SwiftFunctionSignature(signature)
         guard description.parameters.isEmpty else {
-            throw ABIResolutionError.signatureMismatch(.init(expected: "A zero-argument getter signature", found: [String(reflecting: signature)]))
+            throw ABIResolutionError.signatureMismatch(
+                .init(
+                    expected: "A zero-argument getter signature",
+                    found: [String(reflecting: signature)]
+                )
+            )
         }
         return description.result
     }

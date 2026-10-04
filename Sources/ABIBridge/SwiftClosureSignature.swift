@@ -1,3 +1,4 @@
+import ABIBridgeRuntime
 import ABIBridgeCore
 import Synchronization
 
@@ -6,10 +7,13 @@ import Synchronization
 // https://github.com/swiftlang/swift/blob/main/lib/SIL/IR/SILFunctionType.cpp
 func swiftClosureAuthType(_ type: Any.Type) throws -> String {
     guard !(type is any SwiftConventionArgument.Type) else {
-        throw ABIResolutionError.unsupportedDeclaration("Inout and ownership-qualified callback parameters require a scoped native adapter.")
+        throw ABIResolutionError.unsupportedDeclaration(
+            "Inout and ownership-qualified callback parameters require a scoped native adapter."
+        )
     }
     if let closure = type as? any SwiftClosureValue.Type {
-        return "(" + (try SwiftFunctionSignature(closure.swiftFunctionType).closureAuthDescription()) + ")"
+        return "("
+            + (try SwiftFunctionSignature(closure.swiftFunctionType).closureAuthDescription()) + ")"
     }
     let base = (type as? any NativeOptionalValue.Type)?.wrappedType ?? type
     let managed = type is any ABIBridgeSwiftValue.Type
@@ -20,7 +24,8 @@ func swiftClosureAuthType(_ type: Any.Type) throws -> String {
     }
     if base is AnyClass || base == AnyObject.self { return "-class" }
     if let metatype = SwiftMetatypeMetadata(base) {
-        return type is any NativeOptionalValue.Type && metatype.isExistential ? "Optional<-metatype>" : "-metatype"
+        return type is any NativeOptionalValue.Type && metatype.isExistential
+            ? "Optional<-metatype>" : "-metatype"
     }
     if let existential = SwiftExistentialRepresentation(base) {
         return existential.closureAuthType(optional: type is any NativeOptionalValue.Type)
@@ -32,7 +37,9 @@ func swiftClosureAuthType(_ type: Any.Type) throws -> String {
         }
     }
     guard var name = _mangledTypeName(base) else {
-        throw ABIResolutionError.metadataUnavailable("No Swift closure type identity for \(String(reflecting: type)).")
+        throw ABIResolutionError.metadataUnavailable(
+            "No Swift closure type identity for \(String(reflecting: type))."
+        )
     }
     // SIL hashes these nominal declarations without their generic substitutions.
     if base is any SwiftArrayValue.Type {
@@ -54,9 +61,13 @@ private func swiftNominalClosureName(_ mangled: String) throws -> String {
     }
     var nominalName = "", depth = 0
     for character in fullName {
-        if character == "<" { depth += 1 }
-        else if character == ">" { depth -= 1 }
-        else if depth == 0 { nominalName.append(character) }
+        if character == "<" {
+            depth += 1
+        } else if character == ">" {
+            depth -= 1
+        } else if depth == 0 {
+            nominalName.append(character)
+        }
     }
     for index in mangled.indices where mangled[index] == "y" {
         let candidate = String(mangled[..<index])
@@ -139,7 +150,12 @@ protocol SwiftClosureValue: SendableMetatype {
     static var swiftFunctionType: Any.Type { get }
     static func makeClosureCodec() throws -> SwiftClosureCodec
     static func makeGenericClosureCodec(plan: SwiftGenericClosurePlan) throws -> SwiftClosureCodec
-    func encodeGenericClosure(plan: SwiftGenericClosurePlan, retainingCode owner: Any?, asynchronous: Bool, consuming: Bool) throws -> NativeValueStorage
+    func encodeGenericClosure(
+        plan: SwiftGenericClosurePlan,
+        retainingCode owner: Any?,
+        asynchronous: Bool,
+        consuming: Bool
+    ) throws -> NativeValueStorage
     func encodeClosure(consuming: Bool) throws -> NativeValueStorage
     func encodeClosureResult() throws -> NativeValueStorage
 }
@@ -154,13 +170,20 @@ struct SwiftClosureCodec: Sendable {
     let encodeValue: (@Sendable (Any, Any?) throws -> NativeValueStorage)?
     let borrowValue: (@Sendable (SwiftValueBorrow, SwiftValueCodeLifetime?) -> Any)?
     let takeValue: (@Sendable (ABISwiftClosureValue, SwiftValueCodeLifetime?) -> Any)?
-    let makeValue: @Sendable (ABISwiftClosureValue, Any?, Bool, SwiftValueCodeLifetime?) throws -> Any
+    let makeValue:
+        @Sendable (ABISwiftClosureValue, Any?, Bool, SwiftValueCodeLifetime?) throws -> Any
 
-    init(type: CValueType, nativePlan: SwiftGenericClosurePlan? = nil,
-         encoding encodeValue: (@Sendable (Any, Any?) throws -> NativeValueStorage)? = nil,
-         borrowing borrowValue: (@Sendable (SwiftValueBorrow, SwiftValueCodeLifetime?) -> Any)? = nil,
-         taking takeValue: (@Sendable (ABISwiftClosureValue, SwiftValueCodeLifetime?) -> Any)? = nil,
-         makeValue: @escaping @Sendable (ABISwiftClosureValue, Any?, Bool, SwiftValueCodeLifetime?) throws -> Any) {
+    init(
+        type: CValueType,
+        nativePlan: SwiftGenericClosurePlan? = nil,
+        encoding encodeValue: (@Sendable (Any, Any?) throws -> NativeValueStorage)? = nil,
+        borrowing borrowValue: (@Sendable (SwiftValueBorrow, SwiftValueCodeLifetime?) -> Any)? =
+            nil,
+        taking takeValue: (@Sendable (ABISwiftClosureValue, SwiftValueCodeLifetime?) -> Any)? = nil,
+        makeValue:
+            @escaping @Sendable (ABISwiftClosureValue, Any?, Bool, SwiftValueCodeLifetime?) throws
+            -> Any
+    ) {
         self.type = type
         self.nativePlan = nativePlan
         self.encodeValue = encodeValue
@@ -179,53 +202,87 @@ final class SwiftClosureStorage {
     let codeLifetime: SwiftValueCodeLifetime?
 
     // Consumes one native context reference, including on preparation failure.
-    init(adopting value: ABISwiftClosureValue, discriminator: UInt16, retaining owner: Any?,
-         codeLifetime: SwiftValueCodeLifetime? = nil, ownsContext: Bool = true,
-         implementation prepared: SwiftImplementation? = nil) throws {
+    init(
+        adopting value: ABISwiftClosureValue,
+        discriminator: UInt16,
+        retaining owner: Any?,
+        codeLifetime: SwiftValueCodeLifetime? = nil,
+        ownsContext: Bool = true,
+        implementation prepared: SwiftImplementation? = nil
+    ) throws {
         self.ownsContext = ownsContext
         do {
-            guard let function = ABIAuthenticateSwiftClosureFunction(value.function, discriminator) else {
+            guard let function = ABIAuthenticateSwiftClosureFunction(value.function, discriminator)
+            else {
                 throw ABIInvocationError.unexpectedNilResult(expected: "a Swift closure")
             }
             implementation = try prepared ?? SwiftImplementation(function: function, retaining: nil)
         } catch {
-            withExtendedLifetime(owner) { if ownsContext { ABIReleaseSwiftClosureContext(value.context) } }
+            withExtendedLifetime(owner) {
+                if ownsContext { ABIReleaseSwiftClosureContext(value.context) }
+            }
             throw error
         }
         self.value = value
-        let callbackOwner = ABICopySwiftClosureCallbackCodeOwner(implementation.function, value.context).map {
+        let callbackOwner = ABICopySwiftClosureCallbackCodeOwner(
+            implementation.function,
+            value.context
+        ).map {
             Unmanaged<AnyObject>.fromOpaque($0).takeRetainedValue()
         }
-        callbackFactory = ABICopySwiftClosureCallbackBodyOwner(implementation.function, value.context).map {
+        callbackFactory = ABICopySwiftClosureCallbackBodyOwner(
+            implementation.function,
+            value.context
+        ).map {
             Unmanaged<SwiftClosureBodyFactory>.fromOpaque($0).takeRetainedValue()
         }
         codeOwner = (owner, implementation, callbackOwner)
         let callbackLifetime = (callbackOwner as? SwiftClosureCodeOwner)?.codeLifetime
         let images = implementation.image.map { [$0] } ?? []
-        let lifetime = codeLifetime ?? callbackLifetime
+        let lifetime =
+            codeLifetime ?? callbackLifetime
             ?? (images.isEmpty ? nil : SwiftValueCodeLifetime(images))
-        self.codeLifetime = SwiftValueCodeLifetime.connect([lifetime, callbackLifetime].compactMap { $0 },
-            retaining: images)
+        self.codeLifetime = SwiftValueCodeLifetime.connect(
+            [lifetime, callbackLifetime].compactMap { $0 },
+            retaining: images
+        )
     }
 
     deinit {
-        withExtendedLifetime((implementation, codeOwner)) { if ownsContext { ABIReleaseSwiftClosureContext(value.context) } }
+        withExtendedLifetime((implementation, codeOwner)) {
+            if ownsContext { ABIReleaseSwiftClosureContext(value.context) }
+        }
     }
 
     func encoded(codeLifetime: SwiftValueCodeLifetime? = nil) -> NativeValueStorage {
-        if ownsContext { return Self.copy(value, retaining: self, codeLifetime: codeLifetime ?? self.codeLifetime) }
-        let storage = NativeValueStorage(size: MemoryLayout<ABISwiftClosureValue>.stride,
-            alignment: MemoryLayout<ABISwiftClosureValue>.alignment, owner: self, codeLifetime: self.codeLifetime)
+        if ownsContext {
+            return Self.copy(
+                value,
+                retaining: self,
+                codeLifetime: codeLifetime ?? self.codeLifetime
+            )
+        }
+        let storage = NativeValueStorage(
+            size: MemoryLayout<ABISwiftClosureValue>.stride,
+            alignment: MemoryLayout<ABISwiftClosureValue>.alignment,
+            owner: self,
+            codeLifetime: self.codeLifetime
+        )
         storage.store(value)
         return storage
     }
 
-    static func copy(_ value: ABISwiftClosureValue, retaining owner: AnyObject,
-                     codeLifetime: SwiftValueCodeLifetime? = nil) -> NativeValueStorage {
+    static func copy(
+        _ value: ABISwiftClosureValue,
+        retaining owner: AnyObject,
+        codeLifetime: SwiftValueCodeLifetime? = nil
+    ) -> NativeValueStorage {
         let storage = NativeValueStorage(
             size: MemoryLayout<ABISwiftClosureValue>.stride,
             alignment: MemoryLayout<ABISwiftClosureValue>.alignment,
-            owner: owner, codeLifetime: codeLifetime, destroyingWith: destroy
+            owner: owner,
+            codeLifetime: codeLifetime,
+            destroyingWith: destroy
         )
         ABIRetainSwiftClosureContext(value.context)
         storage.store(value)
@@ -265,7 +322,8 @@ final class SwiftNativeClosureAdapter: Sendable {
             let layout = ABISwiftGetValueLayout(unsafeBitCast(metadata, to: UnsafeRawPointer.self))
             stride = layout.stride; alignment = layout.alignment
             constants = SwiftValueConstants(metadata)
-            func leaves(_ type: Any.Type, at offset: Int) -> [SwiftTupleValuePlan.NativeProjection] {
+            func leaves(_ type: Any.Type, at offset: Int) -> [SwiftTupleValuePlan.NativeProjection]
+            {
                 if let tuple = SwiftTupleMetadata(type) {
                     return tuple.elements.flatMap { leaves($0.type, at: offset + $0.offset) }
                 }
@@ -276,20 +334,39 @@ final class SwiftNativeClosureAdapter: Sendable {
         }
 
         func makeResultStorage() -> NativeValueStorage {
-            expanded?.makeResultStorage() ?? NativeValueStorage(size: stride, alignment: alignment,
-                codeLifetime: SwiftValueCodeLifetime.current)
+            expanded?.makeResultStorage()
+                ?? NativeValueStorage(
+                    size: stride,
+                    alignment: alignment,
+                    codeLifetime: SwiftValueCodeLifetime.current
+                )
         }
 
-        func materializeArgument(from source: UnsafeMutableRawPointer, consuming: Bool) -> NativeValueStorage {
-            if let expanded { return expanded.materializeArgument(from: source, consuming: consuming) }
+        func materializeArgument(
+            from source: UnsafeMutableRawPointer,
+            consuming: Bool
+        ) -> NativeValueStorage {
+            if let expanded {
+                return expanded.materializeArgument(from: source, consuming: consuming)
+            }
             let type = unsafeBitCast(metadata, to: UnsafeRawPointer.self)
-            let storage = NativeValueStorage(size: stride, alignment: alignment,
-                codeLifetime: SwiftValueCodeLifetime.current, destroyingWith: { value in
-                    if consuming { ABISwiftTakeValue(type, source, value) }
-                    else { ABISwiftDestroyValue(type, value) }
-                })
-            if consuming { ABISwiftTakeValue(type, storage.address, source) }
-            else { ABISwiftCopyValue(type, storage.address, source) }
+            let storage = NativeValueStorage(
+                size: stride,
+                alignment: alignment,
+                codeLifetime: SwiftValueCodeLifetime.current,
+                destroyingWith: { value in
+                    if consuming {
+                        ABISwiftTakeValue(type, source, value)
+                    } else {
+                        ABISwiftDestroyValue(type, value)
+                    }
+                }
+            )
+            if consuming {
+                ABISwiftTakeValue(type, storage.address, source)
+            } else {
+                ABISwiftCopyValue(type, storage.address, source)
+            }
             constants.initialize(at: storage.address)
             return storage
         }
@@ -301,7 +378,9 @@ final class SwiftNativeClosureAdapter: Sendable {
                 if !result, let closure = leaf.argument.closure { return closure }
             }
             let projection = projections.first {
-                $0.offset == offset && unsafeBitCast($0.metadata, to: UnsafeRawPointer.self).load(as: UInt.self) == 0x302
+                $0.offset == offset
+                    && unsafeBitCast($0.metadata, to: UnsafeRawPointer.self).load(as: UInt.self)
+                        == 0x302
             }!
             return try SwiftGenericClosurePlan.nativeValue(projection.metadata)
         }
@@ -349,50 +428,103 @@ final class SwiftNativeClosureAdapter: Sendable {
         self.source = source; self.target = target
         let sourceResultTuple = source.result.tuple
         let resultTuple = target.result.tuple
-        initializeNativeResult = swiftResultInitializer(nativeMetadata: target.nativeResult, generic: target.result, tuple: resultTuple)
-        arguments = try zip(source.parameters.arguments, target.parameters.arguments).enumerated().compactMap { index, pair in
-            let convention = pair.1.convention
-            if pair.0.tuple != nil || pair.1.tuple != nil {
-                let expected = TupleRepresentation(metadata: source.nativeParameters[index], expanded: pair.0.tuple)
-                let incoming = TupleRepresentation(metadata: target.nativeParameters[index], expanded: pair.1.tuple)
-                let fields = try Self.argumentFields(source: incoming, target: expected, mutable: convention == .inoutValue)
-                return Argument(index: index, conversion: .tuple(source: incoming, target: expected, fields: fields),
-                                convention: convention, escaping: true)
+        initializeNativeResult = swiftResultInitializer(
+            nativeMetadata: target.nativeResult,
+            generic: target.result,
+            tuple: resultTuple
+        )
+        arguments = try zip(source.parameters.arguments, target.parameters.arguments).enumerated()
+            .compactMap { index, pair in
+                let convention = pair.1.convention
+                if pair.0.tuple != nil || pair.1.tuple != nil {
+                    let expected = TupleRepresentation(
+                        metadata: source.nativeParameters[index],
+                        expanded: pair.0.tuple
+                    )
+                    let incoming = TupleRepresentation(
+                        metadata: target.nativeParameters[index],
+                        expanded: pair.1.tuple
+                    )
+                    let fields = try Self.argumentFields(
+                        source: incoming,
+                        target: expected,
+                        mutable: convention == .inoutValue
+                    )
+                    return Argument(
+                        index: index,
+                        conversion: .tuple(source: incoming, target: expected, fields: fields),
+                        convention: convention,
+                        escaping: true
+                    )
+                }
+                guard let expected = source.nativeArgumentClosures[index],
+                    let incoming = target.nativeArgumentClosures[index]
+                else { return nil }
+                let adapter = try SwiftNativeClosureAdapter(source: incoming, target: expected)
+                let reverse =
+                    try convention == .inoutValue
+                    ? SwiftNativeClosureAdapter(source: expected, target: incoming) : nil
+                return Argument(
+                    index: index,
+                    conversion: .closure(adapter, reverse: reverse),
+                    convention: convention,
+                    escaping: incoming.isEscaping
+                )
             }
-            guard let expected = source.nativeArgumentClosures[index],
-                  let incoming = target.nativeArgumentClosures[index] else { return nil }
-            let adapter = try SwiftNativeClosureAdapter(source: incoming, target: expected)
-            let reverse = try convention == .inoutValue ? SwiftNativeClosureAdapter(source: expected, target: incoming) : nil
-            return Argument(index: index, conversion: .closure(adapter, reverse: reverse),
-                            convention: convention, escaping: incoming.isEscaping)
-        }
         if let produced = source.nativeResultClosure, let expected = target.nativeResultClosure {
-            result = .closure(try SwiftNativeClosureAdapter(source: produced, target: expected), reverse: nil)
+            result = .closure(
+                try SwiftNativeClosureAdapter(source: produced, target: expected),
+                reverse: nil
+            )
         } else if sourceResultTuple != nil || resultTuple != nil {
             let expected = TupleRepresentation(metadata: target.nativeResult, expanded: resultTuple)
-            let produced = TupleRepresentation(metadata: source.nativeResult, expanded: sourceResultTuple)
-            result = .tuple(source: produced, target: expected, fields: try Self.resultFields(source: produced, target: expected))
-        } else { result = nil }
+            let produced = TupleRepresentation(
+                metadata: source.nativeResult,
+                expanded: sourceResultTuple
+            )
+            result = .tuple(
+                source: produced,
+                target: expected,
+                fields: try Self.resultFields(source: produced, target: expected)
+            )
+        } else {
+            result = nil
+        }
         var failure: OpaquePointer?
         switch target.transport {
         case .synchronous(let interface):
             var functions = ABISwiftThrowingClosureCallbackFunctions()
             functions.usesNativeContext = true
             functions.invoke = { context, arguments, result, error in
-                let value = Unmanaged<SwiftNativeClosureContext>.fromOpaque(context!).takeUnretainedValue()
-                return value.adapter.invoke(value, arguments: arguments, result: result!, error: error)
+                let value = Unmanaged<SwiftNativeClosureContext>.fromOpaque(context!)
+                    .takeUnretainedValue()
+                return value.adapter.invoke(
+                    value,
+                    arguments: arguments,
+                    result: result!,
+                    error: error
+                )
             }
             functions.initializeResult = { context, offset, size, destination, source in
-                let value = Unmanaged<SwiftNativeClosureContext>.fromOpaque(context!).takeUnretainedValue()
+                let value = Unmanaged<SwiftNativeClosureContext>.fromOpaque(context!)
+                    .takeUnretainedValue()
                 SwiftValueCodeLifetime.withCurrent(value.codeLifetime) {
                     value.adapter.initializeNativeResult(offset, size, destination!, source!)
                 }
             }
             functions.copyCodeOwner = { context in
-                let owner = Unmanaged<SwiftNativeClosureContext>.fromOpaque(context!).takeUnretainedValue().codeOwner
+                let owner = Unmanaged<SwiftNativeClosureContext>.fromOpaque(context!)
+                    .takeUnretainedValue().codeOwner
                 return Unmanaged.passRetained(owner).toOpaque()
             }
-            guard let handle = ABICreateSwiftThrowingClosureCallback(interface.handle, functions, nil, &failure) else {
+            guard
+                let handle = ABICreateSwiftThrowingClosureCallback(
+                    interface.handle,
+                    functions,
+                    nil,
+                    &failure
+                )
+            else {
                 throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftClosure")
             }
             entry = .synchronous(try SwiftClosureCallbackOwner(handle: handle))
@@ -400,52 +532,96 @@ final class SwiftNativeClosureAdapter: Sendable {
             var functions = ABISwiftAsyncClosureCallbackFunctions()
             functions.usesNativeContext = true
             functions.createBody = { context, arguments, result, error, didThrow in
-                let value = Unmanaged<SwiftNativeClosureContext>.fromOpaque(context!).takeUnretainedValue()
-                let body = SwiftAsyncClosureBody(inheritsCallerIsolation: value.adapter.inheritsCallerIsolation,
-                    codeLifetime: value.codeLifetime) { arguments, result, error in
-                    await value.adapter.invokeAsync(value, arguments: arguments, result: result, error: error)
+                let value = Unmanaged<SwiftNativeClosureContext>.fromOpaque(context!)
+                    .takeUnretainedValue()
+                let body = SwiftAsyncClosureBody(
+                    inheritsCallerIsolation: value.adapter.inheritsCallerIsolation,
+                    codeLifetime: value.codeLifetime
+                ) { arguments, result, error in
+                    await value.adapter.invokeAsync(
+                        value,
+                        arguments: arguments,
+                        result: result,
+                        error: error
+                    )
                 }
-                let invocation = SwiftAsyncClosureInvocation(body, arguments, result!, error, didThrow!)
+                let invocation = SwiftAsyncClosureInvocation(
+                    body,
+                    arguments,
+                    result!,
+                    error,
+                    didThrow!
+                )
                 if body.inheritsCallerIsolation {
-                    let operation: nonisolated(nonsending) @Sendable () async -> Void = { await invocation.run() }
+                    let operation: nonisolated(nonsending) @Sendable () async -> Void = {
+                        await invocation.run()
+                    }
                     return retainedValue(operation)
                 }
                 let operation: @Sendable @concurrent () async -> Void = { await invocation.run() }
                 return retainedValue(operation)
             }
             functions.initializeResult = { context, offset, size, destination, source in
-                let value = Unmanaged<SwiftNativeClosureContext>.fromOpaque(context!).takeUnretainedValue()
+                let value = Unmanaged<SwiftNativeClosureContext>.fromOpaque(context!)
+                    .takeUnretainedValue()
                 SwiftValueCodeLifetime.withCurrent(value.codeLifetime) {
                     value.adapter.initializeNativeResult(offset, size, destination!, source!)
                 }
             }
             functions.copyCodeOwner = { context in
-                let owner = Unmanaged<SwiftNativeClosureContext>.fromOpaque(context!).takeUnretainedValue().codeOwner
+                let owner = Unmanaged<SwiftNativeClosureContext>.fromOpaque(context!)
+                    .takeUnretainedValue().codeOwner
                 return Unmanaged.passRetained(owner).toOpaque()
             }
-            guard let handle = ABICreateSwiftAsyncClosureCallback(interface.handle, functions, nil, &failure) else {
+            guard
+                let handle = ABICreateSwiftAsyncClosureCallback(
+                    interface.handle,
+                    functions,
+                    nil,
+                    &failure
+                )
+            else {
                 throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftAsyncClosure")
             }
             entry = .asynchronous(try SwiftAsyncClosureCallbackOwner(handle: handle))
         }
     }
 
-    private static func argumentFields(source: TupleRepresentation, target: TupleRepresentation,
-                                       mutable: Bool) throws -> [Field] {
-        let offsets = Set(source.closureOffsets(result: false) + target.closureOffsets(result: false)).sorted()
+    private static func argumentFields(
+        source: TupleRepresentation,
+        target: TupleRepresentation,
+        mutable: Bool
+    ) throws -> [Field] {
+        let offsets = Set(
+            source.closureOffsets(result: false) + target.closureOffsets(result: false)
+        ).sorted()
         return try offsets.map { offset in
             let incoming = try source.closure(at: offset, result: false)
             let expected = try target.closure(at: offset, result: false)
-            return Field(offset: offset, adapter: try SwiftNativeClosureAdapter(source: incoming, target: expected),
-                         reverse: try mutable ? SwiftNativeClosureAdapter(source: expected, target: incoming) : nil)
+            return Field(
+                offset: offset,
+                adapter: try SwiftNativeClosureAdapter(source: incoming, target: expected),
+                reverse: try mutable
+                    ? SwiftNativeClosureAdapter(source: expected, target: incoming) : nil
+            )
         }
     }
 
-    private static func resultFields(source: TupleRepresentation, target: TupleRepresentation) throws -> [Field] {
-        let offsets = Set(source.closureOffsets(result: true) + target.closureOffsets(result: true)).sorted()
+    private static func resultFields(
+        source: TupleRepresentation,
+        target: TupleRepresentation
+    ) throws -> [Field] {
+        let offsets = Set(source.closureOffsets(result: true) + target.closureOffsets(result: true))
+            .sorted()
         return try offsets.map { offset in
-            Field(offset: offset, adapter: try SwiftNativeClosureAdapter(source: source.closure(at: offset, result: true),
-                target: target.closure(at: offset, result: true)), reverse: nil)
+            Field(
+                offset: offset,
+                adapter: try SwiftNativeClosureAdapter(
+                    source: source.closure(at: offset, result: true),
+                    target: target.closure(at: offset, result: true)
+                ),
+                reverse: nil
+            )
         }
     }
 
@@ -454,25 +630,54 @@ final class SwiftNativeClosureAdapter: Sendable {
         return false
     }
 
-    func encode(_ value: ABISwiftClosureValue, taking: Bool, escaping: Bool, retainingValue valueOwner: AnyObject? = nil,
-                retainingCode owner: Any?, codeLifetime: SwiftValueCodeLifetime?) -> NativeValueStorage {
-        let context = SwiftNativeClosureContext(adapter: self, value: value, taking: taking, escaping: escaping, retainingValue: valueOwner,
-                                               retainingCode: owner, codeLifetime: codeLifetime)
+    func encode(
+        _ value: ABISwiftClosureValue,
+        taking: Bool,
+        escaping: Bool,
+        retainingValue valueOwner: AnyObject? = nil,
+        retainingCode owner: Any?,
+        codeLifetime: SwiftValueCodeLifetime?
+    ) -> NativeValueStorage {
+        let context = SwiftNativeClosureContext(
+            adapter: self,
+            value: value,
+            taking: taking,
+            escaping: escaping,
+            retainingValue: valueOwner,
+            retainingCode: owner,
+            codeLifetime: codeLifetime
+        )
         let function: UnsafeRawPointer?
         switch entry {
-        case .synchronous(let entry): function = ABISignSwiftClosureFunction(entry.function, target.discriminator)
+        case .synchronous(let entry):
+            function = ABISignSwiftClosureFunction(entry.function, target.discriminator)
         case .asynchronous(let entry):
-            function = ABISignSwiftAsyncClosureDescriptor(ABISwiftAsyncClosureCallbackDescriptor(entry.handle), target.discriminator)
+            function = ABISignSwiftAsyncClosureDescriptor(
+                ABISwiftAsyncClosureCallbackDescriptor(entry.handle),
+                target.discriminator
+            )
         }
-        let storage = NativeValueStorage(size: MemoryLayout<ABISwiftClosureValue>.stride,
-            alignment: MemoryLayout<ABISwiftClosureValue>.alignment, codeLifetime: codeLifetime,
-            destroyingWith: SwiftClosureStorage.destroy)
-        storage.store(ABISwiftClosureValue(function: function, context: Unmanaged.passRetained(context).toOpaque()))
+        let storage = NativeValueStorage(
+            size: MemoryLayout<ABISwiftClosureValue>.stride,
+            alignment: MemoryLayout<ABISwiftClosureValue>.alignment,
+            codeLifetime: codeLifetime,
+            destroyingWith: SwiftClosureStorage.destroy
+        )
+        storage.store(
+            ABISwiftClosureValue(
+                function: function,
+                context: Unmanaged.passRetained(context).toOpaque()
+            )
+        )
         return storage
     }
 
-    private func convertArguments(_ incoming: UnsafePointer<UnsafeMutableRawPointer?>?, context: SwiftNativeClosureContext)
-        -> Arguments {
+    private func convertArguments(
+        _ incoming: UnsafePointer<UnsafeMutableRawPointer?>?,
+        context: SwiftNativeClosureContext
+    )
+        -> Arguments
+    {
         let unpacked = target.parameters.unpack(incoming)
         var addresses = unpacked.addresses
         var storage = unpacked.storage
@@ -484,27 +689,44 @@ final class SwiftNativeClosureAdapter: Sendable {
             case .closure(let adapter, let reverse):
                 let mutable = argument.convention == .inoutValue
                 let source = mutable ? address.load(as: UnsafeMutableRawPointer.self) : address
-                let encoded = adapter.encode(source.load(as: ABISwiftClosureValue.self),
-                    taking: argument.convention == .consuming, escaping: mutable || argument.escaping,
-                    retainingCode: context.codeOwner, codeLifetime: context.codeLifetime)
+                let encoded = adapter.encode(
+                    source.load(as: ABISwiftClosureValue.self),
+                    taking: argument.convention == .consuming,
+                    escaping: mutable || argument.escaping,
+                    retainingCode: context.codeOwner,
+                    codeLifetime: context.codeLifetime
+                )
                 storage.append(encoded)
                 if argument.convention == .consuming { consumed.append(encoded) }
                 if let reverse {
-                    let pointer = NativeValueStorage(size: MemoryLayout<UnsafeMutableRawPointer>.stride,
-                        alignment: MemoryLayout<UnsafeMutableRawPointer>.alignment, owner: encoded)
+                    let pointer = NativeValueStorage(
+                        size: MemoryLayout<UnsafeMutableRawPointer>.stride,
+                        alignment: MemoryLayout<UnsafeMutableRawPointer>.alignment,
+                        owner: encoded
+                    )
                     pointer.store(encoded.address)
                     storage.append(pointer)
                     addresses[argument.index] = pointer.address
                     writebacks.append {
-                        let replacement = reverse.encode(encoded.address.load(as: ABISwiftClosureValue.self),
-                            taking: true, escaping: true, retainingCode: context.codeOwner, codeLifetime: context.codeLifetime)
+                        let replacement = reverse.encode(
+                            encoded.address.load(as: ABISwiftClosureValue.self),
+                            taking: true,
+                            escaping: true,
+                            retainingCode: context.codeOwner,
+                            codeLifetime: context.codeLifetime
+                        )
                         encoded.relinquishValue()
                         let previous = source.load(as: ABISwiftClosureValue.self)
-                        source.storeBytes(of: replacement.address.load(as: ABISwiftClosureValue.self), as: ABISwiftClosureValue.self)
+                        source.storeBytes(
+                            of: replacement.address.load(as: ABISwiftClosureValue.self),
+                            as: ABISwiftClosureValue.self
+                        )
                         replacement.relinquishValue()
                         ABIReleaseSwiftClosureContext(previous.context)
                     }
-                } else { addresses[argument.index] = encoded.address }
+                } else {
+                    addresses[argument.index] = encoded.address
+                }
             case .tuple(let incoming, let expected, let fields):
                 let mutable = argument.convention == .inoutValue
                 let native: NativeValueStorage
@@ -516,64 +738,117 @@ final class SwiftNativeClosureAdapter: Sendable {
                     native.assumeInitialized { ABISwiftDestroyValue(metadata, $0) }
                     let previous = incoming.makeResultStorage()
                     writebacks.append {
-                        Self.reabstractFields(fields, at: native.address, reverse: true, context: context)
+                        Self.reabstractFields(
+                            fields,
+                            at: native.address,
+                            reverse: true,
+                            context: context
+                        )
                         ABISwiftTakeValue(metadata, previous.address, source)
                         previous.assumeInitialized { ABISwiftDestroyValue(metadata, $0) }
                         ABISwiftTakeValue(metadata, source, native.address)
                         native.relinquishValue()
                     }
                 } else {
-                    native = incoming.materializeArgument(from: address, consuming: argument.convention == .consuming)
+                    native = incoming.materializeArgument(
+                        from: address,
+                        consuming: argument.convention == .consuming
+                    )
                     if argument.convention == .consuming { consumed.append(native) }
                 }
                 Self.reabstractFields(fields, at: native.address, reverse: false, context: context)
                 storage.append(native)
                 if mutable {
-                    let pointer = NativeValueStorage(size: MemoryLayout<UnsafeMutableRawPointer>.stride,
-                        alignment: MemoryLayout<UnsafeMutableRawPointer>.alignment, owner: native)
+                    let pointer = NativeValueStorage(
+                        size: MemoryLayout<UnsafeMutableRawPointer>.stride,
+                        alignment: MemoryLayout<UnsafeMutableRawPointer>.alignment,
+                        owner: native
+                    )
                     pointer.store(native.address)
                     storage.append(pointer)
                     addresses[argument.index] = pointer.address
                 } else if let expanded = expected.expanded {
-                    let vector = NativeValueStorage(size: expanded.leaves.count * MemoryLayout<UnsafeMutableRawPointer?>.stride,
-                        alignment: MemoryLayout<UnsafeMutableRawPointer?>.alignment, owner: native)
-                    for (index, address) in expanded.nativeArgumentAddresses(native.address).enumerated() {
-                        vector.address.storeBytes(of: address, toByteOffset: index * MemoryLayout<UnsafeMutableRawPointer?>.stride,
-                                                  as: UnsafeMutableRawPointer?.self)
+                    let vector = NativeValueStorage(
+                        size: expanded.leaves.count * MemoryLayout<UnsafeMutableRawPointer?>.stride,
+                        alignment: MemoryLayout<UnsafeMutableRawPointer?>.alignment,
+                        owner: native
+                    )
+                    for (index, address) in expanded.nativeArgumentAddresses(native.address)
+                        .enumerated()
+                    {
+                        vector.address.storeBytes(
+                            of: address,
+                            toByteOffset: index * MemoryLayout<UnsafeMutableRawPointer?>.stride,
+                            as: UnsafeMutableRawPointer?.self
+                        )
                     }
                     storage.append(vector)
                     addresses[argument.index] = vector.address
-                } else { addresses[argument.index] = native.address }
+                } else {
+                    addresses[argument.index] = native.address
+                }
             }
         }
-        return Arguments(encoded: source.parameters.encode(addresses), storage: storage, consumed: consumed, writebacks: writebacks)
+        return Arguments(
+            encoded: source.parameters.encode(addresses),
+            storage: storage,
+            consumed: consumed,
+            writebacks: writebacks
+        )
     }
 
-    private static func reabstractFields(_ fields: [Field], at address: UnsafeMutableRawPointer,
-                                        reverse: Bool, context: SwiftNativeClosureContext) {
+    private static func reabstractFields(
+        _ fields: [Field],
+        at address: UnsafeMutableRawPointer,
+        reverse: Bool,
+        context: SwiftNativeClosureContext
+    ) {
         for field in fields {
             let location = address.advanced(by: field.offset)
             let adapter = reverse ? field.reverse! : field.adapter
-            let replacement = adapter.encode(location.load(as: ABISwiftClosureValue.self), taking: true, escaping: true,
-                retainingCode: context.codeOwner, codeLifetime: context.codeLifetime)
-            location.storeBytes(of: replacement.address.load(as: ABISwiftClosureValue.self), as: ABISwiftClosureValue.self)
+            let replacement = adapter.encode(
+                location.load(as: ABISwiftClosureValue.self),
+                taking: true,
+                escaping: true,
+                retainingCode: context.codeOwner,
+                codeLifetime: context.codeLifetime
+            )
+            location.storeBytes(
+                of: replacement.address.load(as: ABISwiftClosureValue.self),
+                as: ABISwiftClosureValue.self
+            )
             replacement.relinquishValue()
         }
     }
 
-    private func initializeResult(_ storage: NativeValueStorage?, at output: UnsafeMutableRawPointer,
-                                  context: SwiftNativeClosureContext) {
+    private func initializeResult(
+        _ storage: NativeValueStorage?,
+        at output: UnsafeMutableRawPointer,
+        context: SwiftNativeClosureContext
+    ) {
         if let result, let storage {
             switch result {
             case .closure(let adapter, _):
-                let encoded = adapter.encode(storage.address.load(as: ABISwiftClosureValue.self), taking: true, escaping: true,
-                    retainingCode: context.codeOwner, codeLifetime: context.codeLifetime)
-                output.copyMemory(from: encoded.address, byteCount: MemoryLayout<ABISwiftClosureValue>.size)
+                let encoded = adapter.encode(
+                    storage.address.load(as: ABISwiftClosureValue.self),
+                    taking: true,
+                    escaping: true,
+                    retainingCode: context.codeOwner,
+                    codeLifetime: context.codeLifetime
+                )
+                output.copyMemory(
+                    from: encoded.address,
+                    byteCount: MemoryLayout<ABISwiftClosureValue>.size
+                )
                 encoded.relinquishValue()
             case .tuple(_, let target, let fields):
                 source.resultConstants.initialize(at: storage.address)
                 Self.reabstractFields(fields, at: storage.address, reverse: false, context: context)
-                ABISwiftTakeValue(unsafeBitCast(target.metadata, to: UnsafeRawPointer.self), output, storage.address)
+                ABISwiftTakeValue(
+                    unsafeBitCast(target.metadata, to: UnsafeRawPointer.self),
+                    output,
+                    storage.address
+                )
             }
         }
         target.resultConstants.initialize(at: output)
@@ -582,29 +857,53 @@ final class SwiftNativeClosureAdapter: Sendable {
     private func resultStorage() -> NativeValueStorage? {
         switch result {
         case .none: nil
-        case .closure: NativeValueStorage(size: MemoryLayout<ABISwiftClosureValue>.stride,
-            alignment: MemoryLayout<ABISwiftClosureValue>.alignment)
+        case .closure:
+            NativeValueStorage(
+                size: MemoryLayout<ABISwiftClosureValue>.stride,
+                alignment: MemoryLayout<ABISwiftClosureValue>.alignment
+            )
         case .tuple(let source, _, _): source.makeResultStorage()
         }
     }
 
-    private func invoke(_ context: SwiftNativeClosureContext, arguments: UnsafePointer<UnsafeMutableRawPointer?>?,
-                        result output: UnsafeMutableRawPointer, error: UnsafeMutableRawPointer?) -> Bool {
+    private func invoke(
+        _ context: SwiftNativeClosureContext,
+        arguments: UnsafePointer<UnsafeMutableRawPointer?>?,
+        result output: UnsafeMutableRawPointer,
+        error: UnsafeMutableRawPointer?
+    ) -> Bool {
         guard case .synchronous(let interface) = source.transport else {
             preconditionFailure("A native reabstraction preserves its synchronous convention.")
         }
         let arguments = convertArguments(arguments, context: context)
         let result = resultStorage()
         let unusedError = target.errorPlan == nil ? source.errorPlan?.makeStorage() : nil
-        let function = ABIAuthenticateSwiftClosureFunction(context.value.function, source.discriminator)!
+        let function = ABIAuthenticateSwiftClosureFunction(
+            context.value.function,
+            source.discriminator
+        )!
         var didThrow = false
         let success = arguments.encoded.addresses.withUnsafeBufferPointer { arguments in
             if source.errorPlan != nil {
-                return ABIUnsafeInvokeSwiftThrowingCallInterface(interface.handle, function, result?.address ?? output,
-                    arguments.baseAddress, context.value.context, error ?? unusedError?.address, &didThrow, nil)
+                return ABIUnsafeInvokeSwiftThrowingCallInterface(
+                    interface.handle,
+                    function,
+                    result?.address ?? output,
+                    arguments.baseAddress,
+                    context.value.context,
+                    error ?? unusedError?.address,
+                    &didThrow,
+                    nil
+                )
             }
-            return ABIUnsafeInvokeSwiftCallInterface(interface.handle, function, result?.address ?? output,
-                arguments.baseAddress, context.value.context, nil)
+            return ABIUnsafeInvokeSwiftCallInterface(
+                interface.handle,
+                function,
+                result?.address ?? output,
+                arguments.baseAddress,
+                context.value.context,
+                nil
+            )
         }
         defer { withExtendedLifetime((context, arguments, unusedError)) {} }
         precondition(success, "A prepared native reabstraction has a valid call frame.")
@@ -613,28 +912,53 @@ final class SwiftNativeClosureAdapter: Sendable {
         return didThrow
     }
 
-    private nonisolated(nonsending) func invokeAsync(_ context: SwiftNativeClosureContext,
-        arguments: UnsafePointer<UnsafeMutableRawPointer?>?, result output: UnsafeMutableRawPointer,
-        error: UnsafeMutableRawPointer?) async -> Bool {
+    private nonisolated(nonsending) func invokeAsync(
+        _ context: SwiftNativeClosureContext,
+        arguments: UnsafePointer<UnsafeMutableRawPointer?>?,
+        result output: UnsafeMutableRawPointer,
+        error: UnsafeMutableRawPointer?
+    ) async -> Bool {
         guard case .asynchronous(let interface, _) = source.transport else {
             preconditionFailure("A native reabstraction preserves its asynchronous convention.")
         }
         let arguments = convertArguments(arguments, context: context)
-        let pointers = SwiftGenericArgumentBuffer(arguments.encoded.addresses.map { UInt(bitPattern: $0) })
-        let forwarded = UnsafeRawPointer(bitPattern: pointers.address)!.assumingMemoryBound(to: UnsafeMutableRawPointer?.self)
+        let pointers = SwiftGenericArgumentBuffer(
+            arguments.encoded.addresses.map { UInt(bitPattern: $0) }
+        )
+        let forwarded = UnsafeRawPointer(bitPattern: pointers.address)!.assumingMemoryBound(
+            to: UnsafeMutableRawPointer?.self
+        )
         let result = resultStorage()
         let unusedError = target.errorPlan == nil ? source.errorPlan?.makeStorage() : nil
         // The native caller supplies a live descriptor under the prepared ABI.
         // Its code lifetime is inherited from the active native call, so dispatch
         // does not reopen images or perform fallible public-handle preparation.
-        let descriptor = ABIAuthenticateSwiftAsyncClosureDescriptor(context.value.function, source.discriminator)!
+        let descriptor = ABIAuthenticateSwiftAsyncClosureDescriptor(
+            context.value.function,
+            source.discriminator
+        )!
         let offset = descriptor.load(as: Int32.self)
         let function = ABIUnsafeFunctionAtAddress(descriptor.advanced(by: Int(offset)))
         let contextSize = descriptor.load(fromByteOffset: 4, as: UInt32.self)
-        let invocation = ABICreateSwiftAsyncInvocation(interface.handle, function, contextSize,
-            result?.address ?? output, forwarded, context.value.context, error ?? unusedError?.address, nil)
-        precondition(invocation != nil, "A prepared native async reabstraction has a valid call frame.")
-        defer { withExtendedLifetime((context, arguments, pointers, unusedError)) { ABIReleaseSwiftAsyncInvocation(invocation!) } }
+        let invocation = ABICreateSwiftAsyncInvocation(
+            interface.handle,
+            function,
+            contextSize,
+            result?.address ?? output,
+            forwarded,
+            context.value.context,
+            error ?? unusedError?.address,
+            nil
+        )
+        precondition(
+            invocation != nil,
+            "A prepared native async reabstraction has a valid call frame."
+        )
+        defer {
+            withExtendedLifetime((context, arguments, pointers, unusedError)) {
+                ABIReleaseSwiftAsyncInvocation(invocation!)
+            }
+        }
         await invokeSwiftAsync(invocation!)
         arguments.finishInvocation()
         let didThrow = ABISwiftAsyncInvocationDidThrow(invocation!)
@@ -653,7 +977,8 @@ struct SwiftRuntimeClosureConversions: Sendable {
     private let fields: [Field]
     var isEmpty: Bool { fields.isEmpty }
 
-    init(metadata: Any.Type, tuple: SwiftTupleValuePlan?, closure: SwiftGenericClosurePlan?) throws {
+    init(metadata: Any.Type, tuple: SwiftTupleValuePlan?, closure: SwiftGenericClosurePlan?) throws
+    {
         var functions: [(Int, Any.Type, SwiftGenericClosurePlan)] = []
         if let closure { functions.append((0, metadata, closure)) }
         if let tuple {
@@ -664,24 +989,40 @@ struct SwiftRuntimeClosureConversions: Sendable {
         fields = try functions.compactMap { offset, metadata, native in
             let storage = try SwiftGenericClosurePlan.nativeValue(metadata)
             guard !native.hasSameNativeABI(as: storage) else { return nil }
-            return Field(offset: offset,
+            return Field(
+                offset: offset,
                 toStorage: try SwiftNativeClosureAdapter(source: native, target: storage),
                 toNative: try SwiftNativeClosureAdapter(source: storage, target: native),
-                ownsContext: storage.isEscaping)
+                ownsContext: storage.isEscaping
+            )
         }
     }
 
-    func apply(to storage: NativeValueStorage, native: Bool, retainingCode owner: Any?,
-               codeLifetime: SwiftValueCodeLifetime?) {
+    func apply(
+        to storage: NativeValueStorage,
+        native: Bool,
+        retainingCode owner: Any?,
+        codeLifetime: SwiftValueCodeLifetime?
+    ) {
         for field in fields {
             let location = storage.address.advanced(by: field.offset)
             let adapter = native ? field.toNative : field.toStorage
-            let replacement = adapter.encode(location.load(as: ABISwiftClosureValue.self),
-                taking: field.ownsContext, escaping: field.ownsContext,
-                retainingCode: owner, codeLifetime: codeLifetime)
-            location.storeBytes(of: replacement.address.load(as: ABISwiftClosureValue.self), as: ABISwiftClosureValue.self)
-            if field.ownsContext { replacement.relinquishValue() }
-            else { storage.retainResource(replacement) }
+            let replacement = adapter.encode(
+                location.load(as: ABISwiftClosureValue.self),
+                taking: field.ownsContext,
+                escaping: field.ownsContext,
+                retainingCode: owner,
+                codeLifetime: codeLifetime
+            )
+            location.storeBytes(
+                of: replacement.address.load(as: ABISwiftClosureValue.self),
+                as: ABISwiftClosureValue.self
+            )
+            if field.ownsContext {
+                replacement.relinquishValue()
+            } else {
+                storage.retainResource(replacement)
+            }
         }
     }
 }
@@ -694,12 +1035,24 @@ private final class SwiftNativeClosureContext {
     private let ownsContext: Bool
     private let valueOwner: AnyObject?
 
-    init(adapter: SwiftNativeClosureAdapter, value: ABISwiftClosureValue, taking: Bool, escaping: Bool, retainingValue valueOwner: AnyObject?,
-         retainingCode owner: Any?, codeLifetime: SwiftValueCodeLifetime?) {
-        self.adapter = adapter; self.value = value; self.codeLifetime = codeLifetime; self.valueOwner = valueOwner
+    init(
+        adapter: SwiftNativeClosureAdapter,
+        value: ABISwiftClosureValue,
+        taking: Bool,
+        escaping: Bool,
+        retainingValue valueOwner: AnyObject?,
+        retainingCode owner: Any?,
+        codeLifetime: SwiftValueCodeLifetime?
+    ) {
+        self.adapter = adapter; self.value = value; self.codeLifetime = codeLifetime;
+        self.valueOwner = valueOwner
         codeOwner = SwiftClosureCodeOwner((adapter, owner), codeLifetime: codeLifetime)!
         ownsContext = taking || escaping
         if escaping && !taking { ABIRetainSwiftClosureContext(value.context) }
     }
-    deinit { withExtendedLifetime((codeOwner, valueOwner)) { if ownsContext { ABIReleaseSwiftClosureContext(value.context) } } }
+    deinit {
+        withExtendedLifetime((codeOwner, valueOwner)) {
+            if ownsContext { ABIReleaseSwiftClosureContext(value.context) }
+        }
+    }
 }

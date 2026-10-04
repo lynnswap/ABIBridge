@@ -1,3 +1,4 @@
+import ABIBridgeRuntime
 import ABIBridgeObjCXX
 import ABIBridgeCore
 import Foundation
@@ -16,13 +17,17 @@ struct ObjCValueCodec<Value> {
         let base = (Value.self as? any NativeOptionalValue.Type)?.wrappedType ?? Value.self
         let encoding: String
         let size: Int
-        if Self.isBlockType(base) { encoding = "@?"; size = MemoryLayout<UnsafeRawPointer>.size }
-        else if base == AnyClass.self { encoding = "#"; size = MemoryLayout<UnsafeRawPointer>.size }
-        else if base is AnyClass || base == AnyObject.self || base == String.self {
+        if Self.isBlockType(base) {
+            encoding = "@?"; size = MemoryLayout<UnsafeRawPointer>.size
+        } else if base == AnyClass.self {
+            encoding = "#"; size = MemoryLayout<UnsafeRawPointer>.size
+        } else if base is AnyClass || base == AnyObject.self || base == String.self {
             encoding = "@"; size = MemoryLayout<UnsafeRawPointer>.size
-        } else if base == Selector.self { encoding = ":"; size = MemoryLayout<UnsafeRawPointer>.size }
-        else if base is any NativePointerValue.Type { encoding = "^v"; size = MemoryLayout<UnsafeRawPointer>.size }
-        else {
+        } else if base == Selector.self {
+            encoding = ":"; size = MemoryLayout<UnsafeRawPointer>.size
+        } else if base is any NativePointerValue.Type {
+            encoding = "^v"; size = MemoryLayout<UnsafeRawPointer>.size
+        } else {
             size = MemoryLayout<Value>.size
             switch Value.self {
             case is Bool.Type: encoding = "B"
@@ -44,7 +49,9 @@ struct ObjCValueCodec<Value> {
             case is CGRect.Type: encoding = String(cString: ABIObjCEncodingRect())
             case is NSRange.Type: encoding = String(cString: ABIObjCEncodingRange())
             default:
-                throw ABIResolutionError.unsupportedDeclaration("Anonymous Objective-C arguments require a concrete C scalar, pointer, object, block, or standard imported structure.")
+                throw ABIResolutionError.unsupportedDeclaration(
+                    "Anonymous Objective-C arguments require a concrete C scalar, pointer, object, block, or standard imported structure."
+                )
             }
         }
         try self.init(encoding: encoding, size: size)
@@ -52,7 +59,9 @@ struct ObjCValueCodec<Value> {
 
     init(encoding: String, size: Int) throws {
         guard let decoded = ObjCTypeDecoder.decode(encoding) else {
-            throw ABIResolutionError.metadataUnavailable("Invalid Objective-C type encoding: \(encoding)")
+            throw ABIResolutionError.metadataUnavailable(
+                "Invalid Objective-C type encoding: \(encoding)"
+            )
         }
         var type = decoded
         while case .modified(_, let base) = type { type = base }
@@ -73,11 +82,13 @@ struct ObjCValueCodec<Value> {
             kind = .boolean
         } else if case .block = type {
             guard Self.isBlockType(baseType), size == MemoryLayout<UnsafeRawPointer>.size,
-                  MemoryLayout<Value>.size == size else { throw Self.mismatch(encoding) }
+                MemoryLayout<Value>.size == size
+            else { throw Self.mismatch(encoding) }
             kind = .block
         } else if case .object = type {
             if Self.isBlockType(baseType) {
-                guard size == MemoryLayout<UnsafeRawPointer>.size, MemoryLayout<Value>.size == size else {
+                guard size == MemoryLayout<UnsafeRawPointer>.size, MemoryLayout<Value>.size == size
+                else {
                     throw Self.mismatch(encoding)
                 }
                 kind = .block
@@ -89,13 +100,17 @@ struct ObjCValueCodec<Value> {
         } else if Self.matchesInteger(type), size == MemoryLayout<Value>.size {
             kind = .bytes
         } else if (type == .float && (Value.self == Float.self || Value.self == CGFloat.self))
-                    || (type == .double && (Value.self == Double.self || Value.self == CGFloat.self)) {
+            || (type == .double && (Value.self == Double.self || Value.self == CGFloat.self))
+        {
             guard size == MemoryLayout<Value>.size else { throw Self.mismatch(encoding) }
             kind = .bytes
         } else if let aggregateType, aggregateType.size == size,
-                  (MemoryLayout<Value>.size...MemoryLayout<Value>.stride).contains(size) {
+            (MemoryLayout<Value>.size...MemoryLayout<Value>.stride).contains(size)
+        {
             kind = .bytes
-        } else if pointerType != nil, Self.isPointer(type), size == MemoryLayout<UnsafeRawPointer>.size {
+        } else if pointerType != nil, Self.isPointer(type),
+            size == MemoryLayout<UnsafeRawPointer>.size
+        {
             kind = .pointer
         } else {
             throw Self.mismatch(encoding)
@@ -134,8 +149,11 @@ struct ObjCValueCodec<Value> {
             return storage
         case .object, .classObject:
             let unwrapped: Any?
-            if let optional = value as? any NativeOptionalValue { unwrapped = optional.wrappedValue }
-            else { unwrapped = value }
+            if let optional = value as? any NativeOptionalValue {
+                unwrapped = optional.wrappedValue
+            } else {
+                unwrapped = value
+            }
             // Class metadata and object instances both occupy one pointer, but
             // sending an instance where Objective-C expects Class is invalid.
             // Validate before bridging, which erases this distinction.
@@ -151,8 +169,11 @@ struct ObjCValueCodec<Value> {
             return storage
         case .pointer:
             let unwrapped: Any?
-            if let optional = value as? any NativeOptionalValue { unwrapped = optional.wrappedValue }
-            else { unwrapped = value }
+            if let optional = value as? any NativeOptionalValue {
+                unwrapped = optional.wrappedValue
+            } else {
+                unwrapped = value
+            }
             let pointer = (unwrapped as? any NativePointerValue)?.rawPointer
             let storage = NativeValueStorage(size: size, alignment: alignment)
             storage.store(pointer)
@@ -176,15 +197,23 @@ struct ObjCValueCodec<Value> {
         case .boolean: return (address.load(as: UInt8.self) != 0) as! Value
         case .bytes: return address.load(as: Value.self)
         case .block:
-            guard let pointer = address.load(as: UnsafeRawPointer?.self) else { return try nilResult() }
+            guard let pointer = address.load(as: UnsafeRawPointer?.self) else {
+                return try nilResult()
+            }
             let reference = Unmanaged<AnyObject>.fromOpaque(pointer)
-            let object = takingObjectReference ? reference.takeRetainedValue() : reference.takeUnretainedValue()
+            let object =
+                takingObjectReference
+                ? reference.takeRetainedValue() : reference.takeUnretainedValue()
             let copy: AnyObject? = try Self.copyBlock(object)
             return unsafeBitCast(copy, to: Value.self)
         case .object, .classObject:
-            guard let pointer = address.load(as: UnsafeRawPointer?.self) else { return try nilResult() }
+            guard let pointer = address.load(as: UnsafeRawPointer?.self) else {
+                return try nilResult()
+            }
             let reference = Unmanaged<AnyObject>.fromOpaque(pointer)
-            let object = takingObjectReference ? reference.takeRetainedValue() : reference.takeUnretainedValue()
+            let object =
+                takingObjectReference
+                ? reference.takeRetainedValue() : reference.takeUnretainedValue()
             if kind == .classObject {
                 guard let type = object as? AnyClass else {
                     throw ABIInvocationError.incompatibleValue(
@@ -198,7 +227,9 @@ struct ObjCValueCodec<Value> {
             }
             return try convert(object)
         case .pointer:
-            guard let pointer = address.load(as: UnsafeRawPointer?.self) else { return try nilResult() }
+            guard let pointer = address.load(as: UnsafeRawPointer?.self) else {
+                return try nilResult()
+            }
             return try convert(pointerType!.fromRawPointer(pointer))
         }
     }
@@ -213,8 +244,10 @@ struct ObjCValueCodec<Value> {
             return try optional.wrapping(value) as! Value
         }
         guard let result = value as? Value else {
-            throw ABIInvocationError.incompatibleValue(expected: String(reflecting: Value.self),
-                                                      actual: String(reflecting: type(of: value)))
+            throw ABIInvocationError.incompatibleValue(
+                expected: String(reflecting: Value.self),
+                actual: String(reflecting: type(of: value))
+            )
         }
         return result
     }
@@ -233,7 +266,8 @@ struct ObjCValueCodec<Value> {
     private static func copyBlock(_ object: AnyObject) throws -> AnyObject {
         guard let copy = ABICopyObjCBlock(Unmanaged.passUnretained(object).toOpaque()) else {
             throw ABIInvocationError.incompatibleValue(
-                expected: String(reflecting: Value.self), actual: String(reflecting: Swift.type(of: object))
+                expected: String(reflecting: Value.self),
+                actual: String(reflecting: Swift.type(of: object))
             )
         }
         return Unmanaged<AnyObject>.fromOpaque(copy).takeRetainedValue()
@@ -255,9 +289,11 @@ struct ObjCValueCodec<Value> {
     }
 
     private static func matchesInteger(_ type: ObjCType) -> Bool {
-        let signed = Value.self == Int.self || Value.self == Int8.self || Value.self == Int16.self
+        let signed =
+            Value.self == Int.self || Value.self == Int8.self || Value.self == Int16.self
             || Value.self == Int32.self || Value.self == Int64.self
-        let unsigned = Value.self == UInt.self || Value.self == UInt8.self || Value.self == UInt16.self
+        let unsigned =
+            Value.self == UInt.self || Value.self == UInt8.self || Value.self == UInt16.self
             || Value.self == UInt32.self || Value.self == UInt64.self
         switch type {
         case .char, .short, .int, .long, .longLong: return signed

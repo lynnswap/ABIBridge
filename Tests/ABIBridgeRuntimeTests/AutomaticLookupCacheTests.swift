@@ -1,12 +1,13 @@
+import ABIBridgeTestSupport
 #if os(macOS) && DEBUG
-@testable import ABIBridge
+@testable import ABIBridgeRuntime
 import Foundation
 import Testing
 
 @Suite(.serialized)
 struct AutomaticLookupCacheTests {
-    @Test(arguments: [NativeLanguage.c, .cxx, .swift])
-    func laterLoadsReplaceNegativeAndUniqueResults(language: NativeLanguage) async throws {
+    @Test(arguments: [RuntimeLanguage.c, .cxx, .swift])
+    func laterLoadsReplaceNegativeAndUniqueResults(language: RuntimeLanguage) async throws {
         let module = "Catalog_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
         let source: String
         let name: String
@@ -28,15 +29,17 @@ struct AutomaticLookupCacheTests {
         }
         let first = try fixture(), second = try fixture()
         defer { first.cleanup(); second.cleanup() }
-        let runtime = ABIRuntime()
-        let declaration = NativeDeclaration(name: name, language: language)
+        let runtime = RuntimeSymbolResolver()
+        let declaration = RuntimeDeclaration(name: name, language: language)
         for _ in 0..<2 {
-            await #expect(throws: ABIResolutionError.declarationNotFound(declaration)) {
+            await #expect(throws: RuntimeResolutionError.declarationNotFound(declaration)) {
                 _ = try await runtime.resolve(declaration)
             }
         }
         try first.load()
-        let expected = try #require(try await runtime.images(matching: .path(first.libraryURL)).first).identity
+        let expected = try #require(
+            try await runtime.images(matching: .path(first.libraryURL)).first
+        ).identity
         let symbol = try await runtime.resolve(declaration)
         #expect(symbol.image.identity == expected)
         #expect(try await runtime.resolve(declaration).image.identity == symbol.image.identity)
@@ -45,26 +48,37 @@ struct AutomaticLookupCacheTests {
             do {
                 _ = try await runtime.resolve(declaration)
                 Issue.record("Newly loaded competing definitions must invalidate a unique result")
-            } catch ABIResolutionError.ambiguousDeclaration(let actual, let candidates) {
+            } catch RuntimeResolutionError.ambiguousDeclaration(let actual, let candidates) {
                 #expect(actual == declaration)
                 #expect(candidates.count == 2)
             }
         }
-        #expect(try await runtime.resolve(declaration, in: symbol.image, loading: .loadedOnly).image.identity == symbol.image.identity)
+        #expect(
+            try await runtime.resolve(declaration, in: symbol.image, loading: .loadedOnly).image
+                .identity == symbol.image.identity
+        )
         await runtime.removeCachedResults()
     }
 
     @Test func cacheClearingCanRaceWithNativeResolution() async throws {
         let fixture = try FixtureLibrary()
         defer { fixture.cleanup() }
-        let resolver = SymbolResolver()
-        let expected = try #require(try resolver.images(matching: .path(fixture.libraryURL)).first).identity
-        let declaration = NativeDeclaration(name: fixture.namespace + "::add(int, int)", language: .cxx)
+        let resolver = RuntimeSymbolResolver()
+        let expected = try #require(try resolver.images(matching: .path(fixture.libraryURL)).first)
+            .identity
+        let declaration = RuntimeDeclaration(
+            name: fixture.namespace + "::add(int, int)",
+            language: .cxx
+        )
         try await withThrowingTaskGroup(of: Void.self) { group in
             for _ in 0..<3 {
                 group.addTask {
                     for _ in 0..<10 {
-                        let symbol = try resolver.resolve(declaration, in: .automatic, loading: .loadedOnly)
+                        let symbol = try resolver.resolve(
+                            declaration,
+                            in: .automatic,
+                            loading: .loadedOnly
+                        )
                         #expect(symbol.image.identity == expected)
                     }
                 }

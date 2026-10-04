@@ -1,12 +1,19 @@
 import Foundation
 
-struct SwiftGenericContext: Hashable, Sendable {
-    let identity: ObjectIdentifier
-    let owner: String
+package struct SwiftGenericContext: Hashable, Sendable {
+    package let identity: ObjectIdentifier
+    package let owner: String
     private let arguments: [String: String]
 
-    init?(_ type: AnyClass, owner: String) throws {
-        let name = try swiftFunctionTypeName(type)
+    package init?(_ type: AnyClass, owner: String) throws {
+        let name: String
+        if let mangled = _mangledTypeName(type),
+            let demangled = DeclarationKey.demangle("$s" + mangled, language: .swift)
+        {
+            name = demangled
+        } else {
+            name = String(reflecting: type)
+        }
         let groups = SwiftGenericSyntax.groups(in: name)
         guard !groups.isEmpty else { return nil }
         identity = ObjectIdentifier(type)
@@ -29,8 +36,10 @@ struct SwiftGenericContext: Hashable, Sendable {
         self.arguments = arguments
     }
 
-    func satisfies(_ extensionMember: SwiftConstrainedExtension,
-                   isDependentType: (String, String) -> Bool) throws(ABIResolutionError) -> Bool {
+    package func satisfies(
+        _ extensionMember: SwiftConstrainedExtension,
+        isDependentType: (String, String) -> Bool
+    ) throws(RuntimeResolutionError) -> Bool {
         guard extensionMember.owner == owner else { return false }
         var unsupported: String?
         for requirement in extensionMember.requirements {
@@ -46,20 +55,30 @@ struct SwiftGenericContext: Hashable, Sendable {
                 expected = argument
             } else {
                 let names = SwiftGenericSyntax.names(in: terms[1])
-                guard !names.contains(where: { name in
-                    guard arguments[String(name.prefix { $0 != "." })] != nil else { return false }
-                    guard !SwiftGenericSyntax.isTupleLabel(name, in: terms[1]) else { return false }
-                    return !name.contains(".") || isDependentType(String(name), requirement)
-                }) else {
+                guard
+                    !names.contains(where: { name in
+                        guard arguments[String(name.prefix { $0 != "." })] != nil else {
+                            return false
+                        }
+                        guard !SwiftGenericSyntax.isTupleLabel(name, in: terms[1]) else {
+                            return false
+                        }
+                        return !name.contains(".") || isDependentType(String(name), requirement)
+                    })
+                else {
                     unsupported = requirement
                     continue
                 }
                 expected = terms[1]
             }
-            if DeclarationKey.make(actual, language: .swift) != DeclarationKey.make(expected, language: .swift) { return false }
+            if DeclarationKey.make(actual, language: .swift)
+                != DeclarationKey.make(expected, language: .swift)
+            {
+                return false
+            }
         }
         if let unsupported {
-            throw ABIResolutionError.unsupportedDeclaration(
+            throw RuntimeResolutionError.unsupportedDeclaration(
                 "Constrained Swift member requires a native adapter for \(unsupported)."
             )
         }
@@ -67,15 +86,16 @@ struct SwiftGenericContext: Hashable, Sendable {
     }
 }
 
-struct SwiftConstrainedExtension {
-    let owner: String
-    let memberName: String
-    let requirements: [String]
+package struct SwiftConstrainedExtension {
+    package let owner: String
+    package let memberName: String
+    package let requirements: [String]
 
-    init?(_ unqualified: String) {
+    package init?(_ unqualified: String) {
         guard let group = SwiftGenericSyntax.groups(in: unqualified).first,
-              let clause = group.contents.range(of: " where "),
-              unqualified[group.range.upperBound...].first == "." else { return nil }
+            let clause = group.contents.range(of: " where "),
+            unqualified[group.range.upperBound...].first == "."
+        else { return nil }
         let prefix = String(unqualified[..<group.range.lowerBound])
         owner = prefix.hasPrefix("static ") ? String(prefix.dropFirst(7)) : prefix
         memberName = prefix + unqualified[group.range.upperBound...]
@@ -84,31 +104,36 @@ struct SwiftConstrainedExtension {
     }
 }
 
-enum SwiftGenericSyntax {
-    static func names(in type: String) -> [Substring] {
+package enum SwiftGenericSyntax {
+    package static func names(in type: String) -> [Substring] {
         type.split { $0.isWhitespace || "<>()[],:?!@&-=".contains($0) }
     }
 
-    static func isTupleLabel(_ name: Substring, in type: String) -> Bool {
+    package static func isTupleLabel(_ name: Substring, in type: String) -> Bool {
         guard type[name.endIndex...].drop(while: \.isWhitespace).first == ":" else { return false }
         var groups: [Character] = []
         var previous: Character?
         for character in type[..<name.startIndex] {
-            if character == "(" || character == "[" || character == "<" { groups.append(character) }
-            else if character == ")", groups.last == "(" { groups.removeLast() }
-            else if character == "]", groups.last == "[" { groups.removeLast() }
-            else if character == ">", previous != "-", groups.last == "<" { groups.removeLast() }
+            if character == "(" || character == "[" || character == "<" {
+                groups.append(character)
+            } else if character == ")", groups.last == "(" {
+                groups.removeLast()
+            } else if character == "]", groups.last == "[" {
+                groups.removeLast()
+            } else if character == ">", previous != "-", groups.last == "<" {
+                groups.removeLast()
+            }
             previous = character
         }
         return groups.last == "("
     }
 
-    struct Group {
-        let range: Range<String.Index>
-        let contents: Substring
+    package struct Group {
+        package let range: Range<String.Index>
+        package let contents: Substring
     }
 
-    static func groups(in text: String) -> [Group] {
+    package static func groups(in text: String) -> [Group] {
         var result: [Group] = []
         var depth = 0
         var opening: String.Index?
@@ -121,8 +146,12 @@ enum SwiftGenericSyntax {
             } else if character == ">", previous != "-", depth > 0 {
                 depth -= 1
                 if depth == 0, let start = opening {
-                    result.append(Group(range: start..<text.index(after: index),
-                                        contents: text[text.index(after: start)..<index]))
+                    result.append(
+                        Group(
+                            range: start..<text.index(after: index),
+                            contents: text[text.index(after: start)..<index]
+                        )
+                    )
                 }
             }
             previous = character
@@ -130,7 +159,7 @@ enum SwiftGenericSyntax {
         return result
     }
 
-    static func opensGeneric(in text: String, at index: String.Index) -> Bool {
+    package static func opensGeneric(in text: String, at index: String.Index) -> Bool {
         let remainder = text[text.index(after: index)...]
         guard let next = remainder.first, !isOperatorHead(next) else { return false }
         if next == "(" {
@@ -145,20 +174,20 @@ enum SwiftGenericSyntax {
     }
 
     // Swift 6.3's operator-head scalar ranges: include/swift/AST/Identifier.h.
-    static func isOperatorHead(_ character: Character) -> Bool {
+    package static func isOperatorHead(_ character: Character) -> Bool {
         let scalar = character.unicodeScalars.first!.value
         if scalar < 0x80 { return "/=-+*%<>!&|^~.?".unicodeScalars.contains { $0.value == scalar } }
         switch scalar {
         case 0xA1...0xA7, 0xA9, 0xAB, 0xAC, 0xAE, 0xB0, 0xB1, 0xB6, 0xBB,
-             0xBF, 0xD7, 0xF7, 0x2016, 0x2017, 0x2020...0x2027, 0x2030...0x203E,
-             0x2041...0x2053, 0x2055...0x205E, 0x2190...0x23FF, 0x2500...0x2775,
-             0x2794...0x2BFF, 0x2E00...0x2E7F, 0x3001...0x3003, 0x3008...0x3030:
+            0xBF, 0xD7, 0xF7, 0x2016, 0x2017, 0x2020...0x2027, 0x2030...0x203E,
+            0x2041...0x2053, 0x2055...0x205E, 0x2190...0x23FF, 0x2500...0x2775,
+            0x2794...0x2BFF, 0x2E00...0x2E7F, 0x3001...0x3003, 0x3008...0x3030:
             return true
         default: return false
         }
     }
 
-    static func split(_ text: Substring) -> [String] {
+    package static func split(_ text: Substring) -> [String] {
         var result: [String] = []
         var start = text.startIndex
         var angle = 0, parentheses = 0, brackets = 0, braces = 0

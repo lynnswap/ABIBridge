@@ -1,3 +1,4 @@
+import ABIBridgeTestSupport
 #if os(macOS)
 import ABIBridgeCore
 import Darwin
@@ -13,7 +14,10 @@ private struct ObservedImage: Sendable {
 private final class ObservationCallback: Sendable {
     let receive: @Sendable ([ObservedImage]) -> Void
     let released: @Sendable () -> Void
-    init(_ receive: @escaping @Sendable ([ObservedImage]) -> Void, released: @escaping @Sendable () -> Void) {
+    init(
+        _ receive: @escaping @Sendable ([ObservedImage]) -> Void,
+        released: @escaping @Sendable () -> Void
+    ) {
         self.receive = receive
         self.released = released
     }
@@ -22,21 +26,40 @@ private final class ObservationCallback: Sendable {
 
 private final class CatalogObservation: @unchecked Sendable {
     let handle: OpaquePointer
-    init(released: @escaping @Sendable () -> Void = {}, receive: @escaping @Sendable ([ObservedImage]) -> Void) throws {
+    init(
+        released: @escaping @Sendable () -> Void = {},
+        receive: @escaping @Sendable ([ObservedImage]) -> Void
+    ) throws {
         let callback = ObservationCallback(receive, released: released)
         var error: OpaquePointer?
-        let handle = ABIObserveLoadedImages(Unmanaged.passRetained(callback).toOpaque(), { context, list in
-            guard let list else { Issue.record("Missing catalog snapshot"); return }
-            let images = (0..<ABIImageListCount(list)).map { index in
-                let value = ABIImageListGet(list, index)
-                return ObservedImage(generation: value.generation, path: String(cString: value.path))
-            }
-            Unmanaged<ObservationCallback>.fromOpaque(context!).takeUnretainedValue().receive(images)
-        }, { context in
-            Unmanaged<ObservationCallback>.fromOpaque(context!).release()
-        }, &error)
+        let handle = ABIObserveLoadedImages(
+            Unmanaged.passRetained(callback).toOpaque(),
+            { context, list in
+                guard let list else { Issue.record("Missing catalog snapshot"); return }
+                let images = (0..<ABIImageListCount(list)).map { index in
+                    let value = ABIImageListGet(list, index)
+                    return ObservedImage(
+                        generation: value.generation,
+                        path: String(cString: value.path)
+                    )
+                }
+                Unmanaged<ObservationCallback>.fromOpaque(context!).takeUnretainedValue().receive(
+                    images
+                )
+            },
+            { context in
+                Unmanaged<ObservationCallback>.fromOpaque(context!).release()
+            },
+            &error
+        )
         defer { if let error { ABIReleaseResolutionFailure(error) } }
-        self.handle = try #require(handle, Comment(rawValue: error.map { String(cString: ABIResolutionFailureMessage($0)) } ?? "No observer"))
+        self.handle = try #require(
+            handle,
+            Comment(
+                rawValue: error.map { String(cString: ABIResolutionFailureMessage($0)) }
+                    ?? "No observer"
+            )
+        )
     }
     func invalidate() { ABIInvalidateImageObservation(handle) }
     deinit { ABIReleaseImageObservation(handle) }
@@ -44,16 +67,27 @@ private final class CatalogObservation: @unchecked Sendable {
 
 private func waitForObservation(_ condition: @escaping @Sendable () -> Bool) async throws -> Bool {
     let deadline = ContinuousClock.now + .seconds(5)
-    while !condition() && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    while !condition() && ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
     return condition()
 }
 
 @Suite(.serialized)
 struct ImageObservationTests {
     @Test func snapshotsTrackUnloadAndReloadWithoutRetainingImages() async throws {
-        let fixture = try FixtureLibrary(load: false, cxxSource: "extern \"C\" int observedValue() { return 42; }")
-        let middle = try FixtureLibrary(load: false, cxxSource: "extern \"C\" int middleValue() { return 1; }")
-        let last = try FixtureLibrary(load: false, cxxSource: "extern \"C\" int lastValue() { return 2; }")
+        let fixture = try FixtureLibrary(
+            load: false,
+            cxxSource: "extern \"C\" int observedValue() { return 42; }"
+        )
+        let middle = try FixtureLibrary(
+            load: false,
+            cxxSource: "extern \"C\" int middleValue() { return 1; }"
+        )
+        let last = try FixtureLibrary(
+            load: false,
+            cxxSource: "extern \"C\" int lastValue() { return 2; }"
+        )
         defer { fixture.cleanup(); middle.cleanup(); last.cleanup() }
         // Other suites legitimately retain images during automatic symbol
         // lookup. An isolated process gives this test sole loader ownership.
@@ -69,11 +103,16 @@ struct ImageObservationTests {
             core.appendingPathComponent("NativeFailure.cpp").path,
             "-L/usr/lib/swift", "-lswiftCore", "-o", executable.path,
         ])
-        try FixtureLibrary.run([executable.path, fixture.libraryURL.path, middle.libraryURL.path, last.libraryURL.path])
+        try FixtureLibrary.run([
+            executable.path, fixture.libraryURL.path, middle.libraryURL.path, last.libraryURL.path,
+        ])
     }
 
     @Test func deliveryAndContextReleaseCanReenterTheCatalog() async throws {
-        let fixture = try FixtureLibrary(load: false, cxxSource: "extern \"C\" int nestedValue() { return 7; }")
+        let fixture = try FixtureLibrary(
+            load: false,
+            cxxSource: "extern \"C\" int nestedValue() { return 7; }"
+        )
         defer { fixture.cleanup() }
         let path = fixture.libraryURL.path
         let entered = Mutex(false), completed = Mutex(false), released = Mutex(false)
@@ -83,7 +122,11 @@ struct ImageObservationTests {
             ABIFreeImageList(snapshot)
             released.withLock { $0 = true }
         }) { _ in
-            guard entered.withLock({ flag in if flag { return false }; flag = true; return true }) else { return }
+            guard
+                entered.withLock({ flag in
+                    if flag { return false }; flag = true; return true
+                })
+            else { return }
             let snapshot = ABICopyLoadedImages()
             #expect(snapshot != nil)
             ABIFreeImageList(snapshot)
@@ -115,14 +158,17 @@ struct ImageObservationTests {
         defer { finish.signal(); observation.invalidate() }
         #expect(try await waitForObservation { entered.withLock { $0 } })
         let cancel: @convention(c) (OpaquePointer?) -> Void = ABIInvalidateImageObservation
-        let fixture = try FixtureLibrary(load: false, cxxSource: """
-        #include <stdint.h>
-        __attribute__((constructor)) static void cancelObservation() {
-            auto cancel = reinterpret_cast<void(*)(void*)>(uintptr_t(\(unsafeBitCast(cancel, to: UInt.self))));
-            cancel(reinterpret_cast<void*>(uintptr_t(\(UInt(bitPattern: observation.handle)))));
-        }
-        extern "C" int cancellationFixture() { return 1; }
-        """)
+        let fixture = try FixtureLibrary(
+            load: false,
+            cxxSource: """
+                #include <stdint.h>
+                __attribute__((constructor)) static void cancelObservation() {
+                    auto cancel = reinterpret_cast<void(*)(void*)>(uintptr_t(\(unsafeBitCast(cancel, to: UInt.self))));
+                    cancel(reinterpret_cast<void*>(uintptr_t(\(UInt(bitPattern: observation.handle)))));
+                }
+                extern "C" int cancellationFixture() { return 1; }
+                """
+        )
         defer { fixture.cleanup() }
         let path = fixture.libraryURL.path
         let loaded = Mutex(false)
@@ -147,12 +193,20 @@ struct ImageObservationTests {
     @Test func rejectedRegistrationReleasesTransferredContext() {
         let released = Mutex(false)
         do {
-            let callback = ObservationCallback({ _ in }, released: { released.withLock { $0 = true } })
+            let callback = ObservationCallback(
+                { _ in },
+                released: { released.withLock { $0 = true } }
+            )
             let context = Unmanaged.passRetained(callback).toOpaque()
             var error: OpaquePointer?
-            let observation = ABIObserveLoadedImages(context, nil, { pointer in
-                Unmanaged<ObservationCallback>.fromOpaque(pointer!).release()
-            }, &error)
+            let observation = ABIObserveLoadedImages(
+                context,
+                nil,
+                { pointer in
+                    Unmanaged<ObservationCallback>.fromOpaque(pointer!).release()
+                },
+                &error
+            )
             #expect(observation == nil)
             #expect(error != nil)
             if let error {
@@ -167,7 +221,8 @@ struct ImageObservationTests {
     @Test func deliveryCanInvalidateItsOwnObservation() async throws {
         let ready = DispatchSemaphore(value: 0)
         let address = Mutex<UInt>(0), completed = Mutex(false), released = Mutex(false)
-        let observation = try CatalogObservation(released: { released.withLock { $0 = true } }) { _ in
+        let observation = try CatalogObservation(released: { released.withLock { $0 = true } }) {
+            _ in
             ready.wait()
             ABIInvalidateImageObservation(OpaquePointer(bitPattern: address.withLock { $0 }))
             completed.withLock { $0 = true }
@@ -175,7 +230,9 @@ struct ImageObservationTests {
         defer { ready.signal(); observation.invalidate() }
         address.withLock { $0 = UInt(bitPattern: observation.handle) }
         ready.signal()
-        #expect(try await waitForObservation { completed.withLock { $0 } && released.withLock { $0 } })
+        #expect(
+            try await waitForObservation { completed.withLock { $0 } && released.withLock { $0 } }
+        )
     }
 }
 #endif

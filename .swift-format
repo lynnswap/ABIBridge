@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "indentation": { "spaces": 4 },
+  "indentConditionalCompilationBlocks": false,
+  "lineBreakBeforeEachArgument": true,
+  "lineBreakBeforeEachGenericRequirement": true,
+  "prioritizeKeepingFunctionOutputTogether": true,
+  "respectsExistingLineBreaks": true,
+  "rules": {
+    "IdentifiersMustBeASCII": false,
+    "UseSynthesizedInitializer": false
+  }
+}

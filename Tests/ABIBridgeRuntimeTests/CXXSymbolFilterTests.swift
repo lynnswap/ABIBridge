@@ -1,7 +1,7 @@
 #if DEBUG
 // Release bridge tests consume the production module without -enable-testing.
 import Testing
-@testable import ABIBridge
+@testable import ABIBridgeRuntime
 
 struct CXXSymbolFilterTests {
     @Test(arguments: [
@@ -36,19 +36,32 @@ struct CXXSymbolFilterTests {
     }
 
     @Test func normalizationKeepsTypeBoundariesAndEmbeddedNulls() {
-        #expect(DeclarationKey.make("Example :: f ( unsigned int )") == DeclarationKey.make("Example::f(unsigned int)"))
-        #expect(DeclarationKey.make("Example::f(unsigned int)") != DeclarationKey.make("Example::f(unsignedint)"))
+        #expect(
+            DeclarationKey.make("Example :: f ( unsigned int )")
+                == DeclarationKey.make("Example::f(unsigned int)")
+        )
+        #expect(
+            DeclarationKey.make("Example::f(unsigned int)")
+                != DeclarationKey.make("Example::f(unsignedint)")
+        )
         #expect(DeclarationKey.make("Example::f()") != DeclarationKey.make("Example::f()\0extra"))
     }
 
     @Test func fingerprintCandidatesRequireFullDeclarationMatch() {
         let intended = IndexedSymbol(name: "__ZN7Example1fEj", address: 1, source: .image)
         let sameDeclaration = IndexedSymbol(name: intended.name, address: 2, source: .image)
-        let differentType = IndexedSymbol(name: "__ZN7Example1fE11unsignedint", address: 3, source: .image)
+        let differentType = IndexedSymbol(
+            name: "__ZN7Example1fE11unsignedint",
+            address: 3,
+            source: .image
+        )
         let query = SymbolQuery(.init(name: "Example :: f( unsigned int )", language: .cxx))
-        var unsupported: ABIResolutionError?
+        var unsupported: RuntimeResolutionError?
         let matches = SymbolIndex.matching(
-            [differentType, intended, sameDeclaration], query: query, extensionsOnly: false, unsupported: &unsupported
+            [differentType, intended, sameDeclaration],
+            query: query,
+            extensionsOnly: false,
+            unsupported: &unsupported
         )
         #expect(matches.map(\.address) == [1, 2])
     }

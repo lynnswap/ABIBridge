@@ -4,29 +4,30 @@ import Darwin
 import MachO
 import MachOKit
 
-struct IndexedSymbol: Hashable {
-    let name: String
-    let address: UInt64
-    let source: ResolvedSymbol.Source
+package struct IndexedSymbol: Hashable {
+    package let name: String
+    package let address: UInt64
+    package let source: RuntimeSymbol.Source
 
-    static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.address == rhs.address && lhs.source == rhs.source && lhs.name.utf8.elementsEqual(rhs.name.utf8)
+    package static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.address == rhs.address && lhs.source == rhs.source
+            && lhs.name.utf8.elementsEqual(rhs.name.utf8)
     }
 
-    func hash(into hasher: inout Hasher) {
+    package func hash(into hasher: inout Hasher) {
         hasher.combine(name)
         hasher.combine(address)
         hasher.combine(source)
     }
 }
 
-struct SymbolSection {
-    let range: Range<UInt64>
-    let code: Bool
-    let vtable: Bool
-    let threadLocal: Bool
+package struct SymbolSection {
+    package let range: Range<UInt64>
+    package let code: Bool
+    package let vtable: Bool
+    package let threadLocal: Bool
 
-    func accepts(_ kind: NativeSymbolKind) -> Bool {
+    package func accepts(_ kind: RuntimeSymbolKind) -> Bool {
         guard !threadLocal else { return false }
         switch kind {
         case .function: return code
@@ -36,9 +37,9 @@ struct SymbolSection {
     }
 }
 
-enum DeclarationKey {
+package enum DeclarationKey {
     // These are exactly the prefixes accepted by the native demanglers.
-    static func symbolPrefixes(for language: NativeLanguage) -> [String] {
+    package static func symbolPrefixes(for language: RuntimeLanguage) -> [String] {
         switch language {
         case .cxx: ["__Z", "_Z"]
         case .swift: ["_$s", "_$S", "$s", "$S"]
@@ -46,18 +47,19 @@ enum DeclarationKey {
         }
     }
 
-    static func fingerprint(_ key: [UInt8]) -> Int {
+    package static func fingerprint(_ key: [UInt8]) -> Int {
         var hasher = Hasher()
         key.withUnsafeBytes { hasher.combine(bytes: $0) }
         return hasher.finalize()
     }
 
-    static func make(_ declaration: String, language: NativeLanguage) -> [UInt8] {
+    package static func make(_ declaration: String, language: RuntimeLanguage) -> [UInt8] {
         make(language == .swift ? canonicalCollections(declaration) : declaration)
     }
 
     private static let collectionSpelling = try! NSRegularExpression(
-        pattern: #"(?<![A-Za-z0-9_.])Swift\.(Array|Dictionary|Optional)\s*<"#)
+        pattern: #"(?<![A-Za-z0-9_.])Swift\.(Array|Dictionary|Optional)\s*<"#
+    )
 
     // Swift runtime and toolchain demanglers use both nominal and sugared
     // spellings. Normalize only Swift's three language-defined type sugars.
@@ -65,17 +67,22 @@ enum DeclarationKey {
         guard source.contains("Swift.") else { return source }
         var remaining = source
         var result = ""
-        while let match = collectionSpelling.firstMatch(in: remaining, range: NSRange(remaining.startIndex..., in: remaining)),
-              let range = Range(match.range, in: remaining),
-              let kindRange = Range(match.range(at: 1), in: remaining) {
+        while let match = collectionSpelling.firstMatch(
+            in: remaining,
+            range: NSRange(remaining.startIndex..., in: remaining)
+        ),
+            let range = Range(match.range, in: remaining),
+            let kindRange = Range(match.range(at: 1), in: remaining)
+        {
             let opening = remaining.index(before: range.upperBound)
             var depth = 0
             var previous: Character?
             var closing: String.Index?
             for index in remaining[opening...].indices {
                 let character = remaining[index]
-                if character == "<" { depth += 1 }
-                else if character == ">", previous != "-" {
+                if character == "<" {
+                    depth += 1
+                } else if character == ">", previous != "-" {
                     depth -= 1
                     if depth == 0 { closing = index; break }
                 }
@@ -88,10 +95,13 @@ enum DeclarationKey {
             let replacement: String
             switch remaining[kindRange] {
             case "Array" where fields.count == 1: replacement = "[" + fields[0] + "]"
-            case "Dictionary" where fields.count == 2: replacement = "[" + fields[0] + ": " + fields[1] + "]"
+            case "Dictionary" where fields.count == 2:
+                replacement = "[" + fields[0] + ": " + fields[1] + "]"
             case "Optional" where fields.count == 1:
                 let wrapped = fields[0]
-                replacement = (SwiftFormalSyntax.topLevelArrow(in: wrapped) == nil ? wrapped : "(" + wrapped + ")") + "?"
+                replacement =
+                    (SwiftFormalSyntax.topLevelArrow(in: wrapped) == nil
+                        ? wrapped : "(" + wrapped + ")") + "?"
             default: return result + remaining
             }
             result += remaining[..<range.lowerBound] + replacement
@@ -100,13 +110,14 @@ enum DeclarationKey {
         return result + remaining
     }
 
-    static func make(_ declaration: String) -> [UInt8] {
+    package static func make(_ declaration: String) -> [UInt8] {
         var key: [UInt8] = []
         key.reserveCapacity(declaration.utf8.count * 2)
         var inIdentifier = false
         for byte in declaration.utf8 {
             if (byte >= 48 && byte <= 57) || (byte >= 65 && byte <= 90)
-                || (byte >= 97 && byte <= 122) || byte == 95 {
+                || (byte >= 97 && byte <= 122) || byte == 95
+            {
                 if !inIdentifier { key.append(0) }
                 key.append(byte)
                 inIdentifier = true
@@ -121,7 +132,7 @@ enum DeclarationKey {
         return key
     }
 
-    static func demangle(_ raw: String, language: NativeLanguage) -> String? {
+    package static func demangle(_ raw: String, language: RuntimeLanguage) -> String? {
         switch language {
         case .c: return raw.hasPrefix("_") ? String(raw.dropFirst()) : raw
         case .cxx, .swift:
@@ -138,28 +149,30 @@ enum DeclarationKey {
 
 // Coverage describes names read from a source, independently of symbol kind.
 // A filtered scan must not mark other names or owners as already loaded.
-enum SymbolCandidateScope: Hashable {
+package enum SymbolCandidateScope: Hashable {
     case exact([UInt8])
-    case language(NativeLanguage)
+    case language(RuntimeLanguage)
     case swiftModule(String)
     case swiftFallback
     case cxxOwner(String)
 }
 
-struct SymbolQuery {
-    let declaration: NativeDeclaration
-    let exactName: String?
-    let key: [UInt8]
-    let fingerprint: Int
-    let filter: CXXSymbolFilter?
-    let swiftModule: SwiftModuleFilter?
-    let candidateScope: SymbolCandidateScope
+package struct SymbolQuery {
+    package let declaration: RuntimeDeclaration
+    package let exactName: String?
+    package let key: [UInt8]
+    package let fingerprint: Int
+    package let filter: CXXSymbolFilter?
+    package let swiftModule: SwiftModuleFilter?
+    package let candidateScope: SymbolCandidateScope
     private let exactNeedle: [CChar]
     private let prefixes: [[CChar]]
 
-    init(_ declaration: NativeDeclaration) {
+    package init(_ declaration: RuntimeDeclaration) {
         self.declaration = declaration
-        swiftModule = declaration.language == .swift && declaration.nameForm == .source ? SwiftModuleFilter(declaration.name) : nil
+        swiftModule =
+            declaration.language == .swift && declaration.nameForm == .source
+            ? SwiftModuleFilter(declaration.name) : nil
         if declaration.nameForm != .source || declaration.language == .c {
             let name = declaration.nameForm == .machO ? declaration.name : "_" + declaration.name
             exactName = name
@@ -173,46 +186,57 @@ struct SymbolQuery {
             key = DeclarationKey.make(declaration.name, language: declaration.language)
             fingerprint = DeclarationKey.fingerprint(key)
             filter = declaration.language == .cxx ? CXXSymbolFilter(declaration.name) : nil
-            if let module = swiftModule?.module { candidateScope = .swiftModule(module) }
-            else if let owner = filter?.fragments.first { candidateScope = .cxxOwner(owner) }
-            else { candidateScope = .language(declaration.language) }
+            if let module = swiftModule?.module {
+                candidateScope = .swiftModule(module)
+            } else if let owner = filter?.fragments.first {
+                candidateScope = .cxxOwner(owner)
+            } else {
+                candidateScope = .language(declaration.language)
+            }
             exactNeedle = []
         }
-        prefixes = DeclarationKey.symbolPrefixes(for: declaration.language).map { Array($0.utf8CString) }
+        prefixes = DeclarationKey.symbolPrefixes(for: declaration.language).map {
+            Array($0.utf8CString)
+        }
     }
 
-    func acceptsCandidate(_ raw: UnsafePointer<CChar>) -> Bool {
+    package func acceptsCandidate(_ raw: UnsafePointer<CChar>) -> Bool {
         if exactName != nil {
-            return !exactNeedle.isEmpty && exactNeedle.withUnsafeBufferPointer { strcmp(raw, $0.baseAddress!) == 0 }
+            return !exactNeedle.isEmpty
+                && exactNeedle.withUnsafeBufferPointer { strcmp(raw, $0.baseAddress!) == 0 }
         }
-        guard prefixes.contains(where: { prefix in
-            prefix.withUnsafeBufferPointer { strncmp(raw, $0.baseAddress!, $0.count - 1) == 0 }
-        }) else { return false }
+        guard
+            prefixes.contains(where: { prefix in
+                prefix.withUnsafeBufferPointer { strncmp(raw, $0.baseAddress!, $0.count - 1) == 0 }
+            })
+        else { return false }
         return (swiftModule?.matches(raw) ?? true) && (filter?.matchesOwner(raw) ?? true)
     }
 }
 
-/// Rejects known different root modules, including standard abbreviations.
-/// Compressed and other uncertain roots still reach the full demangler.
-struct SwiftModuleFilter {
-    let module: String
+package struct SwiftModuleFilter {
+    package let module: String
     private let prefix: String
 
-    init?(_ declaration: String) {
+    package init?(_ declaration: String) {
         var name = declaration.trimmingCharacters(in: .whitespacesAndNewlines)
-        for marker in ["nominal type descriptor for ", "protocol descriptor for ", "type metadata accessor for ", "type metadata for ", "static "] {
+        for marker in [
+            "nominal type descriptor for ", "protocol descriptor for ",
+            "type metadata accessor for ", "type metadata for ", "static ",
+        ] {
             if name.hasPrefix(marker) { name.removeFirst(marker.count); break }
         }
         guard let dot = name.firstIndex(of: ".") else { return nil }
         let module = String(name[..<dot])
-        guard module.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) != nil else { return nil }
+        guard module.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) != nil
+        else { return nil }
         self.module = module
         prefix = String(module.utf8.count) + module
     }
 
     // Nil also describes an incomplete trie edge. Standard module and type
     // substitutions have known roots; compressed identifiers stay conservative.
-    static func knownModulePrefix(_ name: UnsafePointer<CChar>) -> Bool? {
+    package static func knownModulePrefix(_ name: UnsafePointer<CChar>) -> Bool? {
         var body = name
         if body.pointee == 95 { body += 1 }
         guard body.pointee == 36, body[1] == 115 || body[1] == 83 else { return nil }
@@ -222,11 +246,11 @@ struct SwiftModuleFilter {
         return body.pointee == 115 || (body.pointee >= 49 && body.pointee <= 57)
     }
 
-    func matches(_ raw: String) -> Bool {
+    package func matches(_ raw: String) -> Bool {
         raw.withCString { matches($0) }
     }
 
-    func matches(_ name: UnsafePointer<CChar>, partial: Bool = false) -> Bool {
+    package func matches(_ name: UnsafePointer<CChar>, partial: Bool = false) -> Bool {
         var body = name
         if body.pointee == 95 { body += 1 }
         guard body.pointee == 36, body[1] == 115 || body[1] == 83 else { return true }
@@ -248,13 +272,11 @@ struct SwiftModuleFilter {
     }
 }
 
-/// A conservative prefilter over Itanium names. Matching still uses the full
-/// demangled declaration; complex spellings fall back to unfiltered lookup.
-struct CXXSymbolFilter {
-    let fragments: [String]
+package struct CXXSymbolFilter {
+    package let fragments: [String]
     private let needles: [[CChar]]
 
-    init(_ declaration: String) {
+    package init(_ declaration: String) {
         var prefix = String(declaration.prefix { $0 != "(" })
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "\\s*::\\s*", with: "::", options: .regularExpression)
@@ -274,7 +296,11 @@ struct CXXSymbolFilter {
             isTypeName = true
         }
         guard hasQualification,
-              prefix.range(of: "^(?:[A-Za-z_][A-Za-z0-9_]*::)*~?[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) != nil else {
+            prefix.range(
+                of: "^(?:[A-Za-z_][A-Za-z0-9_]*::)*~?[A-Za-z_][A-Za-z0-9_]*$",
+                options: .regularExpression
+            ) != nil
+        else {
             fragments = []
             needles = []
             return
@@ -283,8 +309,10 @@ struct CXXSymbolFilter {
             "std", "__1", "allocator", "basic_string", "string",
             "basic_istream", "basic_ostream", "basic_iostream", "istream", "ostream", "iostream",
         ]
-        var names = Array(prefix.replacingOccurrences(of: "~", with: "")
-            .components(separatedBy: "::").suffix(2))
+        var names = Array(
+            prefix.replacingOccurrences(of: "~", with: "")
+                .components(separatedBy: "::").suffix(2)
+        )
         // Group type metadata and operators with the class's ordinary members.
         if isTypeName { names.reverse() }
         var selected: [String] = []
@@ -295,16 +323,16 @@ struct CXXSymbolFilter {
         needles = selected.map { Array($0.utf8CString) }
     }
 
-    func matchesOwner(_ rawName: String) -> Bool {
+    package func matchesOwner(_ rawName: String) -> Bool {
         rawName.withCString { matchesOwner($0) }
     }
 
-    func matchesOwner(_ raw: UnsafePointer<CChar>) -> Bool {
+    package func matchesOwner(_ raw: UnsafePointer<CChar>) -> Bool {
         guard let needle = needles.first else { return true }
         return needle.withUnsafeBufferPointer { strstr(raw, $0.baseAddress!) != nil }
     }
 
-    func matches(_ rawName: String) -> Bool {
+    package func matches(_ rawName: String) -> Bool {
         if needles.isEmpty { return true }
         return rawName.withCString { raw in
             needles.allSatisfy { needle in
@@ -314,9 +342,9 @@ struct CXXSymbolFilter {
     }
 }
 
-final class SymbolIndex {
-    let image: NativeImage
-    let sections: [SymbolSection]
+package final class SymbolIndex {
+    package let image: RuntimeImage
+    package let sections: [SymbolSection]
     private let macho: MachOImage
     private lazy var exportTrie = macho.exportTrie
     private var localSymbols: [IndexedSymbol] = []
@@ -330,78 +358,103 @@ final class SymbolIndex {
     private var sharedCacheScopes: Set<SymbolCandidateScope> = []
     private enum SwiftBucket { case knownModule, fallback }
     private struct Scope: Hashable, Sendable {
-        let language: NativeLanguage
+        let language: RuntimeLanguage
         let fragments: [String]
         let swiftFallback: Bool
     }
-    private static let swiftFallbackScope = Scope(language: .swift, fragments: [], swiftFallback: true)
+    private static let swiftFallbackScope = Scope(
+        language: .swift,
+        fragments: [],
+        swiftFallback: true
+    )
     private var decoded: [Scope: [Int: [IndexedSymbol]]] = [:]
     private var linkerNames: [[UInt8]: [IndexedSymbol]] = [:]
     private var swiftExtensions: [Scope: [Int: [IndexedSymbol]]] = [:]
     private var swiftMembers: [Scope: [Int: [IndexedSymbol]]] = [:]
 
-    init(image: NativeImage) {
+    package init(image: RuntimeImage) {
         self.image = image
-        let macho = MachOImage(ptr: UnsafePointer<mach_header>(bitPattern: UInt(image.identity.headerAddress))!)
+        let macho = MachOImage(
+            ptr: UnsafePointer<mach_header>(bitPattern: UInt(image.identity.headerAddress))!
+        )
         self.macho = macho
         let slide = image.identity.slide
         sections = macho.sections.compactMap { section in
             guard section.address >= 0, section.size > 0,
-                  let start = Self.slid(UInt64(section.address), by: slide),
-                  UInt64(section.size) <= UInt64.max - start else { return nil }
+                let start = Self.slid(UInt64(section.address), by: slide),
+                UInt64(section.size) <= UInt64.max - start
+            else { return nil }
             let threadLocal: Bool
             switch section.flags.type {
             case .some(.thread_local_regular), .some(.thread_local_zerofill),
-                 .some(.thread_local_variables), .some(.thread_local_variable_pointers),
-                 .some(.thread_local_init_function_pointers): threadLocal = true
+                .some(.thread_local_variables), .some(.thread_local_variable_pointers),
+                .some(.thread_local_init_function_pointers):
+                threadLocal = true
             default: threadLocal = false
             }
             return SymbolSection(
                 range: start..<(start + UInt64(section.size)),
-                code: section.flags.attributes.contains(.pure_instructions) || section.flags.attributes.contains(.some_instructions),
+                code: section.flags.attributes.contains(.pure_instructions)
+                    || section.flags.attributes.contains(.some_instructions),
                 vtable: section.sectionName == "__const"
-                    && (section.segmentName.hasPrefix("__DATA") || section.segmentName.hasPrefix("__AUTH")),
+                    && (section.segmentName.hasPrefix("__DATA")
+                        || section.segmentName.hasPrefix("__AUTH")),
                 threadLocal: threadLocal
             )
         }
     }
 
-    var hasSharedSwiftFallback: Bool {
+    package var hasSharedSwiftFallback: Bool {
         sharedCacheScopes.contains(.swiftFallback) || sharedCacheScopes.contains(.language(.swift))
     }
 
-    func hasSharedCacheSymbols(for query: SymbolQuery) -> Bool {
+    package func hasSharedCacheSymbols(for query: SymbolQuery) -> Bool {
         if sharedCacheScopes.contains(query.candidateScope) { return true }
         switch query.candidateScope {
         case .swiftModule: return sharedCacheScopes.contains(.language(.swift))
         case .cxxOwner: return sharedCacheScopes.contains(.language(.cxx))
         case .exact(let name):
-            if hasSharedSwiftFallback, query.exactName?.withCString({ SwiftModuleFilter.knownModulePrefix($0) == false }) == true { return true }
-            return [NativeLanguage.swift, .cxx].contains { language in
+            if hasSharedSwiftFallback,
+                query.exactName?.withCString({ SwiftModuleFilter.knownModulePrefix($0) == false })
+                    == true
+            {
+                return true
+            }
+            return [RuntimeLanguage.swift, .cxx].contains { language in
                 sharedCacheScopes.contains(.language(language))
-                    && DeclarationKey.symbolPrefixes(for: language).contains { name.starts(with: $0.utf8) }
+                    && DeclarationKey.symbolPrefixes(for: language).contains {
+                        name.starts(with: $0.utf8)
+                    }
             }
         default: return false
         }
     }
 
-    func appendSharedCacheSymbols(_ more: [IndexedSymbol], matching query: SymbolQuery) {
+    package func appendSharedCacheSymbols(_ more: [IndexedSymbol], matching query: SymbolQuery) {
         let hasFallback = hasSharedSwiftFallback
         // The first Swift module read already includes all uncertain roots.
         // Concurrent or broader reads must not append that same payload again.
-        let additions = hasFallback ? more.filter {
-            $0.name.withCString { SwiftModuleFilter.knownModulePrefix($0) != false }
-        } : more
-        let changesFallback = !hasFallback && additions.contains {
-            $0.name.withCString { SwiftModuleFilter.knownModulePrefix($0) == false }
-        }
+        let additions =
+            hasFallback
+            ? more.filter {
+                $0.name.withCString { SwiftModuleFilter.knownModulePrefix($0) != false }
+            } : more
+        let changesFallback =
+            !hasFallback
+            && additions.contains {
+                $0.name.withCString { SwiftModuleFilter.knownModulePrefix($0) == false }
+            }
         sharedCacheScopes.insert(query.candidateScope)
         switch query.candidateScope {
         case .swiftModule, .language(.swift): sharedCacheScopes.insert(.swiftFallback)
         default: break
         }
         guard !additions.isEmpty else { return }
-        let fallback = (sourceSymbols.filter { $0.key.candidates == .swiftFallback }, decoded[Self.swiftFallbackScope], swiftExtensions[Self.swiftFallbackScope], swiftMembers[Self.swiftFallbackScope])
+        let fallback = (
+            sourceSymbols.filter { $0.key.candidates == .swiftFallback },
+            decoded[Self.swiftFallbackScope], swiftExtensions[Self.swiftFallbackScope],
+            swiftMembers[Self.swiftFallbackScope]
+        )
         localSymbols += additions
         sourceSymbols.removeAll()
         decoded.removeAll()
@@ -422,7 +475,8 @@ final class SymbolIndex {
         return IndexedSymbol(name: name, address: base + UInt64(offset), source: .image)
     }
 
-    private func tableSymbols(matching predicate: (UnsafePointer<CChar>) -> Bool) -> [IndexedSymbol] {
+    private func tableSymbols(matching predicate: (UnsafePointer<CChar>) -> Bool) -> [IndexedSymbol]
+    {
         if let table = macho.symbols64 {
             var result: [IndexedSymbol] = []
             var index = 0
@@ -432,7 +486,10 @@ final class SymbolIndex {
                 guard Int32(entry.n_type) & N_TYPE == N_SECT else { continue }
                 let name = table.stringBase.advanced(by: Int(entry.n_un.n_strx))
                 guard predicate(name) else { continue }
-                if let symbol = imageSymbol(name: String(cString: name), offset: table.addressStart + Int(entry.n_value)) {
+                if let symbol = imageSymbol(
+                    name: String(cString: name),
+                    offset: table.addressStart + Int(entry.n_value)
+                ) {
                     result.append(symbol)
                 }
             }
@@ -450,7 +507,8 @@ final class SymbolIndex {
 
     // Keep offsets rather than names: another module can reuse the language
     // scan without materializing unrelated strings or pinning a second copy.
-    private func swiftSymbols(matching predicate: (UnsafePointer<CChar>) -> Bool) -> [IndexedSymbol] {
+    private func swiftSymbols(matching predicate: (UnsafePointer<CChar>) -> Bool) -> [IndexedSymbol]
+    {
         guard let table = macho.symbols64 else { return tableSymbols(matching: predicate) }
         if swiftTableIndices == nil {
             var indexes: [Int] = []
@@ -460,7 +518,9 @@ final class SymbolIndex {
                 let name = table.stringBase.advanced(by: Int(entry.n_un.n_strx))
                 var prefix = name
                 if prefix.pointee == 95 { prefix += 1 }
-                if prefix.pointee == 36 && (prefix[1] == 115 || prefix[1] == 83) { indexes.append(index) }
+                if prefix.pointee == 36 && (prefix[1] == 115 || prefix[1] == 83) {
+                    indexes.append(index)
+                }
             }
             swiftTableIndices = indexes
         }
@@ -468,7 +528,10 @@ final class SymbolIndex {
             let entry = table.symbols[index]
             let name = table.stringBase.advanced(by: Int(entry.n_un.n_strx))
             guard predicate(name) else { return nil }
-            return imageSymbol(name: String(cString: name), offset: table.addressStart + Int(entry.n_value))
+            return imageSymbol(
+                name: String(cString: name),
+                offset: table.addressStart + Int(entry.n_value)
+            )
         }
     }
 
@@ -476,7 +539,9 @@ final class SymbolIndex {
         guard !key.contains(0) else { return [] }
         if let cached = linkerNames[key] { return cached }
         var matches = name.withCString { name in tableSymbols { strcmp($0, name) == 0 } }
-        if let offset = exportedOffset(named: key), let symbol = imageSymbol(name: name, offset: offset) {
+        if let offset = exportedOffset(named: key),
+            let symbol = imageSymbol(name: name, offset: offset)
+        {
             matches.append(symbol)
         }
         matches += localSymbols.filter { $0.name.utf8.elementsEqual(key) }
@@ -491,40 +556,60 @@ final class SymbolIndex {
         var offset = 0
         var remaining = name[...]
         while offset < trie.exportSize {
-            guard let node = TrieNode<ExportTrieNodeContent>.readNext(
-                basePointer: trie.basePointer.assumingMemoryBound(to: UInt8.self),
-                trieSize: trie.exportSize, nextOffset: &offset
-            ) else { return nil }
+            guard
+                let node = TrieNode<ExportTrieNodeContent>.readNext(
+                    basePointer: trie.basePointer.assumingMemoryBound(to: UInt8.self),
+                    trieSize: trie.exportSize,
+                    nextOffset: &offset
+                )
+            else { return nil }
             if remaining.isEmpty {
                 return node.content?.symbolOffset.map { Int(bitPattern: $0) }
             }
-            guard let child = node.children.first(where: {
-                !$0.label.isEmpty && remaining.starts(with: $0.label.utf8)
-            }), let childOffset = Int(exactly: child.offset) else { return nil }
+            guard
+                let child = node.children.first(where: {
+                    !$0.label.isEmpty && remaining.starts(with: $0.label.utf8)
+                }), let childOffset = Int(exactly: child.offset)
+            else { return nil }
             remaining = remaining.dropFirst(child.label.utf8.count)
             offset = childOffset
         }
         return nil
     }
 
-    private func symbols(for query: SymbolQuery, swiftBucket: SwiftBucket?, descriptorKind: DescriptorKind? = nil) -> [IndexedSymbol] {
-        let scope = SourceScope(candidates: swiftBucket == .fallback ? .swiftFallback : query.candidateScope,
-                                descriptorKind: descriptorKind)
+    private func symbols(
+        for query: SymbolQuery,
+        swiftBucket: SwiftBucket?,
+        descriptorKind: DescriptorKind? = nil
+    ) -> [IndexedSymbol] {
+        let scope = SourceScope(
+            candidates: swiftBucket == .fallback ? .swiftFallback : query.candidateScope,
+            descriptorKind: descriptorKind
+        )
         if let cached = sourceSymbols[scope] { return cached }
         let prefixes = DeclarationKey.symbolPrefixes(for: query.declaration.language)
         let accepts: (UnsafePointer<CChar>) -> Bool = { raw in
             if let descriptorKind {
                 let count = strlen(raw)
-                guard count >= 2, raw[count - 2] == 77, raw[count - 1] == CChar(descriptorKind.rawValue) else { return false }
+                guard count >= 2, raw[count - 2] == 77,
+                    raw[count - 1] == CChar(descriptorKind.rawValue)
+                else { return false }
             }
             guard query.acceptsCandidate(raw) else { return false }
             guard let swiftBucket else { return true }
             return SwiftModuleFilter.knownModulePrefix(raw) == (swiftBucket == .knownModule)
         }
-        var symbols = query.declaration.language == .swift && descriptorKind == nil
+        var symbols =
+            query.declaration.language == .swift && descriptorKind == nil
             ? swiftSymbols(matching: accepts) : tableSymbols(matching: accepts)
         if let trie = exportTrie {
-            symbols += filteredExports(in: trie, prefixes: prefixes, query: query, swiftBucket: swiftBucket, accepts: accepts)
+            symbols += filteredExports(
+                in: trie,
+                prefixes: prefixes,
+                query: query,
+                swiftBucket: swiftBucket,
+                accepts: accepts
+            )
         }
         symbols += localSymbols.filter { $0.name.withCString(accepts) }
         // Definitions commonly occur in both nlist and the export trie.
@@ -537,71 +622,139 @@ final class SymbolIndex {
 
     // An owner substring can occur later in a C++ name, so only Swift's proven
     // known module prefix may prune a subtree. Other filters apply at terminals.
-    private func filteredExports(in trie: MachOImage.ExportTrie, prefixes: [String], query: SymbolQuery,
-                                 swiftBucket: SwiftBucket?, accepts: (UnsafePointer<CChar>) -> Bool) -> [IndexedSymbol] {
+    private func filteredExports(
+        in trie: MachOImage.ExportTrie,
+        prefixes: [String],
+        query: SymbolQuery,
+        swiftBucket: SwiftBucket?,
+        accepts: (UnsafePointer<CChar>) -> Bool
+    ) -> [IndexedSymbol] {
         var symbols: [IndexedSymbol] = []
         var pending = [(name: "", offset: 0)]
         while let entry = pending.popLast() {
             var offset = entry.offset
-            guard let node = TrieNode<ExportTrieNodeContent>.readNext(
-                basePointer: trie.basePointer.assumingMemoryBound(to: UInt8.self),
-                trieSize: trie.exportSize, nextOffset: &offset
-            ) else { continue }
+            guard
+                let node = TrieNode<ExportTrieNodeContent>.readNext(
+                    basePointer: trie.basePointer.assumingMemoryBound(to: UInt8.self),
+                    trieSize: trie.exportSize,
+                    nextOffset: &offset
+                )
+            else { continue }
             if let value = node.content?.symbolOffset,
-               entry.name.withCString(accepts),
-               let symbol = imageSymbol(name: entry.name, offset: Int(bitPattern: value)) {
+                entry.name.withCString(accepts),
+                let symbol = imageSymbol(name: entry.name, offset: Int(bitPattern: value))
+            {
                 symbols.append(symbol)
             }
             for child in node.children {
                 let name = entry.name + child.label
                 guard prefixes.contains(where: { name.hasPrefix($0) || $0.hasPrefix(name) }),
-                      name.withCString({ query.swiftModule?.matches($0, partial: true) ?? true }),
-                      let next = Int(exactly: child.offset) else { continue }
-                if let swiftBucket, let known = name.withCString(SwiftModuleFilter.knownModulePrefix),
-                   known != (swiftBucket == .knownModule) { continue }
+                    name.withCString({ query.swiftModule?.matches($0, partial: true) ?? true }),
+                    let next = Int(exactly: child.offset)
+                else { continue }
+                if let swiftBucket,
+                    let known = name.withCString(SwiftModuleFilter.knownModulePrefix),
+                    known != (swiftBucket == .knownModule)
+                {
+                    continue
+                }
                 pending.append((name, next))
             }
         }
         return symbols
     }
 
-    func matches(_ declaration: NativeDeclaration, extensionsOnly: Bool = false) -> [IndexedSymbol] {
-        var unsupported: ABIResolutionError?
-        return matches(SymbolQuery(declaration), extensionsOnly: extensionsOnly, unsupported: &unsupported)
+    package func matches(
+        _ declaration: RuntimeDeclaration,
+        extensionsOnly: Bool = false
+    ) -> [IndexedSymbol] {
+        var unsupported: RuntimeResolutionError?
+        return matches(
+            SymbolQuery(declaration),
+            extensionsOnly: extensionsOnly,
+            unsupported: &unsupported
+        )
     }
 
-    private func matches(_ query: SymbolQuery, extensionsOnly: Bool, genericContext: SwiftGenericContext? = nil,
-                         unsupported: inout ABIResolutionError?) -> [IndexedSymbol] {
+    private func matches(
+        _ query: SymbolQuery,
+        extensionsOnly: Bool,
+        genericContext: SwiftGenericContext? = nil,
+        unsupported: inout RuntimeResolutionError?
+    ) -> [IndexedSymbol] {
         let declaration = query.declaration
         if let name = query.exactName {
             return exactSymbols(named: name, key: query.key)
         }
         if declaration.language == .swift {
             let name = declaration.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            let descriptor: DescriptorKind? = name.hasPrefix("protocol descriptor for ") ? .protocolType
+            let descriptor: DescriptorKind? =
+                name.hasPrefix("protocol descriptor for ")
+                ? .protocolType
                 : name.hasPrefix("nominal type descriptor for ") ? .nominalType : nil
             if let descriptor {
                 // Mp and Mn identify descriptors in Swift's stable mangling.
                 // Descriptor coverage must not hide later ordinary declarations.
-                let candidates = symbols(for: query, swiftBucket: .knownModule, descriptorKind: descriptor)
+                let candidates =
+                    symbols(for: query, swiftBucket: .knownModule, descriptorKind: descriptor)
                     + symbols(for: query, swiftBucket: .fallback, descriptorKind: descriptor)
-                return Self.matching(candidates, query: query,
-                    extensionsOnly: extensionsOnly, genericContext: genericContext, unsupported: &unsupported)
+                return Self.matching(
+                    candidates,
+                    query: query,
+                    extensionsOnly: extensionsOnly,
+                    genericContext: genericContext,
+                    unsupported: &unsupported
+                )
             }
-            return indexedMatches(query, extensionsOnly: extensionsOnly, swiftBucket: .knownModule, genericContext: genericContext, unsupported: &unsupported)
-                + indexedMatches(query, extensionsOnly: extensionsOnly, swiftBucket: .fallback, genericContext: genericContext, unsupported: &unsupported)
+            return indexedMatches(
+                query,
+                extensionsOnly: extensionsOnly,
+                swiftBucket: .knownModule,
+                genericContext: genericContext,
+                unsupported: &unsupported
+            )
+                + indexedMatches(
+                    query,
+                    extensionsOnly: extensionsOnly,
+                    swiftBucket: .fallback,
+                    genericContext: genericContext,
+                    unsupported: &unsupported
+                )
         }
-        return indexedMatches(query, extensionsOnly: extensionsOnly, swiftBucket: nil, genericContext: genericContext, unsupported: &unsupported)
+        return indexedMatches(
+            query,
+            extensionsOnly: extensionsOnly,
+            swiftBucket: nil,
+            genericContext: genericContext,
+            unsupported: &unsupported
+        )
     }
 
-    private func indexedMatches(_ query: SymbolQuery, extensionsOnly: Bool, swiftBucket: SwiftBucket?,
-                                genericContext: SwiftGenericContext?, unsupported: inout ABIResolutionError?) -> [IndexedSymbol] {
+    private func indexedMatches(
+        _ query: SymbolQuery,
+        extensionsOnly: Bool,
+        swiftBucket: SwiftBucket?,
+        genericContext: SwiftGenericContext?,
+        unsupported: inout RuntimeResolutionError?
+    ) -> [IndexedSymbol] {
         let declaration = query.declaration
         let filter = query.filter
-        let scope = swiftBucket == .fallback ? Self.swiftFallbackScope
-            : Scope(language: declaration.language, fragments: filter?.fragments ?? query.swiftModule.map { [$0.module] } ?? [], swiftFallback: false)
+        let scope =
+            swiftBucket == .fallback
+            ? Self.swiftFallbackScope
+            : Scope(
+                language: declaration.language,
+                fragments: filter?.fragments ?? query.swiftModule.map { [$0.module] } ?? [],
+                swiftFallback: false
+            )
         if extensionsOnly, let extensions = swiftExtensions[scope] {
-            return Self.matching(extensions[query.fingerprint] ?? [], query: query, extensionsOnly: true, genericContext: genericContext, unsupported: &unsupported)
+            return Self.matching(
+                extensions[query.fingerprint] ?? [],
+                query: query,
+                extensionsOnly: true,
+                genericContext: genericContext,
+                unsupported: &unsupported
+            )
         }
         if decoded[scope] == nil {
             let candidates = symbols(for: query, swiftBucket: swiftBucket)
@@ -609,7 +762,9 @@ final class SymbolIndex {
             var extensions: [Int: [IndexedSymbol]] = [:]
             for symbol in candidates {
                 guard filter?.matches(symbol.name) ?? true else { continue }
-                guard let name = DeclarationKey.demangle(symbol.name, language: declaration.language) else { continue }
+                guard
+                    let name = DeclarationKey.demangle(symbol.name, language: declaration.language)
+                else { continue }
                 // An extension fallback needs no index of ordinary declarations
                 // in unrelated images. Reject those before alias/key creation.
                 if extensionsOnly && Self.extensionMemberName(name) == nil { continue }
@@ -620,12 +775,29 @@ final class SymbolIndex {
                 }
                 for name in names {
                     if !extensionsOnly {
-                        index[DeclarationKey.fingerprint(DeclarationKey.make(name, language: declaration.language)), default: []].append(symbol)
+                        index[
+                            DeclarationKey.fingerprint(
+                                DeclarationKey.make(name, language: declaration.language)
+                            ),
+                            default: []
+                        ].append(symbol)
                     }
-                    if declaration.language == .swift, let unqualified = Self.extensionMemberName(name) {
-                        extensions[DeclarationKey.fingerprint(DeclarationKey.make(unqualified, language: .swift)), default: []].append(symbol)
+                    if declaration.language == .swift,
+                        let unqualified = Self.extensionMemberName(name)
+                    {
+                        extensions[
+                            DeclarationKey.fingerprint(
+                                DeclarationKey.make(unqualified, language: .swift)
+                            ),
+                            default: []
+                        ].append(symbol)
                         if let constrained = SwiftConstrainedExtension(unqualified) {
-                            extensions[DeclarationKey.fingerprint(DeclarationKey.make(constrained.memberName, language: .swift)), default: []].append(symbol)
+                            extensions[
+                                DeclarationKey.fingerprint(
+                                    DeclarationKey.make(constrained.memberName, language: .swift)
+                                ),
+                                default: []
+                            ].append(symbol)
                         }
                     }
                 }
@@ -633,21 +805,41 @@ final class SymbolIndex {
             if !extensionsOnly { decoded[scope] = index }
             if declaration.language == .swift { swiftExtensions[scope] = extensions }
         }
-        let candidates = extensionsOnly ? swiftExtensions[scope]?[query.fingerprint] ?? [] : decoded[scope]?[query.fingerprint] ?? []
-        return Self.matching(candidates, query: query, extensionsOnly: extensionsOnly, genericContext: genericContext, unsupported: &unsupported)
+        let candidates =
+            extensionsOnly
+            ? swiftExtensions[scope]?[query.fingerprint] ?? []
+            : decoded[scope]?[query.fingerprint] ?? []
+        return Self.matching(
+            candidates,
+            query: query,
+            extensionsOnly: extensionsOnly,
+            genericContext: genericContext,
+            unsupported: &unsupported
+        )
     }
 
-    func swiftDeclarationCandidates(_ query: SymbolQuery, source: ResolvedSymbol.Source,
-                               extensionsOnly: Bool) -> [ResolvedSymbol] {
+    package func swiftDeclarationCandidates(
+        _ query: SymbolQuery,
+        source: RuntimeSymbol.Source,
+        extensionsOnly: Bool
+    ) -> [RuntimeSymbol] {
         guard let key = SwiftMemberLookup.key(query.declaration.name) else { return [] }
         var symbols: [IndexedSymbol] = []
         for bucket in [SwiftBucket.knownModule, .fallback] {
-            let scope = bucket == .fallback ? Self.swiftFallbackScope
-                : Scope(language: .swift, fragments: query.swiftModule.map { [$0.module] } ?? [], swiftFallback: false)
+            let scope =
+                bucket == .fallback
+                ? Self.swiftFallbackScope
+                : Scope(
+                    language: .swift,
+                    fragments: query.swiftModule.map { [$0.module] } ?? [],
+                    swiftFallback: false
+                )
             if swiftMembers[scope] == nil {
                 var members: [Int: [IndexedSymbol]] = [:]
                 for symbol in self.symbols(for: query, swiftBucket: bucket) {
-                    guard let name = DeclarationKey.demangle(symbol.name, language: .swift) else { continue }
+                    guard let name = DeclarationKey.demangle(symbol.name, language: .swift) else {
+                        continue
+                    }
                     for name in [name, Self.operatorAlias(name)].compactMap({ $0 }) {
                         guard let key = SwiftMemberLookup.key(name) else { continue }
                         members[DeclarationKey.fingerprint(key), default: []].append(symbol)
@@ -660,22 +852,41 @@ final class SymbolIndex {
         var addresses: Set<UInt64> = []
         return symbols.compactMap { symbol in
             guard symbol.source == source,
-                  let name = DeclarationKey.demangle(symbol.name, language: .swift),
-                  extensionsOnly == (Self.extensionMemberName(name) != nil),
-                  [name, Self.operatorAlias(name)].compactMap({ $0 }).contains(where: { SwiftMemberLookup.key($0) == key }),
-                  let section = sections.first(where: { $0.range.contains(symbol.address) }),
-                  section.accepts(query.declaration.kind), addresses.insert(symbol.address).inserted else { return nil }
-            return ResolvedSymbol(declaration: .init(name: name, language: .swift), image: image,
-                sectionRange: section.range, source: source, address: symbol.address, linkageName: symbol.name)
+                let name = DeclarationKey.demangle(symbol.name, language: .swift),
+                extensionsOnly == (Self.extensionMemberName(name) != nil),
+                [name, Self.operatorAlias(name)].compactMap({ $0 }).contains(where: {
+                    SwiftMemberLookup.key($0) == key
+                }),
+                let section = sections.first(where: { $0.range.contains(symbol.address) }),
+                section.accepts(query.declaration.kind), addresses.insert(symbol.address).inserted
+            else { return nil }
+            return RuntimeSymbol(
+                declaration: .init(name: name, language: .swift),
+                image: image,
+                sectionRange: section.range,
+                source: source,
+                address: symbol.address,
+                linkageName: symbol.name
+            )
         }
     }
 
     // Fingerprints keep the index compact; the full normalized spelling is
     // always checked before a candidate can affect resolution or ambiguity.
-    static func matching(_ candidates: [IndexedSymbol], query: SymbolQuery, extensionsOnly: Bool,
-                         genericContext: SwiftGenericContext? = nil, unsupported: inout ABIResolutionError?) -> [IndexedSymbol] {
+    package static func matching(
+        _ candidates: [IndexedSymbol],
+        query: SymbolQuery,
+        extensionsOnly: Bool,
+        genericContext: SwiftGenericContext? = nil,
+        unsupported: inout RuntimeResolutionError?
+    ) -> [IndexedSymbol] {
         candidates.filter { symbol in
-            guard let name = DeclarationKey.demangle(symbol.name, language: query.declaration.language) else { return false }
+            guard
+                let name = DeclarationKey.demangle(
+                    symbol.name,
+                    language: query.declaration.language
+                )
+            else { return false }
             var names = [name]
             if query.declaration.language == .swift {
                 if let alias = operatorAlias(name) { names.append(alias) }
@@ -684,19 +895,28 @@ final class SymbolIndex {
             return names.contains { name in
                 if extensionsOnly {
                     guard let unqualified = extensionMemberName(name) else { return false }
-                    if DeclarationKey.make(unqualified, language: .swift) == query.key { return true }
+                    if DeclarationKey.make(unqualified, language: .swift) == query.key {
+                        return true
+                    }
                     guard let constrained = SwiftConstrainedExtension(unqualified),
-                          DeclarationKey.make(constrained.memberName, language: .swift) == query.key else { return false }
+                        DeclarationKey.make(constrained.memberName, language: .swift) == query.key
+                    else { return false }
                     guard let genericContext else {
-                        unsupported = .unsupportedDeclaration("No generic receiver context establishes \(unqualified).")
+                        unsupported = .unsupportedDeclaration(
+                            "No generic receiver context establishes \(unqualified)."
+                        )
                         return false
                     }
-                    do throws(ABIResolutionError) {
+                    do throws(RuntimeResolutionError) {
                         return try genericContext.satisfies(constrained) {
-                            dependentType($0, requirement: $1, in: symbol.name, extensionMember: constrained)
+                            dependentType(
+                                $0,
+                                requirement: $1,
+                                in: symbol.name,
+                                extensionMember: constrained
+                            )
                         }
-                    }
-                    catch { unsupported = error; return false }
+                    } catch { unsupported = error; return false }
                 }
                 return DeclarationKey.make(name, language: query.declaration.language) == query.key
             }
@@ -710,29 +930,40 @@ final class SymbolIndex {
         pattern: "x|q(?:[zs]|d[0-9]*_[0-9]*_|[0-9]*_)"
     )
 
-    static func dependentType(_ reference: String, requirement: String, in mangled: String,
-                                      extensionMember: SwiftConstrainedExtension, occurrence: Int? = nil) -> Bool {
+    package static func dependentType(
+        _ reference: String,
+        requirement: String,
+        in mangled: String,
+        extensionMember: SwiftConstrainedExtension,
+        occurrence: Int? = nil
+    ) -> Bool {
         var context: String?
         for index in mangled.indices where mangled[index] == "E" {
             let prefix = String(mangled[...index])
             guard let declaration = DeclarationKey.demangle(prefix + "1fyyF", language: .swift),
-                  let unqualified = extensionMemberName(declaration),
-                  let parsed = SwiftConstrainedExtension(unqualified),
-                  parsed.owner == extensionMember.owner, parsed.requirements == extensionMember.requirements else { continue }
+                let unqualified = extensionMemberName(declaration),
+                let parsed = SwiftConstrainedExtension(unqualified),
+                parsed.owner == extensionMember.owner,
+                parsed.requirements == extensionMember.requirements
+            else { continue }
             context = prefix
             break
         }
         guard let context else { return true }
-        guard let requirementIndex = extensionMember.requirements.firstIndex(of: requirement) else { return true }
+        guard let requirementIndex = extensionMember.requirements.firstIndex(of: requirement) else {
+            return true
+        }
         let head = reference.prefix { $0 != "." }
         let newHead = head == "A" ? "B" : "A"
         let old = requirement.components(separatedBy: "==")
         guard old.count == 2 else { return true }
         func establishesDependence(_ context: String) -> Bool {
             guard let declaration = DeclarationKey.demangle(context + "1fyyF", language: .swift),
-                  let unqualified = extensionMemberName(declaration),
-                  let parsed = SwiftConstrainedExtension(unqualified), parsed.owner == extensionMember.owner,
-                  parsed.requirements.count == extensionMember.requirements.count else { return false }
+                let unqualified = extensionMemberName(declaration),
+                let parsed = SwiftConstrainedExtension(unqualified),
+                parsed.owner == extensionMember.owner,
+                parsed.requirements.count == extensionMember.requirements.count
+            else { return false }
             let changed = parsed.requirements[requirementIndex].components(separatedBy: "==")
             guard changed.count == 2, old[0] == changed[0] else { return false }
             let before = SwiftGenericSyntax.names(in: old[1])
@@ -745,8 +976,11 @@ final class SymbolIndex {
                 let (before, after) = pair
                 if before != after {
                     guard before == head || before.hasPrefix(head + "."),
-                          after == newHead + before.dropFirst(head.count) else { return false }
-                    if before == reference && (occurrence == nil || occurrence == index) { observed = true }
+                        after == newHead + before.dropFirst(head.count)
+                    else { return false }
+                    if before == reference && (occurrence == nil || occurrence == index) {
+                        observed = true
+                    }
                 }
                 expected += old[1][cursor..<before.startIndex] + after
                 cursor = before.endIndex
@@ -757,28 +991,38 @@ final class SymbolIndex {
         // Validate complete extension contexts: a type prefix inside an open
         // generic argument list cannot be demangled on its own. A native change
         // must rename this reference while preserving the rest of the RHS.
-        for match in genericParameter.matches(in: context, range: NSRange(context.startIndex..., in: context)) {
+        for match in genericParameter.matches(
+            in: context,
+            range: NSRange(context.startIndex..., in: context)
+        ) {
             guard let range = Range(match.range, in: context) else { continue }
-            let altered = String(context[..<range.lowerBound]) + (head == "A" ? "q_" : "x") + context[range.upperBound...]
+            let altered =
+                String(context[..<range.lowerBound]) + (head == "A" ? "q_" : "x")
+                + context[range.upperBound...]
             if establishesDependence(altered) { return true }
         }
-        for match in dependentMember.matches(in: context, range: NSRange(context.startIndex..., in: context)) {
+        for match in dependentMember.matches(
+            in: context,
+            range: NSRange(context.startIndex..., in: context)
+        ) {
             guard let range = Range(match.range, in: context) else { continue }
             let code = context[range].dropFirst().first!
             // Relative-base Qx/QX members use the parameter handled above.
             if code == "x" || code == "X" { continue }
             let chain = code == "Y" || code == "Z"
             let replacement = head == "A" ? (chain ? "QY_" : "Qy_") : (chain ? "QZ" : "Qz")
-            let altered = String(context[..<range.lowerBound]) + replacement + context[range.upperBound...]
+            let altered =
+                String(context[..<range.lowerBound]) + replacement + context[range.upperBound...]
             if establishesDependence(altered) { return true }
         }
         return false
     }
 
-    static func nominalDescriptorAlias(_ name: String) -> String? {
+    package static func nominalDescriptorAlias(_ name: String) -> String? {
         let marker = "nominal type descriptor for "
         guard name.hasPrefix(marker),
-              var nominal = extensionMemberName(String(name.dropFirst(marker.count))) else { return nil }
+            var nominal = extensionMemberName(String(name.dropFirst(marker.count)))
+        else { return nil }
         // A nominal declaration is selected before its arguments are bound.
         // Its descriptor retains the extension constraints for runtime validation.
         for group in SwiftGenericSyntax.groups(in: nominal).reversed() {
@@ -787,22 +1031,26 @@ final class SymbolIndex {
         return marker + nominal
     }
 
-    static func operatorAlias(_ name: String) -> String? {
+    package static func operatorAlias(_ name: String) -> String? {
         for fixity in [" infix", " prefix", " postfix"] {
             for suffix in ["(", "<"] {
                 guard let offset = byteOffset(of: fixity + suffix, in: name) else { continue }
                 return String(decoding: name.utf8.prefix(offset), as: UTF8.self)
-                    + String(decoding: name.utf8.dropFirst(offset + fixity.utf8.count), as: UTF8.self)
+                    + String(
+                        decoding: name.utf8.dropFirst(offset + fixity.utf8.count),
+                        as: UTF8.self
+                    )
             }
         }
         return nil
     }
 
-    static func extensionMemberName(_ name: String) -> String? {
+    package static func extensionMemberName(_ name: String) -> String? {
         let isStatic = name.hasPrefix("static ")
         let declaration = isStatic ? String(name.dropFirst(7)) : name
         guard declaration.hasPrefix("(extension in "),
-              let offset = byteOffset(of: "):", in: declaration) else { return nil }
+            let offset = byteOffset(of: "):", in: declaration)
+        else { return nil }
         return (isStatic ? "static " : "")
             + String(decoding: declaration.utf8.dropFirst(offset + 2), as: UTF8.self)
     }
@@ -815,39 +1063,56 @@ final class SymbolIndex {
         }
     }
 
-    func swiftNominalTypeName(
-        at address: UInt64, matching query: SymbolQuery, source: ResolvedSymbol.Source
+    package func swiftNominalTypeName(
+        at address: UInt64,
+        matching query: SymbolQuery,
+        source: RuntimeSymbol.Source
     ) throws -> String? {
-        let candidates = query.swiftModule == nil
+        let candidates =
+            query.swiftModule == nil
             ? symbols(for: query, swiftBucket: nil, descriptorKind: .nominalType)
             : symbols(for: query, swiftBucket: .knownModule, descriptorKind: .nominalType)
                 + symbols(for: query, swiftBucket: .fallback, descriptorKind: .nominalType)
         let marker = "nominal type descriptor for "
         var names = Set<String>()
-        for candidate in candidates where candidate.address == address && candidate.source == source {
+        for candidate in candidates where candidate.address == address && candidate.source == source
+        {
             guard let name = DeclarationKey.demangle(candidate.name, language: .swift),
-                  name.hasPrefix(marker) else { continue }
+                name.hasPrefix(marker)
+            else { continue }
             names.insert(String(name.dropFirst(marker.count)))
         }
         guard names.count <= 1 else {
-            throw ABIResolutionError.ambiguousDeclaration(query.declaration, candidates: names.sorted())
+            throw RuntimeResolutionError.ambiguousDeclaration(
+                query.declaration,
+                candidates: names.sorted()
+            )
         }
         return names.first
     }
 
-    func resolve(
-        _ declaration: NativeDeclaration, source: ResolvedSymbol.Source, extensionsOnly: Bool = false
-    ) throws -> ResolvedSymbol? {
+    package func resolve(
+        _ declaration: RuntimeDeclaration,
+        source: RuntimeSymbol.Source,
+        extensionsOnly: Bool = false
+    ) throws -> RuntimeSymbol? {
         try resolve(SymbolQuery(declaration), source: source, extensionsOnly: extensionsOnly)
     }
 
-    func resolve(
-        _ query: SymbolQuery, source: ResolvedSymbol.Source, extensionsOnly: Bool = false,
+    package func resolve(
+        _ query: SymbolQuery,
+        source: RuntimeSymbol.Source,
+        extensionsOnly: Bool = false,
         genericContext: SwiftGenericContext? = nil
-    ) throws -> ResolvedSymbol? {
+    ) throws -> RuntimeSymbol? {
         let declaration = query.declaration
-        var unsupported: ABIResolutionError?
-        let candidates = matches(query, extensionsOnly: extensionsOnly, genericContext: genericContext, unsupported: &unsupported).filter { $0.source == source }
+        var unsupported: RuntimeResolutionError?
+        let candidates = matches(
+            query,
+            extensionsOnly: extensionsOnly,
+            genericContext: genericContext,
+            unsupported: &unsupported
+        ).filter { $0.source == source }
         guard !candidates.isEmpty else {
             if let unsupported { throw unsupported }
             return nil
@@ -855,20 +1120,30 @@ final class SymbolIndex {
         var addresses: [UInt64: (IndexedSymbol, SymbolSection)] = [:]
         for candidate in candidates {
             if candidate.address != 0,
-               let section = sections.first(where: { $0.range.contains(candidate.address) }),
-               section.accepts(declaration.kind) {
+                let section = sections.first(where: { $0.range.contains(candidate.address) }),
+                section.accepts(declaration.kind)
+            {
                 addresses[candidate.address] = (candidate, section)
             }
         }
-        guard !addresses.isEmpty else { throw ABIResolutionError.invalidAddress }
+        guard !addresses.isEmpty else { throw RuntimeResolutionError.invalidAddress }
         guard addresses.count == 1, let match = addresses.first?.value else {
-            throw ABIResolutionError.ambiguousDeclaration(declaration, candidates: candidates.map(\.name).sorted())
+            throw RuntimeResolutionError.ambiguousDeclaration(
+                declaration,
+                candidates: candidates.map(\.name).sorted()
+            )
         }
-        return ResolvedSymbol(declaration: declaration, image: image, sectionRange: match.1.range,
-                              source: match.0.source, address: match.0.address, linkageName: match.0.name)
+        return RuntimeSymbol(
+            declaration: declaration,
+            image: image,
+            sectionRange: match.1.range,
+            source: match.0.source,
+            address: match.0.address,
+            linkageName: match.0.name
+        )
     }
 
-    static func slid(_ value: UInt64, by slide: Int64) -> UInt64? {
+    package static func slid(_ value: UInt64, by slide: Int64) -> UInt64? {
         if slide >= 0 {
             let result = value.addingReportingOverflow(UInt64(slide))
             return result.overflow ? nil : result.partialValue

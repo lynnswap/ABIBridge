@@ -1,3 +1,4 @@
+import ABIBridgeRuntime
 import ABIBridgeCore
 import Foundation
 
@@ -36,9 +37,16 @@ public struct NativeImportedImageUpdate: Sendable {
             if let handle = value.hook {
                 let hook = NativeImportedFunctionHook(ABIRetainImportedHook(handle)!)
                 let index = ABIImportedHookFailedIndex(handle)
-                state = .failed(NativeImportedHookInstallationError(underlyingError: error,
-                    failedIndex: index < 0 ? nil : index, registration: hook))
-            } else { state = .failed(error) }
+                state = .failed(
+                    NativeImportedHookInstallationError(
+                        underlyingError: error,
+                        failedIndex: index < 0 ? nil : index,
+                        registration: hook
+                    )
+                )
+            } else {
+                state = .failed(error)
+            }
         }
     }
 }
@@ -58,7 +66,9 @@ public final class NativeImportedFunctionMonitor: @unchecked Sendable {
     public var images: [NativeImportedImageUpdate] {
         let snapshot = ABICopyImportedHookMonitorImages(handle)!
         defer { ABIReleaseImportedImageList(snapshot) }
-        return (0..<ABIImportedImageListCount(snapshot)).map { NativeImportedImageUpdate(ABIImportedImageListGet(snapshot, $0)) }
+        return (0..<ABIImportedImageListCount(snapshot)).map {
+            NativeImportedImageUpdate(ABIImportedImageListGet(snapshot, $0))
+        }
     }
 
     /// Stops observation and disables new callback entry without waiting for
@@ -72,7 +82,10 @@ public final class NativeImportedFunctionMonitor: @unchecked Sendable {
 private final class ImportedMonitorCallbacks {
     let callback: FunctionCallbackBox
     let update: @Sendable (NativeImportedImageUpdate) -> Void
-    init(_ callback: FunctionCallbackBox, update: @escaping @Sendable (NativeImportedImageUpdate) -> Void) {
+    init(
+        _ callback: FunctionCallbackBox,
+        update: @escaping @Sendable (NativeImportedImageUpdate) -> Void
+    ) {
         self.callback = callback; self.update = update
     }
 }
@@ -91,27 +104,62 @@ extension ABIRuntime {
     /// An unresolved lazy import can fail its one attempt for that generation;
     /// bind it normally before creating a new monitor to retry.
     @unsafe public func monitorImportedFunction<Result, each Argument>(
-        _ declaration: NativeDeclaration, as signature: ((repeat each Argument) -> Result).Type,
-        in importer: ImageSelector, from provider: ImageSelector? = nil,
+        _ declaration: NativeDeclaration,
+        as signature: ((repeat each Argument) -> Result).Type,
+        in importer: ImageSelector,
+        from provider: ImageSelector? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         onImageUpdate: @escaping @Sendable (NativeImportedImageUpdate) -> Void,
-        body: @escaping @Sendable (NativeImportedFunctionInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+        body:
+            @escaping @Sendable (
+                NativeImportedFunctionInvocation<Result, repeat each Argument>, repeat each Argument
+            ) throws -> Result
     ) throws -> NativeImportedFunctionMonitor {
-        let query = try ImportedFunctionQuery(declaration: declaration, importer: importer, provider: provider)
-        let callback = try prepareImportedCallback(declaration: declaration, as: signature, onFailure: onFailure, body: body)
-        let context = Unmanaged.passRetained(ImportedMonitorCallbacks(callback, update: onImageUpdate)).toOpaque()
+        let query = try withRuntimeErrors {
+            try RuntimeImportedFunctionQuery(
+                declaration: declaration.runtimeValue,
+                importer: importer.runtimeValue,
+                provider: provider?.runtimeValue
+            )
+        }
+        let callback = try prepareImportedCallback(
+            declaration: declaration,
+            as: signature,
+            onFailure: onFailure,
+            body: body
+        )
+        let context = Unmanaged.passRetained(
+            ImportedMonitorCallbacks(callback, update: onImageUpdate)
+        ).toOpaque()
         let parameters: [OpaquePointer?] = callback.parameters.map(\.handle)
         var error: OpaquePointer?
         let handle = withExtendedLifetime(callback) {
             parameters.withUnsafeBufferPointer { types in
-                ABICreateImportedHookMonitor(query.retainedHandle(), callback.result.handle, types.baseAddress, types.count,
-                    context, { context, call, _ in
-                        invokeFunctionCallback(Unmanaged<ImportedMonitorCallbacks>.fromOpaque(context!).takeUnretainedValue().callback, call!)
-                    }, { context, error in
-                        Unmanaged<ImportedMonitorCallbacks>.fromOpaque(context!).takeUnretainedValue().callback.failure(importedHookFailure(error!))
-                    }, { context, update in
-                        Unmanaged<ImportedMonitorCallbacks>.fromOpaque(context!).takeUnretainedValue().update(NativeImportedImageUpdate(update))
-                    }, { context in Unmanaged<ImportedMonitorCallbacks>.fromOpaque(context!).release() }, &error)
+                ABICreateImportedHookMonitor(
+                    query.retainedHandle(),
+                    callback.result.handle,
+                    types.baseAddress,
+                    types.count,
+                    context,
+                    { context, call, _ in
+                        invokeFunctionCallback(
+                            Unmanaged<ImportedMonitorCallbacks>.fromOpaque(context!)
+                                .takeUnretainedValue().callback,
+                            call!
+                        )
+                    },
+                    { context, error in
+                        Unmanaged<ImportedMonitorCallbacks>.fromOpaque(context!)
+                            .takeUnretainedValue().callback.failure(importedHookFailure(error!))
+                    },
+                    { context, update in
+                        Unmanaged<ImportedMonitorCallbacks>.fromOpaque(context!)
+                            .takeUnretainedValue().update(NativeImportedImageUpdate(update))
+                    },
+                    { context in Unmanaged<ImportedMonitorCallbacks>.fromOpaque(context!).release()
+                    },
+                    &error
+                )
             }
         }
         guard let handle else { throw consumeNativeCallFailure(error) }
