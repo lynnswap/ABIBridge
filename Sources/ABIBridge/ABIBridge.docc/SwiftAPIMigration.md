@@ -58,7 +58,7 @@ Label-only names select a declaration whose bound signature matches `as:`. Keep 
 
 ## Use one owned runtime value type
 
-Replace `NativeSwiftOpaqueValue` with ``NativeSwiftValue``. Replace `valueType` with `type.metadata`, and use the retained `type` for member lookup. The earlier `withValue` operation made an `Any` copy; its replacement, `withCopy`, can report an invalid copy.
+Replace `NativeSwiftOpaqueValue` with ``NativeSwiftValue``. Use its public `type` handle for type identity, member lookup, and generic arguments, and `type.name` for the source-level name. The handle retains the type's implementation images. The earlier `withValue` operation made an `Any` copy; its replacement, `withCopy`, can report an invalid copy.
 
 ```swift
 // Before
@@ -75,6 +75,8 @@ let make = try await runtime.swiftFunction(
     as: ((String) -> NativeSwiftValue).self
 )
 let value = try unsafe make.unsafeInvoke("title")
+let type = value.type
+print(type.name)
 try value.withCopy { print($0) }
 ```
 
