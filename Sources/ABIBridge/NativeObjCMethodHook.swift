@@ -126,6 +126,18 @@ extension ABIRuntime {
     /// completed continuation, that result is preserved without replaying it.
     /// Failures are synchronously delivered to `onFailure` on the caller's thread.
     ///
+    /// Explicit `ns_consumed` arguments are supported. Set
+    /// ``NativeMethodOptions/consumedArguments`` to their zero-based positions,
+    /// excluding the receiver and selector. The dispatcher owns the incoming
+    /// consumed references and supplies a fresh +1 reference each time the chain
+    /// calls the native implementation. Skipping continuation releases unused
+    /// incoming references; failure recovery balances incoming and continuation
+    /// ownership. Callback values have ordinary Swift ownership.
+    ///
+    /// Supply ``NativeMethodOptions/returnsRetainedObject`` when result ownership
+    /// differs from the method family. Registrations on one managed entry must
+    /// agree on ownership and native signature. See <doc:ObjectiveCMethodHooks>.
+    ///
     /// - Parameters:
     ///   - type: The class whose instance or class method is intercepted.
     ///   - selector: The Objective-C selector, including argument colons.
@@ -141,8 +153,9 @@ extension ABIRuntime {
     ///
     /// The caller supplies correct ownership/block declarations, keeps pointer
     /// pointees valid, honors execution isolation, and coordinates installation
-    /// with external method-table writers. Consumed explicit arguments, foreign
-    /// exceptions, initializers, allocation, and lifecycle methods are unsupported.
+    /// with external method-table writers. Foreign exceptions, allocation, and
+    /// lifecycle methods are unsupported. Initializers use the separate API in
+    /// <doc:ObjectiveCInitializerHooks>.
     @unsafe public nonisolated func hookMethod<Result, each Argument>(
         on type: AnyClass, selector: String, as signature: ((repeat each Argument) -> Result).Type,
         classMethod: Bool = false, options: NativeMethodOptions = .init(), retaining owner: Any? = nil,
