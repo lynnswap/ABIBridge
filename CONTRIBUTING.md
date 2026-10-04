@@ -76,7 +76,15 @@ xcodebuild build \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-For watchOS, add `WATCHOS_DEPLOYMENT_TARGET=11.4` so dependencies also build within the supported deployment range. CI uses Xcode 26.6 on `macos-26` for macOS tests and iOS, visionOS, watchOS, and tvOS builds. CI uses three macOS jobs: package shards and optimized bridge tests share one runner; native consumers and architecture validation share another; all four platform builds share a third. Package shards still execute in separate test processes and sequentially reuse one build directory. Independent checks continue after a failure, and PR and release validation require every job to succeed. Release targets that predate the shard script run the original full package suite once. Closing a PR cancels its superseded validation without allocating replacement macOS runners.
+For watchOS, add `WATCHOS_DEPLOYMENT_TARGET=11.4` so dependencies also build within the supported deployment range. CI uses Xcode 26.6 on `macos-26` for macOS tests and iOS, visionOS, watchOS, and tvOS builds. CI uses three macOS jobs: package shards and optimized bridge tests share one runner; native consumers and architecture validation share another; iOS, tvOS, visionOS, and watchOS Simulator tests and device builds share a third. Package shards still execute in separate test processes and sequentially reuse one build directory. Independent checks continue after a failure, and PR and release validation require every job to succeed. Release targets that predate the shard script run the original full package suite once. Simulator runs use task-created devices, disable parallel destination clones, and delete each device before the next OS. Closing a PR cancels its superseded validation without allocating replacement macOS runners.
+
+Run the same sequential Simulator validation locally with installed runtimes:
+
+```sh
+python3 scripts/test-simulators.py
+```
+
+Use `--platforms iOS tvOS` to select platforms. The helper prefers a runtime matching the selected Xcode SDK, shares `.build/simulator-tests`, and retains result bundles in `.build/simulator-results`. It runs the portable package tests and builds the optional SwiftUI product; host compiler fixtures remain macOS-only. Device builds stay separate because Simulator execution does not verify device ABI or pointer authentication. Older release targets without this helper retain their original device build checks.
 
 ## Managed Swift value adapters
 
