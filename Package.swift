@@ -27,11 +27,26 @@ let package = Package(
         .package(url: "https://github.com/lynnswap/ZDLibffi.git", exact: "0.380.1"),
     ],
     targets: [
-        .target(name: "ABIBridgeSwiftUI", dependencies: ["ABIBridge"], swiftSettings: strictSwiftSettings),
-        .target(name: "HookCoordinationFixtures", path: "Tests/HookCoordinationFixtures",
-            cSettings: [.unsafeFlags(["-fno-objc-arc"])], linkerSettings: [.linkedFramework("Foundation")]),
+        .target(
+            name: "ABIBridgeSwiftUI",
+            dependencies: ["ABIBridge"],
+            swiftSettings: strictSwiftSettings
+        ),
+        .target(
+            name: "HookCoordinationFixtures",
+            path: "Tests/HookCoordinationFixtures",
+            cSettings: [.unsafeFlags(["-fno-objc-arc"])],
+            linkerSettings: [.linkedFramework("Foundation")]
+        ),
         .target(
             name: "ABIBridge",
+            dependencies: [
+                "ABIBridgeCore", "ABIBridgeObjCXX", "ABIBridgeRuntime",
+            ],
+            swiftSettings: strictSwiftSettings
+        ),
+        .target(
+            name: "ABIBridgeRuntime",
             dependencies: [
                 "ABIBridgeCore", "ABIBridgeObjCXX",
                 .product(name: "MachOKit", package: "MachOKit"),
@@ -57,7 +72,7 @@ let package = Package(
             path: "Sources/ABIBridgeObjCXX",
             publicHeadersPath: "include",
             linkerSettings: [
-                .linkedFramework("Foundation"),
+                .linkedFramework("Foundation")
             ]
         ),
         .target(
@@ -69,17 +84,44 @@ let package = Package(
         .target(
             name: "ManagedSwiftFixtures",
             path: "Tests/ManagedSwiftFixtures",
-            swiftSettings: [.unsafeFlags(["-enable-library-evolution"]), .enableExperimentalFeature("Lifetimes")]
+            swiftSettings: [
+                .unsafeFlags(["-enable-library-evolution"]),
+                .enableExperimentalFeature("Lifetimes"),
+            ]
         ),
         .target(
             name: "ManagedSwiftAdapters",
             dependencies: ["ManagedSwiftFixtures"],
             path: "Tests/ManagedSwiftAdapters"
         ),
+        .target(name: "ABIBridgeTestSupport", path: "Tests/ABIBridgeTestSupport"),
+        .testTarget(
+            name: "ABIBridgeCoreTests",
+            dependencies: [
+                "ABIBridgeCore", "ABIBridgeObjCXX", "ABIBridgeRuntime", "ObjectiveCFixtures",
+            ],
+            swiftSettings: strictSwiftSettings
+        ),
+        .testTarget(
+            name: "ABIBridgeRuntimeTests",
+            dependencies: [
+                "ABIBridgeRuntime", "ABIBridgeTestSupport", "ObjectiveCFixtures",
+                "ManagedSwiftFixtures", "ManagedSwiftAdapters",
+            ],
+            swiftSettings: strictSwiftSettings
+        ),
+        .testTarget(
+            name: "ABIBridgeLocalTests",
+            dependencies: ["ABIBridge", "ObjectiveCFixtures", "ManagedSwiftFixtures"],
+            swiftSettings: strictSwiftSettings
+        ),
         .testTarget(
             name: "ABIBridgeTests",
-            dependencies: ["ABIBridge", "ObjectiveCFixtures", "HookCoordinationFixtures",
-                           "ManagedSwiftFixtures", "ManagedSwiftAdapters"],
+            dependencies: [
+                "ABIBridge", "ABIBridgeRuntime", "ABIBridgeTestSupport", "ObjectiveCFixtures",
+                "HookCoordinationFixtures",
+                "ManagedSwiftFixtures", "ManagedSwiftAdapters",
+            ],
             swiftSettings: strictSwiftSettings
         ),
     ],

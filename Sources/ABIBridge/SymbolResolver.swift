@@ -1,455 +1,142 @@
-import Synchronization
-import Darwin
+import ABIBridgeRuntime
 
-// Loader operations run outside the index lock: constructors and destructors
-// may reenter the native API while dyld holds its own lock.
+// The public Swift API and C entry points share the runtime's single index owner.
 final class SymbolResolver: Sendable {
-    static let shared = SymbolResolver()
-    private let state = Mutex(ResolutionState())
-
-    private struct Scope: Hashable {
-        let selector: ImageSelector
-        let loading: ImageLoadingPolicy
-    }
-
-    private struct LookupKey: Hashable, Sendable {
-        let declaration: NativeDeclaration
-        let extensionsOnly: Bool
-        let genericContext: SwiftGenericContext?
-    }
-
-    // Results have their own lock. Retiring the node releases all image leases
-    // outside the resolver lock, including after a concurrent cache clear.
-    private final class AutomaticScope: Sendable {
-        let revision: UInt64
-        let images: [NativeImage]
-        let results = Mutex<[LookupKey: Result<ResolvedSymbol, ABIResolutionError>]>([:])
-        init(revision: UInt64, images: [NativeImage]) { self.revision = revision; self.images = images }
-    }
-
-    private enum SearchScope {
-        case images([NativeImage])
-        case automatic(AutomaticScope)
-        case partial([NativeImage])
-        var images: [NativeImage] {
-            switch self {
-            case .images(let images), .partial(let images): images
-            case .automatic(let scope): scope.images
-            }
-        }
-        var isComplete: Bool {
-            if case .partial = self { return false }
-            return true
-        }
-    }
-
-    private func searchScope(_ selector: ImageSelector, loading: ImageLoadingPolicy) throws -> SearchScope {
-        guard selector == .automatic else { return .images(try acquire(selector, loading: loading)) }
-        let snapshot = try ImageSnapshot.catalog()
-        if let cached = state.withLock({ $0.automatic }), cached.revision == snapshot.revision { return .automatic(cached) }
-        let retained = try retain(snapshot.images, skippingUnavailable: true)
-        // Initializer completion has no add/remove notification. A partial
-        // scope must be reacquired even if the catalog revision stays the same.
-        guard retained.isComplete else { return .partial(retained.images) }
-        let candidate = AutomaticScope(revision: snapshot.revision, images: retained.images)
-        let (selected, retired) = state.withLock { state -> (AutomaticScope, AutomaticScope?) in
-            if let existing = state.automatic {
-                if existing.revision == candidate.revision { return (existing, nil) }
-                if existing.revision > candidate.revision { return (candidate, nil) }
-            }
-            let previous = state.automatic
-            state.automatic = candidate
-            return (candidate, previous)
-        }
-        return withExtendedLifetime((candidate, retired)) { .automatic(selected) }
-    }
-
-    private func resolve(_ declaration: NativeDeclaration, in scope: SearchScope, extensionsOnly: Bool = false,
-                         genericContext: SwiftGenericContext? = nil) throws -> ResolvedSymbol {
-        guard !scope.images.isEmpty else {
-            throw scope.isComplete ? ABIResolutionError.imageNotLoaded : ABIResolutionError.imageUnavailable
-        }
-        guard case .automatic(let cache) = scope else {
-            do {
-                return try unique(declaration, images: scope.images, extensionsOnly: extensionsOnly, genericContext: genericContext)
-            } catch ABIResolutionError.declarationNotFound where !scope.isComplete {
-                throw ABIResolutionError.imageUnavailable
-            } catch ABIResolutionError.unsupportedDeclaration where !scope.isComplete {
-                throw ABIResolutionError.imageUnavailable
-            }
-        }
-        let key = LookupKey(declaration: declaration, extensionsOnly: extensionsOnly, genericContext: genericContext)
-        if let cached = cache.results.withLock({ $0[key] }) { return try cached.get() }
-        let result: Result<ResolvedSymbol, ABIResolutionError>
-        do { result = .success(try unique(declaration, images: cache.images, extensionsOnly: extensionsOnly, genericContext: genericContext)) }
-        catch let failure as ABIResolutionError {
-            switch failure {
-            case .declarationNotFound, .ambiguousDeclaration, .invalidAddress: result = .failure(failure)
-            default: throw failure
-            }
-        }
-        cache.results.withLock { results in
-            // Never replace a cached symbol under the lock: releasing its last
-            // lease could reenter dyld even when another call retained the image.
-            if results[key] == nil { results[key] = result }
-        }
-        return try result.get()
-    }
-
-    private func acquire(_ selector: ImageSelector, loading: ImageLoadingPolicy) throws -> [NativeImage] {
-        guard loading == .ifNeeded, selector != .automatic else { return try images(matching: selector) }
-        try selector.validateTarget()
-        switch selector {
-        case .automatic: return try images(matching: selector)
-        case .installName(let name):
-            return [try NativeImage.opening(path: name)]
-        case .path(let url):
-            return [try NativeImage.opening(path: url.path)]
-        case .framework(let name):
-            let loaded = try images(matching: selector)
-            if loaded.count == 1 { return [try loaded[0].opened()] }
-            if loaded.count > 1 { throw ABIResolutionError.ambiguousImage(candidates: loaded.map(\.path)) }
-            let candidates = FrameworkImages.candidates(named: name)
-            guard candidates.count <= 1 else {
-                throw ABIResolutionError.ambiguousImage(candidates: candidates.map(\.path))
-            }
-            guard let target = candidates.first else { return [] }
-            return [try NativeImage.opening(path: target.path)]
-        }
-    }
+    static let shared = SymbolResolver(RuntimeSymbolResolver.shared)
+    let runtime: RuntimeSymbolResolver
+    init(_ runtime: RuntimeSymbolResolver = RuntimeSymbolResolver()) { self.runtime = runtime }
 
     func images(matching selector: ImageSelector) throws -> [NativeImage] {
-        let snapshots = try ImageSnapshot.matching(selector, in: ImageSnapshot.current())
-        return try retain(snapshots, skippingUnavailable: selector == .automatic).images
-    }
-
-    private func retain(
-        _ snapshots: [ImageSnapshot], skippingUnavailable: Bool
-    ) throws -> (images: [NativeImage], isComplete: Bool) {
-        let retained = state.withLock { state in
-            snapshots.map { state.indexes[$0.identity]?.image }
-        }
-        var images: [NativeImage] = []
-        var isComplete = true
-        for (snapshot, cached) in zip(snapshots, retained) {
-            if let cached { images.append(cached); continue }
-            do {
-                images.append(try snapshot.retain())
-            } catch ABIResolutionError.imageChanged {
-                // This generation disappeared; add/remove already advances the revision.
-                continue
-            } catch ABIResolutionError.imageUnavailable where skippingUnavailable {
-                isComplete = false
-            }
-        }
-        return (images, isComplete)
-    }
-
-    func resolve(_ declaration: NativeDeclaration, in selector: ImageSelector, loading: ImageLoadingPolicy = .ifNeeded) throws -> ResolvedSymbol {
-        try validate(declaration)
-        return try resolve(declaration, in: searchScope(selector, loading: loading))
-    }
-
-    func resolve(_ declaration: NativeDeclaration, in image: NativeImage, loading: ImageLoadingPolicy = .ifNeeded) throws -> ResolvedSymbol {
-        try validate(declaration)
-        return try unique(declaration, images: [loading == .ifNeeded ? image.opened() : image])
-    }
-
-    func resolve(_ request: NativeSymbolRequest) throws -> ResolvedSymbol {
-        var scopes: [Scope: Result<SearchScope, any Error>] = [:]
-        return try resolve(request, scopes: &scopes)
-    }
-
-    func resolve(_ requests: [NativeSymbolRequest]) -> [Result<ResolvedSymbol, any Error>] {
-        var scopes: [Scope: Result<SearchScope, any Error>] = [:]
-        return requests.map { request in
-            Result { try resolve(request, scopes: &scopes) }
+        try withRuntimeErrors {
+            try runtime.images(matching: selector.runtimeValue).map(NativeImage.init)
         }
     }
-
-    private func resolve(
-        _ request: NativeSymbolRequest,
-        scopes: inout [Scope: Result<SearchScope, any Error>]
+    func resolve(
+        _ declaration: NativeDeclaration,
+        in selector: ImageSelector,
+        loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> ResolvedSymbol {
-        var missing: ABIResolutionError = .imageNotLoaded
-        for (index, candidate) in ([request.declaration] + request.fallbacks).enumerated() {
-            do {
-                return try resolveAliases(
-                    candidate, alternatives: index == 0 ? request.alternatives : [],
-                    in: request.imageScopes, loading: request.loading, scopes: &scopes
+        try withRuntimeErrors {
+            ResolvedSymbol(
+                try runtime.resolve(
+                    declaration.runtimeValue,
+                    in: selector.runtimeValue,
+                    loading: loading.runtimeValue
                 )
-            } catch let error as ABIResolutionError {
-                switch error {
-                case .imageNotLoaded, .declarationNotFound:
-                    if index == 0 { missing = error }
-                default: throw error
-                }
-            }
+            )
         }
-        throw missing
     }
-
-    private func resolveAliases(
-        _ primary: NativeDeclaration, alternatives: [NativeDeclaration],
-        in imageScopes: [ImageSelector], loading: ImageLoadingPolicy,
-        scopes: inout [Scope: Result<SearchScope, any Error>]
+    func resolve(
+        _ declaration: NativeDeclaration,
+        in image: NativeImage,
+        loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> ResolvedSymbol {
-        for declaration in [primary] + alternatives { try validate(declaration) }
-        var missing: ABIResolutionError = .imageNotLoaded
-        for scope in imageScopes {
-            let key = Scope(selector: scope, loading: loading)
-            let scopeResult: Result<SearchScope, any Error>
-            if let cached = scopes[key] {
-                scopeResult = cached
-            } else {
-                // Even a failed dlopen can change the catalog through dependencies
-                // or constructors. Later requests must see those changes.
-                if loading == .ifNeeded && scope != .automatic { scopes.removeAll() }
-                scopeResult = Result { try searchScope(scope, loading: loading) }
-                if case .success(let search) = scopeResult, search.isComplete {
-                    scopes[key] = scopeResult
-                }
-            }
-            let search = try scopeResult.get()
-            guard !search.images.isEmpty else {
-                if !search.isComplete { throw ABIResolutionError.imageUnavailable }
-                continue
-            }
-            var match: ResolvedSymbol?
-            for declaration in [primary] + alternatives {
-                do {
-                    let found = try resolve(declaration, in: search)
-                    if let previous = match {
-                        guard previous.address == found.address,
-                              previous.image.identity == found.image.identity else {
-                            throw ABIResolutionError.ambiguousDeclaration(
-                                primary,
-                                candidates: [previous.declaration.name, found.declaration.name]
-                            )
-                        }
-                    } else {
-                        match = found
-                    }
-                } catch ABIResolutionError.declarationNotFound {
-                    continue
-                } catch ABIResolutionError.imageUnavailable where !search.isComplete {
-                    // Unavailable images do not hide an alias already found in
-                    // this scope, or prevent another available alias matching.
-                    continue
-                }
-            }
-            if let match { return match }
-            if !search.isComplete { throw ABIResolutionError.imageUnavailable }
-            missing = .declarationNotFound(primary)
-        }
-        throw missing
-    }
-
-    func image(forSwiftClass type: AnyClass, lookup: () throws -> NativeImage) throws -> NativeImage {
-        let key = ObjectIdentifier(type)
-        if let cached = state.withLock({ $0.classImages[key] }) { return cached }
-        let candidate = try lookup()
-        return withExtendedLifetime(candidate) {
-            state.withLock { state in
-                if let cached = state.classImages[key] { return cached }
-                state.classImages[key] = candidate
-                return candidate
-            }
+        try withRuntimeErrors {
+            ResolvedSymbol(
+                try runtime.resolve(
+                    declaration.runtimeValue,
+                    in: image.runtimeValue,
+                    loading: loading.runtimeValue
+                )
+            )
         }
     }
-
-    func resolveSwiftExtension(_ declaration: NativeDeclaration, genericContext: SwiftGenericContext? = nil) throws -> ResolvedSymbol {
-        try resolve(declaration, in: searchScope(.automatic, loading: .loadedOnly), extensionsOnly: true,
-                    genericContext: genericContext)
+    func resolve(_ request: NativeSymbolRequest) throws -> ResolvedSymbol {
+        try withRuntimeErrors { ResolvedSymbol(try runtime.resolve(request.runtimeValue)) }
     }
-
-    func swiftDeclarationCandidates(_ declaration: NativeDeclaration, in selector: ImageSelector,
-                                    loading: ImageLoadingPolicy) throws -> [ResolvedSymbol] {
-        try validate(declaration)
-        return try swiftDeclarationCandidates(declaration, in: searchScope(selector, loading: loading), extensionsOnly: false)
-    }
-
-    func swiftDeclarationCandidates(_ declaration: NativeDeclaration, in image: NativeImage?,
-                                    loading: ImageLoadingPolicy = .loadedOnly,
-                                    extensionsOnly: Bool = false) throws -> [ResolvedSymbol] {
-        try validate(declaration)
-        let scope = try image.map { SearchScope.images([loading == .ifNeeded ? try $0.opened() : $0]) }
-            ?? searchScope(.automatic, loading: .loadedOnly)
-        return try swiftDeclarationCandidates(declaration, in: scope, extensionsOnly: extensionsOnly)
-    }
-
-    private func swiftDeclarationCandidates(_ declaration: NativeDeclaration, in scope: SearchScope,
-                                           extensionsOnly: Bool) throws -> [ResolvedSymbol] {
-        let query = SymbolQuery(declaration)
-        let indexes = state.withLock { state in scope.images.map { state.index(for: $0) } }
-        func matches(_ source: ResolvedSymbol.Source) -> [ResolvedSymbol] {
-            state.withLock { _ in
-                indexes.flatMap { $0.swiftDeclarationCandidates(query, source: source, extensionsOnly: extensionsOnly) }
-            }
+    func resolve(_ requests: [NativeSymbolRequest]) -> [Result<ResolvedSymbol, any Error>] {
+        runtime.resolve(requests.map(\.runtimeValue)).map { result in
+            Result { try withRuntimeErrors { ResolvedSymbol(try result.get()) } }
         }
-        let primary = matches(.image)
-        if !primary.isEmpty { return primary }
-        loadSharedCacheSymbols(for: query, into: indexes)
-        let fallback = matches(.sharedCache)
-        if fallback.isEmpty && !scope.isComplete { throw ABIResolutionError.imageUnavailable }
-        return fallback
     }
-
-    func removeCachedResults() {
-        let removed = state.withLock { state in
-            let indexes = (state.indexes, state.imports, state.virtualEntries, state.automatic, state.classImages, state.virtualTables)
-            state.indexes = [:]
-            state.imports = [:]
-            state.virtualEntries = [:]
-            state.virtualTables = [:]
-            state.automatic = nil
-            state.classImages = [:]
-            return indexes
+    func image(forSwiftClass type: AnyClass, lookup: () throws -> NativeImage) throws -> NativeImage
+    {
+        try withRuntimeErrors {
+            NativeImage(try runtime.image(forSwiftClass: type) { try lookup().runtimeValue })
         }
-        withExtendedLifetime(removed) {}
     }
-
+    func resolveSwiftExtension(
+        _ declaration: NativeDeclaration,
+        genericContext: SwiftGenericContext? = nil
+    ) throws -> ResolvedSymbol {
+        try withRuntimeErrors {
+            ResolvedSymbol(
+                try runtime.resolveSwiftExtension(
+                    declaration.runtimeValue,
+                    genericContext: genericContext
+                )
+            )
+        }
+    }
+    func swiftDeclarationCandidates(
+        _ declaration: NativeDeclaration,
+        in selector: ImageSelector,
+        loading: ImageLoadingPolicy
+    ) throws -> [ResolvedSymbol] {
+        try withRuntimeErrors {
+            try runtime.swiftDeclarationCandidates(
+                declaration.runtimeValue,
+                in: selector.runtimeValue,
+                loading: loading.runtimeValue
+            ).map(ResolvedSymbol.init)
+        }
+    }
+    func swiftDeclarationCandidates(
+        _ declaration: NativeDeclaration,
+        in image: NativeImage?,
+        loading: ImageLoadingPolicy = .loadedOnly,
+        extensionsOnly: Bool = false
+    ) throws -> [ResolvedSymbol] {
+        try withRuntimeErrors {
+            try runtime.swiftDeclarationCandidates(
+                declaration.runtimeValue,
+                in: image?.runtimeValue,
+                loading: loading.runtimeValue,
+                extensionsOnly: extensionsOnly
+            ).map(ResolvedSymbol.init)
+        }
+    }
+    func removeCachedResults() { runtime.removeCachedResults() }
     func importIndex(for image: NativeImage) throws -> ImportIndex {
-        if let cached = state.withLock({ $0.imports[image.identity] }) { return cached }
-        // File/cache discovery can enter dyld; keep it outside the resolver lock.
-        let candidate = try ImportIndex(image: image)
-        return withExtendedLifetime(candidate) {
-            state.withLock { state in
-                if let cached = state.imports[image.identity] { return cached }
-                state.imports[image.identity] = candidate
-                return candidate
-            }
+        try withRuntimeErrors { ImportIndex(try runtime.importIndex(for: image.runtimeValue)) }
+    }
+    func virtualEntry(
+        named name: String,
+        addressPoint: UInt,
+        entryCount: Int
+    ) throws -> VirtualEntryResolution {
+        try withRuntimeErrors {
+            let value = try runtime.virtualEntry(
+                named: name,
+                addressPoint: addressPoint,
+                entryCount: entryCount
+            )
+            return .init(
+                image: NativeImage(value.image),
+                index: value.index,
+                symbol: value.symbol,
+                authentication: NativePointerAuthentication(value.authentication)
+            )
         }
     }
-
-    func virtualEntry(named name: String, addressPoint: UInt, entryCount: Int) throws -> VirtualEntryResolution {
-        let (size, overflow) = entryCount.multipliedReportingOverflow(by: MemoryLayout<UInt>.size)
-        guard entryCount >= 0, !overflow, addressPoint != 0, UInt(size) <= UInt.max - addressPoint else {
-            throw ABIResolutionError.invalidAddress
-        }
-        if let cached = state.withLock({ $0.virtualTables[addressPoint] }) {
-            return try cached.match(named: name, addressPoint: addressPoint, entryCount: entryCount)
-        }
-        var info = Dl_info()
-        guard dladdr(UnsafeRawPointer(bitPattern: addressPoint), &info) != 0, let header = info.dli_fbase,
-              let snapshot = try ImageSnapshot.current().first(where: { $0.identity.headerAddress == UInt64(UInt(bitPattern: header)) }) else {
-            throw ABIResolutionError.metadataUnavailable("The virtual table has no loaded-image metadata; supply explicit adapter metadata")
-        }
-        let cached = state.withLock { $0.virtualEntries[snapshot.identity] }
-        let index: VirtualEntryIndex
-        if let cached { index = cached }
-        else {
-            let candidate = try VirtualEntryIndex(image: snapshot.retain())
-            index = withExtendedLifetime(candidate) {
-                state.withLock { state in
-                    if let cached = state.virtualEntries[snapshot.identity] { return cached }
-                    state.virtualEntries[snapshot.identity] = candidate
-                    return candidate
-                }
-            }
-        }
-        let result = try index.match(named: name, addressPoint: addressPoint, entryCount: entryCount)
-        state.withLock { state in
-            // The retained image prevents address reuse. A concurrent clear must
-            // not let this lookup republish a retired metadata index.
-            if state.virtualEntries[snapshot.identity] === index && state.virtualTables[addressPoint] == nil {
-                state.virtualTables[addressPoint] = index
-            }
-        }
-        return result
-    }
-
-    private func validate(_ declaration: NativeDeclaration) throws {
-        guard declaration.language != .objectiveC || declaration.nameForm != .source else {
-            throw ABIResolutionError.unsupportedDeclaration("Objective-C selectors require the invocation frontend.")
+    func swiftNominalTypeName(
+        at address: UInt64,
+        in image: NativeImage,
+        suggestedName: String
+    ) throws -> String? {
+        try withRuntimeErrors {
+            try runtime.swiftNominalTypeName(
+                at: address,
+                in: image.runtimeValue,
+                suggestedName: suggestedName
+            )
         }
     }
+}
 
-    private func unique(_ declaration: NativeDeclaration, images: [NativeImage], extensionsOnly: Bool = false,
-                        genericContext: SwiftGenericContext? = nil) throws -> ResolvedSymbol {
-        // Keep these indexes for the whole lookup even if another caller clears
-        // the cache while shared-cache metadata is being read.
-        let query = SymbolQuery(declaration)
-        let candidates = state.withLock { state in images.map { state.index(for: $0) } }
-        return try withExtendedLifetime(candidates) {
-            var unsupported: ABIResolutionError?
-            func matches(_ source: ResolvedSymbol.Source) throws -> [ResolvedSymbol] {
-                try state.withLock { _ in
-                    try candidates.compactMap { index in
-                        do { return try index.resolve(query, source: source, extensionsOnly: extensionsOnly, genericContext: genericContext) }
-                        catch let error as ABIResolutionError {
-                            guard case .unsupportedDeclaration = error else { throw error }
-                            unsupported = error
-                            return nil
-                        }
-                    }
-                }
-            }
-            let primary = try matches(.image)
-            if !primary.isEmpty { return try select(declaration, from: primary) }
-
-            loadSharedCacheSymbols(for: query, into: candidates)
-            let fallback = try matches(.sharedCache)
-            if fallback.isEmpty, let unsupported { throw unsupported }
-            return try select(declaration, from: fallback)
-        }
-    }
-
-    func swiftNominalTypeName(at address: UInt64, in image: NativeImage, suggestedName: String) throws -> String? {
-        let query = SymbolQuery(.init(
-            name: "nominal type descriptor for " + suggestedName, language: .swift, kind: .data
-        ))
-        let index = state.withLock { $0.index(for: image) }
-        return try withExtendedLifetime(index) {
-            if let name = try state.withLock({ _ in
-                try index.swiftNominalTypeName(at: address, matching: query, source: .image)
-            }) { return name }
-            loadSharedCacheSymbols(for: query, into: [index])
-            return try state.withLock { _ in
-                try index.swiftNominalTypeName(at: address, matching: query, source: .sharedCache)
-            }
-        }
-    }
-
-    private func loadSharedCacheSymbols(for query: SymbolQuery, into candidates: [SymbolIndex]) {
-        let missing = state.withLock { _ in
-            candidates.indices.filter { !candidates[$0].hasSharedCacheSymbols(for: query) }
-                .map { ($0, !candidates[$0].hasSharedSwiftFallback) }
-        }
-        // Host-cache discovery may call dyld, so perform it outside the lock.
-        let cache = SharedCacheSymbols()
-        let additions = missing.map { index, includeFallback in
-            (candidates[index], cache.symbols(in: candidates[index].image, matching: query,
-                                              includingSwiftFallback: includeFallback))
-        }
-        state.withLock { _ in
-            for (index, symbols) in additions where !index.hasSharedCacheSymbols(for: query) {
-                index.appendSharedCacheSymbols(symbols, matching: query)
-            }
-        }
-    }
-
-    private func select(_ declaration: NativeDeclaration, from matches: [ResolvedSymbol]) throws -> ResolvedSymbol {
-        guard let result = matches.first else { throw ABIResolutionError.declarationNotFound(declaration) }
-        guard matches.count == 1 else {
-            throw ABIResolutionError.ambiguousDeclaration(declaration, candidates: matches.map { $0.image.path })
-        }
-        return result
-    }
-
-    private struct ResolutionState {
-        var automatic: AutomaticScope?
-        var classImages: [ObjectIdentifier: NativeImage] = [:]
-        var indexes: [NativeImageIdentity: SymbolIndex] = [:]
-        var imports: [NativeImageIdentity: ImportIndex] = [:]
-        var virtualEntries: [NativeImageIdentity: VirtualEntryIndex] = [:]
-        var virtualTables: [UInt: VirtualEntryIndex] = [:]
-
-        mutating func index(for image: NativeImage) -> SymbolIndex {
-            if let cached = indexes[image.identity] { return cached }
-            let index = SymbolIndex(image: image)
-            indexes[image.identity] = index
-            return index
-        }
-    }
+struct VirtualEntryResolution: Sendable {
+    let image: NativeImage
+    let index: Int
+    let symbol: String
+    let authentication: NativePointerAuthentication
 }

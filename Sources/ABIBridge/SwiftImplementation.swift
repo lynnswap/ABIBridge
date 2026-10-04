@@ -1,36 +1,39 @@
+import ABIBridgeRuntime
 import ABIBridgeCore
 import Synchronization
 
 /// Owns an authenticated code pointer and its containing image, when available.
-final class SwiftImplementation: @unchecked Sendable {
-    let handle: OpaquePointer
-    let owner: (any Sendable)?
-    let image: NativeImage?
-    var function: ABIUnmanagedFunction { ABIVirtualCallTargetFunction(handle)! }
-    var generation: UInt64 { ABIVirtualCallTargetGeneration(handle) }
-
-    init?(bits: UInt, storage: UnsafeRawPointer, authentication: NativePointerAuthentication,
-          retaining owner: (any Sendable)?) throws {
-        var error: OpaquePointer?
-        guard let handle = ABICopyFunctionSlotTarget(bits, storage, authentication.keyCode,
-            authentication.discriminator, authentication.addressDiversity, &error) else {
-            if let error { throw consumeNativeCallFailure(error) }
-            return nil
-        }
-        self.handle = handle
-        self.owner = owner
-        do { image = try NativeImage.retaining(generation: ABIVirtualCallTargetGeneration(handle)) }
-        catch { ABIReleaseVirtualCallTarget(handle); throw error }
+final class SwiftImplementation: Sendable {
+    let runtime: RuntimeImplementation
+    var handle: OpaquePointer { runtime.handle }
+    var owner: (any Sendable)? { runtime.owner }
+    var image: NativeImage? { runtime.image.map(NativeImage.init) }
+    var function: ABIUnmanagedFunction { runtime.function }
+    var generation: UInt64 { runtime.generation }
+    init(_ runtime: RuntimeImplementation) { self.runtime = runtime }
+    init?(
+        bits: UInt,
+        storage: UnsafeRawPointer,
+        authentication: NativePointerAuthentication,
+        retaining owner: (any Sendable)?
+    ) throws {
+        guard
+            let runtime = try withRuntimeErrors({
+                try RuntimeImplementation(
+                    bits: bits,
+                    storage: storage,
+                    authentication: authentication.runtimeValue,
+                    retaining: owner
+                )
+            })
+        else { return nil }
+        self.runtime = runtime
     }
     init(function: ABIUnmanagedFunction, retaining owner: (any Sendable)?) throws {
-        var error: OpaquePointer?
-        guard let handle = ABICopyFunctionTarget(function, &error) else { throw consumeNativeCallFailure(error) }
-        self.handle = handle
-        self.owner = owner
-        do { image = try NativeImage.retaining(generation: ABIVirtualCallTargetGeneration(handle)) }
-        catch { ABIReleaseVirtualCallTarget(handle); throw error }
+        runtime = try withRuntimeErrors {
+            try RuntimeImplementation(function: function, retaining: owner)
+        }
     }
-    deinit { ABIReleaseVirtualCallTarget(handle) }
 }
 
 // Saved native pointers can outlive restoration and their Swift handles. Pin
@@ -45,8 +48,12 @@ private enum PublishedSwiftCode {
     static func retain(_ implementation: SwiftImplementation) {
         pins.withLock { pins in
             if implementation.generation != 0 && implementation.owner == nil {
-                if pins.images[implementation.generation] == nil { pins.images[implementation.generation] = implementation }
-            } else { pins.owned[ObjectIdentifier(implementation)] = implementation }
+                if pins.images[implementation.generation] == nil {
+                    pins.images[implementation.generation] = implementation
+                }
+            } else {
+                pins.owned[ObjectIdentifier(implementation)] = implementation
+            }
         }
     }
 }
@@ -64,11 +71,16 @@ public struct NativeSwiftFunctionImplementation<Signature>: Sendable {
     }
     /// Invokes the captured code with the original function's supplied contract.
     /// The caller satisfies the function's ABI, ownership and isolation rules.
-    @unsafe public func unsafeInvoke<Result, Failure: Error, each Argument>(_ values: repeat each Argument) throws -> Result where Signature == (repeat each Argument) throws(Failure) -> Result {
+    @unsafe public func unsafeInvoke<Result, Failure: Error, each Argument>(
+        _ values: repeat each Argument
+    ) throws -> Result where Signature == (repeat each Argument) throws(Failure) -> Result {
         try unsafe function.unsafeInvoke(repeat each values)
     }
 
-    @unsafe public func unsafeInvoke<Result, Failure: Error, each Argument>(_ values: repeat each Argument) throws -> Result where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
+    @unsafe public func unsafeInvoke<Result, Failure: Error, each Argument>(
+        _ values: repeat each Argument
+    ) throws -> Result
+    where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
         try unsafe function.unsafeInvoke(repeat each values)
     }
 }
@@ -83,19 +95,33 @@ public struct NativeSwiftMethodImplementation<Signature>: Sendable {
         method = prototype.capturing(entry)
     }
     /// Invokes a captured class or nonmutating value method on the supplied receiver.
-    @unsafe public func unsafeInvoke<Receiver, Result, Failure: Error, each Argument>(on receiver: Receiver, _ values: repeat each Argument) throws -> Result where Signature == (repeat each Argument) throws(Failure) -> Result {
+    @unsafe public func unsafeInvoke<Receiver, Result, Failure: Error, each Argument>(
+        on receiver: Receiver,
+        _ values: repeat each Argument
+    ) throws -> Result where Signature == (repeat each Argument) throws(Failure) -> Result {
         try unsafe method.unsafeInvoke(on: receiver, repeat each values)
     }
 
-    @unsafe public func unsafeInvoke<Receiver, Result, Failure: Error, each Argument>(on receiver: Receiver, _ values: repeat each Argument) throws -> Result where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
+    @unsafe public func unsafeInvoke<Receiver, Result, Failure: Error, each Argument>(
+        on receiver: Receiver,
+        _ values: repeat each Argument
+    ) throws -> Result
+    where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
         try unsafe method.unsafeInvoke(on: receiver, repeat each values)
     }
     /// Invokes the captured member and performs its declared receiver writeback.
-    @unsafe public func unsafeInvoke<Receiver, Result, Failure: Error, each Argument>(on receiver: inout Receiver, _ values: repeat each Argument) throws -> Result where Signature == (repeat each Argument) throws(Failure) -> Result {
+    @unsafe public func unsafeInvoke<Receiver, Result, Failure: Error, each Argument>(
+        on receiver: inout Receiver,
+        _ values: repeat each Argument
+    ) throws -> Result where Signature == (repeat each Argument) throws(Failure) -> Result {
         try unsafe method.unsafeInvoke(on: &receiver, repeat each values)
     }
 
-    @unsafe public func unsafeInvoke<Receiver, Result, Failure: Error, each Argument>(on receiver: inout Receiver, _ values: repeat each Argument) throws -> Result where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
+    @unsafe public func unsafeInvoke<Receiver, Result, Failure: Error, each Argument>(
+        on receiver: inout Receiver,
+        _ values: repeat each Argument
+    ) throws -> Result
+    where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
         try unsafe method.unsafeInvoke(on: &receiver, repeat each values)
     }
 }
@@ -120,8 +146,10 @@ public struct NativeSwiftReplacementMutation: Sendable {
     init(_ value: ABIPointerSlotResult) {
         status = value.status; didWrite = value.didWrite; observed = value.observed
         systemErrorCode = value.systemErrorCode
-        restoreProtectionError = value.restoreProtectionError; restoreMaximumError = value.restoreMaximumError
-        protectionBefore = value.protectionBefore; maximumBefore = value.maximumBefore; regionFlags = value.regionFlags
+        restoreProtectionError = value.restoreProtectionError;
+        restoreMaximumError = value.restoreMaximumError
+        protectionBefore = value.protectionBefore; maximumBefore = value.maximumBefore;
+        regionFlags = value.regionFlags
     }
 }
 
@@ -137,15 +165,29 @@ public struct NativeSwiftReplacementError: Error, Sendable {
     /// Failures during rollback after a failed installation.
     public let restorationFailedIndices: [Int]
     init(operation: Operation, failedIndices: [Int], restorationFailedIndices: [Int] = []) {
-        self.operation = operation; self.failedIndices = failedIndices; self.restorationFailedIndices = restorationFailedIndices
+        self.operation = operation; self.failedIndices = failedIndices;
+        self.restorationFailedIndices = restorationFailedIndices
     }
 }
 
 struct SwiftReplacementTransport: Sendable {
     var exchange: @Sendable (UInt, UInt, UInt) -> ABIPointerSlotResult
     var repair: @Sendable (UInt, UInt, Int32, Int32, Bool, Bool) -> ABIPointerSlotResult
-    static let live = Self(exchange: { ABICompareExchangePointerSlot(UnsafeMutableRawPointer(bitPattern: $0), $1, $2) },
-        repair: { ABIRestorePointerSlotProtection(UnsafeMutableRawPointer(bitPattern: $0), $1, $2, $3, $4, $5) })
+    static let live = Self(
+        exchange: {
+            ABICompareExchangePointerSlot(UnsafeMutableRawPointer(bitPattern: $0), $1, $2)
+        },
+        repair: {
+            ABIRestorePointerSlotProtection(
+                UnsafeMutableRawPointer(bitPattern: $0),
+                $1,
+                $2,
+                $3,
+                $4,
+                $5
+            )
+        }
+    )
 }
 
 final class SwiftReplacementStorage: @unchecked Sendable {
@@ -163,8 +205,12 @@ final class SwiftReplacementStorage: @unchecked Sendable {
         var desiredMaximum: Int32?
         var needsRepair: Bool { desiredProtection != nil || desiredMaximum != nil }
         mutating func recordProtectionFailure(_ result: ABIPointerSlotResult) {
-            if result.restoreProtectionError != 0 && desiredProtection == nil { desiredProtection = result.protectionBefore }
-            if result.restoreMaximumError != 0 && desiredMaximum == nil { desiredMaximum = result.maximumBefore }
+            if result.restoreProtectionError != 0 && desiredProtection == nil {
+                desiredProtection = result.protectionBefore
+            }
+            if result.restoreMaximumError != 0 && desiredMaximum == nil {
+                desiredMaximum = result.maximumBefore
+            }
         }
     }
     struct State { var slots: [Slot] }
@@ -181,53 +227,120 @@ final class SwiftReplacementStorage: @unchecked Sendable {
         let asyncEntry: SwiftAsyncEntry?
     }
 
-    static func capture(_ slots: [(UInt, NativePointerAuthentication)], retaining owner: (any Sendable)?, asyncDescriptors: Bool = false) throws -> [CapturedSlot] {
+    static func capture(
+        _ slots: [(UInt, NativePointerAuthentication)],
+        retaining owner: (any Sendable)?,
+        asyncDescriptors: Bool = false
+    ) throws -> [CapturedSlot] {
         try slots.map { address, authentication in
             var before: UInt = 0
-            guard ABIReadMemory(address, MemoryLayout<UInt>.size, &before).status == ABIMemoryReadComplete,
-                  let storage = UnsafeRawPointer(bitPattern: address) else { throw ABIResolutionError.invalidAddress }
+            guard
+                ABIReadMemory(address, MemoryLayout<UInt>.size, &before).status
+                    == ABIMemoryReadComplete,
+                let storage = UnsafeRawPointer(bitPattern: address)
+            else { throw ABIResolutionError.invalidAddress }
             if asyncDescriptors {
-                guard let descriptor = ABIUnsafeAuthenticatePointerSlot(before, storage, authentication.keyCode,
-                    authentication.discriminator, authentication.addressDiversity) else { throw ABIResolutionError.invalidAddress }
+                guard
+                    let descriptor = ABIUnsafeAuthenticatePointerSlot(
+                        before,
+                        storage,
+                        authentication.keyCode,
+                        authentication.discriminator,
+                        authentication.addressDiversity
+                    )
+                else { throw ABIResolutionError.invalidAddress }
                 let entry = try SwiftAsyncEntry(descriptor: descriptor)
                 let image = try swiftImplementationImage(containing: descriptor)
-                let original = try SwiftImplementation(function: entry.function, retaining: (owner, entry, image))
-                return CapturedSlot(address: address, before: before, original: original,
-                    authentication: authentication, asyncEntry: entry)
+                let original = try SwiftImplementation(
+                    function: entry.function,
+                    retaining: (owner, entry, image)
+                )
+                return CapturedSlot(
+                    address: address,
+                    before: before,
+                    original: original,
+                    authentication: authentication,
+                    asyncEntry: entry
+                )
             }
-            return CapturedSlot(address: address, before: before,
-                original: try SwiftImplementation(bits: before, storage: storage, authentication: authentication, retaining: owner),
-                authentication: authentication, asyncEntry: nil)
+            return CapturedSlot(
+                address: address,
+                before: before,
+                original: try SwiftImplementation(
+                    bits: before,
+                    storage: storage,
+                    authentication: authentication,
+                    retaining: owner
+                ),
+                authentication: authentication,
+                asyncEntry: nil
+            )
         }
     }
 
-    convenience init(slots: [(UInt, NativePointerAuthentication)], replacement symbol: ResolvedSymbol,
-         retaining owners: Any, codeOwner: (any Sendable)?, transport: SwiftReplacementTransport = .live) throws {
+    convenience init(
+        slots: [(UInt, NativePointerAuthentication)],
+        replacement symbol: ResolvedSymbol,
+        retaining owners: Any,
+        codeOwner: (any Sendable)?,
+        transport: SwiftReplacementTransport = .live
+    ) throws {
         let replacement = try unsafe symbol.withUnsafeAddress { address in
-            try SwiftImplementation(bits: UInt(bitPattern: address), storage: address,
-                authentication: .unsigned, retaining: codeOwner)!
+            try SwiftImplementation(
+                bits: UInt(bitPattern: address),
+                storage: address,
+                authentication: .unsigned,
+                retaining: codeOwner
+            )!
         }
-        try self.init(captured: Self.capture(slots, retaining: codeOwner), replacement: replacement,
-            retaining: owners, transport: transport)
+        try self.init(
+            captured: Self.capture(slots, retaining: codeOwner),
+            replacement: replacement,
+            retaining: owners,
+            transport: transport
+        )
     }
 
-    init(captured: [CapturedSlot], replacement: SwiftImplementation, retaining owners: Any,
-         replacementDescriptor: UnsafeRawPointer? = nil, transport: SwiftReplacementTransport = .live) throws {
+    init(
+        captured: [CapturedSlot],
+        replacement: SwiftImplementation,
+        retaining owners: Any,
+        replacementDescriptor: UnsafeRawPointer? = nil,
+        transport: SwiftReplacementTransport = .live
+    ) throws {
         self.transport = transport
         storageOwners = owners
         self.replacement = replacement
         let prepared = try captured.map { slot in
             let authentication = slot.authentication
             var after: UInt = 0
-            let encoded = if let replacementDescriptor {
-                ABIEncodePointerSlotData(replacementDescriptor, UnsafeRawPointer(bitPattern: slot.address), authentication.keyCode,
-                    authentication.discriminator, authentication.addressDiversity, &after)
-            } else {
-                ABIEncodePointerSlotFunction(replacement.function, UnsafeRawPointer(bitPattern: slot.address), authentication.keyCode,
-                    authentication.discriminator, authentication.addressDiversity, &after)
-            }
+            let encoded =
+                if let replacementDescriptor {
+                    ABIEncodePointerSlotData(
+                        replacementDescriptor,
+                        UnsafeRawPointer(bitPattern: slot.address),
+                        authentication.keyCode,
+                        authentication.discriminator,
+                        authentication.addressDiversity,
+                        &after
+                    )
+                } else {
+                    ABIEncodePointerSlotFunction(
+                        replacement.function,
+                        UnsafeRawPointer(bitPattern: slot.address),
+                        authentication.keyCode,
+                        authentication.discriminator,
+                        authentication.addressDiversity,
+                        &after
+                    )
+                }
             guard encoded else { throw ABIResolutionError.invalidAddress }
-            return Slot(address: slot.address, before: slot.before, after: after, original: slot.original)
+            return Slot(
+                address: slot.address,
+                before: slot.before,
+                after: after,
+                original: slot.original
+            )
         }
         state = Mutex(State(slots: prepared))
     }
@@ -236,8 +349,12 @@ final class SwiftReplacementStorage: @unchecked Sendable {
 
     func install() throws {
         try state.withLock { state in
-            let pending = state.slots.indices.filter { state.slots[$0].pending || state.slots[$0].needsRepair }
-            guard pending.isEmpty else { throw NativeSwiftReplacementError(operation: .install, failedIndices: pending) }
+            let pending = state.slots.indices.filter {
+                state.slots[$0].pending || state.slots[$0].needsRepair
+            }
+            guard pending.isEmpty else {
+                throw NativeSwiftReplacementError(operation: .install, failedIndices: pending)
+            }
             for index in state.slots.indices {
                 let slot = state.slots[index]
                 let result = transport.exchange(slot.address, slot.before, slot.after)
@@ -253,7 +370,11 @@ final class SwiftReplacementStorage: @unchecked Sendable {
                 }
                 if result.status != ABIPointerSlotComplete {
                     let failures = restore(&state)
-                    throw NativeSwiftReplacementError(operation: .install, failedIndices: [index], restorationFailedIndices: failures)
+                    throw NativeSwiftReplacementError(
+                        operation: .install,
+                        failedIndices: [index],
+                        restorationFailedIndices: failures
+                    )
                 }
             }
         }
@@ -262,7 +383,9 @@ final class SwiftReplacementStorage: @unchecked Sendable {
     func restore() throws {
         try state.withLock { state in
             let failures = restore(&state)
-            if !failures.isEmpty { throw NativeSwiftReplacementError(operation: .restore, failedIndices: failures) }
+            if !failures.isEmpty {
+                throw NativeSwiftReplacementError(operation: .restore, failedIndices: failures)
+            }
         }
     }
 
@@ -272,14 +395,22 @@ final class SwiftReplacementStorage: @unchecked Sendable {
             let result = transport.exchange(slot.address, slot.after, slot.before)
             state.slots[index].restoration = NativeSwiftReplacementMutation(result)
             state.slots[index].recordProtectionFailure(result)
-            if result.didWrite || (result.status == ABIPointerSlotDisplaced && result.observed == slot.before) {
+            if result.didWrite
+                || (result.status == ABIPointerSlotDisplaced && result.observed == slot.before)
+            {
                 state.slots[index].pending = false
             }
         }
         for index in state.slots.indices where state.slots[index].needsRepair {
             let slot = state.slots[index]
-            let result = transport.repair(slot.address, slot.pending ? slot.after : slot.before,
-                slot.desiredProtection ?? 0, slot.desiredMaximum ?? 0, slot.desiredProtection != nil, slot.desiredMaximum != nil)
+            let result = transport.repair(
+                slot.address,
+                slot.pending ? slot.after : slot.before,
+                slot.desiredProtection ?? 0,
+                slot.desiredMaximum ?? 0,
+                slot.desiredProtection != nil,
+                slot.desiredMaximum != nil
+            )
             state.slots[index].protectionRecovery = NativeSwiftReplacementMutation(result)
             if result.status == ABIPointerSlotComplete {
                 state.slots[index].desiredProtection = nil

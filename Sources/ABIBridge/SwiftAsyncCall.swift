@@ -1,8 +1,6 @@
+import ABIBridgeRuntime
 import ABIBridgeCore
 import Synchronization
-
-@_silgen_name("ABIInvokeSwiftAsync")
-nonisolated(nonsending) func invokeSwiftAsync(_ invocation: OpaquePointer) async
 
 struct SwiftAsyncImplementation: Sendable {
     let symbol: ResolvedSymbol
@@ -10,60 +8,63 @@ struct SwiftAsyncImplementation: Sendable {
     let entry: SwiftAsyncEntry
 
     init(symbol: ResolvedSymbol, resolver: SymbolResolver) throws {
-        let descriptor = try resolver.resolve(.init(
-            name: "async function pointer to " + symbol.declaration.name, language: .swift, kind: .data),
-            in: symbol.image, loading: .loadedOnly)
+        let descriptor = try resolver.resolve(
+            .init(
+                name: "async function pointer to " + symbol.declaration.name,
+                language: .swift,
+                kind: .data
+            ),
+            in: symbol.image,
+            loading: .loadedOnly
+        )
         try self.init(symbol: symbol, descriptor: descriptor)
     }
 
     init(symbol: ResolvedSymbol, descriptor: ResolvedSymbol) throws {
         self.symbol = symbol
         self.descriptor = descriptor
-        entry = try SwiftAsyncEntry(descriptor: UnsafeRawPointer(bitPattern: UInt(descriptor.address))!)
+        entry = try SwiftAsyncEntry(
+            descriptor: UnsafeRawPointer(bitPattern: UInt(descriptor.address))!
+        )
     }
 }
 
-final class SwiftAsyncEntry: @unchecked Sendable {
-    let handle: OpaquePointer
-    var function: ABIUnmanagedFunction { ABISwiftAsyncDescriptorFunction(handle)! }
-    var contextSize: UInt32 { ABISwiftAsyncDescriptorContextSize(handle) }
+final class SwiftAsyncEntry: Sendable {
+    let runtime: RuntimeSwiftAsyncEntry
+    init(_ runtime: RuntimeSwiftAsyncEntry) { self.runtime = runtime }
+    var handle: OpaquePointer { runtime.handle }
+    var function: ABIUnmanagedFunction { runtime.function }
+    var contextSize: UInt32 { runtime.contextSize }
     init(descriptor: UnsafeRawPointer) throws {
-        var failure: OpaquePointer?
-        guard let handle = ABICopySwiftAsyncDescriptor(descriptor, &failure) else {
-            throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftAsyncInvocation")
-        }
-        self.handle = handle
+        runtime = try withRuntimeErrors { try RuntimeSwiftAsyncEntry(descriptor: descriptor) }
     }
-    deinit { ABIReleaseSwiftAsyncDescriptor(handle) }
 }
 
 final class SwiftAsyncCallInterface: @unchecked Sendable {
-    let handle: OpaquePointer
-    let inheritsCallerIsolation: Bool
-    private let callback = Mutex<SwiftAsyncClosureCallbackOwner?>(nil)
+    let runtime: RuntimeSwiftAsyncCallInterface
+    var handle: OpaquePointer { runtime.handle }
+    var inheritsCallerIsolation: Bool { runtime.inheritsCallerIsolation }
 
     func closureEntry() throws -> SwiftAsyncClosureCallbackOwner {
-        try callback.withLock { cached in
-            if let cached { return cached }
-            let entry = try SwiftAsyncClosureCallbackOwner(interface: self)
-            cached = entry
-            return entry
+        try SwiftAsyncClosureCallbackOwner(interface: self)
+    }
+    init(
+        result: CValueType,
+        parameters: [CValueType],
+        errorPlan: SwiftErrorPlan?,
+        inheritsCallerIsolation: Bool
+    ) throws {
+        runtime = try withRuntimeErrors {
+            try RuntimeSwiftAsyncCallInterface(
+                result: result.runtime,
+                parameters: parameters.map(\.runtime),
+                errorPlan: errorPlan.map {
+                    RuntimeErrorConvention(type: $0.type.runtime, isTyped: $0.isTyped)
+                },
+                inheritsCallerIsolation: inheritsCallerIsolation
+            )
         }
     }
-    init(result: CValueType, parameters: [CValueType], errorPlan: SwiftErrorPlan?, inheritsCallerIsolation: Bool) throws {
-        self.inheritsCallerIsolation = inheritsCallerIsolation
-        let handles: [OpaquePointer?] = parameters.map(\.handle)
-        var failure: OpaquePointer?
-        let handle = withExtendedLifetime((result, parameters, errorPlan)) {
-            handles.withUnsafeBufferPointer {
-                ABICreateSwiftAsyncCallInterface(result.handle, $0.baseAddress, $0.count,
-                    errorPlan?.type.handle, errorPlan?.isTyped ?? false, inheritsCallerIsolation, &failure)
-            }
-        }
-        guard let handle else { throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftAsyncInvocation") }
-        self.handle = handle
-    }
-    deinit { ABIReleaseSwiftAsyncCallInterface(handle) }
 }
 
 final class SwiftAsyncCall: Sendable {
@@ -75,20 +76,42 @@ final class SwiftAsyncCall: Sendable {
     let closure: SwiftGenericClosurePlan?
     let parameters: SwiftGenericParameters
 
-    init(signature: Any.Type, trailingType: CValueType? = nil, consumesArguments: Bool = false,
-         errorPlan: SwiftErrorPlan? = nil, inheritsCallerIsolation: Bool, opaqueResult: SwiftOpaqueResultPlan? = nil, generic: SwiftGenericCallPlan? = nil, closure: SwiftGenericClosurePlan? = nil) throws {
+    init(
+        signature: Any.Type,
+        trailingType: CValueType? = nil,
+        consumesArguments: Bool = false,
+        errorPlan: SwiftErrorPlan? = nil,
+        inheritsCallerIsolation: Bool,
+        opaqueResult: SwiftOpaqueResultPlan? = nil,
+        generic: SwiftGenericCallPlan? = nil,
+        closure: SwiftGenericClosurePlan? = nil
+    ) throws {
         try generic?.validateMetadataArguments()
         let signature = try SwiftFunctionSignature(signature)
-        parameters = try generic?.parameters ?? closure?.parameters ?? SwiftGenericParameters(actual: signature.parameters,
-            arguments: SwiftGenericParameters.concreteArguments(signature: signature, defaultConsuming: consumesArguments))
-        values = try SwiftCallValues(signature: signature, consumesArguments: consumesArguments,
-            opaqueResult: opaqueResult, arguments: parameters.arguments,
-            result: generic?.result ?? closure?.result ?? .concrete)
+        parameters =
+            try generic?.parameters ?? closure?.parameters
+            ?? SwiftGenericParameters(
+                actual: signature.parameters,
+                arguments: SwiftGenericParameters.concreteArguments(
+                    signature: signature,
+                    defaultConsuming: consumesArguments
+                )
+            )
+        values = try SwiftCallValues(
+            signature: signature,
+            consumesArguments: consumesArguments,
+            opaqueResult: opaqueResult,
+            arguments: parameters.arguments,
+            result: generic?.result ?? closure?.result ?? .concrete
+        )
         let logical = values.arguments.map(\.type)
         var types = parameters.types(from: logical)
         if let trailingType { types.append(trailingType) }
         if let generic {
-            types += Array(repeating: try CValueType(scalar: ABIValuePointer), count: generic.metadata.count)
+            types += Array(
+                repeating: try CValueType(scalar: ABIValuePointer),
+                count: generic.metadata.count
+            )
         }
         self.generic = generic
         self.closure = closure
@@ -98,8 +121,12 @@ final class SwiftAsyncCall: Sendable {
             }
             interface = original
         } else {
-            interface = try SwiftAsyncCallInterface(result: values.result.type, parameters: types,
-                errorPlan: errorPlan, inheritsCallerIsolation: inheritsCallerIsolation)
+            interface = try SwiftAsyncCallInterface(
+                result: values.result.type,
+                parameters: types,
+                errorPlan: errorPlan,
+                inheritsCallerIsolation: inheritsCallerIsolation
+            )
         }
         self.errorPlan = errorPlan
         hasTrailingValue = trailingType != nil
@@ -107,102 +134,193 @@ final class SwiftAsyncCall: Sendable {
     }
 
     @unsafe nonisolated(nonsending) func unsafeInvoke<Result, each Argument>(
-        implementation: SwiftAsyncImplementation, context: UnsafeRawPointer? = nil,
-        trailingValue: NativeValueStorage? = nil, receiverStorage: NativeValueStorage? = nil, retaining owner: Any? = nil,
-        retainingCode codeOwner: Any? = nil, didInvoke: (() -> Void)? = nil,
+        implementation: SwiftAsyncImplementation,
+        context: UnsafeRawPointer? = nil,
+        trailingValue: NativeValueStorage? = nil,
+        receiverStorage: NativeValueStorage? = nil,
+        retaining owner: Any? = nil,
+        retainingCode codeOwner: Any? = nil,
+        didInvoke: (() -> Void)? = nil,
         _ values: repeat each Argument
     ) async throws -> Result {
         try self.values.requireIndependentResult()
-        return try unsafe await invoke(implementation: implementation, context: context, trailingValue: trailingValue, receiverStorage: receiverStorage,
-            retaining: owner, retainingCode: codeOwner, didInvoke: didInvoke, repeat each values) { output, owner, codeOwner in
+        return try unsafe await invoke(
+            implementation: implementation,
+            context: context,
+            trailingValue: trailingValue,
+            receiverStorage: receiverStorage,
+            retaining: owner,
+            retainingCode: codeOwner,
+            didInvoke: didInvoke,
+            repeat each values
+        ) { output, owner, codeOwner in
             try self.values.decode(output, retaining: owner, retainingCode: codeOwner)
         }
     }
 
     @unsafe nonisolated(nonsending) func unsafeInvoke<Result: ~Copyable, each Argument>(
-        implementation: SwiftAsyncImplementation, context: UnsafeRawPointer? = nil,
-        trailingValue: NativeValueStorage? = nil, receiverStorage: NativeValueStorage? = nil, retaining owner: Any? = nil,
-        retainingCode codeOwner: Any? = nil, didInvoke: (() -> Void)? = nil,
+        implementation: SwiftAsyncImplementation,
+        context: UnsafeRawPointer? = nil,
+        trailingValue: NativeValueStorage? = nil,
+        receiverStorage: NativeValueStorage? = nil,
+        retaining owner: Any? = nil,
+        retainingCode codeOwner: Any? = nil,
+        didInvoke: (() -> Void)? = nil,
         _ values: repeat each Argument,
         withResult body: (NativeSwiftBorrowedValue) async throws -> Result
     ) async throws -> Result {
         let result = try self.values.scopedResult()
-        return try unsafe await invoke(implementation: implementation, context: context, trailingValue: trailingValue, receiverStorage: receiverStorage,
-            retaining: owner, retainingCode: codeOwner, didInvoke: didInvoke, repeat each values) { output, _, _ in
+        return try unsafe await invoke(
+            implementation: implementation,
+            context: context,
+            trailingValue: trailingValue,
+            receiverStorage: receiverStorage,
+            retaining: owner,
+            retainingCode: codeOwner,
+            didInvoke: didInvoke,
+            repeat each values
+        ) { output, _, _ in
             try await result.withBorrowedResult(output, body)
         }
     }
 
     @unsafe nonisolated(nonsending) func unsafeInvoke<Result, each Argument>(
-        entry: SwiftAsyncEntry, context: UnsafeRawPointer? = nil,
-        trailingValue: NativeValueStorage? = nil, receiverStorage: NativeValueStorage? = nil, retaining owner: Any? = nil,
-        retainingCode codeOwner: Any? = nil, images: [NativeImage] = [], didInvoke: (() -> Void)? = nil,
+        entry: SwiftAsyncEntry,
+        context: UnsafeRawPointer? = nil,
+        trailingValue: NativeValueStorage? = nil,
+        receiverStorage: NativeValueStorage? = nil,
+        retaining owner: Any? = nil,
+        retainingCode codeOwner: Any? = nil,
+        images: [NativeImage] = [],
+        didInvoke: (() -> Void)? = nil,
         _ values: repeat each Argument
     ) async throws -> Result {
         try self.values.requireIndependentResult()
-        return try unsafe await invoke(entry: entry, context: context, trailingValue: trailingValue, receiverStorage: receiverStorage,
-            retaining: owner, retainingCode: codeOwner, images: images, didInvoke: didInvoke, repeat each values) { output, owner, codeOwner in
+        return try unsafe await invoke(
+            entry: entry,
+            context: context,
+            trailingValue: trailingValue,
+            receiverStorage: receiverStorage,
+            retaining: owner,
+            retainingCode: codeOwner,
+            images: images,
+            didInvoke: didInvoke,
+            repeat each values
+        ) { output, owner, codeOwner in
             try self.values.decode(output, retaining: owner, retainingCode: codeOwner)
         }
     }
 
     @unsafe nonisolated(nonsending) func unsafeInvoke<Result: ~Copyable, each Argument>(
-        entry: SwiftAsyncEntry, context: UnsafeRawPointer? = nil,
-        trailingValue: NativeValueStorage? = nil, receiverStorage: NativeValueStorage? = nil, retaining owner: Any? = nil,
-        retainingCode codeOwner: Any? = nil, images: [NativeImage] = [], didInvoke: (() -> Void)? = nil,
+        entry: SwiftAsyncEntry,
+        context: UnsafeRawPointer? = nil,
+        trailingValue: NativeValueStorage? = nil,
+        receiverStorage: NativeValueStorage? = nil,
+        retaining owner: Any? = nil,
+        retainingCode codeOwner: Any? = nil,
+        images: [NativeImage] = [],
+        didInvoke: (() -> Void)? = nil,
         _ values: repeat each Argument,
         withResult body: (NativeSwiftBorrowedValue) async throws -> Result
     ) async throws -> Result {
         let result = try self.values.scopedResult()
-        return try unsafe await invoke(entry: entry, context: context, trailingValue: trailingValue, receiverStorage: receiverStorage,
-            retaining: owner, retainingCode: codeOwner, images: images, didInvoke: didInvoke, repeat each values) { output, _, _ in
+        return try unsafe await invoke(
+            entry: entry,
+            context: context,
+            trailingValue: trailingValue,
+            receiverStorage: receiverStorage,
+            retaining: owner,
+            retainingCode: codeOwner,
+            images: images,
+            didInvoke: didInvoke,
+            repeat each values
+        ) { output, _, _ in
             try await result.withBorrowedResult(output, body)
         }
     }
 
     @unsafe nonisolated(nonsending) func invoke<Result: ~Copyable, each Argument>(
-        implementation: SwiftAsyncImplementation, context: UnsafeRawPointer? = nil,
-        trailingValue: NativeValueStorage? = nil, receiverStorage: NativeValueStorage? = nil, retaining owner: Any? = nil,
-        retainingCode codeOwner: Any? = nil, didInvoke: (() -> Void)? = nil,
+        implementation: SwiftAsyncImplementation,
+        context: UnsafeRawPointer? = nil,
+        trailingValue: NativeValueStorage? = nil,
+        receiverStorage: NativeValueStorage? = nil,
+        retaining owner: Any? = nil,
+        retainingCode codeOwner: Any? = nil,
+        didInvoke: (() -> Void)? = nil,
         _ values: repeat each Argument,
         processingResult: (NativeValueStorage, Any?, Any?) async throws -> Result
     ) async throws -> Result {
-        try unsafe await invoke(entry: implementation.entry, context: context,
-            trailingValue: trailingValue, receiverStorage: receiverStorage, retaining: (implementation, owner),
-            retainingCode: (implementation, codeOwner), images: [implementation.symbol.image, implementation.descriptor.image], didInvoke: didInvoke, repeat each values, processingResult: processingResult)
+        try unsafe await invoke(
+            entry: implementation.entry,
+            context: context,
+            trailingValue: trailingValue,
+            receiverStorage: receiverStorage,
+            retaining: (implementation, owner),
+            retainingCode: (implementation, codeOwner),
+            images: [implementation.symbol.image, implementation.descriptor.image],
+            didInvoke: didInvoke,
+            repeat each values,
+            processingResult: processingResult
+        )
     }
 
     @unsafe nonisolated(nonsending) func invoke<Result: ~Copyable, each Argument>(
-        entry: SwiftAsyncEntry, context: UnsafeRawPointer? = nil,
-        trailingValue: NativeValueStorage? = nil, receiverStorage: NativeValueStorage? = nil, retaining owner: Any? = nil,
-        retainingCode codeOwner: Any? = nil, images: [NativeImage] = [], didInvoke: (() -> Void)? = nil,
+        entry: SwiftAsyncEntry,
+        context: UnsafeRawPointer? = nil,
+        trailingValue: NativeValueStorage? = nil,
+        receiverStorage: NativeValueStorage? = nil,
+        retaining owner: Any? = nil,
+        retainingCode codeOwner: Any? = nil,
+        images: [NativeImage] = [],
+        didInvoke: (() -> Void)? = nil,
         _ values: repeat each Argument,
         processingResult: (NativeValueStorage, Any?, Any?) async throws -> Result
     ) async throws -> Result {
         precondition(hasTrailingValue == (trailingValue != nil))
-        let logicalStorage = try self.values.encode(repeat each values, retainingCode: (codeOwner, generic, closure))
+        let logicalStorage = try self.values.encode(
+            repeat each values,
+            retainingCode: (codeOwner, generic, closure)
+        )
         let logicalAddresses: [UnsafeMutableRawPointer?] = logicalStorage.map(\.address)
         let encoded = parameters.encode(logicalAddresses, retaining: logicalStorage)
         var addresses = encoded.addresses
         if let trailingValue { addresses.append(trailingValue.address) }
         if let generic { addresses.append(contentsOf: generic.metadata.addresses) }
         let output = self.values.result.makeStorage()
-        let lifetimes = (logicalStorage + [trailingValue, receiverStorage, output].compactMap { $0 }).compactMap(\.codeLifetime)
+        let lifetimes =
+            (logicalStorage + [trailingValue, receiverStorage, output].compactMap { $0 })
+            .compactMap(\.codeLifetime)
             + [SwiftValueCodeLifetime.current].compactMap { $0 }
-        let lifetime = SwiftValueCodeLifetime.connect(lifetimes,
-            retaining: images + (generic?.binding.images ?? []) + (generic?.binding.typeOwners.flatMap(\.codeImages) ?? []))
+        let lifetime = SwiftValueCodeLifetime.connect(
+            lifetimes,
+            retaining: images + (generic?.binding.images ?? [])
+                + (generic?.binding.typeOwners.flatMap(\.codeImages) ?? [])
+        )
         let codeOwners: Any = (codeOwner, generic, closure, lifetime)
         let nativeError = errorPlan?.makeStorage()
         var failure: OpaquePointer?
         let invocation = addresses.withUnsafeBufferPointer {
-            ABICreateSwiftAsyncInvocation(interface.handle,
+            ABICreateSwiftAsyncInvocation(
+                interface.handle,
                 entry.function,
-                entry.contextSize, output.address, $0.baseAddress, context,
-                nativeError?.address, &failure)
+                entry.contextSize,
+                output.address,
+                $0.baseAddress,
+                context,
+                nativeError?.address,
+                &failure
+            )
         }
-        guard let invocation else { throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftAsyncInvocation") }
+        guard let invocation else {
+            throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftAsyncInvocation")
+        }
         defer {
-            withExtendedLifetime((self, entry, logicalStorage, encoded, output, nativeError, trailingValue, receiverStorage, owner, codeOwners)) {
+            withExtendedLifetime(
+                (
+                    self, entry, logicalStorage, encoded, output, nativeError, trailingValue,
+                    receiverStorage, owner, codeOwners
+                )
+            ) {
                 ABIReleaseSwiftAsyncInvocation(invocation)
             }
         }

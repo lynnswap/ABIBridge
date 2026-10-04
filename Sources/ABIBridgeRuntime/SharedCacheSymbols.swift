@@ -2,9 +2,7 @@ import Foundation
 import MachO
 import MachOKit
 
-/// Owned by one lookup. Cache files supply names and unslid addresses only;
-/// addresses are subsequently checked against the retained image's sections.
-final class SharedCacheSymbols {
+package final class SharedCacheSymbols {
     private lazy var loadedCache = DyldCacheLoaded.current
     private lazy var fullCache = FullDyldCache.host
     private lazy var filesByUUID: [UUID: MachOFile] = {
@@ -23,25 +21,48 @@ final class SharedCacheSymbols {
     private var filesByCache: [UUID: [SymbolFile]] = [:]
     private var rangesByTable: [UUID: [UInt64: Range<Int>]] = [:]
 
-    func symbols(in image: NativeImage, matching query: SymbolQuery, includingSwiftFallback: Bool = true) -> [IndexedSymbol] {
-        let macho = MachOImage(ptr: UnsafePointer<mach_header>(bitPattern: UInt(image.identity.headerAddress))!)
+    package func symbols(
+        in image: RuntimeImage,
+        matching query: SymbolQuery,
+        includingSwiftFallback: Bool = true
+    ) -> [IndexedSymbol] {
+        let macho = MachOImage(
+            ptr: UnsafePointer<mach_header>(bitPattern: UInt(image.identity.headerAddress))!
+        )
         guard macho.header.flags.contains(.dylib_in_cache),
-              macho.is64Bit,
-              let text = macho.segments64.first(where: { $0.segmentName == "__TEXT" }) else { return [] }
+            macho.is64Bit,
+            let text = macho.segments64.first(where: { $0.segmentName == "__TEXT" })
+        else { return [] }
         var result: [IndexedSymbol] = []
         var foundDefinitions = false
         func record(_ name: UnsafePointer<CChar>, _ value: UInt64) {
             guard let address = SymbolIndex.slid(value, by: image.identity.slide) else { return }
             foundDefinitions = true
-            if query.acceptsCandidate(name), includingSwiftFallback || SwiftModuleFilter.knownModulePrefix(name) != false {
-                result.append(IndexedSymbol(name: String(cString: name), address: address, source: .sharedCache))
+            if query.acceptsCandidate(name),
+                includingSwiftFallback || SwiftModuleFilter.knownModulePrefix(name) != false
+            {
+                result.append(
+                    IndexedSymbol(
+                        name: String(cString: name),
+                        address: address,
+                        source: .sharedCache
+                    )
+                )
             }
         }
-        if let cache = loadedCache, let cacheSlide = cache.slide, cacheSlide == image.identity.slide,
-           UInt64(text.virtualMemoryAddress) >= cache.mainCacheHeader.sharedRegionStart {
+        if let cache = loadedCache, let cacheSlide = cache.slide,
+            cacheSlide == image.identity.slide,
+            UInt64(text.virtualMemoryAddress) >= cache.mainCacheHeader.sharedRegionStart
+        {
             let offset = UInt64(text.virtualMemoryAddress) - cache.mainCacheHeader.sharedRegionStart
             if let info = cache.localSymbolsInfo, let symbols = info.symbols64(in: cache),
-               let range = localRange(offset, table: cache.mainCacheHeader.uuid, entries: Array(info.entries(in: cache)), count: symbols.count) {
+                let range = localRange(
+                    offset,
+                    table: cache.mainCacheHeader.uuid,
+                    entries: Array(info.entries(in: cache)),
+                    count: symbols.count
+                )
+            {
                 for index in range {
                     let symbol = symbols.symbols.advanced(by: index).pointee
                     let name = symbols.stringBase.advanced(by: numericCast(symbol.n_un.n_strx))
@@ -52,15 +73,25 @@ final class SharedCacheSymbols {
             readSymbolFiles(header: cache.mainCacheHeader, offset: offset, record: record)
         }
         if !foundDefinitions, let cache = fullCache, let expectedUUID = image.identity.uuid,
-           let file = filesByUUID[expectedUUID],
-           let fileText = file.segments64.first(where: { $0.segmentName == "__TEXT" }),
-           UInt64(fileText.virtualMemoryAddress) >= cache.mainCacheHeader.sharedRegionStart {
-            let offset = UInt64(fileText.virtualMemoryAddress) - cache.mainCacheHeader.sharedRegionStart
+            let file = filesByUUID[expectedUUID],
+            let fileText = file.segments64.first(where: { $0.segmentName == "__TEXT" }),
+            UInt64(fileText.virtualMemoryAddress) >= cache.mainCacheHeader.sharedRegionStart
+        {
+            let offset =
+                UInt64(fileText.virtualMemoryAddress) - cache.mainCacheHeader.sharedRegionStart
             if let info = cache.localSymbolsInfo, let symbols = info.symbols64(in: cache),
-               let range = localRange(offset, table: cache.mainCacheHeader.uuid, entries: Array(info.entries(in: cache)), count: symbols.count) {
+                let range = localRange(
+                    offset,
+                    table: cache.mainCacheHeader.uuid,
+                    entries: Array(info.entries(in: cache)),
+                    count: symbols.count
+                )
+            {
                 for index in range {
                     let symbol = symbols[index]
-                    if symbol.offset >= 0 { symbol.name.withCString { record($0, UInt64(symbol.offset)) } }
+                    if symbol.offset >= 0 {
+                        symbol.name.withCString { record($0, UInt64(symbol.offset)) }
+                    }
                 }
             }
             readSymbolFiles(header: cache.mainCacheHeader, offset: offset, record: record)
@@ -69,8 +100,10 @@ final class SharedCacheSymbols {
     }
 
     private func localRange(
-        _ offset: UInt64, table: UUID,
-        entries: @autoclosure () -> [any DyldCacheLocalSymbolsEntryProtocol], count: Int
+        _ offset: UInt64,
+        table: UUID,
+        entries: @autoclosure () -> [any DyldCacheLocalSymbolsEntryProtocol],
+        count: Int
     ) -> Range<Int>? {
         if rangesByTable[table] == nil {
             var ranges: [UInt64: Range<Int>] = [:]
@@ -78,8 +111,10 @@ final class SharedCacheSymbols {
             for entry in entries() {
                 let address = UInt64(entry.dylibOffset)
                 guard seen.insert(address).inserted,
-                      entry.nlistStartIndex >= 0, entry.nlistCount >= 0,
-                      entry.nlistStartIndex <= count, entry.nlistCount <= count - entry.nlistStartIndex else { continue }
+                    entry.nlistStartIndex >= 0, entry.nlistCount >= 0,
+                    entry.nlistStartIndex <= count,
+                    entry.nlistCount <= count - entry.nlistStartIndex
+                else { continue }
                 ranges[address] = entry.nlistStartIndex..<(entry.nlistStartIndex + entry.nlistCount)
             }
             rangesByTable[table] = ranges
@@ -88,14 +123,17 @@ final class SharedCacheSymbols {
     }
 
     private func readSymbolFiles(
-        header: DyldCacheHeader, offset: UInt64, record: (UnsafePointer<CChar>, UInt64) -> Void
+        header: DyldCacheHeader,
+        offset: UInt64,
+        record: (UnsafePointer<CChar>, UInt64) -> Void
     ) {
         if filesByCache[header.uuid] == nil {
             filesByCache[header.uuid] = []
             for url in Self.symbolFileURLs() {
                 guard let file = try? DyldCache(subcacheUrl: url, mainCacheHeader: header),
-                      file.header.uuid == header.symbolFileUUID,
-                      let symbols = SymbolFile(file) else { continue }
+                    file.header.uuid == header.symbolFileUUID,
+                    let symbols = SymbolFile(file)
+                else { continue }
                 // Several Cryptex paths can expose the same symbol file. Its
                 // UUID identifies the complete table, so read it only once.
                 filesByCache[header.uuid] = [symbols]
@@ -103,14 +141,22 @@ final class SharedCacheSymbols {
             }
         }
         for file in filesByCache[header.uuid] ?? [] {
-            guard let range = localRange(offset, table: file.cache.header.uuid,
-                entries: Array(file.info.entries(in: file.cache)), count: file.symbols.count) else { continue }
+            guard
+                let range = localRange(
+                    offset,
+                    table: file.cache.header.uuid,
+                    entries: Array(file.info.entries(in: file.cache)),
+                    count: file.symbols.count
+                )
+            else { continue }
             if let mapping = file.mapping {
                 mapping.forEach(in: range, record: record)
             } else {
                 for index in range {
                     let symbol = file.symbols[index]
-                    if symbol.offset >= 0 { symbol.name.withCString { record($0, UInt64(symbol.offset)) } }
+                    if symbol.offset >= 0 {
+                        symbol.name.withCString { record($0, UInt64(symbol.offset)) }
+                    }
                 }
             }
         }
@@ -123,7 +169,9 @@ final class SharedCacheSymbols {
         let mapping: MappedSymbols?
 
         init?(_ cache: DyldCache) {
-            guard let info = cache.localSymbolsInfo, let symbols = info.symbols64(in: cache) else { return nil }
+            guard let info = cache.localSymbolsInfo, let symbols = info.symbols64(in: cache) else {
+                return nil
+            }
             self.cache = cache
             self.info = info
             self.symbols = symbols
@@ -133,35 +181,54 @@ final class SharedCacheSymbols {
 
     // Keep names in the mapped string table until the query accepts them. The
     // ordinary MachOKit collection remains available when mapping is unavailable.
-    struct MappedSymbols {
-        let data: Data
-        let symbolStart: Int
-        let strings: Range<Int>
+    package struct MappedSymbols {
+        package let data: Data
+        package let symbolStart: Int
+        package let strings: Range<Int>
 
-        init?(_ cache: DyldCache, info: DyldCacheLocalSymbolsInfo) {
+        package init?(_ cache: DyldCache, info: DyldCacheLocalSymbolsInfo) {
             guard let data = try? Data(contentsOf: cache.url, options: .alwaysMapped),
-                  data.count >= MemoryLayout<DyldCacheHeader.Layout>.size,
-                  data.withUnsafeBytes({ UUID(uuid: $0.loadUnaligned(as: DyldCacheHeader.Layout.self).uuid) }) == cache.header.uuid else { return nil }
-            self.init(data: data, localSymbolsOffset: cache.header.localSymbolsOffset, layout: info.layout)
+                data.count >= MemoryLayout<DyldCacheHeader.Layout>.size,
+                data.withUnsafeBytes({
+                    UUID(uuid: $0.loadUnaligned(as: DyldCacheHeader.Layout.self).uuid)
+                }) == cache.header.uuid
+            else { return nil }
+            self.init(
+                data: data,
+                localSymbolsOffset: cache.header.localSymbolsOffset,
+                layout: info.layout
+            )
         }
 
-        init?(data: Data, localSymbolsOffset: UInt64, layout: DyldCacheLocalSymbolsInfo.Layout) {
+        package init?(
+            data: Data,
+            localSymbolsOffset: UInt64,
+            layout: DyldCacheLocalSymbolsInfo.Layout
+        ) {
             guard let base = Int(exactly: localSymbolsOffset), base <= data.count,
-                  let namesOffset = Int(exactly: layout.stringsOffset), namesOffset <= data.count - base,
-                  let namesCount = Int(exactly: layout.stringsSize), namesCount <= data.count - base - namesOffset,
-                  let symbolsOffset = Int(exactly: layout.nlistOffset), symbolsOffset <= data.count - base,
-                  let count = Int(exactly: layout.nlistCount),
-                  count <= (data.count - base - symbolsOffset) / MemoryLayout<nlist_64>.stride else { return nil }
+                let namesOffset = Int(exactly: layout.stringsOffset),
+                namesOffset <= data.count - base,
+                let namesCount = Int(exactly: layout.stringsSize),
+                namesCount <= data.count - base - namesOffset,
+                let symbolsOffset = Int(exactly: layout.nlistOffset),
+                symbolsOffset <= data.count - base,
+                let count = Int(exactly: layout.nlistCount),
+                count <= (data.count - base - symbolsOffset) / MemoryLayout<nlist_64>.stride
+            else { return nil }
             self.data = data
             symbolStart = base + symbolsOffset
             strings = (base + namesOffset)..<(base + namesOffset + namesCount)
         }
 
-        func forEach(in range: Range<Int>, record: (UnsafePointer<CChar>, UInt64) -> Void) {
+        package func forEach(in range: Range<Int>, record: (UnsafePointer<CChar>, UInt64) -> Void) {
             data.withUnsafeBytes { bytes in
                 for index in range {
-                    let entry = bytes.loadUnaligned(fromByteOffset: symbolStart + index * MemoryLayout<nlist_64>.stride, as: nlist_64.self)
-                    guard let offset = Int(exactly: entry.n_un.n_strx), offset < strings.count else { continue }
+                    let entry = bytes.loadUnaligned(
+                        fromByteOffset: symbolStart + index * MemoryLayout<nlist_64>.stride,
+                        as: nlist_64.self
+                    )
+                    guard let offset = Int(exactly: entry.n_un.n_strx), offset < strings.count
+                    else { continue }
                     let name = bytes.baseAddress!.advanced(by: strings.lowerBound + offset)
                     guard memchr(name, 0, strings.count - offset) != nil else { continue }
                     record(name.assumingMemoryBound(to: CChar.self), entry.n_value)
@@ -176,9 +243,15 @@ final class SharedCacheSymbols {
             urls.append(URL(fileURLWithPath: path.hasSuffix(".symbols") ? path : path + ".symbols"))
         }
         #if os(macOS)
-        let directories = ["/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld", "/System/Library/dyld"]
+        let directories = [
+            "/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld", "/System/Library/dyld",
+        ]
         #else
-        let directories = ["/System/Library/Caches/com.apple.dyld", "/System/Cryptexes/OS/System/Library/Caches/com.apple.dyld", "/private/preboot/Cryptexes/OS/System/Library/Caches/com.apple.dyld"]
+        let directories = [
+            "/System/Library/Caches/com.apple.dyld",
+            "/System/Cryptexes/OS/System/Library/Caches/com.apple.dyld",
+            "/private/preboot/Cryptexes/OS/System/Library/Caches/com.apple.dyld",
+        ]
         #endif
         for path in directories {
             let names = (try? FileManager.default.contentsOfDirectory(atPath: path)) ?? []

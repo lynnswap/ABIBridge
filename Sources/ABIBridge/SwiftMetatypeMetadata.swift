@@ -1,50 +1,13 @@
+import ABIBridgeRuntime
 import ABIBridgeCore
 
 /// Metadata.h and SIL/TypeLowering.cpp: a singleton metatype occupies a word
 /// in generic value storage, but has no components in a concrete SIL signature.
-struct SwiftMetatypeMetadata {
-    let instance: Any.Type?
-    let isExistential: Bool
-    let witnessCount: Int
+typealias SwiftMetatypeMetadata = RuntimeMetatypeMetadata
 
-    init?(_ type: Any.Type) {
-        let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
-        let kind = metadata.load(as: UInt.self)
-        if kind == 0x307, let shape = ABISwiftExtendedExistentialShape(metadata),
-           shape.loadUnaligned(as: UInt32.self) & 0xff == 2 {
-            guard let witnesses = SwiftExtendedExistentialShapeLayout(shape).witnessCount else { return nil }
-            instance = nil
-            isExistential = true
-            witnessCount = witnesses
-            return
-        }
-        guard kind == 0x304 || kind == 0x306 else { return nil }
-        instance = metadata.load(fromByteOffset: MemoryLayout<UInt>.size, as: Any.Type.self)
-        isExistential = kind == 0x306
-        witnessCount = isExistential
-            ? Int(metadata.load(fromByteOffset: 2 * MemoryLayout<UInt>.size, as: UInt32.self) & 0x00ffffff) : 0
-    }
-
-    var isSingleton: Bool { !isExistential && instance.map(Self.hasSingletonMetatype) == true }
-
-    private static func hasSingletonMetatype(_ instance: Any.Type) -> Bool {
-        if instance is AnyClass { return false }
-        if let metatype = Self(instance), !metatype.isExistential, let nested = metatype.instance {
-            return hasSingletonMetatype(nested)
-        }
-        return true
-    }
-
+extension RuntimeMetatypeMetadata {
     func valueType<Value>(for type: Value.Type, thin: Bool? = nil) throws -> CValueType {
-        let components: CValueType
-        if thin ?? isSingleton {
-            components = try CValueType(scalar: ABIValueVoid)
-        } else {
-            let pointer = try CValueType(scalar: ABIValuePointer)
-            components = witnessCount == 0 ? pointer : try CValueType(fields: Array(repeating: pointer, count: 1 + witnessCount))
-        }
-        return try CValueType(swiftComponents: components, size: MemoryLayout<Value>.size,
-            alignment: MemoryLayout<Value>.alignment)
+        try withRuntimeErrors { CValueType(try runtimeValueType(for: type, thin: thin)) }
     }
 }
 
@@ -60,7 +23,9 @@ struct SwiftValueConstants: Sendable {
     init(_ type: Any.Type) {
         func collect(_ type: Any.Type, offset: Int) -> [(Int, UInt, Bool)] {
             let wrapped = (type as? any NativeOptionalValue.Type)?.wrappedType
-            if let metatype = SwiftMetatypeMetadata(wrapped ?? type), metatype.isSingleton, let instance = metatype.instance {
+            if let metatype = SwiftMetatypeMetadata(wrapped ?? type), metatype.isSingleton,
+                let instance = metatype.instance
+            {
                 return [(offset, unsafeBitCast(instance, to: UInt.self), wrapped != nil)]
             }
             if let tuple = SwiftTupleMetadata(type) {
@@ -76,7 +41,8 @@ struct SwiftValueConstants: Sendable {
     }
 
     func initialize(at address: UnsafeMutableRawPointer) {
-        for word in words where !word.optional || address.load(fromByteOffset: word.offset, as: UInt.self) != 0 {
+        for word in words
+        where !word.optional || address.load(fromByteOffset: word.offset, as: UInt.self) != 0 {
             address.storeBytes(of: word.value, toByteOffset: word.offset, as: UInt.self)
         }
     }

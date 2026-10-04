@@ -60,6 +60,35 @@ class SimulatorTests(unittest.TestCase):
         self.assertIn(['xcrun', 'simctl', 'delete', 'owned-device'], calls)
         self.assertFalse(any('other-task-device' in call for call in calls))
 
+    def test_runtime_scheme_does_not_build_the_upper_product(self):
+        def output(*args):
+            if 'runtimes' in args:
+                return json.dumps({'runtimes': [runtime('27.0')]})
+            if '--show-sdk-version' in args:
+                return '27.0'
+            if 'create' in args:
+                return 'owned-device'
+            return json.dumps({'devices': {'runtime': [
+                {'udid': 'owned-device', 'state': 'Shutdown'}]}})
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'Sources/ABIBridgeSwiftUI'
+            source.mkdir(parents=True)
+            (source / 'View.swift').touch()
+            with patch.object(simulators, 'output', side_effect=output), \
+                    patch.object(simulators.subprocess, 'run') as run:
+                failures = simulators.run_platform(
+                    'iOS', root, root / 'build', root / 'results', 10,
+                    scheme='ABIBridgeRuntime', build_swiftui=False)
+        self.assertEqual(failures, [])
+        commands = [call.args[0] for call in run.call_args_list]
+        builds = [command for command in commands if command[0] == 'xcodebuild']
+        self.assertEqual(len(builds), 1)
+        self.assertIn('ABIBridgeRuntime', builds[0])
+        self.assertNotIn('ABIBridgeSwiftUI', builds[0])
+        self.assertIn(['xcrun', 'simctl', 'delete', 'owned-device'], commands)
+
     def test_both_shutdown_and_deletion_failures_remain_observable(self):
         catalog = {'devices': {'runtime': [{'udid': 'owned-device', 'state': 'Booted'}]}}
         with patch.object(simulators, 'output', return_value=json.dumps(catalog)), \

@@ -1,3 +1,4 @@
+import ABIBridgeTestSupport
 #if os(macOS)
 import ABIBridge
 import Darwin
@@ -15,19 +16,28 @@ private final class ImportMonitorFixture {
         let suffix = UUID().uuidString.replacingOccurrences(of: "-", with: "_")
         name = "ABIMonitored_" + suffix
         framework = "Monitored_" + suffix
-        provider = try FixtureLibrary(cxxSource: "extern \"C\" int \(name)(int value) { return value; }")
+        provider = try FixtureLibrary(
+            cxxSource: "extern \"C\" int \(name)(int value) { return value; }"
+        )
     }
     func makeConsumer(addend: Bool = false, initialization: String = "") throws -> URL {
         let declaration = "extern \"C\" int \(name)(int);"
-        let source = addend ? """
-        \(declaration)
-        asm(".data\\n.globl _ABIMonitoredBadSlot\\n_ABIMonitoredBadSlot:\\n.quad _\(name) + 1\\n");
-        """ : """
-        \(declaration)
-        static int (*volatile slot)(int) = \(name);
-        extern "C" int ABIMonitoredCall(int value) { return slot(value); }
-        """
-        let consumer = try FixtureLibrary(load: false, cxxSource: source + "\n" + initialization, linkArguments: [provider.libraryURL.path])
+        let source =
+            addend
+            ? """
+            \(declaration)
+            asm(".data\\n.globl _ABIMonitoredBadSlot\\n_ABIMonitoredBadSlot:\\n.quad _\(name) + 1\\n");
+            """
+            : """
+            \(declaration)
+            static int (*volatile slot)(int) = \(name);
+            extern "C" int ABIMonitoredCall(int value) { return slot(value); }
+            """
+        let consumer = try FixtureLibrary(
+            load: false,
+            cxxSource: source + "\n" + initialization,
+            linkArguments: [provider.libraryURL.path]
+        )
         consumers.append(consumer)
         let directory = consumer.directory.appendingPathComponent("\(framework).framework")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -35,8 +45,13 @@ private final class ImportMonitorFixture {
         try FileManager.default.copyItem(at: consumer.libraryURL, to: url)
         return url
     }
-    func load(_ url: URL) throws { handles.append(try #require(dlopen(url.path, RTLD_NOW | RTLD_LOCAL))) }
-    func cleanup() { handles.reversed().forEach { dlclose($0) }; consumers.forEach { $0.cleanup() }; provider.cleanup() }
+    func load(_ url: URL) throws {
+        handles.append(try #require(dlopen(url.path, RTLD_NOW | RTLD_LOCAL)))
+    }
+    func cleanup() {
+        handles.reversed().forEach { dlclose($0) }; consumers.forEach { $0.cleanup() };
+        provider.cleanup()
+    }
     var declaration: NativeDeclaration { NativeDeclaration(name: name, language: .c) }
     var scope: ImageSelector { .framework(named: framework) }
 }
@@ -58,25 +73,36 @@ struct ImportedFunctionMonitorTests {
     private enum CallbackFailure: Error { case expected }
     @Test func initializationReadinessDoesNotBecomeAPermanentInstallationFailure() async throws {
         let fixture = try ImportMonitorFixture(); defer { fixture.cleanup() }
-        let url = try fixture.makeConsumer(initialization: """
-        #include <unistd.h>
-        __attribute__((constructor)) static void holdInitialization() { usleep(500000); }
-        """)
+        let url = try fixture.makeConsumer(
+            initialization: """
+                #include <unistd.h>
+                __attribute__((constructor)) static void holdInitialization() { usleep(500000); }
+                """
+        )
         let installed = Mutex(false), failed = Mutex(false)
-        let monitor = try await unsafe ABIRuntime().monitorImportedFunction(fixture.declaration, as: ((Int32) -> Int32).self,
-            in: fixture.scope, onFailure: { Issue.record($0) }, onImageUpdate: { update in
+        let monitor = try await unsafe ABIRuntime().monitorImportedFunction(
+            fixture.declaration,
+            as: ((Int32) -> Int32).self,
+            in: fixture.scope,
+            onFailure: { Issue.record($0) },
+            onImageUpdate: { update in
                 switch update.state {
                 case .installed: installed.withLock { $0 = true }
                 case .failed: failed.withLock { $0 = true }
                 default: break
                 }
-            }) { next, value in try next.proceed(value) + 1 }
+            }
+        ) { next, value in try next.proceed(value) + 1 }
         defer { monitor.invalidate() }
         try fixture.load(url)
         try await waitForMonitoring { installed.withLock { $0 } || failed.withLock { $0 } }
         #expect(!failed.withLock { $0 })
         #expect(installed.withLock { $0 })
-        let call = try await ABIRuntime().cFunction(named: "ABIMonitoredCall", as: ((Int32) -> Int32).self, in: .path(url))
+        let call = try await ABIRuntime().cFunction(
+            named: "ABIMonitoredCall",
+            as: ((Int32) -> Int32).self,
+            in: .path(url)
+        )
         #expect(try unsafe call.unsafeInvoke(41) == 42)
     }
 
@@ -87,29 +113,42 @@ struct ImportedFunctionMonitorTests {
         let runtime = ABIRuntime()
         let applied = Mutex<[String]>([])
         let expectedDeclaration = fixture.declaration
-        let monitor = try await unsafe runtime.monitorImportedFunction(fixture.declaration, as: ((Int32) -> Int32).self,
-            in: fixture.scope, onFailure: { Issue.record($0) }, onImageUpdate: { update in
+        let monitor = try await unsafe runtime.monitorImportedFunction(
+            fixture.declaration,
+            as: ((Int32) -> Int32).self,
+            in: fixture.scope,
+            onFailure: { Issue.record($0) },
+            onImageUpdate: { update in
                 switch update.state {
                 case .installed: applied.withLock { $0.append(update.path) }
                 case .failed(let error): Issue.record(error)
                 default: break
                 }
-            }) { next, value in
-                #expect(next.declaration == expectedDeclaration)
-                #expect(ObjectIdentifier(next.signature) == ObjectIdentifier(((Int32) -> Int32).self))
-                return try next.proceed(value) + 1
             }
+        ) { next, value in
+            #expect(next.declaration == expectedDeclaration)
+            #expect(ObjectIdentifier(next.signature) == ObjectIdentifier(((Int32) -> Int32).self))
+            return try next.proceed(value) + 1
+        }
         defer { monitor.invalidate() }
         try await waitForMonitoring { applied.withLock { $0.count == 1 } }
         try fixture.load(future)
         try await waitForMonitoring { applied.withLock { $0.count == 2 } }
         #expect(monitor.images.count == 2)
         for url in [current, future] {
-            let call = try await runtime.cFunction(named: "ABIMonitoredCall", as: ((Int32) -> Int32).self, in: .path(url))
+            let call = try await runtime.cFunction(
+                named: "ABIMonitoredCall",
+                as: ((Int32) -> Int32).self,
+                in: .path(url)
+            )
             #expect(try unsafe call.unsafeInvoke(41) == 42)
         }
         monitor.invalidate()
-        let call = try await runtime.cFunction(named: "ABIMonitoredCall", as: ((Int32) -> Int32).self, in: .path(future))
+        let call = try await runtime.cFunction(
+            named: "ABIMonitoredCall",
+            as: ((Int32) -> Int32).self,
+            in: .path(future)
+        )
         #expect(try unsafe call.unsafeInvoke(42) == 42)
     }
 
@@ -117,14 +156,19 @@ struct ImportedFunctionMonitorTests {
         let fixture = try ImportMonitorFixture(); defer { fixture.cleanup() }
         let bad = try fixture.makeConsumer(addend: true), good = try fixture.makeConsumer()
         let failed = Mutex(false), installed = Mutex(false)
-        let monitor = try await unsafe ABIRuntime().monitorImportedFunction(fixture.declaration, as: ((Int32) -> Int32).self,
-            in: fixture.scope, onFailure: { Issue.record($0) }, onImageUpdate: { update in
+        let monitor = try await unsafe ABIRuntime().monitorImportedFunction(
+            fixture.declaration,
+            as: ((Int32) -> Int32).self,
+            in: fixture.scope,
+            onFailure: { Issue.record($0) },
+            onImageUpdate: { update in
                 switch update.state {
                 case .failed: failed.withLock { $0 = true }
                 case .installed: installed.withLock { $0 = true }
                 default: break
                 }
-            }) { next, value in try next.proceed(value) + 1 }
+            }
+        ) { next, value in try next.proceed(value) + 1 }
         defer { monitor.invalidate() }
         try fixture.load(bad)
         try await waitForMonitoring { failed.withLock { $0 } }
@@ -140,17 +184,22 @@ struct ImportedFunctionMonitorTests {
         let monitor: NativeImportedFunctionMonitor
         do {
             let capture = MonitorCapture { released.withLock { $0 = true } }
-            monitor = try await unsafe ABIRuntime().monitorImportedFunction(fixture.declaration, as: ((Int32) -> Int32).self,
-                in: fixture.scope, onFailure: { Issue.record($0) }, onImageUpdate: { update in
+            monitor = try await unsafe ABIRuntime().monitorImportedFunction(
+                fixture.declaration,
+                as: ((Int32) -> Int32).self,
+                in: fixture.scope,
+                onFailure: { Issue.record($0) },
+                onImageUpdate: { update in
                     switch update.state {
                     case .installed: applied.withLock { $0 = true }
                     case .failed(let error): Issue.record(error)
                     default: break
                     }
-                }) { next, value in
-                    withExtendedLifetime(capture) {}
-                    return try next.proceed(value) + 1
                 }
+            ) { next, value in
+                withExtendedLifetime(capture) {}
+                return try next.proceed(value) + 1
+            }
         }
         try fixture.load(first)
         try await waitForMonitoring { applied.withLock { $0 } }
@@ -159,7 +208,11 @@ struct ImportedFunctionMonitorTests {
         try fixture.load(later)
         let runtime = ABIRuntime()
         for url in [first, later] {
-            let call = try await runtime.cFunction(named: "ABIMonitoredCall", as: ((Int32) -> Int32).self, in: .path(url))
+            let call = try await runtime.cFunction(
+                named: "ABIMonitoredCall",
+                as: ((Int32) -> Int32).self,
+                in: .path(url)
+            )
             #expect(try unsafe call.unsafeInvoke(42) == 42)
         }
         #expect(monitor.images.count == 1)
@@ -168,36 +221,48 @@ struct ImportedFunctionMonitorTests {
     @Test func invalidationPreservesAnInFlightCallbackAndItsOriginalError() async throws {
         let fixture = try ImportMonitorFixture(); defer { fixture.cleanup() }
         let url = try fixture.makeConsumer(); try fixture.load(url)
-        let applied = Mutex(false), entered = Mutex(false), released = Mutex(false), failures = Mutex(0)
+        let applied = Mutex(false), entered = Mutex(false), released = Mutex(false),
+            failures = Mutex(0)
         let finish = DispatchSemaphore(value: 0)
         let monitor: NativeImportedFunctionMonitor
         do {
             let capture = MonitorCapture { released.withLock { $0 = true } }
-            monitor = try await unsafe ABIRuntime().monitorImportedFunction(fixture.declaration, as: ((Int32) -> Int32).self,
-                in: fixture.scope, onFailure: { error in
+            monitor = try await unsafe ABIRuntime().monitorImportedFunction(
+                fixture.declaration,
+                as: ((Int32) -> Int32).self,
+                in: fixture.scope,
+                onFailure: { error in
                     #expect(error is CallbackFailure)
                     failures.withLock { $0 += 1 }
-                }, onImageUpdate: { update in
+                },
+                onImageUpdate: { update in
                     switch update.state {
                     case .installed: applied.withLock { $0 = true }
                     case .failed(let error): Issue.record(error)
                     default: break
                     }
-                }) { next, value in
-                    entered.withLock { $0 = true }; finish.wait()
-                    withExtendedLifetime(capture) {}
-                    _ = try next.proceed(value)
-                    throw CallbackFailure.expected
                 }
+            ) { next, value in
+                entered.withLock { $0 = true }; finish.wait()
+                withExtendedLifetime(capture) {}
+                _ = try next.proceed(value)
+                throw CallbackFailure.expected
+            }
         }
         defer { finish.signal(); monitor.invalidate() }
         try await waitForMonitoring { applied.withLock { $0 } }
-        let call = try await ABIRuntime().cFunction(named: "ABIMonitoredCall", as: ((Int32) -> Int32).self, in: .path(url))
+        let call = try await ABIRuntime().cFunction(
+            named: "ABIMonitoredCall",
+            as: ((Int32) -> Int32).self,
+            in: .path(url)
+        )
         // This callback deliberately blocks until the async controller releases
         // it; the blocked call must not consume a cooperative executor worker.
         let task = Task {
             try await withCheckedThrowingContinuation { continuation in
-                let worker = Thread { continuation.resume(with: Result { try unsafe call.unsafeInvoke(41) }) }
+                let worker = Thread {
+                    continuation.resume(with: Result { try unsafe call.unsafeInvoke(41) })
+                }
                 worker.qualityOfService = .userInitiated
                 worker.start()
             }

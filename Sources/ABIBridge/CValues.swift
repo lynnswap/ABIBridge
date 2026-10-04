@@ -1,106 +1,73 @@
+import ABIBridgeRuntime
 import ABIBridgeCore
 import Foundation
 import CoreGraphics
 
-func consumeNativeCallFailure(_ failure: OpaquePointer?, domain: String = "ABIBridge.CInvocation") -> any Error {
-    guard let failure else {
-        return ABIResolutionError.metadataUnavailable("The native call interface returned no failure details.")
-    }
-    defer { ABIReleaseResolutionFailure(failure) }
-    return NSError(
-        domain: domain, code: Int(ABIResolutionFailureCode(failure)),
-        userInfo: [NSLocalizedDescriptionKey: String(cString: ABIResolutionFailureMessage(failure))]
-    )
+func consumeNativeCallFailure(
+    _ failure: OpaquePointer?,
+    domain: String = "ABIBridge.CInvocation"
+) -> any Error {
+    let error = consumeRuntimeCallFailure(failure, domain: domain)
+    return (error as? RuntimeResolutionError).map(ABIResolutionError.init) ?? error
 }
 
 // Layout is finalized by the C++ backend before publication. It retains nested
 // field types and permits concurrent preparation without mutating them.
-final class CValueType: @unchecked Sendable {
-    let handle: OpaquePointer
-    let size: Int
-    let alignment: Int
-
-    init(adopting handle: OpaquePointer) {
-        self.handle = handle
-        size = ABIValueTypeSize(handle)
-        alignment = ABIValueTypeAlignment(handle)
+final class CValueType: Sendable {
+    let runtime: RuntimeValueType
+    var handle: OpaquePointer { runtime.handle }
+    var size: Int { runtime.size }
+    var alignment: Int { runtime.alignment }
+    init(_ runtime: RuntimeValueType) { self.runtime = runtime }
+    convenience init(adopting handle: OpaquePointer) {
+        self.init(RuntimeValueType(adopting: handle))
     }
-
-    init(scalar: Int) throws {
-        var failure: OpaquePointer?
-        guard let handle = ABICreateScalarType(Int32(scalar), &failure) else {
-            throw consumeNativeCallFailure(failure)
-        }
-        self.handle = handle
-        size = ABIValueTypeSize(handle)
-        alignment = ABIValueTypeAlignment(handle)
+    convenience init(scalar: Int) throws {
+        self.init(try withRuntimeErrors { try RuntimeValueType(scalar: scalar) })
     }
-
-    init(fields: [CValueType]) throws {
-        let handles: [OpaquePointer?] = fields.map(\.handle)
-        var failure: OpaquePointer?
-        // Keep the owners alive until the aggregate retains each native field type.
-        let handle = withExtendedLifetime(fields) {
-            handles.withUnsafeBufferPointer {
-                ABICreateStructType($0.baseAddress, $0.count, &failure)
+    convenience init(fields: [CValueType]) throws {
+        self.init(try withRuntimeErrors { try RuntimeValueType(fields: fields.map(\.runtime)) })
+    }
+    convenience init(indirectSwiftSize size: Int, alignment: Int) throws {
+        self.init(
+            try withRuntimeErrors {
+                try RuntimeValueType(indirectSwiftSize: size, alignment: alignment)
             }
-        }
-        guard let handle else { throw consumeNativeCallFailure(failure) }
-        self.handle = handle
-        size = ABIValueTypeSize(handle)
-        alignment = ABIValueTypeAlignment(handle)
+        )
     }
-
-    init(indirectSwiftSize size: Int, alignment: Int) throws {
-        var failure: OpaquePointer?
-        guard let handle = ABICreateSwiftIndirectStorageType(size, alignment, &failure) else {
-            throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftInvocation")
-        }
-        self.handle = handle
-        self.size = size
-        self.alignment = alignment
-    }
-
-    init(swiftTuple fields: [CValueType], offsets: [Int], size: Int, alignment: Int, isPack: Bool = false) throws {
-        let handles: [OpaquePointer?] = fields.map(\.handle)
-        var failure: OpaquePointer?
-        let handle = withExtendedLifetime(fields) {
-            handles.withUnsafeBufferPointer { handles in
-                offsets.withUnsafeBufferPointer { offsets in
-                    if isPack {
-                        ABICreateSwiftPackStorageType(handles.baseAddress, offsets.baseAddress,
-                            fields.count, size, alignment, &failure)
-                    } else {
-                        ABICreateSwiftTupleStorageType(handles.baseAddress, offsets.baseAddress,
-                            fields.count, size, alignment, &failure)
-                    }
-                }
+    convenience init(
+        swiftTuple fields: [CValueType],
+        offsets: [Int],
+        size: Int,
+        alignment: Int,
+        isPack: Bool = false
+    ) throws {
+        self.init(
+            try withRuntimeErrors {
+                try RuntimeValueType(
+                    swiftTuple: fields.map(\.runtime),
+                    offsets: offsets,
+                    size: size,
+                    alignment: alignment,
+                    isPack: isPack
+                )
             }
-        }
-        guard let handle else { throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftInvocation") }
-        self.handle = handle
-        self.size = size
-        self.alignment = alignment
+        )
     }
-
-    init(swiftOptionalSingleton: Void) {
-        handle = ABICreateSwiftOptionalSingletonType()!
-        size = MemoryLayout<UInt>.size
-        alignment = MemoryLayout<UInt>.alignment
+    convenience init(swiftOptionalSingleton: Void) {
+        self.init(RuntimeValueType(swiftOptionalSingleton: ()))
     }
-
-    init(swiftComponents components: CValueType, size: Int, alignment: Int) throws {
-        var failure: OpaquePointer?
-        let handle = withExtendedLifetime(components) {
-            ABICreateSwiftStorageType(components.handle, size, alignment, &failure)
-        }
-        guard let handle else { throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftInvocation") }
-        self.handle = handle
-        self.size = size
-        self.alignment = alignment
+    convenience init(swiftComponents components: CValueType, size: Int, alignment: Int) throws {
+        self.init(
+            try withRuntimeErrors {
+                try RuntimeValueType(
+                    swiftComponents: components.runtime,
+                    size: size,
+                    alignment: alignment
+                )
+            }
+        )
     }
-
-    deinit { ABIReleaseValueType(handle) }
 }
 
 // Swift 6.3 IRGen crashes when this payload enum is nested in the generic
@@ -151,11 +118,14 @@ struct CValueCodec<Value>: Sendable {
         case .void, .foreign: break
         default:
             guard type.size == MemoryLayout<Value>.size,
-                  type.alignment == MemoryLayout<Value>.alignment else {
-                throw ABIResolutionError.signatureMismatch(.init(
-                    expected: "Swift layout of \(String(reflecting: Value.self))",
-                    found: ["C size \(type.size), alignment \(type.alignment)"]
-                ))
+                type.alignment == MemoryLayout<Value>.alignment
+            else {
+                throw ABIResolutionError.signatureMismatch(
+                    .init(
+                        expected: "Swift layout of \(String(reflecting: Value.self))",
+                        found: ["C size \(type.size), alignment \(type.alignment)"]
+                    )
+                )
             }
         }
     }
@@ -173,17 +143,27 @@ struct CValueCodec<Value>: Sendable {
         case .bytes: return storing(value)
         case .pointer:
             let unwrapped: Any?
-            if let optional = value as? any NativeOptionalValue { unwrapped = optional.wrappedValue }
-            else { unwrapped = value }
+            if let optional = value as? any NativeOptionalValue {
+                unwrapped = optional.wrappedValue
+            } else {
+                unwrapped = value
+            }
             return storing((unwrapped as? any NativePointerValue)?.rawPointer)
         case .foreign(_, let nativeType):
             let unwrapped: Any?
-            if let optional = value as? any NativeOptionalValue { unwrapped = optional.wrappedValue }
-            else { unwrapped = value }
+            if let optional = value as? any NativeOptionalValue {
+                unwrapped = optional.wrappedValue
+            } else {
+                unwrapped = value
+            }
             guard let unwrapped else { return storing(UnsafeRawPointer?.none) }
             let nativeValue = try (unwrapped as! any ABIBridgeValue).nativeValueForCall()
             try nativeValue.requireLayout(nativeType)
-            let storage = NativeValueStorage(size: type.size, alignment: type.alignment, owner: nativeValue)
+            let storage = NativeValueStorage(
+                size: type.size,
+                alignment: type.alignment,
+                owner: nativeValue
+            )
             unsafe nativeValue.withUnsafeBytes {
                 if let base = $0.baseAddress, !$0.isEmpty {
                     storage.address.copyMemory(from: base, byteCount: $0.count)
@@ -202,7 +182,9 @@ struct CValueCodec<Value>: Sendable {
             let optional = Value.self as? any NativeOptionalValue.Type
             guard let pointer = storage.address.load(as: UnsafeRawPointer?.self) else {
                 guard let optional else {
-                    throw ABIInvocationError.unexpectedNilResult(expected: String(reflecting: Value.self))
+                    throw ABIInvocationError.unexpectedNilResult(
+                        expected: String(reflecting: Value.self)
+                    )
                 }
                 return optional.nilValue as! Value
             }
@@ -232,23 +214,34 @@ struct CValueCodec<Value>: Sendable {
         if Value.self == UInt32.self { return ABIValueUInt32 }
         if Value.self == Int64.self { return ABIValueInt64 }
         if Value.self == UInt64.self { return ABIValueUInt64 }
-        if Value.self == Int.self { return MemoryLayout<Int>.size == 8 ? ABIValueInt64 : ABIValueInt32 }
-        if Value.self == UInt.self { return MemoryLayout<UInt>.size == 8 ? ABIValueUInt64 : ABIValueUInt32 }
+        if Value.self == Int.self {
+            return MemoryLayout<Int>.size == 8 ? ABIValueInt64 : ABIValueInt32
+        }
+        if Value.self == UInt.self {
+            return MemoryLayout<UInt>.size == 8 ? ABIValueUInt64 : ABIValueUInt32
+        }
         if Value.self == Float.self { return ABIValueFloat }
         if Value.self == Double.self { return ABIValueDouble }
-        if Value.self == CGFloat.self { return MemoryLayout<CGFloat>.size == 8 ? ABIValueDouble : ABIValueFloat }
+        if Value.self == CGFloat.self {
+            return MemoryLayout<CGFloat>.size == 8 ? ABIValueDouble : ABIValueFloat
+        }
         return nil
     }
 
     private static func standardValueType() throws -> CValueType? {
         if Value.self == NSRange.self {
-            let field = try CValueType(scalar: MemoryLayout<UInt>.size == 8 ? ABIValueUInt64 : ABIValueUInt32)
+            let field = try CValueType(
+                scalar: MemoryLayout<UInt>.size == 8 ? ABIValueUInt64 : ABIValueUInt32
+            )
             return try CValueType(fields: [field, field])
         }
-        guard Value.self == CGPoint.self || Value.self == CGSize.self || Value.self == CGRect.self else {
+        guard Value.self == CGPoint.self || Value.self == CGSize.self || Value.self == CGRect.self
+        else {
             return nil
         }
-        let field = try CValueType(scalar: MemoryLayout<CGFloat>.size == 8 ? ABIValueDouble : ABIValueFloat)
+        let field = try CValueType(
+            scalar: MemoryLayout<CGFloat>.size == 8 ? ABIValueDouble : ABIValueFloat
+        )
         let pair = try CValueType(fields: [field, field])
         return Value.self == CGRect.self ? try CValueType(fields: [pair, pair]) : pair
     }

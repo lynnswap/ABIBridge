@@ -1,3 +1,4 @@
+import ABIBridgeRuntime
 import ABIBridgeCore
 
 /// The upstream Swift parser owns the immutable tree and copied identifier
@@ -6,17 +7,23 @@ final class SwiftSyntax: @unchecked Sendable {
     private let handle: OpaquePointer
 
     init(symbol: String) throws {
-        guard let handle = symbol.utf8CString.withUnsafeBufferPointer({
-            ABICopySwiftSymbolSyntax($0.baseAddress, $0.count - 1)
-        }) else {
-            throw ABIResolutionError.unsupportedDeclaration("Cannot decode the Swift symbol " + symbol + ".")
+        guard
+            let handle = symbol.utf8CString.withUnsafeBufferPointer({
+                ABICopySwiftSymbolSyntax($0.baseAddress, $0.count - 1)
+            })
+        else {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "Cannot decode the Swift symbol " + symbol + "."
+            )
         }
         self.handle = handle
     }
 
     @unsafe init(typeReference: UnsafePointer<CChar>, length: Int) throws {
         guard let handle = ABICopySwiftTypeSyntax(typeReference, length) else {
-            throw ABIResolutionError.unsupportedDeclaration("Cannot decode the Swift metadata type reference.")
+            throw ABIResolutionError.unsupportedDeclaration(
+                "Cannot decode the Swift metadata type reference."
+            )
         }
         self.handle = handle
     }
@@ -30,7 +37,9 @@ final class SwiftSyntax: @unchecked Sendable {
     static func metadataType(_ type: Any.Type) throws -> Node {
         if let syntax = try extendedMetadataType(type) { return syntax }
         guard let name = _mangledTypeName(type) else {
-            throw ABIResolutionError.metadataUnavailable("The metadata's mangled type name is unavailable.")
+            throw ABIResolutionError.metadataUnavailable(
+                "The metadata's mangled type name is unavailable."
+            )
         }
         return try name.utf8CString.withUnsafeBufferPointer {
             try unsafe SwiftSyntax(typeReference: $0.baseAddress!, length: $0.count - 1).root
@@ -39,27 +48,33 @@ final class SwiftSyntax: @unchecked Sendable {
 
     static func extendedMetadataType(_ type: Any.Type) throws -> Node? {
         let pointer = unsafeBitCast(type, to: UnsafeRawPointer.self)
-        let kind = pointer.load(as: UInt.self)
-        if kind == 0x307 {
+        let kind = runtimeMetadataKind(type)
+        if kind == .extendedExistential {
             guard let handle = ABICopySwiftExtendedExistentialTypeSyntax(pointer) else {
-                throw ABIResolutionError.metadataUnavailable("The extended existential's type expression is unavailable.")
+                throw ABIResolutionError.metadataUnavailable(
+                    "The extended existential's type expression is unavailable."
+                )
             }
             let source = SwiftSyntax(adopting: handle).root
             let arguments = try SwiftGenericTypeMetadata(metadata: type).arguments.map { argument in
                 guard case .type(let value, _) = argument.storage else {
-                    throw ABIResolutionError.metadataUnavailable("The extended existential has a non-scalar generalization parameter.")
+                    throw ABIResolutionError.metadataUnavailable(
+                        "The extended existential has a non-scalar generalization parameter."
+                    )
                 }
                 return try metadataType(value)
             }
             return try source.substitutingTypeArguments(arguments)
         }
         if let optional = type as? any NativeOptionalValue.Type,
-           let wrapped = try extendedMetadataType(optional.wrappedType) {
+            let wrapped = try extendedMetadataType(optional.wrappedType)
+        {
             return try containerType(kind: 0x202, elements: [wrapped])
         }
         if let metatype = SwiftMetatypeMetadata(type), let instance = metatype.instance,
-           let wrapped = try extendedMetadataType(instance) {
-            return try containerType(kind: UInt32(kind), elements: [wrapped])
+            let wrapped = try extendedMetadataType(instance)
+        {
+            return try containerType(kind: UInt32(kind!.rawValue), elements: [wrapped])
         }
         if let tuple = SwiftTupleMetadata(type) {
             let extended = try tuple.elements.map { try extendedMetadataType($0.type) }
@@ -69,30 +84,48 @@ final class SwiftSyntax: @unchecked Sendable {
             }
             return try containerType(kind: 0x301, elements: elements, labels: tuple.labels)
         }
-        if kind == 0x302 {
+        if kind == .function {
             let info = try SwiftFunctionMetadata(type)
             let types = [info.result] + info.parameters
             let extended = try types.map(extendedMetadataType)
             guard extended.contains(where: { $0 != nil }) else { return nil }
-            let elements = try types.enumerated().map { index, type in try extended[index] ?? metadataType(type) }
+            let elements = try types.enumerated().map { index, type in
+                try extended[index] ?? metadataType(type)
+            }
             let failure = try info.extendedFlags & 1 != 0 ? metadataType(info.failure) : nil
             let actor = try info.globalActor.map(metadataType)
             return try withExtendedLifetime((elements, failure, actor)) {
-                let handle = elements.dropFirst().map { Optional($0.pointer) }.withUnsafeBufferPointer { parameters in
-                    info.parameterFlags.withUnsafeBufferPointer {
-                        ABICopySwiftFunctionTypeSyntax(info.flags, info.extendedFlags, parameters.baseAddress,
-                            $0.baseAddress, elements[0].pointer, failure?.pointer, actor?.pointer,
-                            info.attributes.differentiability.rawValue)
+                let handle = elements.dropFirst().map { Optional($0.pointer) }
+                    .withUnsafeBufferPointer { parameters in
+                        info.parameterFlags.withUnsafeBufferPointer {
+                            ABICopySwiftFunctionTypeSyntax(
+                                info.flags,
+                                info.extendedFlags,
+                                parameters.baseAddress,
+                                $0.baseAddress,
+                                elements[0].pointer,
+                                failure?.pointer,
+                                actor?.pointer,
+                                info.attributes.differentiability.rawValue
+                            )
+                        }
                     }
+                guard let handle else {
+                    throw ABIResolutionError.metadataUnavailable(
+                        "Cannot describe the function metadata's type expression."
+                    )
                 }
-                guard let handle else { throw ABIResolutionError.metadataUnavailable("Cannot describe the function metadata's type expression.") }
                 return SwiftSyntax(adopting: handle).root
             }
         }
         return nil
     }
 
-    private static func containerType(kind: UInt32, elements: [Node], labels: [String] = []) throws -> Node {
+    private static func containerType(
+        kind: UInt32,
+        elements: [Node],
+        labels: [String] = []
+    ) throws -> Node {
         let strings = labels.map { Array($0.utf8CString) }
         var pointers: [UnsafePointer<CChar>?] = []
         func append(_ index: Int) throws -> Node {
@@ -104,12 +137,22 @@ final class SwiftSyntax: @unchecked Sendable {
                 }
             }
             return try withExtendedLifetime(elements) {
-                let handle = elements.map { Optional($0.pointer) }.withUnsafeBufferPointer { elements in
+                let handle = elements.map { Optional($0.pointer) }.withUnsafeBufferPointer {
+                    elements in
                     pointers.withUnsafeBufferPointer {
-                        ABICopySwiftContainerTypeSyntax(kind, elements.baseAddress, elements.count, $0.baseAddress)
+                        ABICopySwiftContainerTypeSyntax(
+                            kind,
+                            elements.baseAddress,
+                            elements.count,
+                            $0.baseAddress
+                        )
                     }
                 }
-                guard let handle else { throw ABIResolutionError.metadataUnavailable("Cannot describe the container metadata's type expression.") }
+                guard let handle else {
+                    throw ABIResolutionError.metadataUnavailable(
+                        "Cannot describe the container metadata's type expression."
+                    )
+                }
                 return SwiftSyntax(adopting: handle).root
             }
         }
@@ -126,7 +169,9 @@ final class SwiftSyntax: @unchecked Sendable {
             self.owner = owner
         }
 
-        var kind: String { withExtendedLifetime(owner) { String(cString: ABISwiftSyntaxNodeKind(pointer)) } }
+        var kind: String {
+            withExtendedLifetime(owner) { String(cString: ABISwiftSyntaxNodeKind(pointer)) }
+        }
         var index: UInt64? {
             withExtendedLifetime(owner) {
                 ABISwiftSyntaxNodeHasIndex(pointer) ? ABISwiftSyntaxNodeIndex(pointer) : nil
@@ -137,8 +182,13 @@ final class SwiftSyntax: @unchecked Sendable {
             withExtendedLifetime(owner) {
                 var count = 0
                 guard let text = ABISwiftSyntaxNodeText(pointer, &count) else { return nil }
-                return String(decoding: UnsafeBufferPointer(start: UnsafeRawPointer(text).assumingMemoryBound(to: UInt8.self),
-                                                            count: count), as: UTF8.self)
+                return String(
+                    decoding: UnsafeBufferPointer(
+                        start: UnsafeRawPointer(text).assumingMemoryBound(to: UInt8.self),
+                        count: count
+                    ),
+                    as: UTF8.self
+                )
             }
         }
 
@@ -155,7 +205,9 @@ final class SwiftSyntax: @unchecked Sendable {
         func mangledName() throws -> String {
             try withExtendedLifetime(owner) {
                 guard let name = ABICopySwiftSyntaxNodeMangledName(pointer) else {
-                    throw ABIResolutionError.unsupportedDeclaration("Cannot remangle the Swift " + kind + " type node.")
+                    throw ABIResolutionError.unsupportedDeclaration(
+                        "Cannot remangle the Swift " + kind + " type node."
+                    )
                 }
                 defer { ABIFreeString(name) }
                 return String(cString: name)
@@ -167,27 +219,41 @@ final class SwiftSyntax: @unchecked Sendable {
                 let handle = arguments.map { Optional($0.pointer) }.withUnsafeBufferPointer {
                     ABICopySwiftSubstitutedTypeSyntax(pointer, $0.baseAddress, $0.count)
                 }
-                guard let handle else { throw ABIResolutionError.metadataUnavailable("Cannot substitute the metadata's type expression.") }
+                guard let handle else {
+                    throw ABIResolutionError.metadataUnavailable(
+                        "Cannot substitute the metadata's type expression."
+                    )
+                }
                 return SwiftSyntax(adopting: handle).root
             }
         }
 
         func constrainedExistentialShapeName(metatypeDepth: Int = 0) throws -> String {
             try withExtendedLifetime(owner) {
-                guard let name = ABICopySwiftConstrainedExistentialShapeName(pointer, metatypeDepth) else {
-                    throw ABIResolutionError.unsupportedDeclaration("Cannot generalize the constrained existential requirements.")
+                guard let name = ABICopySwiftConstrainedExistentialShapeName(pointer, metatypeDepth)
+                else {
+                    throw ABIResolutionError.unsupportedDeclaration(
+                        "Cannot generalize the constrained existential requirements."
+                    )
                 }
                 defer { ABIFreeString(name) }
                 return String(cString: name)
             }
         }
 
-        func makeExtendedExistentialShape(protocols: [UnsafeRawPointer?], written: [String],
-                                           declaring: [String], classBound: Bool,
-                                           superclass: Any.Type?) throws -> UnsafeMutableRawPointer {
+        func makeExtendedExistentialShape(
+            protocols: [UnsafeRawPointer?],
+            written: [String],
+            declaring: [String],
+            classBound: Bool,
+            superclass: Any.Type?
+        ) throws -> UnsafeMutableRawPointer {
             let writtenStrings = written.map { Array($0.utf8CString) }
             let declaringStrings = declaring.map { Array($0.utf8CString) }
-            func pointers<Result>(_ strings: [[CChar]], _ body: ([UnsafePointer<CChar>?]) throws -> Result) rethrows -> Result {
+            func pointers<Result>(
+                _ strings: [[CChar]],
+                _ body: ([UnsafePointer<CChar>?]) throws -> Result
+            ) rethrows -> Result {
                 var values: [UnsafePointer<CChar>?] = []
                 func append(_ index: Int) throws -> Result {
                     if index == strings.count { return try body(values) }
@@ -205,10 +271,23 @@ final class SwiftSyntax: @unchecked Sendable {
                         try protocols.withUnsafeBufferPointer { protocols in
                             try written.withUnsafeBufferPointer { written in
                                 try declaring.withUnsafeBufferPointer { declaring in
-                                    guard let value = ABICreateSwiftExtendedExistentialShape(pointer, protocols.baseAddress,
-                                        protocols.count, written.baseAddress, declaring.baseAddress, written.count, classBound,
-                                        superclass.map { unsafeBitCast($0, to: UnsafeRawPointer.self) }) else {
-                                        throw ABIResolutionError.metadataUnavailable("Cannot form the extended existential shape.")
+                                    guard
+                                        let value = ABICreateSwiftExtendedExistentialShape(
+                                            pointer,
+                                            protocols.baseAddress,
+                                            protocols.count,
+                                            written.baseAddress,
+                                            declaring.baseAddress,
+                                            written.count,
+                                            classBound,
+                                            superclass.map {
+                                                unsafeBitCast($0, to: UnsafeRawPointer.self)
+                                            }
+                                        )
+                                    else {
+                                        throw ABIResolutionError.metadataUnavailable(
+                                            "Cannot form the extended existential shape."
+                                        )
                                     }
                                     return value
                                 }
@@ -221,8 +300,15 @@ final class SwiftSyntax: @unchecked Sendable {
 
         func name() throws -> String {
             let mangled = try mangledName()
-            guard let name = DeclarationKey.demangle(mangled.hasPrefix("$s") ? mangled : "$s" + mangled, language: .swift) else {
-                throw ABIResolutionError.unsupportedDeclaration("Cannot display the Swift " + kind + " type node.")
+            guard
+                let name = DeclarationKey.demangle(
+                    mangled.hasPrefix("$s") ? mangled : "$s" + mangled,
+                    language: .swift
+                )
+            else {
+                throw ABIResolutionError.unsupportedDeclaration(
+                    "Cannot display the Swift " + kind + " type node."
+                )
             }
             return name
         }
