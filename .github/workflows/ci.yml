@@ -3,6 +3,7 @@ name: CI
 on:
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, closed]
   push:
     branches: [main]
   workflow_dispatch:
@@ -17,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ inputs.revision && github.run_id || github.ref }}
+  group: ci-${{ github.workflow }}-${{ inputs.revision && github.run_id || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 # macos-26 is an arm64 runner; Xcode 26.6 includes Swift 6.3 and all five SDKs.
@@ -27,6 +28,7 @@ env:
 jobs:
   release-tests:
     name: Release automation tests
+    if: github.event_name != 'pull_request' || github.event.action != 'closed'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -38,13 +40,14 @@ jobs:
       - run: python3 -m unittest discover -s scripts -p 'test_release.py' -v
 
   macos-tests:
-    name: macOS tests (${{ matrix.suite }})
+    name: macOS tests (${{ matrix.group }})
+    if: github.event_name != 'pull_request' || github.event.action != 'closed'
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
-        suite: [Core, Invocation, Hooks, Optimized bridge, Native consumers, Architecture]
+        group: [Package, Native]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -55,49 +58,57 @@ jobs:
         run: |
           xcodebuild -version
           xcrun swift --version
+          echo "ABI_TEST_BUILD_DIR=$RUNNER_TEMP/DerivedData" >> "$GITHUB_ENV"
       - name: Check whitespace and manifest
-        if: matrix.suite == 'Core'
+        if: matrix.group == 'Package'
         run: |
           git diff --check HEAD^ HEAD
           xcrun swift package dump-package
-      - name: Test package shard
-        id: package-tests
+      - name: Test core package shard
+        if: ${{ !cancelled() && matrix.group == 'Package' }}
         timeout-minutes: 25
-        if: contains(fromJSON('["Core", "Invocation", "Hooks"]'), matrix.suite)
-        env:
-          PACKAGE_SUITE: ${{ matrix.suite }}
-          ABI_TEST_BUILD_DIR: ${{ runner.temp }}/DerivedData
         run: |
           if [[ -f scripts/test-package.sh ]]; then
-            bash scripts/test-package.sh "$(printf '%s' "$PACKAGE_SUITE" | tr '[:upper:]' '[:lower:]')"
-          elif [[ "$PACKAGE_SUITE" == Core ]]; then
-            # Release validation can check out a revision older than the shard script.
+            bash scripts/test-package.sh core
+          else
+            # Release targets can predate the shard script.
             xcodebuild test -scheme ABIBridge \
               -destination 'platform=macOS,arch=arm64' \
               -derivedDataPath "$ABI_TEST_BUILD_DIR"
           fi
-      - name: Preserve failed package test diagnostics
-        if: always() && contains(fromJSON('["Core", "Invocation", "Hooks"]'), matrix.suite) && steps.package-tests.outcome != 'success' && steps.package-tests.outcome != 'skipped'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: package-test-${{ matrix.suite }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/DerivedData/Logs/Test
-          if-no-files-found: warn
-          retention-days: 7
+      - name: Test invocation package shard
+        if: ${{ !cancelled() && matrix.group == 'Package' && hashFiles('scripts/test-package.sh') != '' }}
+        timeout-minutes: 25
+        run: bash scripts/test-package.sh invocation
+      - name: Test hooks package shard
+        if: ${{ !cancelled() && matrix.group == 'Package' && hashFiles('scripts/test-package.sh') != '' }}
+        timeout-minutes: 25
+        run: bash scripts/test-package.sh hooks
       - name: Test optimized native bridge
-        if: matrix.suite == 'Optimized bridge'
+        if: ${{ !cancelled() && matrix.group == 'Package' }}
+        timeout-minutes: 15
         run: >-
           xcodebuild test
           -configuration Release
           -scheme ABIBridge
           -destination 'platform=macOS,arch=arm64'
-          -derivedDataPath "$RUNNER_TEMP/DerivedData"
+          -derivedDataPath "$ABI_TEST_BUILD_DIR"
           -only-testing:ABIBridgeTests/NativeRuntimeTests
+      - name: Preserve failed package test diagnostics
+        if: always() && matrix.group == 'Package' && (failure() || cancelled())
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: package-test-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/DerivedData/Logs/Test
+          if-no-files-found: warn
+          retention-days: 7
       - name: Test native consumers
-        if: matrix.suite == 'Native consumers'
+        if: ${{ !cancelled() && matrix.group == 'Native' }}
+        timeout-minutes: 25
         run: bash scripts/test-native-consumer.sh
       - name: Test architecture fixtures on macOS
-        if: matrix.suite == 'Architecture'
+        if: ${{ !cancelled() && matrix.group == 'Native' }}
+        timeout-minutes: 15
         working-directory: Tests/ArchitectureValidation
         run: >-
           xcodebuild test
@@ -105,17 +116,14 @@ jobs:
           -destination 'platform=macOS,arch=arm64'
           -derivedDataPath "$RUNNER_TEMP/ArchitectureValidation"
       - name: Check arm64 and arm64e code generation
-        if: matrix.suite == 'Architecture'
+        if: ${{ !cancelled() && matrix.group == 'Native' }}
         run: python3 scripts/check-architecture-codegen.py
 
   platform-builds:
-    name: Build (${{ matrix.platform }})
+    name: Apple platform builds
+    if: github.event_name != 'pull_request' || github.event.action != 'closed'
     runs-on: macos-26
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [iOS, visionOS, watchOS, tvOS]
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -125,31 +133,32 @@ jobs:
         run: |
           xcodebuild -version
           xcrun swift --version
-      - name: Build package products
-        env:
-          PLATFORM: ${{ matrix.platform }}
-        run: >-
-          xcodebuild build
-          -scheme ABIBridge
-          -destination "generic/platform=$PLATFORM"
-          -derivedDataPath "$RUNNER_TEMP/DerivedData"
-          WATCHOS_DEPLOYMENT_TARGET=11.4
-          CODE_SIGNING_ALLOWED=NO
-      - name: Build physical-device validation host
-        if: matrix.platform == 'iOS'
-        run: >-
-          ABI_VALIDATION_BUILD_DIR="$RUNNER_TEMP/DerivedData"
-          bash scripts/build-device-validation.sh arm64
-          CODE_SIGNING_ALLOWED=NO
-      - name: Build optional SwiftUI product
-        # Release validation may check out a revision from before this product existed.
-        if: hashFiles('Sources/ABIBridgeSwiftUI/*.swift') != ''
-        env:
-          PLATFORM: ${{ matrix.platform }}
-        run: >-
-          xcodebuild build
-          -scheme ABIBridgeSwiftUI
-          -destination "generic/platform=$PLATFORM"
-          -derivedDataPath "$RUNNER_TEMP/DerivedData"
-          WATCHOS_DEPLOYMENT_TARGET=11.4
-          CODE_SIGNING_ALLOWED=NO
+      - name: Build all Apple platforms
+        run: |
+          task_status=0
+          for task_platform in iOS visionOS watchOS tvOS; do
+            echo "::group::Build $task_platform"
+            if ! xcodebuild build -scheme ABIBridge \
+              -destination "generic/platform=$task_platform" \
+              -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+              WATCHOS_DEPLOYMENT_TARGET=11.4 CODE_SIGNING_ALLOWED=NO; then
+              task_status=1
+            fi
+            if [[ "$task_platform" == iOS ]]; then
+              if ! ABI_VALIDATION_BUILD_DIR="$RUNNER_TEMP/DerivedData" \
+                bash scripts/build-device-validation.sh arm64 CODE_SIGNING_ALLOWED=NO; then
+                task_status=1
+              fi
+            fi
+            # Release targets can predate the optional SwiftUI product.
+            if compgen -G 'Sources/ABIBridgeSwiftUI/*.swift' > /dev/null; then
+              if ! xcodebuild build -scheme ABIBridgeSwiftUI \
+                -destination "generic/platform=$task_platform" \
+                -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+                WATCHOS_DEPLOYMENT_TARGET=11.4 CODE_SIGNING_ALLOWED=NO; then
+                task_status=1
+              fi
+            fi
+            echo "::endgroup::"
+          done
+          exit "$task_status"

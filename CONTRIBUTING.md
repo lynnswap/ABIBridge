@@ -76,7 +76,7 @@ xcodebuild build \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-For watchOS, add `WATCHOS_DEPLOYMENT_TARGET=11.4` so dependencies also build within the supported deployment range. CI uses Xcode 26.6 on `macos-26` for macOS tests and iOS, visionOS, watchOS, and tvOS builds. Three package test shards, optimized bridge tests, native consumers, and architecture validation run as six independent macOS jobs. Each owns its build directories; PR and release validation require every job to succeed. Release targets that predate the shard script run the original full package suite in the core job.
+For watchOS, add `WATCHOS_DEPLOYMENT_TARGET=11.4` so dependencies also build within the supported deployment range. CI uses Xcode 26.6 on `macos-26` for macOS tests and iOS, visionOS, watchOS, and tvOS builds. CI uses three macOS jobs: package shards and optimized bridge tests share one runner; native consumers and architecture validation share another; all four platform builds share a third. Package shards still execute in separate test processes and sequentially reuse one build directory. Independent checks continue after a failure, and PR and release validation require every job to succeed. Release targets that predate the shard script run the original full package suite once. Closing a PR cancels its superseded validation without allocating replacement macOS runners.
 
 ## Managed Swift value adapters
 
