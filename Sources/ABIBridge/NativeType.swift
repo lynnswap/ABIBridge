@@ -155,7 +155,7 @@ public struct NativeType: Sendable, Hashable {
     }
 }
 
-/// A runtime-known fixed signature for a C-compatible call.
+/// A runtime-known signature for one C-compatible call.
 ///
 /// Use function-type metatypes for ordinary typed calls. This description is
 /// useful when an adapter discovers value layouts at runtime.
@@ -164,14 +164,19 @@ public struct NativeSignature: Sendable, Hashable {
     public let parameters: [NativeType]
     /// The result representation, including void.
     public let result: NativeType
+    /// The fixed prefix of a variadic declaration, or nil for a fixed signature.
+    public let fixedParameterCount: Int?
 
-    /// Describes a fixed signature without preparing or invoking a function.
+    /// Describes a concrete call without preparing or invoking a function.
     ///
     /// - Parameters:
     ///   - parameters: Explicit parameter representations.
+    ///   - variadicParameters: Anonymous input representations. Nil describes a
+    ///     fixed declaration; an empty array describes a variadic call with no tail.
     ///   - result: The result representation.
-    public init(parameters: [NativeType], returns result: NativeType) {
-        self.parameters = parameters
+    public init(parameters: [NativeType], variadicParameters: [NativeType]? = nil, returns result: NativeType) {
+        self.parameters = parameters + (variadicParameters ?? [])
+        fixedParameterCount = variadicParameters == nil ? nil : parameters.count
         self.result = result
     }
 }

@@ -24,6 +24,10 @@ uint32_t ABIValidationCPUType(void);
 uint32_t ABIValidationCPUSubtype(void);
 bool ABIValidationPACCompiled(void);
 int32_t ABIValidationAdd(int32_t a, int32_t b);
+double ABIValidationVariadicPromotions(int32_t prefix, ...);
+double ABIValidationVariadicOracle(int32_t prefix, float real, int8_t signedValue, uint16_t unsignedValue, bool boolean);
+double ABIValidationVariadicSum(int32_t count, ...);
+double ABIValidationVariadicStackOracle(void);
 typedef struct {
     int64_t a, b, c, d, e, f, g, h;
 } ABIValidationLarge;

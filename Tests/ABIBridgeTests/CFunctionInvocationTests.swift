@@ -5,6 +5,52 @@ import ObjectiveCFixtures
 import Testing
 
 struct CFunctionInvocationTests {
+    @Test func variadicPromotionsMatchNativeCalls() async throws {
+        let call = try await ABIRuntime().cFunction(named: "ABICVariadicMix",
+            as: ((Float, Int32, Int8, UInt16, Bool, Float, UnsafeRawPointer?, CGPoint) -> Double).self,
+            variadicFrom: 2)
+        let point = CGPoint(x: 2, y: 3)
+        var token = Int32(0)
+        try withUnsafePointer(to: &token) { pointer in
+            let expected = ABICVariadicMixOracle(4, 6, -8, 65500, true, 1.5, pointer, point)
+            let actual = try unsafe call.unsafeInvoke(4, 6, -8, 65500, true, 1.5, pointer, point)
+            #expect(actual == expected)
+        }
+    }
+
+    @Test func variadicEmptyAndStackTailsKeepTheirCallingConvention() async throws {
+        let runtime = ABIRuntime()
+        let empty = try await runtime.cFunction(named: "ABICVariadicSum",
+            as: ((Int32) -> Double).self, variadicFrom: 1)
+        #expect(try unsafe empty.unsafeInvoke(0) == 0)
+        let stack = try await runtime.cFunction(named: "ABICVariadicSum",
+            as: ((Int32, Float, Double, Float, Double, Float, Double, Float, Double, Double, Double, Float, Double) -> Double).self,
+            variadicFrom: 1)
+        #expect(try unsafe stack.unsafeInvoke(12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12) == ABICVariadicStackOracle())
+    }
+
+    @Test func runtimeVariadicLayoutsPromoteInputsAndRetainTheirTypes() async throws {
+        let signature = NativeSignature(parameters: [.int32], variadicParameters: [.float, .double], returns: .double)
+        let call = try await ABIRuntime().cFunction(named: "ABICVariadicSum", signature: signature)
+        #expect(signature.fixedParameterCount == 1 && signature.parameters.count == 3)
+        let values = [try NativeValue(copying: Int32(2), as: .int32),
+                      try NativeValue(copying: Float(1.5), as: .float),
+                      try NativeValue(copying: Double(2.5), as: .double)]
+        #expect(try unsafe call.unsafeInvoke(with: values).read(as: Double.self) == 4)
+        let empty = try await ABIRuntime().cFunction(named: "ABICVariadicSum",
+            signature: .init(parameters: [.int32], variadicParameters: [], returns: .double))
+        #expect(try unsafe empty.unsafeInvoke(with: [try .init(copying: Int32(0), as: .int32)]).read(as: Double.self) == 0)
+    }
+
+    @Test func invalidVariadicBoundariesFailPreparation() async throws {
+        for boundary in [-1, 0, 2] {
+            await #expect(throws: (any Error).self) {
+                _ = try await ABIRuntime().cFunction(named: "ABICVariadicSum",
+                    as: ((Int32) -> Double).self, variadicFrom: boundary)
+            }
+        }
+    }
+
     @Test func zeroNarrowAndBooleanResults() async throws {
         let runtime = ABIRuntime()
         let answer = try await runtime.cFunction(named: "ABICAnswer", as: (() -> Int32).self)

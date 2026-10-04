@@ -11,10 +11,11 @@ namespace abi_bridge {
 template <typename Signature> class function;
 
 /// A concrete C/C++ function signature, lowered by the consumer's compiler.
-/// Variadic signatures are not supported. A handle may be copied and outlive
+/// Fixed and variadic signatures use ordinary function types. A handle may outlive
 /// its runtime; target thread-safety and argument lifetimes remain caller-owned.
-template <typename Result, typename... Arguments>
-class function<Result(Arguments...)> final {
+template <typename Signature>
+class function final {
+    static_assert(std::is_function_v<Signature>, "A native function requires a function signature.");
 public:
     /// Takes a retained C/C++ function symbol without repeating lookup.
     /// Data, vtables, and other source-language calling conventions are rejected.
@@ -30,8 +31,9 @@ public:
     /// Calls using the supplied signature. The caller must ensure that argument
     /// and result types, calling convention, and ownership match the definition.
     /// Name resolution alone cannot validate this ABI contract.
-    Result unsafe_invoke(Arguments... arguments) const {
-        using signature = Result(Arguments...);
+    template <typename... Arguments>
+    decltype(auto) unsafe_invoke(Arguments&&... arguments) const {
+        using signature = Signature;
         using pointer = signature*;
         void* address = const_cast<void*>(symbol_.unsafe_address());
 #if __has_feature(ptrauth_calls)
@@ -60,6 +62,16 @@ template <typename Result, typename... Arguments>
 struct method_signature<Result(Arguments...) const> {
     using receiver = const void;
     using function_type = Result(const void*, Arguments...);
+};
+template <typename Result, typename... Arguments>
+struct method_signature<Result(Arguments..., ...)> {
+    using receiver = void;
+    using function_type = Result(void*, Arguments..., ...);
+};
+template <typename Result, typename... Arguments>
+struct method_signature<Result(Arguments..., ...) const> {
+    using receiver = const void;
+    using function_type = Result(const void*, Arguments..., ...);
 };
 }
 

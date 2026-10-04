@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <cstdarg>
 #include <iostream>
 #include <memory>
 #include <thread>
@@ -13,6 +14,25 @@ struct Nested { int16_t tag; Pair pair; void* context; };
 extern "C" uint8_t dynamicTiny(uint8_t value) { return value ^ 0xff; }
 extern "C" int8_t dynamicNegative() { return -42; }
 extern "C" int32_t dynamicZero() { return 42; }
+extern "C" double dynamicVariadic(float prefix, int count, ...) {
+    va_list arguments;
+    va_start(arguments, count);
+    int integer = va_arg(arguments, int);
+    double real = va_arg(arguments, double);
+    void* pointer = va_arg(arguments, void*);
+    Pair pair = va_arg(arguments, Pair);
+    va_end(arguments);
+    return prefix + count + integer + real + (pointer != nullptr) + pair.x + pair.y;
+}
+struct VariadicReceiver {
+    __attribute__((noinline, used)) double run(int count, ...) const {
+        va_list arguments;
+        va_start(arguments, count);
+        double value = va_arg(arguments, double);
+        va_end(arguments);
+        return count + value;
+    }
+};
 extern "C" double dynamicMany(int64_t a, int64_t b, int64_t c, int64_t d, int64_t e,
     int64_t f, int64_t g, int64_t h, int64_t i, int64_t j, double k, float l) {
     return a + b + c + d + e + f + g + h + i + j + k + l;
@@ -63,6 +83,56 @@ int main() {
     auto f64 = scalar(ABIValueDouble);
     auto pointer = scalar(ABIValuePointer);
     auto unit = scalar(ABIValueVoid);
+
+    auto pairType = structure({f64.get(), f64.get()});
+    const ABIValueType* variadicTypes[] = {f32.get(), i32.get(), i8.get(), f32.get(), pointer.get(), pairType.get()};
+    ABIResolutionFailure* variadicFailure = nullptr;
+    Call variadic(ABICreateVariadicCCallInterface(f64.get(), variadicTypes, 6, 2, &variadicFailure), ABIReleaseCallInterface);
+    assert(variadic && !variadicFailure);
+    float prefix = 1.5f, real = 2.5f;
+    int count = 4;
+    int8_t integer = -7;
+    int token = 0;
+    void* context = &token;
+    Pair variadicPair{3,4};
+    void* variadicArguments[] = {&prefix, &count, &integer, &real, &context, &variadicPair};
+    auto variadicSymbol = abi_bridge::Runtime::current().resolve(
+        abi_bridge::declaration("dynamicVariadic", abi_bridge::language::c));
+    const double expectedVariadic = dynamicVariadic(prefix, count, integer, real, context, variadicPair);
+    double variadicResult = 0;
+    invoke(variadic.get(), ABIUnsafeFunctionAtAddress(variadicSymbol.unsafe_address()), &variadicResult, variadicArguments);
+    assert(variadicResult == expectedVariadic);
+    abi_bridge::function<double(float, int, ...)> typedVariadic(variadicSymbol);
+    assert(typedVariadic.unsafe_invoke(prefix, count, integer, real, context, variadicPair) == expectedVariadic);
+    auto methodSymbol = abi_bridge::Runtime::current().resolve(
+        abi_bridge::declaration("VariadicReceiver::run(int, ...) const", abi_bridge::language::cxx));
+    abi_bridge::method<double(int, ...) const> variadicMethod(methodSymbol);
+    auto receiver = std::make_shared<VariadicReceiver>();
+    auto boundVariadic = variadicMethod.bind(receiver);
+    assert(boundVariadic.unsafe_invoke(40, 2.0f) == receiver->run(40, 2.0f));
+    auto callback = std::unique_ptr<ABICallClosure, decltype(&ABIReleaseCallClosure)>(
+        ABICreateCallClosure(variadic.get(), [](void*, void* result, void* const* values) {
+            auto pair = *static_cast<Pair*>(values[5]);
+            *static_cast<double*>(result) = *static_cast<float*>(values[0]) + *static_cast<int*>(values[1])
+                + *static_cast<int*>(values[2]) + *static_cast<double*>(values[3])
+                + (*static_cast<void**>(values[4]) != nullptr) + pair.x + pair.y;
+        }, nullptr, &variadicFailure), ABIReleaseCallClosure);
+    assert(callback && !variadicFailure);
+    invoke(variadic.get(), ABICallClosureFunction(callback.get()), &variadicResult, variadicArguments);
+    assert(variadicResult == expectedVariadic);
+    std::vector<std::thread> variadicWorkers;
+    for (int index = 0; index < 4; ++index) variadicWorkers.emplace_back([&] {
+        for (int iteration = 0; iteration < 20; ++iteration) {
+            double result = 0;
+            invoke(variadic.get(), ABIUnsafeFunctionAtAddress(variadicSymbol.unsafe_address()), &result, variadicArguments);
+            assert(result == expectedVariadic);
+        }
+    });
+    for (auto& worker : variadicWorkers) worker.join();
+    ABIResolutionFailure* boundaryFailure = nullptr;
+    assert(!ABICreateVariadicCCallInterface(f64.get(), variadicTypes, 6, 0, &boundaryFailure));
+    assert(ABIResolutionFailureCode(boundaryFailure) == ABIFailureInvalidRequest);
+    ABIReleaseResolutionFailure(boundaryFailure);
 
     auto tiny = call(u8.get(), {u8.get()});
     u8.reset();

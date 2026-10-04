@@ -1,5 +1,6 @@
 #import "CFunctionFixtures.h"
 #include <stdlib.h>
+#include <stdarg.h>
 #include "CXXObjectFixtures.h"
 
 int32_t ABICNextRecordMode(int32_t value) { return value == 7 ? 42 : 7; }
@@ -17,6 +18,33 @@ ABICXXNestedRecord ABICTransformNestedRecord(ABICXXNestedRecord value) {
 int32_t ABICAnswer(void) { return 42; }
 int8_t ABICNegative(void) { return -42; }
 bool ABICNegate(bool value) { return !value; }
+double ABICVariadicMix(float prefix, int32_t count, ...) {
+    va_list arguments;
+    va_start(arguments, count);
+    int signedValue = va_arg(arguments, int);
+    int unsignedValue = va_arg(arguments, int);
+    int boolean = va_arg(arguments, int);
+    double real = va_arg(arguments, double);
+    const void *pointer = va_arg(arguments, const void *);
+    CGPoint point = va_arg(arguments, CGPoint);
+    va_end(arguments);
+    return prefix + count + signedValue + unsignedValue + boolean + real + (pointer != NULL) + point.x + point.y;
+}
+double ABICVariadicMixOracle(float prefix, int32_t count, int8_t signedValue,
+    uint16_t unsignedValue, bool boolean, float real, const void *pointer, CGPoint point) {
+    return ABICVariadicMix(prefix, count, signedValue, unsignedValue, boolean, real, pointer, point);
+}
+double ABICVariadicSum(int32_t count, ...) {
+    va_list arguments;
+    va_start(arguments, count);
+    double result = 0;
+    for (int32_t index = 0; index < count; ++index) result += va_arg(arguments, double);
+    va_end(arguments);
+    return result;
+}
+double ABICVariadicStackOracle(void) {
+    return ABICVariadicSum(12, 1.0f, 2.0, 3.0f, 4.0, 5.0f, 6.0, 7.0f, 8.0, 9.0, 10.0, 11.0f, 12.0);
+}
 double ABICMixed(int8_t a, uint16_t b, int32_t c, uint64_t d,
     float e, double f, bool g, const void *h, int64_t i, double j, uintptr_t k, int32_t l) {
     return a + b + c + d + e + f + g + (h != NULL) + i + j + k + l;

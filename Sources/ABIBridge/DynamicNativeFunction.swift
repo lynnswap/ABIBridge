@@ -8,7 +8,7 @@ import ABIBridgeCore
 public struct DynamicNativeFunction: Sendable {
     /// The resolved symbol and retained image.
     public let symbol: ResolvedSymbol
-    /// The fixed parameter and result layouts.
+    /// The concrete input/result layouts and optional variadic boundary.
     public let signature: NativeSignature
     private let interface: CCallInterface
 
@@ -17,7 +17,8 @@ public struct DynamicNativeFunction: Sendable {
         self.signature = signature
         interface = try CCallInterface(
             result: signature.result.requireCType(),
-            parameters: signature.parameters.map { try $0.requireCType() }
+            parameters: signature.parameters.map { try $0.requireCType() },
+            fixedParameterCount: signature.fixedParameterCount
         )
     }
 
@@ -26,8 +27,9 @@ public struct DynamicNativeFunction: Sendable {
     /// Count and layout compatibility are checked before dispatch. Each argument
     /// is copied to aligned call storage while its owner stays alive. Results own
     /// their byte allocation; ownership of resources referenced by returned
-    /// pointers must be established by the adapter. Nontrivial values, consumed
-    /// arguments, variadic declarations, and foreign exceptions need native adapters.
+    /// pointers must be established by the adapter. Anonymous Float and narrow
+    /// integer values undergo C default promotions when the signature is variadic.
+    /// Nontrivial values, consumed arguments, and foreign exceptions need native adapters.
     ///
     /// - Parameter values: Explicit arguments in declaration order.
     /// - Returns: Native result storage that can be cast to a user-defined wrapper.

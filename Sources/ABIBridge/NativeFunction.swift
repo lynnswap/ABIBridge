@@ -5,13 +5,16 @@ import ABIBridgeCore
 final class CCallInterface: @unchecked Sendable {
     let handle: OpaquePointer
 
-    init(result: CValueType, parameters: [CValueType]) throws {
+    init(result: CValueType, parameters: [CValueType], fixedParameterCount: Int? = nil) throws {
         let handles: [OpaquePointer?] = parameters.map(\.handle)
         var failure: OpaquePointer?
         // Borrowed handles must outlive preparation, which retains their native storage.
         let handle = withExtendedLifetime((result, parameters)) {
             handles.withUnsafeBufferPointer {
-                ABICreateCCallInterface(result.handle, $0.baseAddress, $0.count, &failure)
+                if let fixedParameterCount {
+                    return ABICreateVariadicCCallInterface(result.handle, $0.baseAddress, $0.count, fixedParameterCount, &failure)
+                }
+                return ABICreateCCallInterface(result.handle, $0.baseAddress, $0.count, &failure)
             }
         }
         guard let handle else { throw consumeNativeCallFailure(failure) }
@@ -30,7 +33,7 @@ struct CFunctionCall<Result, each Argument>: Sendable {
     private let hiddenPointerCount: Int
     private let argumentCount: Int
 
-    init(hiddenPointerCount: Int = 0) throws {
+    init(hiddenPointerCount: Int = 0, variadicFrom: Int? = nil) throws {
         self.hiddenPointerCount = hiddenPointerCount
         let arguments = (repeat try CValueCodec<each Argument>())
         let result = try CValueCodec<Result>()
@@ -40,7 +43,11 @@ struct CFunctionCall<Result, each Argument>: Sendable {
         }
         for codec in repeat each arguments { types.append(codec.type) }
         argumentCount = types.count
-        interface = try CCallInterface(result: result.type, parameters: types)
+        if let variadicFrom, variadicFrom < 0 || variadicFrom > types.count - hiddenPointerCount {
+            throw ABIResolutionError.signatureMismatch(.init(expected: "A variadic boundary within the explicit argument list", found: [String(variadicFrom)]))
+        }
+        interface = try CCallInterface(result: result.type, parameters: types,
+            fixedParameterCount: variadicFrom.map { $0 + hiddenPointerCount })
         self.arguments = arguments
         self.result = result
     }
@@ -91,9 +98,9 @@ public struct NativeFunction<Result, each Argument>: Sendable {
 
     private let call: CFunctionCall<Result, repeat each Argument>
 
-    init(symbol: ResolvedSymbol) throws {
+    init(symbol: ResolvedSymbol, variadicFrom: Int? = nil) throws {
         self.symbol = symbol
-        call = try CFunctionCall()
+        call = try CFunctionCall(variadicFrom: variadicFrom)
     }
 
     /// Calls the function using the prepared platform C calling convention.
@@ -101,10 +108,11 @@ public struct NativeFunction<Result, each Argument>: Sendable {
     /// The caller must ensure the signature matches the native declaration,
     /// pointers remain valid, and any thread or ownership requirements are met.
     /// Pointer values remain borrowed; the handle does not retain pointees.
-    /// Variadic declarations, native exceptions, and nontrivial C++ values require
-    /// separate adapters and must not be passed through this entry point.
+    /// Variadic calls use the prepared fixed-prefix boundary and standard C
+    /// promotions for anonymous arguments. Native exceptions and nontrivial
+    /// C++ values require a compiler adapter.
     ///
-    /// - Parameter values: Fixed arguments in declaration order.
+    /// - Parameter values: All concrete arguments, including the anonymous tail.
     /// - Returns: The result converted to the requested Swift type.
     /// - Throws: An invocation error for a null nonoptional pointer result, or a
     ///   native call-interface error. ABI mismatches are not recoverable errors.
@@ -123,7 +131,8 @@ extension ABIRuntime {
     ///
     /// - Parameters:
     ///   - name: A C linker name without the Mach-O underscore.
-    ///   - signature: A synchronous, fixed function type using supported C representations.
+    ///   - signature: A synchronous function type describing all concrete inputs.
+    ///   - variadicFrom: The first anonymous argument index, or nil for a fixed declaration.
     ///   - scope: Images to search; automatic scope considers only loaded images.
     ///   - loading: Whether an explicit image may be acquired and initialized.
     /// - Returns: A reusable function retaining its image and prepared signature.
@@ -131,17 +140,19 @@ extension ABIRuntime {
     public func cFunction<Result, each Argument>(
         named name: String,
         as signature: ((repeat each Argument) -> Result).Type,
+        variadicFrom: Int? = nil,
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeFunction<Result, repeat each Argument> {
-        try NativeFunction(symbol: resolve(.init(name: name, language: .c), in: scope, loading: loading))
+        try NativeFunction(symbol: resolve(.init(name: name, language: .c), in: scope, loading: loading), variadicFrom: variadicFrom)
     }
 
     /// Resolves a C function in an already retained image.
     ///
     /// - Parameters:
     ///   - name: A C linker name without the Mach-O underscore.
-    ///   - signature: A synchronous, fixed function type using supported C representations.
+    ///   - signature: A synchronous function type describing all concrete inputs.
+    ///   - variadicFrom: The first anonymous argument index, or nil for a fixed declaration.
     ///   - image: The retained image whose symbol index can be reused.
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable typed function retaining the image.
@@ -149,10 +160,11 @@ extension ABIRuntime {
     public func cFunction<Result, each Argument>(
         named name: String,
         as signature: ((repeat each Argument) -> Result).Type,
+        variadicFrom: Int? = nil,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeFunction<Result, repeat each Argument> {
-        try NativeFunction(symbol: resolve(.init(name: name, language: .c), in: image, loading: loading))
+        try NativeFunction(symbol: resolve(.init(name: name, language: .c), in: image, loading: loading), variadicFrom: variadicFrom)
     }
 
     /// Resolves a C++ free or static function with C-compatible value representations.
@@ -162,7 +174,8 @@ extension ABIRuntime {
     ///
     /// - Parameters:
     ///   - name: A complete demangled C++ declaration.
-    ///   - signature: A synchronous, fixed function type using supported C representations.
+    ///   - signature: A synchronous function type describing all concrete inputs.
+    ///   - variadicFrom: The first anonymous argument index, or nil for a fixed declaration.
     ///   - scope: Images to search; automatic scope considers only loaded images.
     ///   - loading: Whether an explicit image may be acquired and initialized.
     /// - Returns: A reusable function retaining its image and prepared signature.
@@ -170,17 +183,19 @@ extension ABIRuntime {
     public func cxxFunction<Result, each Argument>(
         named name: String,
         as signature: ((repeat each Argument) -> Result).Type,
+        variadicFrom: Int? = nil,
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeFunction<Result, repeat each Argument> {
-        try NativeFunction(symbol: resolve(.init(name: name, language: .cxx), in: scope, loading: loading))
+        try NativeFunction(symbol: resolve(.init(name: name, language: .cxx), in: scope, loading: loading), variadicFrom: variadicFrom)
     }
 
     /// Resolves a C-compatible C++ function in an already retained image.
     ///
     /// - Parameters:
     ///   - name: A complete demangled C++ declaration.
-    ///   - signature: A synchronous, fixed function type using supported C representations.
+    ///   - signature: A synchronous function type describing all concrete inputs.
+    ///   - variadicFrom: The first anonymous argument index, or nil for a fixed declaration.
     ///   - image: The retained image whose symbol index can be reused.
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable typed function retaining the image.
@@ -188,9 +203,10 @@ extension ABIRuntime {
     public func cxxFunction<Result, each Argument>(
         named name: String,
         as signature: ((repeat each Argument) -> Result).Type,
+        variadicFrom: Int? = nil,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeFunction<Result, repeat each Argument> {
-        try NativeFunction(symbol: resolve(.init(name: name, language: .cxx), in: image, loading: loading))
+        try NativeFunction(symbol: resolve(.init(name: name, language: .cxx), in: image, loading: loading), variadicFrom: variadicFrom)
     }
 }

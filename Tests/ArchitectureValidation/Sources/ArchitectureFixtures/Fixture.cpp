@@ -8,6 +8,32 @@
 #include <cstring>
 #include <cstdlib>
 #include <optional>
+#include <cstdarg>
+
+double ABIValidationVariadicPromotions(int32_t prefix, ...) {
+    va_list arguments;
+    va_start(arguments, prefix);
+    double real = va_arg(arguments, double);
+    int signedValue = va_arg(arguments, int);
+    int unsignedValue = va_arg(arguments, int);
+    int boolean = va_arg(arguments, int);
+    va_end(arguments);
+    return prefix + real + signedValue + unsignedValue + boolean;
+}
+double ABIValidationVariadicOracle(int32_t prefix, float real, int8_t signedValue, uint16_t unsignedValue, bool boolean) {
+    return ABIValidationVariadicPromotions(prefix, real, signedValue, unsignedValue, boolean);
+}
+double ABIValidationVariadicSum(int32_t count, ...) {
+    va_list arguments;
+    va_start(arguments, count);
+    double result = 0;
+    for (int index = 0; index < count; ++index) result += va_arg(arguments, double);
+    va_end(arguments);
+    return result;
+}
+double ABIValidationVariadicStackOracle(void) {
+    return ABIValidationVariadicSum(12, 1.0f, 2.0, 3.0f, 4.0, 5.0f, 6.0, 7.0f, 8.0, 9.0, 10.0, 11.0f, 12.0);
+}
 
 namespace ABIArchitecture {
 struct Large { long words[8]; };
