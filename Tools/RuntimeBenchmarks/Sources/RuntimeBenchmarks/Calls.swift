@@ -26,6 +26,30 @@ func seconds(_ duration: Duration) -> Double {
     print("\(label): \(values[2]) us/call checksum=\(checksum)")
 }
 struct Benchmark {
+    @MainActor static func runPreparation() async throws {
+        let object = ABIRuntime().object(PreparationBox("value"))
+        let name = "add(Swift.Int64) -> Swift.Int64"
+        let firstStart = ContinuousClock.now
+        let first = try await object.method(named: name, as: ((Int64) -> Int64).self)
+        let firstValue = try unsafe first.unsafeInvoke(35)
+        precondition(firstValue == 42)
+        print("Swift generic member first preparation: \(seconds(firstStart.duration(to: .now))*1000) ms")
+        let count = 1000
+        var samples: [Double] = []
+        for _ in 0..<5 {
+            var checksum: Int64 = 0
+            let start = ContinuousClock.now
+            for value in 0..<count {
+                let method = try await object.method(named: name, as: ((Int64) -> Int64).self)
+                checksum += try unsafe method.unsafeInvoke(Int64(value))
+            }
+            samples.append(seconds(start.duration(to: .now)) * 1e6 / Double(count))
+            precondition(checksum == Int64(count * (count - 1) / 2 + count * 7))
+        }
+        samples.sort()
+        print("Swift generic member warm preparation: \(samples[2]) us/call (median of 5 x \(count))")
+    }
+
     @MainActor static func run() async throws {
         ABIPerfRunNative()
         let runtime = ABIRuntime()
