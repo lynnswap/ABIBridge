@@ -182,7 +182,7 @@ public actor NativeSwiftType: Hashable {
             let request = try declaration(ownerName, usesBinding)
             if originalRequest == nil { originalRequest = request }
             let belongs = !exact || SwiftMemberLookup.belongs(request.name, to: ownerName)
-            if belongs && (!usesBinding || exact) {
+            if belongs && (!usesBinding || exact || explicitSignature) {
                 do {
                     let symbol = try resolveDeclaredMember(request, in: ownerImage, exact: exact) {
                         try ownerClass.flatMap { try SwiftGenericContext($0, owner: ownerName) }
@@ -198,6 +198,8 @@ public actor NativeSwiftType: Hashable {
                     }
                     return (symbol, owner)
                 } catch ABIResolutionError.declarationNotFound {
+                } catch ABIResolutionError.signatureMismatch where usesBinding && explicitSignature && !exact {
+                    // Preserve candidate filtering and diagnostics when the direct match cannot bind.
                 } catch ABIResolutionError.unsupportedDeclaration(let reason) {
                     preparationFailure = ABIResolutionError.unsupportedDeclaration(reason)
                 } catch ABIResolutionError.imageUnavailable {
