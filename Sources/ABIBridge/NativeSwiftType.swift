@@ -154,6 +154,10 @@ public actor NativeSwiftType: Hashable {
 
     // Generic packs expand caller arguments without changing the source labels.
     // Their requests keep those labels until declaration binding determines arity.
+    private typealias ResolvedMember = (
+        symbol: ResolvedSymbol, metadata: Any.Type, generic: SwiftGenericCallPlan?
+    )
+
     private func resolveMember(
         signature: Any.Type? = nil,
         genericArguments: [NativeSwiftGenericArgument] = [],
@@ -163,7 +167,7 @@ public actor NativeSwiftType: Hashable {
         declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:],
         _ declaration: (String, Bool) throws -> NativeDeclaration
-    ) throws -> (symbol: ResolvedSymbol, metadata: Any.Type) {
+    ) throws -> ResolvedMember {
         var originalRequest: NativeDeclaration?
         var ownerClass: AnyClass? = metadata as? AnyClass
         var ownerImage = image
@@ -193,16 +197,19 @@ public actor NativeSwiftType: Hashable {
                             try ownerClass.flatMap { try SwiftGenericContext($0, owner: ownerName) }
                         }
                     }
+                    let generic: SwiftGenericCallPlan?
                     if usesBinding, let signature {
-                        _ = try genericPlan(
+                        generic = try genericPlan(
                             (symbol, owner),
                             signature: signature,
                             arguments: genericArguments,
                             declaredSignature: declaredSignature,
                             valueABIs: valueABIs
                         )
+                    } else {
+                        generic = nil
                     }
-                    return (symbol, owner)
+                    return (symbol, owner, generic)
                 } catch ABIResolutionError.declarationNotFound {
                 } catch ABIResolutionError.signatureMismatch where usesBinding && explicitSignature && !exact {
                     // Preserve candidate filtering and diagnostics when the direct match cannot bind.
@@ -220,7 +227,7 @@ public actor NativeSwiftType: Hashable {
                             in: extensionsOnly ? nil : ownerImage,
                             extensionsOnly: extensionsOnly
                         )
-                        let matches = candidates.filter { symbol in
+                        let matches = candidates.compactMap { symbol -> ResolvedMember? in
                             if explicitSignature,
                                 ![
                                     symbol.declaration.name,
@@ -230,7 +237,7 @@ public actor NativeSwiftType: Hashable {
                                         == SwiftMemberLookup.signatureKey(request.name)
                                 })
                             {
-                                return false
+                                return nil
                             }
                             do {
                                 guard
@@ -241,21 +248,22 @@ public actor NativeSwiftType: Hashable {
                                         declaredSignature: declaredSignature,
                                         valueABIs: valueABIs
                                     )
-                                else { return false }
-                                return try explicitSignature
-                                    || plan.matches(SwiftFunctionSignature(signature))
-                            } catch ABIResolutionError.signatureMismatch { return false } catch {
+                                else { return nil }
+                                guard try explicitSignature
+                                    || plan.matches(SwiftFunctionSignature(signature)) else { return nil }
+                                return (symbol, owner, plan)
+                            } catch ABIResolutionError.signatureMismatch { return nil } catch {
                                 preparationFailure = error
-                                return false
+                                return nil
                             }
                         }
                         if matches.count > 1 {
                             throw ABIResolutionError.ambiguousDeclaration(
                                 request,
-                                candidates: matches.map(\.linkageName)
+                                candidates: matches.map { $0.symbol.linkageName }
                             )
                         }
-                        if let symbol = matches.first { return (symbol, owner) }
+                        if let match = matches.first { return match }
                     }
                 } catch ABIResolutionError.imageUnavailable {
                     hasUnavailableExtensions = true
@@ -325,13 +333,7 @@ public actor NativeSwiftType: Hashable {
                 ? NativeDeclaration(name: member, language: .swift)
                 : swiftFunctionDeclaration(named: member, as: signature)
         }
-        let generic = try genericPlan(
-            symbol,
-            signature: signature,
-            arguments: genericArguments,
-            declaredSignature: declaredSignature,
-            valueABIs: valueABIs
-        )
+        let generic = symbol.generic
         let receiver = try receiverPlan(
             mutating: isMutating,
             consuming: isConsuming,
@@ -425,14 +427,8 @@ public actor NativeSwiftType: Hashable {
             metadata: metadata,
             owner: self,
             consumesArguments: true,
-            generic: genericPlan(
-                symbol,
-                signature: signature,
-                arguments: genericArguments,
-                receiver: metadata is AnyClass ? .object : nil,
-                declaredSignature: declaredSignature,
-                valueABIs: valueABIs
-            )
+            generic: metadata is AnyClass
+                ? symbol.generic.map { try $0.includingReceiver(.object) } : symbol.generic
         )
     }
 
@@ -471,14 +467,8 @@ public actor NativeSwiftType: Hashable {
             symbol: symbol.symbol,
             metadata: metadata,
             owner: self,
-            generic: genericPlan(
-                symbol,
-                signature: signature,
-                arguments: genericArguments,
-                receiver: symbol.metadata is AnyClass ? .object : nil,
-                declaredSignature: declaredSignature,
-                valueABIs: valueABIs
-            )
+            generic: symbol.metadata is AnyClass
+                ? symbol.generic.map { try $0.includingReceiver(.object) } : symbol.generic
         )
     }
 
@@ -545,12 +535,7 @@ public actor NativeSwiftType: Hashable {
                 isStatic: false
             )
         }
-        let generic = try genericPlan(
-            symbol,
-            signature: ((Value) -> Void).self,
-            declaredSignature: declaredSignature,
-            valueABIs: valueABIs
-        )
+        let generic = symbol.generic
         let receiver = try receiverPlan(
             mutating: isMutating ?? !isConsuming,
             consuming: isConsuming,
@@ -601,13 +586,8 @@ public actor NativeSwiftType: Hashable {
             metadata: metadata,
             owner: self,
             consumesArguments: true,
-            generic: genericPlan(
-                symbol,
-                signature: ((Value) -> Void).self,
-                receiver: symbol.metadata is AnyClass ? .object : nil,
-                declaredSignature: declaredSignature,
-                valueABIs: valueABIs
-            )
+            generic: symbol.metadata is AnyClass
+                ? symbol.generic.map { try $0.includingReceiver(.object) } : symbol.generic
         )
     }
 
@@ -855,12 +835,7 @@ extension NativeSwiftType {
                 isStatic: false
             )
         }
-        let generic = try genericPlan(
-            symbol,
-            signature: signature,
-            declaredSignature: declaredSignature,
-            valueABIs: valueABIs
-        )
+        let generic = symbol.generic
         let receiver = try receiverPlan(
             mutating: isMutating,
             consuming: isConsuming,
@@ -905,13 +880,8 @@ extension NativeSwiftType {
             symbol: symbol.symbol,
             metadata: metadata,
             owner: self,
-            generic: genericPlan(
-                symbol,
-                signature: signature,
-                receiver: symbol.metadata is AnyClass ? .object : nil,
-                declaredSignature: declaredSignature,
-                valueABIs: valueABIs
-            )
+            generic: symbol.metadata is AnyClass
+                ? symbol.generic.map { try $0.includingReceiver(.object) } : symbol.generic
         )
     }
 
