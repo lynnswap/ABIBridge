@@ -184,8 +184,14 @@ public actor NativeSwiftType: Hashable {
             let belongs = !exact || SwiftMemberLookup.belongs(request.name, to: ownerName)
             if belongs && (!usesBinding || exact || explicitSignature) {
                 do {
-                    let symbol = try resolveDeclaredMember(request, in: ownerImage, exact: exact) {
-                        try ownerClass.flatMap { try SwiftGenericContext($0, owner: ownerName) }
+                    let symbol: ResolvedSymbol
+                    if usesBinding && explicitSignature && !exact {
+                        // Extensions still need candidate binding to preserve constraints and their declaration names.
+                        symbol = try resolver.resolve(request, in: ownerImage, loading: .loadedOnly)
+                    } else {
+                        symbol = try resolveDeclaredMember(request, in: ownerImage, exact: exact) {
+                            try ownerClass.flatMap { try SwiftGenericContext($0, owner: ownerName) }
+                        }
                     }
                     if usesBinding, let signature {
                         _ = try genericPlan(
