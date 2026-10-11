@@ -127,8 +127,14 @@ final class SwiftCall: Sendable {
         if let trailingValue { addresses.append(trailingValue.address) }
         if let generic { addresses.append(contentsOf: generic.metadata.addresses) }
         let output = self.values.result.makeStorage()
-        let lifetimes = (logicalStorage + [trailingValue, receiverStorage, output].compactMap { $0 }).compactMap(\.codeLifetime)
-            + [SwiftValueCodeLifetime.current].compactMap { $0 }
+        var lifetimes: [SwiftValueCodeLifetime] = []
+        for value in logicalStorage {
+            if let lifetime = value.codeLifetime { lifetimes.append(lifetime) }
+        }
+        if let lifetime = trailingValue?.codeLifetime { lifetimes.append(lifetime) }
+        if let lifetime = receiverStorage?.codeLifetime { lifetimes.append(lifetime) }
+        if let lifetime = output.codeLifetime { lifetimes.append(lifetime) }
+        if let lifetime = SwiftValueCodeLifetime.current { lifetimes.append(lifetime) }
         let lifetime = SwiftValueCodeLifetime.connect(lifetimes,
             retaining: images + (generic?.binding.images ?? []) + (generic?.binding.typeOwners.flatMap(\.codeImages) ?? []))
         let codeOwners: Any = (codeOwner, generic, closure, lifetime)

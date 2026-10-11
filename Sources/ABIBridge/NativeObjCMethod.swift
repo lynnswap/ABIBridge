@@ -30,11 +30,11 @@ public struct NativeObjCMethod<Result, each Argument> {
         try withExtendedLifetime((receiver, binding)) {
             try signature.invoke(repeat each values, using: { addresses, output in
                 var error: NSError?
-                let success = addresses.withUnsafeBufferPointer {
-                    if let interface = signature.variadicInterface {
-                        return ABIInvokeVariadicObjCDispatch(binding.handle, interface.handle, receiver, output, $0.baseAddress, &error)
-                    }
-                    return ABIInvokeObjCDispatch(binding.handle, receiver, output, $0.baseAddress, &error)
+                let success: Bool
+                if let interface = signature.variadicInterface {
+                    success = ABIInvokeVariadicObjCDispatch(binding.handle, interface.handle, receiver, output, addresses.baseAddress, &error)
+                } else {
+                    success = ABIInvokeObjCDispatch(binding.handle, receiver, output, addresses.baseAddress, &error)
                 }
                 guard success else { throw objcResolutionError(error, declaration: binding.declaration) }
             })

@@ -88,9 +88,7 @@ public struct NativeObjCMethodInvocation<Result, each Argument>: CustomStringCon
         try frame.withCall { call in
             try callSignature.invoke(repeat each values, using: { arguments, output in
                 var error: NSError?
-                let success = arguments.withUnsafeBufferPointer {
-                    ABIObjCReplacementProceed(call, $0.baseAddress, &error)
-                }
+                let success = ABIObjCReplacementProceed(call, arguments.baseAddress, &error)
                 guard success else { throw error ?? ABIResolutionError.invalidAddress as NSError }
                 guard ABICopyObjCReplacementResult(call, output, &error) else {
                     throw error ?? ABIResolutionError.invalidAddress as NSError
@@ -245,9 +243,7 @@ package final class ObjCReplacement<Result, each Argument> {
                     let adjusted = try transformingArguments(repeat each values)
                     result = try signature.invoke(repeat each adjusted, using: { arguments, output in
                         var error: NSError?
-                        let success = arguments.withUnsafeBufferPointer {
-                            ABIObjCReplacementProceed(pointer, $0.baseAddress, &error)
-                        }
+                        let success = ABIObjCReplacementProceed(pointer, arguments.baseAddress, &error)
                         guard success else { throw error ?? ABIResolutionError.invalidAddress as NSError }
                         guard ABICopyObjCReplacementResult(pointer, output, &error) else {
                             throw error ?? ABIResolutionError.invalidAddress as NSError

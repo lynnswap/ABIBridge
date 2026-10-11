@@ -21,14 +21,15 @@ final class CCallInterface: Sendable {
 // Hidden pointers are ABI-supplied arguments such as this and an adapter target.
 struct CFunctionCall<Result, each Argument>: Sendable {
     private let interface: CCallInterface
-    private let arguments: (repeat CValueCodec<each Argument>)
+    private let arguments: [CArgumentCodec]
     private let result: CValueCodec<Result>
     private let hiddenPointerCount: Int
-    private let argumentCount: Int
+    private let storageLayout: NativeCallStorageLayout
 
     init(hiddenPointerCount: Int = 0, variadicFrom: Int? = nil) throws {
         self.hiddenPointerCount = hiddenPointerCount
-        let arguments = (repeat try CValueCodec<each Argument>())
+        var arguments: [CArgumentCodec] = []
+        for type in repeat (each Argument).self { arguments.append(try CArgumentCodec(type)) }
         let result = try CValueCodec<Result>()
         var types: [CValueType] = []
         if hiddenPointerCount > 0 {
@@ -37,8 +38,11 @@ struct CFunctionCall<Result, each Argument>: Sendable {
                 count: hiddenPointerCount
             )
         }
-        for codec in repeat each arguments { types.append(codec.type) }
-        argumentCount = types.count
+        types.append(contentsOf: arguments.map(\.type))
+        storageLayout = try NativeCallStorageLayout(
+            result: (result.type.size, result.type.alignment),
+            parameters: types.map { ($0.size, $0.alignment) }
+        )
         if let variadicFrom, variadicFrom < 0 || variadicFrom > types.count - hiddenPointerCount {
             throw ABIResolutionError.signatureMismatch(
                 .init(
@@ -63,34 +67,33 @@ struct CFunctionCall<Result, each Argument>: Sendable {
         _ values: repeat each Argument
     ) throws -> Result {
         precondition(hiddenPointers.count == hiddenPointerCount)
-        var storage: [NativeValueStorage] = []
-        storage.reserveCapacity(argumentCount)
-        for pointer in hiddenPointers {
-            let value = NativeValueStorage(
-                size: MemoryLayout<UnsafeRawPointer>.size,
-                alignment: MemoryLayout<UnsafeRawPointer>.alignment
-            )
-            value.store(pointer)
-            storage.append(value)
-        }
-        for (codec, value) in repeat (each arguments, each values) {
-            storage.append(try codec.encode(value))
-        }
-        let addresses: [UnsafeMutableRawPointer?] = storage.map(\.address)
-        let output = NativeValueStorage(size: result.type.size, alignment: result.type.alignment)
-        return try withExtendedLifetime(storage) {
-            var failure: OpaquePointer?
-            let success = addresses.withUnsafeBufferPointer {
-                ABIUnsafeInvokeCCallInterface(
+        return try storageLayout.withStorage { addresses, output in
+            for (index, pointer) in hiddenPointers.enumerated() {
+                addresses[index]!.storeBytes(of: pointer, as: UnsafeRawPointer.self)
+            }
+            var owners: [NativeValue] = []
+            var index = hiddenPointerCount
+            for value in repeat each values {
+                let owner = try withUnsafePointer(to: value) {
+                    try arguments[index - hiddenPointerCount].encode($0, addresses[index]!)
+                }
+                if let owner {
+                    owners.append(owner)
+                }
+                index += 1
+            }
+            return try withExtendedLifetime(owners) {
+                var failure: OpaquePointer?
+                let success = ABIUnsafeInvokeCCallInterface(
                     interface.handle,
                     function,
-                    output.address,
-                    $0.baseAddress,
+                    output,
+                    addresses.baseAddress,
                     &failure
                 )
+                guard success else { throw consumeNativeCallFailure(failure) }
+                return try result.decode(output, retaining: owner)
             }
-            guard success else { throw consumeNativeCallFailure(failure) }
-            return try result.decode(output, retaining: owner)
         }
     }
 }

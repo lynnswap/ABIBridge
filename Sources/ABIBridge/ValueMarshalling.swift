@@ -75,6 +75,54 @@ func finishSwiftInvocation<Output: ~Copyable>(
     return try outcome.get()
 }
 
+struct NativeCallStorageLayout: Sendable {
+    let offsets: [Int]
+    let resultOffset: Int
+    let size: Int
+    let alignment: Int
+
+    init(result: (size: Int, alignment: Int), parameters: [(size: Int, alignment: Int)]) throws {
+        var extent = 0
+        var alignment = result.alignment
+        func append(_ value: (size: Int, alignment: Int)) throws -> Int {
+            let padding = (value.alignment - extent % value.alignment) % value.alignment
+            let (offset, paddingOverflow) = extent.addingReportingOverflow(padding)
+            let (end, sizeOverflow) = offset.addingReportingOverflow(max(value.size, 1))
+            guard !paddingOverflow, !sizeOverflow else {
+                throw ABIResolutionError.unsupportedDeclaration(
+                    "Combined call storage is not representable."
+                )
+            }
+            extent = end
+            alignment = max(alignment, value.alignment)
+            return offset
+        }
+        offsets = try parameters.map { try append($0) }
+        resultOffset = try append(result)
+        size = extent
+        self.alignment = alignment
+    }
+
+    func withStorage<Result>(
+        _ body: (UnsafeMutableBufferPointer<UnsafeMutableRawPointer?>, UnsafeMutableRawPointer)
+            throws -> Result
+    ) rethrows -> Result {
+        try withUnsafeTemporaryAllocation(byteCount: size, alignment: alignment) { bytes in
+            bytes.initializeMemory(as: UInt8.self, repeating: 0)
+            return try withUnsafeTemporaryAllocation(
+                of: UnsafeMutableRawPointer?.self,
+                capacity: offsets.count
+            ) { addresses in
+                addresses.initialize(repeating: nil)
+                defer { addresses.deinitialize() }
+                let base = bytes.baseAddress!
+                for (index, offset) in offsets.enumerated() { addresses[index] = base + offset }
+                return try body(addresses, base + resultOffset)
+            }
+        }
+    }
+}
+
 final class NativeValueStorage {
     let address: UnsafeMutableRawPointer
     weak var runtimeValueOwner: SwiftRuntimeValueOwner?
@@ -140,6 +188,10 @@ final class NativeValueStorage {
 
     func retainResource(_ resource: AnyObject) {
         resources.append(resource)
+    }
+
+    func retainOwner(_ owner: AnyObject?) {
+        self.owner = owner
     }
 
     func take<Value: ~Copyable>(as type: Value.Type) -> Value {

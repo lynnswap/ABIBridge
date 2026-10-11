@@ -11,10 +11,15 @@ public struct DynamicNativeFunction: Sendable {
     /// The concrete input/result layouts and optional variadic boundary.
     public let signature: NativeSignature
     private let interface: CCallInterface
+    private let storageLayout: NativeCallStorageLayout
 
     init(symbol: ResolvedSymbol, signature: NativeSignature) throws {
         self.symbol = symbol
         self.signature = signature
+        storageLayout = try NativeCallStorageLayout(
+            result: (0, 1),
+            parameters: signature.parameters.map { ($0.size, $0.alignment) }
+        )
         interface = try CCallInterface(
             result: signature.result.requireCType(),
             parameters: signature.parameters.map { try $0.requireCType() },
@@ -41,30 +46,30 @@ public struct DynamicNativeFunction: Sendable {
                 expected: "\(signature.parameters.count) arguments", found: ["\(values.count) arguments"]
             ))
         }
-        var storage: [NativeValueStorage] = []
         for (value, expected) in zip(values, signature.parameters) {
             try value.requireLayout(expected)
-            let copy = NativeValueStorage(size: expected.size, alignment: expected.alignment, owner: value)
-            unsafe value.withUnsafeBytes {
-                if let base = $0.baseAddress, !$0.isEmpty {
-                    copy.address.copyMemory(from: base, byteCount: $0.count)
-                }
-            }
-            storage.append(copy)
         }
-        let addresses: [UnsafeMutableRawPointer?] = storage.map(\.address)
-        return try withExtendedLifetime(storage) {
-            try NativeValue(type: signature.result) { output in
-                var failure: OpaquePointer?
-                let success = unsafe symbol.withUnsafeAddress { address in
-                    addresses.withUnsafeBufferPointer {
-                        ABIUnsafeInvokeCCallInterface(
-                            interface.handle, ABIUnsafeFunctionAtAddress(address),
-                            output.baseAddress, $0.baseAddress, &failure
-                        )
+        return try storageLayout.withStorage { addresses, _ in
+            for (index, value) in values.enumerated() {
+                unsafe value.withUnsafeBytes {
+                    if let base = $0.baseAddress, !$0.isEmpty {
+                        addresses[index]!.copyMemory(from: base, byteCount: $0.count)
                     }
                 }
-                guard success else { throw consumeNativeCallFailure(failure) }
+            }
+            return try withExtendedLifetime(values) {
+                try NativeValue(type: signature.result) { output in
+                    var failure: OpaquePointer?
+                    let success = unsafe symbol.withUnsafeAddress { address in
+                        ABIUnsafeInvokeCCallInterface(
+                            interface.handle, ABIUnsafeFunctionAtAddress(address),
+                            output.baseAddress,
+                            addresses.baseAddress,
+                            &failure
+                        )
+                    }
+                    guard success else { throw consumeNativeCallFailure(failure) }
+                }
             }
         }
     }

@@ -192,11 +192,12 @@ Run the Release benchmarks without other builds or tests competing for resources
 
 ```sh
 bash scripts/benchmark-runtime.sh calls
+bash scripts/benchmark-runtime.sh calls 200000
 bash scripts/benchmark-runtime.sh search
 bash scripts/benchmark-runtime.sh hooks
 ```
 
-`calls` measures prepared native calls and callbacks. `search` measures lookup, demangling, and pointer discovery over generated fixtures. `hooks` measures Objective-C managed hooks and replacement entries through the local test scheme. Record Xcode, machine, configuration, and workload with the results. These benchmarks do not establish application latency or physical-device performance.
+`calls` measures prepared native calls and callbacks, including pointer and runtime-described C arguments, Objective-C structures and objects, and owned Swift strings. Its optional second argument sets the iteration count; fresh-callback creation remains capped at 10,000 iterations. `search` measures lookup, demangling, and pointer discovery over generated fixtures. `hooks` measures Objective-C managed hooks and replacement entries through the local test scheme. Record Xcode, machine, configuration, and workload with the results. These benchmarks do not establish application latency or physical-device performance.
 
 ## Submit a pull request
 

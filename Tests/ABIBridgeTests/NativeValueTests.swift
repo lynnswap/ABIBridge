@@ -31,6 +31,34 @@ private final class TrackedOwner {
 }
 private enum ConversionFailure: Error { case rejected, nullResource }
 
+private struct ScopedPair: ABIBridgeValue {
+    static let abiType = PairValue.abiType
+    let events: Events
+    init(_ events: Events) { self.events = events }
+    init(nativeValue: NativeValue) throws { throw ConversionFailure.rejected }
+    static func nativeValue(from value: Self) -> NativeValue {
+        NativeValue(
+            type: abiType,
+            retaining: TrackedOwner(value.events),
+            destroy: { _ in value.events.values.append("first") }
+        ) { bytes in
+            bytes.baseAddress!.storeBytes(of: Double(1), as: Double.self)
+            bytes.baseAddress!.storeBytes(of: Double(2), toByteOffset: 8, as: Double.self)
+        }
+    }
+}
+
+private struct RejectedCounter: ABIBridgeValue {
+    static let abiType = NativeType.pointer
+    let events: Events
+    init(_ events: Events) { self.events = events }
+    init(nativeValue: NativeValue) throws { throw ConversionFailure.rejected }
+    static func nativeValue(from value: Self) throws -> NativeValue {
+        #expect(value.events.values.isEmpty)
+        throw ConversionFailure.rejected
+    }
+}
+
 private final class ResourceValue: ABIBridgeValue {
     static let abiType = NativeType.pointer
     let storage: NativeValue
@@ -79,6 +107,18 @@ private struct WrongPair: ABIBridgeValue {
 }
 
 struct NativeValueTests {
+    @Test func laterArgumentFailureKeepsEarlierOwnersAliveUntilCleanup() async throws {
+        let function = try await ABIRuntime.shared.cFunction(
+            named: "ABICTransformPair",
+            as: ((ScopedPair, RejectedCounter) -> PairValue).self
+        )
+        let events = Events()
+        #expect(throws: ConversionFailure.rejected) {
+            try unsafe function.unsafeInvoke(ScopedPair(events), RejectedCounter(events))
+        }
+        #expect(events.values == ["first", "owner"])
+    }
+
     @Test func customWrappersUseTheirNativeLayout() async throws {
         let function = try await ABIRuntime.shared.cFunction(
             named: "ABICTransformPair", as: ((PairValue, UnsafeMutablePointer<Int32>) -> PairValue).self

@@ -130,23 +130,31 @@ struct ObjCValueCodec<Value> {
     }
 
     func encode(_ value: Value) throws -> NativeValueStorage {
+        let storage = NativeValueStorage(size: size, alignment: alignment)
+        storage.retainOwner(try encode(value, into: storage.address))
+        return storage
+    }
+
+    func encode(_ value: Value, into address: UnsafeMutableRawPointer) throws -> AnyObject? {
+        func store<Representation>(_ representation: Representation) {
+            withUnsafeBytes(of: representation) { bytes in
+                if let base = bytes.baseAddress, !bytes.isEmpty {
+                    address.copyMemory(from: base, byteCount: bytes.count)
+                }
+            }
+        }
         switch kind {
         case .void: throw Self.mismatch("void parameter")
         case .boolean:
-            let storage = NativeValueStorage(size: size, alignment: alignment)
-            storage.store((value as! Bool) ? UInt8(1) : UInt8(0))
-            return storage
+            store((value as! Bool) ? UInt8(1) : UInt8(0))
         case .bytes:
-            let storage = NativeValueStorage(size: size, alignment: alignment)
-            storage.store(value)
-            return storage
+            store(value)
         case .block:
             // Block and optional-block values both use one nullable object word.
             let object = unsafeBitCast(value, to: AnyObject?.self)
             let copy = try object.map(Self.copyBlock)
-            let storage = NativeValueStorage(size: size, alignment: alignment, owner: copy)
-            storage.store(copy.map { UnsafeRawPointer(Unmanaged.passUnretained($0).toOpaque()) })
-            return storage
+            store(copy.map { UnsafeRawPointer(Unmanaged.passUnretained($0).toOpaque()) })
+            return copy
         case .object, .classObject:
             let unwrapped: Any?
             if let optional = value as? any NativeOptionalValue {
@@ -164,9 +172,8 @@ struct ObjCValueCodec<Value> {
                 )
             }
             let object = unwrapped.map { $0 as AnyObject }
-            let storage = NativeValueStorage(size: size, alignment: alignment, owner: object)
-            storage.store(object.map { UnsafeRawPointer(Unmanaged.passUnretained($0).toOpaque()) })
-            return storage
+            store(object.map { UnsafeRawPointer(Unmanaged.passUnretained($0).toOpaque()) })
+            return object
         case .pointer:
             let unwrapped: Any?
             if let optional = value as? any NativeOptionalValue {
@@ -175,14 +182,17 @@ struct ObjCValueCodec<Value> {
                 unwrapped = value
             }
             let pointer = (unwrapped as? any NativePointerValue)?.rawPointer
-            let storage = NativeValueStorage(size: size, alignment: alignment)
-            storage.store(pointer)
-            return storage
+            store(pointer)
         }
+        return nil
     }
 
     func decode(_ storage: NativeValueStorage) throws -> Value {
-        try decode(storage.address, takingObjectReference: true)
+        try decode(storage.address)
+    }
+
+    func decode(_ address: UnsafeRawPointer) throws -> Value {
+        try decode(address, takingObjectReference: true)
     }
 
     // Callback arguments remain borrowed for the invocation. Decode directly

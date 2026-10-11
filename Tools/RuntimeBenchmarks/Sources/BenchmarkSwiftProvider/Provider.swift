@@ -4,6 +4,7 @@
 @inline(never) public func apply(_ callback: (Int64) -> Int64, _ value: Int64) -> Int64 {
     callback(value)
 }
+@inline(never) public func decorate(_ value: String) -> String { value + "!" }
 
 public final class PreparationBox<Value> {
     public let value: Value
