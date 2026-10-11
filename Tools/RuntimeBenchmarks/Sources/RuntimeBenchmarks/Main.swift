@@ -20,6 +20,7 @@ import Foundation
                 iterations = 50000
             }
             try await Benchmark.run(iterations: iterations)
+        case "prepare": try await Benchmark.runPreparation()
         case "search":
             guard CommandLine.arguments.count == 3 else {
                 throw NSError(
@@ -33,7 +34,7 @@ import Foundation
         default:
             throw NSError(
                 domain: "RuntimeBenchmarks", code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Use calls or search"])
+                userInfo: [NSLocalizedDescriptionKey: "Use calls, prepare, or search"])
         }
     }
 }

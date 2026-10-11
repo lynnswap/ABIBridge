@@ -30,6 +30,13 @@ extension ConstrainedBox where Value: CustomStringConvertible {
 }
 
 private final class ConstrainedPair<First, Second> {}
+final class AsyncConstrainedBox<Value> {
+    let value: Value
+    init(_ value: Value) { self.value = value }
+}
+extension AsyncConstrainedBox where Value == Int {
+    @inline(never) @_optimize(none) func result() async -> Int { value }
+}
 extension ConstrainedPair where First == Int {
     @inline(never) @_optimize(none) func partial() -> String { "partial" }
     @inline(never) @_optimize(none) func overlap() -> String { "first" }
@@ -439,12 +446,13 @@ struct SwiftConstrainedExtensionTests {
         }
     }
 
-    @MainActor @Test func supportedCandidatesAndSuperclassMembersRemainSelectable() async throws {
+    @MainActor @Test(arguments: ["choice()", "choice() -> Swift.String"])
+    func supportedCandidatesAndSuperclassMembersRemainSelectable(declaration: String) async throws {
         let runtime = ABIRuntime()
         let receiver = ConstrainedPair<Int, String>()
         do {
             _ = try await runtime.object(receiver).method(
-                named: "choice()",
+                named: declaration,
                 as: (() -> String).self
             )
             Issue.record("Both applicable constraints must remain ambiguous")
@@ -460,12 +468,22 @@ struct SwiftConstrainedExtensionTests {
         await runtime.removeCachedResults()
         do {
             _ = try await runtime.object(receiver).method(
-                named: "choice()",
+                named: declaration,
                 as: (() -> String).self
             )
             Issue.record("Both applicable constraints must remain ambiguous after clearing caches")
         } catch ABIResolutionError.ambiguousDeclaration {}
 
+    }
+
+    @MainActor @Test(arguments: ["result()", "result() async -> Swift.Int"])
+    func completeAsyncExtensionDeclarationsKeepTheirDescriptor(declaration: String) async throws {
+        let receiver = AsyncConstrainedBox(42)
+        #expect(await receiver.result() == 42)
+        let method = try await ABIRuntime().object(receiver).method(
+            named: declaration, as: (() async -> Int).self
+        )
+        #expect(try await unsafe method.unsafeInvoke() == 42)
     }
 
     #if os(macOS)
