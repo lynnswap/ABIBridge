@@ -78,6 +78,17 @@ private enum CValueKind: Sendable {
     case foreign(any ABIBridgeValue.Type, NativeType)
 }
 
+struct CArgumentCodec: Sendable {
+    let type: CValueType
+    let encode: @Sendable (UnsafeRawPointer, UnsafeMutableRawPointer) throws -> NativeValue?
+
+    init<Value>(_ value: Value.Type) throws {
+        let codec = try CValueCodec<Value>()
+        type = codec.type
+        encode = { try codec.encode($0.load(as: Value.self), into: $1) }
+    }
+}
+
 struct CValueCodec<Value>: Sendable {
     private let kind: CValueKind
     let type: CValueType

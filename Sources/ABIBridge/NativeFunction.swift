@@ -21,14 +21,15 @@ final class CCallInterface: Sendable {
 // Hidden pointers are ABI-supplied arguments such as this and an adapter target.
 struct CFunctionCall<Result, each Argument>: Sendable {
     private let interface: CCallInterface
-    private let arguments: (repeat CValueCodec<each Argument>)
+    private let arguments: [CArgumentCodec]
     private let result: CValueCodec<Result>
     private let hiddenPointerCount: Int
     private let storageLayout: NativeCallStorageLayout
 
     init(hiddenPointerCount: Int = 0, variadicFrom: Int? = nil) throws {
         self.hiddenPointerCount = hiddenPointerCount
-        let arguments = (repeat try CValueCodec<each Argument>())
+        var arguments: [CArgumentCodec] = []
+        for type in repeat (each Argument).self { arguments.append(try CArgumentCodec(type)) }
         let result = try CValueCodec<Result>()
         var types: [CValueType] = []
         if hiddenPointerCount > 0 {
@@ -37,7 +38,7 @@ struct CFunctionCall<Result, each Argument>: Sendable {
                 count: hiddenPointerCount
             )
         }
-        for codec in repeat each arguments { types.append(codec.type) }
+        types.append(contentsOf: arguments.map(\.type))
         storageLayout = try NativeCallStorageLayout(
             result: (result.type.size, result.type.alignment),
             parameters: types.map { ($0.size, $0.alignment) }
@@ -72,8 +73,11 @@ struct CFunctionCall<Result, each Argument>: Sendable {
             }
             var owners: [NativeValue] = []
             var index = hiddenPointerCount
-            for (codec, value) in repeat (each arguments, each values) {
-                if let owner = try codec.encode(value, into: addresses[index]!) {
+            for value in repeat each values {
+                let owner = try withUnsafePointer(to: value) {
+                    try arguments[index - hiddenPointerCount].encode($0, addresses[index]!)
+                }
+                if let owner {
                     owners.append(owner)
                 }
                 index += 1
