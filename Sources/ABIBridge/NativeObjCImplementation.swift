@@ -40,9 +40,7 @@ public struct NativeObjCImplementation<Result, each Argument> {
         try withExtendedLifetime((receiver, codeOwner)) {
             try signature.invoke(repeat each values, using: { addresses, output in
                 var error: NSError?
-                let success = addresses.withUnsafeBufferPointer {
-                    ABIInvokeObjCImplementation(binding.handle, interface.handle, receiver, output, $0.baseAddress, &error)
-                }
+                let success = ABIInvokeObjCImplementation(binding.handle, interface.handle, receiver, output, addresses.baseAddress, &error)
                 guard success else {
                     throw objcResolutionError(error, declaration: binding.declaration)
                 }

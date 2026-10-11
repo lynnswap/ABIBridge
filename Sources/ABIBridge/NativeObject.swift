@@ -281,11 +281,11 @@ public struct NativeBoundObjCMethod<Result, each Argument> {
     @unsafe public func unsafeInvoke(_ values: repeat each Argument) throws -> Result {
         try signature.invoke(repeat each values, using: { addresses, output in
             var error: NSError?
-            let success = addresses.withUnsafeBufferPointer {
-                if let interface = signature.variadicInterface {
-                    return ABIInvokeVariadicObjCInvocation(binding.handle, interface.handle, output, $0.baseAddress, &error)
-                }
-                return ABIInvokeObjCInvocation(binding.handle, output, $0.baseAddress, &error)
+            let success: Bool
+            if let interface = signature.variadicInterface {
+                success = ABIInvokeVariadicObjCInvocation(binding.handle, interface.handle, output, addresses.baseAddress, &error)
+            } else {
+                success = ABIInvokeObjCInvocation(binding.handle, output, addresses.baseAddress, &error)
             }
             guard success else {
                 throw objcResolutionError(error, declaration: binding.declaration)
@@ -297,7 +297,7 @@ public struct NativeBoundObjCMethod<Result, each Argument> {
 struct ObjCMethodSignature<Result, each Argument> {
     let arguments: (repeat ObjCValueCodec<each Argument>)
     let result: ObjCValueCodec<Result>
-    private let argumentCount: Int
+    private let storageLayout: NativeCallStorageLayout
     let variadicInterface: CCallInterface?
 
     init(handle: OpaquePointer, declaration: NativeDeclaration, variadicFrom: Int? = nil) throws {
@@ -311,7 +311,6 @@ struct ObjCMethodSignature<Result, each Argument> {
                 found: ["\(ABIObjCInvocationParameterCount(handle)) arguments"]
             ))
         }
-        argumentCount = count
         var index = 0
         func makeCodec<Value>(_ type: Value.Type) throws -> ObjCValueCodec<Value> {
             defer { index += 1 }
@@ -344,6 +343,11 @@ struct ObjCMethodSignature<Result, each Argument> {
             variadicInterface = try CCallInterface(result: result.cType(), parameters: parameters,
                 fixedParameterCount: variadicFrom + 2)
         } else { variadicInterface = nil }
+        var layouts: [(size: Int, alignment: Int)] = []
+        for codec in repeat each arguments { layouts.append((codec.size, codec.alignment)) }
+        storageLayout = try NativeCallStorageLayout(
+            result: (result.size, result.alignment), parameters: layouts
+        )
         self.arguments = arguments
         self.result = result
         self.variadicInterface = variadicInterface
@@ -358,18 +362,21 @@ struct ObjCMethodSignature<Result, each Argument> {
 
     func invoke(
         _ values: repeat each Argument,
-        using body: ([UnsafeRawPointer], UnsafeMutableRawPointer) throws -> Void
+        using body: (UnsafeBufferPointer<UnsafeRawPointer>, UnsafeMutableRawPointer) throws -> Void
     ) throws -> Result {
-        var storage: [NativeValueStorage] = []
-        storage.reserveCapacity(argumentCount)
-        for (codec, value) in repeat (each arguments, each values) {
-            storage.append(try codec.encode(value))
-        }
-        let addresses = storage.map { UnsafeRawPointer($0.address) }
-        let output = NativeValueStorage(size: result.size, alignment: result.alignment)
-        return try withExtendedLifetime(storage) {
-            try body(addresses, output.address)
-            return try result.decode(output)
+        try storageLayout.withStorage { addresses, output in
+            var owners: [AnyObject] = []
+            var index = 0
+            for (codec, value) in repeat (each arguments, each values) {
+                if let owner = try codec.encode(value, into: addresses[index]!) { owners.append(owner) }
+                index += 1
+            }
+            return try withExtendedLifetime(owners) {
+                try addresses.withMemoryRebound(to: UnsafeRawPointer.self) { addresses in
+                    try body(UnsafeBufferPointer(addresses), output)
+                    return try result.decode(output)
+                }
+            }
         }
     }
 }
