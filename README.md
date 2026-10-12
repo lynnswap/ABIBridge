@@ -7,6 +7,8 @@ Resolve mangled Swift and C++ symbols by source-level name, and call supported n
 - iOS 18.4+, macOS 15.4+, visionOS 2.4+, watchOS 11.4+, or tvOS 18.4+
 - Xcode on macOS with Swift 6.3+
 
+In Xcode, add `https://github.com/lynnswap/ABIBridge` as a package dependency and select the `ABIBridge` product. Add `ABIBridgeSwiftUI` if you need to display native SwiftUI views.
+
 ## Quick start
 
 ### Resolve a C++ function without writing its mangled name
@@ -19,7 +21,7 @@ import Darwin
 let address = dlsym(libraryHandle, "_ZN7Example4Math3addEii")
 ```
 
-With ABIBridge, use the function's declaration name instead. The runtime finds the corresponding mangled symbol in loaded images automatically:
+ABIBridge finds the mangled symbol from its declaration name:
 
 ```swift
 import ABIBridge
@@ -30,7 +32,7 @@ let symbol = try runtime.resolve(
 )
 ```
 
-Lookup is synchronous and prepares the required image and symbol indexes automatically. No preparation-completion flag is needed. Optional asynchronous `prepare(_:)` runs work on a worker queue; a lookup that arrives during preparation joins the work it needs. A synchronous lookup can block its caller, including `MainActor`, until that work finishes. See [symbol lookup](https://lynnswap.github.io/ABIBridge/documentation/abibridge/symbollookup) for examples.
+Lookup prepares the required indexes automatically. This synchronous call can block its caller, including `MainActor`. See [symbol lookup](https://lynnswap.github.io/ABIBridge/documentation/abibridge/symbollookup) for scopes and optional preparation.
 
 ### Call C++ by its declaration
 
@@ -44,7 +46,7 @@ let add = try runtime.cxxFunction(
 let sum = try unsafe add.unsafeInvoke(20, 22)
 ```
 
-Retain the returned handle for repeated calls. Creating the handle and calling a synchronous native function are both synchronous. Invocation follows the function's thread-affinity contract.
+Retain the handle for repeated calls, and invoke it on the thread required by the native function.
 
 ### Call Swift by its source-level name
 
@@ -57,7 +59,7 @@ let decorate = try runtime.resolveSwiftFunctionAndWait(
 let message = try unsafe decorate.unsafeInvoke("Hello")
 ```
 
-Use `resolveSwiftFunction` to search and prepare on a worker queue without blocking `MainActor`. No explicit `prepare` call is needed:
+Use `resolveSwiftFunction` for lookup on a worker queue while the caller suspends:
 
 ```swift
 @MainActor
@@ -69,7 +71,7 @@ func makeMessage() async throws -> String {
 }
 ```
 
-Choose `resolveSwiftFunctionAndWait` for synchronous lookup, including inside an async function. The native signature determines whether invocation itself needs `await`. See [Swift function calls](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftfunctioninvocation) for both forms.
+The `AndWait` variant selects synchronous lookup. Invocation needs `await` only when the native signature is async; see [Swift function calls](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftfunctioninvocation).
 
 Generic declarations use the same callable handles with explicit type arguments:
 
@@ -81,11 +83,11 @@ let echo = try runtime.resolveSwiftFunctionAndWait(
 let message = try unsafe echo.unsafeInvoke("Hello")
 ```
 
-See [Swift generic calls](https://lynnswap.github.io/ABIBridge/documentation/abibridge/genericswiftvalues) for constraints, packs, generic types, and members. Ordinary tuples can combine runtime value handles and closures. Use `NativeSwiftInout` to replace a closure or tuple through a native call; see [Swift closure values](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftclosurevalues) and [argument conventions](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftargumentconventions).
+See [Swift generic calls](https://lynnswap.github.io/ABIBridge/documentation/abibridge/genericswiftvalues) for constraints, packs, and generic members. [Swift closure values](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftclosurevalues) covers closures in tuples; [argument conventions](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftargumentconventions) covers replacing values through `NativeSwiftInout`.
 
 ### Resolve a Swift type and its members without blocking MainActor
 
-Swift types and members use async `resolve` factories, including initializers, instance and static methods, getters, and setters. Their `AndWait` variants select synchronous lookup explicitly. For a native renderer with `func title() -> String`:
+Swift type and member lookup follows the same async/`AndWait` naming. For a native renderer with `func title() -> String`:
 
 ```swift
 @MainActor
@@ -96,7 +98,7 @@ func readTitle(from renderer: AnyObject) async throws -> String {
 }
 ```
 
-Awaited lookup suspends while a worker performs the required search and preparation. Bound object lookup keeps the receiver in the caller's isolation domain. `ABIRuntime` and `NativeSwiftType` remain actors. See [Swift types and members](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftmemberinvocation) for construction, property access, and optional preparation started ahead of time.
+Bound object lookup keeps the receiver in the caller's isolation domain. See [Swift types and members](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftmemberinvocation) for initializers, static methods, and properties.
 
 ### Call an existing Objective-C instance
 
@@ -126,7 +128,7 @@ let makePanel = try runtime.resolveSwiftFunctionAndWait(
 let panel = try NativeSwiftView(unsafe makePanel.unsafeInvoke("Hello"))
 ```
 
-Place `panel` in your SwiftUI hierarchy or a standard hosting controller. It retains the hidden view and its implementation images; the provider module does not need to be importable. The core `ABIBridge` product remains independent of SwiftUI.
+Place `panel` in your SwiftUI hierarchy or a standard hosting controller. It retains the hidden view and its implementation images, even when the provider module is not importable.
 
 ## Documentation
 
@@ -142,11 +144,9 @@ For build and test instructions, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Acknowledgements
 
-ABIBridge's symbol resolution relies on [MachOKit](https://github.com/p-x9/MachOKit) for reading Mach-O images and dyld shared caches. Its parsing support provides the foundation for this package. Objective-C type decoding uses [ObjCTypeDecodeKit](https://github.com/p-x9/swift-objc-dump).
+Symbol resolution uses [MachOKit](https://github.com/p-x9/MachOKit) to read Mach-O images and dyld shared caches. Objective-C type decoding uses [ObjCTypeDecodeKit](https://github.com/p-x9/swift-objc-dump). Thank you to [p-x9](https://github.com/p-x9) and the contributors to [MachOKit](https://github.com/p-x9/MachOKit/graphs/contributors) and [swift-objc-dump](https://github.com/p-x9/swift-objc-dump/graphs/contributors).
 
-Thank you to [p-x9](https://github.com/p-x9) and the contributors to [MachOKit](https://github.com/p-x9/MachOKit/graphs/contributors) and [swift-objc-dump](https://github.com/p-x9/swift-objc-dump/graphs/contributors) for building and sharing these libraries.
-
-The internal C ABI call backend uses [libffi](https://github.com/libffi/libffi), packaged for SwiftPM by [ZDLibffi](https://github.com/faimin/ZDLibffi). ABIBridge uses [a fork](https://github.com/lynnswap/ZDLibffi) with arm64e authentication fixes. Thank you to the original authors and contributors.
+The C ABI backend uses [libffi](https://github.com/libffi/libffi), packaged for SwiftPM by [ZDLibffi](https://github.com/faimin/ZDLibffi). ABIBridge uses [a fork](https://github.com/lynnswap/ZDLibffi) with arm64e authentication fixes. Thank you to their authors and contributors.
 
 ## License
 

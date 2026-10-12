@@ -14,13 +14,13 @@ let decorate = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
 let message = try unsafe decorate.unsafeInvoke("Hello")
 ```
 
-A label-only name obtains its parameter and result type names from the function metatype. Use `Example.combine(_:suffix:)` for a declaration with one unlabeled argument and a second argument labeled suffix. The number of labels must match the signature. A complete demangled declaration is also accepted; use that form when a custom wrapper has a different Swift name from the native type.
+A label-only name obtains parameter and result type names from the function metatype. For example, `Example.combine(_:suffix:)` has one unlabeled argument and one labeled `suffix`; its label count must match the signature. Use a complete demangled declaration when a custom wrapper has a different name from the native type.
 
 The framework/path and retained-image overloads use the same symbol indexes as other runtime lookups. Explicit targets are acquired by default; `loading: .loadedOnly` opts out. See <doc:ImageLoading>.
 
 ## Await lookup and preparation
 
-`resolveSwiftFunction` searches and prepares the call interface on a worker queue while the caller suspends. `resolveSwiftFunctionAndWait` performs the same work synchronously on the caller's thread. Both share symbol indexes and call layouts, joining only required work if earlier preparation is still running. Neither invokes the native function body.
+`resolveSwiftFunction` searches and prepares the call interface on a worker queue while the caller suspends. `resolveSwiftFunctionAndWait` performs that work synchronously and can block the caller, including inside an async function. Both reuse symbol indexes and prepared layouts, and join any preparation already running for the required work.
 
 From `MainActor`, await the factory to keep lookup and preparation from blocking the actor:
 
@@ -48,16 +48,7 @@ func loadContents() async throws -> String {
 }
 ```
 
-The factory name selects lookup behavior. Use `resolveSwiftFunctionAndWait` for synchronous lookup in either a synchronous or async function:
-
-```swift
-let decorate = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
-    named: "Example.decorate(_:)",
-    as: ((String) -> String).self
-)
-```
-
-The `AndWait` operation can block the caller until the required search and preparation finish. Use optional `prepare(_:)` when starting that work ahead of a later call; neither factory requires earlier preparation.
+Neither factory invokes the native body or requires earlier preparation. Optional `prepare(_:)` starts work ahead of a later lookup; see <doc:SymbolLookup>.
 
 ## Complete callable signatures
 
@@ -72,13 +63,7 @@ let load: NativeSwiftFunction<@concurrent (String) async throws -> String> = try
 )
 ```
 
-Calls can still throw lookup/conversion/invocation errors even when the native signature is nonthrowing. Native failures use NativeSwiftError. Async calls preserve their original task and resume on the caller's executor.
-
-When migrating existing annotations, replace the result-first argument list with a function type. For example, `NativeSwiftFunction<String, Int64>` becomes `NativeSwiftFunction<(Int64) -> String>` for a nonthrowing declaration. Include its native `throws(Failure)` and `async` effects when present. Apply the same change to NativeSwiftMethod, NativeBoundSwiftMethod, NativeSwiftFunctionImplementation, and NativeSwiftMethodImplementation.
-
-The separate async function/method types and throwing/async/concurrent closure types have been removed. Use NativeSwiftClosure with the corresponding function type, including `@Sendable` when the native closure declaration includes it. Returned closure wrappers and bound methods retain their original isolation requirements and are not Sendable merely because their signature is Sendable.
-
-Getter lookup takes a complete zero-argument function type, such as `resolveGetter(named: "text", as: (() -> String).self)`. The same rule applies to `resolveStaticGetter`, bound-object getters, and their `AndWait` variants. Include native errors and async isolation in that function type. Use `@concurrent` in place of the former `inheritsCallerIsolation: false` override.
+Invocation can throw bridge errors even when the native signature is nonthrowing. Native failures arrive as ``NativeSwiftError``. Include native errors and async isolation in the function type; see <doc:SwiftErrorABI> and <doc:SwiftAsyncABI>. For changes from earlier handle types, see <doc:SwiftAPIMigration>.
 
 ## Supported representations
 
@@ -98,21 +83,25 @@ Getter lookup takes a complete zero-argument function type, such as `resolveGett
 | Ordinary and existential metatypes, including parameterized protocols | Preserve thin values, runtime type metadata, and required witnesses |
 | Void | An empty result or explicit empty-tuple argument |
 
-The call interface expands values into Swift integer/floating components, spills excess arguments to the stack, and handles direct or indirect results. There is no fixed argument-count limit. It does not call a Swift implementation through a C ABI interface or cast its address to an ordinary Swift closure.
+The call interface uses Swift register and stack conventions, including direct and indirect results. There is no fixed argument-count limit.
 
-Use ``ABIBridgeSwiftValue`` for an imported managed struct or enum with an established fixed ABI; see <doc:ExplicitSwiftValues>. A custom adapter's layout must match the declaration, including field offsets, padding, and whether its ABI is fixed. C-compatible storage descriptions do not describe every Swift struct or enum. Nontrivial foreign values, undescribed resilient layouts, existential layouts outside <doc:SwiftExistentialValues>, ordinary unwrapped function values, and generic signatures outside <doc:GenericSwiftValues> require a compiled native adapter. Use ``NativeSwiftClosure`` for the concrete callback subset described in <doc:SwiftClosureValues>. Use a C-compatible bridge with the C frontend for those cases. See <doc:ManagedSwiftValues> for a verified compiler-adapter path for managed structs, value Optionals, and imported resilient values.
+Use ``ABIBridgeSwiftValue`` for an imported struct or enum with an established fixed or formally indirect ABI; see <doc:ExplicitSwiftValues>. Its layout must match the declaration's field offsets, padding, and passing convention. A C-compatible storage description cannot describe every Swift value.
+
+Signatures outside these representations require a compiled adapter. <doc:ManagedSwiftValues> shows a C-compatible storage bridge for managed structs, value Optionals, and imported resilient values. Closure, existential, and generic support has its own boundaries in the linked guides.
 
 ## Ownership and isolation
 
-Swift object, String, and Array arguments stay alive through the call, including supported optional forms. Their results transfer Swift ownership to the caller. Array elements use the compiler's own copying and destruction operations; the element type does not need a standalone direct-call representation. Array values retain ordinary copy-on-write behavior, and an optional array distinguishes nil from an empty array. Pointer results remain borrowed. Custom wrappers are responsible for their own native value contract; their returned NativeValue retains the resolved symbol.
+Object, String, and Array arguments stay alive through the call, including supported optional forms. Results transfer Swift ownership to the caller; pointer results remain borrowed. Array elements use compiler-owned copying and destruction, so an element needs no standalone direct-call representation. Arrays keep their copy-on-write behavior, and an optional array distinguishes nil from an empty array.
+
+Custom wrappers establish their own native value contract. Their returned ``NativeValue`` retains the resolved symbol.
 
 The function retains its implementation image. Keep an image owner alive while a foreign value can execute code from that image, including destruction. A loaded Swift image can also be retained by the Swift runtime independently of explicit loader references.
 
-The prepared handle is Sendable and can be reused concurrently. Each call uses separate argument, result, and register storage. Synchronous invocation runs on the caller's executor; satisfy the declaration's actor and thread requirements. Async invocation preserves the caller's task and resumes on the caller's executor; see <doc:SwiftAsyncABI>.
+The prepared handle is Sendable and can be reused concurrently with separate storage for each call. Synchronous invocation runs on the caller's executor; the caller must satisfy the declaration's actor and thread requirements. Async invocation preserves the caller's task and resumes on its executor.
 
 ## Declaration conventions
 
-Use NativeSwiftInout, NativeSwiftBorrowing, and NativeSwiftConsuming for explicit parameter conventions; see <doc:SwiftArgumentConventions>. Generic declarations accept `genericArguments:` for their scalar parameters and packs, including constrained declarations and callbacks; see <doc:GenericSwiftValues>. Async function metatypes produce NativeSwiftFunction handles with an async Signature; see <doc:SwiftAsyncABI>. Throwing calls include the native error type in the signature; see <doc:SwiftErrorABI>. The caller still establishes the actual native signature and ownership: a source name or storage size alone does not prove ABI compatibility.
+Use ``NativeSwiftInout``, ``NativeSwiftBorrowing``, and ``NativeSwiftConsuming`` for explicit parameter conventions; see <doc:SwiftArgumentConventions>. Bind generic parameters and packs with `genericArguments:` as described in <doc:GenericSwiftValues>. The caller establishes the native signature and ownership; a source name or storage size alone does not prove ABI compatibility.
 
 Incorrect signatures, invalid pointers, and violated ownership or isolation contracts can corrupt memory. The unsafe invocation boundary exposes that responsibility; conversion and resolution failures use Swift errors.
 

@@ -128,8 +128,7 @@ private func swiftConventionCodec<Value>(for type: Value.Type, generic: SwiftGen
     }
 }
 
-/// An explicit borrowed Swift argument, including a borrowed initializer argument.
-/// The encoded value remains owned by the bridge throughout the call.
+/// An explicit borrowed Swift argument, including a borrowed initializer argument. The encoded value remains owned by the bridge throughout the call.
 public struct NativeSwiftBorrowing<Value> {
     public let value: Value
     public init(_ value: Value) { self.value = value }
@@ -144,13 +143,10 @@ extension NativeSwiftBorrowing: SwiftConventionArgument {
 extension NativeSwiftBorrowing: Sendable where Value: Sendable {}
 
 /// Transfers an owned Swift argument across a native call or callback boundary.
-/// In a host callback, value owns the argument received from native code;
-/// a NativeSwiftValue takes the payload directly, including noncopyable types.
-/// A NativeSwiftValue transfers its existing value and becomes consumed; other
-/// Swift values supply an independently encoded copy and remain usable.
-/// Native code owns the transferred value on successful or throwing completion.
-/// Foreign value conversions cannot assert
-/// Swift destruction semantics; use an actual Swift representation for this mode.
+///
+/// A `NativeSwiftValue` transfers its existing payload, including a noncopyable value, and becomes consumed. Other Swift values supply an independent encoded copy and remain usable. Native code owns the transferred value on successful or throwing completion.
+///
+/// In a host callback, `value` owns the incoming argument; `NativeSwiftValue` takes its payload directly. Use an actual Swift representation: foreign value conversions cannot establish Swift destruction semantics.
 public struct NativeSwiftConsuming<Value> {
     public let value: Value
     public init(_ value: Value) { self.value = value }
@@ -174,20 +170,14 @@ extension NativeSwiftConsuming: SwiftConventionArgument {
 extension NativeSwiftConsuming: Sendable where Value: Sendable {}
 
 /// An owned typed buffer for a native Swift inout argument.
-/// Read value after a call completes, including a throwing call. Mutation is
-/// performed in this buffer and does not assign back to the original input.
-/// For NativeSwiftValue, the buffer retains the same runtime owner and grants
-/// exclusive access to its native payload instead of copying it.
-/// The caller gives native code exclusive access for the entire invocation,
-/// including suspension: do not read, write, or alias this buffer during it.
-/// A callback with a known Swift pointee receives a local buffer whose value is
-/// written back before callback completion, even on error. Runtime-only inout
-/// callback inputs use NativeSwiftBorrowedValue to access the original payload.
-/// Converted pointees use temporary native storage. Their host values are
-/// replaced only after all argument writeback conversions succeed; a failed
-/// conversion does not undo native side effects. A host callback writing back
-/// a converted closure uses throws(any Error) to report conversion failures.
-/// This buffer is deliberately not Sendable.
+///
+/// Read `value` after the call completes, including when it throws. Native mutations update this buffer, leaving the original input unchanged. A `NativeSwiftValue` buffer instead retains the same owner and gives native code exclusive access to its payload.
+///
+/// Give native code exclusive access for the entire invocation, including suspension: do not read, write, or alias the buffer during a call. The buffer is not `Sendable`.
+///
+/// A callback with a known Swift pointee receives a local buffer, written back before callback completion even on error. Runtime-only inout inputs use `NativeSwiftBorrowedValue` to access the original payload.
+///
+/// Converted pointees use temporary native storage. Host values are replaced only after every argument writeback conversion succeeds; a failure does not undo native effects. Converted closure writeback requires `throws(any Error)` to report failures. See <doc:SwiftArgumentConventions>.
 public final class NativeSwiftInout<Value> {
     private let storage: NativeValueStorage
 

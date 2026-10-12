@@ -9,8 +9,7 @@ namespace abi_bridge {
 enum class pointer_normalization : std::int32_t {
     none = ABIPointerNormalizationNone,
     strip_data_signature = ABIPointerNormalizationStripDataSignature,
-    /// Strip data signatures when the current CPU supports PAC; otherwise
-    /// keep bits unchanged. Does not authenticate or remove arbitrary tags.
+    /// Strip data signatures when the current CPU supports PAC; otherwise keep bits unchanged. Does not authenticate or remove arbitrary tags.
     automatic = ABIPointerNormalizationAutomatic
 };
 /// Exhaustive searches can establish observed uniqueness; first-match searches cannot.
@@ -26,8 +25,7 @@ struct pointer_search_options final {
     std::size_t vptr_offset = 0;
     pointer_normalization normalization = pointer_normalization::automatic;
     pointer_search_policy policy = pointer_search_policy::all;
-    /// Revalidated on every search. Scope it to the same live region, layout,
-    /// and vtable identity. Invalid/off-grid hints are ignored.
+    /// Revalidated on every search. Scope it to the same live region, layout, and vtable identity. Invalid/off-grid hints are ignored.
     std::optional<std::size_t> hint_offset;
 };
 
@@ -41,9 +39,7 @@ private:
     std::int32_t code_;
 };
 
-/// Matching slot evidence retaining the source region's optional owner.
-/// The owner must also keep the pointee alive if this candidate will be used
-/// as a receiver. A vtable match alone establishes neither validity nor lifetime.
+/// Matching slot evidence retaining the source region's optional owner. The owner must also keep the pointee alive if this candidate will be used as a receiver. A vtable match alone establishes neither validity nor lifetime.
 struct pointer_candidate final {
     ABIPointerCandidate evidence;
     memory_region source_region;
@@ -59,11 +55,7 @@ private:
     ABIPointerSearchFailure failure_;
 };
 
-/// Revalidates one full-width slot without inspecting other source slots.
-/// Packed slots are accepted; out-of-range slots throw pointer_search_error.
-/// Returns nullopt for null references or readable unequal vptrs. Read failures
-/// throw pointer_read_error with the original stage, address, and Mach result.
-/// The candidate retains the region's owner and makes no uniqueness claim.
+/// Revalidates one full-width slot without inspecting other source slots. Packed slots are accepted; out-of-range slots throw pointer_search_error. Returns nullopt for null references or readable unequal vptrs. Read failures throw pointer_read_error with the original stage, address, and Mach result. The candidate retains the region's owner and makes no uniqueness claim.
 inline std::optional<pointer_candidate> inspect_pointer(
     const memory_region& region, std::size_t offset, std::uintptr_t vtable_address_point,
     std::size_t vptr_offset = 0, pointer_normalization normalization = pointer_normalization::automatic) {
@@ -88,22 +80,14 @@ struct pointer_search_result final {
     std::size_t visited_count;
     bool is_complete;
 
-    /// A candidate only after a complete scan observed one distinct target.
-    /// Aliases are retained in candidates; this returns its first source slot.
+    /// A candidate only after a complete scan observed one distinct target. Aliases are retained in candidates; this returns its first source slot.
     std::optional<pointer_candidate> unique_candidate() const {
         if (is_complete && distinct_count == 1) return candidates.front();
         return std::nullopt;
     }
 };
 
-/// Searches explicit storage for references matching an actual vtable address
-/// point. No ABI header length is inferred. Normalization strips data signatures
-/// for inspection only; raw bits and storage addresses remain in each candidate.
-/// First-match policy may return a matching hint without scanning other slots.
-/// All policy scans every eligible slot, even with a valid hint. Failed reads
-/// make the result incomplete; candidate/alias evidence is still returned.
-/// Throws pointer_search_error for C-level setup failures, or standard
-/// allocation exceptions while copying results.
+/// Searches explicit storage for references matching an actual vtable address point. No ABI header length is inferred. Normalization strips data signatures for inspection only; raw bits and storage addresses remain in each candidate. First-match policy may return a matching hint without scanning other slots. All policy scans every eligible slot, even with a valid hint. Failed reads make the result incomplete; candidate/alias evidence is still returned. Throws pointer_search_error for C-level setup failures, or standard allocation exceptions while copying results.
 inline pointer_search_result find_pointers(
     const memory_region& region, std::uintptr_t vtable_address_point,
     const pointer_search_options& options = {}) {

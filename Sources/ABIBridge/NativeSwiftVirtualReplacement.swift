@@ -2,11 +2,7 @@ import ABIBridgeCore
 
 /// A compiled method replacement in one selected Swift class's metadata.
 ///
-/// Preparation captures the current implementation without changing dispatch.
-/// Initialize replacement-owned state before calling `install()`. Restore
-/// explicitly: releasing the plan does not undo a potentially fallible mutation.
-/// Published and captured code owners remain retained for process lifetime.
-/// See <doc:SwiftVirtualReplacements> for dispatch and inheritance boundaries.
+/// Preparation captures the current implementation without changing dispatch. Initialize replacement-owned state before calling `install()`. Restore explicitly: releasing the plan does not undo a potentially fallible mutation. Published and captured code owners remain retained for process lifetime. See <doc:SwiftVirtualReplacements> for dispatch and inheritance boundaries.
 public final class NativeSwiftVirtualReplacement<Implementation> {
     /// The same observation states used by compiled importing replacements.
     public typealias Status = NativeSwiftImportedReplacement<Implementation>.Status
@@ -32,8 +28,7 @@ public final class NativeSwiftVirtualReplacement<Implementation> {
     /// Publishes the ABI-compatible compiled method. Calls may enter immediately.
     /// - Throws: `NativeSwiftReplacementError`; index zero denotes this entry.
     @unsafe public func install() throws { try unsafe plan.install() }
-    /// Restores owned changes, preserving a different pointer from another writer.
-    /// Failed pointer or protection restoration remains inspectable and retryable.
+    /// Restores owned changes, preserving a different pointer from another writer. Failed pointer or protection restoration remains inspectable and retryable.
     public func restore() throws { try plan.restore() }
 }
 
@@ -42,14 +37,9 @@ extension NativeSwiftVirtualReplacement: @unchecked Sendable where Implementatio
 extension NativeSwiftMethod {
     /// Prepares replacement of this method's entry in the lookup type's metadata.
     ///
-    /// Inherited and overridden methods select the copied slot in the requested
-    /// type. Existing superclass and sibling metadata are unchanged. Subclasses
-    /// initialized later can inherit the changed entry. Direct, devirtualized,
-    /// inlined and previously captured implementations bypass this operation.
+    /// Inherited and overridden methods select the copied slot in the requested type. Existing superclass and sibling metadata are unchanged. Subclasses initialized later can inherit the changed entry. Direct, devirtualized, inlined and previously captured implementations bypass this operation.
     ///
-    /// The replacement must accept every receiver reaching this slot and match
-    /// its Swift context, ownership, lowering and isolation contract. Equal
-    /// argument/result metatypes alone do not establish that compatibility.
+    /// The replacement must accept every receiver reaching this slot and match its Swift context, ownership, lowering and isolation contract. Equal argument/result metatypes alone do not establish that compatibility.
     /// - Parameters:
     ///   - replacement: An already compiled synchronous class method.
     ///   - owner: Optional additional owner of code outside loader images.

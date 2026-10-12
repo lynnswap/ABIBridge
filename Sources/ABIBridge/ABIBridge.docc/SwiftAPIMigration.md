@@ -4,7 +4,7 @@ Update clients of the earlier result-and-argument handle types to complete funct
 
 ## Choose synchronous or async lookup
 
-Choose async lookup or synchronous waiting by the factory name. Async factories search and prepare on a worker queue while the caller suspends; synchronous factories use the same arguments and append `AndWait` to the name:
+Select lookup behavior by factory name. Async lookup prepares on a worker queue while the caller suspends; synchronous lookup appends `AndWait` and takes the same arguments:
 
 | Lookup | Async factory | Synchronous factory |
 | --- | --- | --- |
@@ -25,9 +25,9 @@ let type = try await runtime.resolveSwiftType(named: "Example.Counter")
 let read = try await type.resolveMethod(named: "read()", as: (() -> Int64).self)
 ```
 
-Use `AndWait` without `await` to choose synchronous lookup, including inside async functions. Cold lookup runs on the caller's thread; if a required preparation stage is running, the caller waits for it. Bound object method, getter, and setter lookup keeps the receiver in the caller's isolation domain. See <doc:SwiftFunctionInvocation> and <doc:SwiftMemberInvocation>.
+Use `AndWait` without `await` for synchronous lookup, including inside an async function. It can block during cold lookup or while joining preparation. Bound member lookup keeps the receiver in the caller's isolation domain; see <doc:SwiftFunctionInvocation> and <doc:SwiftMemberInvocation>.
 
-`ABIRuntime` and `NativeSwiftType` remain actors. Earlier preparation is optional for both lookup forms, and both share symbol indexes and prepared call interfaces. Raw symbol lookup, image enumeration, C/C++ factories, Objective-C selector lookup, and `removeCachedResults()` are synchronous; remove `await` from those operations.
+`ABIRuntime` and `NativeSwiftType` remain actors, and earlier preparation is optional. Remove `await` from raw symbol lookup, image enumeration, C/C++ factories, Objective-C selector lookup, and `removeCachedResults()`; those operations are synchronous.
 
 Optional `prepare(_:)` remains asynchronous. Its closure overload runs synchronous factories on a worker queue and shares their preparation with later lookup. See <doc:SymbolLookup>. Keep `await` for invoking native async signatures and for hook installation APIs that remain asynchronous.
 
@@ -45,9 +45,9 @@ let function: NativeSwiftFunction<(Int64) -> String>
 let callback: NativeSwiftClosure<() -> String>
 ```
 
-Apply the same change to `NativeSwiftMethod`, `NativeBoundSwiftMethod`, and returned closures. The separate throwing and async closure types have been removed; use `NativeSwiftClosure<Signature>` with the native effects in `Signature`. Invocation remains throwing for bridge failures, even when the native declaration is nonthrowing. Async signatures use `await`.
+Apply this change to `NativeSwiftMethod`, `NativeBoundSwiftMethod`, `NativeSwiftFunctionImplementation`, and `NativeSwiftMethodImplementation`. Replace separate async function/method handles and throwing/async/concurrent closure types with the corresponding handle and complete `Signature`. Include `@Sendable` for a native Sendable closure. Invocation can still throw bridge errors for a nonthrowing native declaration; native async signatures need `await`.
 
-Swift getters now take a zero-argument function type in place of the earlier result type, such as `String.self`, so their error and isolation contracts remain visible:
+Replace a Swift getter's result metatype, such as `String.self`, with its zero-argument function metatype:
 
 ```swift
 let getter = try await type.resolveGetter(named: "text", as: (() -> String).self)
@@ -69,13 +69,13 @@ let callback = try NativeSwiftClosure<() -> String> { "value" }
 let result = try unsafe run.unsafeInvoke(callback)
 ```
 
-A `.type` can also contain a retained ``NativeSwiftType`` when the consumer cannot import the concrete type. Nominal type lookup binds the enclosing context; member lookup supplies only that member's additional arguments. Existing native metadata and conformances determine substitutions, dependent types, and witnesses. Consumers do not construct witness tables.
+A `.type` can contain a retained ``NativeSwiftType`` when the concrete type is unavailable. Nominal lookup binds the enclosing context; member lookup supplies only its additional parameters. Existing metadata and conformances supply dependent types and witnesses.
 
 Label-only names select a declaration whose bound signature matches `as:`. Keep a complete source declaration when selecting an exact overload or using a host adapter with a different Swift type name. `declaredAs:` supplies formal information missing from the binary, and `valueABIs:` supplies an established native convention for a closed runtime-only nominal value. Neither spelling permits guessing the ABI from metadata size. See <doc:GenericSwiftValues>.
 
 ## Use one owned runtime value type
 
-Replace `NativeSwiftOpaqueValue` with ``NativeSwiftValue``. Use its public `type` handle for type identity, member lookup, and generic arguments, and `type.name` for the source-level name. The handle retains the type's implementation images. The earlier `withValue` operation made an `Any` copy; its replacement, `withCopy`, can report an invalid copy.
+Replace `NativeSwiftOpaqueValue` with ``NativeSwiftValue``. Its retained `type` supports identity, member lookup, and generic arguments; `type.name` gives the source name. Replace `withValue` with throwing `withCopy`, which exposes an `Any` copy and can report copy failure.
 
 ```swift
 let make = try await runtime.resolveSwiftFunction(
@@ -88,7 +88,7 @@ print(type.name)
 try value.withCopy { print($0) }
 ```
 
-The same owner receives ordinary generic and opaque results. Assigning it shares ownership; `copy()` creates an independent native copy when the payload permits copying. `take(as:)` moves an exact known payload and consumes all aliases. Use `withBorrowedValue` to inspect a noncopyable value without making an `Any` copy. These handles retain implementation images but do not make a hidden payload Sendable.
+Assigning a runtime handle shares ownership. `copy()` creates an independent Copyable value; `take(as:)` moves an exact known type and consumes all aliases. Use `withBorrowedValue` for scoped access without copying. Ownership and image lifetime follow <doc:SwiftOpaqueResults>; the handle remains non-Sendable.
 
 ## Replace separate borrowed callback and member families
 
@@ -105,11 +105,11 @@ let callback = try NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Int64> { vie
 }
 ```
 
-This example preserves a nonthrowing provider callback and reports bridge failures through the client's `report` function. A provider with a matching native error channel can instead use a throwing callback signature. The explicit opaque receiver convention applies to this example's formally indirect resilient value.
+This nonthrowing callback reports bridge failures through the client's `report` function. Use a throwing signature if the provider supplies a matching error channel. Its resilient value uses formally indirect self, selected by `.opaque`.
 
 Pass the callback using the provider's complete declaration and `valueABIs:` when its concrete nominal ABI is unavailable to the host. The ordinary member handle can also invoke on an owned ``NativeSwiftValue``. Borrowed views expire at callback completion; `copy()` creates an independent owner only for Copyable, Escapable payloads. See <doc:BorrowedSwiftValues>.
 
-Nested native closures now appear as `NativeSwiftClosure<Signature>` arguments or results inside the outer signature. Incoming nonescaping closures remain scoped borrows. Copy a native `@escaping` input while its borrow is active if it must outlive the callback; saving a nonescaping input does not retain its stack context. Use ``NativeSwiftBorrowing``, ``NativeSwiftConsuming``, and ``NativeSwiftInout`` according to the provider's parameter conventions. See <doc:SwiftClosureValues> and <doc:SwiftArgumentConventions>.
+Use `NativeSwiftClosure<Signature>` inside the outer signature for nested native closures. Inputs are scoped borrows; call `copy()` on an active native `@escaping` input to keep it longer. Nonescaping inputs cannot retain a stack context. Ownership markers follow <doc:SwiftArgumentConventions>, and nested lifetimes follow <doc:SwiftClosureValues>.
 
 ## Keep isolation in the function type
 
@@ -145,9 +145,7 @@ Prepare the matching member handle before invoking `make`. The invocation retain
 
 Imported and virtual Swift hooks use `NativeSwiftFunctionInvocation<Signature>` and `NativeSwiftMethodInvocation<Signature>`. Their continuations preserve the declaration's generic bindings, native error convention, and async task. Use `try call.proceed(...)` for sync entries and `try await call.proceed(...)` for async entries.
 
-Each registration applies to its bound types; unrelated substitutions continue through the captured native chain. A continuation expires when its callback returns. Hook bodies follow the native declaration's ownership and error contract, while `onFailure` handles errors that its native channel cannot represent. See <doc:SwiftFunctionHooks> and <doc:SwiftMethodHooks>.
-
-The interception mechanism keeps its actual reach: imports and metadata slots can be hooked when publication is permitted; direct, inlined, or devirtualized calls can bypass them. A unified signature does not change that dispatch behavior.
+Registrations apply to their bound types, and continuations expire at callback completion. Dispatch scope, ownership, and error recovery follow <doc:SwiftFunctionHooks> and <doc:SwiftMethodHooks>.
 
 ## See Also
 

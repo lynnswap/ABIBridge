@@ -11,8 +11,7 @@
 
 namespace abi_bridge {
 
-/// Owned copied bytes, independent of the source region's lifetime.
-/// Even a complete read is not atomic and does not prove pointee validity.
+/// Owned copied bytes, independent of the source region's lifetime. Even a complete read is not atomic and does not prove pointee validity.
 struct memory_read_result final {
     std::uintptr_t source_address;
     std::size_t requested_byte_count;
@@ -24,10 +23,7 @@ struct memory_read_result final {
     bool is_complete() const noexcept { return status == ABIMemoryReadComplete; }
 };
 
-/// A bounded current-process address range, not a promise of readable memory.
-/// Copies retain the optional owner. The caller supplies allocation bounds,
-/// pointee ownership, and synchronization; retaining an owner alone does not
-/// prevent its storage from moving or being destroyed explicitly.
+/// A bounded current-process address range, not a promise of readable memory. Copies retain the optional owner. The caller supplies allocation bounds, pointee ownership, and synchronization; retaining an owner alone does not prevent its storage from moving or being destroyed explicitly.
 class memory_region final {
 public:
     /// Throws invalid_argument if the half-open address range overflows.
@@ -41,12 +37,10 @@ public:
     std::uintptr_t address() const noexcept { return address_; }
     std::size_t byte_count() const noexcept { return byte_count_; }
 
-    /// Copies a prefix up to the first failed page. Failure is in the result;
-    /// allocation failures propagate as standard C++ allocation exceptions.
+    /// Copies a prefix up to the first failed page. Failure is in the result; allocation failures propagate as standard C++ allocation exceptions.
     memory_read_result read() const { return read(0, byte_count_); }
 
-    /// Reads a bounded subrange, throwing out_of_range before any access when
-    /// the subrange exceeds this region. The result never retains the owner.
+    /// Reads a bounded subrange, throwing out_of_range before any access when the subrange exceeds this region. The result never retains the owner.
     memory_read_result read(std::size_t offset, std::size_t count) const {
         if (offset > byte_count_ || count > byte_count_ - offset) {
             throw std::out_of_range("Memory read exceeds the region.");

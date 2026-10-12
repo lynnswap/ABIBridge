@@ -2,9 +2,7 @@ import ABIBridgeCore
 
 /// A native value's storage layout and, when available, its C ABI representation.
 ///
-/// Names describe the intended foreign type. They do not prove its layout or
-/// ownership. Use field descriptions for C-compatible aggregates; an opaque
-/// byte size alone does not determine a function's calling convention.
+/// Names describe the intended foreign type. They do not prove its layout or ownership. Use field descriptions for C-compatible aggregates; an opaque byte size alone does not determine a function's calling convention.
 public struct NativeType: Sendable, Hashable {
     /// One naturally laid-out C aggregate field.
     public struct Field: Sendable, Hashable {
@@ -105,9 +103,7 @@ public struct NativeType: Sendable, Hashable {
 
     /// Describes storage whose C ABI representation is unavailable.
     ///
-    /// Opaque storage can be owned, borrowed, and accessed by an adapter. It
-    /// cannot be passed by value through a C call interface. A zero-byte extent
-    /// can represent an opaque resource whose address is used only as a pointer.
+    /// Opaque storage can be owned, borrowed, and accessed by an adapter. It cannot be passed by value through a C call interface. A zero-byte extent can represent an opaque resource whose address is used only as a pointer.
     ///
     /// - Parameters:
     ///   - name: A diagnostic foreign type name.
@@ -157,8 +153,7 @@ public struct NativeType: Sendable, Hashable {
 
 /// A runtime-known signature for one C-compatible call.
 ///
-/// Use function-type metatypes for ordinary typed calls. This description is
-/// useful when an adapter discovers value layouts at runtime.
+/// Use function-type metatypes for ordinary typed calls. This description is useful when an adapter discovers value layouts at runtime.
 public struct NativeSignature: Sendable, Hashable {
     /// Explicit parameter representations in declaration order.
     public let parameters: [NativeType]

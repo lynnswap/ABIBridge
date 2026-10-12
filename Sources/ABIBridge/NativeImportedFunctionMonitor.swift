@@ -2,8 +2,7 @@ import ABIBridgeRuntime
 import ABIBridgeCore
 import Foundation
 
-/// One image's asynchronous import-hook outcome. Identity and path do not retain
-/// the image; successful or partially published hooks retain their own leases.
+/// One image's asynchronous import-hook outcome. Identity and path do not retain the image; successful or partially published hooks retain their own leases.
 public struct NativeImportedImageUpdate: Sendable {
     /// The outcome when this update was produced.
     public enum State: Sendable {
@@ -11,8 +10,7 @@ public struct NativeImportedImageUpdate: Sendable {
         case installed(NativeImportedFunctionHook)
         /// The selected image has no matching imported declaration/provider.
         case noMatchingImports
-        /// Lookup or installation failed. Partial effects are preserved by
-        /// `NativeImportedHookInstallationError` when publication was attempted.
+        /// Lookup or installation failed. Partial effects are preserved by `NativeImportedHookInstallationError` when publication was attempted.
         case failed(any Error)
         /// This generation disappeared from the observed catalog.
         case removed
@@ -51,18 +49,12 @@ public struct NativeImportedImageUpdate: Sendable {
     }
 }
 
-/// Owns asynchronous registration on current and subsequently loaded images.
-/// Drop the last owner or call `invalidate()` to stop applying its callback.
-/// Each acquirable selected load is attempted once; per-image failures remain
-/// observable. Images still initializing are acquired asynchronously when ready.
+/// Owns asynchronous registration on current and subsequently loaded images. Drop the last owner or call `invalidate()` to stop applying its callback. Each acquirable selected load is attempted once; per-image failures remain observable. Images still initializing are acquired asynchronously when ready.
 public final class NativeImportedFunctionMonitor: @unchecked Sendable {
     let handle: OpaquePointer
     init(_ handle: OpaquePointer) { self.handle = handle }
 
-    /// Copies the latest observed selected-image outcomes. Active monitors prune
-    /// removed generations; invalidated monitors keep their final snapshot.
-    /// Short-lived images can disappear before observation, so this is not an
-    /// exhaustive event history.
+    /// Copies the latest observed selected-image outcomes. Active monitors prune removed generations; invalidated monitors keep their final snapshot. Short-lived images can disappear before observation, so this is not an exhaustive event history.
     public var images: [NativeImportedImageUpdate] {
         let snapshot = ABICopyImportedHookMonitorImages(handle)!
         defer { ABIReleaseImportedImageList(snapshot) }
@@ -71,10 +63,7 @@ public final class NativeImportedFunctionMonitor: @unchecked Sendable {
         }
     }
 
-    /// Stops observation and disables new callback entry without waiting for
-    /// in-flight calls or loader work. An already preparing installation may
-    /// finish with an inert pass-through entry before cleanup completes.
-    /// Published image/code leases retain their process-lifetime contract.
+    /// Stops observation and disables new callback entry without waiting for in-flight calls or loader work. An already preparing installation may finish with an inert pass-through entry before cleanup completes. Published image/code leases retain their process-lifetime contract.
     public func invalidate() { ABIInvalidateImportedHookMonitor(handle) }
     deinit { ABIReleaseImportedHookMonitor(handle) }
 }
@@ -93,16 +82,9 @@ private final class ImportedMonitorCallbacks {
 extension ABIRuntime {
     /// Applies a typed imported-function callback to current and future importers.
     ///
-    /// Initial and subsequent image application runs asynchronously, with results
-    /// delivered to `onImageUpdate` on a serial queue. An unloaded explicit scope
-    /// is valid. Neither selector loads missing images. Updates may begin before
-    /// this method returns. Installation failures do not stop other images.
+    /// Initial and subsequent image application runs asynchronously, with results delivered to `onImageUpdate` on a serial queue. An unloaded explicit scope is valid. Neither selector loads missing images. Updates may begin before this method returns. Installation failures do not stop other images.
     ///
-    /// Invocation callbacks and `onFailure` retain the calling-thread and C ABI
-    /// contracts of `hookImportedFunction`. Constructor calls and calls made
-    /// before asynchronous application completes are not guaranteed interception.
-    /// An unresolved lazy import can fail its one attempt for that generation;
-    /// bind it normally before creating a new monitor to retry.
+    /// Invocation callbacks and `onFailure` retain the calling-thread and C ABI contracts of `hookImportedFunction`. Constructor calls and calls made before asynchronous application completes are not guaranteed interception. An unresolved lazy import can fail its one attempt for that generation; bind it normally before creating a new monitor to retry.
     @unsafe public func monitorImportedFunction<Result, each Argument>(
         _ declaration: NativeDeclaration,
         as signature: ((repeat each Argument) -> Result).Type,

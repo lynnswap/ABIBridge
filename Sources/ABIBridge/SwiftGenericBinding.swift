@@ -494,9 +494,7 @@ struct SwiftGenericBinding: Sendable {
         }
     }
 
-    /// Swift's canonical generic signature orders dependent subjects, removes
-    /// refined protocols, and then orders protocol declarations by context/name.
-    /// See Swift 6.3 GenericSignature.cpp, Requirement.cpp, and TypeDecl::compare.
+    /// Swift's canonical generic signature orders dependent subjects, removes refined protocols, and then orders protocol declarations by context/name. See Swift 6.3 GenericSignature.cpp, Requirement.cpp, and TypeDecl::compare.
     private func canonicalWitnessIndices() throws -> [Int] {
         if let requirements = declaration.abiRequirements {
             return try requirements.compactMap { requirement in

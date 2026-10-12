@@ -1,8 +1,7 @@
 import ABIBridgeRuntime
 import ABIBridgeCore
 
-/// Metadata.h and SIL/TypeLowering.cpp: a singleton metatype occupies a word
-/// in generic value storage, but has no components in a concrete SIL signature.
+/// Metadata.h and SIL/TypeLowering.cpp: a singleton metatype occupies a word in generic value storage, but has no components in a concrete SIL signature.
 typealias SwiftMetatypeMetadata = RuntimeMetatypeMetadata
 
 extension RuntimeMetatypeMetadata {
@@ -11,9 +10,7 @@ extension RuntimeMetatypeMetadata {
     }
 }
 
-/// Restores values erased by concrete SIL lowering before interpreting their
-/// generic memory representation. Only tuples expose their elements as SIL
-/// values; fields of nominal types keep the nominal type's storage contract.
+/// Restores values erased by concrete SIL lowering before interpreting their generic memory representation. Only tuples expose their elements as SIL values; fields of nominal types keep the nominal type's storage contract.
 struct SwiftValueConstants: Sendable {
     private let words: [(offset: Int, value: UInt, optional: Bool)]
     private let size: Int

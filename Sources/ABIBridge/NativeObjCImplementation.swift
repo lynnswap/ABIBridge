@@ -3,13 +3,9 @@ import Foundation
 
 /// A captured Objective-C implementation whose receiver is supplied at call time.
 ///
-/// Later method replacement does not change this handle, and no instance is
-/// retained. Discoverable implementation and class images are retained.
+/// Later method replacement does not change this handle, and no instance is retained. Discoverable implementation and class images are retained.
 ///
-/// Caller-created classes must remain registered, and generated IMPs must remain
-/// callable while any handle exists. A retained block does not prevent another
-/// owner from invalidating its IMP with `imp_removeBlock`.
-/// See <doc:ObjectiveCInvocation> for dispatch and lifetime rules.
+/// Caller-created classes must remain registered, and generated IMPs must remain callable while any handle exists. A retained block does not prevent another owner from invalidating its IMP with `imp_removeBlock`. See <doc:ObjectiveCInvocation> for dispatch and lifetime rules.
 public struct NativeObjCImplementation<Result, each Argument> {
     private let binding: ObjCInvocationBinding
     private let signature: ObjCMethodSignature<Result, repeat each Argument>
@@ -25,11 +21,7 @@ public struct NativeObjCImplementation<Result, each Argument> {
 
     /// Calls the captured IMP with a compatible receiver.
     ///
-    /// Instance captures accept instances of the requested class or subclasses.
-    /// Class-method captures accept that class or subclass class objects.
-    /// Overrides are not selected. The caller honors isolation, pointer/code
-    /// lifetimes, ownership annotations, and block signatures. Foreign exceptions
-    /// must not cross this boundary.
+    /// Instance captures accept instances of the requested class or subclasses. Class-method captures accept that class or subclass class objects. Overrides are not selected. The caller honors isolation, pointer/code lifetimes, ownership annotations, and block signatures. Foreign exceptions must not cross this boundary.
     ///
     /// - Parameters:
     ///   - receiver: The live instance or class object for this call.
@@ -52,9 +44,7 @@ public struct NativeObjCImplementation<Result, each Argument> {
 extension ABIRuntime {
     /// Captures a concrete Objective-C implementation without binding an instance.
     ///
-    /// The signature describes explicit arguments only. Dynamic method resolution
-    /// may run during lookup, but forwarding-only selectors cannot be captured.
-    /// Ordinary selector method handles continue to follow current message dispatch.
+    /// The signature describes explicit arguments only. Dynamic method resolution may run during lookup, but forwarding-only selectors cannot be captured. Ordinary selector method handles continue to follow current message dispatch.
     ///
     /// - Parameters:
     ///   - type: The class whose instance or class method should be captured.

@@ -18,9 +18,9 @@ print(text.value)
 
 Match the async isolation convention to the native declaration, as described in <doc:SwiftAsyncABI>.
 
-The buffer owns its host value and keeps it alive through native completion. Its value can be read or replaced between invocations. It does not assign back to the variable used to initialize it. A throwing or cancelled call preserves mutations that the native body already made; converted buffers follow the writeback contract below.
+The buffer owns its host value through native completion. Read or replace `value` between invocations; the variable used to initialize the buffer is unchanged. A throwing or cancelled call preserves native mutations, subject to converted-buffer writeback below.
 
-Native code has exclusive access for the entire invocation, including suspension. Do not read, write, or pass an alias to the same buffer during that interval. NativeSwiftInout is deliberately not Sendable; the caller must preserve this exclusivity when invoking an unsafe native entry. The buffer is not a synchronization primitive.
+Native code has exclusive access throughout invocation, including suspension. During that interval, do not read, write, or pass an alias to the buffer. ``NativeSwiftInout`` is not Sendable; the caller maintains this exclusivity at the unsafe boundary.
 
 ## Choose ownership per parameter
 
@@ -31,7 +31,7 @@ Native code has exclusive access for the entire invocation, including suspension
 | NativeSwiftConsuming<T> | Native code receives ownership of the encoded value |
 | NativeSwiftInout<T> | Exclusive mutable access, with temporary native storage when conversion is needed |
 
-Ordinary Swift values supply an independently encoded copy, so the original value remains usable. A `NativeSwiftValue` transfers its native payload and becomes consumed after invocation; the same rule applies to runtime handles inside a consuming tuple. Native code owns transferred values on both normal and throwing completion. If argument conversion fails before entry, the bridge releases prepared copies and leaves pending runtime transfers in their existing owners.
+Ordinary Swift values supply an independently encoded copy, so the original value remains usable. A consuming `NativeSwiftValue` argument transfers its payload and becomes consumed after invocation; runtime handles inside a consuming tuple do the same. Native code owns transferred values on both normal and throwing completion. If conversion fails before entry, the bridge releases prepared copies and leaves pending transfers in their existing owners.
 
 For a native initializer `init(_ title: borrowing String, _ content: consuming String)`:
 
@@ -66,7 +66,9 @@ let result = try unsafe callback.value.unsafeInvoke(35)
 
 Use `NativeSwiftInout<Snapshot>` in the same way when `Snapshot` is an ordinary tuple containing runtime value or closure handles. The bridge prepares the native pointee before invocation and replaces the buffer's host value after native completion. If a runtime field has a different type name from its host handle, supply the complete native declaration, as shown in <doc:SwiftClosureValues>.
 
-After the native body runs, the bridge prepares updated host values for all converted inout arguments before replacing any of those buffers. If one conversion fails, those converted buffers keep their previous host values. Native side effects and changes to directly accessed storage remain in place. Writeback runs when the native body throws and when result decoding fails. A conversion failure before native entry does not run writeback.
+After native completion, the bridge converts all updated inout values before replacing any converted buffer. If a conversion fails, those buffers keep their previous host values. Direct storage mutations and other native effects remain in place.
+
+Writeback also runs after a native error or result-decoding failure. Conversion failure before native entry skips writeback.
 
 If invocation or result conversion and writeback both fail, ``NativeSwiftWritebackError`` retains the errors in `invocationError` and `writebackError`. If only writeback fails, that error is thrown directly.
 
@@ -82,4 +84,4 @@ An inout buffer stores its host value using that value's Swift representation. C
 
 Ownership wrappers describe callable parameters. Use ordinary value or closure representations for results. Managed hooks have their own argument contract in <doc:HookArguments>. Runtime-only values, including standalone noncopyable payloads, use the ownership rules in <doc:BorrowedSwiftValues> and <doc:SwiftOpaqueResults>.
 
-The compiler fixtures verify guaranteed, owned, and inout conventions on arm64, x86_64, arm64e, and arm64_32. Runtime tests cover independent copies, managed and scalar writeback, throwing completion, later argument-conversion failure, mixed initializer ownership, mutating receivers, and suspension/cancellation.
+Compiler fixtures check guaranteed, owned, and inout conventions across the supported architectures. Runtime tests separately cover copy ownership, writeback, failure cleanup, and suspension/cancellation; see <doc:Architectures>.

@@ -10,27 +10,23 @@ extern "C" {
 
 typedef struct ABISwiftCallInterface ABISwiftCallInterface;
 
-/// Storage and ownership operations for a complete Swift metadata pointer.
-/// These operations authenticate the metadata's value witnesses on arm64e.
+/// Storage and ownership operations for a complete Swift metadata pointer. These operations authenticate the metadata's value witnesses on arm64e.
 typedef struct ABISwiftValueLayout {
     size_t size;
     size_t stride;
     size_t alignment;
 } ABISwiftValueLayout;
 ABISwiftValueLayout ABISwiftGetValueLayout(const void *metadata);
-/// Initializes destination by copying source. The caller establishes Copyable
-/// conformance before invoking the native witness.
+/// Initializes destination by copying source. The caller establishes Copyable conformance before invoking the native witness.
 void ABISwiftCopyValue(const void *metadata, void *destination, const void *source);
 /// Initializes destination by taking source, which is left uninitialized.
 void ABISwiftTakeValue(const void *metadata, void *destination, void *source);
 /// Destroys one initialized value, leaving its storage uninitialized.
 void ABISwiftDestroyValue(const void *metadata, void *value);
 
-/// Reads a valid compiler-emitted generic protocol-requirement reference.
-/// Authenticates indirect Swift descriptor pointers before reading their flags.
+/// Reads a valid compiler-emitted generic protocol-requirement reference. Authenticates indirect Swift descriptor pointers before reading their flags.
 bool ABISwiftProtocolRequirementIsClassBound(const void *reference);
-/// Runtime metadata operations over valid compiler-emitted Swift descriptors.
-/// Type construction requires an already validated metadata/witness argument list.
+/// Runtime metadata operations over valid compiler-emitted Swift descriptors. Type construction requires an already validated metadata/witness argument list.
 const void *ABISwiftProtocolRequirementDescriptor(const void *reference);
 const void *ABISwiftProtocolRequirementObjectiveCProtocol(const void *reference);
 const void *ABISwiftConformance(const void *metadata, const void *protocol);
@@ -45,33 +41,26 @@ const void *ABISwiftExtendedExistentialShape(const void *metadata);
 const void *ABISwiftExtendedExistentialMetadata(const void *shape, const void *const *arguments);
 const void *ABISwiftMetatypeMetadata(const void *instance);
 const void *ABISwiftExistentialMetatypeMetadata(const void *instance);
-/// Labels are nil or one space-terminated name per element; an empty name is unlabeled.
-/// The labels buffer only needs to remain valid until this call returns.
+/// Labels are nil or one space-terminated name per element; an empty name is unlabeled. The labels buffer only needs to remain valid until this call returns.
 const void *ABISwiftTupleTypeMetadata(const void *const *elements, size_t count, const char *labels);
-/// Canonical native Swift function metadata from Swift ABI function/parameter flags.
-/// flags carries the parameter count and marks any supplied extended flags.
-/// Differentiability/globalActor agree with the corresponding bits in flags.
+/// Canonical native Swift function metadata from Swift ABI function/parameter flags. flags carries the parameter count and marks any supplied extended flags. Differentiability/globalActor agree with the corresponding bits in flags.
 const void *ABISwiftFunctionTypeMetadata(uintptr_t flags, const void *const *parameters,
     const uint32_t *parameterFlags, const void *result, uint32_t extendedFlags, const void *thrownError,
     uintptr_t differentiability, const void *globalActor);
-/// Parses the subject or type constraint of a compiler-emitted requirement.
-/// A protocol or layout requirement has no type constraint in its second field.
+/// Parses the subject or type constraint of a compiler-emitted requirement. A protocol or layout requirement has no type constraint in its second field.
 ABISwiftSyntax *ABICopySwiftGenericRequirementTypeSyntax(const void *requirement, bool constraint);
 const void *ABISwiftConformanceDescriptor(const void *witnessTable);
 const void *ABISwiftAssociatedType(const void *metadata, const void *protocol, const char *name);
 const void *ABISwiftGenericTypeMetadata(const void *descriptor, const void *const *arguments);
-/// Interns a metadata pack in the Swift runtime. The returned tagged pointer
-/// remains owned by the runtime and may be used in type construction.
+/// Interns a metadata pack in the Swift runtime. The returned tagged pointer remains owned by the runtime and may be used in type construction.
 const void *ABISwiftMetadataPack(const void *const *elements, size_t count);
 typedef struct ABISwiftTypeMetadata ABISwiftTypeMetadata;
-/// Binds source-written type arguments through the runtime's generic type
-/// resolver, which validates constraints and obtains existing conformances.
+/// Binds source-written type arguments through the runtime's generic type resolver, which validates constraints and obtains existing conformances.
 ABISwiftTypeMetadata *ABICreateSwiftTypeMetadata(const void *descriptor,
     const void *const *arguments, size_t count, ABIResolutionFailure **error);
 /// Returns an authenticated raw nominal descriptor, or null for a non-nominal type.
 const void *ABISwiftTypeDescriptor(const void *metadata);
-/// Reflection fields whose storage is inline in a struct or enum. Syntax trees
-/// preserve generic parameters and symbolic descriptor identities.
+/// Reflection fields whose storage is inline in a struct or enum. Syntax trees preserve generic parameters and symbolic descriptor identities.
 size_t ABISwiftTypeFieldCount(const void *metadata);
 ABISwiftSyntax *ABICopySwiftTypeFieldSyntax(const void *metadata, size_t index);
 /// The shape's generalized type expression, preserving symbolic references.
@@ -83,11 +72,9 @@ size_t ABISwiftTypeMetadataArgumentCount(const ABISwiftTypeMetadata *result);
 bool ABISwiftTypeMetadataArgumentIsPack(const ABISwiftTypeMetadata *result, size_t index);
 size_t ABISwiftTypeMetadataArgumentElementCount(const ABISwiftTypeMetadata *result, size_t index);
 const void *ABISwiftTypeMetadataArgumentElement(const ABISwiftTypeMetadata *result, size_t index, size_t element);
-/// Reads the nominal declaration context for member binding. This additional
-/// information is not required to construct or inspect nominal metadata.
+/// Reads the nominal declaration context for member binding. This additional information is not required to construct or inspect nominal metadata.
 bool ABIPrepareSwiftTypeMetadataContext(ABISwiftTypeMetadata *result, ABIResolutionFailure **error);
-/// Type references preserve source generic depth/index for member binding.
-/// Call ABIPrepareSwiftTypeMetadataContext first; returned strings borrow result.
+/// Type references preserve source generic depth/index for member binding. Call ABIPrepareSwiftTypeMetadataContext first; returned strings borrow result.
 const char *ABISwiftTypeMetadataParameterReference(const ABISwiftTypeMetadata *result, size_t index);
 bool ABISwiftTypeMetadataArgumentIsKey(const ABISwiftTypeMetadata *result, size_t index);
 size_t ABISwiftTypeMetadataRequirementCount(const ABISwiftTypeMetadata *result);
@@ -101,20 +88,16 @@ void ABIReleaseSwiftTypeMetadata(ABISwiftTypeMetadata *result);
 const void *ABISwiftTypeForMangledName(const char *name, size_t length,
                                     const void *context, const void *const *arguments);
 
-/// A concrete thick Swift closure. Its context is a Swift heap reference,
-/// including closure capture contexts that are not ordinary class instances.
+/// A concrete thick Swift closure. Its context is a Swift heap reference, including closure capture contexts that are not ordinary class instances.
 typedef struct ABISwiftClosureValue {
     const void *function;
     void *context;
 } ABISwiftClosureValue;
 
-/// Converts between the compiler's type-discriminated Swift function pointer
-/// and the backend's authenticated C function pointer. The discriminator must
-/// describe the concrete SIL signature, not its generic reabstraction.
+/// Converts between the compiler's type-discriminated Swift function pointer and the backend's authenticated C function pointer. The discriminator must describe the concrete SIL signature, not its generic reabstraction.
 ABIUnmanagedFunction ABIAuthenticateSwiftClosureFunction(const void *function, uint16_t discriminator);
 const void *ABISignSwiftClosureFunction(ABIUnmanagedFunction function, uint16_t discriminator);
-/// Async closures authenticate a descriptor with the data key. The descriptor
-/// contains a relative entry address and the required task-context size.
+/// Async closures authenticate a descriptor with the data key. The descriptor contains a relative entry address and the required task-context size.
 const void *ABIAuthenticateSwiftAsyncClosureDescriptor(const void *descriptor, uint16_t discriminator);
 const void *ABISignSwiftAsyncClosureDescriptor(const void *descriptor, uint16_t discriminator);
 typedef struct ABISwiftAsyncDescriptor ABISwiftAsyncDescriptor;
@@ -126,22 +109,17 @@ void ABIReleaseSwiftAsyncDescriptor(ABISwiftAsyncDescriptor *descriptor);
 void ABIRetainSwiftClosureContext(void *context);
 void ABIReleaseSwiftClosureContext(void *context);
 
-/// Combines ABI scalar components and offsets with compiler-known Swift storage.
-/// Scalar field extents must fit size; component aggregate tail padding is
-/// excluded. Alignment must be a power of two.
-/// This layout is for Swift interfaces, not a libffi C calling convention.
+/// Combines ABI scalar components and offsets with compiler-known Swift storage. Scalar field extents must fit size; component aggregate tail padding is excluded. Alignment must be a power of two. This layout is for Swift interfaces, not a libffi C calling convention.
 ABIValueType *ABICreateSwiftOptionalSingletonType(void);
 
 ABIValueType *ABICreateSwiftStorageType(
     const ABIValueType *components, size_t size, size_t alignment, ABIResolutionFailure **error);
 
-/// Describes a formally indirect Swift value, independent of its current size.
-/// There is no C representation and no scalar component description.
+/// Describes a formally indirect Swift value, independent of its current size. There is no C representation and no scalar component description.
 ABIValueType *ABICreateSwiftIndirectStorageType(
     size_t size, size_t alignment, ABIResolutionFailure **error);
 
-/// A formal tuple expands into independent SIL parameters/results. Offsets
-/// describe its concrete Swift storage, including nested tuple elements.
+/// A formal tuple expands into independent SIL parameters/results. Offsets describe its concrete Swift storage, including nested tuple elements.
 ABIValueType *ABICreateSwiftTupleStorageType(
     const ABIValueType *const *fields, const size_t *offsets, size_t count,
     size_t size, size_t alignment, ABIResolutionFailure **error);
@@ -150,16 +128,11 @@ ABIValueType *ABICreateSwiftPackStorageType(
     const ABIValueType *const *fields, const size_t *offsets, size_t count,
     size_t size, size_t alignment, ABIResolutionFailure **error);
 
-/// Prepares a concrete synchronous, nonthrowing Swift call from fixed value
-/// layouts. These are storage descriptions, not a C calling convention.
-/// Parameters must use ordinary guaranteed ownership. Declared formally
-/// indirect values use ABICreateSwiftIndirectStorageType; consumed/inout values
-/// and hidden generic arguments require a native adapter.
+/// Prepares a concrete synchronous, nonthrowing Swift call from fixed value layouts. These are storage descriptions, not a C calling convention. Parameters must use ordinary guaranteed ownership. Declared formally indirect values use ABICreateSwiftIndirectStorageType; consumed/inout values and hidden generic arguments require a native adapter.
 ABISwiftCallInterface *ABICreateSwiftCallInterface(
     const ABIValueType *result, const ABIValueType *const *parameters,
     size_t count, ABIResolutionFailure **error);
-/// Prepares synchronous throwing invocation. Untyped errors use a pointer-sized
-/// owned Swift error reference; typed errors use their declared value layout.
+/// Prepares synchronous throwing invocation. Untyped errors use a pointer-sized owned Swift error reference; typed errors use their declared value layout.
 ABISwiftCallInterface *ABICreateSwiftThrowingCallInterface(
     const ABIValueType *result, const ABIValueType *const *parameters, size_t count,
     const ABIValueType *errorResult, bool typedError, ABIResolutionFailure **error);
@@ -167,19 +140,13 @@ void ABIReleaseSwiftCallInterface(ABISwiftCallInterface *interface);
 /// Whether a fixed value uses indirect Swift parameter/result storage.
 bool ABISwiftValueIsIndirect(const ABIValueType *type);
 
-/// Calls a thin Swift implementation using prepared register/stack lowering.
-/// The caller retains code and all guaranteed arguments and supplies writable,
-/// uninitialized result storage. A successful nontrivial result is owned by
-/// the caller. No Swift errors, native exceptions or async suspension may cross
-/// this boundary. context is the Swift self register, or null for a free function.
+/// Calls a thin Swift implementation using prepared register/stack lowering. The caller retains code and all guaranteed arguments and supplies writable, uninitialized result storage. A successful nontrivial result is owned by the caller. No Swift errors, native exceptions or async suspension may cross this boundary. context is the Swift self register, or null for a free function.
 bool ABIUnsafeInvokeSwiftCallInterface(
     ABISwiftCallInterface *interface, ABIUnmanagedFunction function,
     void *result, void *const *arguments, const void *context,
     ABIResolutionFailure **error);
 
-/// Invokes a prepared throwing interface. didThrow selects the initialized
-/// output: result on success, errorResult on native failure. Bridge preparation
-/// failures return false without entering native code. Each native error is +1.
+/// Invokes a prepared throwing interface. didThrow selects the initialized output: result on success, errorResult on native failure. Bridge preparation failures return false without entering native code. Each native error is +1.
 bool ABIUnsafeInvokeSwiftThrowingCallInterface(
     ABISwiftCallInterface *interface, ABIUnmanagedFunction function,
     void *result, void *const *arguments, const void *context,

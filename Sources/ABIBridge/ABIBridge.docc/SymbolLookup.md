@@ -1,6 +1,6 @@
 # Resolving symbols and retaining images
 
-Select a loaded image, resolve a declaration, and use its address within an explicit lifetime.
+Resolve a declaration in a selected image and keep its code or data alive while using it.
 
 ## Choose a search scope
 
@@ -13,13 +13,13 @@ let images = try runtime.images(
 )
 ```
 
-Image enumeration is always loaded-only. Automatic enumeration includes images whose lifetime can currently be retained. dyld can register an image before its initializers finish; another thread's loaded-only acquisition may temporarily exclude that image. Explicitly selecting such an image reports `ABIResolutionError.imageUnavailable`. An empty automatic image list means no matching image is currently available; it does not predict whether a resolution request can acquire that target.
+Enumeration includes only loaded images that can currently be retained. dyld can register an image before its initializers finish; another thread may temporarily exclude it, while explicit selection reports `ABIResolutionError.imageUnavailable`. An empty list means no matching image is currently available, even if a later resolution request could acquire one.
 
 A `NativeImage` retains its loaded image. Reuse that handle to resolve several declarations in the same scope. The runtime caches raw symbol data and decoded declaration indexes; C++ members with a plain qualified owner reuse that owner's index.
 
-Synchronous lookup prepares the indexes it needs automatically. Callable factories also prepare the supplied signature and return a handle ready for invocation. `ABIRuntime` and `NativeSwiftType` remain actors, with `nonisolated` synchronous lookup methods. Missing preparation runs on the calling thread; joining preparation already in progress blocks that thread until the required work finishes. This also applies to a caller on `MainActor`.
+Lookup automatically prepares its indexes, and callable factories return handles ready for invocation. Synchronous methods are `nonisolated` on `ABIRuntime` and `NativeSwiftType`: they perform missing work or block while required preparation finishes, including on `MainActor`.
 
-Swift function, type, and member lookup uses async factories whose names begin with `resolve`, including instance and static methods, initializers, getters, and setters. Their synchronous counterparts append `AndWait`. Awaiting these factories runs search and preparation on a worker queue while the caller suspends, reusing completed results and joining only required work in progress. Choose the factory name explicitly in either a synchronous or async calling context; no earlier `prepare(_:)` is required. Bound object factories keep the receiver in the caller's isolation domain. See <doc:SwiftFunctionInvocation> and <doc:SwiftMemberInvocation> for `MainActor` examples.
+Swift factories named `resolve` perform function, type, and member lookup on a worker queue while the caller suspends. Their `AndWait` counterparts select synchronous lookup in either a synchronous or async context. Bound factories keep receivers in the caller's isolation domain. See <doc:SwiftFunctionInvocation> and <doc:SwiftMemberInvocation> for `MainActor` examples.
 
 Native invocation follows the target's actor-isolation and thread-affinity requirements. A synchronous native function stays synchronous; an async native signature requires `await` when invoking the returned handle.
 
@@ -36,15 +36,15 @@ let first = try unsafe decorate.unsafeInvoke("Hello")
 let second = try unsafe decorate.unsafeInvoke("Again")
 ```
 
-Retain the callable handle and invoke it repeatedly to avoid resolving the same declaration on each call. When resolving other declarations from the same image, pass the retained `NativeImage` to the corresponding `in:` overload. Use `loading: .loadedOnly` when the target must already be loaded; the loading policy does not change the search scope.
+Retain the handle for repeated calls. For other declarations in the same image, pass its retained `NativeImage` to an `in:` overload.
 
 A Swift module name does not necessarily identify its containing framework: a statically linked module can live in the executable, and a framework can contain several modules. Select the image that actually supplies the declaration. An explicit framework scope does not search its dependencies or fall back to the whole process. If the provider can vary, list its possible frameworks in a ``NativeSymbolRequest``. Append `.automatic` only when a final process-wide search is needed.
 
-An automatic search must check every available image to establish absence or detect ambiguity. Its first lookup can therefore cost substantially more than a framework-scoped lookup. The runtime reuses indexes and caches automatic results while the loaded-image catalog is unchanged. Keep those caches between lookups; `removeCachedResults()` makes subsequent lookups rebuild them. Batch requests also reuse their image scopes, as described below.
+An automatic search checks every available image for absence or ambiguity, so its first lookup can cost substantially more than a framework-scoped lookup. The runtime caches results while the catalog is unchanged; loading or unloading refreshes that scope. Keep these caches between lookups.
 
 ## Prepare known requirements ahead of time
 
-Preparation is optional. A synchronous caller can obtain and invoke a handle without any earlier `prepare(_:)` call:
+Synchronous lookup works without a preceding preparation call:
 
 ```swift
 @MainActor
@@ -81,11 +81,9 @@ func calculateWithPreparation() async throws -> Int32 {
 }
 ```
 
-Use the same runtime for preparation and ordinary lookup. They share symbol indexes and native call layouts. If the required work is already running, synchronous lookup joins it; if preparation has not begun, lookup performs that work itself. Completed results are reused. Discarding the returned handle does not discard the prepared indexes or call layouts.
+Use the same runtime for preparation and lookup so both share indexes and call layouts. Lookup performs work that has not started and joins only the work it needs, without waiting for the whole closure or batch. Discarding a prepared handle leaves cached preparation intact. No readiness flag is required. Native image loading and Swift metadata initialization retain their reentrancy rules.
 
-Lookup joins only the work it needs, rather than waiting for an entire preparation closure or batch. The caller needs no readiness flag or separate recovery path when preparation is unfinished. Native image loading and Swift metadata initialization retain their own reentrancy rules.
-
-For symbol-only preparation, `prepare(request)` returns a ``ResolvedSymbol`` and reports the same lookup errors as `resolve(request)`. `prepare(requests)` returns one `Result` per input, preserving order and partial success. Both use the request's existing image scopes, aliases, fallbacks, and loading policy. These overloads resolve declarations and warm their indexes. Use the closure overload with a callable factory when preparing its supplied invocation signature too.
+For symbol-only preparation, `prepare(request)` returns a ``ResolvedSymbol`` with the same errors as `resolve(request)`. `prepare(requests)` preserves order and partial success with one `Result` per input. Both honor scopes, aliases, fallbacks, and loading policy. To prepare a call signature too, use a callable factory in the closure overload.
 
 ## Describe the declaration
 
@@ -124,7 +122,7 @@ Exact declarations use the same storage checks, image scopes, lookup precedence,
 
 The runtime searches loaded symbol tables and exports first. If no definition matches, it searches local symbols from the matching dyld shared cache where that metadata is available. Loaded-image results retain precedence even after a shared-cache index has been populated.
 
-Automatic lookup searches the images it can currently retain. An unrelated image still running initializers does not prevent a match in an available image. If no match is found while some registered images remain unavailable, lookup reports `ABIResolutionError.imageUnavailable` instead of declaring the symbol absent. That partial scope and its results are not cached, including within a batch, because initializer completion does not itself change the image catalog revision. A later lookup can find the initialized image or report new ambiguity without an explicit cache reset.
+Available images can yield a match while unrelated images are still initializing. If no match is found and some registered images remain unavailable, lookup throws `ABIResolutionError.imageUnavailable`. Partial scopes are not cached, even in a batch: initializer completion leaves the catalog revision unchanged. A later lookup can discover that image or new ambiguity without a cache reset.
 
 Distinct available definitions at the same lookup level produce `ABIResolutionError.ambiguousDeclaration`. A matching name whose address is outside the requested executable or data storage produces `ABIResolutionError.invalidAddress`. The containing section range does not establish the size of a function or value. Thread-local descriptors and storage templates are rejected because they do not provide an ordinary process-wide variable address.
 
@@ -173,9 +171,9 @@ let request = NativeSymbolRequest(
 let symbol = try runtime.resolve(request)
 ```
 
-Candidate order takes precedence over image-scope order. The primary declaration and its `alternatives:` are searched together across every scope before the first fallback is attempted across those scopes. Each fallback is independent, and the first success stops resolution without looking up later candidates. Ambiguity, invalid storage, unsupported declarations, and loader failures stop immediately. If every candidate is absent, the error keeps the primary declaration's identity; empty or entirely unloaded scopes report `imageNotLoaded`.
+Search proceeds by candidate, then scope: the primary and its aliases search all scopes, followed by each fallback in order. The first success stops lookup. Ambiguity, invalid storage, unsupported declarations, and loader failures stop immediately. If all candidates are absent, the error identifies the primary; empty or entirely unloaded scopes report `imageNotLoaded`.
 
-Use `alternatives:` for aliases that must agree and `fallbacks:` for ordered choices that need not have the same address. Both single-request and batch APIs reuse the same scope and symbol caches.
+Use `alternatives:` for aliases that must agree, and `fallbacks:` for independent ordered choices.
 
 ## Borrow an address
 
@@ -195,12 +193,10 @@ See <doc:NativeInspection> for C++ adoption and retention. These operations keep
 
 ## Cache and loader lifetime
 
-Call `removeCachedResults()` on the runtime to release its indexes. Existing `NativeImage` and `ResolvedSymbol` values continue to retain their images. New lookups rebuild the indexes they need.
+Call `removeCachedResults()` to release cached indexes and results. Existing image, symbol, and callable handles stay valid; subsequent lookups rebuild the required indexes. Known Swift classes reuse their defining image while it remains retained.
 
 Each image load has a process-local generation, so a later image at the same address cannot inherit the previous generation's identity. The native catalog registers process-lifetime dyld observers and pins the image containing their callback code. Executables and dyld shared-cache images already have process lifetime, so their leases do not reopen a filesystem path. Other image leases acquire loader references without loading missing code.
 
 ## Validation boundary
 
 The test suite resolves C++ functions, data, and vtables from temporary native libraries, resolves a Swift declaration, checks ambiguous and missing lookups, and verifies that retained handles survive release of the original loader handle. It also checks unload/reload generations. Generic platform builds verify compilation; they do not establish runtime behavior on every supported device.
-
-Automatic lookup reuses immutable catalog snapshots and declaration results while the loaded-image set is unchanged. Loading or unloading an image refreshes that scope, including previously missing or unique results. Known Swift classes reuse their defining image while it is retained. Explicit image/path/framework acquisition retains its loading and filesystem behavior. `removeCachedResults()` releases the runtime's retained indexes and results; existing handles remain valid.

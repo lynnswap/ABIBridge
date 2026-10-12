@@ -4,22 +4,17 @@ import Foundation
 /// A virtual continuation was used after return or on another thread.
 public enum NativeVirtualInvocationError: Error, Sendable { case expiredInvocation, wrongThread }
 
-/// The incoming subobject and a callback-scoped continuation. The receiver and
-/// other pointers remain borrowed; this value does not extend the native call.
+/// The incoming subobject and a callback-scoped continuation. The receiver and other pointers remain borrowed; this value does not extend the native call.
 public struct NativeVirtualInvocation<Result, each Argument>: CustomStringConvertible {
-    /// The source declaration used for named selection; nil for explicit adapter
-    /// entries. It does not identify an already interposed predecessor and its
-    /// copied value remains usable after the callback ends.
+    /// The source declaration used for named selection; nil for explicit adapter entries. It does not identify an already interposed predecessor and its copied value remains usable after the callback ends.
     public let declaration: NativeDeclaration?
 
-    /// The Swift function type supplied at registration, excluding the receiver
-    /// and other hidden arguments. It is not an inferred native signature.
+    /// The Swift function type supplied at registration, excluding the receiver and other hidden arguments. It is not an inferred native signature.
     public var signature: ((repeat each Argument) -> Result).Type {
         ((repeat each Argument) -> Result).self
     }
 
-    /// Cached declaration and supplied signature, without reading native state
-    /// or formatting argument objects. Available after callback expiry too.
+    /// Cached declaration and supplied signature, without reading native state or formatting argument objects. Available after callback expiry too.
     public let description: String
 
     /// The exact incoming base-subobject pointer, without a complete-object cast.
@@ -27,8 +22,7 @@ public struct NativeVirtualInvocation<Result, each Argument>: CustomStringConver
     fileprivate let frame: FunctionCallbackFrame
     fileprivate let callSignature: FunctionCallbackSignature<Result, repeat each Argument>
 
-    /// Calls the next callback or captured adjustment thunk with the same receiver.
-    /// May run only on the incoming thread before this callback returns.
+    /// Calls the next callback or captured adjustment thunk with the same receiver. May run only on the incoming thread before this callback returns.
     public func proceed(_ values: repeat each Argument) throws -> Result {
         do {
             return try frame.use { pointer in
@@ -42,17 +36,13 @@ public struct NativeVirtualInvocation<Result, each Argument>: CustomStringConver
     }
 }
 
-/// Owns one shared-table callback. Copies of the reference share registration.
-/// Later callbacks wrap earlier ones. In-flight calls retain immutable snapshots.
-/// Published callable storage, image leases and table owners remain process-lived;
-/// invalidation releases callback captures after the last active snapshot ends.
+/// Owns one shared-table callback. Copies of the reference share registration. Later callbacks wrap earlier ones. In-flight calls retain immutable snapshots. Published callable storage, image leases and table owners remain process-lived; invalidation releases callback captures after the last active snapshot ends.
 public final class NativeVirtualHook: @unchecked Sendable {
     /// Logical registration state and observed contents of its shared slot.
     public enum Status: Sendable { case invalidated, active, displaced, unreadable }
     /// A copied publication or rollback outcome, including incomplete cleanup.
     public struct Mutation: Sendable {
-        /// Native mutation status; zero is complete. Fields not reached by the
-        /// operation remain zero; interpret them together with this status.
+        /// Native mutation status; zero is complete. Fields not reached by the operation remain zero; interpret them together with this status.
         public let status: Int32
         /// Whether this operation published its pointer, including partial failure.
         public let didWrite: Bool
@@ -83,8 +73,7 @@ public final class NativeVirtualHook: @unchecked Sendable {
     }
     let handle: OpaquePointer
     init(_ handle: OpaquePointer) { self.handle = handle }
-    /// Nil if preparation failed before selecting a slot. Remains available after
-    /// invalidation or external displacement; status is a point-in-time observation.
+    /// Nil if preparation failed before selecting a slot. Remains available after invalidation or external displacement; status is a point-in-time observation.
     public var slot: Slot? {
         guard ABIVirtualHookHasEntry(handle) else { return nil }
         let status: Status
@@ -97,8 +86,7 @@ public final class NativeVirtualHook: @unchecked Sendable {
         return Slot(address: ABIVirtualHookSlot(handle), status: status,
             mutation: Mutation(ABIVirtualHookMutation(handle)), rollback: Mutation(ABIVirtualHookRollback(handle)))
     }
-    /// Removes this callback from future snapshots without waiting or restoring
-    /// the slot. A pointer copied after publication stays callable as pass-through.
+    /// Removes this callback from future snapshots without waiting or restoring the slot. A pointer copied after publication stays callable as pass-through.
     public func invalidate() { ABIInvalidateVirtualHook(handle) }
     deinit { ABIReleaseVirtualHook(handle) }
 }
@@ -113,18 +101,9 @@ public struct NativeVirtualHookInstallationError: Error {
 extension NativeVTable.Entry {
     /// Intercepts calls through this entry for every object using the shared table.
     ///
-    /// The signature describes explicit C-compatible arguments, excluding this.
-    /// The callback runs synchronously on the incoming thread; its continuation
-    /// preserves the incoming subobject and any adjustment/covariant-return thunk.
-    /// If it throws before proceeding, the original arguments pass through;
-    /// otherwise the last completed result is preserved and onFailure is notified.
+    /// The signature describes explicit C-compatible arguments, excluding this. The callback runs synchronously on the incoming thread; its continuation preserves the incoming subobject and any adjustment/covariant-return thunk. If it throws before proceeding, the original arguments pass through; otherwise the last completed result is preserved and onFailure is notified.
     ///
-    /// Direct/devirtualized calls bypass the entry. Construction/destruction,
-    /// native exception unwinding and nontrivial C++ ownership need native adapters.
-    /// Table layout, actual signature, thread requirements and synchronization with
-    /// external writers remain caller responsibilities. Protected tables can refuse
-    /// installation. Published entries retain table owners for process lifetime;
-    /// use callback captures for resources that should release on invalidation.
+    /// Direct/devirtualized calls bypass the entry. Construction/destruction, native exception unwinding and nontrivial C++ ownership need native adapters. Table layout, actual signature, thread requirements and synchronization with external writers remain caller responsibilities. Protected tables can refuse installation. Published entries retain table owners for process lifetime; use callback captures for resources that should release on invalidation.
     /// - Throws: Signature/conversion errors or `NativeVirtualHookInstallationError`
     ///   preserving partial publication and failed cleanup.
     @unsafe public func hookSharedCalls<Result, each Argument>(

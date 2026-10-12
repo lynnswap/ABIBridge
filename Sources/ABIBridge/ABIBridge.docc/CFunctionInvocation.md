@@ -26,11 +26,11 @@ let add = try runtime.cxxFunction(
 let sum = try unsafe add.unsafeInvoke(20, 22)
 ```
 
-The complete demangled C++ declaration selects an overload without a mangled symbol string. The function must use C-compatible parameter and result representations. Use <doc:CXXObjectInvocation> for member receivers. Reference parameters use an address with the declared access and lifetime contract. Nontrivial by-value parameters and results require a compiler adapter because their construction, destruction, and call lowering are not established by the symbol name.
+A complete demangled C++ declaration selects the overload. Parameters and results must have C-compatible representations; see <doc:CXXObjectInvocation> for member calls. Pass reference parameters as addresses with the declared access and lifetime. Nontrivial values require a compiler adapter to handle construction, destruction, and call lowering.
 
 ## Match native representations
 
-The Swift function type describes the native ABI. A C linker name has no type information, and a demangled C++ name alone does not establish the entire call contract. Choosing a signature with the wrong widths or calling convention can corrupt memory; such mismatches are outside Swift error handling.
+Supply a Swift function type that matches the native ABI. C linker names contain no type information, and demangled C++ names omit parts of the call contract. Wrong widths or calling conventions can corrupt memory without producing a Swift error.
 
 | C representation | Swift type |
 | --- | --- |
@@ -46,7 +46,7 @@ The Swift function type describes the native ABI. A C linker name has no type in
 
 For example, a C `int` uses `Int32`, while a pointer-sized integer uses `Int`. Ordinary Swift strings, objects, arbitrary structures, and optional scalars do not have an implicit C representation in this API.
 
-There is no fixed argument-count limit. A Swift function using the Swift calling convention cannot be invoked through this C ABI entry point.
+There is no fixed argument-count limit. Swift calling conventions use the separate APIs in <doc:SwiftCalls>.
 
 ## Call a variadic function
 
@@ -63,7 +63,7 @@ try "value: %.1f\n".withCString { format in
 }
 ```
 
-The backend promotes anonymous Float values to Double and Bool, Int8, UInt8, Int16, and UInt16 values to C int. Fixed arguments keep their declared representation. Other scalars, pointers, and naturally laid-out aggregates retain their normal C representation. The caller still supplies the actual widths and types required by the native consumer, such as each format conversion or `va_arg` operation.
+The backend applies C default argument promotions to the anonymous tail: Float becomes Double, and Bool, Int8, UInt8, Int16, and UInt16 become C int. Fixed arguments and other C-compatible values keep their declared representation. Match every tail argument to the consumer's format conversion or `va_arg` type.
 
 Use ``NativeSignature`` when layouts are known at runtime. Its `parameters:` list describes the fixed prefix, and `variadicParameters:` describes this call's tail. An empty tail still denotes a variadic call; omitting it denotes a fixed declaration:
 
@@ -74,7 +74,7 @@ let signature = NativeSignature(
 let printValue = try runtime.cFunction(named: "printf", signature: signature)
 ```
 
-Each handle prepares one concrete call shape and may be reused concurrently with that shape. Prepare another handle for a different tail. The libffi path requires at least one fixed parameter; native C++ `function<Signature>` wrappers use the consumer compiler's variadic function type directly. Callback interfaces likewise require a known concrete tail for every entry; an import name does not reveal arbitrary callers' argument counts or types.
+Reuse a handle for the same concrete tail; prepare another handle when its types or count change. The libffi path requires at least one fixed parameter. Native C++ `function<Signature>` wrappers use the consumer compiler's variadic function type directly. Callback entry also requires a known concrete tail, which cannot be inferred from an import name.
 
 ## Keep pointers and images alive
 
@@ -108,4 +108,6 @@ let copy = try runtime.cFunction(
 let result = try unsafe copy.unsafeInvoke(.passUnretained(input)).takeRetainedValue()
 ```
 
-The provider's contract determines whether the result is retained. Use `takeUnretainedValue()` for a borrowed result and keep its native owner alive. These operations are Swift's standard manual ownership operations; the bridge only passes pointer bits. A consumed input uses `passRetained`, and its reference transfers when native code enters. If a call fails before entry, release that reference yourself. Complete other fallible argument conversions before creating such a reference, or use a compiler adapter when the operation needs a single ownership and error boundary.
+Use `takeRetainedValue()` for a +1 result and `takeUnretainedValue()` for a borrowed result whose owner remains alive. ABIBridge passes the pointer bits without managing these references.
+
+For a consumed input, `passRetained` creates a reference that transfers on native entry. Release it yourself if the call fails before entry. Finish other fallible argument conversions before creating it, or use a compiler adapter to manage ownership and errors together.

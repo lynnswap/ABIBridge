@@ -18,7 +18,7 @@ void *address = nativeObject.unsafe_invoke();
 
 The example requires an existing receiver implementing those selectors. Signatures exclude `self` and `_cmd`. Passing a class object binds a class method. A selector can be supplied as `SEL` or a UTF-8 name; embedded NULs are rejected.
 
-Capturing checks argument counts and Objective-C type encodings, performs dynamic method resolution, and captures a concrete IMP. It works with concrete methods on NSProxy subclasses without asking the receiver to implement NSObject reflection. The captured method does not follow later method replacement; capture again to observe a new implementation. Forwarded-only methods cannot be captured by this interface.
+Capture checks argument counts and encodings, runs dynamic method resolution, and selects a concrete IMP. Concrete NSProxy methods work without NSObject reflection. Forwarding-only methods cannot be captured.
 
 ## Reuse the captured implementation
 
@@ -36,7 +36,7 @@ abi_bridge::objc_implementation<void(BOOL)> prepared(firstRenderer, "setEnabled:
 
 `objc_implementation<Signature>` retains the lookup class and discoverable implementation images without retaining a receiver instance. Releasing the original binding can release that receiver while the extracted implementation stays alive. Calls accept instances of the lookup class or its subclasses, or compatible class objects for a class-method capture. Incompatible receiver kinds or classes fail before invoking the IMP.
 
-Extraction and `bind` preserve the selected IMP, selector, and ownership overrides without repeating lookup or encoding validation. Compatible overrides and later method replacements are bypassed; capture again to select a different implementation. This remains distinct from ordinary Objective-C message dispatch. Generated classes and IMPs still require caller-managed validity.
+Extraction and `bind` preserve the IMP, selector, and ownership without repeating lookup. Calls bypass subclass overrides and later replacements; capture again to select a new implementation. Keep generated classes and IMPs valid through their final use.
 
 ## Own the receiver and result
 
@@ -68,13 +68,13 @@ The C constructor `ABICopyObjCMethod` accepts an index array and count after the
 
 The C++ interface throws `abi_bridge::resolution_error`, with an owned message and an `ABIFailure` category. Missing concrete declarations report `ABIFailureDeclarationNotFound`; a forwarded-only signature or forwarding IMP reports `ABIFailureUnsupportedDeclaration`; incompatible signatures report `ABIFailureSignatureMismatch`. A fast-forwarded selector without a method signature is treated as an absent concrete declaration. Objective-C exceptions raised by application code during lookup or invocation are not converted into C++ exceptions.
 
-The lower-level interface returns an owned `ABIObjCMethod *` or an NSError in `ABIObjCInvocationErrorDomain`. Release a successful binding with `ABIReleaseObjCMethod`. Its selector and IMP getters are borrowed for the binding's lifetime. `ABIObjCMethodReceiverAddress` returns the borrowed receiver address without Objective-C return ownership; bridge it to `id` while the binding is alive. This replaces the former `id`-returning `ABIObjCMethodReceiver` getter. Directly calling that IMP still requires the same signature and ownership contract as the typed interface.
+The lower-level interface returns an owned `ABIObjCMethod *` or an NSError in `ABIObjCInvocationErrorDomain`. Release the binding with `ABIReleaseObjCMethod`. Selector, IMP, and `ABIObjCMethodReceiverAddress` results borrow from it; bridge the receiver address to `id` only while the binding lives. Raw IMP calls require the typed interface's signature and ownership contract.
 
 ## Use receiver-independent C ownership
 
 `ABICopyObjCMethodImplementation` returns an owned `ABIObjCImplementation *` independently of an existing `ABIObjCMethod` binding. `ABIRetainObjCImplementation` adds a reference and `ABIReleaseObjCImplementation` releases it. Selector/IMP/ownership getters borrow their values from that live handle; keep it alive through invocation. The IMP getter preserves its signed function-pointer representation.
 
-`ABIValidateObjCImplementationReceiver` checks a live receiver's class and method kind. `ABICopyBoundObjCMethod` creates an owned retained-receiver binding to the same captured implementation, reporting incompatible receivers through NSError. Releasing a binding destroys its receiver before releasing the implementation plan's images. These C functions do not establish a different invocation signature or infer ownership annotations.
+`ABIValidateObjCImplementationReceiver` checks class and method kind. `ABICopyBoundObjCMethod` creates an owned binding and reports incompatible receivers through NSError. The binding releases its receiver before the plan's images. The caller still supplies the actual invocation signature and ownership annotations.
 
 ## Invoke a variadic implementation
 

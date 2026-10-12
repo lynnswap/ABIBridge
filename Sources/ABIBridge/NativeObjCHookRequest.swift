@@ -51,9 +51,7 @@ extension NativeObjCMethodHook {
 
 /// A declaration for coordinated Objective-C hook installation.
 ///
-/// Creating a request does not publish an IMP. Requests retain their declaration
-/// inputs and callbacks; release them when they are no longer needed. A request
-/// can be reused. Single hooks can still be installed directly on `ABIRuntime`.
+/// Creating a request does not publish an IMP. Requests retain their declaration inputs and callbacks; release them when they are no longer needed. A request can be reused. Single hooks can still be installed directly on `ABIRuntime`.
 public struct NativeObjCHookRequest {
     let validate: () throws -> ObjCHookValidation
     let install: (ABIRuntime) throws -> NativeObjCMethodHook
@@ -84,8 +82,7 @@ public struct NativeObjCHookRequest {
         })
     }
 
-    /// Describes dedicated initializer preparation and postprocessing.
-    /// Parameters and unsafe requirements match `ABIRuntime.hookInitializer`.
+    /// Describes dedicated initializer preparation and postprocessing. Parameters and unsafe requirements match `ABIRuntime.hookInitializer`.
     @unsafe public static func initializer<Result, each Argument>(
         on type: AnyClass, selector: String, as signature: ((repeat each Argument) -> Result).Type,
         options: NativeMethodOptions = .init(), retaining owner: Any? = nil,
@@ -103,9 +100,7 @@ public struct NativeObjCHookRequest {
                 transformingArguments: transformingArguments, before: before, after: after)
         })
     }
-    /// Describes a weak identity-filtered ordinary instance hook.
-    /// The request retains its object until the request is released; the installed
-    /// registration itself uses weak identity, just like `NativeObject.hookMethod`.
+    /// Describes a weak identity-filtered ordinary instance hook. The request retains its object until the request is released; the installed registration itself uses weak identity, just like `NativeObject.hookMethod`.
     @unsafe public static func objectMethod<Result, each Argument>(
         on object: AnyObject, selector: String, as signature: ((repeat each Argument) -> Result).Type,
         options: NativeMethodOptions = .init(), retaining owner: Any? = nil,
@@ -121,8 +116,7 @@ public struct NativeObjCHookRequest {
         })
     }
 
-    /// Describes a method callback with the direct MainActor-hook contract.
-    /// Preparation itself does not execute the callback or infer future isolation.
+    /// Describes a method callback with the direct MainActor-hook contract. Preparation itself does not execute the callback or infer future isolation.
     @unsafe @MainActor public static func mainActorMethod<Result, each Argument>(
         on type: AnyClass, selector: String, as signature: ((repeat each Argument) -> Result).Type,
         classMethod: Bool = false, options: NativeMethodOptions = .init(), retaining owner: Any? = nil,
@@ -173,31 +167,23 @@ public struct NativeObjCHookInstallationError: Error {
     public let phase: Phase
     /// The original lookup, declaration, ownership, or installation failure.
     public let underlyingError: any Error
-    /// Earlier registrations created by this operation, already invalidated.
-    /// Their status remains readable. Published dispatchers and subclass-local
-    /// pass-through method entries may remain; rollback is logical, not structural.
+    /// Earlier registrations created by this operation, already invalidated. Their status remains readable. Published dispatchers and subclass-local pass-through method entries may remain; rollback is logical, not structural.
     public let invalidatedHooks: [NativeObjCMethodHook]
 }
 
 extension ABIRuntime {
     /// Validates all Objective-C requests, then installs them in array order.
     ///
-    /// Returns ordinary owning handles. Release the array or invalidate its
-    /// elements to remove registrations; retained aliases follow normal handle
-    /// ownership. Empty input returns an empty array.
+    /// Returns ordinary owning handles. Release the array or invalidate its elements to remove registrations; retained aliases follow normal handle ownership. Empty input returns an empty array.
     ///
-    /// Activation revalidates current predecessors, so superclass/subclass
-    /// requests may appear in either order. Visibility is not atomic across
-    /// methods. If activation fails, only registrations added by this operation
-    /// are invalidated. Other hooks and external IMPs are preserved.
+    /// Activation revalidates current predecessors, so superclass/subclass requests may appear in either order. Visibility is not atomic across methods. If activation fails, only registrations added by this operation are invalidated. Other hooks and external IMPs are preserved.
     ///
     /// - Parameter requests: Typed ordinary-method and initializer declarations.
     /// - Returns: Handles in request order, each independently inspectable.
     /// - Throws: `NativeObjCHookInstallationError` with the original cause,
     ///   failed index, phase, and any invalidated partial registrations.
     ///
-    /// Per-request unsafe ownership/lifetime contracts and external-writer
-    /// coordination still apply. See <doc:CoordinatedObjectiveCHooks>.
+    /// Per-request unsafe ownership/lifetime contracts and external-writer coordination still apply. See <doc:CoordinatedObjectiveCHooks>.
     @unsafe public nonisolated func installHooks(_ requests: [NativeObjCHookRequest]) throws -> [NativeObjCMethodHook] {
         var validations: [ObjCHookValidation] = []
         var contracts: [ObjCHookValidation.Key: (retained: Bool, consumed: Bool, arguments: Set<Int>)] = [:]

@@ -5,19 +5,15 @@ import Synchronization
 
 /// Selects images for declaration lookup or loaded-image inspection.
 ///
-/// Resolution may acquire an explicitly selected image according to its loading
-/// policy. Catalog enumeration always remains loaded-only.
+/// Resolution may acquire an explicitly selected image according to its loading policy. Catalog enumeration always remains loaded-only.
 public enum ImageSelector: Hashable, Sendable {
-    /// Search loaded images whose lifetime can currently be retained.
-    /// Competing available definitions are reported as ambiguous.
+    /// Search loaded images whose lifetime can currently be retained. Competing available definitions are reported as ambiguous.
     case automatic
     /// Match a framework by its name without the framework suffix.
     case framework(named: String)
     /// Match an executable image path, resolving filesystem symlinks when available.
     case path(URL)
-    /// A dyld path spelling, including @rpath, @loader_path, or @executable_path.
-    /// Relative loader paths use the image containing ABIBridge's native loader
-    /// call, not the source location of an async Swift caller.
+    /// A dyld path spelling, including @rpath, @loader_path, or @executable_path. Relative loader paths use the image containing ABIBridge's native loader call, not the source location of an async Swift caller.
     case installName(String)
 
     func validateTarget() throws { try withRuntimeErrors { try runtimeValue.validateTarget() } }
@@ -26,8 +22,7 @@ public enum ImageSelector: Hashable, Sendable {
 
 /// Controls whether resolution can acquire an explicitly selected image.
 public enum ImageLoadingPolicy: Int32, Hashable, Sendable {
-    /// Use dyld to acquire and initialize an explicit target. Automatic search
-    /// still considers only images already present in the catalog.
+    /// Use dyld to acquire and initialize an explicit target. Automatic search still considers only images already present in the catalog.
     case ifNeeded = 0
     /// Search existing images without requesting loading or initialization.
     case loadedOnly = 1
@@ -87,9 +82,7 @@ struct ImageSnapshot: Sendable {
 
 /// A native symbol together with the image that keeps its address valid.
 ///
-/// Resolution establishes the containing storage and image identity. It does
-/// not establish a function signature, object layout, or ownership convention.
-/// See <doc:SymbolLookup> for lookup precedence and lifetime rules.
+/// Resolution establishes the containing storage and image identity. It does not establish a function signature, object layout, or ownership convention. See <doc:SymbolLookup> for lookup precedence and lifetime rules.
 public struct ResolvedSymbol: Sendable {
     /// The symbol metadata source used for this result.
     public enum Source: String, Sendable {
@@ -146,10 +139,7 @@ public struct ResolvedSymbol: Sendable {
 
     /// Borrows the symbol address while retaining its image.
     ///
-    /// The address must not escape the closure. Calling it requires a compatible
-    /// ABI, argument lifetimes, and function-pointer authentication where required.
-    /// This method supplies a raw address and does not perform authentication.
-    /// Reading data requires knowledge of the actual value's layout and size.
+    /// The address must not escape the closure. Calling it requires a compatible ABI, argument lifetimes, and function-pointer authentication where required. This method supplies a raw address and does not perform authentication. Reading data requires knowledge of the actual value's layout and size.
     ///
     /// - Parameter body: A synchronous operation using the borrowed address.
     /// - Returns: The result produced by the closure.

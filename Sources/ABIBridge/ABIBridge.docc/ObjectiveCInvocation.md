@@ -24,7 +24,7 @@ The function type describes only explicit arguments. ABIBridge supplies the rece
 
 Keep a method handle to reuse its decoded signature. Each invocation builds an independent call frame and uses normal Objective-C message dispatch, including forwarding. A replacement implementation must preserve the signature and ownership contract captured during lookup.
 
-The `selector:` parameter also accepts `Selector` values, including compiler-checked `#selector` expressions. String names remain available for declarations that cannot be imported. Both forms use the same dispatch, ownership, isolation, and error handling, including captured implementations and direct/MainActor/coordinated hooks.
+Pass a `Selector`, including a compiler-checked `#selector`, when the declaration is importable. String names support declarations unavailable to the compiler. Both forms share the same invocation and hook contracts.
 
 ```swift
 let append = try runtime.objcMethod(
@@ -34,7 +34,7 @@ let append = try runtime.objcMethod(
 )
 ```
 
-A compiler-checked selector confirms the declaration's spelling; the supplied function type and ownership contract still describe the native call.
+A compiler-checked selector verifies spelling. The function type and ownership options must still match the native declaration.
 
 ## Call a variadic method
 
@@ -49,7 +49,7 @@ let format = try runtime.object(NSString.self as AnyObject).method(
 let text = try unsafe format.unsafeInvoke("%.1f/%d/%@", 1.5, -3, "value")
 ```
 
-ABIBridge applies C's default argument promotions to the anonymous tail. Object, class, block, selector, pointer, scalar, and standard CoreGraphics/Foundation structure representations can be inferred from their Swift types. For other anonymous aggregates, use the native C++ frontend so the compiler supplies the layout. The runtime encoding supplies only the named prefix; the caller must select the actual tail, including any sentinel required by the method.
+ABIBridge applies C default promotions to the anonymous tail and infers representations for objects, classes, blocks, selectors, pointers, scalars, and standard CoreGraphics/Foundation structures. Other anonymous aggregates need the native C++ frontend. Runtime encodings describe only the named prefix, so supply the actual tail and any required sentinel.
 
 Variadic messages resolve the receiver's current concrete IMP on each call; captured implementations keep their original IMP. Forwarding through `NSInvocation` cannot carry an anonymous tail. Fixed signatures retain their existing forwarding behavior.
 
@@ -70,9 +70,9 @@ let bound = try append.bind(to: text)
 try unsafe bound.unsafeInvoke("!")
 ```
 
-`NativeObjCMethod` retains no receiver instance. It validates the supplied receiver's class/method kind and current ABI representation, then follows normal message dispatch. Compatible subclass overrides and later hook installations are observed. Aggregate names may differ when their native layouts agree. Encoding checks cannot establish ownership attributes that the runtime omits: replacements and overrides must honor the prepared ownership contract.
+`NativeObjCMethod` validates each supplied receiver's class, method kind, and current ABI representation before message dispatch. Compatible subclass overrides and later replacements participate. Aggregate names may differ when layouts agree. Runtime encodings omit ownership attributes, so every implementation must honor the prepared ownership contract.
 
-`bind(to:)` returns a `NativeBoundObjCMethod` retaining that receiver and sharing the prepared signature. Its last copy releases the receiver before the prepared plan's image and optional code owner. Like `object(receiver).method(...)`, a bound handle expects later replacements to preserve its prepared signature and ownership.
+`bind(to:)` shares the signature in a `NativeBoundObjCMethod` that retains the receiver. Its last copy releases the receiver before the plan's image and optional code owner.
 
 | Handle | Receiver lifetime | Dispatch |
 | --- | --- | --- |
@@ -80,11 +80,11 @@ try unsafe bound.unsafeInvoke("!")
 | `NativeBoundObjCMethod` | Retained by the handle | Current Objective-C message dispatch |
 | `NativeObjCImplementation` | Supplied for each call | Captured IMP |
 
-Class-based preparation requires a concrete method signature, including signatures supplied by dynamic method resolution. Receiver-specific forwarding signatures remain available through `object(receiver).method(...)`; one object's forwarding behavior is not assumed to apply to other instances. No receiver is constructed during class-based preparation, and no actor hop is performed. Caller-managed dynamic classes and generated code must stay valid through their final use.
+Class-based preparation requires a concrete signature, possibly supplied by dynamic method resolution. For receiver-specific forwarding, use `object(receiver).method(...)`. Preparation constructs no receiver and performs no actor hop. Keep dynamic classes and generated code valid through their final use.
 
 ## Reuse a message discovered on an existing object
 
-The `method` property of a `NativeBoundObjCMethod` returns a receiver-independent message sharing its prepared signature and code owner. Extraction does not perform lookup or decode the signature again, and keeping that message does not retain the original receiver binding.
+Extract `method` from a bound handle to reuse its signature and code owner without retaining the original receiver or repeating lookup:
 
 ```swift
 let bound = try runtime.object(firstRenderer).method(
@@ -96,9 +96,7 @@ let secondBound = try setImage.bind(to: secondRenderer)
 try unsafe secondBound.unsafeInvoke(nil, false)
 ```
 
-The new receiver must be an instance of the original lookup class or a subclass, or a compatible class object for a class message. Calls use current message dispatch, including later replacements and subclass overrides. Extracted forwarding signatures remain usable only when the new receiver supplies an ABI-compatible signature; explicit-receiver invocation and binding check that actual signature. Missing or incompatible signatures throw before forwarding is invoked. Existing bound calls retain their original signature/ownership contract.
-
-The prepared message retains its class image and any explicitly supplied code owner. Dynamic classes and generated code still require caller-managed lifetimes. Receiver isolation and ownership overrides remain unchanged.
+The new receiver must have the lookup class or a subclass, or be a compatible class object for a class message. Invocation and binding validate its actual forwarding signature before use; missing or incompatible signatures throw. The message retains its class image and explicit code owner. Receiver isolation, ownership, and generated-code lifetime follow the same rules as class-based preparation.
 
 ## Capture an implementation for original calls
 
@@ -113,19 +111,17 @@ let original = try ABIRuntime.shared.objcImplementation(
 let measured = try unsafe original.unsafeInvoke(on: view, proposedSize)
 ```
 
-The capture holds a fixed IMP and signature, without retaining an instance. Supply a compatible receiver for each call; subclass instances are accepted, but their overrides are not selected. Ordinary `NativeBoundObjCMethod` handles continue to use current message dispatch. Forwarding-only selectors cannot be captured.
+The handle keeps a fixed IMP and signature without an instance. Supply a compatible receiver on each call; subclass instances use the captured IMP. Forwarding-only selectors cannot be captured.
 
 For a class method, pass the ordinary class with `classMethod: true` and invoke with the class object, such as `SomeClass.self as AnyObject`. A subclass class object is also valid. Wrong receiver kinds and unrelated classes fail before calling native code.
 
 The handle retains discoverable implementation and class images. Caller-created classes must stay registered. Generated IMPs must remain callable; do not call `imp_removeBlock` or free generated code while a capture may use it. Pass `retaining:` to retain an owner responsible for that code/class lifetime. A retained block alone does not own the runtime trampoline produced by `imp_implementationWithBlock`.
 
-Captures use the same supported values and ownership overrides as ordinary selector calls. Lookup and invocation are synchronous on the caller's executor. The captured function pointer preserves authentication through the C call backend; an unsigned loader-inspection address is not used as the callable. Foreign exceptions must not cross that backend boundary.
-
-Installation, ordering, and restoration of replacements remain the consumer's responsibility.
+Captured calls share the value conversions and ownership options below and preserve function-pointer authentication through the C backend. The consumer manages replacement installation, ordering, and restoration.
 
 ## Handle lookup failures
 
-Known Objective-C lookup failures use `ABIResolutionError` across bound methods, captured implementations, and hook preparation. A missing selector throws `declarationNotFound` with the originally requested class and selector; an unsupported encoding throws `unsupportedDeclaration`. Unknown native error domains and codes remain available as their original errors. Exceptions from invoked native code are not translated.
+Bound lookup, implementation capture, and hook preparation report known failures as `ABIResolutionError`. Missing selectors throw `declarationNotFound` with the requested class and selector; unsupported encodings throw `unsupportedDeclaration`. Unknown native errors retain their original domains and codes.
 
 A signature mismatch carries `ABIResolutionError.SignatureMismatch`. Its `declaration` identifies the request, `position` identifies the zero-based explicit argument, result, argument count, or whole signature, and `expected` / `found` preserve the requested type and available native representation. Explicit argument indexes exclude `self` and `_cmd`.
 
@@ -142,7 +138,7 @@ do {
 
 For a native `increment:` taking `Int64`, this example reports `.argument(0)`, `Swift.Double`, and `q`. A mismatch in the return type reports `.result` instead. Coordinated hook installation keeps its `NativeObjCHookInstallationError` envelope; inspect `underlyingError` for the same diagnostic.
 
-The structured payload replaces the previous `signatureMismatch(expected:found:)` case. Match `signatureMismatch(let details)` and access its fields; no compatibility case or initializer is retained. Errors produced before a declaration is known, such as standalone value-layout checks, may have a nil `declaration`.
+Match `signatureMismatch(let details)` to access this payload. Errors from standalone value-layout checks can have a nil `declaration`.
 
 ## Read an object ivar
 
@@ -158,7 +154,7 @@ Lookup searches the receiver's Objective-C class hierarchy and checks the ivar e
 
 A missing ivar throws `ABIResolutionError.ivarNotFound`. A present nil value becomes nil only for an optional requested type; otherwise it throws `ABIInvocationError.unexpectedNilResult`. Incompatible values throw a conversion error. Scalars, raw pointers, and aggregate ivars are rejected even when their size matches an object pointer.
 
-Reads run synchronously on the caller's executor. A returned object owns a reference independently of the receiver. Weak reads follow Objective-C runtime semantics and can yield nil; an unsafe-unretained pointee must remain alive throughout the read. Synchronization with writers and actor/thread affinity remain the caller's responsibility. This API does not infer Swift stored-property layouts, walk object graphs, or invoke property accessors.
+Reads return an independently owned object reference. Weak ivars can yield nil under Objective-C runtime semantics; unsafe-unretained pointees must stay alive through the read. Synchronize with writers and respect the receiver's actor or thread. This API reads Objective-C ivars directly; Swift stored properties and property accessors require their own APIs.
 
 ## Use Swift values
 
@@ -176,7 +172,7 @@ The frontend supports these mappings:
 | Structures with complete field encodings | Caller-selected compatible Swift values, including SDK and user-defined structures, nested structures, and fixed-size array fields |
 | Void result | `Void` |
 
-There is no fixed argument-count limit. Signatures are synchronous and fixed. Structure layouts come from the method's native type encoding, including the ABI used for captured implementations and managed hooks. The library does not require a registration for each structure name.
+There is no fixed argument-count limit. Structure layouts come from runtime encodings for messages, captured implementations, and managed hooks, without per-name registration.
 
 For example, a method declared with UIEdgeInsets can use the SDK type directly:
 
@@ -187,7 +183,7 @@ let adjusted = try runtime.object(receiver).method(
 let result = try unsafe adjusted.unsafeInvoke(insets)
 ```
 
-The unsafe caller guarantees that the selected Swift type's field offsets, representation, alignment, and ownership are compatible with the native value. It may be an imported SDK type or a caller-defined byte-compatible structure. Type names do not need to match. The native extent must cover the Swift value without exceeding its stride, so native tail padding does not require artificial Swift fields. A size check protects storage bounds; it does not prove ABI compatibility.
+Choose an SDK or caller-defined structure whose field offsets, representation, alignment, and ownership match the native value. Names may differ. The native extent must cover the Swift value without exceeding its stride; tail padding needs no artificial fields. Bounds checks do not prove ABI compatibility.
 
 Incomplete structure encodings, bitfields, unions, and nontrivial C++ values still need an appropriate native adapter. Long-double fields use the platform's double representation on Apple ARM; x86_64 x87 long-double fields require a native adapter.
 
@@ -216,9 +212,9 @@ let next = returned?(42)
 
 Arguments are copied to owned block storage for the call. A native API that stores a callback must follow its normal block-copy contract; its retained copy keeps captures alive after invocation returns. Returned blocks are copied and managed by Swift ownership. Block-encoded returns default to borrowed-result handling even when the selector begins with `copy` or `new`; Clang does not apply those method families to block return types. Supply `returnsRetainedObject: true` when an explicit native ownership attribute returns a block at +1. Optional block values preserve nil; an unexpected nil for a nonoptional block throws an invocation error.
 
-The frontend distinguishes block function metadata from ordinary Swift closures and C function pointers. Use a typed block variable to bridge a Swift closure explicitly. An object-encoded argument or result may also carry a typed block, but a non-block object cannot be returned as a block.
+Use a typed block variable to bridge a Swift closure. The frontend distinguishes blocks from ordinary Swift closures and C function pointers. Object-encoded values may carry blocks, but a non-block object fails block conversion.
 
-The usual `@?` method encoding does not describe the block's own arguments and result. The caller must supply that exact signature. A block's inner call is performed by the Swift compiler through its declared convention, including nested completion blocks and Objective-C-representable values. ABI conventions follow the [Clang block specification](https://clang.llvm.org/docs/Block-ABI-Apple.html) and [Swift function metadata flags](https://github.com/swiftlang/swift/blob/main/include/swift/ABI/MetadataValues.h).
+The usual `@?` encoding omits the block's inner signature. Supply it exactly; the Swift compiler then invokes the block through that convention, including nested completion blocks and Objective-C-representable values. See the [Clang block specification](https://clang.llvm.org/docs/Block-ABI-Apple.html) and [Swift function metadata flags](https://github.com/swiftlang/swift/blob/main/include/swift/ABI/MetadataValues.h).
 
 Block ownership does not establish actor isolation or move callbacks to another executor. Callbacks execute where the native API invokes them, and callbacks that require the main actor must be invoked there. Completion blocks are not automatically converted into async functions.
 
@@ -250,10 +246,10 @@ try unsafe consume.unsafeInvoke(value)
 
 For each selected object, class, or block parameter, invocation transfers a separate +1 reference to native code. The caller keeps its ordinary Swift value. Conversion failures before native entry release prepared references without transferring them. The same options apply to receiver-independent messages, captured implementations, and managed hooks. A nil optional parameter remains nil.
 
-Core Foundation values use their pointer representation through `Unmanaged<T>`, optionally wrapped in `Optional`. The bridge does not retain or release these references automatically. Pass `Unmanaged.passUnretained(value)` for a borrowed input; use `takeRetainedValue()` for a result whose native declaration returns +1 and `takeUnretainedValue()` for a borrowed result. Explicit `cf_consumed` inputs use `passRetained`; the caller must release that reference if invocation fails before native entry. See <doc:CFunctionInvocation>.
+Core Foundation values use `Unmanaged<T>`, optionally wrapped in `Optional`, with manual reference ownership. Use `passUnretained` for borrowed input, `takeRetainedValue()` for +1 results, and `takeUnretainedValue()` for borrowed results. A `cf_consumed` input needs `passRetained`; release that reference if invocation fails before native entry. See <doc:CFunctionInvocation>.
 
 ## Preserve the receiver's execution requirements
 
-Selector lookup and invocation are synchronous and stay in the caller's isolation domain. Call `method(selector:as:variadicFrom:options:)` without `await`. Swift ABI member lookup instead uses async `resolveMethod`, `resolveGetter`, and `resolveSetter`, or their synchronous `AndWait` variants. Async lookup performs search and preparation on a worker while retaining the receiver in the caller's isolation domain; see <doc:SwiftMemberInvocation>. Handles retain their receiver but do not make it thread-safe or actor-independent. For a main-actor UI object, perform lookup and invocation on the main actor.
+Objective-C lookup, ivar reads, and invocation are synchronous in the caller's isolation domain. For a MainActor UI object, perform them on MainActor. Receiver retention does not establish thread safety or isolation. Swift ABI member lookup has separate async and `AndWait` factories; see <doc:SwiftMemberInvocation>.
 
 The unsafe call contract includes argument nullability, class constraints, pointer validity, ownership annotations, and any requirements that runtime encodings cannot express. Foundation signature-construction failures are reported as lookup errors. Exceptions from the invoked Objective-C or C++ implementation are not converted to Swift errors. Keep dynamically loaded receiver classes and method implementations available for as long as the object and its handles are used.

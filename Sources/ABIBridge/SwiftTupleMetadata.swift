@@ -68,8 +68,7 @@ func swiftResultInitializer(
     }
 }
 
-/// Swift tuple metadata supplies the instantiated element offsets, which need
-/// not match a C struct's tail-padding rules.
+/// Swift tuple metadata supplies the instantiated element offsets, which need not match a C struct's tail-padding rules.
 typealias SwiftTupleMetadata = RuntimeTupleMetadata
 
 extension RuntimeTupleMetadata {

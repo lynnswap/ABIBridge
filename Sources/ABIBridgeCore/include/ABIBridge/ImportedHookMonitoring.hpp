@@ -72,9 +72,7 @@ template<class R,class... A> struct imported_monitor_factory<R(A...)> {
 };
 }
 
-/// Applies hooks asynchronously to selected current and future imports. Image
-/// callbacks run serially, outside dyld notifications, and may begin before
-/// return. Constructor calls and transient loads can precede installation.
+/// Applies hooks asynchronously to selected current and future imports. Image callbacks run serially, outside dyld notifications, and may begin before return. Constructor calls and transient loads can precede installation.
 template<class Signature,class Body,class OnFailure,class OnImageUpdate>
 imported_hook_monitor monitor_imported_function(const declaration& query, const image_selector& importer,
     Body body, OnFailure onFailure, OnImageUpdate onImageUpdate, const image_selector *provider=nullptr) {

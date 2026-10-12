@@ -1,6 +1,6 @@
 # Runtime boundaries and CI coverage
 
-ABIBridge keeps runtime interpretation in an internal Swift target so its environment-dependent contracts can be tested without building the public API test bundle. Consumers still select the `ABIBridge` and `ABIBridgeSwiftUI` products and import the same public modules.
+`ABIBridgeRuntime` owns runtime interpretation so environment-dependent contracts can be tested separately from the public API. Consumers use the `ABIBridge` and optional `ABIBridgeSwiftUI` products.
 
 ## Module responsibilities
 
@@ -16,7 +16,7 @@ ABIBridgeCore   ABIBridgeObjCXX
    +--------------+
 ```
 
-The native targets retain their existing C/C++ headers. `ABIBridge` also imports these targets where its adapters submit storage or callbacks through the native interfaces. The diagram shows responsibility and dependency direction; the runtime target does not depend on the public Swift target.
+`ABIBridge` also imports the native targets to submit value storage and callbacks. `ABIBridgeRuntime` does not depend on the public Swift target.
 
 | Target | Owns |
 | --- | --- |
@@ -26,19 +26,19 @@ The native targets retain their existing C/C++ headers. `ABIBridge` also imports
 | `ABIBridge` | Public declarations and errors, formal generic binding and member selection, typed values and signatures, callback bodies, and public operation lifetimes |
 | `ABIBridgeSwiftUI` | SwiftUI adapters built on the public API |
 
-MachOKit and ObjCDump are implementation dependencies of `ABIBridgeRuntime`. Internal Swift records and owners cross the boundary with `package` access. Public types remain declared in `ABIBridge`; the package does not expose a new runtime product or recreate public types through re-exports.
+MachOKit and ObjCDump are implementation dependencies of `ABIBridgeRuntime`. Internal records and owners use `package` access; public types are declared in `ABIBridge`. The runtime target has no public product.
 
 ## Data flow and ownership
 
-The public layer converts declaration requests to runtime records. The runtime resolves retained images and symbols, interprets metadata, and prepares physical call interfaces. Public adapters bind formal types and transfer typed Swift values through those interfaces. Raw metadata offsets, class vtable addressing, and closure authentication discriminators belong to the runtime layer.
+The public layer converts declaration requests to runtime records. The runtime resolves images and symbols, interprets metadata, and prepares physical call interfaces. Public adapters bind formal types and transfer Swift values through those interfaces. The runtime owns raw metadata offsets, class vtable addresses, and closure authentication discriminators.
 
-A `RuntimeSymbolResolver` owns each resolver's indexes and image leases. `ABIRuntime` delegates lookup to that owner and keeps its separate cache of typed Swift handles. Physical Swift call interfaces and closure authentication values use bounded shared caches in the runtime target. Upper call wrappers retain those physical owners; they do not duplicate the physical interface cache.
+A `RuntimeSymbolResolver` owns each resolver's indexes and image leases. `ABIRuntime` delegates lookup to it and caches typed Swift handles. Physical call interfaces and closure authentication values use bounded shared runtime caches. Public call wrappers retain the physical owners.
 
-Typed Swift lookup has async factories, such as `resolveSwiftType` and `resolveMethod`, and synchronous counterparts whose names append `AndWait`. Both use the same resolver indexes and physical call-interface caches, joining only required preparation in progress. Async lookup schedules preparation on a worker while the caller suspends; bound object receivers and native invocation stay in the caller's required isolation domain.
+Async Swift lookup, such as `resolveSwiftType` and `resolveMethod`, schedules preparation on a worker while the caller suspends. Synchronous `AndWait` variants use the same indexes and call-interface caches. Both join only the preparation they need. Bound receivers and invocation stay in the caller's required isolation domain.
 
-Native callback entries retain the implementation and storage they need. The public layer supplies the callback functions and owns their typed bodies. Published native code continues to retain its lower owner after cache eviction or release of a temporary public wrapper. Hook publication and retirement keep their existing native registration path.
+The public layer owns typed callback bodies; native entries retain their implementation and storage. Published code retains its native owner after cache eviction or release of a temporary public wrapper. Native registrations handle hook publication and retirement.
 
-Runtime errors preserve their category and associated data when the public layer converts them to `ABIResolutionError`. Mutation, cleanup, and partial-failure reporting keep their existing contracts.
+Conversion to `ABIResolutionError` preserves the runtime error's category and associated data. The public APIs define mutation, cleanup, and partial-failure reporting contracts.
 
 ## Tests by contract
 
@@ -52,15 +52,13 @@ Runtime errors preserve their category and associated data when the public layer
 | `ABIBridgeLocalTests` | Hook timing loops and 10,000 closure handoffs | Local only |
 | Full native consumers, architecture probes, and runtime benchmarks | Exhaustive combinations, generated-code checks, timing, and device-specific behavior | Local only |
 
-The four runtime entries are macOS and iOS Simulator with Xcode 26.6, and macOS and iOS Simulator with Xcode 27.0. Core and Runtime run together under the `ABIBridgeRuntime` scheme. The macOS/Xcode 27 job then runs the `ABIBridge` scheme in the same build directory. Device-SDK builds for iOS, visionOS, watchOS, and tvOS run once with Xcode 27.
-
-These entries sample compiler/OS combinations. They do not isolate compiler changes from OS changes, cover every supported OS release, or verify physical-device pointer authentication. Host-compiled temporary libraries run only in the macOS runtime suite. SwiftUI Simulator behavior is not covered by a runtime test; its Apple platform builds check compilation.
+See [What CI runs](../CONTRIBUTING.md#what-ci-runs) for the environment matrix. Those jobs sample compiler/OS combinations without isolating compiler changes from OS changes or covering every supported OS release. Host-compiled temporary libraries run only on macOS. SwiftUI platform builds check compilation; runtime tests do not cover its Simulator behavior or device pointer authentication.
 
 ### Compiler and runtime oracles
 
 Runtime tests compare native calls with separately compiled Swift and Objective-C fixtures. They cover register/stack overflow arguments, direct and indirect results, managed and resilient values, typed errors, suspension, generic metadata and witnesses, class dispatch, callback entry-page expansion, and native closure retention after call-cache eviction. Metadata tests compare offsets and type identities with compiler-created values.
 
-The focused external consumers retain the checks that cannot move below a generic public declaration. They compile Swift explicit-value and async clients, run generic synchronous/throwing/async hooks, and link C inspection code in Release. Public compiler workarounds therefore remain exercised by both toolchains.
+Focused external consumers exercise generic public declarations with explicit-value and async clients, synchronous/throwing/async hooks, and Release C inspection linkage. Both CI toolchains check public compiler workarounds.
 
 ### Functional assertions and local workloads
 
@@ -68,9 +66,9 @@ The Runtime and public API schemes run each bundle's tests serially because temp
 
 Public applicability tests reuse a runtime across their input cases when cache construction is not their subject. Dedicated cache and image tests retain cold lookup, invalidation, and unload/reload coverage.
 
-The normal closure handoff test checks context identity across successive handoffs in Debug, the invocation result, and final capture release. The local suite retains the original 10,000-handoff stress case. Callback allocation tests still cross a native entry-page boundary; their allocation count is part of the contract.
+The normal closure handoff test checks context identity across successive handoffs in Debug, the invocation result, and final capture release. The local suite runs 10,000 handoffs. Callback allocation tests cross a native entry-page boundary, so their allocation count is part of the contract.
 
-Objective-C hook timing loops live in `ABIBridgeLocalTests` and run through `benchmark-runtime.sh hooks`. Short result and ownership tests remain in the public suite. The `calls` and `search` benchmark modes continue using `Tools/RuntimeBenchmarks`.
+Objective-C hook timing loops live in `ABIBridgeLocalTests` and run through `benchmark-runtime.sh hooks`. Short result and ownership tests belong to the public suite. The `calls` and `search` benchmarks use `Tools/RuntimeBenchmarks`.
 
 ## Commands and validation limits
 

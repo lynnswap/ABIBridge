@@ -20,9 +20,7 @@ enum {
 
 /// Creates an owned scalar type, or returns null with an owned failure.
 ABIValueType *ABICreateScalarType(int32_t kind, ABIResolutionFailure **error);
-/// Creates a naturally laid-out C aggregate, retaining its field descriptions.
-/// Packed layouts, unions, bitfields, and non-trivial value ownership require
-/// separate adapters. Fields may be released after this function returns.
+/// Creates a naturally laid-out C aggregate, retaining its field descriptions. Packed layouts, unions, bitfields, and non-trivial value ownership require separate adapters. Fields may be released after this function returns.
 ABIValueType *ABICreateStructType(
     const ABIValueType *const *fields, size_t count, ABIResolutionFailure **error);
 void ABIReleaseValueType(ABIValueType *type);
@@ -37,15 +35,11 @@ size_t ABIValueTypeFieldCount(const ABIValueType *type);
 /// Index must be less than ABIValueTypeFieldCount(type).
 size_t ABIValueTypeFieldOffset(const ABIValueType *type, size_t index);
 
-/// Prepares the platform C ABI and retains all type descriptions. The interface
-/// may be reused concurrently after creation. Void is permitted only as a
-/// result. Parameters may be null when count is zero.
+/// Prepares the platform C ABI and retains all type descriptions. The interface may be reused concurrently after creation. Void is permitted only as a result. Parameters may be null when count is zero.
 ABICallInterface *ABICreateCCallInterface(
     const ABIValueType *result, const ABIValueType *const *parameters,
     size_t count, ABIResolutionFailure **error);
-/// Prepares one concrete variadic call. The nonempty fixed prefix ends at
-/// fixedCount. Anonymous Float and narrow integers undergo C promotions;
-/// invocation storage still uses the supplied input representations.
+/// Prepares one concrete variadic call. The nonempty fixed prefix ends at fixedCount. Anonymous Float and narrow integers undergo C promotions; invocation storage still uses the supplied input representations.
 ABICallInterface *ABICreateVariadicCCallInterface(
     const ABIValueType *result, const ABIValueType *const *parameters,
     size_t count, size_t fixedCount, ABIResolutionFailure **error);
@@ -53,11 +47,7 @@ void ABIReleaseCallInterface(ABICallInterface *interface);
 void ABIRetainCallInterface(ABICallInterface *interface);
 size_t ABICallInterfaceParameterCount(const ABICallInterface *interface);
 
-/// Internal callback transport. Context and argument storage remain borrowed;
-/// the callback writes the interface's result representation. This does not
-/// manage Objective-C ownership or allow exceptions to cross the C boundary.
-/// Variadic entries require every caller to use the prepared tail. Anonymous
-/// callback arguments use their promoted C representations.
+/// Internal callback transport. Context and argument storage remain borrowed; the callback writes the interface's result representation. This does not manage Objective-C ownership or allow exceptions to cross the C boundary. Variadic entries require every caller to use the prepared tail. Anonymous callback arguments use their promoted C representations.
 typedef void (*ABICallClosureHandler)(void *context, void *result, void *const *arguments);
 /// Retains the prepared interface. A failed creation publishes no callable code.
 ABICallClosure *ABICreateCallClosure(ABICallInterface *interface,
@@ -67,20 +57,12 @@ ABIUnmanagedFunction ABICallClosureFunction(const ABICallClosure *closure);
 /// Requires that no caller can enter or still be executing this closure.
 void ABIReleaseCallClosure(ABICallClosure *closure);
 
-/// Signs an unsigned executable address as a generic C function pointer when
-/// required by the target. Does not validate storage, signature, or lifetime.
+/// Signs an unsigned executable address as a generic C function pointer when required by the target. Does not validate storage, signature, or lifetime.
 ABIUnmanagedFunction ABIUnsafeFunctionAtAddress(const void *address);
 
-/// Invokes a function using a prepared C ABI. The caller must keep the code,
-/// argument values, and referenced objects alive, and satisfy the actual native
-/// signature and ownership contract. Foreign exceptions must not cross this
-/// boundary. This is not a Swift calling-convention entry point.
+/// Invokes a function using a prepared C ABI. The caller must keep the code, argument values, and referenced objects alive, and satisfy the actual native signature and ownership contract. Foreign exceptions must not cross this boundary. This is not a Swift calling-convention entry point.
 ///
-/// Each argument points to aligned storage of the corresponding value, not
-/// directly to a pointee for pointer arguments. The array must contain the
-/// interface's parameter count. Result storage needs only the actual value's
-/// size/alignment; word-sized libffi returns are handled internally. Void allows
-/// null result storage. False reports an invalid invocation request.
+/// Each argument points to aligned storage of the corresponding value, not directly to a pointee for pointer arguments. The array must contain the interface's parameter count. Result storage needs only the actual value's size/alignment; word-sized libffi returns are handled internally. Void allows null result storage. False reports an invalid invocation request.
 bool ABIUnsafeInvokeCCallInterface(
     ABICallInterface *interface, ABIUnmanagedFunction function,
     void *result, void *const *arguments, ABIResolutionFailure **error);

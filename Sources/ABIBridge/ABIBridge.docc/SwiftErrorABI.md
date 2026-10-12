@@ -16,7 +16,7 @@ do {
 }
 ```
 
-A native failure is wrapped in ``NativeSwiftError``. The wrapper retains the original Swift error and its resolved implementation image through inspection and final destruction. Lookup, argument conversion, and other bridge failures retain their original error types. Calls remain synchronous on the caller's executor and require the declaration's actor/thread contract.
+A native failure arrives as ``NativeSwiftError``, retaining the original error and implementation image through destruction. Lookup, conversion, and other bridge failures keep their own types. Synchronous calls run on the caller's executor and require the declaration's actor/thread contract.
 
 ## Specify concrete errors and members
 
@@ -31,7 +31,7 @@ let getter = try type.resolveGetterAndWait(
 let contents = try unsafe getter.unsafeInvoke(on: receiver)
 ```
 
-Getter symbols do not prove their effect convention, so the caller must supply the actual error type. Mutating receivers are written back even when native code throws. Ordinary initializer arguments and consuming receivers transfer ownership on both success and failure. If receiver writeback also fails, ``NativeSwiftWritebackError`` preserves both failures.
+Getter symbols omit their error convention, so supply the actual error type. Generic throwing getters also need `declaredAs:`; see <doc:SwiftMemberInvocation>. Mutating receivers are written back after native errors. Initializer arguments and consuming receivers transfer ownership on success and failure; if writeback also fails, ``NativeSwiftWritebackError`` preserves both errors.
 
 Use `withUnderlyingError` to inspect or cast the original error. If a value escapes that scope and can execute code from the native image, keep the wrapper alive for that value's lifetime. A native Swift image can also be retained independently by the Swift runtime.
 
@@ -47,8 +47,8 @@ These conventions follow Swift's [combined result/error lowering](https://github
 
 ## Boundaries and verification
 
-Async functions use <doc:SwiftAsyncABI>. Synchronous and async throwing closure values use <doc:SwiftClosureValues>. Managed hooks currently require nonthrowing targets because their callback transport has no native error output. Compiled replacements must satisfy the exact native calling convention, including compatible error effects.
+Async functions use <doc:SwiftAsyncABI>, and throwing closures use <doc:SwiftClosureValues>. Managed hooks return errors through the target's native channel when it can represent them, with recovery for other failures; see <doc:SwiftFunctionHooks>. Compiled replacements require an exact ABI match, including error effects.
 
-Swift errors do not include Objective-C or C++ exceptions. There is no exception unwinding or thread blocking in this transport. Incorrect ABI descriptions can corrupt memory and are not recoverable bridge errors.
+Objective-C and C++ exceptions are outside this Swift error channel. Incorrect ABI descriptions can corrupt memory and cannot be recovered as bridge errors.
 
-Separate provider and compiler-adapter fixtures exercise boxed errors, NSError, concrete scalar/reference/managed errors, floating and resilient errors, stack arguments, independent indirect outputs, initializers, and receiver writeback. Compiler probes cover arm64, x86_64, arm64e, and arm64_32. Runtime checks passed on macOS arm64 in Debug, Release, and Address Sanitizer builds. The architecture host's swift-errors mode completed 12 checks on an arm64e iPhone Air running iOS 27, including native errors and receiver writeback. These are verified configurations, not additional deployment requirements.
+Separate provider and adapter fixtures check boxed and concrete errors, indirect outputs, initializers, and receiver writeback. Runtime checks passed on macOS arm64 in Debug, Release, and Address Sanitizer, and on an arm64e iPhone. Cross-architecture compiler probes are separate evidence; see the [architecture validation guide](https://github.com/lynnswap/ABIBridge/blob/main/Tests/ArchitectureValidation/README.md).

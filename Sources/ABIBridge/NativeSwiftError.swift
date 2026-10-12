@@ -3,9 +3,7 @@ import Foundation
 
 /// An owned error thrown by a native Swift implementation.
 ///
-/// The wrapper preserves the original Swift error and the resolved code owners
-/// needed while inspecting or destroying it. Bridge lookup/conversion failures
-/// remain their original error types.
+/// The wrapper preserves the original Swift error and the resolved code owners needed while inspecting or destroying it. Bridge lookup/conversion failures remain their original error types.
 public final class NativeSwiftError: Error, @unchecked Sendable, CustomStringConvertible, LocalizedError {
     // The value is immutable until final destruction. Owners are immutable
     // image/implementation leases, never receiver or temporary call storage.
@@ -19,8 +17,7 @@ public final class NativeSwiftError: Error, @unchecked Sendable, CustomStringCon
 
     /// Inspects the original error while retaining its resolved implementation.
     ///
-    /// Values that escape the body and still depend on foreign code must keep
-    /// this wrapper alive. The body may cast the error to its imported Swift type.
+    /// Values that escape the body and still depend on foreign code must keep this wrapper alive. The body may cast the error to its imported Swift type.
     public func withUnderlyingError<Result>(_ body: (any Error) throws -> Result) rethrows -> Result {
         try withExtendedLifetime(self) { try body(value!) }
     }

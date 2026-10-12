@@ -16,13 +16,10 @@ extension RuntimeExistentialRepresentation {
     }
 }
 
-/// Concrete classes and Objective-C-compatible existentials satisfy Swift's
-/// object constraints. A Swift protocol existential with witness tables does
-/// not itself satisfy an AnyObject generic parameter.
+/// Concrete classes and Objective-C-compatible existentials satisfy Swift's object constraints. A Swift protocol existential with witness tables does not itself satisfy an AnyObject generic parameter.
 typealias SwiftObjectType = RuntimeObjectType
 
-/// Uses the provider's generalized shape when the caller has no concrete
-/// existential metadata. The descriptor owns the signature and witness order.
+/// Uses the provider's generalized shape when the caller has no concrete existential metadata. The descriptor owns the signature and witness order.
 struct SwiftExtendedExistentialMetadata {
     static func formalType(_ metadata: Any.Type) throws -> SwiftFormalType {
         try SwiftFormalType(SwiftSyntax.metadataType(metadata))

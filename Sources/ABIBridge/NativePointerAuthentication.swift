@@ -2,9 +2,7 @@ import ABIBridgeCore
 
 /// An explicit pointer-authentication schema supplied by a native adapter.
 ///
-/// Authentication is applied on targets built with the authenticated-call ABI.
-/// On other targets the stored pointer is used unchanged. These operations do
-/// not discover a schema or turn authentication failure into a Swift error.
+/// Authentication is applied on targets built with the authenticated-call ABI. On other targets the stored pointer is used unchanged. These operations do not discover a schema or turn authentication failure into a Swift error.
 public enum NativePointerAuthentication: Sendable, Hashable {
     /// An unsigned pointer. Use this only when the storage actually is unsigned.
     case unsigned
@@ -28,8 +26,7 @@ public enum NativePointerAuthentication: Sendable, Hashable {
 
     /// Describes a Clang C++ object-vtable pointer with address/type diversity.
     ///
-    /// Compiler versions, flags, and class attributes can change the schema.
-    /// Use an explicit signed schema for legacy or customized representations.
+    /// Compiler versions, flags, and class attributes can change the schema. Use an explicit signed schema for legacy or customized representations.
     /// - Parameter discriminator: The target compiler's discriminator for the
     ///   primary base class's vtable identifier.
     /// - Returns: Data key A with storage-address diversity.
@@ -48,8 +45,7 @@ public enum NativePointerAuthentication: Sendable, Hashable {
 
     /// Reads a data pointer from a bounded native value and applies this schema.
     ///
-    /// The bytes must contain a pointer signed according to the supplied schema.
-    /// Authentication failure can fault when the returned pointer is dereferenced.
+    /// The bytes must contain a pointer signed according to the supplied schema. Authentication failure can fault when the returned pointer is dereferenced.
     /// - Parameters:
     ///   - storage: Storage containing the pointer field.
     ///   - offset: The field's byte offset, defaulting to zero.
@@ -96,11 +92,7 @@ public enum NativeDispatchError: Error, Sendable, Equatable {
 
 /// A borrowed table of absolute function pointers with an explicit entry count.
 ///
-/// The address points to the first function slot, excluding ABI headers such as
-/// RTTI and offset-to-top fields. Relative table formats require a native adapter.
-/// A method lookup captures its selected entry and code owner; later table
-/// changes do not alter it. Receiver-backed views retain the receiver only
-/// while inspecting the table. See <doc:CXXObjectInvocation>.
+/// The address points to the first function slot, excluding ABI headers such as RTTI and offset-to-top fields. Relative table formats require a native adapter. A method lookup captures its selected entry and code owner; later table changes do not alter it. Receiver-backed views retain the receiver only while inspecting the table. See <doc:CXXObjectInvocation>.
 public final class NativeVTable {
     /// The number of function-pointer slots accessible from the address point.
     public let entryCount: Int

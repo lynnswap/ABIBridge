@@ -58,19 +58,15 @@ private enum PublishedSwiftCode {
     }
 }
 
-/// A captured previous function with the source request's supplied Swift ABI.
-/// It calls the captured entry directly, bypassing the replaced import slot.
-/// The entry may itself be compiler-instrumented or interposed.
+/// A captured previous function with the source request's supplied Swift ABI. It calls the captured entry directly, bypassing the replaced import slot. The entry may itself be compiler-instrumented or interposed.
 public struct NativeSwiftFunctionImplementation<Signature>: Sendable {
     private let function: NativeSwiftFunction<Signature>
-    /// The declaration whose importing reference was captured, not the name of
-    /// an implementation installed earlier by another writer.
+    /// The declaration whose importing reference was captured, not the name of an implementation installed earlier by another writer.
     public var declaration: NativeDeclaration { function.symbol.declaration }
     init(_ prototype: NativeSwiftFunction<Signature>, _ entry: SwiftImplementation) {
         function = prototype.capturing(entry)
     }
-    /// Invokes the captured code with the original function's supplied contract.
-    /// The caller satisfies the function's ABI, ownership and isolation rules.
+    /// Invokes the captured code with the original function's supplied contract. The caller satisfies the function's ABI, ownership and isolation rules.
     @unsafe public func unsafeInvoke<Result, Failure: Error, each Argument>(
         _ values: repeat each Argument
     ) throws -> Result where Signature == (repeat each Argument) throws(Failure) -> Result {
@@ -85,8 +81,7 @@ public struct NativeSwiftFunctionImplementation<Signature>: Sendable {
     }
 }
 
-/// A previous member implementation with the original receiver contract.
-/// This does not redispatch the member or discover a different receiver layout.
+/// A previous member implementation with the original receiver contract. This does not redispatch the member or discover a different receiver layout.
 public struct NativeSwiftMethodImplementation<Signature>: Sendable {
     private let method: NativeSwiftMethod<Signature>
     /// The declaration whose reference was captured; not an inferred code identity.
@@ -153,14 +148,12 @@ public struct NativeSwiftReplacementMutation: Sendable {
     }
 }
 
-/// A compiled replacement could not complete every requested pointer operation.
-/// The plan remains available for inspecting each slot and retrying restoration.
+/// A compiled replacement could not complete every requested pointer operation. The plan remains available for inspecting each slot and retrying restoration.
 public struct NativeSwiftReplacementError: Error, Sendable {
     /// Which explicit operation failed.
     public enum Operation: Sendable { case install, restore }
     public let operation: Operation
-    /// Slot indexes that failed publication or restoration. Rollback failures
-    /// remain visible in the plan's slot snapshots too.
+    /// Slot indexes that failed publication or restoration. Rollback failures remain visible in the plan's slot snapshots too.
     public let failedIndices: [Int]
     /// Failures during rollback after a failed installation.
     public let restorationFailedIndices: [Int]

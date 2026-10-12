@@ -54,37 +54,24 @@ enum SwiftClosureCall {
 
 /// A native Swift closure described by its complete function signature.
 ///
-/// Use this value in a function or member signature to pass a callback or receive
-/// a returned closure. Copies preserve its captured context, authenticated entry,
-/// and implementation images. The signature carries native errors and async
-/// effects; invocation can also throw bridge errors. Values are not assumed Sendable.
-/// An ordinary closure callback input borrows that callback's scope. Saved copies
-/// throw NativeSwiftBorrowError.expiredBorrow after the callback returns.
-/// A NativeSwiftConsuming input owns its native context and may outlive the callback.
-/// If preparing that owned input fails, invocation, copy(), and passing the handle
-/// back to native code throw the preparation error; the incoming context is released.
-/// Use copy() during the callback to retain an input declared @escaping.
-/// Async callbacks must await operations on borrowed inputs before returning.
-/// See <doc:SwiftClosureValues>.
+/// Use this value in a function or member signature to pass a callback or receive a closure. The handle preserves its captured context, authenticated entry, and implementation images. Its signature includes native errors and async effects; invocation can also throw bridge errors. Values are not assumed `Sendable`.
+///
+/// Ordinary callback inputs borrow the callback's scope. Saved copies throw `NativeSwiftBorrowError.expiredBorrow` after return; call `copy()` while the callback is active to retain an input declared `@escaping`. Async callbacks must finish operations on borrowed inputs before returning.
+///
+/// A `NativeSwiftConsuming` input owns its context and may outlive the callback. If preparation fails, invocation, `copy()`, and passing it back to native code throw that error, and the incoming context is released. See <doc:SwiftClosureValues>.
 public struct NativeSwiftClosure<Signature> {
     let call: SwiftClosureCall
 
     init(call: SwiftClosureCall) { self.call = call }
 
-    /// Retains an owned reference to this closure's captured state and code.
-    /// A borrowed callback input must still be active and have a native @escaping
-    /// declaration. Copying a nonescaping input throws; ordinary assignment keeps
-    /// the original borrow scope. Preparing native code ownership can also throw.
+    /// Retains an owned reference to this closure's captured state and code. A borrowed callback input must still be active and have a native @escaping declaration. Copying a nonescaping input throws; ordinary assignment keeps the original borrow scope. Preparing native code ownership can also throw.
     public func copy() throws -> Self {
         if case .borrowed(_, let copy) = call { return Self(call: try copy()) }
         if case .failure(let error) = call { throw error }
         return self
     }
 
-    /// Creates a synchronous callback whose Sendable body may escape into native storage.
-    /// The body must be safe on the native caller's thread, including concurrent calls.
-    /// Its original declared errors are returned to native code. Native entry
-    /// preparation occurs on the first invocation or publication.
+    /// Creates a synchronous callback whose Sendable body may escape into native storage. The body must be safe on the native caller's thread, including concurrent calls. Its original declared errors are returned to native code. Native entry preparation occurs on the first invocation or publication.
     public init<Result, Failure: Error, each Argument>(
         _ body: @escaping @Sendable (repeat each Argument) throws(Failure) -> Result
     ) throws where Signature == (repeat each Argument) throws(Failure) -> Result {
@@ -98,8 +85,7 @@ public struct NativeSwiftClosure<Signature> {
         try self.init(scopedBody: body)
     }
 
-    /// Borrows a caller-isolated body for a synchronous native nonescaping parameter.
-    /// Neither native code nor use may retain or return the callback. Calls stay on this executor.
+    /// Borrows a caller-isolated body for a synchronous native nonescaping parameter. Neither native code nor use may retain or return the callback. Calls stay on this executor.
     @unsafe public static func withUnsafeNonescaping<Output, Result, each Argument>(
         _ body: (repeat each Argument) -> Result,
         _ use: (Self) throws -> Output
@@ -107,8 +93,7 @@ public struct NativeSwiftClosure<Signature> {
         try withoutActuallyEscaping(body) { escaped in try use(Self(scopedBody: escaped)) }
     }
 
-    /// Borrows a Sendable body while preserving that attribute in the native signature.
-    /// The callback remains nonescaping and synchronous on the caller's executor.
+    /// Borrows a Sendable body while preserving that attribute in the native signature. The callback remains nonescaping and synchronous on the caller's executor.
     @_disfavoredOverload
     @unsafe public static func withUnsafeNonescaping<Output, Result, each Argument>(
         _ body: @Sendable (repeat each Argument) -> Result,
@@ -204,8 +189,7 @@ public struct NativeSwiftClosure<Signature> {
         )
     }
 
-    /// Calls the retained native closure. Native errors are surfaced as NativeSwiftError.
-    /// The caller satisfies the native signature's ABI, ownership, and actor/thread requirements.
+    /// Calls the retained native closure. Native errors are surfaced as NativeSwiftError. The caller satisfies the native signature's ABI, ownership, and actor/thread requirements.
     @unsafe public func unsafeInvoke<Result, Failure: Error, each Argument>(
         _ values: repeat each Argument
     ) throws -> Result

@@ -4,7 +4,7 @@ Validate related declarations before installation and retain the resulting ordin
 
 ## Declare and install
 
-Create ``NativeObjCHookRequest`` values and pass them to ``ABIRuntime/installHooks(_:)``. Request creation does not change method tables. This is optional: single-hook callers can continue using `hookMethod` or `hookInitializer` directly.
+Pass ``NativeObjCHookRequest`` values to ``ABIRuntime/installHooks(_:)`` to prepare related declarations together. Creating requests leaves method tables unchanged. For one hook, call `hookMethod` or `hookInitializer` directly.
 
 ```swift
 let hooks = try unsafe runtime.installHooks([
@@ -26,7 +26,7 @@ for hook in hooks { hook.invalidate() }
 
 `method`, `objectMethod`, `initializer`, `mainActorMethod`, and `mainActorInitializer` use the corresponding direct hook contracts. Requests retain their callback captures and declaration inputs until the requests are released. An object request holds its receiver during preparation; the installed identity filter remains weak. Request values can be reused.
 
-The returned array owns ordinary ``NativeObjCMethodHook`` tokens in request order. Releasing the array removes registrations when their last token references are released. Explicitly invalidating its elements removes them even if another reference remains. Calls already in progress keep their snapshots. Other independently installed registrations are unaffected.
+The returned array owns ``NativeObjCMethodHook`` tokens in request order. Each token follows the invalidation and snapshot rules in <doc:ObjectiveCMethodHooks>. Invalidate elements explicitly, or release their last references to remove these registrations.
 
 ## Preparation and activation
 
@@ -34,7 +34,7 @@ Every request's target, signature, ownership, and call layout is validated befor
 
 Activation then revalidates current predecessors and installs in request order. Parent and child class requests may appear in either order; an inherited continuation follows the current superclass implementation. A concurrent caller can observe a partially activated batch. The Objective-C runtime does not provide an atomic multi-method swap.
 
-External writers still need to coordinate with installation. A method or implementation can change after preparation. If a later activation fails, all registrations already added by this operation are logically invalidated in reverse order. Preexisting registrations and external replacements are preserved. Added subclass-local method entries and published executable storage can remain as pass-through entries. This rollback does not undo native/user side effects performed by calls that entered while activation was in progress.
+Coordinate with external writers, since methods can change after preparation. On activation failure, the operation invalidates its earlier registrations in reverse order and preserves preexisting registrations and external replacements. Published entries can remain as pass-through storage. Calls that entered during activation keep any native or user side effects.
 
 ## Inspect a failure
 
@@ -50,7 +50,7 @@ do {
 }
 ```
 
-Preparation errors have an empty partial-handle array. Activation errors expose the registrations created before failure, already invalidated. Status remains readable regardless of displacement. Logical invalidation does not throw or wait for live calls, so it introduces no separate cleanup-error channel. It does not imply that published IMPs or runtime method-table entries were physically removed.
+Preparation errors have no partial handles. Activation errors expose earlier registrations after invalidation, with readable status even after displacement. Invalidation is nonthrowing and does not wait for calls or physically remove published IMPs and method-table entries.
 
 ## Native callers
 
@@ -73,10 +73,10 @@ auto hooks = abi_bridge::install_objc_hooks({
 for (auto& hook : hooks) hook.invalidate();
 ```
 
-`onFailure` must be a `noexcept` callback, as in <doc:NativeObjectiveCHooks>. Options preserve instance/class scope, weak object filtering, and explicit main-thread requirements. A C++ request retains callback storage; releasing installed handles does not release captures still owned by a retained request. `objc_hook_installation_error` supplies `failed_index()`, `phase()`, the original `cause()`, and `invalidated_hooks()`. Allocation failures while constructing C++ request/return containers remain ordinary C++ allocation exceptions; any activated handles are invalidated before propagating an error constructing the result vector.
+`onFailure` must be `noexcept`; scope, weak filtering, and main-thread options follow <doc:NativeObjectiveCHooks>. Retained requests keep their captures even after installed handles release them. Inspect `objc_hook_installation_error` through `failed_index()`, `phase()`, `cause()`, and `invalidated_hooks()`. Container allocation errors remain C++ exceptions; failure to construct the result vector invalidates activated handles before throwing.
 
 C callers pass an `ABIObjCHookRequest` array to `ABIInstallObjCHooks`. Keep the array, signature storage, strings, classes, and supplied objects valid throughout the call. The returned `ABIObjCHookInstallation` owns successful or invalidated partial handles and any failure. Inspect it with `ABIObjCHookInstallationFailure`, `FailedIndex`, `Phase`, `Count`, and `Get`; retain a borrowed handle with `ABIRetainObjCMethodHook` to own it independently.
 
-A null array with nonzero count, or any missing context-release callback, is rejected without taking any contexts. Otherwise every context reference transfers on entry, including requests after the first declaration failure. Each registration retains/releases its own context reference. Reusing the same raw pointer in several requests requires a corresponding independent ownership reference for each request. Release callbacks run outside registry locks and may reenter the API.
+A null array with nonzero count or a missing context-release callback is rejected without taking contexts. Otherwise all context references transfer on entry, even for requests after a declaration failure. Supply an independent owned reference per request when reusing a context pointer. Release callbacks run outside registry locks and may reenter the API.
 
 `ABIInvalidateObjCHookInstallation` logically invalidates every result handle and is idempotent. `ABIReleaseObjCHookInstallation` releases its references; independently retained aliases follow the ordinary last-owner contract. Empty batches succeed. Successful results have no failure, phase zero, and `SIZE_MAX` for the failed index. The same non-atomic visibility, inheritance, process-lived entry, and rollback contracts apply across Swift and native callers.

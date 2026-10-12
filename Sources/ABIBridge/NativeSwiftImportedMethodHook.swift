@@ -43,23 +43,18 @@ extension NativeSwiftMethod {
 
     /// Intercepts importing references to this concrete Swift instance member.
     ///
-    /// The callback receives scoped access to the actual incoming receiver.
-    /// Import selection, chaining, failure recovery and process-lived code follow
-    /// the Swift imported-function hook contract. These imports are independent
-    /// of metadata dispatch unless both operations select the same pointer slot.
-    /// Value receivers use the representation selected during type lookup.
-    /// Mutating methods keep the caller's receiver address; consuming methods
-    /// receive independent owned receiver storage for each continuation.
-    /// Lifecycle/coroutine entries and unestablished layouts require separate support.
+    /// The callback receives scoped access to the incoming receiver. Import selection, chaining, failure recovery, and process-lived code follow <doc:SwiftFunctionHooks>. Import hooks act independently of metadata dispatch unless both select the same pointer slot.
+    ///
+    /// Value receivers use the representation selected at lookup. Mutating methods keep the caller's receiver address; consuming methods receive independent owned storage for each continuation. Lifecycle entries, coroutines, and unestablished layouts need separate support. See <doc:SwiftMethodHooks> for receiver access.
+    ///
     /// - Parameters:
     ///   - importer: Loaded images containing references to the implementation.
     ///   - provider: Optional recorded-dependency filter, including reexports.
     ///   - runtime: Runtime whose import indexes are reused.
-    ///   - owner: Additional lifetime owner for generated predecessor code.
-    ///   - onFailure: Thread-safe observer of callback/conversion errors.
+    ///   - owner: Keeps generated predecessor code alive.
+    ///   - onFailure: Thread-safe observer of callback and conversion errors.
     ///   - body: Synchronous callback with an initialized receiver and typed arguments.
-    /// - Throws: Selection/preparation errors or `NativeSwiftHookInstallationError`
-    ///   retaining partial publication and rollback outcomes.
+    /// - Throws: Selection or preparation errors, or `NativeSwiftHookInstallationError` retaining partial publication and rollback outcomes.
     @_transparent
     @unsafe
     public nonisolated(nonsending) func hookImportedCalls<Result, Failure: Error, each Argument>(
@@ -108,9 +103,7 @@ extension NativeSwiftMethod {
 
     /// Installs an imported-member callback for a caller-supplied MainActor method contract.
     ///
-    /// Background entry reports `wrongThread` and bypasses this callback before
-    /// argument or receiver decoding. The callback stays synchronous and the
-    /// failure observer must be thread-safe. Other rules match `hookImportedCalls`.
+    /// Background entry reports `wrongThread` and bypasses this callback before argument or receiver decoding. The callback stays synchronous and the failure observer must be thread-safe. Other rules match `hookImportedCalls`.
     @_transparent
     @unsafe @MainActor
     public func hookMainActorImportedCalls<Result, Failure: Error, each Argument>(
@@ -232,11 +225,7 @@ extension NativeSwiftMethod {
 }
 
 extension NativeSwiftMethod {
-    /// Intercepts an asynchronous entry on the incoming Swift task.
-    /// The callback and `proceed` may suspend; cancellation and task-local values
-    /// follow that task. Invalidation leaves entered snapshots alive until return.
-    /// Unrepresentable failures preserve the latest native outcome, or continue
-    /// with unchanged arguments when no predecessor has completed.
+    /// Intercepts an asynchronous entry on the incoming Swift task. The callback and `proceed` may suspend; cancellation and task-local values follow that task. Invalidation leaves entered snapshots alive until return. Unrepresentable failures preserve the latest native outcome, or continue with unchanged arguments when no predecessor has completed.
     @_transparent
     @unsafe
     public nonisolated(nonsending) func hookImportedCalls<Result, Failure: Error, each Argument>(

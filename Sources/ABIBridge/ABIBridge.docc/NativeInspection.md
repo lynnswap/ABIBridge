@@ -20,9 +20,7 @@ For example, a target in a separate Swift package can use:
 )
 ```
 
-The same product supplies the Swift implementation, native code, and their dependencies. The resolver uses the shared MachOKit-backed implementation and the Swift runtime; linking the internal C++ target alone does not provide the supported product. C consumers do not need to import a generated Swift header or enable C++ interoperability.
-
-The declarations in `Inspection.h` and the C++20 wrappers in `Inspection.hpp` are supported consumer interfaces. Native invocation is supported through the public headers documented in the invocation guides. Other native headers and backend handles remain implementation details. Use the documented public headers directly instead of an internal module umbrella.
+The product supplies the Swift implementation, native code, and dependencies, including the Swift runtime and MachOKit-backed resolver. Include the documented public headers directly. Other native headers and backend handles remain implementation details. C consumers need neither a generated Swift header nor C++ interoperability; linking the internal C++ target alone is insufficient.
 
 ## Use C++ ownership wrappers
 
@@ -42,7 +40,7 @@ const void *address = table.unsafe_address();
 auto path = table.image_path(); // An owned std::string.
 ```
 
-The example acquires the named framework when needed. Use `image_loading::loaded_only` as the third `resolve` argument to opt out; see <doc:ImageLoading>. Resolution throws `resolution_error`, whose `code()` preserves the C failure category and whose `what()` owns the message. Error objects can outlive the runtime and native failure handle. Names and image selectors use UTF-8; embedded NULs are rejected instead of resolving a truncated prefix.
+The example acquires the framework when needed. To search only loaded images, pass `image_loading::loaded_only` as the third argument; see <doc:ImageLoading>. Resolution throws `resolution_error` with the C failure category in `code()` and an owned message in `what()`. Names and selectors use UTF-8 and reject embedded NULs. Errors can outlive the runtime and native failure handle.
 
 Copies of `Runtime` share a resolver cache; default construction creates an independent resolver. Copies of `resolved_symbol` share the acquired symbol, keeping its implementation image alive after cache clearing or runtime destruction. The unsigned address remains borrowed; the C++ wrapper does not establish an invocation signature.
 
@@ -60,7 +58,7 @@ for (std::size_t index = 0; index < snapshot.size(); ++index) {
 
 `image_description` owns its path and UUID but does not retain the image. It can outlive the snapshot. `at()` throws `std::out_of_range` for an invalid index; capture throws `resolution_error` if the catalog is unavailable. Lease acquisition returns `std::nullopt` when the generation disappeared or cannot be retained, matching the C API's lack of a detailed lease failure.
 
-Copies share ownership of the underlying snapshot, lease, runtime, or symbol; their final owner releases the C handle. Moving a handle leaves the source empty. It can be tested with `operator bool`, reassigned, or destroyed; other methods require a live handle. A moved-from `std::optional<image_lease>` can remain engaged, so test the contained handle if it has been moved separately.
+Copies share their C handle; the final owner releases it. Moving leaves an empty handle that can be tested, reassigned, or destroyed. Other methods require a live handle. A moved-from `std::optional<image_lease>` may remain engaged, so test its contained handle if moved separately.
 
 Objective-C++ can store these C++ values in instance variables under either ARC or manual reference counting. Their C++ destructors release the native handles when the enclosing object is destroyed. Keep an Objective-C owner alive through uses of borrowed pointers, for example with an `objc_precise_lifetime` local, or keep an independent C++ handle copy. Image retention still does not retain an unrelated native receiver or satisfy that receiver's thread/lifetime requirements.
 
@@ -93,7 +91,7 @@ ABIReleaseResolvedSymbol(table);
 
 C names omit the Mach-O underscore; C++ and Swift names use demangled declarations. Language, storage-kind, and image-scope constants are declared in the header. Objective-C selector dispatch is not provided through this symbol-lookup API.
 
-Framework and executable-path scopes only search loaded images. Automatic scope reports distinct matching definitions as an ambiguity. A vtable symbol's address is not necessarily its first virtual-function slot; the consumer supplies the actual address-point offset and layout.
+Explicit framework and executable-path scopes acquire the target with `ABIImageLoadIfNeeded`; `ABIImageLoadedOnly` limits them to loaded images. Automatic scope searches loaded images and reports distinct definitions as ambiguous. For vtables, supply the actual address-point offset and layout; the symbol need not start at the first function slot.
 
 ## Resolve an exact native spelling
 
@@ -157,7 +155,7 @@ if (result.symbol) {
 
 Each output contains exactly one owned symbol or failure. Release old output references before reusing storage; the call overwrites them without releasing them. At count zero, both input and output arrays may be null. Request strings and nested arrays are borrowed only for the duration of the call. Invalid fields fail their request independently.
 
-Scopes are tried in order only when an image or declaration is absent. Missing aliases are ignored; all found aliases must agree on address and image generation. Ambiguity or invalid storage stops fallback. Empty scopes match no images. Scope results are reused within the batch, using the same backend as Swift; the operation does not claim an atomic loader snapshot.
+Scopes advance only when an image or declaration is absent. Missing aliases are ignored; found aliases must agree on address and image generation. Ambiguity or invalid storage stops lookup. Empty scopes match no images. Batches reuse scope results through the Swift backend without an atomic loader snapshot.
 
 ### Lazy name fallback
 
@@ -174,9 +172,9 @@ abi_bridge::symbol_request request{
 auto symbol = runtime.resolve(request);
 ```
 
-C supplies the same candidates through `ABISymbolRequest.fallbacks` and `fallbackCount`. Zero-initialize requests before assigning fields, or initialize every field explicitly. This structure is passed by the compiled caller, so native consumers must rebuild when adopting the extended header.
+C supplies these candidates through `ABISymbolRequest.fallbacks` and `fallbackCount`. Initialize every field, or zero-initialize before assigning fields. Rebuild consumers when adopting changes to this source-distributed request layout.
 
-The primary and its aliases search every scope first. Then each fallback searches those scopes in order. Success skips all later candidates; ambiguity, invalid storage, and other substantive errors stop resolution. Request field validation still applies to the entire request before lookup, including unused candidates. If all candidates are absent, the missing-declaration error identifies the primary.
+The primary and aliases search all scopes, followed by each fallback in order. Success stops lookup; substantive errors also stop it. Validation covers the entire request, including unused candidates. If all are absent, the error identifies the primary. See <doc:SymbolLookup> for the shared precedence rules.
 
 ## Pass symbols between Swift and native adapters
 
@@ -193,9 +191,9 @@ Adoption consumes that reference, including if wrapper allocation throws. To acq
 auto retained = abi_bridge::resolved_symbol::retain(symbol.native_handle());
 ```
 
-The original reference must stay alive during retention. Each acquired C reference must be released once; copying its numeric pointer alone does not acquire ownership. `native_handle()` borrows the C pointer from the C++ wrapper.
+Keep the original reference alive during retention. `native_handle()` borrows from the C++ wrapper; use the ownership rules below for acquired references.
 
-In the other direction, Swift's `ResolvedSymbol(retainingNativeHandle:)` imports a live borrowed C handle without consuming it. It preserves the same resolved metadata and independently retains the image. No handoff repeats lookup, and the original Swift value, C handle, or runtime cache can be released once the receiving owner has acquired its reference.
+Swift's `ResolvedSymbol(retainingNativeHandle:)` imports a borrowed C handle with independent ownership. Handoffs preserve metadata without repeating lookup. After the receiving owner acquires its reference, the original owner or cache can be released.
 
 ## Track image identity
 
@@ -219,7 +217,7 @@ If catalog initialization cannot retain the callback image, snapshot creation re
 
 Copying a handle pointer does not acquire another reference. Each call to `ABICopySharedSymbolRuntime` does acquire one, sharing the backend with Swift's `ABIRuntime.shared`. Independent runtimes own independent caches.
 
-Clearing caches or releasing a runtime does not invalidate existing symbol handles. Keep the relevant owner alive through reads and cleanup that use its addresses. Retaining an image does not retain an object found inside it or establish a pointee's lifetime.
+Symbol handles survive cache clearing and runtime release. Keep their owner alive through address use and cleanup. Image retention keeps code and static storage loaded; unrelated objects and pointees need their own owners.
 
 ## Errors and concurrent use
 

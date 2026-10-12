@@ -13,17 +13,11 @@ typedef struct ABIObjCImplementation ABIObjCImplementation;
 /// Errors use the ABIFailure categories declared by ABIBridgeCore.
 FOUNDATION_EXPORT NSErrorDomain const ABIObjCInvocationErrorDomain;
 
-/// Binds a selector to a retained receiver and validates concrete type encodings.
-/// Parameter encodings exclude self and _cmd. Ownership overrides use -1 to
-/// infer the method-family convention, 0 for borrowed, and 1 for retained or
-/// consumed respectively. Runtime encodings cannot reveal ownership attributes.
-/// consumedParameters contains zero-based explicit argument indexes and is copied
-/// during preparation. Pass NULL and zero for ordinary borrowed parameters.
-/// A successful handle owns its receiver and any discoverable code image.
-/// Forwarded-only selectors cannot be bound to a concrete IMP.
-/// Missing declarations report ABIFailureDeclarationNotFound; forwarded-only
-/// signatures/implementations report ABIFailureUnsupportedDeclaration, and
-/// incompatible encodings report ABIFailureSignatureMismatch.
+/// Binds a selector to a retained receiver and validates its concrete encodings. A successful handle owns its receiver and discoverable implementation images. Forwarded-only selectors cannot be bound to a concrete IMP.
+///
+/// Parameter encodings exclude self and _cmd and cannot reveal ownership. Overrides use -1 for method-family inference, 0 for borrowed, and 1 for retained results or a consumed receiver. consumedParameters supplies zero-based explicit argument indexes, copied during preparation; pass NULL and zero for ordinary borrowed parameters.
+///
+/// Missing declarations report ABIFailureDeclarationNotFound; forwarded-only signatures/implementations report ABIFailureUnsupportedDeclaration, and incompatible encodings report ABIFailureSignatureMismatch.
 FOUNDATION_EXPORT ABIObjCMethod * _Nullable ABICopyObjCMethod(
     id receiver, SEL selector, const char *resultType,
     const char * _Nonnull const * _Nullable parameterTypes, size_t parameterCount,
@@ -33,8 +27,7 @@ FOUNDATION_EXPORT ABIObjCMethod * _Nullable ABICopyObjCMethod(
 
 /// Releases the receiver before releasing its implementation image.
 FOUNDATION_EXPORT void ABIReleaseObjCMethod(ABIObjCMethod *method);
-/// Returns the receiver's borrowed object address without Objective-C return ownership.
-/// Keep the binding alive through use; bridge to id for a typed native call.
+/// Returns the receiver's borrowed object address without Objective-C return ownership. Keep the binding alive through use; bridge to id for a typed native call.
 FOUNDATION_EXPORT const void *ABIObjCMethodReceiverAddress(const ABIObjCMethod *method);
 /// Returns the selector captured at binding time.
 FOUNDATION_EXPORT SEL ABIObjCMethodSelector(const ABIObjCMethod *method);
@@ -44,12 +37,10 @@ FOUNDATION_EXPORT IMP ABIObjCMethodImplementation(const ABIObjCMethod *method);
 FOUNDATION_EXPORT BOOL ABIObjCMethodReturnsRetained(const ABIObjCMethod *method);
 /// Whether the target consumes an ownership reference to self.
 FOUNDATION_EXPORT BOOL ABIObjCMethodConsumesReceiver(const ABIObjCMethod *method);
-/// Whether an explicit parameter transfers an additional reference to the callee.
-/// The index must be within the signature supplied during preparation.
+/// Whether an explicit parameter transfers an additional reference to the callee. The index must be within the signature supplied during preparation.
 FOUNDATION_EXPORT BOOL ABIObjCMethodConsumesParameter(const ABIObjCMethod *method, size_t index);
 
-/// Copies ownership of the captured implementation without retaining the bound receiver.
-/// The handle retains its class and discoverable implementation images.
+/// Copies ownership of the captured implementation without retaining the bound receiver. The handle retains its class and discoverable implementation images.
 FOUNDATION_EXPORT ABIObjCImplementation *ABICopyObjCMethodImplementation(const ABIObjCMethod *method);
 /// Adds an ownership reference to a live captured implementation.
 FOUNDATION_EXPORT void ABIRetainObjCImplementation(ABIObjCImplementation *implementation);
@@ -58,8 +49,7 @@ FOUNDATION_EXPORT void ABIReleaseObjCImplementation(ABIObjCImplementation * _Nul
 /// Checks class/instance receiver compatibility without looking up another IMP.
 FOUNDATION_EXPORT BOOL ABIValidateObjCImplementationReceiver(
     const ABIObjCImplementation *implementation, __unsafe_unretained id receiver, NSError * _Nullable * _Nullable error);
-/// Retains a compatible receiver while preserving the captured IMP and ownership.
-/// Failure returns null and an NSError in ABIObjCInvocationErrorDomain.
+/// Retains a compatible receiver while preserving the captured IMP and ownership. Failure returns null and an NSError in ABIObjCInvocationErrorDomain.
 FOUNDATION_EXPORT ABIObjCMethod * _Nullable ABICopyBoundObjCMethod(
     ABIObjCImplementation *implementation, __unsafe_unretained id receiver, NSError * _Nullable * _Nullable error);
 /// Borrowed selector and signed IMP for the captured handle's lifetime.

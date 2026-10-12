@@ -33,10 +33,7 @@ struct SwiftHookReceiverView: Sendable {
 
 /// A scoped Swift receiver and continuation for an intercepted instance method.
 ///
-/// Access requires an active callback and the original thread for synchronous
-/// signatures or the same Swift task for asynchronous signatures. Copied
-/// diagnostic metadata remains readable after return; a saved invocation does
-/// not preserve its native frame or captures. `proceed` does not redispatch.
+/// Access requires an active callback and the original thread for synchronous signatures or the same Swift task for asynchronous signatures. Copied diagnostic metadata remains readable after return; a saved invocation does not preserve its native frame or captures. `proceed` does not redispatch.
 public struct NativeSwiftMethodInvocation<Signature>: CustomStringConvertible {
     let frame: SwiftHookFrame
     let prepared: SwiftCallValues
@@ -50,12 +47,7 @@ public struct NativeSwiftMethodInvocation<Signature>: CustomStringConvertible {
 
     /// Copies the current receiver into the requested Swift representation.
     ///
-    /// A class reference preserves the incoming object's identity and ordinary
-    /// Swift lifetime. Property changes are visible to subsequent implementations
-    /// and to the native caller. A value receiver is a snapshot in its selected
-    /// representation; editing that copy does not write back. A later read sees
-    /// native changes made through an original mutating receiver address.
-    /// Pointer adapters retain their own pointee rules.
+    /// A class reference preserves the incoming object's identity and ordinary Swift lifetime. Property changes are visible to subsequent implementations and to the native caller. A value receiver is a snapshot in its selected representation; editing that copy does not write back. A later read sees native changes made through an original mutating receiver address. Pointer adapters retain their own pointee rules.
     /// - Throws: Scope, thread/task errors, or an incompatible receiver representation.
     public func receiver<Receiver>(as type: Receiver.Type) throws -> Receiver {
         try frame.receiver { try receiverView.decode($0, as: type) }
@@ -63,12 +55,7 @@ public struct NativeSwiftMethodInvocation<Signature>: CustomStringConvertible {
 
     /// Calls the next implementation with replacement explicit arguments.
     ///
-    /// The incoming receiver is preserved. Mutating value methods use its
-    /// original address. A consuming method receives an independent owned
-    /// receiver copy for each continuation, so the callback can
-    /// inspect its receiver before and after proceeding. Native failures throw
-    /// `NativeSwiftError`. If a later hook failure cannot use the declared native
-    /// error channel, recovery preserves the latest result or native failure.
+    /// The incoming receiver is preserved. Mutating value methods use its original address. A consuming method receives an independent owned receiver copy for each continuation, so the callback can inspect its receiver before and after proceeding. Native failures throw `NativeSwiftError`. If a later hook failure cannot use the declared native error channel, recovery preserves the latest result or native failure.
     public func proceed<Result, Failure: Error, each Argument>(_ values: repeat each Argument) throws -> Result
     where Signature == (repeat each Argument) throws(Failure) -> Result {
         try invoke(repeat each values)
@@ -79,8 +66,7 @@ public struct NativeSwiftMethodInvocation<Signature>: CustomStringConvertible {
         try invoke(repeat each values)
     }
 
-    /// Awaits the captured predecessor on this callback's native task.
-    /// The continuation remains usable across suspension until the callback returns.
+    /// Awaits the captured predecessor on this callback's native task. The continuation remains usable across suspension until the callback returns.
     @_transparent
     public nonisolated(nonsending) func proceed<Result, Failure: Error, each Argument>(_ values: repeat each Argument) async throws -> Result
     where Signature == (repeat each Argument) async throws(Failure) -> Result {

@@ -6,13 +6,11 @@ public enum NativePointerNormalization: Int32, Sendable {
     case none = 0
     /// Strip data-address signatures, including when plain arm64 inspects arm64e data.
     ///
-    /// Requires a 64-bit ARM CPU with pointer authentication. This does not
-    /// verify signatures or produce authenticated function-call targets.
+    /// Requires a 64-bit ARM CPU with pointer authentication. This does not verify signatures or produce authenticated function-call targets.
     case stripDataSignature = 1
     /// Strip data signatures when the current CPU supports pointer authentication.
     ///
-    /// On other CPUs, or when capability detection is unavailable, address bits
-    /// remain unchanged. This does not authenticate pointers or remove arbitrary tags.
+    /// On other CPUs, or when capability detection is unavailable, address bits remain unchanged. This does not authenticate pointers or remove arbitrary tags.
     case automatic = 2
 }
 
@@ -48,12 +46,10 @@ public struct NativePointerSearchOptions: Sendable {
     public var normalization: NativePointerNormalization
     /// Exhaustive scan or first observed match.
     public var policy: NativePointerSearchPolicy
-    /// Revalidated hint, scoped by the caller to the region lifetime, layout,
-    /// and target identity. Invalid or off-grid hints are ignored.
+    /// Revalidated hint, scoped by the caller to the region lifetime, layout, and target identity. Invalid or off-grid hints are ignored.
     public var hintOffset: Int?
 
-    /// Defaults to aligned pointer-sized slots, a vptr at zero, and an exhaustive
-    /// search with automatic normalization. No vtable header length is inferred.
+    /// Defaults to aligned pointer-sized slots, a vptr at zero, and an exhaustive search with automatic normalization. No vtable header length is inferred.
     public init(
         firstOffset: Int = 0, stride: Int = MemoryLayout<UInt>.size,
         alignment: Int = MemoryLayout<UInt>.alignment, vptrOffset: Int = 0,
@@ -72,9 +68,7 @@ public struct NativePointerSearchOptions: Sendable {
 
 /// Evidence for one matching slot, retaining the enclosing region's owner.
 ///
-/// Multiple slots may alias the same ``addressForInspection``. The owner must
-/// also keep the pointee alive for later receiver use. A vtable match does not
-/// prove object validity or authenticate a pointer.
+/// Multiple slots may alias the same ``addressForInspection``. The owner must also keep the pointee alive for later receiver use. A vtable match does not prove object validity or authenticate a pointer.
 public struct NativePointerCandidate {
     /// The slot's byte offset within the search region.
     public let offset: Int
@@ -125,8 +119,7 @@ public struct NativePointerSearchResult {
     public let distinctCount: Int
     /// Number of visited slots, including a visited hint and failures.
     public let visitedCount: Int
-    /// True only after scanning every eligible slot without read failures.
-    /// Stopping at a first match always returns false.
+    /// True only after scanning every eligible slot without read failures. Stopping at a first match always returns false.
     public let isComplete: Bool
     /// The first alias only when a complete scan observed exactly one target.
     public var uniqueCandidate: NativePointerCandidate? {
@@ -137,10 +130,7 @@ public struct NativePointerSearchResult {
 extension NativeMemoryRegion {
     /// Revalidates one slot without searching elsewhere in this region.
     ///
-    /// The slot may be unaligned but must fit entirely inside the region.
-    /// A null reference or readable unequal vptr returns nil. A match makes no
-    /// uniqueness claim and retains this region's optional owner. Reads are
-    /// non-atomic; callers synchronize and establish the pointee's lifetime.
+    /// The slot may be unaligned but must fit entirely inside the region. A null reference or readable unequal vptr returns nil. A match makes no uniqueness claim and retains this region's optional owner. Reads are non-atomic; callers synchronize and establish the pointee's lifetime.
     ///
     /// - Parameters:
     ///   - offset: Byte offset of the full-width pointer slot.
@@ -175,13 +165,9 @@ extension NativeMemoryRegion {
 
     /// Finds references whose absolute vptr matches an explicit address point.
     ///
-    /// Only full-width slots inside the declared range are visited. Null
-    /// references are skipped. Failed reads are collected while the scan
-    /// continues. Even a complete result is not atomic; callers synchronize.
+    /// Only full-width slots inside the declared range are visited. Null references are skipped. Failed reads are collected while the scan continues. Even a complete result is not atomic; callers synchronize.
     ///
-    /// A matching hint can short-circuit only ``NativePointerSearchPolicy/first``.
-    /// Cached offsets must be invalidated on region lifetime, layout, or target
-    /// changes; each call re-reads both the slot and pointee at the hinted offset.
+    /// A matching hint can short-circuit only ``NativePointerSearchPolicy/first``. Cached offsets must be invalidated on region lifetime, layout, or target changes; each call re-reads both the slot and pointee at the hinted offset.
     ///
     /// - Parameters:
     ///   - addressPoint: The actual vtable address point, not its symbol base.

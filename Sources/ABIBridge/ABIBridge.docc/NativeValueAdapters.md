@@ -12,7 +12,7 @@ Caller-described types work across C, C++, Objective-C, and Swift. The native de
 | Objective-C | The method's runtime type encoding; select a compatible Swift function metatype |
 | Swift | Built-in representations or `ABIBridgeSwiftValue.swiftABIType` for the actual imported Swift value |
 
-These paths do not require a new library-side case for every struct or enum. They preserve the native language's ownership and register conventions. A C++ value requiring constructors, destruction, or a special nontrivial calling convention still needs a compiler adapter.
+These paths preserve each language's ownership and register conventions. Nontrivial C++ construction, destruction, and call lowering require a compiler adapter.
 
 ## Declare a byte-compatible layout once
 
@@ -38,9 +38,9 @@ let result = try unsafe translate.unsafeInvoke(Pair(left: 2, right: 3))
 
 ``ABIBridgeValue`` supplies default byte conversions for `BitwiseCopyable` conformers. The caller's conformance guarantees field representations, offsets, and valid values. Native tail padding can extend to the Swift value's stride and is zero-filled when copied. Pointer fields copy their bits; they do not retain pointees.
 
-The same conformance works in C functions, C-compatible C++ members, and their supported callback paths because they share the value codec. Keep `abiType` stable for each prepared handle. Use custom `init(nativeValue:)` and `nativeValue(from:)` implementations when Swift storage differs from the native representation or referenced resources require ownership.
+C functions, C-compatible C++ members, and their callbacks share this codec. Keep `abiType` stable for each handle. Implement `init(nativeValue:)` and `nativeValue(from:)` when storage differs or referenced resources need ownership.
 
-Raw-value enums need the native enum's representation. A Swift enum's raw value can differ from its in-memory tag; for example, a two-case Swift enum with Int32 raw values can have a one-byte Swift tag. For a C/C++ call, pass the matching raw-value type or provide conversions that read and write `rawValue`. For an actual Swift enum, describe its Swift ABI through ``ABIBridgeSwiftValue`` instead. See <doc:ExplicitSwiftValues> for managed structs, payload enums, and formally indirect values.
+A Swift enum's raw-value type can differ from its stored tag. For example, two cases with Int32 raw values can use a one-byte tag. C/C++ calls need the native enum representation: pass its raw-value type or convert through `rawValue`. Actual Swift enums use ``ABIBridgeSwiftValue``; see <doc:ExplicitSwiftValues>.
 
 ## Use layouts discovered at runtime
 
@@ -70,7 +70,7 @@ let nativeResult = try unsafe translate.unsafeInvoke(with: [input])
 let result = try unsafe nativeResult.read(as: PairBytes.self)
 ```
 
-Here `translate` is the runtime-signature handle above. The unsafe read checks accessible bounds; the caller guarantees the representation and valid bit patterns. No protocol conformance or type registration is required for `PairBytes`.
+This uses the runtime-signature `translate` above. The unsafe read checks bounds; guarantee the representation and valid bit patterns yourself. `PairBytes` needs no protocol conformance or registration.
 
 Argument count and layouts are checked before native dispatch. `cast(to:)` checks representations, sizes, alignments, and field layouts before calling the wrapper's initializer. Diagnostic names may differ without preventing a compatible conversion. A matching description cannot prove that an external function or memory region actually has that ABI; the adapter remains responsible for that contract.
 
@@ -110,4 +110,4 @@ When an initialization closure throws, ABIBridge frees its allocation without ca
 
 A wrapper adopting an owned native result should establish its release operation before later validation that can throw. If conversion fails after adoption, ordinary Swift lifetime cleanup releases the adopted resource. If the wrapper throws before taking ownership, it must release any resource already transferred by the native function.
 
-Native argument storage and its owners stay alive through the call, including cleanup when another argument fails conversion. Conversion does not transfer an argument's ownership to the callee. Objective-C `ns_consumed` parameters use `NativeMethodOptions.consumedArguments`; Core Foundation references can use `Unmanaged<T>` with explicit caller-managed ownership. C++ copy and move constructors, destructors, and nontrivial result conventions still require a compiler adapter at the actual call boundary. A demangled symbol or byte layout does not supply those operations.
+Argument storage and owners survive the call and cleanup after conversion failure. Conversion alone transfers no ownership. For consumed Objective-C parameters, use `NativeMethodOptions.consumedArguments`; for Core Foundation references, use `Unmanaged<T>` with the manual ownership rules in <doc:CFunctionInvocation>.

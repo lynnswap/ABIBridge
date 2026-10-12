@@ -2,8 +2,6 @@
 
 Intercept concrete synchronous methods with ordinary Swift argument and result types.
 
-See <doc:HookArguments> for editing object arguments, replacing references, and printing declaration/signature diagnostics.
-
 ## Install and retain a hook
 
 Use ``ABIRuntime/hookMethod(on:selector:as:classMethod:options:retaining:onFailure:body:)-(_,String,_,_,_,_,_,_)`` to install an instance-method hook. Keep its ``NativeObjCMethodHook`` token for as long as the callback should run.
@@ -32,7 +30,9 @@ let size = Renderer().sizeThatFits(CGSize(width: 40, height: 20))
 hook.invalidate()
 ```
 
-The selector must resolve to a concrete implementation. The function type contains explicit arguments only; self and the selector are supplied by the bridge. Set `classMethod: true` for a class method. Getters and setters use their ordinary selectors. Scalar, pointer, object, optional, class, block, and runtime-described structure types follow <doc:ObjectiveCInvocation>. There is no fixed argument-count limit. Only Objective-C dispatch is intercepted: Swift calls to an `@objc` method can bypass the method table unless the declaration uses `dynamic` or the caller otherwise performs Objective-C dispatch.
+The selector must resolve to a concrete implementation. The function type contains explicit arguments; ABIBridge supplies self and the selector. Set `classMethod: true` for class methods, and use ordinary selectors for getters and setters. Value types follow <doc:ObjectiveCInvocation>, with no fixed argument-count limit.
+
+Calls must use Objective-C dispatch to enter the hook. Swift calls to an `@objc` method can bypass it unless the declaration uses `dynamic` or the caller performs Objective-C dispatch.
 
 Installation is an unsafe operation because runtime encodings do not describe every ownership annotation, block signature, pointee lifetime, or actor requirement. Supply `NativeMethodOptions` when result ownership differs from the method family or explicit parameters are annotated `ns_consumed`. Registrations on one managed entry must agree on ownership and native signature. Initializers use the dedicated operation in <doc:ObjectiveCInitializerHooks>. Foreign exception unwinding, allocation, retain/release, and lifecycle methods are outside the ordinary-method API.
 
@@ -42,7 +42,11 @@ A method declared with `objc_method_family(none)` can use an `init`- or `alloc`-
 
 ``NativeObjCMethodInvocation/receiver`` returns the current instance or class object. ``NativeObjCMethodInvocation/proceed(_:)`` calls the next registration in this invocation's snapshot, followed by the native implementation. It does not send the selector again. Use ordinary selector dispatch when intentional recursive entry is needed; use ``ABIRuntime/objcImplementation(on:selector:as:variadicFrom:classMethod:options:retaining:)-(_,String,_,_,_,_,_)`` to capture a fixed implementation independently of a callback's continuation.
 
-A callback can change arguments and results, omit `proceed`, or explicitly call it more than once for an ordinary method with borrowed self. With `consumedArguments: [0]`, for example, the dispatcher owns the first incoming explicit argument and supplies a fresh +1 reference each time the chain calls the native implementation. Skipping the continuation releases the unused incoming reference. Callback values have ordinary Swift ownership and can be saved independently. Failure recovery preserves completed native effects and balances both the incoming ownership and each attempted continuation. The invocation is valid only until its callback returns and only on the original thread. Saving it does not keep the native stack frame alive; expired or wrong-thread access throws. It is not Sendable.
+A callback can change arguments and results, omit `proceed`, or call it repeatedly for an ordinary method with borrowed self. Callback values have ordinary Swift ownership and can be saved. See <doc:HookArguments> for object mutations, reference replacement, and diagnostics.
+
+For `consumedArguments: [0]`, the dispatcher owns the incoming argument and supplies a fresh +1 reference on each native continuation. Skipping continuation releases the unused reference; failure recovery balances all attempted transfers.
+
+The invocation itself is non-Sendable and valid only on its callback's original thread until return. Saving it does not keep the native frame alive. Expired or wrong-thread access throws.
 
 A Swift callback or conversion failure is reported synchronously to `onFailure`. If no continuation has completed, the bridge bypasses that callback with its original arguments and runs the remaining snapshot. If a continuation has completed, its most recent result is preserved without replaying native side effects. Side effects already performed by user code are not rolled back. Swift errors do not unwind through Objective-C callers, and Objective-C/C++ exceptions are not translated into Swift errors.
 
@@ -71,7 +75,7 @@ let hook = try unsafe ABIRuntime.shared.object(renderer).hookMethod(
 }
 ```
 
-This does not change isa. The token's filter is weak and does not retain the receiver. The `NativeObject` wrapper itself has its existing strong receiver ownership, so discard that wrapper when it is no longer needed. A callback that explicitly captures its receiver can still retain it. Other instances of the class pass through the dispatcher and skip this callback. Later isa changes or overrides that bypass that class entry are not automatically followed.
+The token filters weakly by identity on the object's current class, leaving isa unchanged. Other instances pass through and skip the callback. The `NativeObject` wrapper and explicit callback captures can still retain the receiver. Release the wrapper when no longer needed. Later isa changes or overrides that bypass the class entry also bypass the hook.
 
 ## MainActor methods
 
@@ -85,14 +89,12 @@ Managed registrations serialize their writes. External swizzlers must coordinate
 
 External replacements can call a saved dispatcher IMP. Its active callbacks still apply even if the token reports displacement. ABIBridge does not automatically retarget that dispatcher to the external replacement, which could create a cycle when the replacement calls the saved dispatcher.
 
-Published executable entries, their prepared call layout, and original fallback ownership are retained for the process lifetime because external IMP holders cannot be enumerated. This is one entry per controlled class/selector/method-kind, independent of registration count; callback captures are not process-lived. Preparation failures release unpublished entries.
+Saved IMPs require published entries, prepared layouts, and original fallback owners to remain alive for the process lifetime. ABIBridge keeps one entry per controlled class, selector, and method kind regardless of registration count. Callback captures release after their last active snapshot; preparation failures release unpublished entries.
 
-Implementation and class images discovered at first installation are retained. `retaining:` can keep a generated original IMP owner or dynamic class owner alive when creating that entry; subsequent registrations reuse its existing fallback ownership. Do not dispose a controlled runtime class, invalidate generated original code, or unload an implementation that inherited pass-through may currently select. External writers remain responsible for the lifetime and ABI/ownership of implementations they introduce. Token invalidation alone does not establish that unloading or physically freeing saved code is safe.
+First installation retains discoverable implementation and class images. Supply `retaining:` for a generated original IMP or dynamic class owner; later registrations reuse that fallback ownership. Keep controlled classes, generated original code, and inherited pass-through implementations valid even after token invalidation. External writers own the lifetime and ABI/ownership contract of their replacements.
 
 See <doc:NativeObjectiveCHooks> for C, C++, and Objective-C++ registration on the same chain.
 
-## Cost and validation
+## Invocation cost
 
-Signatures and argument codecs are prepared at registration. Calls do not perform symbol discovery, demangling, or image scans. An empty dispatcher still has a call-boundary and snapshot cost; each active callback adds value conversion and a scoped continuation frame. Object filtering shares the class-wide dispatcher cost. The `ObjectiveCMethodHookTests` benchmark compares direct calls, inactive dispatch, and one/three hooks for scalar, CGSize, and object methods without imposing timing thresholds.
-
-The same tests cover ordering, inheritance, weak filtering, concurrent callers and registration, reentrancy, ownership, saved entries, and external displacement. The architecture validation package's `hooks` mode exercises the public Swift callback frontend in a signed device host. Build support and executed architecture/device evidence are reported separately in <doc:Architectures>.
+Registration prepares signatures and argument codecs. Calls reuse them without symbol or image searches. Even an empty dispatcher pays for a call boundary and snapshot; each active callback adds conversion and a continuation frame. Object filtering uses the same class-wide dispatcher. See <doc:Architectures> for execution evidence.

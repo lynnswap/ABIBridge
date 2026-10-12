@@ -12,9 +12,7 @@ inline void callback_require(bool ok, ABIResolutionFailure *owned) {
 }
 }
 
-/// Specialize make() to return an owned ABIValueType for a naturally laid-out,
-/// trivially copyable C structure. Pointers remain borrowed; no ObjC ownership,
-/// variadics, C++ references, nontrivial values or native exception unwinding.
+/// Specialize make() to return an owned ABIValueType for a naturally laid-out, trivially copyable C structure. Pointers remain borrowed; no ObjC ownership, variadics, C++ references, nontrivial values or native exception unwinding.
 template<class T> struct callback_value_type {
     static ABIValueType *make() {
         using V=std::remove_cv_t<T>;

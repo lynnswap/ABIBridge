@@ -1,8 +1,7 @@
 import ABIBridgeRuntime
 import Foundation
 
-/// Formal declaration types preserve generic indirection and pack expansion
-/// that concrete function metadata cannot describe.
+/// Formal declaration types preserve generic indirection and pack expansion that concrete function metadata cannot describe.
 struct SwiftGenericDeclaration: Sendable, Equatable {
     struct Parameter: Sendable, Equatable {
         let name: String
@@ -29,8 +28,7 @@ struct SwiftGenericDeclaration: Sendable, Equatable {
 
 }
 
-/// Source-level information omitted from a callable's mangling, supplied by
-/// the caller using the provider's canonical generic signature.
+/// Source-level information omitted from a callable's mangling, supplied by the caller using the provider's canonical generic signature.
 struct SwiftDeclaredSignature {
     let function: SwiftFormalType
     let genericClause: String?
@@ -488,8 +486,7 @@ indirect enum SwiftFormalType: Sendable, Equatable {
     }
 }
 
-/// A lookup key preserves the member and labels while its bound signature is
-/// checked separately. This lets ordinary member names select generic entries.
+/// A lookup key preserves the member and labels while its bound signature is checked separately. This lets ordinary member names select generic entries.
 extension SwiftMemberLookup {
     static func qualifiedName(
         _ member: String,

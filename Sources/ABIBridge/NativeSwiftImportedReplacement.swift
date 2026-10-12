@@ -1,19 +1,12 @@
 import ABIBridgeCore
 
-/// A prepared, explicit replacement of compiled Swift importing references.
+/// A prepared replacement of compiled Swift importing references.
 ///
-/// Preparation captures each previous entry without changing dispatch. Use
-/// `slots` to initialize any state required by the compiled replacement, then
-/// call `install()`. Calls may arrive as soon as its first pointer is published.
-/// Changes across multiple slots are not atomic.
+/// Preparation captures previous entries without changing dispatch. Use `slots` to initialize replacement state, then call `install()`. Calls can arrive after the first pointer is published; changes across slots are not atomic.
 ///
-/// Call `restore()` to undo owned pointer changes. Releasing this plan does not
-/// restore pointers or run a potentially failing hidden cleanup. Code images
-/// published or captured by a successful write stay retained for process lifetime
-/// so copied native function pointers remain callable after restoration. Supplied
-/// additional code owners have that same lifetime. Importing images remain held
-/// while the plan exists. Coordinate all other writers and native code lifetimes.
-/// See <doc:SwiftImportedReplacements>.
+/// Call `restore()` explicitly. Releasing the plan leaves pointers unchanged. Code images published or captured by a successful write, and additional code owners, remain retained for process lifetime so copied native pointers stay callable after restoration. Importing images remain retained while the plan exists.
+///
+/// Coordinate other writers and native code lifetimes. See <doc:SwiftImportedReplacements>.
 public final class NativeSwiftImportedReplacement<Implementation> {
     /// Logical state and the current pointer observation.
     public enum Status: Sendable { case prepared, installed, restored, restorationRequired, displaced, unreadable }
@@ -21,8 +14,7 @@ public final class NativeSwiftImportedReplacement<Implementation> {
     public struct Slot {
         /// Address of the importing pointer, not its code target.
         public let address: UInt
-        /// The entry captured during preparation. Nil represents a null weak
-        /// reference. It is not a new lookup of the target declaration.
+        /// The entry captured during preparation. Nil represents a null weak reference. It is not a new lookup of the target declaration.
         public let original: Implementation?
         public let status: Status
         /// Last installation and subsequent restoration/rollback results.
@@ -54,18 +46,11 @@ public final class NativeSwiftImportedReplacement<Implementation> {
     }
     /// Publishes the compiled replacement at the prepared references.
     ///
-    /// The current pointer must still match the captured representation. A
-    /// failure attempts to restore earlier writes and preserves both outcomes in
-    /// `slots`. Restore outstanding writes before installing this plan again.
-    /// The replacement must match Swift context, argument/result lowering,
-    /// ownership, and isolation. Matching Swift metatypes alone do not prove this.
+    /// The current pointer must still match the captured representation. A failure attempts to restore earlier writes and preserves both outcomes in `slots`. Restore outstanding writes before installing this plan again. The replacement must match Swift context, argument/result lowering, ownership, and isolation. Matching Swift metatypes alone do not prove this.
     /// - Throws: `NativeSwiftReplacementError` with the failed slot indexes.
     @unsafe public func install() throws { try storage.install() }
 
-    /// Restores captured bits wherever this plan still has an outstanding write.
-    /// Never overwrites a different current pointer. Failed restorations can be
-    /// retried; inspect `slots` for partial writes and protection errors.
-    /// Pointer comparisons cannot detect an unrelated writer's ABA changes.
+    /// Restores captured bits wherever this plan still has an outstanding write. Never overwrites a different current pointer. Failed restorations can be retried; inspect `slots` for partial writes and protection errors. Pointer comparisons cannot detect an unrelated writer's ABA changes.
     public func restore() throws { try storage.restore() }
 }
 
@@ -88,11 +73,7 @@ extension NativeSwiftFunction {
 
     /// Prepares compiled Swift replacement at references in loaded importing images.
     ///
-    /// The receiver is the source declaration to select; `replacement` is an
-    /// already resolved compiled entry with an exact compatible Swift ABI.
-    /// Neither preparation nor installation loads importing images. Direct,
-    /// inlined or specialized calls bypassing those references are unaffected.
-    /// Same-image references require interposable linking of that image.
+    /// The receiver is the source declaration to select; `replacement` is an already resolved compiled entry with an exact compatible Swift ABI. Neither preparation nor installation loads importing images. Direct, inlined or specialized calls bypassing those references are unaffected. Same-image references require interposable linking of that image.
     /// - Parameters:
     ///   - replacement: Compiled code, not a capturing Swift closure.
     ///   - importer: Explicit scope of images containing references to change.
@@ -151,11 +132,7 @@ extension NativeSwiftFunction {
 extension NativeSwiftMethod {
     /// Prepares replacement of references to a concrete Swift member implementation.
     ///
-    /// This changes importing pointers, not a class's metadata dispatch table.
-    /// The replacement must have the same physical receiver/context and ownership
-    /// contract as the original member. Slot originals use this member's receiver
-    /// plan, including mutating/consuming behavior selected at lookup.
-    /// Other scope and lifetime requirements match function preparation.
+    /// This changes importing pointers, not a class's metadata dispatch table. The replacement must have the same physical receiver/context and ownership contract as the original member. Slot originals use this member's receiver plan, including mutating/consuming behavior selected at lookup. Other scope and lifetime requirements match function preparation.
     @_transparent
     @unsafe public nonisolated(nonsending) func prepareImportedReplacement<Result, Failure: Error, ReplacementFailure: Error, each Argument>(
         with replacement: NativeSwiftMethod<(repeat each Argument) throws(ReplacementFailure) -> Result>, in importer: ImageSelector,

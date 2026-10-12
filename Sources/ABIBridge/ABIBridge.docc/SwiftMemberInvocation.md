@@ -47,9 +47,11 @@ let secondBound = try start.bind(to: secondRenderer)
 try unsafe secondBound.unsafeInvoke()
 ```
 
-The prepared handle retains the native type context and implementation images without repeating discovery. Calls and new bindings preserve the implementation chosen during lookup; they do not select an override from the new receiver. The receiver must match that context, including an instantiated generic specialization or extension constraint. Binding only retains the supplied class object; ordinary invocation validates its representation and receiver type with the existing receiver plan before calling the member. An incompatible receiver therefore reports an invocation error, including when an AnyObject adapter accepts its representation.
+The prepared handle retains its type context and implementation images. Calls and new bindings use the implementation chosen during lookup, without selecting an override from the new receiver.
 
-`bind(to:)` retains a class object until the last bound copy is released. It does not change the original bound handle or the native ownership, effects, or actor/thread requirements. Async handles keep their existing caller-isolation or concurrent behavior. Value receivers continue to use explicit invocation, including `inout` for mutating members.
+The receiver must match that context, including its generic specialization and extension constraints. Binding retains the supplied object; invocation then validates its representation and native type. An incompatible receiver reports an invocation error even when its representation is accepted as `AnyObject`.
+
+`bind(to:)` retains a class object until the last bound copy is released. Each binding keeps the method's ownership, effects, and isolation contract. Value receivers use explicit invocation, including `inout` for mutating members.
 
 ## Use an instantiated generic receiver
 
@@ -66,7 +68,9 @@ let text = try unsafe title.unsafeInvoke()
 
 A member returning `Content` has a dependent formal result, which can remain indirect even when the actual value fits registers. The prepared call preserves that formal convention and uses the enclosing specialization to validate the concrete signature. For a `Renderer<String>` returning `Content`, use `as: (() -> String).self`.
 
-Member lookup checks constrained extensions against the current receiver or superclass specialization, including protocol conformances, associated types, and same-type requirements. A cached result for one specialization does not apply to another. Multiple applicable short-name declarations remain ambiguous; a fully qualified constrained declaration selects that implementation explicitly. Methods introducing additional parameters accept `genericArguments:` for those parameters and supply the required metadata and witnesses. See <doc:GenericSwiftValues> for examples. Receiver ownership, effects, actor isolation, and captured implementation dispatch retain their ordinary contracts.
+Member lookup checks constrained extensions against the receiver or superclass specialization, including conformances, associated types, and same-type requirements. A cached result for one specialization does not apply to another. Multiple applicable short-name declarations report ambiguity; use a fully qualified constrained declaration to select one.
+
+For parameters introduced by the method itself, supply `genericArguments:`. See <doc:GenericSwiftValues> for examples and binding rules.
 
 An absent declaration or specialization with no applicable candidate reports `ABIResolutionError.declarationNotFound`. A selected declaration whose requirements or representation cannot be established reports a preparation error before invocation.
 
@@ -86,7 +90,7 @@ Methods capture the selected implementation. Lookup prefers declarations in the 
 
 ## Await type and member preparation
 
-Swift function, type, and member lookup uses async factories whose names begin with `resolve`. Their synchronous counterparts append `AndWait` and accept the same arguments. On `NativeSwiftType`, the async factories are `resolveMethod`, `resolveStaticMethod`, `resolveInitializer`, `resolveGetter`, `resolveSetter`, `resolveStaticGetter`, and `resolveStaticSetter`. `ABIRuntime` and `NativeSwiftType` remain actors. Async lookup performs search, metadata preparation, and call-interface preparation on a worker queue while the caller suspends. `AndWait` prepares on the caller's thread or blocks while joining required work already running. Both forms share indexes and call layouts, and neither waits for an entire preparation closure or batch.
+All type and member factories offer async `resolve…` and synchronous `resolve…AndWait` forms with the same arguments. Async lookup moves search, metadata, and call preparation to a worker queue while the caller suspends. `AndWait` runs on the caller's thread or blocks while joining required work already running. Both reuse indexes and call layouts. `ABIRuntime` and `NativeSwiftType` are actors.
 
 Use async resolution on `MainActor` without an earlier `prepare` call:
 
@@ -101,7 +105,7 @@ func readText(
 }
 ```
 
-Lookup and native invocation have separate effects. The example awaits preparation but invokes a synchronous getter. An async native function, method, initializer, or getter uses an async function metatype and also requires `await` for `unsafeInvoke`; see <doc:SwiftAsyncABI>. Preparing the handle does not invoke the native body.
+The example awaits preparation and invokes a synchronous getter on `MainActor`. Lookup does not invoke the native body. An async native member also needs an async function metatype and `await` for `unsafeInvoke`; see <doc:SwiftAsyncABI>.
 
 Optional `prepare(_:)` can start the same work ahead of lookup. Keep the receiver outside its Sendable worker closure:
 
@@ -122,13 +126,7 @@ func readTextWithPreparation(from renderer: AnyObject) async throws -> String {
 
 If preparation is still running, `readText` suspends until the work needed for its type and getter is ready. It does not wait for the entire preparation closure before lookup. The final `await preparation` observes that closure's result after reading the property.
 
-The factory name selects the lookup behavior independently of the calling context. Use `AndWait` for synchronous lookup in either a synchronous or async function:
-
-```swift
-let getText = try type.resolveGetterAndWait(named: "text", as: (() -> String).self)
-```
-
-`AndWait` can block the caller during cold lookup or while joining preparation. Objective-C selector lookup, C/C++ factories, and raw symbol resolution use their synchronous APIs. Use <doc:SymbolLookup> for preparing those operations on a worker ahead of time.
+Use `AndWait` to select synchronous lookup in either a synchronous or async function. For preparing raw symbol lookup and the synchronous C/C++ and Objective-C APIs, see <doc:SymbolLookup>.
 
 ## Initializers and static members
 
@@ -162,7 +160,7 @@ func makeRenderer() async throws -> AnyObject {
 }
 ```
 
-Use `resolveStaticMethod` and `resolveStaticSetter` for async lookup, or their `AndWait` variants for synchronous lookup. These factories prepare a handle; calling the native static method or writing its property still requires a separate `unsafeInvoke` on the declaration's required actor or thread.
+Static methods and setters follow the same factory naming. Invoke their prepared handles on the declaration's required actor or thread.
 
 ## Property accessors
 
@@ -187,8 +185,6 @@ func updateText(of renderer: AnyObject, to text: String) async throws {
 }
 ```
 
-The receiver and returned bound handle stay in the caller's isolation domain. Lookup never invokes the setter, and obtaining a bound handle does not make the receiver Sendable.
-
 Setters transfer ownership of the incoming value. Getters use a zero-argument function metatype, such as `(() -> String).self`, `(() throws -> String).self`, or `(@concurrent () async -> String).self`. Getter symbol names do not establish these effects. See <doc:SwiftErrorABI>.
 
 For a throwing getter in a generic type, also supply its source function type with `declaredAs:`. The getter symbol contains the property type but omits its formal error type. The concrete function metatype alone cannot distinguish `throws(B)` from a fixed error type that happens to equal the argument bound to `B`.
@@ -208,7 +204,7 @@ let value = try unsafe checked.unsafeInvoke(on: receiver)
 
 `A` and `B` follow the declaration's generic parameter order. A fixed error type uses its qualified name, such as `"() throws(Example.ProviderFailure) -> A"`. Include `async` when needed. Bound object getters and static getters accept the same source signature. A getter declared with `throws(B)` still needs `declaredAs:` when `B` is bound to `Never`, even though its concrete `as:` signature is nonthrowing. Getters declared without native errors, including async getters, need only `as:`.
 
-Concrete callback parameters and returned closures use the synchronous or async closure wrapper in the function-type metatype, as described in <doc:SwiftClosureValues>. Initializers transfer the encoded owned context; ordinary methods borrow it for the call.
+Use ``NativeSwiftClosure`` for callback parameters and returned closures. Initializers transfer their owned context; ordinary methods borrow it. See <doc:SwiftClosureValues>.
 
 ## Fixed value receivers and adapters
 
@@ -226,11 +222,11 @@ var point = existingPoint
 try unsafe translate.unsafeInvoke(on: &point, 10)
 ```
 
-The as: representation is useful for an unimportable native struct or enum. Class references, known Swift values, and declared trivial value adapters use the representations described in <doc:SwiftFunctionInvocation>. The adapter must match the actual native value layout; metadata size alone does not establish a call ABI.
+Use `as:` for an unimportable struct or enum with an established representation. The adapter must match its actual layout and calling convention. Supported representations are listed in <doc:SwiftFunctionInvocation>.
 
 Small nonmutating value receivers use ordinary trailing components. Indirect and mutating value receivers use the Swift context register. Specify mutating: true for mutating value methods/getters, and use an inout receiver. Value setters default to mutating unless consuming is true; an explicitly nonmutating setter can opt out with mutating: false.
 
-For a `consuming` method, getter, or setter, pass `consuming: true` during lookup. Bound object methods and accessors expose the same option. This transfers an independent receiver copy and leaves the caller's value usable. Consuming and mutating conventions are mutually exclusive, and symbol names do not distinguish them. Custom value adapters must describe a trivial native value; nontrivial resource destruction requires a native adapter.
+For a `consuming` method, getter, or setter, pass `consuming: true` during lookup, including bound-object lookup. A typed receiver transfers an independent copy, leaving the caller's value usable. Consuming and mutating conventions are mutually exclusive, and symbol names do not distinguish them. A foreign value adapter must describe a trivial native value; nontrivial destruction requires a native adapter. Runtime owners follow the transfer contract in <doc:SwiftOpaqueResults>.
 
 Writeback preserves the originating resource storage and implementation images without retaining a chain of intermediate value copies. After a native mutation, receiver writeback is attempted even if result conversion fails. If both conversions fail, NativeSwiftWritebackError preserves both errors. A writeback failure leaves the caller's receiver value unchanged, while other native side effects may already have occurred.
 
@@ -240,7 +236,7 @@ Label-only method names obtain canonical parameter/result names from their metat
 
 Framework, executable-path, install-name, and retained-image overloads acquire explicit targets by default. Pass `loading: .loadedOnly` to retain inspection behavior; see <doc:ImageLoading>. The method or type handle keeps its implementation alive, and custom wrapper results retain their call's owners. Raw pointers remain borrowed.
 
-The unsafe boundary requires the actual declaration's ownership, effects, and actor/thread requirements. Async function metatypes select NativeSwiftMethod or NativeSwiftFunction handles with an async Signature; see <doc:SwiftAsyncABI>. Constructing generic metadata does not establish an unknown foreign value's direct call layout; see <doc:ExplicitSwiftValues> and <doc:ManagedSwiftValues> for value representations.
+The unsafe boundary requires the declaration's actual ownership, effects, and actor/thread contract. Generic metadata does not establish an unknown value's direct call layout; see <doc:ExplicitSwiftValues> and <doc:ManagedSwiftValues>.
 
 ## Resolve members from private receivers
 

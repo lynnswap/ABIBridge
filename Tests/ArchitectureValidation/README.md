@@ -1,10 +1,12 @@
 # Architecture and replacement validation
 
-This package compares compiler-generated calls with ABIBridge's invocation machinery. Run its tests with Xcode using the commands in [CONTRIBUTING](../../CONTRIBUTING.md). The `replacement` mode additionally checks the internal Objective-C callback boundary on a signed device host. It is not a public hook-installation API.
+This package compares compiler-generated calls with ABIBridge's invocation machinery. Use the [contributor guide](../../CONTRIBUTING.md) to run tests and device probes. The `replacement` mode checks the internal Objective-C callback boundary on a signed device host; public hook APIs have separate probes below.
 
 ## Full iPhone Air validation
 
-The complete device host suite passed on iPhone Air with iOS 27.0.1 (24A446), built using Xcode.app 27.0 (27A266a) / Swift 6.4 in Release for arm64e. All 38 normal modes completed with 396 reported checks, CPU subtype `0x80000002` and `pacCompiled: true`. Each mode ran in a separate launch and its newly written completed report was verified. The separate `tamper` control produced `EXC_ARM_PAC_FAIL` in `ABICopyFunctionSlotTarget`, called from `invokeAuthenticatedTarget`, after the same build passed the unmodified-pointer control.
+All 38 normal device modes passed on iPhone Air with 396 reported checks. The configuration was iOS 27.0.1 (24A446), Xcode 27.0 (27A266a) / Swift 6.4, Release arm64e, CPU subtype `0x80000002`, and `pacCompiled: true`. Each mode ran in a separate launch with a newly written completed report.
+
+After the same build passed the unmodified-pointer control, the separate `tamper` probe produced `EXC_ARM_PAC_FAIL` in `ABICopyFunctionSlotTarget`, called from `invokeAuthenticatedTarget`.
 
 The added modes cover:
 
@@ -17,7 +19,15 @@ The native mode also covers C++ `bound_method::method()` extraction and rebindin
 
 ## Generic declaration bindings
 
-The `swift-generic-bindings` mode checks constrained nominal construction, retained type arguments, dependent class/value members, associated and same-type requirements, empty and mixed packs, metadata fulfilled by class arguments, generic callback arguments/results, async suspension, typed errors, inout writeback, and ordinary/existential metatypes. Its getter controls bind the same concrete error type to both a generic and a fixed error declaration to verify their distinct physical conventions. Refined, independent, and concrete member constraints check canonical witness arguments; borrowed generic members return through an authenticated tuple callback. AnyObject, Objective-C protocol existentials, and superclass-constrained Objective-C compositions satisfy their Swift generic constraints. Constraint checks distinguish tuple labels and Objective-C class/protocol identities; inapplicable associated-type requirements and unsupported opaque candidates do not hide usable overloads or inherited members. Swift, C, and block callback conventions remain distinct during argument and result selection. Generic operator lookups preserve fixity aliases, complete declarations, and independent member type arguments. Complete member/initializer/accessor declarations preserve custom adapters at concrete type positions. Borrowed and consumed closure arguments retain their reabstraction across sync/async calls; closure initializers and setters transfer captures and release them exactly once. Two separately compiled modules exercise the same superclass constraint with and without visibility of a retroactive conformance; their explicit canonical declarations preserve both successful results and typed-error outputs.
+The `swift-generic-bindings` mode covers:
+
+- Type construction and binding: constrained nominals, retained type arguments, dependent class/value members, associated and same-type requirements, empty and mixed packs, class-fulfilled metadata, and ordinary/existential metatypes.
+- Call results and ownership: generic callbacks, async suspension, typed errors, and inout writeback. Getter controls bind one concrete error type to generic and fixed error declarations to distinguish their physical conventions.
+- Witness arguments: refined, independent, and concrete member constraints, plus borrowed generic members returning through an authenticated tuple callback. AnyObject, Objective-C protocol existentials, and superclass-constrained Objective-C compositions satisfy their Swift constraints.
+- Candidate selection: tuple labels and Objective-C class/protocol identities remain distinct. Inapplicable associated-type requirements and unsupported opaque candidates leave usable overloads and inherited members available. Swift, C, and block callback conventions stay distinct in argument/result selection.
+- Declarations and adapters: operator lookup preserves fixity aliases, complete declarations, and independent member type arguments. Complete member, initializer, and accessor declarations preserve custom adapters at concrete type positions.
+- Closure ownership: borrowed and consumed arguments retain reabstraction across sync/async calls. Initializers and setters transfer captures and release them exactly once.
+- Cross-module constraints: two separately compiled modules use the same superclass constraint with and without visibility of a retroactive conformance. Explicit canonical declarations preserve successful results and typed-error outputs.
 
 Closure packs cover per-element reabstraction, empty packs, wrapper values bound as ordinary generic elements, borrowed and owned pack arguments, retained initializer captures, async suspension, and typed-error cleanup of a partially initialized result.
 
@@ -66,7 +76,7 @@ xcodebuild test -configuration Release -scheme ABIBridge \
 
 Coverage includes narrow signed results, standard structures, mixed register/stack arguments, class/object/block values, retained results, conversion failures, main-thread/background entry, concurrent invocations, in-flight invalidation, saved IMPs, and same/nil/replacement initializer results. Benchmarks print direct/callback/inactive timings for scalar, structure, and object paths without imposing machine-specific timing assertions. Allocation profiling should compare the same configuration and iteration count; process startup and one-time preparation are not per-call costs.
 
-For device execution, invoke `runArchitectureValidation(mode: "replacement")` in the checked-in `ArchitectureTestHost` app described in CONTRIBUTING. The native fixture uses the same replacement transport and checks authenticated IMP installation, scalar dispatch, callback capture release, cached calls after owner release, and consuming/nil initialization. It does not exercise the Swift typed callback frontend on the device. Use root package Simulator tests for that frontend, and report these execution scopes separately.
+For device execution, invoke `runArchitectureValidation(mode: "replacement")` in `ArchitectureTestHost`. The native fixture checks authenticated IMP installation, scalar dispatch, capture release, cached calls after owner release, and consuming/nil initialization. This mode tests the transport. Use `hooks` for device execution of the public typed Swift frontend, and root package Simulator tests for its broader coverage.
 
 The `hooks` mode exercises the public typed Swift frontend in a signed host: two callbacks enter Objective-C dispatch, a saved implementation follows removal, and the saved entry remains callable after both tokens are invalidated. Run this separately from `replacement`, which checks the lower-level transport and initializer boundary.
 
@@ -136,7 +146,11 @@ The `swift-replacement` architecture mode uses the same provider/caller declarat
 
 An iPhone Air / iOS 27.0 / arm64e run passed compiled class-method replacement and restoration for scalar, String and indirect results with pointer authentication enabled and normal protections. The captured original and final-method control also passed. Xcode 26.6 code generation passed for arm64/arm64e; Xcode 27.0 additionally passed arm64e.x1 generation. arm64e.x1 runtime replacement remains unverified. Device import validation is recorded separately below.
 
-The public compiled virtual replacement API is additionally covered by `SwiftVirtualReplacementTests`: declaration identity, coalesced implementations, hidden superclass names, inherited/override scope and initialized resilient-superclass bounds. Its final iPhone Air run passed 28 checks, including cross-module override authentication. These compiled-replacement probes do not establish a general function-body interception API. The fixture owns the object and both code images throughout mutation and restoration, and serializes mutation with its callers. Unestablished generic/specialized metadata, coroutine signatures, native async/throws, and concurrent external writers retain separate contracts. Incoming callback validation is described below. Source names and ordinary function metatypes alone do not prove identical physical calling convention or ownership. Compiler dynamic replacement requires instrumentation in the original declaration and is not a fallback for uninstrumented functions. Capturing a pointer to such an instrumented entry does not bypass that instrumentation.
+`SwiftVirtualReplacementTests` covers declaration identity, coalesced implementations, hidden superclass names, inherited/override scope, and initialized resilient-superclass bounds. Its final iPhone Air run passed 28 checks, including cross-module override authentication.
+
+The fixture owns the object and both code images throughout mutation and restoration, and serializes mutation with callers. Source names and ordinary function metatypes alone do not prove identical physical calling convention or ownership. These probes do not establish general function-body interception, generic/specialized metadata handling, coroutine signatures, native async/throws, or coordination with external writers. Incoming callbacks have separate validation below.
+
+Compiler dynamic replacement requires instrumentation in the original declaration. Capturing a pointer to an instrumented entry does not bypass it.
 
 
 ## Public compiled Swift import replacement
@@ -156,9 +170,19 @@ Each entry has independent argument and result storage. A successful `proceed` r
 
 An iPhone Air / iOS 27.0 / arm64e run passed generated scalar and heap-backed String callbacks, repeated continuation and result disposal, logical invalidation, restoration, and a compiler-provided indirect result. Normal link protections were retained. Stack-heavy and four-register result behavior is currently evidenced by macOS arm64 execution; arm64e.x1 runtime execution still requires matching hardware.
 
-The typed imported-function closure API is exercised by `SwiftImportedFunctionHookTests`: ordinary and MainActor entry, editing object references, String and indirect-result ownership, zero/stack arguments, shared chains, escaped frames, external displacement, concurrent snapshots, independent capture release, additive code owners, and protection-only recovery after failed publication. The `swift-function-hooks` device mode uses separately compiled provider/caller frameworks embedded by `ArchitectureTestHost`; its normal caller records successful publication or TPRO refusal, and its writable control requires actual scalar/String/indirect-result hooks and pass-through after invalidation. The macOS hook suites additionally cover generic bindings and native error propagation. `SwiftAsyncHookTests` covers suspension, cancellation and task-local values on the native task, concurrent/reentrant continuations, wrong-task and expired access, indirect results and typed errors, receiver writeback, register/stack arguments, and pass-through after invalidating an async descriptor. The public-product consumer runs optimized async generic imports, native errors, and virtual String methods. Runtime value and nested callback conversion remain tracked in [#296](https://github.com/lynnswap/ABIBridge/issues/296).
+`SwiftImportedFunctionHookTests` covers ordinary and MainActor entry, object-reference edits, String and indirect-result ownership, zero/stack arguments, shared chains, escaped frames, external displacement, concurrent snapshots, independent capture release, additive code owners, and protection-only recovery after failed publication. The macOS suites also check generic bindings and native error propagation.
 
-On October 3, 2026, `swift-function-hooks` passed 31 checks on iPhone Air / iOS 27.0.1 (24A446), using Xcode 27.0 (27A266a) / Swift 6.4, Release arm64e, CPU subtype `0x80000002`, and `pacCompiled: true`. In addition to concrete scalar/String/indirect-result chains and invalidation, the run covered matching and unmatched generic substitutions, indirectly passed class values, returned generic closure authentication, and typed native/callback errors. Async cases add generic mismatch pass-through, owned String results, typed native/callback failures, completed-result recovery, and MainActor resumption. The same build passed all 8 `swift-async` and 12 `swift-async-closures` checks in separate launches. Both normally linked and writable-control callers accepted publication in this host configuration; this does not establish writability for protected imports in other processes. The app uses its normal signing setup without requesting Enhanced Security. arm64e.x1 runtime execution remains unverified.
+The `swift-function-hooks` device mode uses separately compiled provider/caller frameworks embedded by `ArchitectureTestHost`. Its normal caller records publication or TPRO refusal; the writable control requires actual scalar/String/indirect-result hooks and pass-through after invalidation.
+
+`SwiftAsyncHookTests` checks suspension, cancellation and task-local values on the native task, concurrent/reentrant continuations, wrong-task and expired access, indirect results and typed errors, receiver writeback, register/stack arguments, and pass-through after descriptor invalidation. The public-product consumer runs optimized async generic imports, native errors, and virtual String methods. Runtime values, nested callbacks, and ownership use the shared plans described in the [function-hook guide](../../Sources/ABIBridge/ABIBridge.docc/SwiftFunctionHooks.md).
+
+On October 3, 2026, `swift-function-hooks` passed 31 checks on iPhone Air / iOS 27.0.1 (24A446), using Xcode 27.0 (27A266a) / Swift 6.4, Release arm64e, CPU subtype `0x80000002`, and `pacCompiled: true`. The same build passed all 8 `swift-async` and 12 `swift-async-closures` checks in separate launches.
+
+The hook run covered concrete scalar/String/indirect-result chains, invalidation, matching/unmatched generic substitutions, indirect class values, returned generic closure authentication, and typed native/callback errors. Async cases added mismatch pass-through, owned String results, typed failures, completed-result recovery, and MainActor resumption.
+
+Normally linked and writable-control callers both accepted publication with normal host signing and no Enhanced Security request. This does not establish writability in other processes. arm64e.x1 execution remains unverified.
+
+On October 4, 2026, the runtime ownership follow-up passed all 44 `swift-function-hooks` checks on iPhone Air (iOS 27.0.1, 24A446), using Xcode 27.0 / Swift 6.4 in a Release arm64e build. The ownership cases cover consuming noncopyable inputs, shared result publication, recovery before/after continuation, virtual generic methods, async suspension, object cleanup, Optional adapters, failed inout conversion, and consuming runtime closures with authenticated dispatch and capture release. Newly written completed reports recorded PAC enabled and CPU subtype `0x80000002`. The same build also passed the 83-check `swift-opaque` regression probe.
 
 ## Managed Swift class receivers
 
@@ -174,7 +198,9 @@ The permanent host's `swift-value-hooks` mode passed 12 checks on iPhone Air / i
 
 ## Swift lookup performance
 
-Run `swift-lookup` in `ArchitectureTestHost` to measure automatic nominal-descriptor lookup and direct/inherited method lookup. Each operation reports its first lookup and the mean of 100 repeated lookups in seconds, and resolved methods must return the compiler fixture's expected result. The probe clears the runtime's indexes between operation groups while retaining the type handles; “cold” refers to those indexes, not the OS file cache. Use a fresh launch for each Debug/Release comparison with the same toolchain, architecture, signing, and linked dependencies. It also measures successive lookups across different modules, including missing-module controls, without clearing indexes within each sequence. The probe reports timings without a hardware-dependent pass/fail threshold.
+Run `swift-lookup` in `ArchitectureTestHost` to measure automatic nominal-descriptor lookup and direct/inherited methods. Each operation reports its first lookup and the mean of 100 repeated lookups in seconds. Resolved methods must return the compiler fixture's expected result.
+
+The probe clears runtime indexes between operation groups while retaining type handles. "Cold" refers to those indexes, not the OS file cache. Cross-module sequences include missing-module controls and keep indexes between successive lookups. Compare Debug and Release in fresh launches with the same toolchain, architecture, signing, and linked dependencies. Timings have no hardware-dependent pass/fail threshold.
 
 ## C and C++ lookup performance
 
@@ -210,7 +236,7 @@ The `swift-throwing-closures` mode checks generated typed callbacks, zero-valued
 
 All seven checks passed in a Release arm64e build on iPhone Air (iOS 27, build 24A435), with pointer authentication enabled. The report is `Documents/architecture-swift-throwing-closures.json`. macOS tests also cover untyped and Never errors and preservation of the caller's error register by nonthrowing callbacks.
 
-## Async Swift closure values
+## SwiftUI views
 
 The `swiftui` mode compares rendered Text, Image, Color, and AnyView values, an imported resilient Container<Text>, a compiled generic specialization, and private opaque View composition. It also hosts three routes (compiled host, opaque view, composed opaque view), observes state 0 and 1 through SwiftUI's graph, and checks final host/model release. Its 18 checks passed on macOS in Debug/Release and on iPhone Air (iOS 27 build 24A435, Release arm64e/PAC). Image comparisons preserve dimensions and allow only one 8-bit channel level of rasterization rounding.
 
@@ -218,9 +244,13 @@ The public ABIBridgeSwiftUI product replaces the prototype's retaining wrapper w
 
 The host app's **Open SwiftUI demo** button exposes the same three routes for interaction; `--swiftui-demo opaque` opens it directly (`host` and `composed` select the other routes). Increment runs through a native Swift closure and changes both the counter and red/blue panel. All three routes were exercised in the iPhone Air Simulator (iOS 27). The external SwiftUIConsumer separately compiles without the provider's module and renders its private some View result; `scripts/check-swiftui-codegen.py` records arm64, x86_64, arm64e, and arm64_32 compiler evidence. These fixtures do not install SwiftUI conformances in the ABIBridge product.
 
+## Opaque Swift results
+
 The `swift-opaque` mode verifies hidden aligned managed results, complete metadata, protocol erasure, copied-handle lifetime, cache removal, scalar/empty opaque results, throwing completion, getters, and async suspension/cancellation. It also distinguishes class-constrained direct results from unconstrained class payloads and validates cross-module extension descriptors and authenticated protocol references. All 19 checks passed in a Release arm64e build on iPhone Air (iOS 27, build 24A435), with pointer authentication enabled. Its report is `Documents/architecture-swift-opaque.json`.
 
 The expanded probe passed all 83 checks on iPhone Air (iOS 27.0.1, build 24A446) in a Release arm64e build. The fresh report recorded `pacCompiled: true` and CPU subtype `0x80000002`. Its scoped-result cases use actual `~Copyable & ~Escapable` compiler fixtures and cover free functions, bound members, body errors, native failure, expired views, retained inputs across async body suspension, noncopyable body output, and exact native-result destruction. `Lifetimes` is enabled only for test fixtures; consumers still match the native isolation convention explicitly.
+
+## Swift existential values
 
 The `swift-existentials` mode verifies Any and protocol compositions, inline/out-of-line payload ownership, class-constrained layouts, generated/returned callbacks, optional class/error authentication, and async existential results. All 14 checks passed in a Release arm64e build on iPhone Air (iOS 27, build 24A435), with pointer authentication enabled. Its report is `Documents/architecture-swift-existentials.json`.
 
@@ -228,9 +258,11 @@ On October 3, 2026, the expanded mode passed all 23 checks on iPhone Air / iOS 2
 
 The generic superclass follow-up passed all 27 checks on the same iPhone Air configuration. Its additional cases cover runtime-only factories, authenticated callbacks, returned closures, and typed generic superclass metadata. A fresh `architecture-swift-existentials.json` recorded `pacCompiled: true` and CPU subtype `0x80000002` for that Release build.
 
-On October 4, 2026, the runtime ownership follow-up passed all 44 `swift-function-hooks` checks on iPhone Air (iOS 27.0.1, 24A446), using Xcode 27.0 / Swift 6.4 in a Release arm64e build. The ownership cases cover consuming noncopyable inputs, shared result publication, recovery before/after continuation, virtual generic methods, async suspension, object cleanup, Optional adapters, failed inout conversion, and consuming runtime closures with authenticated dispatch and capture release. Newly written completed reports recorded PAC enabled and CPU subtype `0x80000002`. The same build also passed the 83-check `swift-opaque` regression probe.
+## Swift argument ownership
 
 The `swift-arguments` mode verifies typed inout storage, managed/scalar writeback on success and failure, consumed indirect-value lifetimes, mixed initializer ownership, and async suspension/cancellation. All nine checks passed in a Release arm64e build on iPhone Air (iOS 27, build 24A435), with pointer authentication enabled. Its report is `Documents/architecture-swift-arguments.json`.
+
+## Async Swift closure values
 
 The `swift-async-closures` mode exercises caller-isolated and concurrent generated callbacks, typed direct/indirect errors, independent owned result storage, stack arguments, returned descriptors, repeated native handoffs, escaping captures and final release, and original-task cancellation.
 

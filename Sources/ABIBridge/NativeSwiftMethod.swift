@@ -1,7 +1,6 @@
 /// A Swift invocation and its subsequent writeback both failed.
 ///
-/// The native call or callback body ran and either threw or failed its result
-/// conversion. Argument or receiver writeback then failed too; both errors remain available.
+/// The native call or callback body ran and either threw or failed its result conversion. Argument or receiver writeback then failed too; both errors remain available.
 public struct NativeSwiftWritebackError: Error {
     /// The invocation or result-conversion failure.
     public let invocationError: any Error
@@ -11,9 +10,7 @@ public struct NativeSwiftWritebackError: Error {
 
 /// A captured Swift member implementation with an explicit receiver.
 ///
-/// Invocation calls the implementation selected during lookup. It does not
-/// perform virtual redispatch. Handles retain their type and implementation
-/// images, while callers satisfy receiver lifetime and isolation requirements.
+/// Invocation calls the implementation selected during lookup. It does not perform virtual redispatch. Handles retain their type and implementation images, while callers satisfy receiver lifetime and isolation requirements.
 public struct NativeSwiftMethod<Signature>: Sendable {
     /// The selected source-level declaration and retained implementation image.
     public let symbol: ResolvedSymbol
@@ -43,10 +40,7 @@ public struct NativeSwiftMethod<Signature>: Sendable {
 
     /// Retains an object for repeated calls to this captured implementation.
     ///
-    /// Binding reuses the prepared call without calling the member. Invocation
-    /// validates the object representation and receiver type using the original
-    /// plan, and honors its ownership and isolation contract. Value receivers
-    /// use explicit invocation.
+    /// Binding reuses the prepared call without calling the member. Invocation validates the object representation and receiver type using the original plan, and honors its ownership and isolation contract. Value receivers use explicit invocation.
     public func bind(to receiver: AnyObject) throws -> NativeBoundSwiftMethod<Signature> {
         guard self.receiver.mode == .object else {
             throw ABIResolutionError.unsupportedDeclaration("Only Swift class members can bind a retained object.")
@@ -56,12 +50,7 @@ public struct NativeSwiftMethod<Signature>: Sendable {
 
     /// Calls a class member or nonmutating value member.
     ///
-    /// Typed receivers transfer an independent copy to consuming members.
-    /// NativeSwiftValue accesses its owned storage directly: mutating members
-    /// update that value and consuming members leave its handle consumed.
-    /// NativeSwiftBorrowedValue permits mutation when supplied by a native inout
-    /// callback; other borrows are read-only. Borrowed storage cannot be consumed.
-    /// The lookup's ownership options must match the actual native declaration.
+    /// Typed receivers transfer an independent copy to consuming members. NativeSwiftValue accesses its owned storage directly: mutating members update that value and consuming members leave its handle consumed. NativeSwiftBorrowedValue permits mutation when supplied by a native inout callback; other borrows are read-only. Borrowed storage cannot be consumed. The lookup's ownership options must match the actual native declaration.
     ///
     /// - Parameters:
     ///   - receiver: An instance or adapter matching the declaring native type.
@@ -83,8 +72,7 @@ public struct NativeSwiftMethod<Signature>: Sendable {
 
     /// Calls a member and writes the receiver value back to the caller.
     ///
-    /// The receiver's adapter must describe the actual native value layout.
-    /// Native side effects occur before a possible writeback conversion failure.
+    /// The receiver's adapter must describe the actual native value layout. Native side effects occur before a possible writeback conversion failure.
     /// - Parameters:
     ///   - receiver: A caller-owned value updated by a mutating member.
     ///   - values: Explicit method arguments.
@@ -151,13 +139,11 @@ final class SwiftObjectMethodBinding {
 
 /// A captured Swift implementation bound to a retained object.
 ///
-/// The handle remains in the caller's isolation domain and retains the receiver
-/// and implementation images until its last copy is released.
+/// The handle remains in the caller's isolation domain and retains the receiver and implementation images until its last copy is released.
 public struct NativeBoundSwiftMethod<Signature> {
     /// The prepared implementation, independent of this retained receiver.
     ///
-    /// Copies retain the type and implementation images, but not this binding.
-    /// Calls on another compatible receiver preserve the captured implementation.
+    /// Copies retain the type and implementation images, but not this binding. Calls on another compatible receiver preserve the captured implementation.
     public let method: NativeSwiftMethod<Signature>
     private let binding: SwiftObjectMethodBinding
 
@@ -187,10 +173,7 @@ extension NativeSwiftMethod {
 
     /// Awaits a class member or nonmutating value member.
     ///
-    /// The supplied receiver and native signature must match. The caller
-    /// satisfies the target's actor/thread contract. NativeSwiftValue retains
-    /// access across suspension and transfers its owned value to consuming
-    /// members. Typed receivers transfer a copy. Cancellation remains cooperative.
+    /// The supplied receiver and native signature must match. The caller satisfies the target's actor/thread contract. NativeSwiftValue retains access across suspension and transfers its owned value to consuming members. Typed receivers transfer a copy. Cancellation remains cooperative.
     @_transparent
     @unsafe public nonisolated(nonsending) func unsafeInvoke<Receiver, Result, Failure: Error, each Argument>(
         on receiver: Receiver, _ values: repeat each Argument
@@ -207,8 +190,7 @@ extension NativeSwiftMethod {
 
     /// Awaits a member and writes its modified receiver back, including on native failure.
     ///
-    /// Native effects precede writeback. If writeback also fails, a
-    /// NativeSwiftWritebackError preserves the invocation and conversion errors.
+    /// Native effects precede writeback. If writeback also fails, a NativeSwiftWritebackError preserves the invocation and conversion errors.
     @_transparent
     @unsafe public nonisolated(nonsending) func unsafeInvoke<Receiver, Result, Failure: Error, each Argument>(
         on receiver: inout Receiver, _ values: repeat each Argument
@@ -225,10 +207,7 @@ extension NativeSwiftMethod {
 
     /// Awaits a class member or nonmutating value member.
     ///
-    /// The supplied receiver and native signature must match. The caller
-    /// satisfies the target's actor/thread contract. NativeSwiftValue retains
-    /// access across suspension and transfers its owned value to consuming
-    /// members. Typed receivers transfer a copy. Cancellation remains cooperative.
+    /// The supplied receiver and native signature must match. The caller satisfies the target's actor/thread contract. NativeSwiftValue retains access across suspension and transfers its owned value to consuming members. Typed receivers transfer a copy. Cancellation remains cooperative.
     @_transparent
     @unsafe public nonisolated(nonsending) func unsafeInvoke<Receiver, Result, Failure: Error, each Argument>(
         on receiver: Receiver, _ values: repeat each Argument
@@ -245,8 +224,7 @@ extension NativeSwiftMethod {
 
     /// Awaits a member and writes its modified receiver back, including on native failure.
     ///
-    /// Native effects precede writeback. If writeback also fails, a
-    /// NativeSwiftWritebackError preserves the invocation and conversion errors.
+    /// Native effects precede writeback. If writeback also fails, a NativeSwiftWritebackError preserves the invocation and conversion errors.
     @_transparent
     @unsafe public nonisolated(nonsending) func unsafeInvoke<Receiver, Result, Failure: Error, each Argument>(
         on receiver: inout Receiver, _ values: repeat each Argument

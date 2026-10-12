@@ -1,8 +1,7 @@
 import ABIBridgeRuntime
 import ABIBridgeCore
 
-/// The function metadata's formal types and effects, before declaration-level lowering.
-/// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/ABI/Metadata.h
+/// The function metadata's formal types and effects, before declaration-level lowering. https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/ABI/Metadata.h
 struct SwiftFunctionMetadata: Sendable {
     let runtime: RuntimeFunctionMetadata
     var flags: UInt { runtime.flags }
@@ -192,8 +191,7 @@ enum SwiftCallablePlan: Sendable {
     }
 }
 
-/// Shares value preparation between synchronous and asynchronous transports.
-/// The containing signature establishes the types used by typed invocation.
+/// Shares value preparation between synchronous and asynchronous transports. The containing signature establishes the types used by typed invocation.
 struct SwiftCallValues: Sendable {
     struct Argument: Sendable {
         let type: CValueType

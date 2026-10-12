@@ -22,9 +22,7 @@ public enum NativeMemoryReadStatus: Int32, Sendable {
 
 /// Owned copied bytes and the outcome of reading them.
 ///
-/// The bytes remain available after the region and its owner are released.
-/// A complete read is not atomic and does not establish object validity,
-/// pointee ownership, or continued readability of the original address.
+/// The bytes remain available after the region and its owner are released. A complete read is not atomic and does not establish object validity, pointee ownership, or continued readability of the original address.
 public struct NativeMemoryReadResult: Sendable {
     /// The current-process address where copying began.
     public let sourceAddress: UInt
@@ -42,10 +40,7 @@ public struct NativeMemoryReadResult: Sendable {
 
 /// A bounded current-process address range with an optional lifetime owner.
 ///
-/// Creating a region does not access memory or promise that it is readable.
-/// Callers supply allocation bounds, pointee ownership, and synchronization.
-/// Retaining an owner alone cannot prevent its storage from moving or being
-/// destroyed explicitly. Unlike ``NativeValue``, reads return copied bytes.
+/// Creating a region does not access memory or establish readability. Supply allocation bounds, pointee ownership, and synchronization. An owner cannot by itself prevent storage from moving or being destroyed explicitly. Reads return copied bytes; use ``NativeValue`` for live storage views.
 public struct NativeMemoryRegion {
     /// The numeric address of the first byte in the current process.
     public let address: UInt
@@ -71,9 +66,7 @@ public struct NativeMemoryRegion {
 
     /// Copies this region up to the first failed page.
     ///
-    /// Inspect ``NativeMemoryReadResult/status`` and
-    /// ``NativeMemoryReadResult/systemErrorCode`` for recoverable read failures.
-    /// A zero-length region succeeds without accessing memory.
+    /// Inspect ``NativeMemoryReadResult/status`` and ``NativeMemoryReadResult/systemErrorCode`` for recoverable read failures. A zero-length region succeeds without accessing memory.
     public func read() -> NativeMemoryReadResult {
         copy(offset: 0, count: byteCount)
     }
