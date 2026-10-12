@@ -495,7 +495,7 @@ public struct NativeSwiftFunction<Signature>: Sendable {
 }
 
 extension ABIRuntime {
-    private func prepareSwiftFunction<Signature>(
+    private nonisolated func prepareSwiftFunction<Signature>(
         named name: String,
         as signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument],
@@ -564,7 +564,7 @@ extension ABIRuntime {
     ///   - loading: Whether an explicit image may be acquired and initialized.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
     /// - Throws: A resolution, unsupported representation, or call preparation error.
-    public func swiftFunction<Signature>(
+    @concurrent public nonisolated func swiftFunction<Signature>(
         named name: String,
         as signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument] = [],
@@ -572,14 +572,14 @@ extension ABIRuntime {
         valueABIs: [NativeSwiftType: NativeType] = [:],
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
-    ) throws -> NativeSwiftFunction<Signature> {
+    ) async throws -> NativeSwiftFunction<Signature> {
         try prepareSwiftFunction(
             named: name,
             as: signature,
             genericArguments: genericArguments,
             declaredSignature: declaredSignature,
             valueABIs: valueABIs,
-            resolve: { try resolve($0, in: scope, loading: loading) },
+            resolve: { try resolver.resolve($0, in: scope, loading: loading) },
             candidates: { try resolver.swiftDeclarationCandidates($0, in: scope, loading: loading) }
         )
     }
@@ -596,7 +596,7 @@ extension ABIRuntime {
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
     /// - Throws: A resolution, unsupported representation, or call preparation error.
-    public func swiftFunction<Signature>(
+    @concurrent public nonisolated func swiftFunction<Signature>(
         named name: String,
         as signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument] = [],
@@ -604,14 +604,14 @@ extension ABIRuntime {
         valueABIs: [NativeSwiftType: NativeType] = [:],
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
-    ) throws -> NativeSwiftFunction<Signature> {
+    ) async throws -> NativeSwiftFunction<Signature> {
         try prepareSwiftFunction(
             named: name,
             as: signature,
             genericArguments: genericArguments,
             declaredSignature: declaredSignature,
             valueABIs: valueABIs,
-            resolve: { try resolve($0, in: image, loading: loading) },
+            resolve: { try resolver.resolve($0, in: image, loading: loading) },
             candidates: { try resolver.swiftDeclarationCandidates($0, in: image, loading: loading) }
         )
     }

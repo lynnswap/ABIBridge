@@ -85,11 +85,15 @@ extension ABIRuntime {
     ///   - loading: Whether an explicit image may be acquired and initialized.
     /// - Returns: A reusable function retaining the image and call interface.
     /// - Throws: A resolution error or unsupported call layout.
-    public func cFunction(
+    @concurrent
+    public nonisolated func cFunction(
         named name: String, signature: NativeSignature, in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
-    ) throws -> DynamicNativeFunction {
-        try .init(symbol: resolve(.init(name: name, language: .c), in: scope, loading: loading), signature: signature)
+    ) async throws -> DynamicNativeFunction {
+        try .init(
+            symbol: resolver.resolve(.init(name: name, language: .c), in: scope, loading: loading),
+            signature: signature
+        )
     }
 
     /// Resolves a C function in a retained image using runtime-known layouts.
@@ -101,11 +105,15 @@ extension ABIRuntime {
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable function retaining the image and call interface.
     /// - Throws: A resolution error or unsupported call layout.
-    public func cFunction(
+    @concurrent
+    public nonisolated func cFunction(
         named name: String, signature: NativeSignature, in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
-    ) throws -> DynamicNativeFunction {
-        try .init(symbol: resolve(.init(name: name, language: .c), in: image, loading: loading), signature: signature)
+    ) async throws -> DynamicNativeFunction {
+        try .init(
+            symbol: resolver.resolve(.init(name: name, language: .c), in: image, loading: loading),
+            signature: signature
+        )
     }
 
     /// Resolves a C-compatible C++ function using runtime-known native layouts.
@@ -117,11 +125,15 @@ extension ABIRuntime {
     ///   - loading: Whether an explicit image may be acquired and initialized.
     /// - Returns: A reusable function retaining the image and call interface.
     /// - Throws: A resolution error or unsupported call layout.
-    public func cxxFunction(
+    @concurrent
+    public nonisolated func cxxFunction(
         named name: String, signature: NativeSignature, in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
-    ) throws -> DynamicNativeFunction {
-        try .init(symbol: resolve(.init(name: name, language: .cxx), in: scope, loading: loading), signature: signature)
+    ) async throws -> DynamicNativeFunction {
+        try .init(
+            symbol: resolver.resolve(.init(name: name, language: .cxx), in: scope, loading: loading),
+            signature: signature
+        )
     }
 
     /// Resolves a C-compatible C++ function in a retained image using runtime layouts.
@@ -133,10 +145,14 @@ extension ABIRuntime {
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable function retaining the image and call interface.
     /// - Throws: A resolution error or unsupported call layout.
-    public func cxxFunction(
+    @concurrent
+    public nonisolated func cxxFunction(
         named name: String, signature: NativeSignature, in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
-    ) throws -> DynamicNativeFunction {
-        try .init(symbol: resolve(.init(name: name, language: .cxx), in: image, loading: loading), signature: signature)
+    ) async throws -> DynamicNativeFunction {
+        try .init(
+            symbol: resolver.resolve(.init(name: name, language: .cxx), in: image, loading: loading),
+            signature: signature
+        )
     }
 }

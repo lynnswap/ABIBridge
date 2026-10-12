@@ -4,9 +4,44 @@ import Darwin
 // Loader operations run outside the index lock: constructors and destructors
 // may reenter the native API while dyld holds its own lock.
 package final class RuntimeSymbolResolver: Sendable {
-    package init() {}
+    package init() {
+        #if DEBUG
+        sharedCacheCapture = nil
+        beforeCachePublication = nil
+        #endif
+    }
     package static let shared = RuntimeSymbolResolver()
     private let state = Mutex(ResolutionState())
+
+    #if DEBUG
+    private let sharedCacheCapture: (@Sendable (
+        RuntimeImage, RuntimeDeclaration, SharedCacheSymbols.Source
+    ) -> SharedCacheSymbols.CapturedSymbols?)?
+    package enum CachePublication: Sendable {
+        case automaticScope, importIndex, virtualEntries
+    }
+    private let beforeCachePublication: (@Sendable (
+        CachePublication, RuntimeSymbolResolver
+    ) -> Void)?
+
+    package init(capturingSharedCacheSymbols capture: @escaping @Sendable (
+        RuntimeImage, RuntimeDeclaration, SharedCacheSymbols.Source
+    ) -> SharedCacheSymbols.CapturedSymbols?) {
+        sharedCacheCapture = capture
+        beforeCachePublication = nil
+    }
+
+    package init(beforePublishingCache callback: @escaping @Sendable (
+        CachePublication, RuntimeSymbolResolver
+    ) -> Void) {
+        sharedCacheCapture = nil
+        beforeCachePublication = callback
+    }
+
+    package var hasSharedCacheWaiters: Bool {
+        state.withLock { state in state.indexes.values.contains(where: \.hasSharedCacheWaiters) }
+    }
+    #endif
 
     private struct Scope: Hashable {
         let selector: RuntimeImageSelector
@@ -53,8 +88,9 @@ package final class RuntimeSymbolResolver: Sendable {
         guard selector == .automatic else {
             return .images(try acquire(selector, loading: loading))
         }
+        let (cached, generation) = state.withLock { ($0.automatic, $0.cacheGeneration) }
         let snapshot = try RuntimeImageSnapshot.catalog()
-        if let cached = state.withLock({ $0.automatic }), cached.revision == snapshot.revision {
+        if let cached, cached.revision == snapshot.revision {
             return .automatic(cached)
         }
         let retained = try retain(snapshot.images, skippingUnavailable: true)
@@ -62,7 +98,11 @@ package final class RuntimeSymbolResolver: Sendable {
         // scope must be reacquired even if the catalog revision stays the same.
         guard retained.isComplete else { return .partial(retained.images) }
         let candidate = AutomaticScope(revision: snapshot.revision, images: retained.images)
+        #if DEBUG
+        beforeCachePublication?(.automaticScope, self)
+        #endif
         let (selected, retired) = state.withLock { state -> (AutomaticScope, AutomaticScope?) in
+            guard state.cacheGeneration == generation else { return (candidate, nil) }
             if let existing = state.automatic {
                 if existing.revision == candidate.revision { return (existing, nil) }
                 if existing.revision > candidate.revision { return (candidate, nil) }
@@ -308,10 +348,12 @@ package final class RuntimeSymbolResolver: Sendable {
         lookup: () throws -> RuntimeImage
     ) throws -> RuntimeImage {
         let key = ObjectIdentifier(type)
-        if let cached = state.withLock({ $0.classImages[key] }) { return cached }
+        let (cached, generation) = state.withLock { ($0.classImages[key], $0.cacheGeneration) }
+        if let cached { return cached }
         let candidate = try lookup()
         return withExtendedLifetime(candidate) {
             state.withLock { state in
+                guard state.cacheGeneration == generation else { return candidate }
                 if let cached = state.classImages[key] { return cached }
                 state.classImages[key] = candidate
                 return candidate
@@ -393,6 +435,7 @@ package final class RuntimeSymbolResolver: Sendable {
                 state.indexes, state.imports, state.virtualEntries, state.automatic,
                 state.classImages, state.virtualTables
             )
+            state.cacheGeneration &+= 1
             state.indexes = [:]
             state.imports = [:]
             state.virtualEntries = [:]
@@ -405,11 +448,16 @@ package final class RuntimeSymbolResolver: Sendable {
     }
 
     package func importIndex(for image: RuntimeImage) throws -> ImportIndex {
-        if let cached = state.withLock({ $0.imports[image.identity] }) { return cached }
+        let (cached, generation) = state.withLock { ($0.imports[image.identity], $0.cacheGeneration) }
+        if let cached { return cached }
         // File/cache discovery can enter dyld; keep it outside the resolver lock.
         let candidate = try ImportIndex(image: image)
+        #if DEBUG
+        beforeCachePublication?(.importIndex, self)
+        #endif
         return withExtendedLifetime(candidate) {
             state.withLock { state in
+                guard state.cacheGeneration == generation else { return candidate }
                 if let cached = state.imports[image.identity] { return cached }
                 state.imports[image.identity] = candidate
                 return candidate
@@ -441,14 +489,20 @@ package final class RuntimeSymbolResolver: Sendable {
                 "The virtual table has no loaded-image metadata; supply explicit adapter metadata"
             )
         }
-        let cached = state.withLock { $0.virtualEntries[snapshot.identity] }
+        let (cached, generation) = state.withLock {
+            ($0.virtualEntries[snapshot.identity], $0.cacheGeneration)
+        }
         let index: VirtualEntryIndex
         if let cached {
             index = cached
         } else {
             let candidate = try VirtualEntryIndex(image: snapshot.retain())
+            #if DEBUG
+            beforeCachePublication?(.virtualEntries, self)
+            #endif
             index = withExtendedLifetime(candidate) {
                 state.withLock { state in
+                    guard state.cacheGeneration == generation else { return candidate }
                     if let cached = state.virtualEntries[snapshot.identity] { return cached }
                     state.virtualEntries[snapshot.identity] = candidate
                     return candidate
@@ -551,23 +605,65 @@ package final class RuntimeSymbolResolver: Sendable {
             candidates.indices.filter { !candidates[$0].hasSharedCacheSymbols(for: query) }
                 .map { ($0, !candidates[$0].hasSharedSwiftFallback) }
         }
-        // Host-cache discovery may call dyld, so perform it outside the lock.
+        // Discovery can enter dyld. Only scans of captured sources become
+        // joinable, and each image/scope is independent of the rest of a batch.
         let cache = SharedCacheSymbols()
-        let additions = missing.map { index, includeFallback in
-            (
-                candidates[index],
-                cache.symbols(
-                    in: candidates[index].image,
-                    matching: query,
-                    includingSwiftFallback: includeFallback
-                )
-            )
+        func capture(_ index: SymbolIndex, source: SharedCacheSymbols.Source)
+            -> SharedCacheSymbols.CapturedSymbols?
+        {
+            #if DEBUG
+            if let sharedCacheCapture {
+                return sharedCacheCapture(index.image, query.declaration, source)
+            }
+            #endif
+            return cache.capture(in: index.image, source: source)
         }
-        state.withLock { _ in
-            for (index, symbols) in additions where !index.hasSharedCacheSymbols(for: query) {
-                index.appendSharedCacheSymbols(symbols, matching: query)
+        for (position, includeFallback) in missing {
+            let index = candidates[position]
+            if state.withLock({ _ in index.hasSharedCacheSymbols(for: query) }) { continue }
+            var symbols: [IndexedSymbol] = []
+            if let sources = capture(index, source: .loaded) {
+                guard let loaded = scanSharedCacheSymbols(
+                    sources, source: .loaded, for: query, in: index,
+                    includingSwiftFallback: includeFallback
+                ) else { continue }
+                symbols = loaded.symbols
+                if !loaded.foundDefinitions, let sources = capture(index, source: .file),
+                    let file = scanSharedCacheSymbols(
+                        sources, source: .file, for: query, in: index,
+                        includingSwiftFallback: includeFallback
+                    )
+                {
+                    symbols += file.symbols
+                }
+            }
+            let retired = state.withLock { _ in
+                if !index.hasSharedCacheSymbols(for: query) {
+                    index.appendSharedCacheSymbols(symbols, matching: query)
+                }
+                return index.removeSharedCacheScans(for: query)
+            }
+            withExtendedLifetime(retired) {}
+        }
+    }
+
+    private func scanSharedCacheSymbols(
+        _ sources: SharedCacheSymbols.CapturedSymbols,
+        source: SharedCacheSymbols.Source,
+        for query: SymbolQuery,
+        in index: SymbolIndex,
+        includingSwiftFallback: Bool
+    ) -> SharedCacheSymbols.Extraction? {
+        let scan = withExtendedLifetime(sources) {
+            state.withLock { _ -> SharedCacheSymbolScan? in
+                if index.hasSharedCacheSymbols(for: query) { return nil }
+                return index.sharedCacheScan(
+                    for: query, source: source,
+                    includingSwiftFallback: includingSwiftFallback, capturing: sources
+                )
             }
         }
+        return scan?.result()
     }
 
     private func select(
@@ -587,6 +683,9 @@ package final class RuntimeSymbolResolver: Sendable {
     }
 
     private struct ResolutionState {
+        // Catalog revisions track image changes; this generation also retires
+        // candidates being built outside the lock when callers clear caches.
+        var cacheGeneration: UInt64 = 0
         var automatic: AutomaticScope?
         var classImages: [ObjectIdentifier: RuntimeImage] = [:]
         var indexes: [RuntimeImageIdentity: SymbolIndex] = [:]

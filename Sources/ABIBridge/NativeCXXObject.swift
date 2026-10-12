@@ -83,7 +83,8 @@ public final class NativeCXXObject {
         case .selector(let selector): symbol = try await runtime.resolve(declaration, in: selector, loading: loading)
         case .image(let image): symbol = try await runtime.resolve(declaration, in: image, loading: loading)
         }
-        return try NativeCXXMethod<Result, repeat each Argument>(target: .symbol(symbol), adapter: adapter).bind(to: storage)
+        let method = try await prepareCXXMethod(symbol: symbol, adapter: adapter, as: signature)
+        return method.bind(to: storage)
     }
 
     /// Captures a selected virtual entry and binds this receiver/subobject.
@@ -124,6 +125,15 @@ public final class NativeCXXObject {
             target: .virtual(table.target(at: index, authentication: authentication)), adapter: adapter
         ).bind(to: storage)
     }
+}
+
+@concurrent
+private func prepareCXXMethod<Result, each Argument>(
+    symbol: ResolvedSymbol,
+    adapter: ResolvedSymbol?,
+    as signature: ((repeat each Argument) -> Result).Type
+) async throws -> sending NativeCXXMethod<Result, repeat each Argument> {
+    try NativeCXXMethod(target: .symbol(symbol), adapter: adapter)
 }
 
 /// A prepared direct or table-selected C++ implementation with an explicit receiver.

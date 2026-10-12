@@ -1962,7 +1962,7 @@ extension SwiftGenericBinding {
 }
 
 extension ABIRuntime {
-    func preparedGenericFunction<Signature>(
+    nonisolated func preparedGenericFunction<Signature>(
         symbol: ResolvedSymbol,
         signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument],

@@ -201,9 +201,17 @@ func prepare(_ path: String) async throws -> NativeSwiftFunction<(String) -> Str
     defer { dlclose(original) }
     let runtime = ABIRuntime()
     let scope = ImageSelector.path(URL(fileURLWithPath: path))
+    let request = NativeSymbolRequest(
+        .init(name: "SwiftFunctionFixture.answer() -> Swift.Int64", language: .swift), in: [scope]
+    )
+    async let preparation = runtime.prepare(request)
     let answer = try await runtime.swiftFunction(
         named: "SwiftFunctionFixture.answer()", as: (() -> Int64).self, in: scope
     )
+    let prepared = try await preparation
+    precondition(unsafe prepared.withUnsafeAddress { address in
+        answer.symbol.withUnsafeAddress { $0 == address }
+    })
     let value = try unsafe answer.unsafeInvoke()
     precondition(value == 42)
     let function = try await prepare(

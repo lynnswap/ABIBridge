@@ -49,7 +49,10 @@ extension NativeVTable {
 }
 
 extension ABIRuntime {
-    func virtualEntry(named name: String, addressPoint: UInt, entryCount: Int) throws -> VirtualEntryResolution {
+    @concurrent
+    nonisolated func virtualEntry(
+        named name: String, addressPoint: UInt, entryCount: Int
+    ) async throws -> VirtualEntryResolution {
         try resolver.virtualEntry(named: name, addressPoint: addressPoint, entryCount: entryCount)
     }
 }

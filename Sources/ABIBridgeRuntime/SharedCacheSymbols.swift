@@ -21,82 +21,114 @@ package final class SharedCacheSymbols {
     private var filesByCache: [UUID: [SymbolFile]] = [:]
     private var rangesByTable: [UUID: [UInt64: Range<Int>]] = [:]
 
-    package func symbols(
-        in image: RuntimeImage,
-        matching query: SymbolQuery,
-        includingSwiftFallback: Bool = true
-    ) -> [IndexedSymbol] {
+    package enum Source: Hashable, Sendable { case loaded, file }
+
+    package struct Extraction {
+        package let symbols: [IndexedSymbol]
+        package let foundDefinitions: Bool
+    }
+
+    package struct CapturedSymbols {
+        package typealias Reader = ((UnsafePointer<CChar>, UInt64) -> Void) -> Void
+        private let slide: Int64
+        private let readers: [Reader]
+
+        package init(slide: Int64, readers: [Reader]) {
+            self.slide = slide
+            self.readers = readers
+        }
+
+        package func extract(
+            matching query: SymbolQuery,
+            includingSwiftFallback: Bool
+        ) -> Extraction {
+            var result: [IndexedSymbol] = []
+            var foundDefinitions = false
+            func record(_ name: UnsafePointer<CChar>, _ value: UInt64) {
+                guard let address = SymbolIndex.slid(value, by: slide) else { return }
+                foundDefinitions = true
+                if query.acceptsCandidate(name),
+                    includingSwiftFallback || SwiftModuleFilter.knownModulePrefix(name) != false
+                {
+                    result.append(
+                        IndexedSymbol(name: String(cString: name), address: address, source: .sharedCache)
+                    )
+                }
+            }
+            for read in readers { read(record) }
+            return Extraction(symbols: result, foundDefinitions: foundDefinitions)
+        }
+    }
+
+    // Capture dyld/cache discovery and file owners before publishing a shared
+    // scan. Readers below only visit the captured table or mapped file range.
+    package func capture(in image: RuntimeImage, source: Source) -> CapturedSymbols? {
         let macho = MachOImage(
             ptr: UnsafePointer<mach_header>(bitPattern: UInt(image.identity.headerAddress))!
         )
         guard macho.header.flags.contains(.dylib_in_cache),
             macho.is64Bit,
             let text = macho.segments64.first(where: { $0.segmentName == "__TEXT" })
-        else { return [] }
-        var result: [IndexedSymbol] = []
-        var foundDefinitions = false
-        func record(_ name: UnsafePointer<CChar>, _ value: UInt64) {
-            guard let address = SymbolIndex.slid(value, by: image.identity.slide) else { return }
-            foundDefinitions = true
-            if query.acceptsCandidate(name),
-                includingSwiftFallback || SwiftModuleFilter.knownModulePrefix(name) != false
+        else { return nil }
+        var readers: [CapturedSymbols.Reader] = []
+        switch source {
+        case .loaded:
+            if let cache = loadedCache, let cacheSlide = cache.slide,
+                cacheSlide == image.identity.slide,
+                UInt64(text.virtualMemoryAddress) >= cache.mainCacheHeader.sharedRegionStart
             {
-                result.append(
-                    IndexedSymbol(
-                        name: String(cString: name),
-                        address: address,
-                        source: .sharedCache
+                let offset = UInt64(text.virtualMemoryAddress) - cache.mainCacheHeader.sharedRegionStart
+                if let info = cache.localSymbolsInfo, let symbols = info.symbols64(in: cache),
+                    let range = localRange(
+                        offset,
+                        table: cache.mainCacheHeader.uuid,
+                        entries: Array(info.entries(in: cache)),
+                        count: symbols.count
                     )
-                )
-            }
-        }
-        if let cache = loadedCache, let cacheSlide = cache.slide,
-            cacheSlide == image.identity.slide,
-            UInt64(text.virtualMemoryAddress) >= cache.mainCacheHeader.sharedRegionStart
-        {
-            let offset = UInt64(text.virtualMemoryAddress) - cache.mainCacheHeader.sharedRegionStart
-            if let info = cache.localSymbolsInfo, let symbols = info.symbols64(in: cache),
-                let range = localRange(
-                    offset,
-                    table: cache.mainCacheHeader.uuid,
-                    entries: Array(info.entries(in: cache)),
-                    count: symbols.count
-                )
-            {
-                for index in range {
-                    let symbol = symbols.symbols.advanced(by: index).pointee
-                    let name = symbols.stringBase.advanced(by: numericCast(symbol.n_un.n_strx))
-                    let address = symbols.addressStart + numericCast(symbol.n_value)
-                    if address >= 0 { record(name, UInt64(address)) }
-                }
-            }
-            readSymbolFiles(header: cache.mainCacheHeader, offset: offset, record: record)
-        }
-        if !foundDefinitions, let cache = fullCache, let expectedUUID = image.identity.uuid,
-            let file = filesByUUID[expectedUUID],
-            let fileText = file.segments64.first(where: { $0.segmentName == "__TEXT" }),
-            UInt64(fileText.virtualMemoryAddress) >= cache.mainCacheHeader.sharedRegionStart
-        {
-            let offset =
-                UInt64(fileText.virtualMemoryAddress) - cache.mainCacheHeader.sharedRegionStart
-            if let info = cache.localSymbolsInfo, let symbols = info.symbols64(in: cache),
-                let range = localRange(
-                    offset,
-                    table: cache.mainCacheHeader.uuid,
-                    entries: Array(info.entries(in: cache)),
-                    count: symbols.count
-                )
-            {
-                for index in range {
-                    let symbol = symbols[index]
-                    if symbol.offset >= 0 {
-                        symbol.name.withCString { record($0, UInt64(symbol.offset)) }
+                {
+                    readers.append { record in
+                        withExtendedLifetime(cache) {
+                            for index in range {
+                                let symbol = symbols.symbols.advanced(by: index).pointee
+                                let name = symbols.stringBase.advanced(by: numericCast(symbol.n_un.n_strx))
+                                let address = symbols.addressStart + numericCast(symbol.n_value)
+                                if address >= 0 { record(name, UInt64(address)) }
+                            }
+                        }
                     }
                 }
+                readers += captureSymbolFiles(header: cache.mainCacheHeader, offset: offset)
             }
-            readSymbolFiles(header: cache.mainCacheHeader, offset: offset, record: record)
+        case .file:
+            if let cache = fullCache, let expectedUUID = image.identity.uuid,
+                let file = filesByUUID[expectedUUID],
+                let fileText = file.segments64.first(where: { $0.segmentName == "__TEXT" }),
+                UInt64(fileText.virtualMemoryAddress) >= cache.mainCacheHeader.sharedRegionStart
+            {
+                let offset = UInt64(fileText.virtualMemoryAddress) - cache.mainCacheHeader.sharedRegionStart
+                if let info = cache.localSymbolsInfo, let symbols = info.symbols64(in: cache),
+                    let range = localRange(
+                        offset,
+                        table: cache.mainCacheHeader.uuid,
+                        entries: Array(info.entries(in: cache)),
+                        count: symbols.count
+                    )
+                {
+                    readers.append { record in
+                        withExtendedLifetime(cache) {
+                            for index in range {
+                                let symbol = symbols[index]
+                                if symbol.offset >= 0 {
+                                    symbol.name.withCString { record($0, UInt64(symbol.offset)) }
+                                }
+                            }
+                        }
+                    }
+                }
+                readers += captureSymbolFiles(header: cache.mainCacheHeader, offset: offset)
+            }
         }
-        return result
+        return CapturedSymbols(slide: image.identity.slide, readers: readers)
     }
 
     private func localRange(
@@ -122,11 +154,10 @@ package final class SharedCacheSymbols {
         return rangesByTable[table]?[offset]
     }
 
-    private func readSymbolFiles(
+    private func captureSymbolFiles(
         header: DyldCacheHeader,
-        offset: UInt64,
-        record: (UnsafePointer<CChar>, UInt64) -> Void
-    ) {
+        offset: UInt64
+    ) -> [CapturedSymbols.Reader] {
         if filesByCache[header.uuid] == nil {
             filesByCache[header.uuid] = []
             for url in Self.symbolFileURLs() {
@@ -140,6 +171,7 @@ package final class SharedCacheSymbols {
                 break
             }
         }
+        var readers: [CapturedSymbols.Reader] = []
         for file in filesByCache[header.uuid] ?? [] {
             guard
                 let range = localRange(
@@ -150,16 +182,19 @@ package final class SharedCacheSymbols {
                 )
             else { continue }
             if let mapping = file.mapping {
-                mapping.forEach(in: range, record: record)
+                readers.append { record in mapping.forEach(in: range, record: record) }
             } else {
-                for index in range {
-                    let symbol = file.symbols[index]
-                    if symbol.offset >= 0 {
-                        symbol.name.withCString { record($0, UInt64(symbol.offset)) }
+                readers.append { record in
+                    for index in range {
+                        let symbol = file.symbols[index]
+                        if symbol.offset >= 0 {
+                            symbol.name.withCString { record($0, UInt64(symbol.offset)) }
+                        }
                     }
                 }
             }
         }
+        return readers
     }
 
     private struct SymbolFile {
