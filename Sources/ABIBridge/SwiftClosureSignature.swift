@@ -932,6 +932,10 @@ struct SwiftRuntimeClosureConversions: Sendable {
                 leaf.nativeClosure.map { (leaf.nativeOffset, leaf.nativeType, $0) }
             }
         }
+        try self.init(functions: functions)
+    }
+
+    init(functions: [(Int, Any.Type, SwiftGenericClosurePlan)]) throws {
         fields = try functions.compactMap { offset, metadata, native in
             let storage = try SwiftGenericClosurePlan.nativeValue(metadata)
             guard !native.hasSameNativeABI(as: storage) else { return nil }

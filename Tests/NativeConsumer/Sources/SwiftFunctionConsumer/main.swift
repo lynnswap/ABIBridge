@@ -259,7 +259,71 @@ func prepare(_ path: String) async throws -> NativeSwiftFunction<(String) -> Str
     return function
 }
 
+@MainActor
+func prepareRuntimeProjection(
+    _ path: String
+) async throws -> NativeSwiftClosure<@MainActor () -> NativeSwiftValue> {
+    guard let original = dlopen(path, RTLD_NOW | RTLD_LOCAL) else {
+        fatalError(String(cString: dlerror()))
+    }
+    defer { dlclose(original) }
+    let runtime = ABIRuntime()
+    let scope = ImageSelector.path(URL(fileURLWithPath: path))
+    let make = try await runtime.resolveSwiftFunction(
+        named: "SwiftFunctionFixture.makeRuntimeProjection(_:)",
+        as: ((Int64) -> NativeSwiftValue).self,
+        in: scope
+    )
+    let value = try unsafe make.unsafeInvoke(41)
+    let bodyType = try await runtime.resolveSwiftType(
+        named: "SwiftFunctionFixture.RuntimeProjectionBody",
+        in: scope
+    )
+    guard
+        let payload = try await value.resolveEnumPayload(
+            forCase: "preview",
+            valueABIs: [bodyType: .opaque(named: bodyType.name)]
+        )
+    else {
+        fatalError("Expected a preview payload")
+    }
+    let source = try payload.copyTupleElement(at: 0)
+    let concreteSource = try source.copyUnderlyingValue()
+    precondition(source.type != concreteSource.type)
+    precondition(concreteSource.type.name == "SwiftFunctionFixture.RuntimeProjectionBody")
+    let read = try await concreteSource.type.resolveGetter(
+        named: "number",
+        as: (() -> Int64).self,
+        receiverABI: .opaque(named: concreteSource.type.name)
+    )
+    let sourceNumber = try unsafe read.unsafeInvoke(on: concreteSource)
+    precondition(sourceNumber == 41)
+    let closureValue = try payload.copyTupleElement(at: 1)
+    let closure = try await closureValue.resolveClosure(
+        as: (@MainActor () -> NativeSwiftValue).self
+    )
+    precondition(
+        !value.isConsumed && !payload.isConsumed && !source.isConsumed && !closureValue.isConsumed
+    )
+    runtime.removeCachedResults()
+    return closure
+}
+
 let path = CommandLine.arguments[1]
+let runtimeProjection = try await prepareRuntimeProjection(path)
+let projectionBody = try unsafe runtimeProjection.unsafeInvoke()
+precondition(projectionBody.type.name == "SwiftFunctionFixture.RuntimeProjectionBody")
+let projectionNumber = try await projectionBody.type.resolveGetter(
+    named: "number",
+    as: (() -> Int64).self,
+    receiverABI: .opaque(named: projectionBody.type.name)
+)
+let projectionResult = try unsafe projectionNumber.unsafeInvoke(on: projectionBody)
+precondition(projectionResult == 42)
+print(
+    "Public runtime projections retain enum payload types and MainActor closures without importing provider types"
+)
+
 let function = try await prepare(path)
 for length in [0, 1, 100, 4096] {
     let value = String(repeating: "a", count: length)

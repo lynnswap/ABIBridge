@@ -48,6 +48,11 @@ final class SwiftClosureContext {
         self.body = body
     }
 
+    init(entry: SwiftClosureCallbackOwner, body: SwiftThrowingClosureBody) {
+        self.entry = entry
+        self.body = body
+    }
+
     func value(discriminator: UInt16) -> ABISwiftClosureValue {
         ABISwiftClosureValue(
             function: ABISignSwiftClosureFunction(function, discriminator),

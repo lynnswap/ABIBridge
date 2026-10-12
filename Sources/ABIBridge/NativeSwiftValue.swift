@@ -1,7 +1,7 @@
 import ABIBridgeCore
 import Foundation
 
-/// An ownership or access conflict involving a runtime Swift value.
+/// A failure inspecting, copying, or accessing a runtime Swift value.
 public enum NativeSwiftValueError: Error, Sendable, Equatable {
     /// The native value has already been transferred out of this handle.
     case consumedValue
@@ -9,6 +9,12 @@ public enum NativeSwiftValueError: Error, Sendable, Equatable {
     case noncopyableType
     /// An active native operation holds conflicting access to the value.
     case valueInUse
+    /// No runtime enum case has the requested name.
+    case enumCaseNotFound(name: String)
+    /// More than one runtime enum case has the requested name.
+    case ambiguousEnumCase(name: String)
+    /// The tuple has no element at this zero-based index.
+    case tupleElementIndexOutOfBounds(index: Int, count: Int)
 }
 
 /// Owns an Escapable Swift value whose concrete type need not be available at compile time.
@@ -253,6 +259,7 @@ struct SwiftRuntimeValuePlan: Sendable {
 
     init(metadata: Any.Type, type: CValueType, resolver: SymbolResolver, retaining images: [NativeImage],
          nativeTuple: SwiftTupleValuePlan? = nil, nativeClosure: SwiftGenericClosurePlan? = nil) throws {
+        try validateSwiftRuntimeValueStorage(metadata)
         self.type = type
         self.nativeTuple = nativeTuple
         self.nativeClosure = nativeClosure

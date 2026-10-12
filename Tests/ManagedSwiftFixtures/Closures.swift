@@ -30,3 +30,11 @@ public final class StoredIntegerClosure {
 ) -> Int64 {
     callback(value)
 }
+
+@inline(never) public func makeIsolatedIntegerClosure(_ bias: Int64) -> some Any {
+    let body: IsolatedIntegerClosure = { value in
+        MainActor.assertIsolated()
+        return value + bias
+    }
+    return body
+}

@@ -96,3 +96,22 @@ open class AsyncHookRenderer {
     }
 }
 @inline(never) public func makeAsyncHookRenderer() -> AsyncHookRenderer { AsyncHookRenderer() }
+
+public protocol RuntimeProjectionSource { var number: Int64 { get } }
+public struct RuntimeProjectionBody: RuntimeProjectionSource {
+    public let number: Int64
+    public init(_ number: Int64) { self.number = number }
+}
+public enum RuntimeProjection {
+    case preview(
+        source: any RuntimeProjectionSource,
+        makeBody: @MainActor () -> RuntimeProjectionBody
+    )
+}
+@inline(never) public func makeRuntimeProjection(_ number: Int64) -> some Any {
+    let makeBody: @MainActor () -> RuntimeProjectionBody = {
+        MainActor.assertIsolated()
+        return RuntimeProjectionBody(number + 1)
+    }
+    return RuntimeProjection.preview(source: RuntimeProjectionBody(number), makeBody: makeBody)
+}

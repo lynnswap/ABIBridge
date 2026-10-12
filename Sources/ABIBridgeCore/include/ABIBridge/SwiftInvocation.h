@@ -24,6 +24,31 @@ void ABISwiftTakeValue(const void *metadata, void *destination, void *source);
 /// Destroys one initialized value, leaving its storage uninitialized.
 void ABISwiftDestroyValue(const void *metadata, void *value);
 
+/// Enum operations require valid enum metadata with enum value witnesses.
+bool ABISwiftGetEnumTag(const void *metadata, const void *value, uint32_t *tag);
+/// Consumes an initialized enum copy into its payload. An indirect payload is copied out of its retained box; destination is uninitialized payload storage.
+void ABISwiftTakeEnumPayload(const void *metadata, void *enumCopy,
+    const void *payloadMetadata, bool indirect, void *destination);
+typedef struct ABISwiftEnumCaseInfo {
+    const char *name;
+    bool hasPayload;
+    bool indirect;
+} ABISwiftEnumCaseInfo;
+/// Case indexes follow the enum tag/field-record order. Names borrow compiler metadata.
+bool ABISwiftGetEnumCaseInfo(const void *metadata, size_t index, ABISwiftEnumCaseInfo *result);
+/// Resolves only this case's payload using the enum's existing generic metadata arguments.
+const void *ABISwiftEnumCasePayloadMetadata(const void *metadata, size_t index);
+/// Copies the case payload's formal type syntax, including indirect cases and unbound generic parameters.
+ABISwiftSyntax *ABICopySwiftEnumCasePayloadSyntax(const void *metadata, size_t index);
+typedef struct ABISwiftExistentialProjection {
+    const void *metadata;
+    const void *value;
+    void *scratch;
+} ABISwiftExistentialProjection;
+/// Borrows one existential layer. The original value and result storage remain live while using the returned address; bridged Error values may borrow result.scratch.
+bool ABISwiftProjectExistentialValue(const void *metadata, const void *value,
+    ABISwiftExistentialProjection *result);
+
 /// Reads a valid compiler-emitted generic protocol-requirement reference. Authenticates indirect Swift descriptor pointers before reading their flags.
 bool ABISwiftProtocolRequirementIsClassBound(const void *reference);
 /// Runtime metadata operations over valid compiler-emitted Swift descriptors. Type construction requires an already validated metadata/witness argument list.

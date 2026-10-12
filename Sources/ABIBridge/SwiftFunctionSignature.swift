@@ -33,6 +33,8 @@ struct SwiftFunctionSignature: Sendable {
     var result: Any.Type { metadata.result }
     var failure: Any.Type { metadata.failure }
     var isAsync: Bool { metadata.attributes.isAsync }
+    var attributes: SwiftFunctionAttributes { metadata.attributes }
+    var globalActor: Any.Type? { metadata.globalActor }
     var inheritsCallerIsolation: Bool { metadata.attributes.isolation == .caller }
     let parameterConventions: [SwiftArgumentConvention]
 
@@ -59,9 +61,14 @@ struct SwiftFunctionSignature: Sendable {
                 )
             }
         }
-        guard metadata.attributes.differentiability == .none, metadata.globalActor == nil else {
+        guard metadata.attributes.differentiability == .none else {
             throw ABIResolutionError.unsupportedDeclaration(
-                "Differentiable and global-actor function types require their native invocation conventions."
+                "Differentiable function types require their native invocation conventions."
+            )
+        }
+        guard metadata.globalActor == nil || metadata.globalActor == MainActor.self else {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "This global-actor function requires its actor's native invocation convention."
             )
         }
         guard metadata.attributes.isolation != .isolatedAny else {

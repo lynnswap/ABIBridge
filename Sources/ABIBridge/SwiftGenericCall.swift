@@ -1032,13 +1032,7 @@ struct SwiftGenericCallPlan: Sendable {
         }
         let nativeClosure: SwiftGenericClosurePlan?
         if case .function = canonical {
-            nativeClosure = try Self.closure(
-                canonical,
-                signature: SwiftFunctionSignature(
-                    nativeClosureSignature(canonical, binding: binding)
-                ),
-                binding: binding
-            )
+            nativeClosure = try nativeClosurePlan(canonical, binding: binding)
         } else if nativeTuple == nil {
             nativeClosure = SwiftGenericClosurePlan.closureInStoredValue(metadata)
         } else {
@@ -1049,6 +1043,17 @@ struct SwiftGenericCallPlan: Sendable {
             type: layout(formal, actual: metadata, binding: binding),
             nativeTuple: nativeTuple,
             nativeClosure: nativeClosure
+        )
+    }
+
+    static func nativeClosurePlan(
+        _ formal: SwiftFormalType,
+        binding: SwiftGenericBinding
+    ) throws -> SwiftGenericClosurePlan {
+        try closure(
+            formal,
+            signature: SwiftFunctionSignature(nativeClosureSignature(formal, binding: binding)),
+            binding: binding
         )
     }
 
@@ -1393,7 +1398,9 @@ struct SwiftGenericCallPlan: Sendable {
         else {
             preconditionFailure("A closure plan requires a function type.")
         }
+        let nativeActor = try attributes.globalActor.map { try binding.types($0)[0] }
         guard attributes.isAsync == signature.isAsync,
+            nativeActor == signature.globalActor,
             failure != nil || signature.failure == Never.self
         else {
             throw ABIResolutionError.signatureMismatch(.init(expected: formal.spelling, found: []))

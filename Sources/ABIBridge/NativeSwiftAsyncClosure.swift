@@ -159,6 +159,11 @@ final class SwiftAsyncClosureContext {
         self.body = body
     }
 
+    init(entry: SwiftAsyncClosureCallbackOwner, body: SwiftAsyncClosureBody) {
+        self.entry = entry
+        self.body = body
+    }
+
     func value(discriminator: UInt16) -> ABISwiftClosureValue {
         ABISwiftClosureValue(
             function: ABISignSwiftAsyncClosureDescriptor(
@@ -500,7 +505,8 @@ extension NativeSwiftClosure {
 
     static func makeAsyncClosureCodec(
         signature: SwiftFunctionSignature,
-        generic: SwiftGenericClosurePlan? = nil
+        generic: SwiftGenericClosurePlan? = nil,
+        preparingFunction function: UInt? = nil
     ) throws -> SwiftClosureCodec {
         let discriminator = try generic?.discriminator ?? signature.closureDiscriminator()
         let prepared = try SwiftAsyncCall(
@@ -518,6 +524,21 @@ extension NativeSwiftClosure {
         } else {
             interface = prepared.interface
         }
+        let nativeEntry = try function.map { bits in
+            guard
+                let descriptor = ABIAuthenticateSwiftAsyncClosureDescriptor(
+                    UnsafeRawPointer(bitPattern: bits),
+                    discriminator
+                )
+            else {
+                throw ABIInvocationError.unexpectedNilResult(expected: "an async Swift closure")
+            }
+            return try SwiftAsyncEntry(descriptor: descriptor)
+        }
+        let nativeCodeOwner = try nativeEntry.map {
+            try SwiftImplementation(function: $0.function, retaining: nil)
+        }
+        let forwardingEntry = try prepared.interface.closureEntry()
         let makeValue:
             @Sendable (ABISwiftClosureValue, Any?, Bool, SwiftValueCodeLifetime?) throws -> Any = {
                 value,
@@ -525,17 +546,22 @@ extension NativeSwiftClosure {
                 taking,
                 codeLifetime in
                 if !taking { ABIRetainSwiftClosureContext(value.context) }
+                let codeLifetime = SwiftValueCodeLifetime.connect(
+                    [codeLifetime].compactMap { $0 },
+                    retaining: [nativeCodeOwner?.image].compactMap { $0 }
+                )
                 let original = try SwiftAsyncClosureStorage(
                     adopting: value,
                     discriminator: discriminator,
-                    retaining: owner,
-                    codeLifetime: codeLifetime
+                    retaining: (owner, nativeCodeOwner),
+                    codeLifetime: codeLifetime,
+                    entry: nativeEntry
                 )
                 if ABIIsSwiftAsyncClosureCallbackFunction(original.entry.function) {
                     return Self(call: .asynchronous(original, prepared))
                 }
-                let callback = try SwiftAsyncClosureContext(
-                    interface: prepared.interface,
+                let callback = SwiftAsyncClosureContext(
+                    entry: forwardingEntry,
                     body: SwiftAsyncClosureBody(
                         inheritsCallerIsolation: signature.inheritsCallerIsolation,
                         retainingCode: original.codeOwner,
@@ -675,6 +701,16 @@ extension NativeSwiftClosure {
     ) async throws -> Result
     where Signature == @Sendable @concurrent (repeat each Argument) async throws(Failure) -> Result
     {
+        try unsafe await invokeAsync(repeat each values)
+    }
+
+    /// Awaits a MainActor-isolated native closure on the caller's original task.
+    @_transparent
+    @MainActor
+    @unsafe public func unsafeInvoke<Result, Failure: Error, each Argument>(
+        _ values: repeat each Argument
+    ) async throws -> Result
+    where Signature == @MainActor (repeat each Argument) async throws(Failure) -> Result {
         try unsafe await invokeAsync(repeat each values)
     }
 
