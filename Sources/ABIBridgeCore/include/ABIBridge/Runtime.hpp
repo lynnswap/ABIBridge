@@ -11,8 +11,7 @@
 
 namespace abi_bridge {
 
-/// Internal compiler-lowered invocation support for native backend fixtures.
-/// Public inspection and its ownership model live in Inspection.hpp.
+/// Internal compiler-lowered invocation support for native backend fixtures. Public inspection and its ownership model live in Inspection.hpp.
 class InvocationRuntime final {
 public:
     InvocationRuntime() = default;
@@ -29,8 +28,7 @@ public:
         return function<Signature>(resolve(declaration(std::move(name), language::c), scope, loading));
     }
 
-    /// Resolves a complete demangled C++ declaration. Signature must describe
-    /// the actual C++ types, including reference categories and return type.
+    /// Resolves a complete demangled C++ declaration. Signature must describe the actual C++ types, including reference categories and return type.
     template <typename Signature>
     function<Signature> cxx_function(const declaration& query, const image_selector& scope = {},
                             image_loading loading = image_loading::if_needed) const {
@@ -38,9 +36,7 @@ public:
         return function<Signature>(resolve(query, scope, loading));
     }
 
-    /// Resolves a direct member entry point. Use Result(Arguments...) const for
-    /// a const method. The caller supplies the exact receiver subobject;
-    /// virtual dispatch and implicit base adjustments are not performed.
+    /// Resolves a direct member entry point. Use Result(Arguments...) const for a const method. The caller supplies the exact receiver subobject; virtual dispatch and implicit base adjustments are not performed.
     template <typename Signature>
     method<Signature> cxx_method(const declaration& query, const image_selector& scope = {},
                             image_loading loading = image_loading::if_needed) const {

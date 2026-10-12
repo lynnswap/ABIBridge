@@ -1,6 +1,6 @@
 # Editing and inspecting hook calls
 
-Work with ordinary typed arguments, continue with their original or adjusted values, and inspect the declaration without reading native object memory.
+Edit typed arguments, continue with original or adjusted values, and inspect the registered declaration.
 
 ## Edit a referenced object
 
@@ -20,7 +20,7 @@ let hook = try unsafe runtime.hookMethod(
 }
 ```
 
-Here `RenderRequest` is the actual class used by the target API, with those writable properties and methods. The callback receives that same instance; no argument wrapper is required. Other owners observe its mutations too. Within the callback, `try call.receiver` also provides the receiving object for casting to its known class and editing its properties. Use `hookMainActorMethod` for objects whose native callers must run on MainActor, including UI objects.
+`RenderRequest` is the target API's class with the shown writable properties and methods. The callback receives the same instance, so other owners observe its mutations. `try call.receiver` supplies the receiving object for casting and property access. Use `hookMainActorMethod` when native callers must enter on MainActor, including UI objects.
 
 Passing a different object to `proceed` changes the reference received by downstream hooks and the implementation. It does not assign a new value to the caller's reference variable. Bridged Swift values, such as a Swift dictionary converted from an Objective-C object, may have value semantics; use the actual reference type when shared mutation is intended.
 
@@ -45,7 +45,7 @@ let hook = try unsafe runtime.hookMethod(
 }
 ```
 
-The target must expose a setter with that signature. This path does not make a read-only property writable or reinterpret a C++ pointer as an Objective-C instance. Repeated callbacks can use an appropriately prepared implementation when the argument class and method contract are already known; see <doc:ObjectiveCInvocation>.
+The target must expose that setter with a matching signature. For repeated callbacks with a known argument class, prepare and reuse its implementation as described in <doc:ObjectiveCInvocation>.
 
 ## Edit values and native pointees
 
@@ -63,12 +63,12 @@ print(call.signature)
 print(call)
 ```
 
-`declaration` identifies the registration request. For Objective-C it includes the registration class and selector, such as `-[Renderer render:]`; for imports it preserves the supplied declaration/name form. A named virtual entry carries its selection declaration, while an explicit adapter entry has a nil declaration. This information does not identify an implementation installed earlier by another writer.
+`declaration` identifies the registration request: the class and selector for Objective-C, the supplied name for imports, or the selection declaration for a named virtual entry. An explicit adapter entry has nil. It does not identify an earlier interposer's implementation.
 
-`signature` is exactly the Swift function-type metatype supplied via `as:`, excluding hidden receiver/selector arguments. It describes the caller's contract, not an inferred or verified native signature. In particular, a C++ symbol does not generally encode the return type.
+`signature` is the function metatype supplied through `as:`, excluding hidden receiver/selector arguments. The caller must establish that it matches the native ABI; a C++ symbol generally omits the return type.
 
-`description`, also used by `print(call)`, is prepared when the hook is registered. It combines a readable declaration with that supplied type, or an unnamed-entry label when no declaration is available. It does not inspect receiver/argument values, invoke their `description` methods, query images, or demangle symbols during the call.
+`description` combines that declaration and type, using an unnamed-entry label when needed. It is prepared during registration, so `print(call)` performs no value inspection, image lookup, or demangling.
 
-Copied declaration, signature and description values may be kept for later diagnostics. `proceed` remains valid only on the callback's incoming thread before return. Objective-C receiver access follows that same checked scope; raw native pointers keep their borrowed lifetime contract. The invocation is not made Sendable by these diagnostic properties.
+Diagnostic values can be copied for later use. These synchronous invocations keep `proceed` and Objective-C receiver access on the incoming thread until callback return. Raw pointers keep their borrowed lifetime, and saving diagnostics does not make an invocation Sendable. Swift async continuations instead follow <doc:SwiftFunctionHooks> and <doc:SwiftMethodHooks>.
 
 `proceed` follows the remaining hook snapshot and its captured predecessor; it does not redispatch the symbol/selector or bypass every other hook. Dedicated initializer hooks instead expose initialization phases, as described in <doc:ObjectiveCInitializerHooks>.

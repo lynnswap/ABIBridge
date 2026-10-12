@@ -105,8 +105,7 @@ template<class R,class... A> struct imported_installer<R(A...)> {
 };
 }
 
-/// Hooks the selected imported C ABI references. The callback receives a scoped
-/// continuation and ordinary values; it must respect the target's caller thread.
+/// Hooks the selected imported C ABI references. The callback receives a scoped continuation and ordinary values; it must respect the target's caller thread.
 template<class Signature,class Body,class OnFailure>
 imported_hook_handle hook_imported_function(const Runtime& runtime,const declaration& query,const image_selector& importer,
     Body body,OnFailure onFailure,const image_selector *provider=nullptr) {

@@ -4,7 +4,7 @@ Copy an explicitly bounded current-process range without directly dereferencing 
 
 ## Read a region
 
-A ``NativeMemoryRegion`` describes an address, extent, and optional owner. Unlike ``NativeValue``, it does not assume the address is readable. The region keeps its owner alive; its read result owns only copied bytes.
+A ``NativeMemoryRegion`` keeps an address, extent, and optional owner without assuming readability. The read result owns copied bytes independently of that owner.
 
 ```swift
 let region = try NativeMemoryRegion(
@@ -22,7 +22,7 @@ The caller obtains the allocation bounds and supplies any synchronization. Retai
 
 ## Handle incomplete reads
 
-Reads use the current process's Mach task and stop at the first unsuccessful page chunk. A complete read includes every requested byte. A partial read includes only the successfully copied prefix; a failed read has no copied bytes. The original Mach error is preserved in ``NativeMemoryReadResult/systemErrorCode``. Zero indicates no OS error, including a short successful OS read.
+Reads use the current process's Mach task and stop at the first unsuccessful page chunk. Complete results contain all requested bytes; partial results contain the copied prefix; failed results contain none. ``NativeMemoryReadResult/systemErrorCode`` preserves the original Mach error, or zero when the OS reports success, including a short read.
 
 A zero-length range succeeds without accessing memory. Negative extents, address overflow, and subranges beyond the declared bounds throw ``NativeMemoryError`` before any access. The C API reports invalid ranges in its status instead.
 
@@ -58,4 +58,4 @@ The C destination must be writable for the requested extent and must not overlap
 
 ## Validation scope
 
-Guarded-page, unaligned-read, overflow, empty-range, and lifetime tests execute on macOS. Other supported Apple platforms compile in CI; physical-device runtime behavior remains unverified.
+Guarded-page, unaligned-read, overflow, empty-range, and lifetime tests run on macOS. Device fixtures also cover copied reads in tagged allocations; see <doc:Architectures> for their configuration and limits.

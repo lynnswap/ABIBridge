@@ -209,20 +209,11 @@ extension SwiftCallInterface {
     }
 }
 
-/// A prepared native Swift function whose complete signature includes arguments, result, errors, and async effects.
+/// A prepared native Swift function with explicit error and async conventions.
 ///
-/// The prepared call uses the platform Swift calling convention. Supported
-/// representations include scalar values, pointers, class references, String,
-/// Array, their supported optional forms, standard C value types, managed fixed
-/// layouts supplied by ABIBridgeSwiftValue, and trivial ABIBridgeValue layouts.
-/// Use NativeSwiftClosure for supported concrete callbacks. Inout and explicit
-/// ownership use NativeSwiftInout, NativeSwiftBorrowing, and NativeSwiftConsuming.
-/// Generic declarations use explicit genericArguments and preserve their formal
-/// metadata, witness, and value conventions; see <doc:GenericSwiftValues>.
-/// Undescribed resilient values and ordinary unwrapped closures require separate
-/// representations. Async signatures preserve the native task and suspension. Throwing signatures
-/// return native failures as NativeSwiftError.
-/// See <doc:SwiftFunctionInvocation>.
+/// Calls use the platform Swift convention. Async signatures preserve the native task across suspension; throwing signatures surface native errors as `NativeSwiftError`. Use `NativeSwiftClosure` for callbacks and `NativeSwiftInout`, `NativeSwiftBorrowing`, or `NativeSwiftConsuming` for explicit argument conventions.
+///
+/// See <doc:SwiftFunctionInvocation> for supported value representations and <doc:GenericSwiftValues> for generic calls. Undescribed resilient values and ordinary unwrapped closures need separate representations.
 public struct NativeSwiftFunction<Signature>: Sendable {
     /// The declaration and image retained for this function.
     public let symbol: ResolvedSymbol
@@ -265,11 +256,7 @@ public struct NativeSwiftFunction<Signature>: Sendable {
 
     /// Calls the Swift entry point using its prepared declaration-level signature.
     ///
-    /// The signature must match the declaration's Swift ABI and ordinary
-    /// ownership selected by lookup. Initializers transfer ordinary arguments
-    /// to the callee; free/static functions borrow them. The caller satisfies actor/thread
-    /// requirements. Managed object, String, and Array results transfer Swift ownership to the
-    /// caller; custom native wrappers must establish their own value contract.
+    /// The signature must match the declaration's Swift ABI and ordinary ownership selected by lookup. Initializers transfer ordinary arguments to the callee; free/static functions borrow them. The caller satisfies actor/thread requirements. Managed object, String, and Array results transfer Swift ownership to the caller; custom native wrappers must establish their own value contract.
     ///
     /// - Parameter values: Fixed arguments in declaration order.
     /// - Returns: The result with its Swift ownership, or a custom native wrapper.
@@ -313,9 +300,7 @@ public struct NativeSwiftFunction<Signature>: Sendable {
     // decomposes Signature into a parameter pack. Transparent entry thunks keep
     // that requirement out of the implementation frame, including in Debug builds.
 
-    /// Awaits the native implementation on the original task and resumes on the caller's executor.
-    /// The signature and caller must satisfy the native ABI, ownership, and isolation contracts.
-    /// Native failures use NativeSwiftError; bridge failures retain their original types.
+    /// Awaits the native implementation on the original task and resumes on the caller's executor. The signature and caller must satisfy the native ABI, ownership, and isolation contracts. Native failures use NativeSwiftError; bridge failures retain their original types.
     @_transparent
     @unsafe public nonisolated(nonsending) func unsafeInvoke<Result, Failure: Error, each Argument>(
         _ values: repeat each Argument
@@ -365,8 +350,7 @@ public struct NativeSwiftFunction<Signature>: Sendable {
         )
     }
 
-    /// Uses the native result while its return storage and input lifetimes remain active.
-    /// The borrowed view expires and the native result is destroyed before writeback.
+    /// Uses the native result while its return storage and input lifetimes remain active. The borrowed view expires and the native result is destroyed before writeback.
     @unsafe public func unsafeInvoke<Output: ~Copyable, Failure: Error, each Argument>(
         _ values: repeat each Argument,
         withResult body: (NativeSwiftBorrowedValue) throws -> Output
@@ -386,8 +370,7 @@ public struct NativeSwiftFunction<Signature>: Sendable {
         )
     }
 
-    /// Uses the native result while its return storage and input lifetimes remain active.
-    /// The borrowed view expires and the native result is destroyed before writeback.
+    /// Uses the native result while its return storage and input lifetimes remain active. The borrowed view expires and the native result is destroyed before writeback.
     @unsafe public func unsafeInvoke<Output: ~Copyable, Failure: Error, each Argument>(
         _ values: repeat each Argument,
         withResult body: (NativeSwiftBorrowedValue) throws -> Output
@@ -554,8 +537,7 @@ extension ABIRuntime {
 
     /// Resolves a concrete Swift free function by its source-level name.
     ///
-    /// Search and preparation run on the caller's thread, joining required work
-    /// already in progress. No explicit `prepare` call is needed.
+    /// Search and preparation run synchronously on the caller's thread.
     ///
     /// - Parameters:
     ///   - name: A qualified label-only name, such as Example.decorate(_:), or a complete demangled declaration.
@@ -589,9 +571,7 @@ extension ABIRuntime {
 
     /// Resolves and prepares a Swift function without blocking the caller's executor.
     ///
-    /// Lookup, image acquisition, and ABI preparation run on an independent worker.
-    /// This uses the synchronous API's indexes and call interfaces, joining any
-    /// required preparation already in progress. Native invocation is a separate operation.
+    /// Image acquisition, search, and ABI preparation run on a worker. Native invocation is a separate operation.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
     /// - Throws: The same resolution, representation, and preparation errors as synchronous lookup.
     public nonisolated func resolveSwiftFunction<Signature>(
@@ -618,8 +598,7 @@ extension ABIRuntime {
 
     /// Resolves a concrete Swift free function in an already retained image.
     ///
-    /// Search and preparation run on the caller's thread, joining required work
-    /// already in progress. No explicit `prepare` call is needed.
+    /// Search and preparation run synchronously on the caller's thread.
     ///
     /// - Parameters:
     ///   - name: The qualified demangled declaration.
@@ -653,9 +632,7 @@ extension ABIRuntime {
 
     /// Resolves and prepares a Swift function in a retained image on an independent worker.
     ///
-    /// This shares the synchronous API's indexes and call interfaces, joining any
-    /// required preparation already in progress while the caller suspends.
-    /// Native invocation remains a separate operation.
+    /// The caller suspends during lookup and preparation. Native invocation is a separate operation.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
     /// - Throws: The same resolution, representation, and preparation errors as synchronous lookup.
     public nonisolated func resolveSwiftFunction<Signature>(

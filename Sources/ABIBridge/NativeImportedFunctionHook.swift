@@ -5,30 +5,23 @@ import Darwin
 /// A scoped imported-function continuation was used after return or on another thread.
 public enum NativeImportedInvocationError: Error, Sendable { case expiredInvocation, wrongThread }
 
-/// A continuation valid only during this callback and on its incoming thread.
-/// `proceed` calls the next registered callback and then this slot's predecessor;
-/// it does not call the imported symbol again. Escaping this value does not keep
-/// its invocation alive. Native arguments and pointer results remain borrowed.
+/// A continuation valid only during this callback and on its incoming thread. `proceed` calls the next registered callback and then this slot's predecessor; it does not call the imported symbol again. Escaping this value does not keep its invocation alive. Native arguments and pointer results remain borrowed.
 public struct NativeImportedFunctionInvocation<Result, each Argument>: CustomStringConvertible {
     fileprivate let frame: FunctionCallbackFrame
     fileprivate let callSignature: FunctionCallbackSignature<Result, repeat each Argument>
 
-    /// The declaration used for registration, excluding any claim about an
-    /// already interposed predecessor. This value outlives the callback.
+    /// The declaration used for registration, excluding any claim about an already interposed predecessor. This value outlives the callback.
     public let declaration: NativeDeclaration
 
-    /// The Swift function type supplied at registration, excluding the receiver
-    /// and other hidden arguments. It is not an inferred native signature.
+    /// The Swift function type supplied at registration, excluding the receiver and other hidden arguments. It is not an inferred native signature.
     public var signature: ((repeat each Argument) -> Result).Type {
         ((repeat each Argument) -> Result).self
     }
 
-    /// Cached declaration and supplied signature, without reading native state
-    /// or formatting argument objects. Available after callback expiry too.
+    /// Cached declaration and supplied signature, without reading native state or formatting argument objects. Available after callback expiry too.
     public let description: String
 
-    /// Calls the next implementation with the supplied arguments. A later
-    /// callback error preserves the most recently completed continuation result.
+    /// Calls the next implementation with the supplied arguments. A later callback error preserves the most recently completed continuation result.
     public func proceed(_ values: repeat each Argument) throws -> Result {
         do { return try frame.use { try callSignature.proceed($0,repeat each values) } }
         catch FunctionCallbackFrameError.expiredInvocation { throw NativeImportedInvocationError.expiredInvocation }
@@ -36,11 +29,7 @@ public struct NativeImportedFunctionInvocation<Result, each Argument>: CustomStr
     }
 }
 
-/// Owns an imported-function registration across the selected loaded images.
-/// Later registrations wrap earlier ones. In-flight calls retain snapshots;
-/// invalidation affects future calls and never overwrites another writer.
-/// Published entries and their image/code leases remain process-lived, including
-/// empty pass-through entries. Callback captures are released independently.
+/// Owns an imported-function registration across the selected loaded images. Later registrations wrap earlier ones. In-flight calls retain snapshots; invalidation affects future calls and never overwrites another writer. Published entries and their image/code leases remain process-lived, including empty pass-through entries. Callback captures are released independently.
 public final class NativeImportedFunctionHook: @unchecked Sendable {
     /// Logical registration state and a snapshot of the slot's current contents.
     public enum Status: Sendable { case invalidated, active, displaced, unreadable }
@@ -78,8 +67,7 @@ public final class NativeImportedFunctionHook: @unchecked Sendable {
                 mutation: Mutation(ABIImportedHookMutation(handle,index)),rollback: Mutation(ABIImportedHookRollback(handle,index)))
         }
     }
-    /// Idempotently removes this callback without waiting for incoming calls.
-    /// Does not restore import pointers or free published callable storage.
+    /// Idempotently removes this callback without waiting for incoming calls. Does not restore import pointers or free published callable storage.
     public func invalidate() { ABIInvalidateImportedHook(handle) }
     deinit { ABIReleaseImportedHook(handle) }
 }
@@ -124,17 +112,9 @@ func importedHookFailure(_ error: OpaquePointer) -> NSError {
 extension ABIRuntime {
     /// Hooks supported C ABI calls through references in the selected loaded images.
     ///
-    /// `importer` identifies callers, while `provider` optionally filters the
-    /// recorded dependency name (including a reexport facade). Neither loads images.
-    /// Source names are resolved automatically; no mangled string is required.
-    /// Callbacks run synchronously on the incoming thread, without an actor hop.
-    /// If a callback throws before proceeding, its original arguments pass through;
-    /// otherwise its latest completed result is preserved and the error is reported.
+    /// `importer` identifies callers, while `provider` optionally filters the recorded dependency name (including a reexport facade). Neither loads images. Source names are resolved automatically; no mangled string is required. Callbacks run synchronously on the incoming thread, without an actor hop. If a callback throws before proceeding, its original arguments pass through; otherwise its latest completed result is preserved and the error is reported.
     ///
-    /// Signature, pointee/code lifetime and external-writer synchronization are
-    /// caller requirements. Unresolved lazy imports must first be called normally.
-    /// TPRO pages can reject installation. Direct/inlined calls and previously
-    /// copied function pointers that bypass these slots are not intercepted.
+    /// Signature, pointee/code lifetime and external-writer synchronization are caller requirements. Unresolved lazy imports must first be called normally. TPRO pages can reject installation. Direct/inlined calls and previously copied function pointers that bypass these slots are not intercepted.
     /// - Returns: An owner for this callback across the matched import slots.
     /// - Throws: Resolution/signature errors or `NativeImportedHookInstallationError`
     ///   preserving partial publication and rollback failures.

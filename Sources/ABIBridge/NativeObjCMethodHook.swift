@@ -18,15 +18,9 @@ public enum NativeObjCMethodHookError: Error, Sendable, Equatable {
 
 /// Owns one ordinary-method or initializer registration in an Objective-C hook chain.
 ///
-/// Keep the token alive to keep its callback installed. Invalidation and token
-/// destruction remove its behavior without waiting for in-flight snapshots.
-/// Later registrations run outside earlier ones. Calls already in progress keep
-/// their snapshot, including callbacks invalidated during that call.
+/// Keep the token alive to keep its callback installed. Invalidation and token destruction remove its behavior without waiting for in-flight snapshots. Later registrations run outside earlier ones. Calls already in progress keep their snapshot, including callbacks invalidated during that call.
 ///
-/// One dispatcher per class/selector/method-kind and its fallback ownership remain
-/// for the process lifetime so saved IMPs stay callable. Callback captures are
-/// released independently. See <doc:ObjectiveCMethodHooks> for inheritance, weak
-/// object scope, external writers, and dynamic class/code lifetime requirements.
+/// One dispatcher per class/selector/method-kind and its fallback ownership remain for the process lifetime so saved IMPs stay callable. Callback captures are released independently. See <doc:ObjectiveCMethodHooks> for inheritance, weak object scope, external writers, and dynamic class/code lifetime requirements.
 public final class NativeObjCMethodHook: @unchecked Sendable {
     /// The registration's logical state and current method-table ownership.
     public enum Status: Sendable, Equatable {
@@ -54,8 +48,7 @@ public final class NativeObjCMethodHook: @unchecked Sendable {
 
     /// Removes this callback from future snapshots without blocking active calls.
     ///
-    /// Idempotent and safe from a callback. Does not overwrite external IMPs or
-    /// remove runtime method entries added for inherited methods.
+    /// Idempotent and safe from a callback. Does not overwrite external IMPs or remove runtime method entries added for inherited methods.
     public func invalidate() { ABIInvalidateObjCMethodHook(handle) }
     deinit { ABIReleaseObjCMethodHook(handle) }
 
@@ -121,22 +114,13 @@ public final class NativeObjCMethodHook: @unchecked Sendable {
 extension ABIRuntime {
     /// Installs a typed hook on a concrete synchronous Objective-C method.
     ///
-    /// The callback runs on each caller's thread. If it throws before proceeding,
-    /// its original arguments continue to the next hook. If it throws after a
-    /// completed continuation, that result is preserved without replaying it.
-    /// Failures are synchronously delivered to `onFailure` on the caller's thread.
+    /// The callback runs on the caller's thread. If it throws before proceeding, its original arguments continue to the next hook. If it throws after a completed continuation, that result is preserved without repeating the call. `onFailure` receives the error synchronously on the same thread.
     ///
-    /// Explicit `ns_consumed` arguments are supported. Set
-    /// ``NativeMethodOptions/consumedArguments`` to their zero-based positions,
-    /// excluding the receiver and selector. The dispatcher owns the incoming
-    /// consumed references and supplies a fresh +1 reference each time the chain
-    /// calls the native implementation. Skipping continuation releases unused
-    /// incoming references; failure recovery balances incoming and continuation
-    /// ownership. Callback values have ordinary Swift ownership.
+    /// For explicit `ns_consumed` arguments, set ``NativeMethodOptions/consumedArguments`` to their zero-based positions, excluding the receiver and selector. Each native continuation receives a fresh owned reference; unused incoming references are released, including during failure recovery. Callback values use ordinary Swift ownership.
     ///
-    /// Supply ``NativeMethodOptions/returnsRetainedObject`` when result ownership
-    /// differs from the method family. Registrations on one managed entry must
-    /// agree on ownership and native signature. See <doc:ObjectiveCMethodHooks>.
+    /// Set ``NativeMethodOptions/returnsRetainedObject`` when result ownership differs from the method family. All registrations on one entry must agree on ownership and signature.
+    ///
+    /// The caller supplies correct ownership and block declarations, keeps pointees valid, honors execution isolation, and coordinates external method-table writers. Foreign exceptions, allocation, and lifecycle methods are unsupported. Initializers use <doc:ObjectiveCInitializerHooks>; see <doc:ObjectiveCMethodHooks> for chaining and lifetime details.
     ///
     /// - Parameters:
     ///   - type: The class whose instance or class method is intercepted.
@@ -144,18 +128,11 @@ extension ABIRuntime {
     ///   - signature: A supported ordinary function type with explicit arguments only.
     ///   - classMethod: Whether to intercept the metaclass method.
     ///   - options: Ownership annotations missing from runtime encodings.
-    ///   - owner: Lifetime owner for generated original code or a dynamic class when
-    ///     this method's dispatcher is first created. Later registrations reuse it.
+    ///   - owner: Keeps generated original code or a dynamic class alive when this method's dispatcher is first created. Later registrations reuse it.
     ///   - onFailure: Handles Swift callback and value-conversion failures.
     ///   - body: Produces a result, optionally invoking the scoped next implementation.
-    /// - Returns: A token that keeps this registration active until invalidated or released.
+    /// - Returns: A token keeping this registration active until invalidated or released.
     /// - Throws: A lookup, signature, ownership, preparation, or displaced-entry error.
-    ///
-    /// The caller supplies correct ownership/block declarations, keeps pointer
-    /// pointees valid, honors execution isolation, and coordinates installation
-    /// with external method-table writers. Foreign exceptions, allocation, and
-    /// lifecycle methods are unsupported. Initializers use the separate API in
-    /// <doc:ObjectiveCInitializerHooks>.
     @unsafe public nonisolated func hookMethod<Result, each Argument>(
         on type: AnyClass, selector: String, as signature: ((repeat each Argument) -> Result).Type,
         classMethod: Bool = false, options: NativeMethodOptions = .init(), retaining owner: Any? = nil,
@@ -169,11 +146,7 @@ extension ABIRuntime {
 
     /// Installs a hook for a method whose callers are required to run on MainActor.
     ///
-    /// This declaration is a caller-supplied contract. The callback is synchronous;
-    /// it does not hop executors. Background entry reports `wrongThread` and passes
-    /// through to the next hook before decoding Swift arguments. `onFailure` must
-    /// therefore be safe on background threads. Other parameters and unsafe
-    /// requirements match ``hookMethod(on:selector:as:classMethod:options:retaining:onFailure:body:)-(_,String,_,_,_,_,_,_)``.
+    /// This declaration is a caller-supplied contract. The callback is synchronous; it does not hop executors. Background entry reports `wrongThread` and passes through to the next hook before decoding Swift arguments. `onFailure` must therefore be safe on background threads. Other parameters and unsafe requirements match ``hookMethod(on:selector:as:classMethod:options:retaining:onFailure:body:)-(_,String,_,_,_,_,_,_)``.
     @unsafe @MainActor public func hookMainActorMethod<Result, each Argument>(
         on type: AnyClass, selector: String, as signature: ((repeat each Argument) -> Result).Type,
         classMethod: Bool = false, options: NativeMethodOptions = .init(), retaining owner: Any? = nil,
@@ -195,14 +168,9 @@ extension ABIRuntime {
 extension NativeObject {
     /// Installs a method hook filtered by this object's weak identity.
     ///
-    /// The returned token does not retain this wrapper or its receiver. The
-    /// wrapper itself still retains the receiver until released. Other instances
-    /// use the same class dispatcher but skip this callback. Later isa changes or
-    /// overrides that bypass the installed class entry are not followed.
+    /// The returned token does not retain this wrapper or its receiver. The wrapper itself still retains the receiver until released. Other instances use the same class dispatcher but skip this callback. Later isa changes or overrides that bypass the installed class entry are not followed.
     ///
-    /// Parameters, failure behavior, and unsafe requirements match
-    /// ``ABIRuntime/hookMethod(on:selector:as:classMethod:options:retaining:onFailure:body:)-(_,String,_,_,_,_,_,_)``.
-    /// The target is an instance method of the receiver's current runtime class.
+    /// Parameters, failure behavior, and unsafe requirements match ``ABIRuntime/hookMethod(on:selector:as:classMethod:options:retaining:onFailure:body:)-(_,String,_,_,_,_,_,_)``. The target is an instance method of the receiver's current runtime class.
     @unsafe public func hookMethod<Result, each Argument>(
         selector: String, as signature: ((repeat each Argument) -> Result).Type,
         options: NativeMethodOptions = .init(), retaining owner: Any? = nil,
@@ -217,8 +185,7 @@ extension NativeObject {
 
     /// Installs a weak identity-filtered callback for a known MainActor method.
     ///
-    /// Combines ``hookMethod(selector:as:options:retaining:onFailure:body:)-(String,_,_,_,_,_)`` scope
-    /// with ``ABIRuntime/hookMainActorMethod(on:selector:as:classMethod:options:retaining:onFailure:body:)-(_,String,_,_,_,_,_,_)`` isolation.
+    /// Combines ``hookMethod(selector:as:options:retaining:onFailure:body:)-(String,_,_,_,_,_)`` scope with ``ABIRuntime/hookMainActorMethod(on:selector:as:classMethod:options:retaining:onFailure:body:)-(_,String,_,_,_,_,_,_)`` isolation.
     @unsafe @MainActor public func hookMainActorMethod<Result, each Argument>(
         selector: String, as signature: ((repeat each Argument) -> Result).Type,
         options: NativeMethodOptions = .init(), retaining owner: Any? = nil,

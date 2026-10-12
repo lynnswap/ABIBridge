@@ -14,8 +14,7 @@
 
 namespace abi_bridge {
 
-/// Specialize encoding() for a naturally laid-out C structure in pure C++.
-/// Objective-C++ uses compiler encodings, including typed objects and blocks.
+/// Specialize encoding() for a naturally laid-out C structure in pure C++. Objective-C++ uses compiler encodings, including typed objects and blocks.
 template <typename T> struct objc_hook_type {
     static const char *encoding() {
 #ifdef __OBJC__
@@ -54,8 +53,7 @@ struct objc_hook_options {
 };
 enum class objc_hook_status { invalidated = ABIObjCHookInvalidated, active = ABIObjCHookActive, displaced = ABIObjCHookDisplaced };
 
-/// Copies share one owned C reference. Explicit invalidation affects all copies;
-/// destroying the last owner invalidates without waiting for current snapshots.
+/// Copies share one owned C reference. Explicit invalidation affects all copies; destroying the last owner invalidates without waiting for current snapshots.
 class objc_hook_handle final {
 public:
     objc_hook_handle() = default;
@@ -148,8 +146,7 @@ template <typename Signature> struct hook_installer;
 }
 
 template <typename Signature> class objc_hook_invocation;
-/// A noncopyable view valid on the original callback thread. Taking its address
-/// does not extend the lifetime; storing an escaped C/C++ reference is invalid.
+/// A noncopyable view valid on the original callback thread. Taking its address does not extend the lifetime; storing an escaped C/C++ reference is invalid.
 template <typename R, typename... A> class objc_hook_invocation<R(A...)> final {
 public:
     objc_hook_invocation(const objc_hook_invocation&) = delete;
@@ -165,8 +162,7 @@ public:
         return reinterpret_cast<id>(value);
 #endif
     }
-    /// Calls the next snapshot member with explicit arguments. Object results
-    /// remain borrowed for this callback in MRC/pure C++; retain/copy if escaping.
+    /// Calls the next snapshot member with explicit arguments. Object results remain borrowed for this callback in MRC/pure C++; retain/copy if escaping.
     R proceed(A... arguments) const {
         const std::array<const void *, sizeof...(A)> pointers{std::addressof(arguments)...};
         ABIResolutionFailure *error = nullptr;
@@ -291,30 +287,24 @@ template <typename R, typename... A> struct hook_installer<R(A...)> {
 };
 }
 
-/// Installs a synchronous ordinary-method callback. The callback receives a
-/// scoped invocation followed by its typed explicit arguments. Callback C++
-/// exceptions become reported hook failures; foreign native unwinding is unsupported.
+/// Installs a synchronous ordinary-method callback. The callback receives a scoped invocation followed by its typed explicit arguments. Callback C++ exceptions become reported hook failures; foreign native unwinding is unsupported.
 template <typename Signature, typename Body, typename OnFailure>
 objc_hook_handle objc_method_hook(Class type, std::string_view selector, Body&& body, OnFailure&& failure, objc_hook_options options = {}) {
     return detail::hook_installer<Signature>::method(type, selector, std::forward<Body>(body), std::forward<OnFailure>(failure), options);
 }
-/// Before may observe (void), return an argument tuple, or return one value for
-/// one argument. After receives only the initialized object. nullptr omits a phase.
-/// Native initialization is automatic and cannot be repeated or replaced here.
+/// Before may observe (void), return an argument tuple, or return one value for one argument. After receives only the initialized object. nullptr omits a phase. Native initialization is automatic and cannot be repeated or replaced here.
 template <typename Signature, typename Before, typename After, typename OnFailure>
 objc_hook_handle objc_initializer_hook(Class type, std::string_view selector, Before&& before, After&& after, OnFailure&& failure, objc_hook_options options = {}) {
     return detail::hook_installer<Signature>::initializer(type, selector, std::forward<Before>(before), std::forward<After>(after), std::forward<OnFailure>(failure), options);
 }
-/// Identity-filtered instance hook; the registration retains only a weak object
-/// reference. The caller must keep the receiver alive through installation.
+/// Identity-filtered instance hook; the registration retains only a weak object reference. The caller must keep the receiver alive through installation.
 template <typename Signature, typename Body, typename OnFailure>
 objc_hook_handle objc_object_hook(id object, std::string_view selector, Body&& body, OnFailure&& failure, objc_hook_options options = {}) {
     options.object_filter = object;
     options.class_method = false;
     return objc_method_hook<Signature>(object_getClass(object), selector, std::forward<Body>(body), std::forward<OnFailure>(failure), options);
 }
-/// A reusable declaration for coordinated installation. Copies share callback
-/// storage; retaining a request retains its captures independently of handles.
+/// A reusable declaration for coordinated installation. Copies share callback storage; retaining a request retains its captures independently of handles.
 class objc_hook_request final {
 public:
     template <typename Signature, typename Body, typename OnFailure>
@@ -371,8 +361,7 @@ private:
     std::function<ABIObjCHookRequest()> make_;
 };
 
-/// A coordinated-installation failure retaining the original cause and partial
-/// handles, already invalidated. Reading status does not require healthy ownership.
+/// A coordinated-installation failure retaining the original cause and partial handles, already invalidated. Reading status does not require healthy ownership.
 class objc_hook_installation_error final : public std::runtime_error {
 public:
     objc_hook_installation_error(size_t index, int32_t phase, resolution_error cause, std::vector<objc_hook_handle> hooks)
@@ -388,9 +377,7 @@ private:
     std::vector<objc_hook_handle> hooks_;
 };
 
-/// Validates all requests before installation, then returns ordinary handles in
-/// order. On failure throws objc_hook_installation_error after logical rollback.
-/// Cross-method visibility is not atomic; published pass-through entries remain.
+/// Validates all requests before installation, then returns ordinary handles in order. On failure throws objc_hook_installation_error after logical rollback. Cross-method visibility is not atomic; published pass-through entries remain.
 inline std::vector<objc_hook_handle> install_objc_hooks(const std::vector<objc_hook_request>& requests) {
     std::vector<ABIObjCHookRequest> native;
     native.reserve(requests.size());

@@ -54,9 +54,7 @@ final class SwiftHookSlotRecord: Sendable {
 
 /// An imported Swift registration with independently released callback captures.
 ///
-/// Later registrations wrap earlier ones. Published dispatcher code and its
-/// importing/provider image leases remain process-lived, including when empty;
-/// copied native pointers can still call the captured predecessor.
+/// Later registrations wrap earlier ones. Published dispatcher code and its importing/provider image leases remain process-lived, including when empty; copied native pointers can still call the captured predecessor.
 public final class NativeSwiftImportedFunctionHook: @unchecked Sendable {
     /// Logical registration state and current pointer observation.
     public enum Status: Sendable {
@@ -98,14 +96,12 @@ public final class NativeSwiftImportedFunctionHook: @unchecked Sendable {
                 rollback: outcomes.rollback, protectionRecovery: outcomes.protectionRecovery)
         }
     }
-    /// Removes this callback without waiting for already-entered calls. Leaves
-    /// stable pass-through code installed and never overwrites another writer.
+    /// Removes this callback without waiting for already-entered calls. Leaves stable pass-through code installed and never overwrites another writer.
     public func invalidate() {
         node.invalidate()
         for record in records { record.group.dispatcher.remove(node) }
     }
-    /// Retries pointer/protection rollback still owned by this failed installation.
-    /// No operation is performed on slots that no longer need this recovery.
+    /// Retries pointer/protection rollback still owned by this failed installation. No operation is performed on slots that no longer need this recovery.
     public func recoverFailedInstallation() async throws {
         try await SwiftHookRegistry.shared.recover(node: ObjectIdentifier(node), records: records)
     }
@@ -118,8 +114,7 @@ public struct NativeSwiftHookInstallationError: Error {
     public let underlyingError: any Error
     /// Index into the registration's slots where publication failed.
     public let failedIndex: Int
-    /// Already invalidated. Its observations preserve partial writes and rollback
-    /// failures; use recoverFailedInstallation() to retry owned recovery.
+    /// Already invalidated. Its observations preserve partial writes and rollback failures; use recoverFailedInstallation() to retry owned recovery.
     public let registration: NativeSwiftImportedFunctionHook
 }
 

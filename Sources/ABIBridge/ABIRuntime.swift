@@ -2,13 +2,9 @@ import Foundation
 
 /// Resolves declarations using shared image and symbol indexes.
 ///
-/// Use ``shared`` to reuse indexes across callers, or create a runtime to own an
-/// independent cache. Explicit resolution scopes acquire images by default. Image handles and
-/// resolved symbols keep their images alive until the last owner releases them.
-/// Searches prepare their indexes on demand. Swift `resolve…` factories search
-/// and prepare on an independent worker; `resolve…AndWait` factories run synchronously
-/// on the caller's thread, waiting for required preparation already in progress.
-/// Use `prepare(_:)` to start the same work early without occupying the caller's actor.
+/// Use ``shared`` to reuse indexes across callers, or create a runtime with an independent cache. Explicit scopes acquire images by default. Image and symbol handles retain their images until the last owner releases them.
+///
+/// Searches prepare indexes on demand. Swift `resolve…` factories search and prepare on a worker; `resolve…AndWait` factories run on the caller's thread and wait for any required work already in progress. Use `prepare(_:)` to start that work early without occupying the caller's actor.
 ///
 /// See <doc:SymbolLookup> for search scopes and the raw-address contract.
 public actor ABIRuntime {
@@ -25,10 +21,7 @@ public actor ABIRuntime {
 
     /// Returns retained handles for matching loaded images.
     ///
-    /// Images that unload before a loader reference is acquired are omitted.
-    /// Automatic enumeration also omits images whose initializers on another
-    /// thread currently prevent acquiring a reference. Later calls can include
-    /// them without an unload/reload or explicit cache reset.
+    /// Images that unload before a loader reference is acquired are omitted. Automatic enumeration also omits images whose initializers on another thread currently prevent acquiring a reference. Later calls can include them without an unload/reload or explicit cache reset.
     /// - Parameter selector: The search scope; defaults to all available loaded images.
     /// - Returns: Retained matching images, or an empty array when none are available.
     /// - Throws: A catalog error, or imageUnavailable if an explicitly selected
@@ -41,9 +34,7 @@ public actor ABIRuntime {
 
     /// Finds a declaration, acquiring an explicitly selected image when permitted.
     ///
-    /// Loaded-image definitions take precedence. Shared-cache local symbols are
-    /// searched only when no loaded-image definition matches. Multiple distinct
-    /// definitions at the selected level produce an ambiguity error.
+    /// Loaded-image definitions take precedence. Shared-cache local symbols are searched only when no loaded-image definition matches. Multiple distinct definitions at the selected level produce an ambiguity error.
     ///
     /// - Parameters:
     ///   - declaration: A source-level or exact name and storage requirement.
@@ -79,8 +70,7 @@ public actor ABIRuntime {
 
     /// Resolves a requirement with aliases and ordered image fallback.
     ///
-    /// A later scope is tried only when an image or declaration is absent.
-    /// Found aliases must agree on the address and image generation.
+    /// A later scope is tried only when an image or declaration is absent. Found aliases must agree on the address and image generation.
     /// - Parameter request: The declarations and ordered image scopes to search.
     /// - Returns: The first found declaration's symbol, retaining its image.
     /// - Throws: The lookup failure; ambiguity and invalid storage stop fallback.
@@ -90,9 +80,7 @@ public actor ABIRuntime {
 
     /// Resolves independent requirements, preserving input order and partial success.
     ///
-    /// Retained images for each scope are reused within this batch, and symbol
-    /// indexes use this runtime's existing cache. Results are independent; the
-    /// batch is not an atomic snapshot of loader activity.
+    /// Retained images for each scope are reused within this batch, and symbol indexes use this runtime's existing cache. Results are independent; the batch is not an atomic snapshot of loader activity.
     /// - Parameter requests: Requirements to resolve, or an empty array.
     /// - Returns: One owned symbol or lookup error for each input requirement.
     public nonisolated func resolve(
@@ -103,11 +91,7 @@ public actor ABIRuntime {
 
     /// Resolves a requirement early, warming the indexes used by later searches.
     ///
-    /// Preparation is optional. Ordinary searches perform missing work and share
-    /// any index construction already in progress. Preparation runs on an
-    /// independent worker; awaiting it does not occupy the caller's actor.
-    /// Ordinary synchronous searches may block their caller while preparing.
-    /// This prepares symbol lookup, while typed factories prepare their call ABI.
+    /// Preparation is optional. Ordinary searches perform missing work and share any index construction already in progress. Preparation runs on an independent worker; awaiting it does not occupy the caller's actor. Ordinary synchronous searches may block their caller while preparing. This prepares symbol lookup, while typed factories prepare their call ABI.
     /// - Parameter request: The declarations and image scopes to prepare.
     /// - Returns: The resolved symbol, retaining its image.
     /// - Throws: The same lookup failures as ordinary resolution.
@@ -117,8 +101,7 @@ public actor ABIRuntime {
 
     /// Prepares independent requirements, preserving input order and partial success.
     ///
-    /// Each requirement shares the indexes used by ordinary searches. A search
-    /// can reuse a completed index before this entire batch finishes.
+    /// Each requirement shares the indexes used by ordinary searches. A search can reuse a completed index before this entire batch finishes.
     /// - Parameter requests: Requirements to prepare, or an empty array.
     /// - Returns: One owned symbol or lookup error for each input requirement.
     public nonisolated func prepare(
@@ -127,16 +110,12 @@ public actor ABIRuntime {
         await NativePreparation.run { self.resolve(requests) }
     }
 
-    /// Prepares typed handles using the ordinary synchronous lookup APIs.
+    /// Prepares typed handles using the synchronous lookup APIs.
     ///
-    /// The operation runs on an independent worker, using this runtime's indexes
-    /// and shared native call interfaces. A synchronous lookup can reuse completed
-    /// preparation or join the required index or call-interface work without waiting
-    /// for the rest of this operation. Image loading and metadata discovery remain
-    /// outside joinable work so native initialization can reenter the runtime.
-    /// Native invocation is not performed unless the operation explicitly calls it.
+    /// The operation runs on a worker and shares this runtime's indexes and native call interfaces. Other lookups can reuse completed preparation or join the work they need before the whole operation finishes. Lookup may load images and run their initializers on that worker. Calling a prepared function remains an explicit operation.
+    ///
     /// - Parameter operation: Synchronous lookups to start before their results are needed.
-    /// - Returns: The prepared value, which can be retained for later synchronous calls.
+    /// - Returns: The prepared value, which can be retained for later calls.
     /// - Throws: The operation's error. Failure does not disable later lookups.
     public nonisolated func prepare<Value: Sendable>(
         _ operation: @escaping @Sendable (ABIRuntime) throws -> Value
@@ -146,8 +125,7 @@ public actor ABIRuntime {
 
     /// Releases cached declarations and image indexes.
     ///
-    /// Existing image and symbol handles remain valid. Subsequent lookups rebuild
-    /// indexes as needed. The process-lifetime native image catalog remains active.
+    /// Existing image and symbol handles remain valid. Subsequent lookups rebuild indexes as needed. The process-lifetime native image catalog remains active.
     public nonisolated func removeCachedResults() {
         swiftTypeCache.removeCachedResults()
         resolver.removeCachedResults()

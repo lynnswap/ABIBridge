@@ -31,8 +31,7 @@ struct SwiftProtocolDescriptor: Sendable, Equatable {
         return try swiftNativeTypeName(unsafeBitCast(metadata, to: Any.Type.self))
     }
 
-    /// Declaration ordering ignores private-name discriminators, which are
-    /// identity information rather than identifier names in TypeDecl::compare.
+    /// Declaration ordering ignores private-name discriminators, which are identity information rather than identifier names in TypeDecl::compare.
     func orderingPath() throws -> [String] {
         let metadata = unsafe withUnsafeAddress { ABISwiftProtocolTypeMetadata($0)! }
         guard let mangled = _mangledTypeName(unsafeBitCast(metadata, to: Any.Type.self)) else {
@@ -135,8 +134,7 @@ struct SwiftProtocolDescriptor: Sendable, Equatable {
     }
 }
 
-/// The nominal declaration contributes implicit parameters and requirements to
-/// each member. Completed metadata has already validated these requirements.
+/// The nominal declaration contributes implicit parameters and requirements to each member. Completed metadata has already validated these requirements.
 struct SwiftGenericTypeContext: Sendable {
     let parameters: [SwiftGenericDeclaration.Parameter]
     let keyParameters: Set<String>

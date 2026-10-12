@@ -2,11 +2,7 @@ import Foundation
 
 /// One symbol requirement with aliases, lazy fallbacks, and ordered image scopes.
 ///
-/// All found aliases within the first matching scope must resolve to the same
-/// address and image generation. Missing aliases are ignored. Only absence
-/// advances to another scope or fallback; substantive errors stop resolution.
-/// Candidate priority precedes scope priority: all scopes are searched for the
-/// primary and aliases before trying each fallback across the same scopes.
+/// All found aliases within the first matching scope must resolve to the same address and image generation. Missing aliases are ignored. Only absence advances to another scope or fallback; substantive errors stop resolution. Candidate priority precedes scope priority: all scopes are searched for the primary and aliases before trying each fallback across the same scopes.
 public struct NativeSymbolRequest: Sendable, Hashable {
     /// The preferred declaration and the identity used in missing-symbol errors.
     public let declaration: NativeDeclaration

@@ -5,24 +5,19 @@ import ObjectiveC
 
 /// Ownership overrides for Objective-C declarations with nonstandard annotations.
 ///
-/// The default follows Objective-C method-family conventions. Set an override
-/// when the declaration uses an ownership attribute that runtime encodings omit.
+/// The default follows Objective-C method-family conventions. Set an override when the declaration uses an ownership attribute that runtime encodings omit.
 public struct NativeMethodOptions: Sendable {
     /// Whether the method returns an object at +1 instead of +0 ownership.
     public var returnsRetainedObject: Bool?
 
     /// Whether the method consumes an additional reference to its receiver.
     ///
-    /// Outgoing invocation supplies an additional reference so the caller's
-    /// ownership remains valid when initialization returns another object or nil.
-    /// Initializer hooks instead forward the incoming consumed reference once.
+    /// Outgoing invocation supplies an additional reference so the caller's ownership remains valid when initialization returns another object or nil. Initializer hooks instead forward the incoming consumed reference once.
     public var consumesReceiver: Bool?
 
     /// Zero-based explicit arguments passed with an additional owned reference.
     ///
-    /// These positions must have an Objective-C object, class, or block encoding
-    /// and match the declaration's `ns_consumed` parameters. The receiver and
-    /// selector are excluded. The bridge preserves the caller's references.
+    /// These positions must have an Objective-C object, class, or block encoding and match the declaration's `ns_consumed` parameters. The receiver and selector are excluded. The bridge preserves the caller's references.
     public var consumedArguments: Set<Int>
 
     /// Creates ownership overrides; nil values use method-family conventions.
@@ -48,8 +43,7 @@ public enum ABIInvocationError: Error, Sendable, Equatable {
 
 /// A retained object used to look up bound Objective-C or Swift methods.
 ///
-/// The receiver and its handles remain in the caller's isolation domain. This
-/// type does not make an object safe to use from another actor or thread.
+/// The receiver and its handles remain in the caller's isolation domain. This type does not make an object safe to use from another actor or thread.
 public final class NativeObject {
     private(set) var receiver: AnyObject?
     private let runtime: ABIRuntime
@@ -86,20 +80,11 @@ public final class NativeObject {
 
     /// Reads an Objective-C object or class ivar by its runtime name.
     ///
-    /// Lookup includes inherited ivars and runs synchronously on the caller's
-    /// executor. The requested type uses the same object bridging and optional
-    /// conversions as Objective-C method results. The isa field returns the
-    /// runtime-decoded class. A present nil value requires
-    /// an optional result; a missing ivar throws `ABIResolutionError.ivarNotFound`.
+    /// Lookup includes inherited ivars and runs synchronously on the caller's executor. Conversion follows Objective-C method-result rules. The isa field returns the runtime-decoded class. A nil value requires an optional result; a missing ivar throws `ABIResolutionError.ivarNotFound`.
     ///
-    /// The returned value owns its reference independently of this receiver.
-    /// Weak ivars use the runtime's weak load; unsafe-unretained pointees must
-    /// remain alive throughout the read. The caller must synchronize access with
-    /// writers and honor the object's thread or actor requirements.
+    /// The result owns its reference independently of this receiver. Weak ivars use the runtime's weak load. Keep unsafe-unretained pointees alive during the read, synchronize with writers, and honor the object's thread or actor requirements.
     ///
-    /// Scalar, pointer, and aggregate ivars are unsupported. This does not infer
-    /// Swift stored-property layouts. Block results require the correct
-    /// `@convention(block)` signature, which ivar encodings cannot validate.
+    /// Scalar, pointer, and aggregate ivars are unsupported, and lookup does not infer Swift stored-property layouts. Block results require a correct `@convention(block)` signature, which ivar encodings cannot validate.
     ///
     /// - Parameters:
     ///   - name: The literal runtime ivar name, including any leading underscore.
@@ -138,13 +123,9 @@ public final class NativeObject {
 
     /// Resolves a Swift implementation for this object's concrete type.
     ///
-    /// Search and preparation run on the caller's thread, joining required work
-    /// already in progress. No explicit `prepare` call is needed.
+    /// Search and preparation run synchronously on the caller's thread.
     ///
-    /// The method retains the receiver and implementation image. Invocation
-    /// remains on the caller's executor and calls the captured implementation.
-    /// Existing generic class instances supply their enclosing type arguments.
-    /// genericArguments supplies any parameters introduced by the member itself.
+    /// The method retains the receiver and implementation image. Invocation remains on the caller's executor and calls the captured implementation. Existing generic class instances supply their enclosing type arguments. genericArguments supplies any parameters introduced by the member itself.
     /// - Parameters:
     ///   - name: A relative Swift member name and argument labels.
     ///   - signature: Explicit arguments and result, excluding self.
@@ -174,10 +155,7 @@ public final class NativeObject {
 
     /// Resolves a Swift method without blocking the caller's executor.
     ///
-    /// Type lookup and ABI preparation run on an independent worker, joining
-    /// required preparation already in progress. The receiver and returned
-    /// bound handle remain in the caller's isolation domain; no native member
-    /// is invoked during lookup.
+    /// Lookup and preparation run on a worker. The receiver and bound handle stay in the caller's isolation domain; lookup does not invoke the member.
     /// - Returns: A reusable method retaining this receiver.
     /// - Throws: The same lookup and representation errors as synchronous lookup.
     public nonisolated(nonsending) func resolveMethod<Signature>(
@@ -203,8 +181,7 @@ public final class NativeObject {
 
     /// Resolves a Swift setter bound to this object.
     ///
-    /// Search and preparation run on the caller's thread, joining required work
-    /// already in progress. No explicit `prepare` call is needed.
+    /// Search and preparation run synchronously on the caller's thread.
     ///
     /// The setter receives ownership of its ordinary incoming value.
     /// - Parameters:
@@ -231,10 +208,7 @@ public final class NativeObject {
 
     /// Resolves a Swift setter without blocking the caller's executor.
     ///
-    /// Type lookup and ABI preparation run on an independent worker, joining
-    /// required preparation already in progress. The receiver and returned
-    /// bound handle remain in the caller's isolation domain; lookup does not
-    /// set the property.
+    /// Lookup and preparation run on a worker. The receiver and bound handle stay in the caller's isolation domain; lookup does not set the property.
     /// - Returns: A reusable setter retaining this receiver.
     /// - Throws: The same lookup and representation errors as synchronous lookup.
     public nonisolated(nonsending) func resolveSetter<Value>(
@@ -258,18 +232,13 @@ public final class NativeObject {
 
     /// Resolves a selector using an ordinary Swift function type.
     ///
-    /// The signature includes only explicit arguments; the receiver and selector
-    /// are supplied automatically. Each call uses normal Objective-C dispatch.
-    /// Lookup runs synchronously on the caller's executor and validates argument
-    /// count and supported runtime type encodings. Structure encodings supply
-    /// the native layout; callers guarantee that their selected Swift type has
-    /// compatible storage and ownership. No task or actor hop is needed.
+    /// Describe explicit arguments and the result; the receiver and selector are supplied automatically. Calls use normal Objective-C dispatch. Lookup runs on the caller's executor and validates argument count and supported runtime encodings. For structures, the encoding supplies the native layout; the caller guarantees compatible Swift storage and ownership.
     ///
     /// - Parameters:
     ///   - selector: The Objective-C selector, including argument colons.
     ///   - signature: Explicit arguments, including any anonymous tail, and the result.
     ///   - variadicFrom: Index of the first anonymous argument, or nil for a fixed signature.
-    ///   - options: Overrides for ownership annotations absent from runtime metadata.
+    ///   - options: Ownership overrides absent from runtime metadata.
     /// - Returns: A method retaining this receiver.
     /// - Throws: A resolution error for a missing selector or incompatible signature.
     public func method<Result, each Argument>(
@@ -320,18 +289,14 @@ final class ObjCInvocationBinding {
 
 /// A typed Objective-C method bound to a retained receiver.
 ///
-/// The handle can be reused without repeating signature decoding. Invocation
-/// creates an independent argument frame for every call and has no fixed limit on
-/// the number of explicit arguments. See <doc:ObjectiveCInvocation>.
+/// The handle can be reused without repeating signature decoding. Invocation creates an independent argument frame for every call and has no fixed limit on the number of explicit arguments. See <doc:ObjectiveCInvocation>.
 public struct NativeBoundObjCMethod<Result, each Argument> {
     private let binding: ObjCInvocationBinding
     private let signature: ObjCMethodSignature<Result, repeat each Argument>
 
     /// The prepared message, independent of this retained receiver binding.
     ///
-    /// The returned handle shares the signature and code owner without repeating
-    /// lookup or decoding. Calls on another compatible receiver use current
-    /// message dispatch and validate that receiver's actual signature.
+    /// The returned handle shares the signature and code owner without repeating lookup or decoding. Calls on another compatible receiver use current message dispatch and validate that receiver's actual signature.
     public var method: NativeObjCMethod<Result, repeat each Argument> {
         NativeObjCMethod(
             binding: ObjCInvocationBinding(
@@ -354,10 +319,7 @@ public struct NativeBoundObjCMethod<Result, each Argument> {
 
     /// Calls the method using normal Objective-C dispatch.
     ///
-    /// The caller honors the receiver's actor/thread requirements, pointer
-    /// lifetimes, ownership annotations, block signatures, and nullability.
-    /// Retainable arguments stay alive for the call and results use Swift
-    /// ownership. Foreign exceptions are not translated.
+    /// The caller honors the receiver's actor/thread requirements, pointer lifetimes, ownership annotations, block signatures, and nullability. Retainable arguments stay alive for the call and results use Swift ownership. Foreign exceptions are not translated.
     ///
     /// - Parameter values: Explicit arguments, excluding self and the selector.
     /// - Returns: The result converted to the requested Swift type.
@@ -468,9 +430,7 @@ struct ObjCMethodSignature<Result, each Argument> {
 extension NativeObject {
     /// Resolves a Swift property getter bound to this object.
     ///
-    /// Search and preparation run on the caller's thread, joining required work
-    /// already in progress. No explicit `prepare` call is needed.
-    /// Supply its complete zero-argument function type, including native errors and async isolation.
+    /// Search and preparation run synchronously on the caller's thread. Supply its complete zero-argument function type, including native errors and async isolation.
     public nonisolated func resolveGetterAndWait<Signature>(
         named name: String,
         as signature: Signature.Type,
@@ -488,10 +448,7 @@ extension NativeObject {
 
     /// Resolves a Swift getter without blocking the caller's executor.
     ///
-    /// Type lookup and ABI preparation run on an independent worker, joining
-    /// required preparation already in progress. The receiver and returned
-    /// bound handle remain in the caller's isolation domain; no native member
-    /// is invoked during lookup.
+    /// Lookup and preparation run on a worker. The receiver and bound handle stay in the caller's isolation domain; lookup does not invoke the member.
     /// - Returns: A reusable getter retaining this receiver.
     /// - Throws: The same lookup and representation errors as synchronous lookup.
     public nonisolated(nonsending) func resolveGetter<Signature>(

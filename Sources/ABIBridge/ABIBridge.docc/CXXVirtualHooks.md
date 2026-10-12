@@ -2,11 +2,9 @@
 
 Select an absolute virtual-table entry by its implementation declaration, then intercept calls that dispatch through that shared table.
 
-See <doc:HookArguments> for editing object arguments, replacing references, and printing declaration/signature diagnostics.
-
 ## Select the table and method
 
-Start with a ``NativeVTable`` whose address point, accessible function-entry count and base subobject are known. A native adapter can acquire the table using the target compiler; the table view does not infer object layout. See <doc:CXXObjectInvocation> for receiver and vptr acquisition.
+Start with a ``NativeVTable`` whose address point, accessible entry count, and base subobject are known. Acquire these through a native adapter using the target compiler; see <doc:CXXObjectInvocation>.
 
 ```swift
 let entry = try table.entry(
@@ -49,13 +47,13 @@ let hook = try unsafe entry.hookSharedCalls(
 }
 ```
 
-`RequestView` supplies the actual pointer/layout or compiled accessor contract; ABIBridge does not infer arbitrary C++ properties from their names. Passing a different adapter/pointer to `proceed` changes the argument seen by the downstream call. Mutating an object's properties changes that object for every owner, while replacing the argument does not overwrite the caller's reference variable. Supported value-type arguments are copied; modify a local copy and pass it to `proceed` to change the downstream value. Native `inout` and ownership-transfer conventions are separate contracts.
+`RequestView` must supply the pointer layout or compiled accessors. Mutations affect the shared native object. Passing another pointer or adapter to `proceed` changes the downstream argument without overwriting the caller's reference variable. For copied values, edit a local copy and pass it to `proceed`. See <doc:HookArguments> for reference replacement, native `inout`, ownership, and diagnostics.
 
-Object mutations made before a callback fails are not rolled back. If no continuation completed, fallback receives the original argument references, which may now point to modified objects. If a continuation completed, its result is preserved without repeating the native call. See <doc:ObjectiveCMethodHooks> for directly typed Objective-C object arguments and dynamic setter calls.
+Mutations are not rolled back after callback failure. Fallback can therefore receive original references to already-modified objects. Continuation-result recovery is described below.
 
 ## Understand scope and lifetime
 
-This operation changes one **shared table entry**. Calls on every object using it can enter the callback, including objects other than the one used to obtain the table. It does not create a per-object shadow table. Direct, qualified, inlined or devirtualized calls bypass that entry. A function pointer captured before installation also bypasses the new dispatcher.
+The hook changes one shared table entry and affects every object dispatching through it. Direct, qualified, inlined, or devirtualized calls bypass the entry, as do function pointers captured before installation.
 
 Keep the ``NativeVirtualHook`` owner while interception is required. Later registrations wrap earlier ones. Each incoming call uses an immutable callback snapshot. `invalidate()` removes that registration from future snapshots, without waiting for active callbacks and without restoring a pointer over another writer's value. Releasing the final owner also invalidates it.
 
@@ -72,9 +70,9 @@ if let slot = hook.slot {
 hook.invalidate()
 ```
 
-The slot snapshot distinguishes active, invalidated, displaced and unreadable states. It is an observation, not synchronization with an external writer. Publication and rollback records preserve writes, original Mach failures, protection-restoration failures and the region information collected during the operation.
+The slot snapshot reports active, invalidated, displaced, or unreadable state without synchronizing with external writers. Publication and rollback records include writes, original Mach failures, protection-restoration failures, and observed region information.
 
-Installation can throw ``NativeVirtualHookInstallationError``. Its invalidated `registration` preserves any selected slot and partial effects. A nil slot means preparation failed before selection. Read-only or TPRO-protected pages can refuse installation; callers must inspect the actual outcome. A failed installation does not silently switch to a per-object technique.
+Installation can throw ``NativeVirtualHookInstallationError``. Its invalidated `registration` preserves the selected slot and partial effects; a nil slot means preparation failed before selection. Read-only or TPRO-protected pages can refuse installation. Inspect the outcome before relying on interception.
 
 When a Swift body throws before proceeding, the original arguments pass through. If a continuation already completed, its latest result is preserved. The original error is delivered to `onFailure`. C++ callback exceptions are caught by the wrapper and reported similarly. A C callback returns `false` and supplies an owned `ABIResolutionFailure` to report failure.
 

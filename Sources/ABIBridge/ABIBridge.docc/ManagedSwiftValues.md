@@ -13,9 +13,9 @@ A concrete metatype lets Swift code allocate and operate on a value through the 
 | A struct or enum containing a reference | An explicit ABIBridgeSwiftValue conformance supports an established fixed ABI | The compiler adapts additional calling conventions |
 | A value Optional, such as Int64? | No general by-value support | The compiler handles both the payload and the nil representation |
 | A non-frozen struct from a library-evolution module | An explicit opaque ABIBridgeSwiftValue descriptor selects its declared indirect convention | Available for additional signature adaptation |
-| A type unavailable to the consumer compiler | Scoped formally indirect callback borrows and compatible members; see <doc:BorrowedSwiftValues> | Owned handles need an existing compatible adapter supplied by the owning module |
+| A type unavailable to the consumer compiler | Runtime value handles and scoped callback borrows with an established declaration ABI; see <doc:SwiftOpaqueResults> and <doc:BorrowedSwiftValues> | Explicit create, inspect, and destroy operations can expose otherwise unsupported interfaces |
 
-Compiled adapters handle signatures beyond the explicit fixed-layout support in <doc:ExplicitSwiftValues>. Metadata and storage size alone do not infer layouts for tuples or enums, or establish generic, existential, opaque-result, noncopyable, async, or throwing Swift invocation.
+Use a compiled adapter when the signature falls outside the direct frontend's supported representations. Metadata and storage size alone do not establish a calling convention. Generic, existential, opaque-result, closure, and ownership support is described in <doc:SwiftValues>.
 
 ## Pass imported values through storage
 
@@ -72,19 +72,19 @@ let result: Record = unsafe output.withUnsafeBytes {
 }
 ```
 
-Here `record` is the caller's existing `Record`. Typed initialization copies its managed references. Loading the result makes a Swift-owned copy, so the result can outlive the output storage. Each storage destructor deinitializes exactly the value it owns before `NativeValue` frees the allocation. Assignment of a `NativeValue` reference shares its storage; it does not copy the underlying Swift value.
+Here `record` is the caller's existing `Record`. Typed initialization copies its managed references, and loading the result creates a Swift-owned copy that can outlive the output storage. Each destructor deinitializes its value before `NativeValue` frees the allocation. Assigning a `NativeValue` shares the storage.
 
 Use the full stride for storage bound to one typed value, including any tail padding. The opaque layout above describes only an allocation's extent. Do not put it into ``NativeSignature`` as a by-value Swift parameter. A `NativeSignature` describes a C-compatible adapter signature, which in this example has two pointer parameters and no result.
 
 ## Keep runtime-only values opaque
 
-Use <doc:BorrowedSwiftValues> when a callback provides initialized resilient storage and only synchronous nonmutating member access is needed. That path does not create an owned copy. For ownership operations beyond the borrow, use the adapter boundary below.
+Use ``NativeSwiftValue`` for supported owned runtime results and ``NativeSwiftBorrowedValue`` for scoped callback inputs. They support members and ownership operations under the contracts in <doc:SwiftOpaqueResults> and <doc:BorrowedSwiftValues>. For an interface outside those contracts, expose an adapter's own opaque handles.
 
 A caller without an importable type can use an adapter's explicitly documented create, copy, inspect, and destroy operations. Adopt each owned result with ``NativeValue/init(adopting:as:retaining:release:)`` and pass its address using ``NativeValue/reference(to:)``. A zero-byte opaque extent is sufficient when the caller only forwards a handle and the adapter owns all memory accesses.
 
 The destroy operation must match the allocation and Swift type created by that adapter. Retain every implementation image needed by the value's operations and destruction, including the adapter and the type's module, until final release. A resolved destructor retains its implementation image; separately loaded dependencies still need their applicable loader or image owners. The imported example above uses linked modules whose code stays loaded.
 
-A runtime metatype and value witnesses can establish storage size/alignment and value operations. They do not supply a declaration's complete calling convention or authorize calling an arbitrary metadata address. This prototype uses typed compiler-generated operations and explicit C adapters, without reading private value-witness table offsets or synthesizing a general runtime-only Swift signature.
+A runtime metatype supplies storage dimensions and value operations. The adapter's declaration must still establish its calling convention; an arbitrary metadata address is not a callable entry.
 
 ## Preserve ownership on failure
 
@@ -96,10 +96,8 @@ A runtime metatype and value witnesses can establish storage size/alignment and 
 
 The two-pointer adapter above is synchronous and nonthrowing. It initializes its output exactly once if entered. An adapter that can fail needs an explicit C-compatible success/error contract before the caller can decide whether to destroy the output. Thread and actor requirements remain those of the target declaration and value operations; storing a value does not make it Sendable.
 
-## Verification boundary
+## Verification
 
-The executable managed-value fixtures compare ordinary compiler calls with ABIBridge's C adapter calls for a reference-bearing frozen struct, both cases of `Int64?`, and a non-frozen struct imported across a library-evolution boundary. They cover copied and moved storage, indirect-result ownership, runtime-only opaque handles, and cleanup after argument/result conversion failures.
-
-The compiler probe separately records the generated call signatures and resilient copy/take/destroy operations for arm64, x86_64, arm64e, and arm64_32 targets. Compilation evidence is not runtime execution coverage. The initial runtime checks use macOS arm64 in Debug and Release; other targets require their own execution evidence.
+Managed-value fixtures compare compiler calls with C adapter calls for a reference-bearing frozen struct, `Int64?`, and an imported resilient struct. They check copy/move ownership and failure cleanup on macOS arm64 in Debug and Release. Cross-architecture compiler probes check generated conventions separately from runtime execution; see <doc:Architectures>.
 
 See <doc:SwiftFunctionInvocation> for direct-call support, <doc:NativeValueAdapters> for the underlying storage API, and <doc:GenericSwiftValues> for metatype substitutions and existing protocol conformances.

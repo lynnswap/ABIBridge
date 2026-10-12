@@ -1,7 +1,6 @@
 /// One explicit argument in a Swift declaration's generic context.
 ///
-/// Scalar type arguments may use linked metatypes or retained runtime type
-/// handles. A pack supplies the ordered element types for one parameter pack.
+/// Scalar type arguments may use linked metatypes or retained runtime type handles. A pack supplies the ordered element types for one parameter pack.
 public struct NativeSwiftGenericArgument: Sendable {
     enum Storage: Sendable {
         case type(Any.Type, owner: NativeSwiftType?)

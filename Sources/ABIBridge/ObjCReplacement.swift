@@ -41,26 +41,20 @@ private final class ObjCReplacementFrame {
 
 /// A scoped view of the receiver and next implementation in a method-hook call.
 ///
-/// Use it synchronously on the callback's original thread. Saving this value
-/// does not extend the call: later receiver/continuation access throws. Copied
-/// diagnostic metadata remains readable. The invocation itself is not Sendable.
+/// Use it synchronously on the callback's original thread. Saving this value does not extend the call: later receiver/continuation access throws. Copied diagnostic metadata remains readable. The invocation itself is not Sendable.
 public struct NativeObjCMethodInvocation<Result, each Argument>: CustomStringConvertible {
     fileprivate let frame: ObjCReplacementFrame
     fileprivate let callSignature: ObjCMethodSignature<Result, repeat each Argument>
 
-    /// The registration class and selector in Objective-C method notation,
-    /// such as `-[Renderer render:]`. It describes the requested scope, not an
-    /// inherited or already interposed implementation. This value outlives the callback.
+    /// The registration class and selector in Objective-C method notation, such as `-[Renderer render:]`. It describes the requested scope, not an inherited or already interposed implementation. This value outlives the callback.
     public let declaration: NativeDeclaration
 
-    /// The Swift function type supplied at registration, excluding the receiver
-    /// and other hidden arguments. It is not an inferred native signature.
+    /// The Swift function type supplied at registration, excluding the receiver and other hidden arguments. It is not an inferred native signature.
     public var signature: ((repeat each Argument) -> Result).Type {
         ((repeat each Argument) -> Result).self
     }
 
-    /// Cached declaration and supplied signature, without reading native state
-    /// or formatting argument objects. Available after callback expiry too.
+    /// Cached declaration and supplied signature, without reading native state or formatting argument objects. Available after callback expiry too.
     public let description: String
 
     /// The live instance or class object receiving this call.
@@ -78,9 +72,7 @@ public struct NativeObjCMethodInvocation<Result, each Argument>: CustomStringCon
 
     /// Invokes the next hook in this call's snapshot, or the native implementation.
     ///
-    /// This does not send the selector again. Arguments can be changed, and an
-    /// ordinary method may proceed more than once. Each completed result replaces
-    /// the prior result used if this callback subsequently throws.
+    /// This does not send the selector again. Arguments can be changed, and an ordinary method may proceed more than once. Each completed result replaces the prior result used if this callback subsequently throws.
     /// - Parameter values: Explicit arguments, excluding self and the selector.
     /// - Returns: The next implementation's converted result.
     /// - Throws: A scope, thread, value-conversion, or invocation error.
@@ -109,9 +101,7 @@ final class ObjCReplacementCallback {
 // invocation fails runtime metadata initialization for reference arguments on 6.3.
 struct ObjCReplacementIsolatedValue<Value>: @unchecked Sendable { let value: Value }
 
-/// Internal executable-entry owner. It does not install or restore a method.
-/// Published entry code remains callable after invalidation; callback captures
-/// can be released independently once in-flight snapshots have finished.
+/// Internal executable-entry owner. It does not install or restore a method. Published entry code remains callable after invalidation; callback captures can be released independently once in-flight snapshots have finished.
 package final class ObjCReplacement<Result, each Argument> {
     private let handle: OpaquePointer
 

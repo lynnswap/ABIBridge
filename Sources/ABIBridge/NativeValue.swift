@@ -14,32 +14,26 @@ public enum NativeValueError: Error, Sendable, Equatable {
 
 /// Conversion between a user-defined Swift wrapper and native storage.
 ///
-/// The ABI type must remain stable for the lifetime of prepared handles.
-/// Conversion methods own any target-specific initialization, interpretation,
-/// and pointee ownership. The protocol does not make a nontrivial C++ value
-/// compatible with the C calling convention; use a native adapter for that ABI.
+/// The ABI type must remain stable for the lifetime of prepared handles. Conversion methods own any target-specific initialization, interpretation, and pointee ownership. The protocol does not make a nontrivial C++ value compatible with the C calling convention; use a native adapter for that ABI.
 public protocol ABIBridgeValue: SendableMetatype {
     /// The representation used by native calls, independent of Self's Swift layout.
     static var abiType: NativeType { get }
 
     /// Converts native storage into this Swift wrapper.
     ///
-    /// A wrapper that adopts a returned foreign resource must establish cleanup
-    /// before performing further validation that can throw.
+    /// A wrapper that adopts a returned foreign resource must establish cleanup before performing further validation that can throw.
     init(nativeValue: NativeValue) throws
 
     /// Produces storage and retains all resources required while the value is used.
     ///
-    /// This operation does not transfer ownership to a native callee. Consumed
-    /// arguments require an adapter that performs the transfer at the call boundary.
+    /// This operation does not transfer ownership to a native callee. Consumed arguments require an adapter that performs the transfer at the call boundary.
     static func nativeValue(from value: Self) throws -> NativeValue
 }
 
 extension ABIBridgeValue where Self: BitwiseCopyable {
     /// Reads a byte-compatible value using the caller-declared ABI layout.
     ///
-    /// Field offsets and valid value representations remain the conformance's
-    /// responsibility. Use custom conversions when Swift and native storage differ.
+    /// Field offsets and valid value representations remain the conformance's responsibility. Use custom conversions when Swift and native storage differ.
     public init(nativeValue: NativeValue) throws {
         guard (MemoryLayout<Self>.size...MemoryLayout<Self>.stride).contains(nativeValue.type.size) else {
             throw NativeValueError.incompatibleSize(expected: MemoryLayout<Self>.size, actual: nativeValue.type.size)
@@ -49,8 +43,7 @@ extension ABIBridgeValue where Self: BitwiseCopyable {
 
     /// Copies the value, including zero-filled native tail padding when needed.
     ///
-    /// Pointer fields remain borrowed. The conformance must establish matching
-    /// field representations and the lifetime of any referenced native resources.
+    /// Pointer fields remain borrowed. The conformance must establish matching field representations and the lifetime of any referenced native resources.
     public static func nativeValue(from value: Self) throws -> NativeValue {
         try NativeValue(copying: value, as: abiType)
     }
@@ -99,10 +92,7 @@ private final class NativeStorage {
 
 /// Native storage with an explicit layout and lifetime.
 ///
-/// A value can allocate its own storage, adopt an external allocation, or borrow
-/// memory while retaining an owner. Values and views are not Sendable: their
-/// foreign resources and destruction callbacks may have thread requirements.
-/// See <doc:NativeValueAdapters>.
+/// A value can allocate its own storage, adopt an external allocation, or borrow memory while retaining an owner. Values and views are not Sendable: their foreign resources and destruction callbacks may have thread requirements. See <doc:NativeValueAdapters>.
 public final class NativeValue {
     /// The layout associated with these bytes.
     public let type: NativeType
@@ -110,10 +100,7 @@ public final class NativeValue {
 
     /// Allocates storage and initializes it using an adapter.
     ///
-    /// The destruction callback runs before the allocation and retained owner
-    /// are released. If initialization throws, the allocation is released
-    /// without calling destroy; the initializer must clean up any partially
-    /// initialized foreign resources itself.
+    /// The destruction callback runs before the allocation and retained owner are released. If initialization throws, the allocation is released without calling destroy; the initializer must clean up any partially initialized foreign resources itself.
     ///
     /// - Parameters:
     ///   - type: The storage layout.
@@ -147,10 +134,7 @@ public final class NativeValue {
 
     /// Copies a bitwise-copyable Swift value into native storage.
     ///
-    /// The native extent must cover the Swift value without exceeding its
-    /// stride. Additional native tail padding is zero-filled. The adapter must
-    /// ensure field representations and offsets match. This copies pointer bits without retaining pointees or performing
-    /// a foreign copy constructor.
+    /// The native extent must cover the Swift value without exceeding its stride. Additional native tail padding is zero-filled. The adapter must ensure field representations and offsets match. This copies pointer bits without retaining pointees or performing a foreign copy constructor.
     ///
     /// - Parameters:
     ///   - value: The initialized Swift value whose bytes will be copied.
@@ -178,8 +162,7 @@ public final class NativeValue {
     ///   - type: The storage layout.
     ///   - owner: An owner retaining the allocation, when available.
     ///
-    /// The caller must keep ownerless storage alive for this value and every
-    /// derived view. The lifetime promise is not checked by this initializer.
+    /// The caller must keep ownerless storage alive for this value and every derived view. The lifetime promise is not checked by this initializer.
     @unsafe public init(
         borrowing address: UnsafeMutableRawPointer, as type: NativeType,
         retaining owner: Any? = nil
@@ -196,8 +179,7 @@ public final class NativeValue {
     ///   - owner: Any dependency needed while using or releasing the resource.
     ///   - release: Destroys and releases the external allocation exactly once.
     ///
-    /// The caller transfers release responsibility and must not release the
-    /// resource separately. The callback must obey the resource's thread contract.
+    /// The caller transfers release responsibility and must not release the resource separately. The callback must obey the resource's thread contract.
     @unsafe public init(
         adopting address: UnsafeMutableRawPointer, as type: NativeType,
         retaining owner: Any? = nil,
@@ -220,8 +202,7 @@ public final class NativeValue {
 
     /// Creates a bounded storage view with another explicit layout.
     ///
-    /// This is useful for a caller-specified C++ subobject offset. It does not
-    /// infer inheritance layout or adjust the receiver automatically.
+    /// This is useful for a caller-specified C++ subobject offset. It does not infer inheritance layout or adjust the receiver automatically.
     /// - Parameters:
     ///   - offset: The byte offset within this value.
     ///   - type: The view's accessible extent and representation.
@@ -249,8 +230,7 @@ public final class NativeValue {
 
     /// Converts storage to a wrapper with a compatible native layout.
     ///
-    /// Diagnostic names may differ; representation, size, alignment, and field
-    /// layouts must match. The wrapper is responsible for interpreting the bytes.
+    /// Diagnostic names may differ; representation, size, alignment, and field layouts must match. The wrapper is responsible for interpreting the bytes.
     ///
     /// - Parameter valueType: The requested Swift wrapper type.
     /// - Returns: The wrapper produced by its native-value initializer.
@@ -262,8 +242,7 @@ public final class NativeValue {
 
     /// Reads a bitwise-copyable representation from a checked byte range.
     ///
-    /// Bounds are checked and unaligned reads are supported. The caller must
-    /// ensure those bytes are initialized and valid for the requested Swift type.
+    /// Bounds are checked and unaligned reads are supported. The caller must ensure those bytes are initialized and valid for the requested Swift type.
     ///
     /// - Parameters:
     ///   - valueType: The representation to read.
@@ -281,8 +260,7 @@ public final class NativeValue {
 
     /// Borrows the initialized bytes while retaining their storage and owner.
     ///
-    /// The pointer must not outlive the value. Foreign representations and
-    /// pointees remain the adapter's responsibility.
+    /// The pointer must not outlive the value. Foreign representations and pointees remain the adapter's responsibility.
     /// - Parameter body: A synchronous operation on the borrowed bytes.
     /// - Returns: The result produced by body.
     /// - Throws: Any error thrown by body.
@@ -296,8 +274,7 @@ public final class NativeValue {
 
     /// Borrows mutable bytes without changing the storage's ownership.
     ///
-    /// The caller must preserve foreign-value invariants, prevent conflicting
-    /// accesses through other views, and keep the pointer within the value's lifetime.
+    /// The caller must preserve foreign-value invariants, prevent conflicting accesses through other views, and keep the pointer within the value's lifetime.
     /// - Parameter body: A synchronous operation on the borrowed mutable bytes.
     /// - Returns: The result produced by body.
     /// - Throws: Any error thrown by body.

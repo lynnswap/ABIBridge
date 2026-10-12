@@ -12,8 +12,7 @@
 
 namespace abi_bridge {
 
-/// Ownership overrides for annotations not represented in runtime encodings.
-/// Omitted receiver/result values use selector-family conventions.
+/// Ownership overrides for annotations not represented in runtime encodings. Omitted receiver/result values use selector-family conventions.
 struct objc_method_options {
     std::optional<bool> returns_retained;
     std::optional<bool> consumes_receiver;
@@ -59,9 +58,7 @@ struct objc_retained_function_types<true, Result, Arguments...> {
 template <typename Signature> class bound_objc_implementation;
 template <typename Signature> class objc_implementation;
 
-/// A captured typed IMP whose receiver is supplied for each call.
-/// Copies retain its class and implementation images without retaining a receiver.
-/// Calls preserve the original ownership contract and do not redispatch overrides.
+/// A captured typed IMP whose receiver is supplied for each call. Copies retain its class and implementation images without retaining a receiver. Calls preserve the original ownership contract and do not redispatch overrides.
 template <typename Result, typename... Arguments>
 class objc_implementation<Result(Arguments...)> final {
     using signature = Result(Arguments...);
@@ -76,9 +73,7 @@ public:
     objc_implementation(id prototype, std::string_view name, objc_method_options options = {})
         : objc_implementation(prototype, selector_named(name), options) {}
 
-    /// Calls the captured IMP with a compatible live receiver.
-    /// Target isolation, argument lifetimes, and the actual ABI remain caller contracts.
-    /// Object and block results follow ordinary +0 return semantics under ARC/MRC.
+    /// Calls the captured IMP with a compatible live receiver. Target isolation, argument lifetimes, and the actual ABI remain caller contracts. Object and block results follow ordinary +0 return semantics under ARC/MRC.
     Result unsafe_invoke(__unsafe_unretained id receiver, Arguments... arguments) const {
         return invoke_with_tail<false>(receiver, std::forward<Arguments>(arguments)...);
     }
@@ -211,8 +206,7 @@ private:
     std::shared_ptr<ABIObjCImplementation> implementation_;
 };
 
-/// A typed captured IMP bound to a retained receiver.
-/// Copies share the binding, and receiver destruction precedes image release.
+/// A typed captured IMP bound to a retained receiver. Copies share the binding, and receiver destruction precedes image release.
 template <typename Result, typename... Arguments>
 class bound_objc_implementation<Result(Arguments...)> final {
     using signature = Result(Arguments...);

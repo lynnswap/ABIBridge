@@ -100,9 +100,7 @@ struct CFunctionCall<Result, each Argument>: Sendable {
 
 /// A typed C or C-compatible C++ function that retains its containing image.
 ///
-/// A function handle reuses its prepared signature across calls. The handle is
-/// Sendable because it owns immutable call metadata, but the function itself may
-/// impose thread or actor requirements. See <doc:CFunctionInvocation>.
+/// A function handle reuses its prepared signature across calls. The handle is Sendable because it owns immutable call metadata, but the function itself may impose thread or actor requirements. See <doc:CFunctionInvocation>.
 public struct NativeFunction<Result, each Argument>: Sendable {
     /// The resolved symbol and image retained for this function.
     public let symbol: ResolvedSymbol
@@ -116,12 +114,7 @@ public struct NativeFunction<Result, each Argument>: Sendable {
 
     /// Calls the function using the prepared platform C calling convention.
     ///
-    /// The caller must ensure the signature matches the native declaration,
-    /// pointers remain valid, and any thread or ownership requirements are met.
-    /// Pointer values remain borrowed; the handle does not retain pointees.
-    /// Variadic calls use the prepared fixed-prefix boundary and standard C
-    /// promotions for anonymous arguments. Native exceptions and nontrivial
-    /// C++ values require a compiler adapter.
+    /// The caller must ensure the signature matches the native declaration, pointers remain valid, and any thread or ownership requirements are met. Pointer values remain borrowed; the handle does not retain pointees. Variadic calls use the prepared fixed-prefix boundary and standard C promotions for anonymous arguments. Native exceptions and nontrivial C++ values require a compiler adapter.
     ///
     /// - Parameter values: All concrete arguments, including the anonymous tail.
     /// - Returns: The result converted to the requested Swift type.
@@ -137,8 +130,7 @@ public struct NativeFunction<Result, each Argument>: Sendable {
 extension ABIRuntime {
     /// Resolves a C function with an ordinary Swift function-type metatype.
     ///
-    /// Integer widths must match the C declaration; for example, use Int32 for
-    /// C int. Lookup does not infer a C signature from its linker name.
+    /// Integer widths must match the C declaration; for example, use Int32 for C int. Lookup does not infer a C signature from its linker name.
     ///
     /// - Parameters:
     ///   - name: A C linker name without the Mach-O underscore.
@@ -186,8 +178,7 @@ extension ABIRuntime {
 
     /// Resolves a C++ free or static function with C-compatible value representations.
     ///
-    /// The complete demangled declaration selects an overload. It does not
-    /// establish that the supplied Swift function type matches the native ABI.
+    /// The complete demangled declaration selects an overload. It does not establish that the supplied Swift function type matches the native ABI.
     ///
     /// - Parameters:
     ///   - name: A complete demangled C++ declaration.

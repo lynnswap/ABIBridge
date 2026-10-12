@@ -1,8 +1,6 @@
 # Hooking imported C and C++ functions
 
-Change calls through selected Mach-O import slots with typed callbacks, scoped continuations and managed registration lifetime.
-
-See <doc:HookArguments> for editing object arguments, replacing references, and printing declaration/signature diagnostics.
+Intercept selected Mach-O import slots with typed callbacks and scoped continuations.
 
 ## Select the callers
 
@@ -21,7 +19,7 @@ let hook = try await unsafe runtime.hookImportedFunction(
 hook.invalidate()
 ```
 
-`in` identifies the currently loaded callers whose references will change. `from`, when provided, filters the dependency name recorded in the binding metadata; a reexport facade is preserved rather than replaced with its final implementation image. Framework, path and exact install-name selectors are available. These scopes do not load images. Explicit `.automatic` considers all loaded importing images and can fail when required metadata is unavailable; it does not silently omit unreadable system-cache metadata.
+`in` selects loaded callers by framework, path, or exact install name. Optional `from` filters the recorded dependency, preserving reexport facade names. These scopes do not acquire images. Explicit `.automatic` considers all loaded importers and fails when required metadata is unavailable, including unreadable system-cache metadata.
 
 Names reuse ABIBridge's C/C++ resolution conventions. The function type supplies the C ABI contract; a mangled name cannot establish argument ownership or a complete signature. Supported values follow <doc:CFunctionInvocation>, with borrowed pointer arguments/results and no foreign exception unwinding. Native Swift functions, Objective-C ownership, variadics and nontrivial C++ values are separate contracts.
 
@@ -29,11 +27,11 @@ Only calls that read the replaced references are intercepted. Direct/inlined cal
 
 ## Callback order and lifetime
 
-Each physical import slot has its own captured predecessor and permanent callable entry. Later registrations wrap earlier ones; `proceed` uses the current invocation's snapshot, not a new lookup of the symbol. A callback can change arguments/results, skip the predecessor, or proceed more than once where the native operation permits it. Multiple imported slots are not activated atomically.
+Each import slot has a captured predecessor and permanent callable entry. Later registrations wrap earlier ones, and `proceed` uses the invocation's snapshot. Callbacks may change values, skip the predecessor, or proceed repeatedly when the native operation permits. See <doc:HookArguments> for argument edits and diagnostics. Multi-slot activation is non-atomic.
 
 Callbacks run synchronously on the incoming thread. Swift continuations reject use after callback return or on another thread. A Swift callback or conversion error is delivered to `onFailure` as the original Swift error. If no continuation completed, the original arguments pass through; otherwise the latest completed continuation result is preserved without repeating its native side effects.
 
-Retain ``NativeImportedFunctionHook`` while its behavior is needed. Explicit invalidation and the last owner's destruction remove only that registration from future snapshots. In-flight snapshots keep their callbacks until completion. Ordinary invalidation leaves an empty pass-through entry rather than restoring the import pointer. Published executable storage, prepared signatures and original/importing image leases remain process-lived so saved callable entries stay valid. Callback captures are released independently.
+Retain ``NativeImportedFunctionHook`` while needed. Invalidate it or release its last owner to remove the registration from future snapshots; active snapshots finish. Empty entries pass through instead of restoring import pointers. Published storage, signatures, and original/importing image leases remain alive for saved pointers throughout the process lifetime. Callback captures release after their last active snapshot.
 
 External writers must coordinate with registration and memory protection changes. Status can report displacement without overwriting the external pointer. Generated predecessor code must remain valid independently of the token, since it may not have a loader image to retain. Callback code and all pointer pointees must satisfy the native lifetime contract.
 
@@ -97,10 +95,14 @@ let outcomes = monitor.images
 monitor.invalidate()
 ```
 
-An unloaded explicit importer is valid. Both initial application and later changes run asynchronously on a serial queue outside dyld notification callbacks. Images observed before their initializers finish wait for acquisition before their installation attempt. `onImageUpdate` reports installed, no matching imports, failed and removed outcomes. Updates can start before registration returns. A failure affects that image; other selected images continue to be inspected. `images` copies the current outcomes, including partial installation diagnostics when a failure is a ``NativeImportedHookInstallationError``.
+Monitoring accepts an unloaded explicit importer. Initial application and later updates run on a serial queue outside dyld callbacks, waiting for image initialization before installation. Updates can begin before registration returns.
+
+`onImageUpdate` reports installed, no matching imports, failed, and removed outcomes. One image's failure does not stop inspection of others. `images` copies current outcomes, including partial diagnostics from ``NativeImportedHookInstallationError``.
 
 Each observed generation is attempted once. If an unresolved lazy reference fails, call it normally and create a new monitor to retry. Invalidation prevents new callback entry and removes owned registrations without waiting for loader work or in-flight callbacks. Preparation that already started can finish with an inert pass-through entry before cleanup. Incoming calls and previously captured update callbacks may finish after invalidation.
 
-Monitoring coalesces catalog changes and does not retain nonmatching/failed images through a resolver cache. Removed generations are pruned. Successful or partially published entries retain their original process-lifetime code/image leases, so those images can remain loaded after the monitor ends. Calls from constructors, calls before asynchronous application completes, and images that unload before observation are not guaranteed to be intercepted. Registration order is the order callbacks are installed into each slot; independently scheduled monitors do not establish a global ordering across images.
+Monitoring coalesces catalog changes, prunes removed generations, and avoids resolver-cache retention of nonmatching or failed images. Published entries retain process-lifetime code/image leases, so their images can remain loaded after monitoring ends.
+
+Constructor calls, calls before application completes, and images unloaded before observation may bypass interception. Callback order follows installation in each slot; independent monitors provide no global order across images.
 
 Native callers use `ABIMonitorImportedFunction` from `<ABIBridge/ImportedHookMonitoring.h>` or the typed `abi_bridge::monitor_imported_function<Signature>` wrapper from `<ABIBridge/ImportedHookMonitoring.hpp>`. The monitor owns its lookup request and temporary per-image resolution. C++ image/failure handlers must be `noexcept`; copied image updates own their descriptions and any hook handles. Raw C updates borrow their fields during delivery, while `ABICopyImportedHookMonitorImages` returns an owned snapshot.

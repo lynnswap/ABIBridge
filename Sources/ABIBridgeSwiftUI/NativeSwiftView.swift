@@ -1,19 +1,13 @@
 import ABIBridge
 import SwiftUI
 
-/// A SwiftUI view that owns a native opaque result and its implementation images.
+/// A SwiftUI view that retains a native opaque result and its implementation images.
 ///
-/// Resolve a nongeneric native factory returning some View using
-/// NativeSwiftValue, then pass its result to this initializer. The provider
-/// module and concrete view type need not be importable by the consumer.
+/// Resolve a nongeneric factory returning `some View` as `NativeSwiftValue`, then pass its result to the initializer. The provider's module and concrete type need not be importable. The factory call must satisfy its native ABI, argument lifetime, and isolation requirements. See <doc:DisplayingNativeViews> for an example.
 ///
-/// Construction and body evaluation occur on MainActor. The value does not
-/// conform to Sendable: a hidden view can retain actor- or thread-bound state.
-/// The native declaration's ABI, argument lifetimes, and isolation requirements
-/// remain the caller's responsibility.
+/// Construction and body evaluation run on MainActor. This value is not Sendable because hidden views may retain thread- or actor-bound state.
 ///
-/// Copies share the result owner. Keep this view in the hierarchy or in its
-/// hosting controller while native view code, witnesses, or destruction can run.
+/// Copies share ownership. Keep the view or its host alive while native view code, witnesses, or destruction can run.
 public nonisolated struct NativeSwiftView: View {
     private let storage: Storage
 

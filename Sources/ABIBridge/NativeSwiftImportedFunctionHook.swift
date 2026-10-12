@@ -33,35 +33,21 @@ extension NativeSwiftFunction {
 
     /// Intercepts this concrete Swift function through imports in loaded callers.
     ///
-    /// The capturing closure receives typed arguments and a scoped `proceed`
-    /// continuation. It can edit arguments, call the captured predecessor chain,
-    /// and transform the result. Callbacks run synchronously on the incoming
-    /// thread. Errors representable by the declaration's native error type return
-    /// through that channel, including every error for `throws(any Error)`.
-    /// Other errors reach `onFailure`: before proceeding, the original arguments
-    /// continue to the next implementation; afterward, the latest completed
-    /// result or native error is preserved without repeating native effects.
+    /// Callbacks run synchronously on the incoming thread. Errors accepted by the native error type return through that channel, including every error for `throws(any Error)`. Other errors reach `onFailure`: before proceeding, unchanged arguments continue to the next implementation; afterward, the latest completed result or native error is preserved without repeating native effects.
     ///
-    /// Later registrations wrap earlier callbacks. Invalidation releases captures
-    /// after in-flight snapshots finish, while published pass-through code and
-    /// importing/provider image leases remain process-lived. Direct, inlined,
-    /// specialized, and copied-pointer calls that bypass the imports are unaffected.
+    /// Later registrations wrap earlier callbacks. Invalidation releases captures after in-flight calls finish. Published pass-through code and importing/provider image leases remain retained for process lifetime. Direct, inlined, specialized, and copied-pointer calls bypassing the imports are unaffected.
     ///
-    /// The declared Swift ABI, ownership and isolation must match the native entry.
-    /// Source names and metatypes do not establish those contracts. Unresolved
-    /// lazy references must first be called normally; protected pages can reject
-    /// publication. No images are loaded by import selection.
+    /// The Swift ABI, ownership, and isolation must match the native entry; source names and metatypes do not establish them. Call unresolved lazy references normally before hooking them. Protected pages can reject publication, and import selection does not load images. See <doc:SwiftFunctionHooks> for chaining and failure handling.
+    ///
     /// - Parameters:
     ///   - importer: Loaded images containing the references to change.
     ///   - provider: Optional filter on the recorded dependency, including reexports.
     ///   - runtime: Runtime whose import indexes are reused.
-    ///   - owner: Additional lifetime owner for generated predecessor code outside
-    ///     loader images. Published code can keep this owner for process lifetime.
+    ///   - owner: Keeps generated predecessor code outside loader images alive. Published code can retain this owner for process lifetime.
     ///   - onFailure: A thread-safe observer of callback and conversion failures.
-    ///   - body: A synchronous callback with explicit Swift arguments and result.
+    ///   - body: A synchronous callback with typed arguments and a scoped `proceed` continuation; it may replace arguments and transform results.
     /// - Returns: A registration whose captures can be independently invalidated.
-    /// - Throws: Selection/preparation errors or `NativeSwiftHookInstallationError`
-    ///   containing partial publication and rollback outcomes.
+    /// - Throws: Selection or preparation errors, or `NativeSwiftHookInstallationError` containing partial publication and rollback outcomes.
     @_transparent
     @unsafe public nonisolated(nonsending) func hookImportedCalls<Result, Failure: Error, each Argument>(
         in importer: ImageSelector, from provider: ImageSelector? = nil,
@@ -84,10 +70,7 @@ extension NativeSwiftFunction {
 
     /// Intercepts imports whose native callers are required to enter on MainActor.
     ///
-    /// This is a caller-supplied isolation contract, not an executor hop. Background
-    /// entry reports `wrongThread` and bypasses this callback before decoding its
-    /// Swift arguments. `onFailure` must also be safe on background threads.
-    /// Import selection, failure recovery and lifetime match `hookImportedCalls`.
+    /// This is a caller-supplied isolation contract, not an executor hop. Background entry reports `wrongThread` and bypasses this callback before decoding its Swift arguments. `onFailure` must also be safe on background threads. Import selection, failure recovery and lifetime match `hookImportedCalls`.
     @_transparent
     @unsafe @MainActor public func hookMainActorImportedCalls<Result, Failure: Error, each Argument>(
         in importer: ImageSelector, from provider: ImageSelector? = nil,
@@ -161,11 +144,7 @@ extension NativeSwiftFunction {
 }
 
 extension NativeSwiftFunction {
-    /// Intercepts an asynchronous entry on the incoming Swift task.
-    /// The callback and `proceed` may suspend; cancellation and task-local values
-    /// follow that task. Invalidation leaves entered snapshots alive until return.
-    /// Unrepresentable failures preserve the latest native outcome, or continue
-    /// with unchanged arguments when no predecessor has completed.
+    /// Intercepts an asynchronous entry on the incoming Swift task. The callback and `proceed` may suspend; cancellation and task-local values follow that task. Invalidation leaves entered snapshots alive until return. Unrepresentable failures preserve the latest native outcome, or continue with unchanged arguments when no predecessor has completed.
     @_transparent
     @unsafe public nonisolated(nonsending) func hookImportedCalls<Result, Failure: Error, each Argument>(
         in importer: ImageSelector, from provider: ImageSelector? = nil,

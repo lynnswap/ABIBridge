@@ -13,33 +13,18 @@ typedef void (*ABIVirtualFailureHandler)(void *, const ABIResolutionFailure *);
 typedef void (*ABIVirtualContextRelease)(void *);
 enum { ABIVirtualInactive = 0, ABIVirtualActive = 1, ABIVirtualDisplaced = 2, ABIVirtualUnreadable = 3 };
 
-/// Intercepts one absolute entry shared by all objects dispatching through this
-/// table. Parameters describe explicit C-compatible arguments, excluding this.
-/// The incoming subobject and captured adjustment thunk are preserved by proceed.
-/// The caller establishes the signature, table format, bounds and schema. Native
-/// exceptions, nontrivial C++ values and construction/destruction dispatch need
-/// compiled adapters; direct/devirtualized calls bypass the table.
+/// Intercepts one absolute entry shared by all objects dispatching through this table. Parameters describe explicit C-compatible arguments, excluding this. The incoming subobject and captured adjustment thunk are preserved by proceed. The caller establishes the signature, table format, bounds and schema. Native exceptions, nontrivial C++ values and construction/destruction dispatch need compiled adapters; direct/devirtualized calls bypass the table.
 ///
-/// Callback, onFailure and releaseContext are required. A nonnull releaseContext
-/// transfers context on entry, including failure. If releaseStorage is nonnull,
-/// storageContext transfers too. A null releaseContext returns null taking neither.
-/// Other outcomes return an owned hook; inspect failure and partial mutation
-/// results before releasing it. Protected pages may reject installation.
+/// Callback, onFailure and releaseContext are required. A nonnull releaseContext transfers context on entry, including failure. If releaseStorage is nonnull, storageContext transfers too. A null releaseContext returns null without taking either context. Other outcomes return an owned hook; inspect failure and partial mutation results before releasing it. Protected pages may reject installation.
 ///
-/// Published callable entries, image leases and explicit storage keepalives are
-/// process-lived, including pass-through entries after invalidation. Callback
-/// captures release when their final active snapshot ends. Callback code and
-/// captured native resources must outlive their final invocation and release.
-/// Coordinate external
-/// writers and keep unowned table/generated code alive independently.
+/// Published entries, image leases, and explicit storage owners have process lifetime, including pass-through entries after invalidation. Callback captures are released after their final active snapshot. Callback code and native resources must survive their final invocation and release. Coordinate external writers; retain unowned tables and generated code independently.
 ABIVirtualHook *ABIInstallSharedVirtualHook(ABIVirtualEntryInfo entry,
     void *storageContext, ABIVirtualContextRelease releaseStorage,
     const ABIValueType *result, const ABIValueType *const *parameters, size_t count,
     void *context, ABIVirtualCallback callback, ABIVirtualFailureHandler onFailure,
     ABIVirtualContextRelease releaseContext);
 ABIVirtualHook *ABIRetainVirtualHook(ABIVirtualHook *hook);
-/// Idempotently removes this callback from future snapshots, without waiting,
-/// restoring the pointer, or overwriting an external writer's replacement.
+/// Idempotently removes this callback from future snapshots, without waiting, restoring the pointer, or overwriting an external writer's replacement.
 void ABIInvalidateVirtualHook(ABIVirtualHook *hook);
 /// Last-owner release invalidates the registration. Null is accepted.
 void ABIReleaseVirtualHook(ABIVirtualHook *hook);
@@ -53,9 +38,7 @@ int32_t ABIVirtualHookStatus(const ABIVirtualHook *hook);
 ABIPointerSlotResult ABIVirtualHookMutation(const ABIVirtualHook *hook);
 ABIPointerSlotResult ABIVirtualHookRollback(const ABIVirtualHook *hook);
 
-/// Invocation pointers and receiver/pointees are borrowed only on the incoming
-/// callback's thread. Never use them after callback return. A failed callback
-/// passes through with original arguments, or keeps its latest proceed result.
+/// Invocation pointers and receiver/pointees are borrowed only on the incoming callback's thread. Never use them after callback return. A failed callback passes through with original arguments, or keeps its latest proceed result.
 void *ABIVirtualInvocationReceiver(ABIVirtualInvocation *, ABIResolutionFailure **);
 /// Reads an explicit argument (index zero excludes this).
 bool ABIVirtualReadArgument(ABIVirtualInvocation *, size_t index, void *bytes, size_t size, ABIResolutionFailure **);

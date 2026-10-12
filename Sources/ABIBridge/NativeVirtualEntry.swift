@@ -1,8 +1,7 @@
 import ABIBridgeCore
 
 extension NativeVTable {
-    /// One selected absolute entry, retaining its bounded table and metadata image.
-    /// This describes a slot; capturing a callable reads its current contents.
+    /// One selected absolute entry, retaining its bounded table and metadata image. This describes a slot; capturing a callable reads its current contents.
     public struct Entry {
         /// The zero-based offset from this table's address point.
         public let index: Int
@@ -10,25 +9,19 @@ extension NativeVTable {
         public let authentication: NativePointerAuthentication
         /// The original method or adjustment-thunk symbol, when metadata is available.
         public let symbolName: String?
-        /// The source declaration used for named selection; nil for an explicit
-        /// adapter entry. This does not identify an already replaced live target.
+        /// The source declaration used for named selection; nil for an explicit adapter entry. This does not identify an already replaced live target.
         public let declaration: NativeDeclaration?
         let table: NativeVTable
         let image: NativeImage?
     }
 
-    /// Selects an entry by its qualified implementation declaration, including
-    /// argument types and qualifiers, such as `Example::Derived::value(int) const`.
+    /// Selects an entry by its qualified implementation declaration.
     ///
-    /// Reads the matching loaded image's original chained fixups and symbols.
-    /// Secondary/covariant thunks keep their slot identity and authentication.
-    /// Existing hooks do not affect selection. Repeated queries share the runtime's
-    /// retained table owner and normalized original declarations. Stripped identities, missing files, ambiguous aliases and
-    /// unsupported layouts require ``entry(at:authentication:)`` adapter metadata.
-    /// The table bounds and subobject were established when constructing this view;
-    /// neither class layouts nor method signatures are inferred from the name.
-    /// Known null slots in the original image do not prevent named selection.
-    /// A live zero does not establish a missing original entry's identity.
+    /// Include argument types and qualifiers, such as `Example::Derived::value(int) const`. Selection reads the loaded image's original fixups and symbols, preserving secondary and covariant-return thunk identity and authentication. Existing hooks do not change selection.
+    ///
+    /// Use ``entry(at:authentication:)`` adapter metadata for stripped identities, missing files, ambiguous aliases, or unsupported layouts. Construction of this view establishes table bounds and the subobject; the name does not establish class layout or a method signature.
+    ///
+    /// Known null slots in the original image can still be selected by name. A live zero alone cannot identify a missing original entry.
     public nonisolated func entry(
         named name: String, using runtime: ABIRuntime = .shared
     ) throws -> Entry {
@@ -41,9 +34,7 @@ extension NativeVTable {
         return Entry(index: result.index, authentication: result.authentication, symbolName: result.symbol, declaration: .init(name: name, language: .cxx), table: self, image: result.image)
     }
 
-    /// Selects a bounded slot using a target-specific native adapter's schema.
-    /// The caller establishes the absolute-table format and actual authentication
-    /// identity. This does not inspect the current target or infer a signature.
+    /// Selects a bounded slot using a target-specific native adapter's schema. The caller establishes the absolute-table format and actual authentication identity. This does not inspect the current target or infer a signature.
     @unsafe public func entry(at index: Int, authentication: NativePointerAuthentication) throws -> Entry {
         guard index >= 0, index < entryCount else {
             throw NativeDispatchError.entryOutOfBounds(index: index, count: entryCount)

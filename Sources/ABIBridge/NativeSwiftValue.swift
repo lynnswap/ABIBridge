@@ -13,9 +13,7 @@ public enum NativeSwiftValueError: Error, Sendable, Equatable {
 
 /// Owns an Escapable Swift value whose concrete type need not be available at compile time.
 ///
-/// Assignment shares this handle. Use copy() for an independent native value.
-/// Native code, metadata, and value witnesses remain retained through destruction.
-/// The value stays in the caller's isolation domain and is not Sendable.
+/// Assignment shares this handle. Use copy() for an independent native value. Native code, metadata, and value witnesses remain retained through destruction. The value stays in the caller's isolation domain and is not Sendable.
 public final class NativeSwiftValue {
     /// The actual runtime type and its retained implementation images.
     public let type: NativeSwiftType
@@ -31,8 +29,7 @@ public final class NativeSwiftValue {
         isCopyable = SwiftCopyability.accepts(type.metadata)
     }
 
-    /// Whether this handle has transferred its value to native code or take(as:).
-    /// The type and copyability remain available after consumption.
+    /// Whether this handle has transferred its value to native code or take(as:). The type and copyability remain available after consumption.
     public var isConsumed: Bool {
         valueOwner.isConsumed
     }
@@ -46,9 +43,7 @@ public final class NativeSwiftValue {
 
     /// Passes an Any copy to body while retaining its implementation images.
     ///
-    /// Standard Swift casts can inspect the copy's existing conformances. If
-    /// a value escapes body, keep this handle alive while that value may execute
-    /// dynamically loaded code, including during destruction.
+    /// Standard Swift casts can inspect the copy's existing conformances. If a value escapes body, keep this handle alive while that value may execute dynamically loaded code, including during destruction.
     public func withCopy<Result>(_ body: (Any) throws -> Result) throws -> Result {
         let source = try access(.borrowing)
         guard isCopyable else { throw NativeSwiftValueError.noncopyableType }
@@ -64,9 +59,7 @@ public final class NativeSwiftValue {
 
     /// Moves the exact native type into a typed Swift value, consuming this handle.
     ///
-    /// This also supports noncopyable Swift types. A type or access error leaves
-    /// the value owned by this handle. Keep its type handle alive while the
-    /// returned value may execute code from a dynamically loaded image.
+    /// This also supports noncopyable Swift types. A type or access error leaves the value owned by this handle. Keep its type handle alive while the returned value may execute code from a dynamically loaded image.
     public func take<Value: ~Copyable>(as valueType: Value.Type) throws -> Value {
         guard unsafeBitCast(valueType, to: UnsafeRawPointer.self)
                 == unsafeBitCast(type.metadata, to: UnsafeRawPointer.self) else {
@@ -81,10 +74,7 @@ public final class NativeSwiftValue {
 
     /// Borrows this value on the current thread until body returns.
     ///
-    /// The view expires at the end of this scope even if it is saved elsewhere.
-    /// A conflicting mutation or transfer fails while this borrow remains active.
-    /// An async member started during the scope retains its read access until
-    /// native completion, even after the view expires at the end of body.
+    /// The view expires at the end of this scope even if it is saved elsewhere. A conflicting mutation or transfer fails while this borrow remains active. An async member started during the scope retains its read access until native completion, even after the view expires at the end of body.
     public func withBorrowedValue<Result>(
         _ body: (NativeSwiftBorrowedValue) throws -> Result
     ) throws -> Result {

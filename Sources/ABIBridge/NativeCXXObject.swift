@@ -38,9 +38,7 @@ private final class CXXMethodBinding {
 
 /// A C++ receiver view and source-level type scope.
 ///
-/// The caller supplies a live object or correctly adjusted base-subobject view.
-/// This type does not infer object layout, inheritance, or construction state.
-/// It retains the storage owner and preserves the caller's isolation domain.
+/// The caller supplies a live object or correctly adjusted base-subobject view. This type does not infer object layout, inheritance, or construction state. It retains the storage owner and preserves the caller's isolation domain.
 public final class NativeCXXObject {
     /// The source-level qualified class name used for direct member lookup.
     public let typeName: String
@@ -61,9 +59,7 @@ public final class NativeCXXObject {
 
     /// Resolves a direct member implementation and binds this receiver.
     ///
-    /// Include parameter types and qualifiers in the relative declaration, such
-    /// as add(int) or current() const. Lookup reuses the runtime's owner indexes.
-    /// Use virtualMethod for a vtable-selected implementation.
+    /// Include parameter types and qualifiers in the relative declaration, such as add(int) or current() const. Lookup reuses the runtime's owner indexes. Use virtualMethod for a vtable-selected implementation.
     ///
     /// - Parameters:
     ///   - name: The member declaration relative to the class name.
@@ -89,9 +85,7 @@ public final class NativeCXXObject {
         return method.bind(to: storage)
     }
 
-    /// Captures a selected virtual entry and binds this receiver/subobject.
-    /// The entry retains its original adjustment thunk and authentication schema;
-    /// the caller must supply the corresponding live base-subobject view.
+    /// Captures a selected virtual entry and binds this receiver/subobject. The entry retains its original adjustment thunk and authentication schema; the caller must supply the corresponding live base-subobject view.
     @unsafe public func virtualMethod<Result, each Argument>(
         _ entry: NativeVTable.Entry,
         as signature: ((repeat each Argument) -> Result).Type,
@@ -105,9 +99,7 @@ public final class NativeCXXObject {
 
     /// Captures an absolute virtual-function entry and binds this receiver.
     ///
-    /// The slot, authentication schema, receiver adjustment, and C-compatible
-    /// signature must match the target ABI. Authentication failure can fault;
-    /// it is not a recoverable Swift error.
+    /// The slot, authentication schema, receiver adjustment, and C-compatible signature must match the target ABI. Authentication failure can fault; it is not a recoverable Swift error.
     ///
     /// - Parameters:
     ///   - index: A function-slot index within the declared table.
@@ -139,9 +131,7 @@ private func prepareCXXMethod<Result, each Argument>(
 
 /// A prepared direct or table-selected C++ implementation with an explicit receiver.
 ///
-/// Copies retain the selected implementation and adapter images, but no receiver
-/// binding. A selected virtual target keeps its original adjustment thunk and
-/// authentication; calls do not redispatch through the supplied receiver's table.
+/// Copies retain the selected implementation and adapter images, but no receiver binding. A selected virtual target keeps its original adjustment thunk and authentication; calls do not redispatch through the supplied receiver's table.
 public struct NativeCXXMethod<Result, each Argument> {
     private let target: CXXCallTarget
     private let adapter: ResolvedSymbol?
@@ -158,18 +148,14 @@ public struct NativeCXXMethod<Result, each Argument> {
 
     /// Retains receiver storage for repeated calls without preparing the method again.
     ///
-    /// The storage must describe the live object or adjusted subobject expected
-    /// by this captured entry point. Binding does not inspect C++ object layout.
+    /// The storage must describe the live object or adjusted subobject expected by this captured entry point. Binding does not inspect C++ object layout.
     public func bind(to receiver: NativeValue) -> NativeBoundCXXMethod<Result, repeat each Argument> {
         NativeBoundCXXMethod(method: self, receiver: receiver)
     }
 
     /// Calls the captured implementation on a live receiver or adjusted subobject.
     ///
-    /// Direct calls require C-compatible values. A compiled native adapter handles
-    /// nontrivial ownership and special result ABIs. Foreign exceptions must not
-    /// cross this boundary. Custom result wrappers retain the method and receiver;
-    /// raw pointer results remain borrowed. Honor the object's thread requirements.
+    /// Direct calls require C-compatible values. A compiled native adapter handles nontrivial ownership and special result ABIs. Foreign exceptions must not cross this boundary. Custom result wrappers retain the method and receiver; raw pointer results remain borrowed. Honor the object's thread requirements.
     @unsafe public func unsafeInvoke(on receiver: NativeValue, _ values: repeat each Argument) throws -> Result {
         let binding = CXXMethodBinding(receiver: receiver, method: self)
         return try unsafe invoke(on: receiver, retaining: binding, repeat each values)
@@ -204,8 +190,7 @@ public struct NativeCXXMethod<Result, each Argument> {
 
 /// A prepared C++ implementation bound to retained receiver storage.
 ///
-/// Custom ABIBridgeValue results retain this binding when their wrapper keeps the
-/// returned NativeValue. Raw pointer results remain borrowed. See <doc:CXXObjectInvocation>.
+/// Custom ABIBridgeValue results retain this binding when their wrapper keeps the returned NativeValue. Raw pointer results remain borrowed. See <doc:CXXObjectInvocation>.
 public struct NativeBoundCXXMethod<Result, each Argument> {
     /// The prepared implementation, independent of this receiver binding.
     public let method: NativeCXXMethod<Result, repeat each Argument>
@@ -218,8 +203,7 @@ public struct NativeBoundCXXMethod<Result, each Argument> {
 
     /// Calls the captured implementation using the retained receiver storage.
     ///
-    /// The signature, subobject, ownership, and thread requirements remain those
-    /// of the prepared method. Retention does not make the object thread-safe.
+    /// The signature, subobject, ownership, and thread requirements remain those of the prepared method. Retention does not make the object thread-safe.
     @unsafe public func unsafeInvoke(_ values: repeat each Argument) throws -> Result {
         try unsafe method.invoke(on: binding.receiver!, retaining: binding, repeat each values)
     }

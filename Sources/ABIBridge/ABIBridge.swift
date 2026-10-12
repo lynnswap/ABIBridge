@@ -16,8 +16,7 @@ public enum NativeLanguage: Sendable, Hashable {
 public enum NativeSymbolKind: Sendable, Hashable {
     /// Code in a section marked as containing instructions.
     case function
-    /// Non-instruction storage, excluding thread-local descriptors and templates.
-    /// This does not establish a value's layout.
+    /// Non-instruction storage, excluding thread-local descriptors and templates. This does not establish a value's layout.
     case data
     /// Constant data holding a C++ virtual table.
     case vtable
@@ -25,8 +24,7 @@ public enum NativeSymbolKind: Sendable, Hashable {
 
 /// Identifies one load of an image in the current process.
 ///
-/// A generation distinguishes an unloaded image from a later image at the same
-/// address. Constructing this value does not acquire a loader reference.
+/// A generation distinguishes an unloaded image from a later image at the same address. Constructing this value does not acquire a loader reference.
 public struct NativeImageIdentity: Sendable, Hashable {
     /// The address of the loaded Mach-O header.
     public let headerAddress: UInt64
@@ -56,8 +54,7 @@ public struct NativeImageIdentity: Sendable, Hashable {
 public enum NativeSymbolNameForm: Int32, Sendable, Hashable {
     /// A source-level declaration, interpreted using its language.
     case source = 0
-    /// An exact linker spelling, such as a mangled C++ or Swift name.
-    /// Mach-O's leading underscore is added exactly once without inspecting the name.
+    /// An exact linker spelling, such as a mangled C++ or Swift name. Mach-O's leading underscore is added exactly once without inspecting the name.
     case linker = 1
     /// An exact symbol-table spelling, including Mach-O's leading underscore.
     case machO = 2
@@ -65,11 +62,7 @@ public enum NativeSymbolNameForm: Int32, Sendable, Hashable {
 
 /// A name, representation, language, and storage requirement for symbol lookup.
 ///
-/// Prefer complete source-level declarations for C++ and Swift. Source lookup
-/// normalizes punctuation spacing while preserving identifier boundaries.
-/// Exact-name initializers bypass that normalization. A name alone does not
-/// determine calling convention or ownership. Equality and hashing preserve
-/// the name's UTF-8 bytes, even for canonically equivalent Unicode strings.
+/// Prefer complete source-level declarations for C++ and Swift. Source lookup normalizes punctuation spacing while preserving identifier boundaries. Exact-name initializers bypass that normalization. A name alone does not determine calling convention or ownership. Equality and hashing preserve the name's UTF-8 bytes, even for canonically equivalent Unicode strings.
 public struct NativeDeclaration: Sendable, Hashable {
     /// The name or complete declaration to match.
     public let name: String
@@ -96,8 +89,7 @@ public struct NativeDeclaration: Sendable, Hashable {
 
     /// Describes an exact linker spelling without demangling or normalization.
     ///
-    /// Use the source-level initializer for ordinary lookup. This escape hatch
-    /// distinguishes ABI variants with identical demangled declarations.
+    /// Use the source-level initializer for ordinary lookup. This escape hatch distinguishes ABI variants with identical demangled declarations.
     /// - Parameters:
     ///   - linkerName: The exact linker name; any existing underscore is preserved.
     ///   - language: The declaration's source language, retained as metadata.
@@ -139,8 +131,7 @@ public struct NativeDeclaration: Sendable, Hashable {
 
     /// Describes a C++ vtable using its qualified source-level type name.
     ///
-    /// The resolver supplies the descriptive symbol spelling. The resulting
-    /// address is the vtable symbol, not an inferred address point or first slot.
+    /// The resolver supplies the descriptive symbol spelling. The resulting address is the vtable symbol, not an inferred address point or first slot.
     /// - Parameter typeName: A qualified C++ type name, such as `Example::Renderer`.
     public init(vtableFor typeName: String) {
         self.init(name: "vtable for \(typeName)", language: .cxx, kind: .vtable)
@@ -149,8 +140,7 @@ public struct NativeDeclaration: Sendable, Hashable {
 
 /// The ownership contract associated with a native result.
 ///
-/// These labels describe a contract; they do not implement retain, copy, or
-/// destruction operations.
+/// These labels describe a contract; they do not implement retain, copy, or destruction operations.
 public enum NativeOwnership: Sendable, Hashable {
     /// Valid only within a lifetime established by another owner.
     case borrowed

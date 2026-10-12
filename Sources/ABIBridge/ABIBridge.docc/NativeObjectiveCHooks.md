@@ -1,12 +1,12 @@
 # Hooking Objective-C from native code
 
-Use the same managed dispatch entries and snapshots from C, C++, Objective-C++, and Swift.
+Register native callbacks on the managed hook chains shared with Swift.
 
 ## Include the native interface
 
 Link the `ABIBridge` product. Include `<ABIBridge/ObjectiveCHooks.h>` from C or `<ABIBridge/ObjectiveCHooks.hpp>` from C++20/Objective-C++. Neither interface requires a generated Swift header. Pure C/C++ uses the Objective-C runtime's opaque `Class`, `id`, and `SEL` types; Objective-C++ additionally uses compiler encodings for typed objects, blocks, and structures.
 
-These interfaces intercept Objective-C methods and initializers. They do not install hooks on native Swift functions, imported-symbol slots, or C++ vtables.
+For Swift functions, imported-symbol slots, or C++ vtables, choose the corresponding interface in <doc:HooksAndReplacements>.
 
 ## Install a C++ method hook
 
@@ -30,9 +30,9 @@ auto hook = abi_bridge::objc_method_hook<int32_t(int32_t)>(
 hook.invalidate();
 ```
 
-The invocation view exposes `receiver()` and `proceed(...)` for the current snapshot. It is noncopyable and nonmovable. Taking its address does not extend its lifetime. Use it only synchronously on the original callback thread; an escaped reference is invalid. Live cross-thread access reports `ABIFailureWrongThread`, but a dangling C/C++ pointer cannot be inspected safely to diagnose expiration.
+The noncopyable, nonmovable invocation view exposes `receiver()` and `proceed(...)`. Use it synchronously on the callback's original thread. Live cross-thread access reports `ABIFailureWrongThread`; a dangling pointer cannot safely diagnose expiry.
 
-Copies of `objc_hook_handle` share ownership. Invalidating one copy removes that registration for all copies. Releasing the last owning reference has the same logical effect; existing calls finish on their captured snapshot. `native_handle()` is borrowed, `retain()` acquires a C reference, and `adopt()` takes ownership of an existing reference. A moved-from or default handle is empty and can be tested, assigned, invalidated, or destroyed.
+Copies of `objc_hook_handle` share a registration. Invalidate any copy or release the last owner to remove it from future snapshots; active calls finish. `native_handle()` borrows, `retain()` acquires a C reference, and `adopt()` consumes one. Empty handles can be tested, assigned, invalidated, or destroyed.
 
 The C++ wrapper validates encodings and sizes before installation. Pure C++ supports scalar/pointer encodings automatically; specialize `abi_bridge::objc_hook_type<T>::encoding()` for a naturally laid-out C structure. The supplied type must be trivially copyable, and its actual size/alignment must agree with the encoding and target method. Objective-C++ uses `@encode(T)` and supports retainable Objective-C pointer types under ARC and MRC. Nontrivial values, packed structures, unions, arrays, bitfields, and extended scalar representations require separate adapters.
 
@@ -59,7 +59,9 @@ Argument object/block pointers are borrowed for the callback. Results read from 
 
 `objc_hook_options` supplies `class_method`, `requires_main_thread`, ownership overrides, zero-based `consumed_parameters`, an optional `object_filter`, and a `fallback_owner`. ARC options containing objects retain them for the options value's own lifetime; the installed object filter is weak. The fallback owner is retained independently when first publishing the dispatcher and is not replaced by later registrations.
 
-For an ordinary `objc_method_family(none)` method with an `init`- or `alloc`-like name, a +0 object result and borrowed self use `returns_retained = false` and `consumes_receiver = false`. The C frontend expresses the same overrides with `ABIObjCOwnershipBorrowed` for both ownership fields. The supplied contract must match the declaration's annotations. For parameters annotated `ns_consumed`, set `consumed_parameters = {0, ...}` in C++ or `consumedParameters` and `consumedParameterCount` in C. Installation copies the index array. The dispatcher releases incoming owned arguments when the call finishes, including skipped callbacks, and supplies a separate owned reference for each native continuation. Registrations sharing an entry must agree on these parameter annotations.
+For an ordinary `objc_method_family(none)` method named like `init` or `alloc`, describe +0 results and borrowed self with `returns_retained = false` and `consumes_receiver = false`. C uses `ABIObjCOwnershipBorrowed` for both fields. Match the declaration's annotations.
+
+For `ns_consumed` arguments, set zero-based `consumed_parameters = {0, ...}` in C++, or `consumedParameters` and `consumedParameterCount` in C. Installation copies the indexes. The dispatcher owns incoming references until completion and supplies a separate reference for each native continuation. Registrations sharing an entry must agree on this ownership.
 
 ## Initializer phases
 
@@ -86,13 +88,13 @@ Initialization proceeds automatically once. No phase exposes incoming self or a 
 
 An ordinary callback receives an `ABIObjCHookInvocation`. Use `ABIObjCHookReadArgument`, `ABIObjCHookProceed`, `ABIObjCHookReadResult`, and `ABIObjCHookSetResult`. Storage sizes must match the declaration. Proceed can reuse incoming arguments with null/zero or receive the complete explicit argument list in aligned storage. Setting a candidate result does not publish it until the callback returns true. Void results accept null/zero storage.
 
-A false callback result transfers an owned failure through its error output. Create it with `ABICreateResolutionFailure`; the bridge releases it after notifying `onFailure`. If no failure is supplied, the bridge reports a generic callback failure. The failure notification receives a borrowed immutable error. It must not throw or release that reference.
+Return false with an owned failure created by `ABICreateResolutionFailure` to report callback failure. Without one, the bridge reports a generic failure. `onFailure` borrows the immutable error; it must neither throw nor release it. The bridge releases the error after notification.
 
 If the callback fails before any downstream call completes, the dispatcher proceeds with the incoming arguments. If a downstream result exists, that result is preserved. A failing callback's candidate result is discarded. A successful ordinary callback that neither proceeds nor sets a result passes through; set a void result explicitly to skip a void method.
 
 Initializer before callbacks receive only an `ABIObjCInitializerArguments` view. Read explicit values and optionally replace individual arguments with `ABIObjCInitializerSetArgument`. Unchanged arguments retain their original native representation. Changed objects/blocks are retained/copied for continuation and discarded if preparation fails. After callbacks receive only the actual initialized object or nil, borrowed for that callback.
 
-A nonnull `releaseContext` transfers context ownership on entry, including installation failure. It runs exactly once after failure or after the registration's last in-flight snapshot releases it. A null release callback is rejected before taking ownership. Failure reporting during invocation is distinct from installation errors, which are returned to the installer. `onFailure` is required; before and after may be null. No registry lock is held while invoking or releasing user context.
+A nonnull `releaseContext` transfers context on entry, including failure, and runs once after installation failure or the last active snapshot. A null release callback is rejected without taking ownership. `onFailure` is required for invocation errors; installation errors return to the installer. Initializer before and after callbacks may be null. User callbacks and context release run outside registry locks.
 
 `ABIRetainObjCMethodHook` adds an owning reference. The last `ABIReleaseObjCMethodHook` invalidates; explicit invalidation is idempotent and nonblocking. Null retain/release/invalidate are accepted. `ABIObjCMethodHookStatus` remains readable after invalidation or external displacement and reports no active registration for null.
 
@@ -102,4 +104,4 @@ Swift, C, and C++ registrations join the same native chain. Later registrations 
 
 Callbacks run synchronously on the incoming thread. `requires_main_thread` reports a background entry and bypasses user callbacks before argument access; it does not dispatch work or establish arbitrary Swift actor isolation. C++ callback exceptions are converted to reported failures within the wrapper. Failure callbacks must be `noexcept`. Raw C callbacks, Objective-C exceptions, and exceptions from native implementations must not unwind across the call boundary.
 
-Runtime encodings cannot establish every ownership annotation, concrete object class, block/function-pointer signature, or pointee lifetime. Installation and invocation remain unsafe native operations whose declarations and lifetimes the caller must honor. Tests through the public product cover C11, pure C++, ARC/MRC Objective-C++, mixed Swift/native ordering, initializer ownership, copy/move/destruction, concurrent invalidation, and callback failure recovery.
+Match the declaration's ownership, object classes, block/function-pointer signatures, and pointee lifetimes. Runtime encodings cannot establish these parts of the unsafe contract. See <doc:Architectures> for execution evidence.

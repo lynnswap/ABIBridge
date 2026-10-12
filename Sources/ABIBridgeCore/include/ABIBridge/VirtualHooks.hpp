@@ -41,8 +41,7 @@ private:
 };
 
 template<class Signature> class virtual_hook_invocation;
-/// A borrowed continuation, usable only on the incoming callback thread before
-/// return. Explicit arguments exclude this; proceed preserves the subobject.
+/// A borrowed continuation, usable only on the incoming callback thread before return. Explicit arguments exclude this; proceed preserves the subobject.
 template<class R,class... A> class virtual_hook_invocation<R(A...)> {
 public:
     explicit virtual_hook_invocation(ABIVirtualInvocation *call):call_(call) {}
@@ -121,8 +120,7 @@ template<class R,class... A> struct virtual_installer<R(A...)> {
 };
 }
 
-/// A selected slot. Named selections retain original image metadata; explicit
-/// adapters provide ABIVirtualEntryInfo and any independent storage/code owner.
+/// A selected slot. Named selections retain original image metadata; explicit adapters provide ABIVirtualEntryInfo and any independent storage/code owner.
 class virtual_entry {
 public:
     explicit virtual_entry(ABIVirtualEntryInfo info,std::shared_ptr<const void> owner={}): info_(info), owner_(std::move(owner)) {}
@@ -134,9 +132,7 @@ public:
         return *this;
     }
     ABIVirtualEntryInfo native_info() const noexcept { return info_; }
-    /// The callback describes explicit C-compatible arguments only. It runs on
-    /// the incoming thread and affects every object dispatching through this
-    /// shared entry. Table/code keepalives remain process-lived after publication.
+    /// The callback describes explicit C-compatible arguments only. It runs on the incoming thread and affects every object dispatching through this shared entry. Table/code keepalives remain process-lived after publication.
     template<class Signature,class Body,class OnFailure>
     virtual_hook_handle hook_shared_calls(Body body,OnFailure onFailure) const {
         return detail::virtual_installer<Signature>::install(info_,owner_,std::move(body),std::move(onFailure));
@@ -149,20 +145,17 @@ private:
     std::shared_ptr<const void> owner_;
 };
 
-/// A borrowed absolute address point with caller-established function bounds.
-/// The view does not infer class layout or create per-object shadow tables.
+/// A borrowed absolute address point with caller-established function bounds. The view does not infer class layout or create per-object shadow tables.
 class virtual_table {
 public:
     virtual_table(const void *addressPoint,size_t count,std::shared_ptr<const void> owner={})
         :address_(addressPoint),count_(count),owner_(std::move(owner)) {}
-    /// Lets Clang authenticate the vptr for this exact static base-subobject type.
-    /// The caller supplies the accessible absolute entry count and a live object.
+    /// Lets Clang authenticate the vptr for this exact static base-subobject type. The caller supplies the accessible absolute entry count and a live object.
     template<class T> static virtual_table from(T& object,size_t count,std::shared_ptr<const void> owner={}) {
         static_assert(std::is_polymorphic_v<T>,"Use a live polymorphic subobject.");
         return virtual_table(__builtin_get_vtable_pointer(&object),count,std::move(owner));
     }
-    /// Selects the original implementation declaration, including qualifiers;
-    /// aliases/thunks follow the same rules as Swift NativeVTable.entry(named:).
+    /// Selects the original implementation declaration, including qualifiers; aliases/thunks follow the same rules as Swift NativeVTable.entry(named:).
     virtual_entry entry(const Runtime& runtime,const std::string& name) const {
         if(name.find('\0')!=std::string::npos) throw resolution_error(ABIFailureInvalidRequest,"Declaration contains a NUL.");
         ABIResolutionFailure *error=nullptr;

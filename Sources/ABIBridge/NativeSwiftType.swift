@@ -90,9 +90,7 @@ struct SwiftMetadataResponse: BitwiseCopyable, ABIBridgeValue {
 
 /// A concrete Swift type and its retained implementation images.
 ///
-/// Type lookup requests complete metadata without constructing an instance.
-/// Generic arguments are validated by the Swift runtime. Member lookups reuse
-/// the image's existing symbol index.
+/// Type lookup requests complete metadata without constructing an instance. Generic arguments are validated by the Swift runtime. Member lookups reuse the image's existing symbol index. See <doc:SwiftMemberInvocation> for lookup and invocation conventions.
 public actor NativeSwiftType: Hashable {
     /// Type handles compare by their concrete Swift metadata identity.
     public nonisolated static func == (lhs: NativeSwiftType, rhs: NativeSwiftType) -> Bool {
@@ -383,17 +381,11 @@ public actor NativeSwiftType: Hashable {
 
     /// Resolves a concrete instance implementation using a function-type metatype.
     ///
-    /// Search and preparation run on the caller's thread, joining required work
-    /// already in progress. No explicit `prepare` call is needed.
+    /// Search and preparation run synchronously on the caller's thread.
     ///
-    /// The signature excludes self. Mutating value members require an explicit
-    /// mutating flag because their source-level symbol does not encode it.
-    /// Consuming members similarly require consuming: true. Typed receivers
-    /// transfer a copy; NativeSwiftValue transfers its owned value. Borrowed
-    /// views permit nonmutating, nonconsuming access within their active scope.
-    /// For runtime-only self, receiverABI supplies established fixed components
-    /// or an opaque descriptor for formally indirect self. Metadata supplies
-    /// storage dimensions, not the declaration's passing convention.
+    /// The signature excludes self. Mutating value members require an explicit mutating flag because their source-level symbol does not encode it. Consuming members similarly require consuming: true. Typed receivers transfer a copy; NativeSwiftValue transfers its owned value. Borrowed views allow nonconsuming calls within their active scope; only native inout callback borrows permit mutation.
+    ///
+    /// For runtime-only self, receiverABI supplies established fixed components or an opaque descriptor for formally indirect self. Metadata supplies storage dimensions, not the declaration's passing convention.
     /// - Parameters:
     ///   - name: A relative member name or a complete qualified declaration.
     ///   - signature: Explicit arguments and result.
@@ -440,10 +432,8 @@ public actor NativeSwiftType: Hashable {
 
     /// Resolves and prepares a method without blocking the caller's executor.
     ///
-    /// An independent worker uses the synchronous API's indexes and call
-    /// interfaces, joining required preparation already in progress. Receiver
-    /// values remain with the caller; lookup does not invoke the native member.
-    /// - Returns: The same reusable handle as synchronous lookup.
+    /// Lookup and preparation run on a worker. Receivers remain with the caller, and lookup does not invoke the member.
+    /// - Returns: A reusable handle retaining its type and implementation.
     /// - Throws: The same lookup, representation, and preparation errors.
     public nonisolated func resolveMethod<Signature>(
         named name: String,
@@ -534,13 +524,9 @@ public actor NativeSwiftType: Hashable {
     }
     /// Resolves a concrete allocating initializer.
     ///
-    /// Search and preparation run on the caller's thread, joining required work
-    /// already in progress. No explicit `prepare` call is needed.
+    /// Search and preparation run synchronously on the caller's thread.
     ///
-    /// Ordinary initializer arguments transfer ownership to the callee. The
-    /// native metadata is supplied automatically, and the result uses the
-    /// requested Swift class or fixed-layout value adapter. NativeSwiftBorrowing
-    /// selects an explicitly borrowed initializer parameter.
+    /// Ordinary initializer arguments transfer ownership to the callee. The native metadata is supplied automatically, and the result uses the requested Swift class or fixed-layout value adapter. NativeSwiftBorrowing selects an explicitly borrowed initializer parameter.
     /// - Parameters:
     ///   - name: The relative initializer name, such as init(text:).
     ///   - signature: Explicit arguments and constructed result.
@@ -589,10 +575,8 @@ public actor NativeSwiftType: Hashable {
 
     /// Resolves and prepares an initializer without blocking the caller's executor.
     ///
-    /// An independent worker uses the synchronous API's indexes and call
-    /// interfaces, joining required preparation already in progress. No explicit
-    /// `prepare` call is needed, and lookup does not invoke the native body.
-    /// - Returns: The same reusable handle as synchronous lookup.
+    /// Lookup and preparation run on a worker; native invocation is a separate operation.
+    /// - Returns: A reusable handle retaining its type and implementation.
     /// - Throws: The same lookup, representation, and preparation errors.
     public nonisolated func resolveInitializer<Signature>(
         named name: String,
@@ -614,8 +598,7 @@ public actor NativeSwiftType: Hashable {
 
     /// Resolves a concrete static or class implementation.
     ///
-    /// Search and preparation run on the caller's thread, joining required work
-    /// already in progress. No explicit `prepare` call is needed.
+    /// Search and preparation run synchronously on the caller's thread.
     ///
     /// The declaring type's metadata is supplied as the Swift context.
     /// - Parameters:
@@ -651,10 +634,8 @@ public actor NativeSwiftType: Hashable {
 
     /// Resolves and prepares a static or class method without blocking the caller's executor.
     ///
-    /// An independent worker uses the synchronous API's indexes and call
-    /// interfaces, joining required preparation already in progress. No explicit
-    /// `prepare` call is needed, and lookup does not invoke the native body.
-    /// - Returns: The same reusable handle as synchronous lookup.
+    /// Lookup and preparation run on a worker; native invocation is a separate operation.
+    /// - Returns: A reusable handle retaining its type and implementation.
     /// - Throws: The same lookup, representation, and preparation errors.
     public nonisolated func resolveStaticMethod<Signature>(
         named name: String,
@@ -699,13 +680,9 @@ public actor NativeSwiftType: Hashable {
 
     /// Resolves a property setter that consumes its incoming value.
     ///
-    /// Search and preparation run on the caller's thread, joining required work
-    /// already in progress. No explicit `prepare` call is needed.
+    /// Search and preparation run synchronously on the caller's thread.
     ///
-    /// Class receivers are references. Ordinary value setters receive self
-    /// inout; consuming setters transfer a typed copy or NativeSwiftValue's owned
-    /// value. An explicitly nonmutating
-    /// setter can use mutating: false.
+    /// Class receivers are references. Ordinary value setters receive self inout; consuming setters transfer a typed copy or NativeSwiftValue's owned value. An explicitly nonmutating setter can use mutating: false.
     /// - Parameters:
     ///   - name: A property name or complete relative setter declaration.
     ///   - valueType: The incoming value representation.
@@ -752,10 +729,8 @@ public actor NativeSwiftType: Hashable {
 
     /// Resolves and prepares a property setter without blocking the caller's executor.
     ///
-    /// An independent worker uses the synchronous API's indexes and call
-    /// interfaces, joining required preparation already in progress. No explicit
-    /// `prepare` call is needed, and lookup does not invoke the native body.
-    /// - Returns: The same reusable handle as synchronous lookup.
+    /// Lookup and preparation run on a worker; native invocation is a separate operation.
+    /// - Returns: A reusable handle retaining its type and implementation.
     /// - Throws: The same lookup, representation, and preparation errors.
     public nonisolated func resolveSetter<Value>(
         named name: String,
@@ -781,8 +756,7 @@ public actor NativeSwiftType: Hashable {
 
     /// Resolves a static property setter that consumes its incoming value.
     ///
-    /// Search and preparation run on the caller's thread, joining required work
-    /// already in progress. No explicit `prepare` call is needed.
+    /// Search and preparation run synchronously on the caller's thread.
     ///
     /// - Parameters:
     ///   - name: A property name or complete relative setter declaration.
@@ -821,10 +795,8 @@ public actor NativeSwiftType: Hashable {
 
     /// Resolves and prepares a static property setter without blocking the caller's executor.
     ///
-    /// An independent worker uses the synchronous API's indexes and call
-    /// interfaces, joining required preparation already in progress. No explicit
-    /// `prepare` call is needed, and lookup does not invoke the native body.
-    /// - Returns: The same reusable handle as synchronous lookup.
+    /// Lookup and preparation run on a worker; native invocation is a separate operation.
+    /// - Returns: A reusable handle retaining its type and implementation.
     /// - Throws: The same lookup, representation, and preparation errors.
     public nonisolated func resolveStaticSetter<Value>(
         named name: String,
@@ -915,8 +887,7 @@ extension ABIRuntime {
 
     /// Resolves a concrete Swift class, struct, or enum and caches its metadata.
     ///
-    /// Search and preparation run on the caller's thread, joining required work
-    /// already in progress. No explicit `prepare` call is needed.
+    /// Search and preparation run synchronously on the caller's thread.
     ///
     /// - Parameters:
     ///   - name: A module-qualified nominal type name.
@@ -948,10 +919,8 @@ extension ABIRuntime {
 
     /// Resolves a Swift type without blocking the caller's executor.
     ///
-    /// Lookup, image acquisition, and metadata discovery run on an independent
-    /// worker using the synchronous API's cache and joining required index
-    /// preparation already in progress. No explicit `prepare` call is needed.
-    /// - Returns: The same reusable type handle as synchronous lookup.
+    /// Image acquisition, search, and metadata discovery run on a worker.
+    /// - Returns: A reusable type handle retaining its implementation images.
     /// - Throws: The same lookup and metadata errors.
     public nonisolated func resolveSwiftType(
         named name: String,
@@ -971,8 +940,7 @@ extension ABIRuntime {
 
     /// Resolves a concrete Swift type within an already retained image.
     ///
-    /// Search and preparation run on the caller's thread, joining required work
-    /// already in progress. No explicit `prepare` call is needed.
+    /// Search and preparation run synchronously on the caller's thread.
     ///
     /// - Parameters:
     ///   - name: A module-qualified nominal type name.
@@ -1004,10 +972,8 @@ extension ABIRuntime {
 
     /// Resolves a Swift type without blocking the caller's executor.
     ///
-    /// Lookup, image acquisition, and metadata discovery run on an independent
-    /// worker using the synchronous API's cache and joining required index
-    /// preparation already in progress. No explicit `prepare` call is needed.
-    /// - Returns: The same reusable type handle as synchronous lookup.
+    /// Image acquisition, search, and metadata discovery run on a worker.
+    /// - Returns: A reusable type handle retaining its implementation images.
     /// - Throws: The same lookup and metadata errors.
     public nonisolated func resolveSwiftType(
         named name: String,
@@ -1027,12 +993,9 @@ extension ABIRuntime {
 
     /// Resolves a Swift type with an explicit receiver representation.
     ///
-    /// Search and preparation run on the caller's thread, joining required work
-    /// already in progress. No explicit `prepare` call is needed.
+    /// Search and preparation run synchronously on the caller's thread.
     ///
-    /// Use an ABIBridgeValue adapter when the native type cannot be imported.
-    /// The representation describes fixed storage and ownership; it does not
-    /// establish ABI compatibility with a resilient or generic declaration.
+    /// Use an ABIBridgeValue adapter when the native type cannot be imported. The representation describes fixed storage and ownership; it does not establish ABI compatibility with a resilient or generic declaration.
     /// - Parameters:
     ///   - name: The qualified native type name.
     ///   - representation: A Swift type or adapter for receiver values.
@@ -1065,10 +1028,8 @@ extension ABIRuntime {
 
     /// Resolves a Swift type without blocking the caller's executor.
     ///
-    /// Lookup, image acquisition, and metadata discovery run on an independent
-    /// worker using the synchronous API's cache and joining required index
-    /// preparation already in progress. No explicit `prepare` call is needed.
-    /// - Returns: The same reusable type handle as synchronous lookup.
+    /// Image acquisition, search, and metadata discovery run on a worker.
+    /// - Returns: A reusable type handle retaining its implementation images.
     /// - Throws: The same lookup and metadata errors.
     public nonisolated func resolveSwiftType<Representation>(
         named name: String,
@@ -1090,8 +1051,7 @@ extension ABIRuntime {
 
     /// Resolves a Swift type and receiver adapter within a retained image.
     ///
-    /// Search and preparation run on the caller's thread, joining required work
-    /// already in progress. No explicit `prepare` call is needed.
+    /// Search and preparation run synchronously on the caller's thread.
     ///
     /// - Parameters:
     ///   - name: The qualified native type name.
@@ -1125,10 +1085,8 @@ extension ABIRuntime {
 
     /// Resolves a Swift type without blocking the caller's executor.
     ///
-    /// Lookup, image acquisition, and metadata discovery run on an independent
-    /// worker using the synchronous API's cache and joining required index
-    /// preparation already in progress. No explicit `prepare` call is needed.
-    /// - Returns: The same reusable type handle as synchronous lookup.
+    /// Image acquisition, search, and metadata discovery run on a worker.
+    /// - Returns: A reusable type handle retaining its implementation images.
     /// - Throws: The same lookup and metadata errors.
     public nonisolated func resolveSwiftType<Representation>(
         named name: String,
@@ -1207,18 +1165,11 @@ extension ABIRuntime {
 extension NativeSwiftType {
     /// Resolves a property getter using its complete zero-argument function type.
     ///
-    /// Search and preparation run on the caller's thread, joining required work
-    /// already in progress. No explicit `prepare` call is needed.
+    /// Search and preparation run synchronously on the caller's thread.
     ///
-    /// Use (() -> Value).self for a synchronous nonthrowing getter. Include its
-    /// native throws type, async effect, and isolation convention when present.
-    /// For a throwing generic getter, declaredAs supplies the source function
-    /// type, such as "() throws(B) -> A". Getter symbols omit the formal error
-    /// type; A and B refer to the enclosing declaration's generic parameters.
-    /// valueABIs supplies formal ABIs for runtime-only closed nominal values.
-    /// Receiver ownership and writeback follow the ordinary member contract.
-    /// receiverABI can describe runtime-only fixed components or formally
-    /// indirect self, as for method lookup.
+    /// Use (() -> Value).self for a synchronous nonthrowing getter. Include its native throws type, async effect, and isolation convention when present.
+    ///
+    /// For a throwing generic getter, declaredAs supplies the source function type, such as "() throws(B) -> A". Getter symbols omit the formal error type; A and B refer to the enclosing declaration's generic parameters. valueABIs supplies formal ABIs for runtime-only closed nominal values. Receiver ownership and writeback follow the ordinary member contract. receiverABI can describe runtime-only fixed components or formally indirect self, as for method lookup.
     public nonisolated func resolveGetterAndWait<Signature>(
         named name: String,
         as signature: Signature.Type,
@@ -1256,10 +1207,8 @@ extension NativeSwiftType {
 
     /// Resolves and prepares a getter without blocking the caller's executor.
     ///
-    /// An independent worker uses the synchronous API's indexes and call
-    /// interfaces, joining required preparation already in progress. Receiver
-    /// values remain with the caller; lookup does not invoke the native member.
-    /// - Returns: The same reusable handle as synchronous lookup.
+    /// Lookup and preparation run on a worker. Receivers remain with the caller, and lookup does not invoke the member.
+    /// - Returns: A reusable handle retaining its type and implementation.
     /// - Throws: The same lookup, representation, and preparation errors.
     public nonisolated func resolveGetter<Signature>(
         named name: String,
@@ -1285,11 +1234,7 @@ extension NativeSwiftType {
 
     /// Resolves a static getter using its complete zero-argument function type.
     ///
-    /// Search and preparation run on the caller's thread, joining required work
-    /// already in progress. No explicit `prepare` call is needed.
-    /// Native error, async, and isolation effects remain part of the signature.
-    /// Throwing generic getters also require their source type in declaredAs.
-    /// valueABIs supplies formal ABIs for runtime-only closed nominal values.
+    /// Search and preparation run synchronously on the caller's thread. Native error, async, and isolation effects remain part of the signature. Throwing generic getters also require their source type in declaredAs. valueABIs supplies formal ABIs for runtime-only closed nominal values.
     public nonisolated func resolveStaticGetterAndWait<Signature>(
         named name: String,
         as signature: Signature.Type,
@@ -1317,10 +1262,8 @@ extension NativeSwiftType {
 
     /// Resolves and prepares a static or class property getter without blocking the caller's executor.
     ///
-    /// An independent worker uses the synchronous API's indexes and call
-    /// interfaces, joining required preparation already in progress. No explicit
-    /// `prepare` call is needed, and lookup does not invoke the native body.
-    /// - Returns: The same reusable handle as synchronous lookup.
+    /// Lookup and preparation run on a worker; native invocation is a separate operation.
+    /// - Returns: A reusable handle retaining its type and implementation.
     /// - Throws: The same lookup, representation, and preparation errors.
     public nonisolated func resolveStaticGetter<Signature>(
         named name: String,

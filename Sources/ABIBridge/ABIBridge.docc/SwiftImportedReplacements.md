@@ -26,7 +26,7 @@ try unsafe plan.install()
 try plan.restore()
 ```
 
-Preparation reads and retains the selected loaded importing images and captures their current code pointers. It changes no dispatch. Each slot's `original` calls that captured entry using the supplied Swift ABI; it can differ from the directly resolved `original` handle if another writer already interposed the slot. A null weak reference has a nil captured implementation.
+Preparation retains the selected loaded importers and captures their pointers without changing dispatch. Each slot's `original` calls its captured entry with the supplied ABI. An earlier interposer can make that entry differ from the directly resolved function; a null weak reference yields nil.
 
 Calls may enter the new implementation as soon as the first pointer is written. Prepare and synchronize replacement-owned state before installation. ABIBridge synchronizes its own operations, not globals accessed by the compiled replacement. Multiple pointers cannot be published atomically as a group.
 
@@ -50,14 +50,16 @@ Swift 6.3.3 Debug code generation can over-release a reference receiver when opt
 
 ## Restore and inspect partial effects
 
-Keep the plan to call `restore()` explicitly. Releasing it does not undo dispatch changes or run hidden cleanup that could fail. Preparation is reversible without any restoration because it publishes nothing.
+Keep the plan and call `restore()` explicitly. Releasing it leaves dispatch changes in place. A plan that has only been prepared needs no restoration.
 
-An installation failure attempts to restore earlier writes. `NativeSwiftReplacementError` identifies the failed publication and any failed rollback indexes. Inspect `slots` for the original mutation, restoration and protection-recovery results. A pointer write and its page-protection restoration can have different outcomes. Outstanding restoration and failed protection recovery can be retried; successful pointer restoration alone is not reported as complete when protection repair remains.
+Installation failure attempts to restore earlier writes. ``NativeSwiftReplacementError`` identifies the failed publication and rollback indexes. Inspect `slots` for pointer mutation, restoration, and protection recovery. Retry outstanding recovery; restoration is incomplete while page-protection repair remains.
 
 Restoration compares the current representation before writing, leaving another writer's different pointer unchanged. A reference already restored to the captured bits needs no additional pointer write. Coordinate other writers and page-protection changes; raw pointer comparisons cannot detect ABA changes. TPRO-protected references may reject installation without any write, even when their maximum protection includes WRITE.
 
-Published replacement code images and captured predecessor code images remain pinned for process lifetime, including after restoration and plan release, so saved code pointers remain callable. Known image generations are shared by that keepalive. Code outside loader images needs the optional `retaining` owner, or a lifetime maintained by the caller; additional owners supplied for published code have the same process lifetime. Arbitrary mutable state used by those implementations remains the caller's responsibility.
+Published replacement and predecessor images remain pinned for process lifetime, including after restoration, so saved pointers remain callable. For code outside loader images, supply `retaining` or maintain its lifetime yourself. Supplied owners also become process-lived. The caller still manages mutable state accessed by those implementations.
 
-## Validation boundary
+## Verification and dispatch limits
 
-Optimized fixtures cover scalar, heap-backed String, indirect value results and concrete struct member context. The caller and replacement are compiled separately. An iPhone Air / iOS 27.0 / arm64e run passed these same cases with authenticated calls in separately compiled, signed fixture frameworks. The normally linked caller reported TPRO refusal without mutation; the disposable `-no_data_const` caller completed replacement and restoration. That option belongs only to the validation fixture, not package or consumer settings. arm64e.x1 runtime behavior remains unverified. Generic, async, throwing and unsupported value signatures retain the invocation API's existing limitations. Previously captured instrumented `dynamic` entries can still consult compiler dynamic-replacement machinery; capturing their pointer does not bypass that instrumentation.
+Separately compiled fixtures check scalar, String, indirect-result, and value-member calls. Protected normal imports can reject mutation; writable controls separately check replacement and restoration. Device configurations are recorded in the [architecture validation guide](https://github.com/lynnswap/ABIBridge/blob/main/Tests/ArchitectureValidation/README.md). arm64e.x1 execution remains unverified, and signatures retain the invocation API's representation limits.
+
+Captured compiler-instrumented `dynamic` entries may still consult Swift's dynamic-replacement machinery. Capturing their pointer does not bypass that instrumentation.

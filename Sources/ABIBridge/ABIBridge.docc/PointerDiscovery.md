@@ -19,7 +19,7 @@ if let candidate = result.uniqueCandidate {
 }
 ```
 
-The default layout visits native-width absolute pointer slots at pointer-sized intervals. Use ``NativePointerSearchOptions/firstOffset``, ``NativePointerSearchOptions/stride``, and ``NativePointerSearchOptions/alignment`` for another layout, including packed slots with alignment 1. The first slot address must satisfy the declared alignment and stride must be a multiple of it. Trailing bytes shorter than a complete slot are not visited.
+By default, the search visits native-width absolute pointers at pointer-sized intervals. Adjust ``NativePointerSearchOptions/firstOffset``, ``NativePointerSearchOptions/stride``, and ``NativePointerSearchOptions/alignment`` for other layouts, including packed slots with alignment 1. Align the first slot and make stride a multiple of alignment. Trailing incomplete slots are skipped.
 
 The pointee's absolute vptr may be at a nonzero ``NativePointerSearchOptions/vptrOffset``. A match identifies the referenced address, without adjusting it to a base subobject or proving its construction state.
 
@@ -29,7 +29,7 @@ The pointee's absolute vptr may be at a nonzero ``NativePointerSearchOptions/vpt
 
 Every slot and vptr read uses the recoverable memory reader. Null references are skipped. Other unreadable references are recorded in ``NativePointerSearchResult/failures``, and scanning continues. A range-overflow failure has no OS error; when adding the vptr offset overflows, its recorded address is the candidate base.
 
-An exhaustive scan with no read failures is complete. With zero distinct candidates, it observed no matches. With one, ``NativePointerSearchResult/uniqueCandidate`` returns the first alias. With multiple candidates, it returns nil. An incomplete scan also returns nil, even if the readable portion contained just one target. Callers can inspect the evidence and apply a different explicit selection policy.
+``NativePointerSearchResult/uniqueCandidate`` returns the first alias only after a complete scan finds exactly one distinct target. No match, multiple targets, or any read failure yields nil. Inspect `candidates` and `failures` if your selection policy accepts incomplete evidence.
 
 Completeness covers the eligible slots under the supplied layout. Reads are not atomic and do not establish a stable object graph. Callers supply synchronization and keep both the enclosing allocation and pointees alive.
 
@@ -49,7 +49,7 @@ if let candidate = result.candidates.first {
 
 Every search re-reads the hinted slot and its pointee. A stale nonmatching hint falls back to the remaining eligible slots; an unreadable hint is retained as a failure. Off-grid or out-of-range hints are ignored. A matching hint short-circuits only the first-match policy, which always reports an incomplete result after finding a match and never claims uniqueness.
 
-With the default exhaustive policy, a hint does not avoid scanning other slots or hide ambiguity. Hints are caller-owned values, with no global cache. Scope them to a live enclosing region, slot layout, and target image/vtable identity; discard them when those change, including allocation replacement or image reload. A still-matching hint cannot detect a new competing target when first-match policy is used.
+The default exhaustive policy still scans other slots to detect ambiguity. Keep hints scoped to the live region, slot layout, and target image/vtable identity; discard them after allocation replacement or image reload. Under first-match policy, a matching hint cannot reveal a new competing target.
 
 ## Revalidate only the cached slot
 
@@ -64,7 +64,7 @@ if candidate == nil {
 
 The single-slot operation returns nil for a null reference or a readable unequal vptr. It throws ``NativePointerSearchFailure`` if the slot or its pointee cannot be read, preserving the stage, attempted address, copied byte count, and system error. Handle that failure explicitly if the consumer's policy permits falling back to a full search.
 
-The explicit offset may be unaligned, but a full-width slot must fit within the region. Invalid bounds and unavailable normalization throw ``NativePointerSearchError``. A successful candidate retains the region's owner and makes no uniqueness claim about other slots. Scope cached offsets to the same live region, layout, and target identity, as with search hints.
+The offset may be unaligned, but the full-width slot must fit. Invalid bounds or unavailable normalization throw ``NativePointerSearchError``. A match retains the region owner without establishing uniqueness. Scope cached offsets as you would search hints.
 
 C++ uses `inspect_pointer(region, offset, addressPoint, vptrOffset, normalization)`, returning `std::optional<pointer_candidate>`. A readable nonmatch returns `std::nullopt`; a read failure throws `pointer_read_error`, whose `failure()` preserves the C evidence. Setup failures throw `pointer_search_error`.
 
@@ -78,7 +78,7 @@ Use `normalization: .none` when the operation requires unchanged pointer bits. C
 
 ``NativePointerNormalization/stripDataSignature`` removes data-address signatures for recoverable inspection and comparison. It also works in a plain arm64 caller inspecting arm64e data, using a CPU capability check rather than relying on intrinsics that become no-ops outside the authenticated ABI. Unsupported CPUs report ``NativePointerSearchError/normalizationUnavailable``.
 
-Neither automatic normalization nor explicit stripping verifies a signature. Both valid and invalid signatures can produce matching evidence. They do not remove arbitrary pointer tags, authenticate a vptr, or turn a stripped address into an authenticated function pointer. See [Clang's pointer-authentication model](https://clang.llvm.org/docs/PointerAuthentication.html#basic-concepts).
+Normalization and stripping can match both valid and invalid signatures. They provide comparison evidence without authentication or removal of arbitrary tags. Dispatch still needs the original storage and schema, as described in [Clang's pointer-authentication model](https://clang.llvm.org/docs/PointerAuthentication.html#basic-concepts).
 
 Each candidate preserves ``NativePointerCandidate/pointerBits``, ``NativePointerCandidate/slotAddress``, ``NativePointerCandidate/vptrBits``, and ``NativePointerCandidate/vptrAddress``. Use the original storage and a caller-supplied authentication schema for authenticated dispatch. Do not copy address-diversified signed bits to new storage and authenticate them using that new address.
 
@@ -121,4 +121,4 @@ C callers initialize `ABIPointerSearchOptions` with `ABIDefaultPointerSearchOpti
 
 ## Validation scope
 
-Synthetic C++ objects verify shifted fields, stale hints, aliases, competing targets, unreadable memory, packed slots, nonzero vptr offsets, and retained owners. Swift tests pass discovered receivers into existing invocation APIs. Plain arm64 macOS tests exercise PAC-bearing data generated with native signing instructions, including comparison of altered signatures. SDK builds cover other supported Apple platforms and arm64e compilation; authenticated dispatch on physical devices remains separately unverified.
+Synthetic tests cover layouts, hint reuse, ambiguity, unreadable memory, and ownership, then pass discovered receivers to invocation APIs. macOS arm64 tests compare PAC-bearing data, including altered signatures. Device fixtures cover bounded discovery in tagged allocations; see <doc:Architectures> for authenticated-call evidence and its limits.

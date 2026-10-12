@@ -1,6 +1,6 @@
 # Calling Swift functions with opaque results
 
-Use NativeSwiftValue for a native declaration returning `some P`. The bridge obtains complete underlying metadata from the matched declaration's opaque descriptor. Its class constraints select a direct object result or indirect storage; the metadata supplies the actual storage size and alignment.
+Use ``NativeSwiftValue`` for a native declaration returning `some P`. The matched declaration's opaque descriptor supplies the hidden type and its result convention; runtime metadata supplies storage size and alignment.
 
 For a loaded module declaring `func makeSummary(_ title: String) -> some Summary`:
 
@@ -34,19 +34,19 @@ Opaque descriptors receive the enclosing type and function bindings, including e
 
 ## Values and lifetime
 
-The result handle owns initialized storage for the hidden concrete value. Assigning the handle shares that owner; copy() creates an independent native copy when the actual type is copyable. The native value is destroyed once after its final owner releases it, or transferred by take(as:), while its implementation images remain alive.
+The handle owns the initialized native value and retains its implementation images through destruction. Assignment shares that owner. `copy()` creates an independent value when the payload is Copyable, and `take(as:)` transfers an exact known type, including a noncopyable type. A type mismatch leaves the original value owned.
 
-The type property exposes a retained NativeSwiftType, including the underlying type name. It does not make distinct opaque declarations interchangeable in Swift's type system.
+The `type` property exposes a retained ``NativeSwiftType`` and its source name. Distinct opaque declarations keep their Swift type identities.
 
-Native copies follow Swift's normal copy semantics, including shared references inside a value. Runtime values that interact in a call share their retained code dependencies so later reference or inout updates remain usable, even when the native operation throws. Those images can remain loaded until all related value and type handles are released; this retention does not extend a borrowed view's scope or keep a consumed payload alive.
+Copies follow Swift semantics, including shared references. Values interacting in a call share their code dependencies so later reference or inout updates remain usable, even after a native error. Related value/type handles can keep those images loaded. Borrow expiry and consumed ownership remain unchanged.
 
 Callbacks passed alongside runtime values share those code dependencies. A callback restores that relationship when native code invokes it later, including across async suspension. Native calls made from its body contribute their implementation images even when their arguments use ordinary Swift types.
 
-The withCopy body receives an ordinary Any copy and retains its implementation images throughout the body. Copying a noncopyable value throws NativeSwiftValueError.noncopyableType. Standard casts can open existing protocol conformances or recognize a known underlying type. The hidden payload needs no ABIBridgeSwiftValue conformance or caller-invented fixed layout. The handle is deliberately not Sendable because its hidden value may carry actor or thread requirements.
+`withCopy` supplies an ordinary `Any` copy for casts to known types or existing protocol conformances. Copying a noncopyable value throws `NativeSwiftValueError.noncopyableType`. The hidden type needs no ``ABIBridgeSwiftValue`` conformance. Its actor or thread requirements still apply, so the handle is not Sendable.
 
-Keep the handle alive if a value or metatype escapes withCopy and will later execute native code, including during destruction. Indirect native resources and code dependencies retain their original lifetime requirements. A scoped body that extracts an independent String or number is a convenient consumption path.
+If a value or metatype escapes `withCopy`, keep the handle alive while it can execute native code, including destruction. After `take(as:)`, keep the type handle for that purpose. Indirect resources keep their original lifetime requirements. Extracting an independent String or number within the scope avoids carrying the native value onward.
 
-Use withBorrowedValue for scoped access without copying. A saved borrowed view expires when the body returns. take(as:) moves an exact known type, including a noncopyable type, and leaves the handle consumed; a type mismatch preserves the original value. Conflicting access during an active native operation throws NativeSwiftValueError.valueInUse.
+Use `withBorrowedValue` for access without copying. The view expires at body completion; see <doc:BorrowedSwiftValues>. Conflicting access during a native operation throws `NativeSwiftValueError.valueInUse`.
 
 Only native success adopts the output storage. Native errors and cooperative cancellation preserve the existing NativeSwiftError behavior without destroying an uninitialized result. Async storage and descriptors remain alive until the operation completes.
 
@@ -69,7 +69,7 @@ print(try unsafe read.unsafeInvoke(on: result))
 
 The opaque descriptor describes the factory's result convention, not every underlying member's self convention. Supply receiverABI when that convention is unavailable from the type's representation or generic declaration. Fixed components use the same NativeType contract as ABIBridgeSwiftValue; an opaque descriptor selects formally indirect self. Class receivers use their reference representation without an override.
 
-Consuming members prepared with `consuming: true` transfer the owner's native value, including noncopyable payloads. The same handle accepts an active borrowed view for nonmutating, nonconsuming members. NativeSwiftBorrowedMethod, borrowedMethod and borrowedGetter are replaced by these ordinary handles; getter signatures now use the complete zero-argument function type.
+Members prepared with `consuming: true` transfer the owned payload, including noncopyable values. Active borrowed views support nonconsuming members, with mutation allowed only by their borrow contract. Getter signatures use a complete zero-argument function type. For earlier borrowed-member APIs, see <doc:SwiftAPIMigration>.
 
 ## Pass values through generic calls
 
@@ -85,23 +85,25 @@ let moved = try unsafe move.unsafeInvoke(NativeSwiftConsuming(result))
 // result.isConsumed is true; moved owns the same native payload.
 ```
 
-An ordinary runtime argument borrows its value. NativeSwiftConsuming transfers the existing owned payload; it does not make a native copy. NativeSwiftInout retains the same owner and grants exclusive access to its storage. A later argument conversion failure preserves all runtime owners because native execution has not begun. Once execution begins, a consuming argument transfers on both success and native failure. The bridge checks native type compatibility and conflicting access before entering native code.
+An ordinary runtime argument borrows its value. ``NativeSwiftConsuming`` transfers the existing payload without copying; ``NativeSwiftInout`` grants exclusive access to the same owner's storage. Type compatibility and conflicting access are checked before entry.
+
+Conversion failure before entry preserves runtime owners. Once native execution begins, consuming arguments transfer on both success and failure. See <doc:SwiftArgumentConventions> for writeback.
 
 Borrowed and consuming class arguments allow a subclass to be passed to its superclass or AnyObject. Inout arguments require the exact storage type because the callee can replace the reference with a different instance of the declared type.
 
 These conventions also apply through async suspension. An async call started with an owned-value borrow retains its read access through completion, even when the borrowed view's scope has ended. Generic results initialize the same owned storage used by opaque results. Generic bindings enforce both Copyable and Escapable requirements. A noncopyable or nonescapable type can bind only where the declaration suppresses the corresponding requirement with `~Copyable` or `~Escapable`.
 
-## Why an existential result is different
+## Opaque and existential results
 
-A function returning `some P` does not directly initialize an `any P` or Any container. Class-constrained opaque contracts return an owned object pointer. Unconstrained contracts use indirect storage, including hidden integers, empty tuples, and class instances. The bridge first receives the actual concrete value, then lets the compiler build the Any copy inside withCopy. See <doc:SwiftExistentialValues> for declarations that themselves accept or return existential containers.
+A `some P` result contains the actual hidden value. Class constraints select an owned object pointer; otherwise the result is indirect, even for a hidden integer or class instance. `withCopy` then lets Swift build an `Any` container. Declarations returning `any P` already use an existential container and follow <doc:SwiftExistentialValues>.
 
 ## Scope
 
 Owned opaque results must be Escapable. Their generic bindings and nested tuple or closure positions are resolved from the matched declaration. Copyability comes from the concrete metadata; `some ~Copyable` results use the same owned storage and can be moved without Any erasure. Nonescapable results use the scoped body described below. Opaque callback results and managed hook bodies require separate contracts; this owned-result API does not extend their lifetime.
 
-This does not synthesize protocol witnesses. Existing View conformance can be opened and erased with AnyView while retaining the result owner; see <doc:SwiftUIInteroperability>. Use the native protocol API or an explicitly compiled adapter for other operations.
+Existing View conformance can be opened through the owned wrapper in <doc:SwiftUIInteroperability>. Other operations need the native protocol API or a compiled adapter; the bridge does not synthesize witnesses.
 
-Compiler controls compare provider descriptors and independently compiled caller signatures on arm64, x86_64, arm64e, and arm64_32. The runtime operation follows Swift's [opaque descriptor layout](https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/ABI/Metadata.h), [generic requirements](https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/ABI/GenericContext.h), and [opaque metadata accessor ABI](https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/Runtime/RuntimeFunctions.def). Runtime execution is verified separately from cross-compilation.
+Compiler controls compare provider descriptors with independently compiled callers. The operation follows Swift's [opaque descriptor layout](https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/ABI/Metadata.h), [generic requirements](https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/ABI/GenericContext.h), and [metadata accessor ABI](https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/Runtime/RuntimeFunctions.def). Runtime execution is recorded separately in the [architecture validation guide](https://github.com/lynnswap/ABIBridge/blob/main/Tests/ArchitectureValidation/README.md).
 
 ## Scoped nonescapable results
 
@@ -119,6 +121,8 @@ let number = try unsafe make.unsafeInvoke(owner, withResult: { view in
 
 Prepare member handles such as `read` before entering a synchronous body. They use the existing receiver ABI contract; a resilient value receiver can require an explicit opaque `receiverABI`. The same `withResult:` form is available on member and bound-method handles. Async signatures accept an async body and keep the result valid through its suspension.
 
-The invocation retains argument and receiver access through the body. When the body returns or throws, the borrowed view expires, the native result is destroyed, and argument/receiver writeback completes. Saving the handle preserves readable type information but does not preserve access to its former storage. The body can return a noncopyable Escapable value; it cannot return the native nonescapable payload as an owned handle or `Any`. Calling the ordinary result-returning overload with this marker fails before native invocation.
+Invocation retains argument and receiver access through the body. On return or throw, the view expires, the result is destroyed, and writeback completes. Saving the view preserves type information only.
+
+The body can return a noncopyable Escapable value, but cannot return the native nonescapable payload as an owned handle or `Any`. Using this result marker with the ordinary result-returning overload fails before native entry.
 
 Native and body errors remain available. If writeback also fails, `NativeSwiftWritebackError` includes the invocation/body error and the writeback error. Native failure does not run the result body or adopt uninitialized result storage.

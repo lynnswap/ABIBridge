@@ -20,7 +20,7 @@ let process = try await ABIRuntime.shared.resolveSwiftFunction(
 let result = try unsafe await process.unsafeInvoke("input")
 ```
 
-Explicit annotations keep the call convention independent of the caller target's feature flags. Plain async function types follow that target's NonisolatedNonsendingByDefault setting. Use `@concurrent` when the selected native entry has no hidden isolation payload. The complete signature selects this convention; there is no separate `inheritsCallerIsolation:` override.
+Explicit annotations keep the convention independent of the consumer's feature flags. Plain async function types follow its `NonisolatedNonsendingByDefault` setting. Use `@concurrent` when the native entry has no hidden caller-isolation payload.
 
 ## Members, values, and errors
 
@@ -30,7 +30,7 @@ Arguments and results use the same supported Swift value representations as sync
 
 Untyped and concrete typed native failures are returned as ``NativeSwiftError``, which keeps its error and code owners alive. Bridge lookup and conversion failures retain their original types. The bridge runs on the caller's Swift task, preserves task-local and cancellation state, and returns to the caller's executor. Cancellation remains cooperative: it does not abandon an active native context or release its values before completion.
 
-Async closure arguments and results use NativeSwiftClosure with an async function signature; see <doc:SwiftClosureValues>. Inout and per-argument ownership use the same typed wrappers as synchronous calls; see <doc:SwiftArgumentConventions>. Generic signatures with hidden metadata or witness arguments require a compiled adapter. Calls require a valid async descriptor. See <doc:SwiftFunctionInvocation> for value support and <doc:SwiftErrorABI> for error inspection.
+Async closures use ``NativeSwiftClosure`` with an async signature; see <doc:SwiftClosureValues>. Argument ownership follows <doc:SwiftArgumentConventions>. Bind hidden generic metadata and witnesses with `genericArguments:` as described in <doc:GenericSwiftValues>. A native call also requires a valid async descriptor.
 
 Opaque some results can use NativeSwiftValue in the async signature. Their dynamic storage is adopted only on success; see <doc:SwiftOpaqueResults>.
 
@@ -52,12 +52,8 @@ A `nonisolated(nonsending)` declaration accepts a hidden caller-isolation payloa
 
 Enabling NonisolatedNonsendingByDefault changes a default nonisolated async declaration to caller-isolated behavior without changing its source symbol name. Therefore, symbol lookup alone cannot identify the complete ABI. Explicit `@concurrent` and `nonisolated(nonsending)` annotations keep the fixtures' contracts independent of the package's feature flags. See [SE-0461](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0461-async-function-isolation.md).
 
-The frontend preserves the caller's task and cancellation/task-local state, passes the selected caller-isolation convention, and resumes its Swift caller on the original executor. Any actor requirement that the selected declaration leaves to its caller remains part of the unsafe invocation contract.
+The caller must satisfy any actor requirement left to it by the declaration. Selecting the physical convention does not establish that requirement.
 
-## Ownership and cancellation evidence
+## Verification
 
-The independent provider and reference-adapter targets use ordinary Swift async calls. An actor gate proves that execution has reached a suspension point before tests inspect lifetime or request cancellation. No thread is blocked to simulate an async operation.
-
-Tests cover immediate completion, mixed register/stack arguments, receiver and argument retention, owned errors, indirect success/error outputs, floating errors, caller task-local values, and explicitly isolated functions/members. Cancellation remains cooperative: the fixture holds its arguments while suspended, then its native body decides whether to throw CancellationError or its declared typed error.
-
-Compiler probes inspect arm64, x86_64, arm64e, and arm64_32 entry signatures, descriptors, error completion, and authenticated context operations. The dynamic frontend passed macOS arm64 tests in Debug, Release, and Address Sanitizer, x86_64 tests under Rosetta, and eight checks on an arm64e iPhone Air running iOS 27. The arm64_32 result is compilation evidence. These are verified configurations, not additional deployment requirements.
+Independent provider and adapter tests compare ordinary Swift async calls with the bridge. They cover suspension lifetime, cancellation, task-local values, isolation, register/stack arguments, and direct/indirect success and error outputs. Runtime checks passed on macOS arm64, x86_64 under Rosetta, and an arm64e iPhone. Compiler probes check descriptors and context authentication separately; arm64_32 coverage is compilation-only. See the [architecture validation guide](https://github.com/lynnswap/ABIBridge/blob/main/Tests/ArchitectureValidation/README.md) for recorded configurations.

@@ -348,9 +348,7 @@ extension NativeSwiftClosure {
         ).encoded()
     }
 
-    /// Creates an async callback that preserves the native caller's task and isolation.
-    /// The Sendable body may escape and be called concurrently. Native code receives its declared errors.
-    /// Native entry preparation occurs on the first invocation or publication.
+    /// Creates an async callback that preserves the native caller's task and isolation. The Sendable body may escape and be called concurrently. Native code receives its declared errors. Native entry preparation occurs on the first invocation or publication.
     public init<Result, Failure: Error, each Argument>(
         _ body: @escaping @Sendable (repeat each Argument) async throws(Failure) -> Result
     ) throws where Signature == (repeat each Argument) async throws(Failure) -> Result {
@@ -645,8 +643,7 @@ extension NativeSwiftClosure {
     // decomposes Signature into a parameter pack. Transparent entry thunks keep
     // that requirement out of the implementation frame, including in Debug builds.
 
-    /// Awaits the native closure on the original task. Native failures use NativeSwiftError.
-    /// The caller satisfies the native signature's ABI, ownership, and actor/thread requirements.
+    /// Awaits the native closure on the original task. Native failures use NativeSwiftError. The caller satisfies the native signature's ABI, ownership, and actor/thread requirements.
     @_transparent
     @unsafe public nonisolated(nonsending) func unsafeInvoke<Result, Failure: Error, each Argument>(
         _ values: repeat each Argument

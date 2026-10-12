@@ -25,7 +25,7 @@ The native declaration must accept and return that existential type. Selecting A
 | Parameterized protocols, such as any Collection<Int> | The extended shape preserves associated type constraints and the opaque or class-constrained convention |
 | Single-level Optional of these types | The matching optional container, including nil |
 
-A payload can be inline or allocated outside the container. It may be a concrete struct, enum, class, or resilient value whose standalone call layout is unknown to the bridge. The compiler constructs the existential and performs copying, opening, casting, and destruction. The payload does not need ABIBridgeSwiftValue conformance.
+A payload can be inline or separately allocated, including a struct, enum, class, or resilient value with an unknown standalone call layout. The compiler constructs, copies, opens, casts, and destroys the container. Its payload needs no ``ABIBridgeSwiftValue`` conformance.
 
 Ordinary parameters borrow their container for the call. Results transfer an owned container. NativeSwiftConsuming transfers a separate owned copy, and NativeSwiftInout provides exclusive mutable container storage; see <doc:SwiftArgumentConventions>. Async calls retain containers until completion, including cooperative cancellation. Existential values do not acquire Sendable or actor-safety guarantees from the bridge: those requirements come from the native declaration and contained value.
 
@@ -45,11 +45,11 @@ let values: any Collection<Int> = try unsafe echo.unsafeInvoke([1, 2, 3])
 
 Generic declarations substitute their bound types into those constraints. A signature using `any Collection<Int>` cannot describe a binding that requires `any Collection<String>`.
 
-Superclass compositions also bind their generic arguments. For a declaration returning `any SourceBase<T> & Source<T>`, bind `T` through `genericArguments:` and use `any SourceBase<Int> & Source<Int>` in `as:` when `T` is `Int`. The superclass specialization and the protocol's associated types must both match. Binding includes nested generic superclass contexts. Compositions whose superclass requires additional conformance witnesses are also subject to the storage limitation below.
+Superclass compositions bind their generic arguments too. For `any SourceBase<T> & Source<T>`, bind `T` through `genericArguments:` and use `any SourceBase<Int> & Source<Int>` in `as:` when `T` is `Int`. Both the superclass specialization and associated types must match, including nested superclass contexts. Additional superclass witnesses are subject to the storage limitations below.
 
 Parameterized existential metatypes use the same interface. For a declaration accepting and returning `any Collection<Int>.Type`, use `((any Collection<Int>.Type) -> any Collection<Int>.Type).self` and pass a conforming type such as `Array<Int>.self`. The bridge preserves its type metadata and protocol witness through typed calls, runtime-only values, and callbacks. Tuple and single-level Optional containers keep this representation as well.
 
-NativeSwiftValue also receives an extended existential when the provider's types are unavailable to the consumer. The bridge reuses matching caller metadata or the provider's generalized shape. If the provider did not emit a shape, the protocol and superclass declarations supply its constraints and existing witnesses. Swift's runtime interns that shape; its descriptor and referenced declaration images remain available for the runtime cache's lifetime. User payloads and invocation arguments keep their ordinary value lifetimes.
+``NativeSwiftValue`` can receive an extended existential whose provider types are unavailable to the consumer. The bridge reuses matching metadata or obtains the shape's constraints from the protocol and superclass declarations. Swift interns the shape, keeping its descriptor and declaration images available for the runtime cache. Payloads and arguments keep their ordinary lifetimes.
 
 ## Closures and authentication
 
@@ -57,16 +57,16 @@ The same representations work in generated and returned Swift closures. Use the 
 
 Authentication follows the formal Swift signature. Opaque containers are formally indirect. A class-constrained existential remains class-based for authentication even when its object/witness component list uses indirect physical storage. Optional class and error containers have distinct authentication identities. Compiler probes compare these identities with generated arm64e calls.
 
-## Scope
+## Scope and compiler limitations
 
-This path recognizes simple existential metadata and extended parameterized protocols, including class-constrained protocols. Existing AnyObject behavior is preserved. It uses the actual imported existential metatype; it does not synthesize witness tables or discover a missing conformance.
+The bridge uses existing metadata and conformances for simple and extended existentials; it does not synthesize witness tables. Ordinary protocol metatypes such as `(any P).Type` keep the protocol type's identity, while existential metatypes preserve runtime type and witness components. Noncopyable containers require their own ownership contract. Opaque `some P` results follow <doc:SwiftOpaqueResults>.
 
-Extended superclass compositions use the same typed and runtime-only paths described above. Superclass parameter packs remain outside shape construction: Swift 6.3's extended-existential generalization does not emit their pack layout. Noncopyable containers also require their own ownership contract. Existential metatypes preserve their runtime type and witness components; ordinary protocol metatypes such as `(any P).Type` retain the protocol type's identity. Opaque `some P` results use <doc:SwiftOpaqueResults>.
+Swift compiler/runtime discrepancies can make native container storage disagree with value witnesses. Preparation rejects such layouts before invocation. Use a compiled adapter for these combinations; [issue #302](https://github.com/lynnswap/ABIBridge/issues/302) records the discrepancies and workarounds:
 
-Swift 6.3's generic storage for `any Error & AnyObject` disagrees with its native object/witness layout. The same discrepancy occurs for a class composition of two unrelated protocols that both bind an associated type named `Element` to the same type: native calls use three words, while the runtime value witnesses report two. The existing storage-layout validation rejects these combinations before invocation. Use a compiled adapter for them; [issue #302](https://github.com/lynnswap/ABIBridge/issues/302) tracks the Swift compiler/runtime discrepancy. Bind a function's hidden generic metadata and witnesses with `genericArguments:`, as described in <doc:GenericSwiftValues>.
+- `any Error & AnyObject` has inconsistent generic and native object/witness storage in Swift 6.3.
+- A class composition of two unrelated protocols binding `Element` to the same type uses three native words, while runtime witnesses report two.
+- Swift 6.3.3 can report excess storage for `any Base<T> & P<T>` when superclass constraints need conformance witnesses. The observed `Base<T: Hashable>` case had two native words and three runtime words on macOS 26.6.2. Associated-type conformance and same-type constraints can have the same issue.
 
-Swift 6.3.3 can report a larger generic storage size for `any Base<T> & P<T>` when `Base` constrains `T` to a protocol. For example, `Base<T: Hashable>` produced a two-word native container and a three-word runtime layout on macOS 26.6.2. The bridge uses the native container convention and fails preparation if the runtime storage disagrees. This also affects superclass constraints involving associated-type conformances or same-type parameters. The compiler/runtime discrepancy and possible workarounds are tracked in [#302](https://github.com/lynnswap/ABIBridge/issues/302).
-
-Ordinary compositions such as `any PackBase<repeat each T> & Marker` bind empty and mixed superclass type packs through the canonical simple existential path. Adding primary-associated-type constraints requires extended metadata. A standalone Swift 6.3.3 control for that extended superclass-pack shape fails with `Expected metadata but got a metadata pack` before entering ABIBridge; preparation retains an actionable error for that case.
+Simple compositions such as `any PackBase<repeat each T> & Marker` support empty and mixed superclass packs. Primary-associated-type constraints require extended metadata, whose Swift 6.3 generalization omits the superclass-pack layout. A Swift 6.3.3 compiler control fails with `Expected metadata but got a metadata pack` before ABIBridge is entered; bridge preparation reports this unsupported shape.
 
 The metadata classification follows Swift's [simple existential metadata](https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/ABI/Metadata.h) and [existential flags](https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/ABI/MetadataValues.h). Compiler fixtures cover arm64, x86_64, arm64e, and arm64_32; runtime validation is recorded separately.

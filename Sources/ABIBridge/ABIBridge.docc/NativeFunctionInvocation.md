@@ -15,15 +15,15 @@ abi_bridge::function<int(int, int)> add(std::move(symbol));
 int result = add.unsafe_invoke(20, 22);
 ```
 
-The example requires an already-loaded library defining that declaration. Construction accepts an owned `resolved_symbol` without running lookup again. Batch results and symbols transferred from Swift through `ResolvedSymbol.copyNativeHandle()` use the same constructor after wrapping their C handle with `resolved_symbol::adopt` or `resolved_symbol::retain` as appropriate. Both the transferred symbol and call handle retain the implementation image.
+The example requires a loaded library defining the declaration. Construct the handle from an owned `resolved_symbol` without repeating lookup. Batch results work the same way. For C handles transferred from Swift through `ResolvedSymbol.copyNativeHandle()`, first use `resolved_symbol::adopt`; use `retain` for borrowed handles. The resulting function retains the implementation image.
 
 A constructor rejects empty handles, data/vtable symbols, and declarations marked with other source-language calling conventions. These checks use declaration metadata, not signature inference: C++ mangled names do not establish a complete calling contract. `ABIResolvedSymbolKind` and `ABIResolvedSymbolLanguage` expose this metadata through the C inspection interface.
 
 ## Supply the actual signature
 
-`function<Result(Arguments...)>` preserves C++ reference categories and lets the compiler lower register arguments, stack arguments, and indirect or nontrivial results. Use `function<Result(FixedArguments..., ...)>` for a variadic declaration; the consumer compiler applies its standard promotions to anonymous arguments. Const and nonconst member signatures can also include the ellipsis. The caller must use types with the same ABI, layout, standard-library ABI, and ownership as the target definition. Compiler support for a type does not make an unknown private type's layout inferable.
+`function<Result(Arguments...)>` lets the compiler lower references, register/stack arguments, and indirect or nontrivial results. For variadics, use `function<Result(FixedArguments..., ...)>`; const and nonconst members also support an ellipsis. The compiler promotes anonymous arguments. Supply types with the target's ABI, layout, standard-library ABI, and ownership, including known layouts for private types.
 
-On an authenticated call ABI, the handle signs the resolved address for the supplied function-pointer type. This is not authentication of an original signed pointer. The resolver establishes executable storage and image lifetime; it cannot prove that the supplied signature, receiver, argument lifetime, or calling thread is correct.
+On an authenticated ABI, the handle signs the resolved unsigned address for the supplied function-pointer type. The resolver checks executable storage and retains the image. The caller guarantees the signature, receiver, argument lifetime, and calling thread; signing does not prove them.
 
 Copies share the retained symbol. Handles remain valid after the original loader reference, resolver, or cache is released. A moved-from handle may be destroyed or assigned but must not be invoked or used to access its symbol.
 

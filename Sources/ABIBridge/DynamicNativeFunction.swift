@@ -2,9 +2,7 @@ import ABIBridgeCore
 
 /// A C-compatible function whose value layouts are described at runtime.
 ///
-/// Prefer NativeFunction and function-type metatypes when Swift types are known.
-/// This handle retains its image and prepared signature; input and output values
-/// retain their own storage and pointee owners.
+/// Prefer NativeFunction and function-type metatypes when Swift types are known. This handle retains its image and prepared signature; input and output values retain their own storage and pointee owners.
 public struct DynamicNativeFunction: Sendable {
     /// The resolved symbol and retained image.
     public let symbol: ResolvedSymbol
@@ -29,12 +27,7 @@ public struct DynamicNativeFunction: Sendable {
 
     /// Invokes the native function with values matching the runtime signature.
     ///
-    /// Count and layout compatibility are checked before dispatch. Each argument
-    /// is copied to aligned call storage while its owner stays alive. Results own
-    /// their byte allocation; ownership of resources referenced by returned
-    /// pointers must be established by the adapter. Anonymous Float and narrow
-    /// integer values undergo C default promotions when the signature is variadic.
-    /// Nontrivial values, consumed arguments, and foreign exceptions need native adapters.
+    /// Count and layout compatibility are checked before dispatch. Each argument is copied to aligned call storage while its owner stays alive. Results own their byte allocation; ownership of resources referenced by returned pointers must be established by the adapter. Anonymous Float and narrow integer values undergo C default promotions when the signature is variadic. Nontrivial values, consumed arguments, and foreign exceptions need native adapters.
     ///
     /// - Parameter values: Explicit arguments in declaration order.
     /// - Returns: Native result storage that can be cast to a user-defined wrapper.

@@ -22,7 +22,7 @@ if let image = images.first {
 
 The source image stays retained while metadata is copied. Returned values own their strings and may outlive the image. Swift and C++ mangling is decoded where supported; `rawName` retains the exact recorded spelling. An import name does not establish a symbol's storage kind, function signature, or current address.
 
-These diagnostics neither acquire dependencies nor prepare calls. Ordinary resolution handles explicit-target acquisition according to its loading policy; see <doc:ImageLoading>. A recorded dependency path can contain loader tokens such as `@rpath`, and does not prove that the dependency is present or loadable.
+Inspection does not acquire dependencies. Recorded paths may contain dyld tokens such as `@rpath`; they do not guarantee presence or loadability. For acquisition during resolution, see <doc:ImageLoading>.
 
 ## Interpret unavailable information
 
@@ -63,6 +63,6 @@ The C interface in `Inspection.h` supplies `ABICopyLazyLibrariesForImage` and `A
 
 ## Binding chains and validation scope
 
-Diagnostics do not expose binding locations or traverse live binding chains. dyld can overwrite a chain concurrently, and loaded or prebound entries may no longer contain their original encoded bind information. Reading the initialized flag cannot make traversal atomic. Use normal symbol resolution to obtain a callable handle after the required library is loaded.
+Use symbol resolution to obtain callable handles. These diagnostics omit binding locations and live chains, which dyld can overwrite concurrently. Loaded or prebound entries may have lost their original bind encoding, and the initialized flag supplies no synchronization.
 
 Payload layout comes from MachOKit. The prebound flag follows MachOKit 0.53.0's interpretation, whose verification against a published dyld implementation remains an upstream follow-up. Parsing this metadata does not establish arm64e.x1 invocation support.

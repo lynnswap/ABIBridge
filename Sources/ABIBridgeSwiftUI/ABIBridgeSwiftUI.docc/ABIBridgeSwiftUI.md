@@ -4,9 +4,9 @@ Display native opaque SwiftUI results while retaining their values and implement
 
 ## Overview
 
-Use this optional product to place a native view in a SwiftUI hierarchy or a standard hosting controller. ``NativeSwiftView`` owns the opaque result and its implementation images. The provider's concrete view type and module need not be importable by the consumer.
+``NativeSwiftView`` places a native view in a SwiftUI hierarchy or hosting controller. The provider's concrete type and module need not be importable.
 
-Start with <doc:DisplayingNativeViews> for setup, a complete example, and ownership and isolation requirements. The core ABIBridge product remains available separately and does not depend on SwiftUI.
+See <doc:DisplayingNativeViews> for setup, ownership, and isolation. The core ABIBridge product is available separately without a SwiftUI dependency.
 
 ## Topics
 

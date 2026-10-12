@@ -50,7 +50,7 @@ bash scripts/test-package.sh local
 
 Each selection uses its own directory under `.build/package-tests`. Set `ABI_TEST_BUILD_DIR` to reuse another directory across sequential runs; do not share it between simultaneous builds. The script forwards extra arguments to `xcodebuild`.
 
-The Runtime and public API test bundles disable parallel execution in their shared schemes. They load and unload libraries in the process-wide image catalog; an absence check needs that catalog to remain stable while it runs. Individual tests still exercise concurrent operations where that is the contract. A suite's `serialized` trait does not isolate it from unrelated suites; see [Swift Testing parallelization](https://developer.apple.com/documentation/testing/parallelization).
+The Runtime and public API schemes disable parallel tests because fixtures load and unload libraries in the process-wide image catalog. Individual tests still exercise concurrency. A suite's `serialized` trait does not isolate it from unrelated suites; see [Swift Testing parallelization](https://developer.apple.com/documentation/testing/parallelization).
 
 During development, select a single suite:
 
@@ -129,9 +129,9 @@ Older `actionlint` versions do not recognize GitHub's [official `xcode-27` runne
 | 26.6 | `macos-26` | macOS and iOS Simulator | Focused external consumers on macOS |
 | 27.0 | `xcode-27` | macOS and iOS Simulator | Public API suite and focused external/SwiftUI consumers on macOS |
 
-The public API suite runs once in the macOS/Xcode 27 job, reusing the runtime build directory. A separate Xcode 27 job builds both products for the iOS, visionOS, watchOS, and tvOS device SDKs. Timing loops, long repetition, full external integration combinations, and architecture probes remain local checks.
+The macOS/Xcode 27 job runs the public API suite in the runtime build directory. A separate Xcode 27 job builds both products for iOS, visionOS, watchOS, and tvOS. Timing loops, stress tests, full external consumer combinations, and architecture probes run locally.
 
-The matrix checks compiler and OS assumptions in metadata, calling conventions, and image loading. Focused external Swift clients also exercise generic public entry points that contain compiler workarounds. The `xcode-27` runner runs macOS 27 and is currently in public preview. Simulator execution does not verify device pointer authentication.
+The matrix checks metadata, calling conventions, image loading, and compiler workarounds in generic public entry points. The `xcode-27` runner uses macOS 27 and is in public preview. Device pointer authentication requires execution on matching hardware.
 
 Independent checks continue after failures. CI keeps failed package and Simulator diagnostics for seven days. Pull requests and releases require every CI job to succeed; closing a pull request cancels its superseded validation. Older release targets without the runtime target use their original package and consumer suites. DocC builds run separately with Xcode 27.0 when `main` changes.
 
@@ -149,7 +149,7 @@ See [Runtime boundaries and CI coverage](Docs/RuntimeArchitecture.md) for module
 | [Tests/ArchitectureValidation](Tests/ArchitectureValidation/README.md) | Architecture probes, device modes, and recorded execution results |
 | [scripts](scripts) | Compiler probes, build helpers, and automation |
 
-Use the [DocC guides](Sources/ABIBridge/ABIBridge.docc/ABIBridge.md) for API contracts and supported behavior. Keep detailed test cases with their fixtures and device observations in the architecture validation guide.
+API contracts belong in the [DocC guides](Sources/ABIBridge/ABIBridge.docc/ABIBridge.md), test cases with their fixtures, and device observations in the architecture validation guide.
 
 ## Run on a physical device
 
@@ -166,9 +166,9 @@ The helper accepts `arm64`, `arm64e`, and `arm64e.x1`, followed by extra `xcodeb
 
 Set `ABI_VALIDATION_CONFIGURATION=Debug` for a diagnostic build. For compilation without signing, pass `CODE_SIGNING_ALLOWED=NO`. Default products are under `.build/device-validation/<architecture>/Build/Products/Release-iphoneos`.
 
-Run probes in separate launches. Each writes `Documents/architecture-<mode>.json`, which can be shared from the result view. A start marker alone means the probe did not finish. Report protected-memory refusal separately from successful mutation. Neither a device build nor Simulator execution verifies device pointer authentication.
+Run probes in separate launches. Each writes `Documents/architecture-<mode>.json`, shareable from the result view. A start marker alone means the probe did not finish. Report protected-memory refusal separately from successful mutation.
 
-The hidden `tamper` probe intentionally corrupts a pointer signature. Run it separately after `native` passes with `pacCompiled: true` in the same build; verify the expected authentication failure in the crash report. A generic crash is insufficient. See the [architecture validation guide](Tests/ArchitectureValidation/README.md) for probe details and execution evidence. Keep credentials, provisioning profiles, and device identifiers out of the repository.
+The hidden `tamper` probe corrupts a pointer signature. Run it separately after `native` passes with `pacCompiled: true` in the same build, then confirm the expected authentication failure in the crash report. See the [architecture validation guide](Tests/ArchitectureValidation/README.md) for probe details and evidence. Keep credentials, provisioning profiles, and device identifiers out of the repository.
 
 ## Update documentation
 
@@ -176,7 +176,9 @@ The public interfaces are the `ABIBridge` Swift module, the native headers descr
 
 Describe public API contracts in DocC comments and longer guides in the relevant module's DocC catalog. Keep the README focused on installation and quick-start examples. Write prose without manual line wrapping.
 
-Keep module landing pages brief. In the ABIBridge catalog, place guides and top-level symbols in the feature collections linked from `ABIBridge.md`; Swift values and callbacks belong in `SwiftValues` under `SwiftCalls`. Use `Topics` for the primary hierarchy and inline or `See Also` links for related features. Preserve article filenames so published URLs remain stable.
+Keep module landing pages brief. Place guides and top-level symbols in the feature collections linked from `ABIBridge.md`; Swift values and callbacks belong in `SwiftValues` under `SwiftCalls`. Use `Topics` for the hierarchy and inline or `See Also` links for related features. Preserve article filenames so published URLs remain stable.
+
+Give shared concepts one main explanation and link to it from related guides. Each API comment should still state the conditions needed to use that API directly, including ownership, lifetime, isolation, and failure behavior.
 
 Build the static site locally:
 

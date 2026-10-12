@@ -12,11 +12,9 @@ extern "C" {
 typedef struct ABISwiftSyntax ABISwiftSyntax;
 typedef struct ABISwiftSyntaxNode ABISwiftSyntaxNode;
 
-/// Parses a modern Swift symbol. Nodes borrow the returned syntax object's
-/// storage. Invalid or unsupported input returns null.
+/// Parses a modern Swift symbol. Nodes borrow the returned syntax object's storage. Invalid or unsupported input returns null.
 ABISwiftSyntax *ABICopySwiftSymbolSyntax(const char *name, size_t length);
-/// Parses a compiler-emitted type reference at its original address, resolving
-/// relative symbolic references before the original bytes leave scope.
+/// Parses a compiler-emitted type reference at its original address, resolving relative symbolic references before the original bytes leave scope.
 ABISwiftSyntax *ABICopySwiftTypeSyntax(const char *name, size_t length);
 void ABIReleaseSwiftSyntax(ABISwiftSyntax *syntax);
 const ABISwiftSyntaxNode *ABISwiftSyntaxRoot(const ABISwiftSyntax *syntax);
@@ -39,11 +37,9 @@ ABISwiftSyntax *ABICopySwiftFunctionTypeSyntax(uintptr_t flags, uint32_t extende
     const ABISwiftSyntaxNode *const *parameters, const uint32_t *parameterFlags,
     const ABISwiftSyntaxNode *result, const ABISwiftSyntaxNode *failure,
     const ABISwiftSyntaxNode *globalActor, uintptr_t differentiability);
-/// The compiler's uniquable shape symbol for a parameterized protocol value.
-/// Superclass arguments precede same-type constraints in generalization order.
+/// The compiler's uniquable shape symbol for a parameterized protocol value. Superclass arguments precede same-type constraints in generalization order.
 char *ABICopySwiftConstrainedExistentialShapeName(const ABISwiftSyntaxNode *node, size_t metatypeDepth);
-/// Builds an unpublished parameterized-protocol shape. The caller keeps its
-/// storage and referenced protocol images alive after publishing it to Swift.
+/// Builds an unpublished parameterized-protocol shape. The caller keeps its storage and referenced protocol images alive after publishing it to Swift.
 void *ABICreateSwiftExtendedExistentialShape(const ABISwiftSyntaxNode *node,
     const void *const *protocols, size_t protocolCount,
     const char *const *writtenProtocols, const char *const *declaringProtocols,

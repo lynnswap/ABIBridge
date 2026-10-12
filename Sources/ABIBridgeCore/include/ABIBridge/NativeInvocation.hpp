@@ -8,9 +8,7 @@
 
 namespace abi_bridge {
 
-/// A concrete C/C++ function signature, lowered by the consumer's compiler.
-/// Fixed and variadic signatures use ordinary function types. A handle may outlive
-/// its runtime; target thread-safety and argument lifetimes remain caller-owned.
+/// A concrete C/C++ function signature, lowered by the consumer's compiler. Use ordinary function types for fixed and variadic signatures. A handle may outlive its runtime. The caller keeps argument values alive and meets the target's thread and synchronization requirements.
 template <typename Signature> class function;
 
 namespace detail {
@@ -42,8 +40,7 @@ template <typename Result, typename... Arguments>
 class function<Result(Arguments...)> final {
     detail::function_target<Result(Arguments...)> target_;
 public:
-    /// Takes a retained C/C++ function symbol. The supplied signature is the
-    /// caller's ABI and ownership contract, not information proven by lookup.
+    /// Takes a retained C/C++ function symbol. The supplied signature is the caller's ABI and ownership contract, not information proven by lookup.
     explicit function(resolved_symbol symbol) : target_(std::move(symbol)) {}
     /// Calls with the declared fixed parameter types and native ownership.
     Result unsafe_invoke(Arguments... arguments) const {
@@ -57,8 +54,7 @@ class function<Result(Arguments..., ...)> final {
     detail::function_target<Result(Arguments..., ...)> target_;
 public:
     explicit function(resolved_symbol symbol) : target_(std::move(symbol)) {}
-    /// The compiler promotes anonymous arguments. Their types must match the
-    /// implementation's va_arg operations; pointer/resource lifetimes are borrowed.
+    /// The compiler promotes anonymous arguments. Their types must match the implementation's va_arg operations; pointer/resource lifetimes are borrowed.
     template <typename... VariadicArguments>
     Result unsafe_invoke(Arguments... arguments, VariadicArguments&&... tail) const {
         return target_.pointer()(std::forward<Arguments>(arguments)...,
@@ -93,9 +89,7 @@ struct method_signature<Result(Arguments..., ...) const> {
 
 template <typename Signature> class bound_method;
 
-/// A direct member entry point with an explicitly supplied receiver.
-/// Use a const-qualified signature for const methods. The receiver must point
-/// to the target class subobject; this handle does not perform virtual dispatch.
+/// A direct member entry point with an explicitly supplied receiver. Use a const-qualified signature for const methods. The receiver must point to the target class subobject; this handle does not perform virtual dispatch.
 template <typename Signature>
 class method final {
     using traits = detail::method_signature<Signature>;
@@ -108,16 +102,13 @@ public:
             throw resolution_error(ABIFailureInvalidRequest, "Expected a C++ member-entry symbol.");
     }
 
-    /// Borrows a valid receiver for one call. The signature, receiver subobject,
-    /// argument lifetimes, and target thread requirements are caller contracts.
+    /// Borrows a valid receiver for one call. The signature, receiver subobject, argument lifetimes, and target thread requirements are caller contracts.
     template <typename... Arguments>
     decltype(auto) unsafe_invoke(receiver* object, Arguments&&... arguments) const {
         return function_.unsafe_invoke(object, std::forward<Arguments>(arguments)...);
     }
 
-    /// Binds an existing object, retaining its shared owner. An aliasing
-    /// shared_ptr can keep an enclosing allocation alive while pointing at the
-    /// exact subobject expected by this member entry point.
+    /// Binds an existing object, retaining its shared owner. An aliasing shared_ptr can keep an enclosing allocation alive while pointing at the exact subobject expected by this member entry point.
     template <typename Object>
         requires std::is_convertible_v<Object*, receiver*>
     bound_method<Signature> bind(std::shared_ptr<Object> object) const {
@@ -147,8 +138,7 @@ public:
         return *this;
     }
 
-    /// Calls on the retained receiver. Retention does not make the target's
-    /// mutable state thread-safe or retain other pointer/reference arguments.
+    /// Calls on the retained receiver. Retention does not make the target's mutable state thread-safe or retain other pointer/reference arguments.
     template <typename... Arguments>
     decltype(auto) unsafe_invoke(Arguments&&... arguments) const {
         return method_.unsafe_invoke(receiver_.get(), std::forward<Arguments>(arguments)...);

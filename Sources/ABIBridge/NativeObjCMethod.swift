@@ -3,10 +3,7 @@ import Foundation
 
 /// A prepared Objective-C message whose receiver is supplied at call time.
 ///
-/// The handle retains its class image and optional code owner, but no receiver
-/// instance or fixed IMP. Compatible subclass overrides and later replacements
-/// participate in normal message dispatch. The caller honors receiver isolation
-/// and the prepared declaration's ABI and ownership contract.
+/// The handle retains its class image and optional code owner, but no receiver instance or fixed IMP. Compatible subclass overrides and later replacements participate in normal message dispatch. The caller honors receiver isolation and the prepared declaration's ABI and ownership contract.
 public struct NativeObjCMethod<Result, each Argument> {
     private let binding: ObjCInvocationBinding
     private let signature: ObjCMethodSignature<Result, repeat each Argument>
@@ -23,9 +20,7 @@ public struct NativeObjCMethod<Result, each Argument> {
 
     /// Sends the prepared message to a compatible instance or class object.
     ///
-    /// The receiver stays alive throughout the call. Its current method encoding
-    /// must remain compatible with the prepared declaration. Foreign exceptions
-    /// are not converted into Swift errors.
+    /// The receiver stays alive throughout the call. Its current method encoding must remain compatible with the prepared declaration. Foreign exceptions are not converted into Swift errors.
     @unsafe public func unsafeInvoke(on receiver: AnyObject, _ values: repeat each Argument) throws -> Result {
         try withExtendedLifetime((receiver, binding)) {
             try signature.invoke(repeat each values, using: { addresses, output in
@@ -43,9 +38,7 @@ public struct NativeObjCMethod<Result, each Argument> {
 
     /// Retains a compatible receiver for repeated ordinary message dispatch.
     ///
-    /// The bound handle shares the prepared signature and keeps its receiver
-    /// alive until the last bound copy is released. Subsequent replacements must
-    /// preserve the signature and ownership contract, as for other bound methods.
+    /// The bound handle shares the prepared signature and keeps its receiver alive until the last bound copy is released. Subsequent replacements must preserve the signature and ownership contract, as for other bound methods.
     public func bind(to receiver: AnyObject) throws -> NativeBoundObjCMethod<Result, repeat each Argument> {
         var error: NSError?
         guard let handle = ABICopyBoundObjCInvocation(binding.handle, receiver, &error) else {
@@ -61,10 +54,7 @@ public struct NativeObjCMethod<Result, each Argument> {
 extension ABIRuntime {
     /// Prepares a class-declared message without retaining a receiver instance.
     ///
-    /// Dynamic method resolution may run. A concrete method signature must be
-    /// available on the requested class; use object(receiver).method for
-    /// receiver-specific forwarding signatures. Invocation selects the receiver's
-    /// current implementation rather than the IMP present during preparation.
+    /// Dynamic method resolution may run. A concrete method signature must be available on the requested class; use object(receiver).method for receiver-specific forwarding signatures. Invocation selects the receiver's current implementation rather than the IMP present during preparation.
     ///
     /// - Parameters:
     ///   - type: The class declaring the instance or class method.

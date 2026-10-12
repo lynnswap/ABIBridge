@@ -87,17 +87,11 @@ private final class SwiftBorrowAccess {
 
 /// A scoped view of a runtime-only Swift value.
 ///
-/// The storage belongs to a native caller or NativeSwiftValue. Saving this view
-/// does not extend its scope; new access after return throws. Synchronous scopes
-/// also reject access from another thread. An owned-value borrow can keep a
-/// started async member's read access until completion. A native async callback
-/// may await operations on its borrow, and must finish those operations before
-/// returning. A synchronous native callback cannot extend its storage across
-/// suspension and rejects async member entry with synchronousBorrow.
-/// A native inout callback parameter grants mutable access through ordinary
-/// mutating members and inout arguments. Other borrows remain read-only;
-/// overlapping mutations and consuming borrowed storage are rejected.
-/// The value is not Sendable and retains the declaration's isolation contract.
+/// The storage belongs to a native caller or `NativeSwiftValue`. Saving this view does not extend its scope: new access after return throws, and synchronous scopes also reject access from another thread. The view is not `Sendable` and keeps the declaration's isolation contract.
+///
+/// An owned-value borrow retains read access for an async member already started, until completion. Native async callbacks may await operations on their borrow and must finish them before returning. Synchronous native callbacks reject async member entry with `synchronousBorrow` because their storage cannot survive suspension.
+///
+/// Native inout callback parameters permit mutation through mutating members and inout arguments. Other borrows are read-only. Overlapping mutations and consuming borrowed storage are rejected.
 public final class NativeSwiftBorrowedValue {
     /// The actual native type and its retained implementation image.
     public let type: NativeSwiftType
@@ -108,8 +102,7 @@ public final class NativeSwiftBorrowedValue {
         self.borrow = borrow
     }
 
-    /// Copies the native value into an independent owner while the borrow is active.
-    /// The native type must be Copyable and Escapable.
+    /// Copies the native value into an independent owner while the borrow is active. The native type must be Copyable and Escapable.
     public func copy() throws -> NativeSwiftValue {
         try borrow.withAddress { try NativeSwiftValue.copy(from: $0, type: type) }
     }

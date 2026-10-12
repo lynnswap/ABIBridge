@@ -28,15 +28,9 @@ typedef struct ABIMemoryReadResult {
 
 /// Copies current-process bytes without directly dereferencing the source.
 ///
-/// The destination must be writable for byteCount bytes and must not overlap
-/// the source. Only the returned prefix is valid; the rest is unspecified.
-/// A zero-length read succeeds without accessing either address (destination
-/// may be NULL). Nonempty wrapping ranges or NULL destinations are invalid.
+/// The destination must be writable for byteCount bytes and must not overlap the source. Only the returned prefix is valid; the rest is unspecified. A zero-length read succeeds without accessing either address (destination may be NULL). Nonempty wrapping ranges or NULL destinations are invalid.
 ///
-/// Reads stop at the first failed page and preserve previously copied pages.
-/// This is not an atomic snapshot: callers provide synchronization if needed.
-/// Neither a successful read nor a copied pointer proves object validity,
-/// ownership, or continued readability. No other process can be selected.
+/// Reads stop at the first failed page and preserve previously copied pages. This is not an atomic snapshot: callers provide synchronization if needed. Neither a successful read nor a copied pointer proves object validity, ownership, or continued readability. No other process can be selected.
 ABIMemoryReadResult ABIReadMemory(uintptr_t address, size_t byteCount, void *destination);
 
 #ifdef __cplusplus

@@ -1,9 +1,6 @@
 import ABIBridgeCore
 
-/// An inline field whose size remains an unbound archetype makes the containing
-/// value formally indirect, independently of the nominal type's resilience.
-/// Other values keep the existing explicit ABI contract: reflection metadata
-/// does not record whether a public value declaration is frozen.
+/// An inline field whose size remains an unbound archetype makes the containing value formally indirect, independently of the nominal type's resilience. Other values keep the existing explicit ABI contract: reflection metadata does not record whether a public value declaration is frozen.
 enum SwiftGenericValueLayout {
     static func isIndirect(_ metadata: Any.Type, arguments: [SwiftFormalType],
                            binding: SwiftGenericBinding) throws -> Bool {

@@ -1,8 +1,6 @@
 /// Owns callback behavior for one selected Swift class metadata entry.
 ///
-/// The stable dispatcher and its code/metadata owners remain process-lived.
-/// Invalidation releases user captures after in-flight snapshots finish. Saved
-/// pointers and subclass metadata that copied this dispatcher share its chain.
+/// The stable dispatcher and its code/metadata owners remain process-lived. Invalidation releases user captures after in-flight snapshots finish. Saved pointers and subclass metadata that copied this dispatcher share its chain.
 public final class NativeSwiftVirtualHook: Sendable {
     /// The same logical and pointer-observation states as imported Swift hooks.
     public typealias Status = NativeSwiftImportedFunctionHook.Status
@@ -40,23 +38,15 @@ extension NativeSwiftMethod {
 
     /// Intercepts calls through the selected class's virtual method entry.
     ///
-    /// Declaration descriptors select the lookup type's copied slot, including
-    /// inherited and overridden methods. Already separate superclass/sibling
-    /// entries are unchanged. Saved dispatchers and later-initialized subclasses
-    /// that copy this entry share its chain, including future registrations.
-    /// Direct, final, inlined and devirtualized calls bypass the selected slot.
+    /// Declaration descriptors select the lookup type's copied slot, including inherited and overridden methods. Separate superclass and sibling entries are unchanged. Saved dispatchers and later-initialized subclasses copying this entry share its chain, including future registrations. Direct, final, inlined, and devirtualized calls bypass the slot.
     ///
-    /// Callbacks run on the incoming thread with an initialized instance. The
-    /// native ABI, ownership, isolation and external-writer coordination remain
-    /// caller requirements. Initializers, deinitializers and yielding accessors
-    /// need separate lifecycle/effect support. Source types alone do not establish
-    /// those contracts. Native protection failures remain observable.
+    /// Callbacks run on the incoming thread with an initialized instance. The caller establishes the native ABI, ownership, isolation, and coordination with external writers; source types alone do not establish those contracts. Initializers, deinitializers, and yielding accessors need separate support. See <doc:SwiftMethodHooks> for receiver access and failure handling.
+    ///
     /// - Parameters:
-    ///   - owner: Additional lifetime owner for generated predecessor code.
-    ///   - onFailure: Thread-safe observer of callback/conversion errors.
-    ///   - body: Synchronous typed callback with scoped receiver/continuation access.
-    /// - Throws: Preparation errors or `NativeSwiftVirtualHookInstallationError`
-    ///   with partial publication and retryable rollback outcomes.
+    ///   - owner: Keeps generated predecessor code alive.
+    ///   - onFailure: Thread-safe observer of callback and conversion errors.
+    ///   - body: Synchronous typed callback with scoped receiver and continuation access.
+    /// - Throws: Preparation errors, or `NativeSwiftVirtualHookInstallationError` with partial publication and retryable rollback outcomes.
     @_transparent
     @unsafe public nonisolated(nonsending) func hookVirtualCalls<Result, Failure: Error, each Argument>(
         retaining owner: (any Sendable)? = nil,
@@ -77,10 +67,7 @@ extension NativeSwiftMethod {
 
     /// Installs a virtual callback for a method with a caller-supplied MainActor contract.
     ///
-    /// Background calls report `wrongThread` and bypass this callback before
-    /// decoding arguments or the receiver. No actor hop occurs; `onFailure` must
-    /// remain safe on any entering thread. Other scope/lifetime rules match
-    /// `hookVirtualCalls`.
+    /// Background calls report `wrongThread` and bypass this callback before decoding arguments or the receiver. No actor hop occurs; `onFailure` must remain safe on any entering thread. Other scope/lifetime rules match `hookVirtualCalls`.
     @_transparent
     @unsafe @MainActor public func hookMainActorVirtualCalls<Result, Failure: Error, each Argument>(
         retaining owner: (any Sendable)? = nil,
@@ -147,11 +134,7 @@ extension NativeSwiftMethod {
 }
 
 extension NativeSwiftMethod {
-    /// Intercepts an asynchronous entry on the incoming Swift task.
-    /// The callback and `proceed` may suspend; cancellation and task-local values
-    /// follow that task. Invalidation leaves entered snapshots alive until return.
-    /// Unrepresentable failures preserve the latest native outcome, or continue
-    /// with unchanged arguments when no predecessor has completed.
+    /// Intercepts an asynchronous entry on the incoming Swift task. The callback and `proceed` may suspend; cancellation and task-local values follow that task. Invalidation leaves entered snapshots alive until return. Unrepresentable failures preserve the latest native outcome, or continue with unchanged arguments when no predecessor has completed.
     @_transparent
     @unsafe public nonisolated(nonsending) func hookVirtualCalls<Result, Failure: Error, each Argument>(
         retaining owner: (any Sendable)? = nil,

@@ -62,8 +62,7 @@ struct declaration final {
         return {std::move(name), source_language, kind, name_form::mach_o};
     }
 
-    /// Requests a C++ vtable by qualified type name. Resolves its symbol base,
-    /// without inferring an address point, object layout, or authentication.
+    /// Requests a C++ vtable by qualified type name. Resolves its symbol base, without inferring an address point, object layout, or authentication.
     static declaration vtable_for(std::string type_name) {
         return {"vtable for " + type_name, language::cxx, symbol_kind::vtable};
     }
@@ -104,9 +103,7 @@ private:
     std::string value_;
 };
 
-/// One declaration with aliases, lazy fallbacks, and ordered loaded-image scopes.
-/// Empty scopes match no images. Found aliases must agree on address and load.
-/// Each candidate searches all scopes before the next candidate is attempted.
+/// One declaration with aliases, lazy fallbacks, and ordered loaded-image scopes. Empty scopes match no images. Found aliases must agree on address and load. Each candidate searches all scopes before the next candidate is attempted.
 struct symbol_request final {
     declaration primary;
     std::vector<declaration> alternatives;
@@ -130,26 +127,21 @@ private:
 /// A symbol retaining its image. Copies share ownership of the same result.
 class resolved_symbol final {
 public:
-    /// Takes ownership of one acquired, non-null C symbol reference. The caller
-    /// must not release that reference after this call, including if allocation
-    /// throws. Copies of the wrapper share its ownership.
+    /// Takes ownership of one acquired, non-null C symbol reference. The caller must not release that reference after this call, including if allocation throws. Copies of the wrapper share its ownership.
     static resolved_symbol adopt(ABIResolvedSymbol* owned) {
         return resolved_symbol(owned);
     }
-    /// Acquires independent ownership from a borrowed, live, non-null C symbol.
-    /// Keep the borrowed reference alive throughout this call.
+    /// Acquires independent ownership from a borrowed, live, non-null C symbol. Keep the borrowed reference alive throughout this call.
     static resolved_symbol retain(ABIResolvedSymbol* borrowed) {
         return adopt(ABIRetainResolvedSymbol(borrowed));
     }
-    /// Borrows the C handle. Keep this wrapper or another owning copy alive
-    /// during use; call ABIRetainResolvedSymbol to acquire independent ownership.
+    /// Borrows the C handle. Keep this wrapper or another owning copy alive during use; call ABIRetainResolvedSymbol to acquire independent ownership.
     ABIResolvedSymbol* native_handle() const noexcept { return handle_.get(); }
 
     /// False after a move. Other operations require a live handle.
     explicit operator bool() const noexcept { return bool(handle_); }
 
-    /// Borrowed address; keep this handle alive while using it. This establishes
-    /// neither a native signature nor the ownership/layout of a data value.
+    /// Borrowed address; keep this handle alive while using it. This establishes neither a native signature nor the ownership/layout of a data value.
     const void* unsafe_address() const noexcept {
         return ABIResolvedSymbolAddress(handle_.get());
     }
@@ -175,20 +167,17 @@ private:
 /// An independently owned per-request symbol or lookup failure.
 using resolution_result = std::variant<resolved_symbol, resolution_error>;
 
-/// A copied image description. The path and UUID are owned values; this
-/// description does not retain the image or make its addresses safe to read.
+/// A copied image description. The path and UUID are owned values; this description does not retain the image or make its addresses safe to read.
 struct image_description final {
     image_identity identity;
     std::array<std::uint8_t, 16> uuid;
     std::string path;
 };
 
-/// An immutable image-catalog snapshot. Copies share the snapshot's storage.
-/// Moving leaves an empty handle, which may be tested, reassigned, or destroyed.
+/// An immutable image-catalog snapshot. Copies share the snapshot's storage. Moving leaves an empty handle, which may be tested, reassigned, or destroyed.
 class image_snapshot final {
 public:
-    /// Captures loaded-image descriptions without retaining those images.
-    /// Throws resolution_error if the catalog cannot be initialized/retained.
+    /// Captures loaded-image descriptions without retaining those images. Throws resolution_error if the catalog cannot be initialized/retained.
     static image_snapshot capture() {
         auto* list = ABICopyLoadedImages();
         if (!list) {
@@ -200,8 +189,7 @@ public:
     explicit operator bool() const noexcept { return bool(handle_); }
     /// Requires a live snapshot.
     std::size_t size() const noexcept { return ABIImageListCount(handle_.get()); }
-    /// Copies an entry, including its path. The returned description may
-    /// outlive the snapshot. Throws out_of_range for an invalid index.
+    /// Copies an entry, including its path. The returned description may outlive the snapshot. Throws out_of_range for an invalid index.
     image_description at(std::size_t index) const {
         if (index >= size()) throw std::out_of_range("Image snapshot index is out of range.");
         const auto info = ABIImageListGet(handle_.get(), index);
@@ -213,18 +201,15 @@ private:
     std::shared_ptr<ABIImageList> handle_;
 };
 
-/// An image lifetime lease. Copies share one acquired lease; its last owner releases it.
-/// This does not own path strings copied or borrowed from another handle.
+/// An image lifetime lease. Copies share one acquired lease; its last owner releases it. This does not own path strings copied or borrowed from another handle.
 class image_lease final {
 public:
-    /// Returns no value if the generation disappeared or cannot be retained.
-    /// The loader may independently keep an image loaded after lease release.
+    /// Returns no value if the generation disappeared or cannot be retained. The loader may independently keep an image loaded after lease release.
     static std::optional<image_lease> acquire(std::uint64_t generation) {
         if (auto* lease = ABIRetainLoadedImage(generation)) return image_lease(lease);
         return std::nullopt;
     }
-    /// False after moving the contained lease; a moved-from optional can still
-    /// be engaged, as with other optional values.
+    /// False after moving the contained lease; a moved-from optional can still be engaged, as with other optional values.
     explicit operator bool() const noexcept { return bool(handle_); }
 
 private:
@@ -250,12 +235,10 @@ struct lazy_library_description final {
     std::optional<std::vector<lazy_symbol_description>> symbols;
 };
 
-/// Immutable diagnostics that may outlive the source image or file.
-/// Copies share ownership; descriptions returned by at() own their strings.
+/// Immutable diagnostics that may outlive the source image or file. Copies share ownership; descriptions returned by at() own their strings.
 class lazy_library_snapshot final {
 public:
-    /// Retains the generation during reading, then releases that temporary lease.
-    /// No dependency is loaded and no mutable binding chain is traversed.
+    /// Retains the generation during reading, then releases that temporary lease. No dependency is loaded and no mutable binding chain is traversed.
     static lazy_library_snapshot capture(std::uint64_t generation) {
         ABIResolutionFailure* failure = nullptr;
         auto* list = ABICopyLazyLibrariesForImage(generation, &failure);
@@ -308,10 +291,7 @@ private:
     std::shared_ptr<ABILazyLibraryList> handle_;
 };
 
-/// Synchronous access to the same backend as Swift's ABIRuntime.
-/// Copies share a cache; default construction creates an independent cache.
-/// Calls and cache clearing are thread-safe while handles stay alive. Moving
-/// leaves an empty handle; do not resolve or clear through that moved-from value.
+/// Synchronous access to the same backend as Swift's ABIRuntime. Copies share a cache; default construction creates an independent cache. Calls and cache clearing are thread-safe while handles stay alive. Moving leaves an empty handle; do not resolve or clear through that moved-from value.
 class Runtime final {
 public:
     Runtime() : handle_(ABICreateSymbolRuntime(), ABIReleaseSymbolRuntime) {}
@@ -321,10 +301,7 @@ public:
     /// Borrows this resolver's C reference; keep the Runtime alive during use.
     ABISymbolRuntime *native_handle() const noexcept { return handle_.get(); }
 
-    /// Resolves a declaration or throws an owned resolution_error. The returned
-    /// symbol is independent of this runtime and keeps its image loaded.
-    /// Names/selectors use UTF-8 without embedded NULs. Embedded NULs report
-    /// ABIFailureInvalidRequest instead of resolving a truncated C string.
+    /// Resolves a declaration or throws an owned resolution_error. The returned symbol is independent of this runtime and keeps its image loaded. Names/selectors use UTF-8 without embedded NULs. Embedded NULs report ABIFailureInvalidRequest instead of resolving a truncated C string.
     resolved_symbol resolve(const declaration& query, const image_selector& scope = {},
                             image_loading loading = image_loading::if_needed) const {
         if (query.name.find('\0') != std::string::npos || scope.value_.find('\0') != std::string::npos) {
@@ -352,9 +329,7 @@ public:
         throw std::get<resolution_error>(results.front());
     }
 
-    /// Resolves every request, preserving order and partial success. Scope
-    /// results are reused within this batch, not an atomic loader snapshot.
-    /// Allocation failures still throw; resolution failures remain per request.
+    /// Resolves every request, preserving order and partial success. Scope results are reused within this batch, not an atomic loader snapshot. Allocation failures still throw; resolution failures remain per request.
     std::vector<resolution_result> resolve(const std::vector<symbol_request>& queries) const {
         const auto declaration_value = [](const declaration& d) {
             return ABIDeclaration{d.name.c_str(), static_cast<std::int32_t>(d.source_language),

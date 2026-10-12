@@ -16,9 +16,9 @@ let create = try runtime.cFunction(
 
 Explicit framework and file-URL scopes default to ``ImageLoadingPolicy/ifNeeded``. The native loader acquires the selected image and performs its normal initialization before resolution proceeds. A catalog entry or process-lifetime mapping alone is not used as an initialization guarantee. Ordinary dyld reentrancy rules still apply when resolution is called from an initializer.
 
-Loading occurs synchronously on the thread performing resolution. Synchronous lookup uses the caller's thread; asynchronous `prepare(_:)` and all awaited Swift function, type, and member factories use a worker queue. `ABIRuntime` remains an actor, but its synchronous lookup methods are `nonisolated`. If a library requires a particular initialization context, acquire it there before using `loading: .loadedOnly`.
+Loading runs on the resolution thread: the caller for synchronous lookup, or a worker for async preparation and Swift factories. If the library requires an initialization context, acquire it there and then use `loading: .loadedOnly`. See <doc:SymbolLookup> for choosing synchronous or async lookup.
 
-Framework names first select matching loaded images. Otherwise, discovery checks the application's framework directories and the system's public/private framework locations, including shared-cache-only images. Multiple candidates report `ABIResolutionError.ambiguousImage`; use a concrete executable URL to distinguish them. Presence in a directory or cache does not establish loadability.
+Framework lookup first checks matching loaded images, then application and system public/private framework locations, including shared-cache-only images. Multiple candidates throw `ABIResolutionError.ambiguousImage`; use an executable URL to distinguish them. Discovery does not guarantee loadability.
 
 ```swift
 let function = try runtime.cxxFunction(
@@ -41,7 +41,7 @@ let symbol = try runtime.resolve(
 )
 ```
 
-`@rpath`, `@loader_path`, `@executable_path`, bare names, and relative paths follow dyld's rules. The loader call resides in ABIBridge's native code. If that code is linked into a framework, `@loader_path` refers to that framework's image. Use an absolute URL when that distinction matters. ABIBridge does not recreate dyld's path expansion or decode opaque loader handles.
+dyld expands `@rpath`, `@loader_path`, `@executable_path`, bare names, and relative paths. The loader call resides in ABIBridge's native image; when linked into a framework, `@loader_path` refers to that framework. Use an absolute URL when the caller's location must determine the target.
 
 ## Keep inspection loaded-only
 
@@ -69,6 +69,6 @@ Only the requested explicit target is acquired. ABIBridge uses its existing symb
 
 C++ and Objective-C++ use `Runtime::resolve(query, selector, image_loading::if_needed)` by default, or `image_loading::loaded_only` for inspection. `image_selector::install_name` carries dyld spellings. A `symbol_request` stores the same policy in `loading`.
 
-The C entry points `ABIResolveSymbol`, `ABIResolveSymbolWithNameForm`, and `ABIResolveCXXVTable` accept a loading argument before the failure output. Pass `ABIImageLoadIfNeeded` or `ABIImageLoadedOnly`; zero-initialized `ABISymbolRequest` values use the former. Rebuild C consumers against the updated declarations and request layout. These are source-distributed interfaces, not a binary compatibility layer for older headers.
+Pass `ABIImageLoadIfNeeded` or `ABIImageLoadedOnly` before the failure output in `ABIResolveSymbol`, `ABIResolveSymbolWithNameForm`, and `ABIResolveCXXVTable`. Zero-initialized `ABISymbolRequest` values select the former. Rebuild C consumers when adopting changed headers or request layouts.
 
 Platform loader and code-signing rules determine which targets can be acquired. Package build coverage does not establish runtime loading permission for every library on every Apple platform.

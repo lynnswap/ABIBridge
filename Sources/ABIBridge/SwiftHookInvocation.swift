@@ -146,12 +146,7 @@ final class SwiftHookFrame {
 
 /// The next implementation of a concrete Swift function, scoped to one callback.
 ///
-/// Later hooks wrap earlier hooks. `proceed` traverses that snapshot and then
-/// calls the captured predecessor with the incoming Swift context. It does not
-/// resolve the source declaration again. Saving this value preserves diagnostics,
-/// but does not extend its call frame or retain callback captures after return.
-/// Synchronous continuations stay on the entering thread. Async continuations
-/// remain valid across suspension on the same Swift task until the callback ends.
+/// Later hooks wrap earlier hooks. `proceed` traverses that snapshot and then calls the captured predecessor with the incoming Swift context. It does not resolve the source declaration again. Saving this value preserves diagnostics, but does not extend its call frame or retain callback captures after return. Synchronous continuations stay on the entering thread. Async continuations remain valid across suspension on the same Swift task until the callback ends.
 public struct NativeSwiftFunctionInvocation<Signature>: CustomStringConvertible {
     let frame: SwiftHookFrame
     let prepared: SwiftCallValues
@@ -162,9 +157,7 @@ public struct NativeSwiftFunctionInvocation<Signature>: CustomStringConvertible 
     /// A cached description that does not read native state or format argument objects.
     public let description: String
 
-    /// Calls the next implementation with replacement arguments and returns its value.
-    /// Reference arguments retain their ordinary identity, so edits to their
-    /// properties are visible to subsequent callbacks and native code.
+    /// Calls the next implementation with replacement arguments and returns its value. Reference arguments retain their ordinary identity, so edits to their properties are visible to subsequent callbacks and native code.
     /// - Throws: Scope, argument/result conversion, or continuation errors.
     public func proceed<Result, Failure: Error, each Argument>(
         _ values: repeat each Argument
@@ -180,8 +173,7 @@ public struct NativeSwiftFunctionInvocation<Signature>: CustomStringConvertible 
         try invoke(repeat each values)
     }
 
-    /// Awaits the captured predecessor on this callback's native task.
-    /// The continuation remains usable across suspension until the callback returns.
+    /// Awaits the captured predecessor on this callback's native task. The continuation remains usable across suspension until the callback returns.
     @_transparent
     public nonisolated(nonsending) func proceed<Result, Failure: Error, each Argument>(
         _ values: repeat each Argument

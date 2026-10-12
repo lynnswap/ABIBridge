@@ -27,8 +27,7 @@ package enum SwiftMemberLookup {
             || declaration.contains(".getter : ") || declaration.contains(".setter : ")
     }
 
-    /// Compare an explicitly supplied function/property signature independently
-    /// of the context requirements, which the generic binding validates.
+    /// Compare an explicitly supplied function/property signature independently of the context requirements, which the generic binding validates.
     package static func signatureKey(_ declaration: String) -> [UInt8]? {
         let text = SymbolIndex.extensionMemberName(declaration) ?? declaration
         let opening =
