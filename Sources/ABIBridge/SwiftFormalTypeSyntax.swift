@@ -271,9 +271,20 @@ extension SwiftFormalType {
             self = .function(parameters.map(\.type), try Self(node.requiredChild(kind: "ReturnType")),
                 failure: failure, attributes: attributes)
         case "ProtocolListWithClass":
-            self = .constrainedExistential(base: "any " + (try node.requiredChild(kind: "ProtocolList").name()),
-                superclass: try Self(node.requiredChild(kind: "Type")), constraints: [], shape: nil)
-        case "ProtocolList", "ProtocolListWithAnyObject", "BuiltinTypeName":
+            self = .constrainedExistential(
+                base: "any " + (try node.requiredChild(kind: "ProtocolList").name()),
+                superclass: try Self(node.requiredChild(kind: "Type")),
+                constraints: [],
+                shape: nil
+            )
+        case "ProtocolList", "ProtocolListWithAnyObject":
+            self = .constrainedExistential(
+                base: "any " + (try node.name()),
+                superclass: nil,
+                constraints: [],
+                shape: nil
+            )
+        case "BuiltinTypeName":
             self = .nominal(try node.name(), [])
         case "SugaredOptional": self = .nominal("Swift.Optional", [try Self(node.requiredChild())])
         case "SugaredArray": self = .nominal("Swift.Array", [try Self(node.requiredChild())])

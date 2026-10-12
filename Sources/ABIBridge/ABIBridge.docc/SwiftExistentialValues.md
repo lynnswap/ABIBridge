@@ -51,6 +51,8 @@ Parameterized existential metatypes use the same interface. For a declaration ac
 
 ``NativeSwiftValue`` can receive an extended existential whose provider types are unavailable to the consumer. The bridge reuses matching metadata or obtains the shape's constraints from the protocol and superclass declarations. Swift interns the shape, keeping its descriptor and declaration images available for the runtime cache. Payloads and arguments keep their ordinary lifetimes.
 
+An ordinary protocol-returning getter can also use `(() -> NativeSwiftValue).self` without the consumer naming its protocol in Swift code. Resolution obtains the existential metadata from the matched declaration's protocol descriptors. The returned handle owns the existential container; use `copyUnderlyingValue()` to obtain its concrete value before looking up that value's members.
+
 ## Closures and authentication
 
 The same representations work in generated and returned Swift closures. Use the matching synchronous or async wrapper from <doc:SwiftClosureValues>.

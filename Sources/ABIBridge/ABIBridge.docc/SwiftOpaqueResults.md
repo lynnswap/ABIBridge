@@ -128,6 +128,8 @@ Tuple and existential copies use already established value conventions and run s
 
 Member invocation keeps its existing ABI requirements. A getter returning a closed nominal enum or struct can require `valueABIs:` even when `NativeSwiftValue` receives the result. Supply an established direct representation or formally indirect `.opaque` convention as described in <doc:BorrowedSwiftValues>; storage dimensions alone do not establish that calling convention.
 
+This also applies to a nominal aggregate nested in a generic owner when its ABI cannot be inferred from the declaration, such as `Source<A>.Structure`. Use the retained type of the instantiated aggregate as the `valueABIs` key. An override does not change an archetype's formally indirect convention or the established conventions of generic classes and standard collections.
+
 The `any Error & AnyObject` composition has incompatible native and generic storage layouts in the tested Swift 6.3 and 6.4 toolchains. Projection rejects this composition, including tuple and Optional payloads containing it, before copying. Ordinary `any Error` and class-bound protocols inheriting `Error` use their supported storage representations. See <doc:SwiftExistentialValues> for the existing native-call boundary.
 
 ## Scope

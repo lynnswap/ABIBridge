@@ -160,11 +160,16 @@ const void *ABISwiftProtocolTypeMetadata(const void *protocol) {
                                            nullptr, 1, &reference);
 }
 
-const void *ABISwiftSuperclassExistentialMetadata(const void *superclass,
-    const void *const *protocols, size_t count) {
+const void *ABISwiftExistentialTypeMetadata(const void *superclass,
+    const void *const *protocols, size_t count, bool classBound) {
     std::vector<uintptr_t> references;
-    for (size_t index = 0; index < count; ++index) references.push_back(reinterpret_cast<uintptr_t>(protocols[index]));
-    return swift_getExistentialTypeMetadata(false, superclass, count, references.data());
+    classBound |= superclass != nullptr;
+    for (size_t index = 0; index < count; ++index) {
+        const auto reference = reinterpret_cast<uintptr_t>(protocols[index]);
+        references.push_back(reference);
+        classBound |= (reference & 1) || !(read<uint32_t>(protocols[index]) & 0x10000);
+    }
+    return swift_getExistentialTypeMetadata(!classBound, superclass, count, references.data());
 }
 
 const void *ABISwiftConformanceDescriptor(const void *witnessTable) {
