@@ -8,6 +8,7 @@ import ABIBridgeCore
 import ManagedSwiftFixtures
 import Darwin
 import Testing
+import Synchronization
 
 private nonisolated(nonsending) func concurrentClosureBody(
     _ gate: AsyncGate,
@@ -41,16 +42,19 @@ private nonisolated(nonsending) func isOnMainThread() async -> Bool { pthread_ma
 private final class AsyncCallbackCapture: Sendable {}
 
 private struct SwiftClosurePreparationValue: ABIBridgeSwiftValue {
+    static let preparationThreads = Mutex<[Bool]>([])
     var raw: Int64
     static var swiftABIType: NativeType {
-        SwiftPreparationValue.preparationThreads.withLock { $0.append(pthread_main_np() != 0) }
+        SwiftClosurePreparationValue.preparationThreads.withLock {
+            $0.append(pthread_main_np() != 0)
+        }
         return .int64
     }
 }
 
 private nonisolated(nonsending) func coldHostClosureBody() async -> SwiftClosurePreparationValue {
     MainActor.preconditionIsolated()
-    let observations = SwiftPreparationValue.preparationThreads.withLock { $0 }
+    let observations = SwiftClosurePreparationValue.preparationThreads.withLock { $0 }
     #expect(!observations.isEmpty)
     #expect(observations.allSatisfy { !$0 })
     return .init(raw: 42)
@@ -58,8 +62,8 @@ private nonisolated(nonsending) func coldHostClosureBody() async -> SwiftClosure
 
 struct NativeSwiftAsyncClosureTests {
     @MainActor @Test func coldHostInvocationPreparesAwayFromCallerActor() async throws {
-        SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() }
-        defer { SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() } }
+        SwiftClosurePreparationValue.preparationThreads.withLock { $0.removeAll() }
+        defer { SwiftClosurePreparationValue.preparationThreads.withLock { $0.removeAll() } }
         let callback = try NativeSwiftClosure<
             nonisolated(nonsending) @Sendable () async -> SwiftClosurePreparationValue
         >(coldHostClosureBody)
