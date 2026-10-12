@@ -7,6 +7,7 @@ package final class RuntimeSymbolResolver: Sendable {
     package init() {
         #if DEBUG
         sharedCacheCapture = nil
+        beforeCachePublication = nil
         #endif
     }
     package static let shared = RuntimeSymbolResolver()
@@ -16,11 +17,25 @@ package final class RuntimeSymbolResolver: Sendable {
     private let sharedCacheCapture: (@Sendable (
         RuntimeImage, RuntimeDeclaration, SharedCacheSymbols.Source
     ) -> SharedCacheSymbols.CapturedSymbols?)?
+    package enum CachePublication: Sendable {
+        case automaticScope, importIndex, virtualEntries
+    }
+    private let beforeCachePublication: (@Sendable (
+        CachePublication, RuntimeSymbolResolver
+    ) -> Void)?
 
     package init(capturingSharedCacheSymbols capture: @escaping @Sendable (
         RuntimeImage, RuntimeDeclaration, SharedCacheSymbols.Source
     ) -> SharedCacheSymbols.CapturedSymbols?) {
         sharedCacheCapture = capture
+        beforeCachePublication = nil
+    }
+
+    package init(beforePublishingCache callback: @escaping @Sendable (
+        CachePublication, RuntimeSymbolResolver
+    ) -> Void) {
+        sharedCacheCapture = nil
+        beforeCachePublication = callback
     }
 
     package var hasSharedCacheWaiters: Bool {
@@ -73,8 +88,9 @@ package final class RuntimeSymbolResolver: Sendable {
         guard selector == .automatic else {
             return .images(try acquire(selector, loading: loading))
         }
+        let (cached, generation) = state.withLock { ($0.automatic, $0.cacheGeneration) }
         let snapshot = try RuntimeImageSnapshot.catalog()
-        if let cached = state.withLock({ $0.automatic }), cached.revision == snapshot.revision {
+        if let cached, cached.revision == snapshot.revision {
             return .automatic(cached)
         }
         let retained = try retain(snapshot.images, skippingUnavailable: true)
@@ -82,7 +98,11 @@ package final class RuntimeSymbolResolver: Sendable {
         // scope must be reacquired even if the catalog revision stays the same.
         guard retained.isComplete else { return .partial(retained.images) }
         let candidate = AutomaticScope(revision: snapshot.revision, images: retained.images)
+        #if DEBUG
+        beforeCachePublication?(.automaticScope, self)
+        #endif
         let (selected, retired) = state.withLock { state -> (AutomaticScope, AutomaticScope?) in
+            guard state.cacheGeneration == generation else { return (candidate, nil) }
             if let existing = state.automatic {
                 if existing.revision == candidate.revision { return (existing, nil) }
                 if existing.revision > candidate.revision { return (candidate, nil) }
@@ -328,10 +348,12 @@ package final class RuntimeSymbolResolver: Sendable {
         lookup: () throws -> RuntimeImage
     ) throws -> RuntimeImage {
         let key = ObjectIdentifier(type)
-        if let cached = state.withLock({ $0.classImages[key] }) { return cached }
+        let (cached, generation) = state.withLock { ($0.classImages[key], $0.cacheGeneration) }
+        if let cached { return cached }
         let candidate = try lookup()
         return withExtendedLifetime(candidate) {
             state.withLock { state in
+                guard state.cacheGeneration == generation else { return candidate }
                 if let cached = state.classImages[key] { return cached }
                 state.classImages[key] = candidate
                 return candidate
@@ -413,6 +435,7 @@ package final class RuntimeSymbolResolver: Sendable {
                 state.indexes, state.imports, state.virtualEntries, state.automatic,
                 state.classImages, state.virtualTables
             )
+            state.cacheGeneration &+= 1
             state.indexes = [:]
             state.imports = [:]
             state.virtualEntries = [:]
@@ -425,11 +448,16 @@ package final class RuntimeSymbolResolver: Sendable {
     }
 
     package func importIndex(for image: RuntimeImage) throws -> ImportIndex {
-        if let cached = state.withLock({ $0.imports[image.identity] }) { return cached }
+        let (cached, generation) = state.withLock { ($0.imports[image.identity], $0.cacheGeneration) }
+        if let cached { return cached }
         // File/cache discovery can enter dyld; keep it outside the resolver lock.
         let candidate = try ImportIndex(image: image)
+        #if DEBUG
+        beforeCachePublication?(.importIndex, self)
+        #endif
         return withExtendedLifetime(candidate) {
             state.withLock { state in
+                guard state.cacheGeneration == generation else { return candidate }
                 if let cached = state.imports[image.identity] { return cached }
                 state.imports[image.identity] = candidate
                 return candidate
@@ -461,14 +489,20 @@ package final class RuntimeSymbolResolver: Sendable {
                 "The virtual table has no loaded-image metadata; supply explicit adapter metadata"
             )
         }
-        let cached = state.withLock { $0.virtualEntries[snapshot.identity] }
+        let (cached, generation) = state.withLock {
+            ($0.virtualEntries[snapshot.identity], $0.cacheGeneration)
+        }
         let index: VirtualEntryIndex
         if let cached {
             index = cached
         } else {
             let candidate = try VirtualEntryIndex(image: snapshot.retain())
+            #if DEBUG
+            beforeCachePublication?(.virtualEntries, self)
+            #endif
             index = withExtendedLifetime(candidate) {
                 state.withLock { state in
+                    guard state.cacheGeneration == generation else { return candidate }
                     if let cached = state.virtualEntries[snapshot.identity] { return cached }
                     state.virtualEntries[snapshot.identity] = candidate
                     return candidate
@@ -649,6 +683,9 @@ package final class RuntimeSymbolResolver: Sendable {
     }
 
     private struct ResolutionState {
+        // Catalog revisions track image changes; this generation also retires
+        // candidates being built outside the lock when callers clear caches.
+        var cacheGeneration: UInt64 = 0
         var automatic: AutomaticScope?
         var classImages: [ObjectIdentifier: RuntimeImage] = [:]
         var indexes: [RuntimeImageIdentity: SymbolIndex] = [:]
