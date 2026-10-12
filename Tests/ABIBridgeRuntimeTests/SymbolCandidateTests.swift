@@ -5,6 +5,34 @@ import Foundation
 import Testing
 
 struct SymbolCandidateTests {
+    @Test func declarationInspectionKeepsFoldedSymbolSpellings() async throws {
+        let fixture = try FixtureLibrary()
+        defer { fixture.cleanup() }
+        let runtime = RuntimeSymbolResolver()
+        let image = try #require(try runtime.images(matching: .path(fixture.libraryURL)).first)
+        let index = SymbolIndex(image: image)
+        let address = UInt64(try fixture.address(kind: 0))
+        let query = SymbolQuery(.init(name: "First.fold()", language: .swift))
+        let symbols: [IndexedSymbol] = [
+            .init(name: "_$s5First4folds5Int32VyF", address: address, source: .sharedCache),
+            .init(name: "_$s5First4folds6UInt32VyF", address: address, source: .sharedCache),
+        ]
+        index.appendSharedCacheSymbols(symbols + symbols, matching: query)
+        let inspected = index.swiftDeclarationCandidates(
+            query,
+            source: .sharedCache,
+            extensionsOnly: false,
+            includingAliases: true
+        )
+        #expect(Set(inspected.map(\.linkageName)) == Set(symbols.map(\.name)))
+        #expect(inspected.count == 2)
+        #expect(inspected.allSatisfy { $0.address == address })
+        #expect(
+            index.swiftDeclarationCandidates(query, source: .sharedCache, extensionsOnly: false)
+                .count == 1
+        )
+    }
+
     @Test func protocolDescriptorCandidatesKeepModuleAndFallbackCoverage() {
         let query = SymbolQuery(
             .init(name: "protocol descriptor for First.Readable", language: .swift, kind: .data)

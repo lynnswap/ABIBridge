@@ -126,6 +126,25 @@ Candidate order takes precedence over image-scope order. The primary declaration
 
 Use `alternatives:` for aliases that must agree and `fallbacks:` for ordered choices that need not have the same address. Both single-request and batch APIs reuse the same scope and symbol caches.
 
+## Inspect Swift overloads
+
+Use ``ABIRuntime/swiftDeclarationCandidates(named:in:)`` to inspect ordinary Swift declarations in an explicitly retained image when the parameter or result types are not known:
+
+```swift
+for image in try await runtime.images(matching: .framework(named: "Example")) {
+    let candidates = try await runtime.swiftDeclarationCandidates(
+        named: "Example.decorate(_:)", in: image
+    )
+    for candidate in candidates {
+        print(candidate.declaration.name, candidate.machOName, candidate.source)
+    }
+}
+```
+
+The operation matches the qualified name and argument labels; types in a complete input declaration do not restrict the overloads. An absent name returns an empty array. Results have no guaranteed order, and distinct symbol spellings remain available when compiler folding gives them the same address. Extension declarations, prefixes, and spelling variants are outside this operation's scope.
+
+Each result is a ``ResolvedSymbol`` retaining its image. Select its complete `declaration.name` when preparing a typed function or method through the existing APIs. Candidate inspection does not establish the invocation ABI, ownership, or isolation contract. ``ResolvedSymbol/machOName`` includes the exact Mach-O underscore and can be used with `NativeDeclaration(machOName:language:kind:)` for an exact lookup.
+
 ## Borrow an address
 
 Use `ResolvedSymbol.withUnsafeAddress` for a synchronous operation that requires the raw address. The closure keeps the containing image retained, but the pointer must not escape.

@@ -206,8 +206,20 @@ func prepare(_ path: String) async throws -> NativeSwiftFunction<(String) -> Str
     )
     let value = try unsafe answer.unsafeInvoke()
     precondition(value == 42)
+    let candidates = try await runtime.swiftDeclarationCandidates(
+        named: "SwiftFunctionFixture.decorate(Swift.Int32) -> Swift.Int32",
+        in: answer.symbol.image
+    )
+    precondition(candidates.count == 1)
+    let candidate = candidates[0]
+    precondition(candidate.declaration.name == "SwiftFunctionFixture.decorate(Swift.String) -> Swift.String")
+    precondition(candidate.machOName.hasPrefix("_$s") && candidate.image == answer.symbol.image)
+    let exact = try await runtime.resolve(
+        .init(machOName: candidate.machOName, language: .swift), in: candidate.image
+    )
+    precondition(exact.image == candidate.image)
     let function = try await prepare(
-        named: "SwiftFunctionFixture.decorate(_:)", as: ((String) -> String).self, in: scope, using: runtime
+        named: candidate.declaration.name, as: ((String) -> String).self, in: scope, using: runtime
     )
     let transform = try await runtime.swiftFunction(
         named: "SwiftFunctionFixture.transform(SwiftFunctionFixture.Three) -> SwiftFunctionFixture.Three",

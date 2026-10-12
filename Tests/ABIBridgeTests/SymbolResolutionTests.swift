@@ -12,6 +12,77 @@ import Testing
 
 @Suite(.serialized)
 struct SymbolResolutionTests {
+    @Test func declarationCandidatesRecoverAnOverloadAfterSignatureLookupFails() async throws {
+        let module = "Candidates_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+        let fixture = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                public func transform(_ value: Int32) -> Int32 { value + 1 }
+                public func transform(_ value: String) -> String { value + "!" }
+                public func transform(named value: Bool) -> Bool { !value }
+                """
+        )
+        defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        let image = try #require(
+            try await runtime.images(matching: .path(fixture.libraryURL)).first
+        )
+        let badDeclaration = module + ".transform(Swift.Double) -> Swift.Double"
+        do {
+            _ = try await runtime.swiftFunction(
+                named: module + ".transform(_:)",
+                as: ((Double) -> Double).self,
+                in: image
+            )
+            Issue.record("The nonexistent Double overload must not prepare a call")
+        } catch ABIResolutionError.declarationNotFound {}
+
+        let candidates = try await runtime.swiftDeclarationCandidates(
+            named: badDeclaration,
+            in: image
+        )
+        let expectedNames: Set<String> = [
+            module + ".transform(Swift.Int32) -> Swift.Int32",
+            module + ".transform(Swift.String) -> Swift.String",
+        ]
+        #expect(Set(candidates.map(\.declaration.name)) == expectedNames)
+        #expect(candidates.count == 2)
+        #expect(candidates.allSatisfy { $0.image.identity == image.identity })
+        #expect(candidates.allSatisfy { $0.source.rawValue == "image" })
+        #expect(candidates.allSatisfy { $0.machOName.hasPrefix("_$s") })
+        #expect(
+            try await runtime.swiftDeclarationCandidates(
+                named: module + ".missing(_:)",
+                in: image
+            ).isEmpty
+        )
+
+        let scalar = try #require(
+            candidates.first {
+                $0.declaration.name == module + ".transform(Swift.Int32) -> Swift.Int32"
+            }
+        )
+        let function = try await runtime.swiftFunction(
+            named: scalar.declaration.name,
+            as: ((Int32) -> Int32).self,
+            in: scalar.image
+        )
+        #expect(try unsafe function.unsafeInvoke(41) == 42)
+        let exact = try await runtime.resolve(
+            .init(machOName: scalar.machOName, language: .swift),
+            in: scalar.image
+        )
+        #expect(exact.image.identity == scalar.image.identity)
+        await runtime.removeCachedResults()
+        let afterClear = try await runtime.swiftDeclarationCandidates(
+            named: module + ".transform(_:)",
+            in: scalar.image
+        )
+        #expect(Set(afterClear.map(\.machOName)) == Set(candidates.map(\.machOName)))
+        fixture.cleanup()
+        #expect(try unsafe function.unsafeInvoke(41) == 42)
+    }
+
     @Test(arguments: [false, true])
     func exactSpellingsPreserveCXXVariantsAndUnderscores(stripped: Bool) async throws {
         let fixture = try FixtureLibrary(stripped: stripped)

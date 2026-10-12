@@ -110,6 +110,12 @@ public struct ResolvedSymbol: Sendable {
     let address: UInt64
     let linkageName: String
 
+    /// Exact Mach-O symbol spelling, including the leading underscore.
+    ///
+    /// Use this value with `NativeDeclaration(machOName:language:kind:)` to
+    /// describe an exact lookup. The spelling does not establish a call ABI.
+    public var machOName: String { linkageName }
+
     init(
         declaration: NativeDeclaration,
         image: NativeImage,

@@ -63,7 +63,11 @@ public actor ABIRuntime {
     /// - Returns: A resolved symbol retaining that image.
     /// - Throws: ``ABIResolutionError`` when the declaration cannot be resolved
     ///   unambiguously in the requested storage.
-    public func resolve(_ declaration: NativeDeclaration, in image: NativeImage, loading: ImageLoadingPolicy = .ifNeeded) throws -> ResolvedSymbol {
+    public func resolve(
+        _ declaration: NativeDeclaration,
+        in image: NativeImage,
+        loading: ImageLoadingPolicy = .ifNeeded
+    ) throws -> ResolvedSymbol {
         try resolver.resolve(declaration, in: image, loading: loading)
     }
 
@@ -89,6 +93,30 @@ public actor ABIRuntime {
         _ requests: [NativeSymbolRequest]
     ) -> [Result<ResolvedSymbol, any Error>] {
         resolver.resolve(requests)
+    }
+
+    /// Lists ordinary Swift overloads in a retained image.
+    ///
+    /// Matches the module-qualified name and argument labels. Parameter and
+    /// result types in `name` do not filter the candidates. Extension members,
+    /// prefixes, and spelling variants are outside this operation's scope.
+    /// Candidates retain their images but do not establish an invocation ABI.
+    /// - Parameters:
+    ///   - name: A qualified name with labels, or a complete demangled declaration.
+    ///   - image: The retained image to inspect without acquiring another image.
+    /// - Returns: Distinct matching symbol spellings, or an empty array for an absent name.
+    ///   The array has no guaranteed order. Folded symbols may share an address.
+    /// - Throws: A declaration-validation or symbol-index error.
+    public func swiftDeclarationCandidates(
+        named name: String,
+        in image: NativeImage
+    ) throws -> [ResolvedSymbol] {
+        try resolver.swiftDeclarationCandidates(
+            .init(name: name, language: .swift),
+            in: image,
+            loading: .loadedOnly,
+            includingAliases: true
+        )
     }
 
     /// Releases cached declarations and image indexes.

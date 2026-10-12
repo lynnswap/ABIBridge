@@ -821,7 +821,8 @@ package final class SymbolIndex {
     package func swiftDeclarationCandidates(
         _ query: SymbolQuery,
         source: RuntimeSymbol.Source,
-        extensionsOnly: Bool
+        extensionsOnly: Bool,
+        includingAliases: Bool = false
     ) -> [RuntimeSymbol] {
         guard let key = SwiftMemberLookup.key(query.declaration.name) else { return [] }
         var symbols: [IndexedSymbol] = []
@@ -850,6 +851,7 @@ package final class SymbolIndex {
             symbols += swiftMembers[scope]?[DeclarationKey.fingerprint(key)] ?? []
         }
         var addresses: Set<UInt64> = []
+        var names: Set<String> = []
         return symbols.compactMap { symbol in
             guard symbol.source == source,
                 let name = DeclarationKey.demangle(symbol.name, language: .swift),
@@ -858,7 +860,9 @@ package final class SymbolIndex {
                     SwiftMemberLookup.key($0) == key
                 }),
                 let section = sections.first(where: { $0.range.contains(symbol.address) }),
-                section.accepts(query.declaration.kind), addresses.insert(symbol.address).inserted
+                section.accepts(query.declaration.kind),
+                includingAliases
+                    ? names.insert(symbol.name).inserted : addresses.insert(symbol.address).inserted
             else { return nil }
             return RuntimeSymbol(
                 declaration: .init(name: name, language: .swift),

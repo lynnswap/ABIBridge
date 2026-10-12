@@ -85,14 +85,16 @@ final class SymbolResolver: Sendable {
         _ declaration: NativeDeclaration,
         in image: NativeImage?,
         loading: ImageLoadingPolicy = .loadedOnly,
-        extensionsOnly: Bool = false
+        extensionsOnly: Bool = false,
+        includingAliases: Bool = false
     ) throws -> [ResolvedSymbol] {
         try withRuntimeErrors {
             try runtime.swiftDeclarationCandidates(
                 declaration.runtimeValue,
                 in: image?.runtimeValue,
                 loading: loading.runtimeValue,
-                extensionsOnly: extensionsOnly
+                extensionsOnly: extensionsOnly,
+                includingAliases: includingAliases
             ).map(ResolvedSymbol.init)
         }
     }

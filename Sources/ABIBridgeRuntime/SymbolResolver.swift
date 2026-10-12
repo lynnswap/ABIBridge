@@ -348,7 +348,8 @@ package final class RuntimeSymbolResolver: Sendable {
         _ declaration: RuntimeDeclaration,
         in image: RuntimeImage?,
         loading: RuntimeImageLoadingPolicy = .loadedOnly,
-        extensionsOnly: Bool = false
+        extensionsOnly: Bool = false,
+        includingAliases: Bool = false
     ) throws -> [RuntimeSymbol] {
         try validate(declaration)
         let scope =
@@ -357,14 +358,16 @@ package final class RuntimeSymbolResolver: Sendable {
         return try swiftDeclarationCandidates(
             declaration,
             in: scope,
-            extensionsOnly: extensionsOnly
+            extensionsOnly: extensionsOnly,
+            includingAliases: includingAliases
         )
     }
 
     private func swiftDeclarationCandidates(
         _ declaration: RuntimeDeclaration,
         in scope: SearchScope,
-        extensionsOnly: Bool
+        extensionsOnly: Bool,
+        includingAliases: Bool = false
     ) throws -> [RuntimeSymbol] {
         let query = SymbolQuery(declaration)
         let indexes = state.withLock { state in scope.images.map { state.index(for: $0) } }
@@ -374,7 +377,8 @@ package final class RuntimeSymbolResolver: Sendable {
                     $0.swiftDeclarationCandidates(
                         query,
                         source: source,
-                        extensionsOnly: extensionsOnly
+                        extensionsOnly: extensionsOnly,
+                        includingAliases: includingAliases
                     )
                 }
             }
