@@ -229,7 +229,7 @@ struct ImageLoadingTests {
         let runtime = ABIRuntime()
         let scope = ImageSelector.path(fixture.libraryURL)
         #expect(try runtime.images(matching: scope).isEmpty)
-        let function = try runtime.swiftFunction(
+        let function = try await runtime.swiftFunction(
             named: module + ".answer()",
             as: (() -> Int).self,
             in: scope

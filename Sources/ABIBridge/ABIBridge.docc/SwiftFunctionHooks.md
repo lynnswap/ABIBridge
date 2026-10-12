@@ -7,7 +7,7 @@ Use a capturing Swift closure to intercept imports of a Swift function, edit its
 Resolve the function by its source declaration and ordinary Swift function type:
 
 ```swift
-let transform = try runtime.swiftFunction(
+let transform = try await runtime.swiftFunction(
     named: "Rendering.transform(_:)", as: ((String) -> String).self
 )
 let hook = try await unsafe transform.hookImportedCalls(
@@ -33,7 +33,7 @@ The closure receives ordinary Swift arguments. Reference arguments keep their id
 Resolve an async function with its complete isolation and error signature, then use the same registration and invocation types:
 
 ```swift
-let transform = try runtime.swiftFunction(
+let transform = try await runtime.swiftFunction(
     named: "Rendering.transformAsync(_:)",
     as: (nonisolated(nonsending) (String) async throws -> String).self
 )
@@ -65,7 +65,7 @@ Synchronous callbacks stay on the incoming thread. When the native function's co
 Resolve the native declaration with explicit generic arguments before registering a hook:
 
 ```swift
-let echo = try runtime.swiftFunction(
+let echo = try await runtime.swiftFunction(
     named: "Rendering.echo(_:)", as: ((String) -> String).self,
     genericArguments: [.type(String.self)]
 )
@@ -86,7 +86,7 @@ Use NativeSwiftValue for an owned runtime value and NativeSwiftBorrowedValue for
 For a provider declaring `consume<T: Readable & ~Copyable>(_ value: consuming T) -> Int64`, prepare its binding and any member handles before registration:
 
 ```swift
-let consume = try runtime.swiftFunction(
+let consume = try await runtime.swiftFunction(
     named: "Provider.consume(_:)",
     as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self,
     genericArguments: [.type(ticketType)]

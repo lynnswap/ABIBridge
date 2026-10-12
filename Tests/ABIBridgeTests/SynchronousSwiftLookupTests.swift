@@ -37,6 +37,38 @@ struct SynchronousSwiftLookupTests {
         #expect(try unsafe prepared.unsafeInvoke(on: receiver) == "updated")
     }
 
+    @MainActor @Test
+    func asynchronousSwiftLookupDoesNotWaitForTheEntireTypedPreparation() async throws {
+        let runtime = ABIRuntime()
+        let pause = SwiftPreparationPause()
+        let preparation = Task {
+            try await runtime.prepare { runtime in
+                defer { pause.finish() }
+                let function = try runtime.swiftFunction(
+                    named: "ABIBridgeTests.swiftABIString(_:)",
+                    as: ((String) -> String).self
+                )
+                pause.readyAndWait()
+                return function
+            }
+        }
+        defer { pause.release() }
+        await pause.waitUntilReady()
+
+        let demanded = try await runtime.swiftFunction(
+            named: "ABIBridgeTests.swiftABIString(_:)",
+            as: ((String) -> String).self
+        )
+        #expect(try unsafe demanded.unsafeInvoke("demanded") == "demanded!")
+        #expect(!pause.hasFinished)
+        MainActor.assertIsolated()
+
+        pause.release()
+        let prepared = try await preparation.value
+        #expect(prepared.symbol.declaration == demanded.symbol.declaration)
+        #expect(try unsafe prepared.unsafeInvoke("prepared") == "prepared!")
+    }
+
 }
 
 private final class SwiftPreparationPause: Sendable {

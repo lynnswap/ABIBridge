@@ -21,12 +21,12 @@ struct SwiftFunctionDeclarationTests {
             genericSecond = GenericOperatorBox<Int64>(7)
         for operation in ["-->", "->>"] {
             let expected = operation == "-->" ? (Int64(35) --> Int64(7)) : (Int64(35) ->> Int64(7))
-            let function = try runtime.swiftFunction(
+            let function = try await runtime.swiftFunction(
                 named: "ManagedSwiftFixtures." + operation + "(_:_:)",
                 as: ((Int64, Int64) -> Int64).self
             )
             #expect(try unsafe function.unsafeInvoke(35, 7) == expected)
-            let complete = try runtime.swiftFunction(
+            let complete = try await runtime.swiftFunction(
                 named: "ManagedSwiftFixtures." + operation
                     + " infix(Swift.Int64, Swift.Int64) -> Swift.Int64",
                 as: ((Int64, Int64) -> Int64).self,
@@ -81,7 +81,7 @@ struct SwiftFunctionDeclarationTests {
                 loading: .loadedOnly
             )
             do {
-                _ = try runtime.swiftFunction(
+                _ = try await runtime.swiftFunction(
                     named: declaration,
                     as: ((Int) -> String).self,
                     in: .path(fixture.libraryURL),
@@ -90,7 +90,7 @@ struct SwiftFunctionDeclarationTests {
                 Issue.record("A generic declaration was prepared without metadata or witnesses")
             } catch ABIResolutionError.unsupportedDeclaration {}
             do {
-                _ = try runtime.swiftFunction(
+                _ = try await runtime.swiftFunction(
                     named: declaration,
                     as: ((Int) async throws -> String).self,
                     in: .path(fixture.libraryURL),
@@ -108,7 +108,7 @@ struct SwiftFunctionDeclarationTests {
         let declaration =
             "(extension in Example):Example.Box<A where A == (Swift.Int) -> Swift.String>.value() \(effects) -> Swift.String"
         do {
-            _ = try ABIRuntime().swiftFunction(named: declaration, as: (() -> String).self)
+            _ = try await ABIRuntime().swiftFunction(named: declaration, as: (() -> String).self)
             Issue.record("An outer effect was accepted by a synchronous nonthrowing metatype")
         } catch ABIResolutionError.unsupportedDeclaration {}
     }

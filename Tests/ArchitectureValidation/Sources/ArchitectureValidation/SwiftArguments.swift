@@ -8,7 +8,7 @@ import SwiftValueFixtures
         guard condition else { throw ArchitectureValidationFailure(description: message) }
         checks.append(message)
     }
-    let mutate = try runtime.swiftFunction(
+    let mutate = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.mutateArguments(_:_:_:_:)",
         as: ((NativeSwiftInout<String>, NativeSwiftInout<[String]>, NativeSwiftInout<Int64>, Bool) throws(SmallError) -> Void).self)
     let text = NativeSwiftInout(String(repeating: "text", count: 100))
@@ -23,7 +23,7 @@ import SwiftValueFixtures
         try error.withUnderlyingError { try check(($0 as? SmallError)?.code == 42 && count.value == 42 && values.value.count == 2, "Throwing completion preserves all inout mutations") }
     }
 
-    let consume = try runtime.swiftFunction(
+    let consume = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.consumeArgument(_:_:_:)",
         as: ((NativeSwiftConsuming<LargeError>, NativeSwiftBorrowing<String>, Bool) throws(SmallError) -> String).self)
     let counts = ArgumentCounts()
@@ -55,7 +55,7 @@ import SwiftValueFixtures
     let owner = try unsafe make.unsafeInvoke(.init("first"), .init("second"), .init(token))
     try check(owner.first == "first" && owner.second == "second" && owner.token === token, "Allocating initializer mixes guaranteed and owned parameters")
 
-    let async = try runtime.swiftFunction(
+    let async = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.asyncArguments(_:_:_:_:)",
         as: (@concurrent (AsyncValueGate, NativeSwiftInout<String>, NativeSwiftConsuming<String>, NativeSwiftBorrowing<String>) async throws(SmallError) -> String).self)
     for cancelled in [false, true] {

@@ -55,7 +55,7 @@ struct SwiftBorrowedValueTests {
                 return try unsafe (method.unsafeInvoke(on: value), getter.unsafeInvoke(on: value))
             } catch { errors.record { throw error }; return (-1, -1) }
         }
-        let visit = try runtime.swiftFunction(
+        let visit = try await runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitBorrowedGenericRecord(Swift.Int64, (ManagedSwiftFixtures.GenericRecord<ManagedSwiftFixtures.ResilientRecord>) -> (Swift.Int64, Swift.Int64)) -> (Swift.Int64, Swift.Int64)",
             as: ((Int64, NativeSwiftClosure<(NativeSwiftBorrowedValue) -> (Int64, Int64)>) -> (
@@ -91,7 +91,7 @@ struct SwiftBorrowedValueTests {
             as: (() -> Void).self,
             receiverABI: .opaque(named: type.name)
         )
-        let visit = try runtime.swiftFunction(
+        let visit = try await runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitRuntimeRecord(Swift.AnyObject, Swift.String, Swift.UnsafeMutablePointer<Swift.Int32>, (ManagedSwiftFixtures.RuntimeRecord) -> ()) -> ()",
             as: ((
@@ -100,7 +100,7 @@ struct SwiftBorrowedValueTests {
             ) -> Void).self,
             valueABIs: [type: .opaque(named: type.name)]
         )
-        let reference = try runtime.swiftFunction(
+        let reference = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.referenceRuntimeRecord(_:_:_:)",
             as: ((AnyObject, String, UnsafeMutablePointer<Int32>) -> String).self
         )
@@ -155,7 +155,7 @@ struct SwiftBorrowedValueTests {
             as: (() async -> Int64).self,
             receiverABI: .opaque(named: type.name)
         )
-        let visit = try runtime.swiftFunction(
+        let visit = try await runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitRuntimeRecord(Swift.AnyObject, Swift.String, Swift.UnsafeMutablePointer<Swift.Int32>, (ManagedSwiftFixtures.RuntimeRecord) -> ()) -> ()",
             as: ((
@@ -201,7 +201,7 @@ struct SwiftBorrowedValueTests {
             as: (() -> Int).self,
             receiverABI: .opaque(named: other.name)
         )
-        let visit = try runtime.swiftFunction(
+        let visit = try await runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitRuntimeRecord(Swift.AnyObject, Swift.String, Swift.UnsafeMutablePointer<Swift.Int32>, (ManagedSwiftFixtures.RuntimeRecord) -> ()) -> ()",
             as: ((
@@ -247,17 +247,17 @@ struct SwiftBorrowedValueTests {
             as: (() -> String).self,
             receiverABI: .opaque(named: type.name)
         )
-        let save = try runtime.swiftFunction(
+        let save = try await runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.saveRuntimeCallback((ManagedSwiftFixtures.RuntimeRecord) -> ()) -> ()",
             as: ((NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Void>) -> Void).self,
             valueABIs: [type: .opaque(named: type.name)]
         )
-        let fire = try runtime.swiftFunction(
+        let fire = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.fireRuntimeCallback(_:_:_:)",
             as: ((AnyObject, String, UnsafeMutablePointer<Int32>) -> Void).self
         )
-        let clear = try runtime.swiftFunction(
+        let clear = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.clearRuntimeCallback()",
             as: (() -> Void).self
         )

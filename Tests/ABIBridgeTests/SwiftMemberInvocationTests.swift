@@ -351,7 +351,7 @@ struct SwiftMemberInvocationTests {
             Issue.record("Typed-throwing members need a throwing function metatype")
         } catch ABIResolutionError.unsupportedDeclaration {}
         do {
-            _ = try runtime.swiftFunction(
+            _ = try await runtime.swiftFunction(
                 named: "ABIBridgeTests.swiftMemberTypedFailure() throws(ABIBridgeTests.SwiftMemberFailure) -> Swift.Int",
                 as: (() -> Int).self, in: type.image
             )

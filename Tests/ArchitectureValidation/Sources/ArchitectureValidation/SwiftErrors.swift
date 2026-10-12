@@ -28,7 +28,7 @@ extension ErrorCounter: ABIBridgeSwiftValue { public static var swiftABIType: Na
             throw ArchitectureValidationFailure(description: "Native call unexpectedly succeeded")
         } catch let error as NativeSwiftError { return error }
     }
-    let untyped = try runtime.swiftFunction(
+    let untyped = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.untypedError(_:_:)",
         as: ((ErrorToken, Bool) throws -> String).self)
     weak var observed: ErrorToken?
@@ -48,7 +48,7 @@ extension ErrorCounter: ABIBridgeSwiftValue { public static var swiftABIType: Na
     try withExtendedLifetime(held) { try check(observed != nil, "Error wrapper retains native payload") }
     held = nil
     try check(observed == nil, "Final error release destroys the payload")
-    let small = try runtime.swiftFunction(
+    let small = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.smallError(_:)",
         as: ((Bool) throws(SmallError) -> Double).self)
     try check(try unsafe small.unsafeInvoke(false) == 1.5, "Normal floating result uses its register bank")
@@ -56,7 +56,7 @@ extension ErrorCounter: ABIBridgeSwiftValue { public static var swiftABIType: Na
     try smallFailure.withUnderlyingError {
         try check(($0 as? SmallError)?.code == 0, "Zero-valued typed error uses a separate failure indicator")
     }
-    let floating = try runtime.swiftFunction(
+    let floating = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.floatingError(_:)",
         as: ((Bool) throws(FloatingError) -> Void).self)
     try unsafe floating.unsafeInvoke(false)
@@ -64,7 +64,7 @@ extension ErrorCounter: ABIBridgeSwiftValue { public static var swiftABIType: Na
     try floatingFailure.withUnderlyingError {
         try check(($0 as? FloatingError)?.value == 1.5, "Floating error uses the hidden output buffer")
     }
-    let indirect = try runtime.swiftFunction(
+    let indirect = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.indirectError(_:_:)",
         as: ((ErrorToken, Bool) throws(IndirectError) -> String).self)
     let token = ErrorToken()
@@ -73,7 +73,7 @@ extension ErrorCounter: ABIBridgeSwiftValue { public static var swiftABIType: Na
     try indirectFailure.withUnderlyingError {
         try check(($0 as? IndirectError)?.token === token, "Resilient native error is taken from indirect storage")
     }
-    let large = try runtime.swiftFunction(
+    let large = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.largeError(_:_:)",
         as: ((ErrorToken, Bool) throws(LargeError) -> LargeError).self)
     let result = try unsafe large.unsafeInvoke(token, false)

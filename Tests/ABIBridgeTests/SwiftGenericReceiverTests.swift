@@ -446,7 +446,7 @@ struct SwiftGenericReceiverTests {
     ])
     func genericRequirementsDoNotBecomeFunctionEffects(_ declaration: String) async throws {
         do {
-            _ = try ABIRuntime().swiftFunction(
+            _ = try await ABIRuntime().swiftFunction(
                 named: declaration, as: ((Int) async throws -> Int).self
             )
             Issue.record("Generic metadata and witnesses were not supplied")

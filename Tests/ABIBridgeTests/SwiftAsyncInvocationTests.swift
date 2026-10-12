@@ -82,11 +82,11 @@ struct SwiftAsyncInvocationTests {
 
     @Test func functionMetatypesSelectTheNativeIsolationConvention() async throws {
         let runtime = ABIRuntime.shared
-        let immediate = try runtime.swiftFunction(
+        let immediate = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.asyncImmediate(_:)",
             as: (nonisolated(nonsending) (Int64) async -> Int64).self)
         #expect(try unsafe await immediate.unsafeInvoke(41) == 42)
-        let suspended = try runtime.swiftFunction(
+        let suspended = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.asyncConcurrent(_:_:_:)",
             as: (@concurrent (AsyncGate, ErrorLifetimeToken, Int64) async -> String).self)
         let gate = AsyncGate(), token = ErrorLifetimeToken()
@@ -94,11 +94,11 @@ struct SwiftAsyncInvocationTests {
         await gate.waitUntilSuspended()
         await gate.open()
         #expect(try await task.value == String(repeating: "value:7", count: 100))
-        let inImage = try runtime.swiftFunction(
+        let inImage = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.asyncImmediate(_:)",
             as: (nonisolated(nonsending) (Int64) async -> Int64).self, in: immediate.symbol.image)
         #expect(try unsafe await inImage.unsafeInvoke(9) == 10)
-        let explicitConvention = try runtime.swiftFunction(
+        let explicitConvention = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.asyncConcurrent(_:_:_:)",
             as: (@concurrent (AsyncGate, ErrorLifetimeToken, Int64) async -> String).self)
         let overrideGate = AsyncGate()
@@ -109,7 +109,7 @@ struct SwiftAsyncInvocationTests {
 
     @MainActor @Test func callerTaskAndExecutorArePreservedAcrossNativeSuspension() async throws {
         let runtime = ABIRuntime.shared
-        let call = try runtime.swiftFunction(
+        let call = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.asyncCaller(_:_:)",
             as: (nonisolated(nonsending) (AsyncGate, Int64) async -> Int64).self)
         let gate = AsyncGate()
@@ -122,7 +122,7 @@ struct SwiftAsyncInvocationTests {
         }
         await gate.waitUntilSuspended(); await gate.open()
         #expect(try await task.value == 42)
-        let concurrent = try runtime.swiftFunction(
+        let concurrent = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.asyncConcurrent(_:_:_:)",
             as: (@concurrent (AsyncGate, ErrorLifetimeToken, Int64) async -> String).self)
         let nextGate = AsyncGate(), token = ErrorLifetimeToken()
@@ -136,7 +136,7 @@ struct SwiftAsyncInvocationTests {
     }
 
     @Test func cancellationIsReportedByTheNativeImplementation() async throws {
-        let call = try ABIRuntime.shared.swiftFunction(
+        let call = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.asyncUntyped(_:_:_:)",
             as: (@concurrent (AsyncGate, ErrorLifetimeToken, Bool) async throws -> String).self)
         let gate = AsyncGate(), token = ErrorLifetimeToken()

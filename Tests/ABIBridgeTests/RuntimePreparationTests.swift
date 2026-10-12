@@ -159,6 +159,82 @@ struct RuntimePreparationTests {
         MainActor.assertIsolated()
     }
 
+    @MainActor @Test(arguments: [false, true])
+    func swiftFunctionLookupSelectsTheCallingThreadOrAnIndependentWorker(
+        asynchronous: Bool
+    ) async throws {
+        let dependency = try FixtureLibrary(
+            load: false,
+            cxxSource: """
+                #include <pthread.h>
+                static int preparationThread = -1;
+                __attribute__((constructor)) static void initialize() {
+                    preparationThread = pthread_main_np();
+                }
+                extern "C" int ABISwiftPreparationThread() { return preparationThread; }
+                """
+        )
+        defer { dependency.cleanup() }
+        let module = "SwiftPreparation_" + dependency.namespace
+        let fixture = try FixtureLibrary(
+            load: false,
+            swiftModule: module,
+            swiftSource: """
+                @_silgen_name("ABISwiftPreparationThread") private func preparationThread() -> Int32
+                public func thread() -> Int32 { preparationThread() }
+                """,
+            linkArguments: [dependency.libraryURL.path]
+        )
+        defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        let name = module + ".thread()"
+        let image = ImageSelector.path(fixture.libraryURL)
+
+        let function: NativeSwiftFunction<() -> Int32>
+        if asynchronous {
+            function = try await runtime.swiftFunction(
+                named: name,
+                as: (() -> Int32).self,
+                in: image
+            )
+        } else {
+            function = try { () throws -> NativeSwiftFunction<() -> Int32> in
+                try runtime.swiftFunction(named: name, as: (() -> Int32).self, in: image)
+            }()
+        }
+        MainActor.assertIsolated()
+        #expect(try unsafe function.unsafeInvoke() == (asynchronous ? 0 : 1))
+
+        let retained = try await runtime.swiftFunction(
+            named: name,
+            as: (() -> Int32).self,
+            in: function.symbol.image,
+            loading: .loadedOnly
+        )
+        #expect(retained.symbol.declaration == function.symbol.declaration)
+        #expect(try unsafe retained.unsafeInvoke() == (asynchronous ? 0 : 1))
+        MainActor.assertIsolated()
+    }
+
+    @Test func asynchronousSwiftLookupPreservesLookupFailures() async throws {
+        let runtime = ABIRuntime()
+        let missing = NativeDeclaration(
+            name: "ABIBridgeTests.swiftPreparationMissing() -> Swift.Int32",
+            language: .swift
+        )
+        await #expect(throws: ABIResolutionError.declarationNotFound(missing)) {
+            try await runtime.swiftFunction(
+                named: missing.name,
+                as: (() -> Int32).self
+            )
+        }
+        let function = try await runtime.swiftFunction(
+            named: "ABIBridgeTests.swiftABIAnswer()",
+            as: (() -> Int32).self
+        )
+        #expect(try unsafe function.unsafeInvoke() == 42)
+    }
+
     @Test func failedPreparationDoesNotDisableLaterSynchronousLookup() async throws {
         let fixture = try FixtureLibrary(load: false)
         defer { fixture.cleanup() }

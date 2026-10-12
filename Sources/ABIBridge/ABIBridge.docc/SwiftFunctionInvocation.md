@@ -1,6 +1,6 @@
 # Calling concrete Swift functions
 
-Resolve a synchronous Swift function by source-level name and invoke it with ordinary Swift values.
+Resolve a Swift function by source-level name and invoke it with ordinary Swift values.
 
 ## Resolve and call
 
@@ -17,6 +17,49 @@ let message = try unsafe decorate.unsafeInvoke("Hello")
 A label-only name obtains its parameter and result type names from the function metatype. Use `Example.combine(_:suffix:)` for a declaration with one unlabeled argument and a second argument labeled suffix. The number of labels must match the signature. A complete demangled declaration is also accepted; use that form when a custom wrapper has a different Swift name from the native type.
 
 The framework/path and retained-image overloads use the same symbol indexes as other runtime lookups. Explicit targets are acquired by default; `loading: .loadedOnly` opts out. See <doc:ImageLoading>.
+
+## Await lookup and preparation
+
+`swiftFunction` has synchronous and async overloads with the same arguments. The async overload searches and prepares the call interface on a worker queue while the caller suspends. It shares the synchronous overload's indexes and call layouts, joining only required work if earlier preparation is still running. It never invokes the native function body.
+
+From `MainActor`, await the factory to keep lookup and preparation from blocking the actor:
+
+```swift
+@MainActor
+func makeMessage() async throws -> String {
+    let decorate = try await ABIRuntime.shared.swiftFunction(
+        named: "Example.decorate(_:)",
+        as: ((String) -> String).self
+    )
+    return try unsafe decorate.unsafeInvoke("Hello")
+}
+```
+
+The native signature controls invocation separately. A synchronous signature runs on the caller's executor; an async signature also requires `await` when invoking the handle:
+
+```swift
+@MainActor
+func loadContents() async throws -> String {
+    let load = try await ABIRuntime.shared.swiftFunction(
+        named: "Example.load(_:)",
+        as: (@concurrent (String) async throws -> String).self
+    )
+    return try unsafe await load.unsafeInvoke("settings")
+}
+```
+
+Swift prefers the async overload in an async context, so those factory calls require `await`. Synchronous functions and closures select the synchronous overload. To deliberately perform synchronous lookup inside an async function, use a synchronous closure:
+
+```swift
+let decorate = try { () throws -> NativeSwiftFunction<(String) -> String> in
+    try ABIRuntime.shared.swiftFunction(
+        named: "Example.decorate(_:)",
+        as: ((String) -> String).self
+    )
+}()
+```
+
+This closure can block the caller until the required search and preparation finish. Use optional `prepare(_:)` when starting that work ahead of a later call; neither factory overload requires earlier preparation.
 
 ## Complete callable signatures
 
@@ -67,7 +110,7 @@ Swift object, String, and Array arguments stay alive through the call, including
 
 The function retains its implementation image. Keep an image owner alive while a foreign value can execute code from that image, including destruction. A loaded Swift image can also be retained by the Swift runtime independently of explicit loader references.
 
-The prepared handle is Sendable and can be reused concurrently. Each call uses separate argument, result, and register storage. Calling remains synchronous on the caller's executor; satisfy the declaration's actor and thread requirements.
+The prepared handle is Sendable and can be reused concurrently. Each call uses separate argument, result, and register storage. Synchronous invocation runs on the caller's executor; satisfy the declaration's actor and thread requirements. Async invocation preserves the caller's task and resumes on the caller's executor; see <doc:SwiftAsyncABI>.
 
 ## Declaration conventions
 

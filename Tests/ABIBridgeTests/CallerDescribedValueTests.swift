@@ -100,23 +100,23 @@ struct CallerDescribedValueTests {
 
     @Test func swiftStructEnumArrayAndCallbackUseCallerDescriptions() async throws {
         let runtime = ABIRuntime.shared
-        let function = try runtime.swiftFunction(
+        let function = try await runtime.swiftFunction(
             named: "ABIBridgeTests.callerRecord(_:)", as: ((CallerRecord) -> CallerRecord).self)
         let input = CallerRecord(value: 2, tag: 3)
         let result = try unsafe function.unsafeInvoke(input)
         #expect(result.value == 3.5 && result.tag == 5)
-        let apply = try runtime.swiftFunction(
+        let apply = try await runtime.swiftFunction(
             named: "ABIBridgeTests.callerApply(_:_:)",
             as: ((NativeSwiftClosure<(CallerRecord) -> CallerRecord>, CallerRecord) -> CallerRecord).self)
         let body = try NativeSwiftClosure { (value: CallerRecord) in callerRecord(value) }
         let callbackResult = try unsafe apply.unsafeInvoke(body, input)
         #expect(callbackResult.value == result.value && callbackResult.tag == result.tag)
-        let choice = try runtime.swiftFunction(
+        let choice = try await runtime.swiftFunction(
             named: "ABIBridgeTests.callerChoice(_:)", as: ((CallerChoice) -> CallerChoice).self)
         if case .number(let value) = try unsafe choice.unsafeInvoke(.number(42)) { #expect(value == 42) }
         else { Issue.record("Expected number payload") }
         if case .empty = try unsafe choice.unsafeInvoke(.empty) {} else { Issue.record("Expected empty case") }
-        let array = try runtime.swiftFunction(
+        let array = try await runtime.swiftFunction(
             named: "ABIBridgeTests.callerRecords(_:)", as: (([CallerRecord]) -> [CallerRecord]).self)
         let records = try unsafe array.unsafeInvoke([input, CallerRecord(value: 4, tag: 5)])
         #expect(records.count == 2 && records[0].value == 4 && records[1].tag == 3)
@@ -131,7 +131,7 @@ struct CallerDescribedValueTests {
         let cxx = try runtime.cxxFunction(
             named: "ABICXXFixture::nextMode(ABICXXFixture::RecordMode)",
                                                 as: ((CallerMode) -> CallerMode).self)
-        let swift = try runtime.swiftFunction(
+        let swift = try await runtime.swiftFunction(
             named: "ABIBridgeTests.callerMode(_:)",
                                                     as: ((CallerMode) -> CallerMode).self)
         #expect(try unsafe c.unsafeInvoke(.slow) == .fast)

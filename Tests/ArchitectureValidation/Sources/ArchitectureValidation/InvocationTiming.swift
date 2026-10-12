@@ -18,15 +18,15 @@ private final class InvocationTimingReceiver: NSObject {
         named: "ABIValidationAdvance",
         as: ((UnsafeMutablePointer<CChar>, Int) -> UnsafeMutableRawPointer).self
     )
-    let sum = try runtime.swiftFunction(
+    let sum = try await runtime.swiftFunction(
         named: "ArchitectureValidation.architectureSum(_:_:_:_:_:_:_:_:_:_:)",
         as: ((Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Int).self
     )
-    let decorate = try runtime.swiftFunction(
+    let decorate = try await runtime.swiftFunction(
         named: "ArchitectureValidation.architectureDecorate(_:)",
         as: ((String) -> String).self
     )
-    let mix = try runtime.swiftFunction(
+    let mix = try await runtime.swiftFunction(
         named: "ArchitectureValidation.architectureTimingMix(_:_:_:_:)",
         as: ((Int32, Double, Float, UInt64) -> Double).self
     )

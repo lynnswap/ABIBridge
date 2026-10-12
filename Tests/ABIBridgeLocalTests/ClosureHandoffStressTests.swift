@@ -20,7 +20,7 @@ private final class ClosureCapture: Sendable {
 
 struct ClosureHandoffStressTests {
     @Test func repeatedNativeHandoffsPreserveOneOwningEntry() async throws {
-        let echo = try ABIRuntime.shared.swiftFunction(
+        let echo = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.echoClosure(_:)",
             as: ((NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftClosure<(Int64) -> Int64>)
                 .self

@@ -13,7 +13,7 @@ import Synchronization
     let provider = path("SwiftImportProvider"), caller = path("SwiftImportCallerControl")
     let name = "SwiftImportProvider.HookRenderer"
     let type = try runtime.swiftType(named: name, in: provider)
-    let make = try runtime.swiftFunction(
+    let make = try await runtime.swiftFunction(
         named: "SwiftImportProvider.makeHookRenderer(Swift.Int64) -> " + name,
         as: ((Int64) -> AnyObject).self, in: provider)
     var object: AnyObject? = try unsafe make.unsafeInvoke(10)
@@ -30,7 +30,7 @@ import Synchronization
     let getter = try type.getter(named: "count", as: (() -> Int64).self)
     let setter = try type.setter(named: "count", as: Int64.self)
     let method = try type.method(named: "render(_:)", as: ((Int64) -> Int64).self)
-    let oracle = try runtime.swiftFunction(
+    let oracle = try await runtime.swiftFunction(
         named: "SwiftImportCallerControl.hookRender(\(name), Swift.Int64) -> Swift.Int64",
         as: ((AnyObject, Int64) -> Int64).self, in: caller)
     let first = try await unsafe method.hookVirtualCalls(onFailure: failure) { call, value in
@@ -53,7 +53,7 @@ import Synchronization
     try check(try unsafe oracle.unsafeInvoke(object!, 2) == 32, "Virtual invalidation preserves callable pass-through code")
 
     let direct = try type.method(named: "directRender(_:)", as: ((Int64) -> Int64).self)
-    let directOracle = try runtime.swiftFunction(
+    let directOracle = try await runtime.swiftFunction(
         named: "SwiftImportCallerControl.hookDirectRender(\(name), Swift.Int64) -> Swift.Int64",
         as: ((AnyObject, Int64) -> Int64).self, in: caller)
     let imported = try await unsafe direct.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call, value in
@@ -69,7 +69,7 @@ import Synchronization
 
     let textSetter = try type.setter(named: "text", as: String.self)
     let textGetter = try type.getter(named: "text", as: (() -> String).self)
-    let textOracle = try runtime.swiftFunction(
+    let textOracle = try await runtime.swiftFunction(
         named: "SwiftImportCallerControl.hookSetText(\(name), Swift.String) -> Swift.String",
         as: ((AnyObject, String) -> String).self, in: caller)
     let setHook = try await unsafe textSetter.hookVirtualCalls(onFailure: failure) { call, value in try call.proceed(value + " set") }
@@ -89,7 +89,7 @@ import Synchronization
         as: ((Int64) -> Int64).self,
         consuming: true
     )
-    let consumeOracle = try runtime.swiftFunction(
+    let consumeOracle = try await runtime.swiftFunction(
         named: "SwiftImportCallerControl.hookConsume(\(name), Swift.Int64) -> Swift.Int64",
         as: ((AnyObject, Int64) -> Int64).self, in: caller)
     let consumed = try await unsafe consume.hookVirtualCalls(onFailure: failure) { call, value in
@@ -108,12 +108,12 @@ import Synchronization
     try check(try unsafe consumeOracle.unsafeInvoke(object!, 2) == 32, "Consuming fallback preserves the compiler ownership convention")
     let childName = "SwiftImportCallerControl.CallerOverridingRenderer"
     let childType = try runtime.swiftType(named: childName, in: caller)
-    let makeChild = try runtime.swiftFunction(
+    let makeChild = try await runtime.swiftFunction(
         named: "SwiftImportCallerControl.makeCallerRenderer() -> " + childName,
         as: (() -> AnyObject).self, in: caller)
     let child = try unsafe makeChild.unsafeInvoke()
     let childText = try childType.method(named: "text(_:)", as: ((String) -> String).self)
-    let childOracle = try runtime.swiftFunction(
+    let childOracle = try await runtime.swiftFunction(
         named:
             "SwiftImportCallerControl.classText(SwiftImportProvider.ReplacementRenderer, Swift.String) -> Swift.String",
         as: ((AnyObject, String) -> String).self, in: caller)

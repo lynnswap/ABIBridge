@@ -31,18 +31,18 @@ private struct ImportPayload: ABIBridgeValue {
         }
         try check(result.get(), message)
     }
-    let target = try runtime.swiftFunction(
+    let target = try await runtime.swiftFunction(
         named: "SwiftImportProvider.scalar(_:)",
         as: ((Int64) -> Int64).self,
         in: path("SwiftImportProvider")
     )
-    let replacement = try runtime.swiftFunction(
+    let replacement = try await runtime.swiftFunction(
         named: "SwiftImportProvider.replacementScalar(_:)",
         as: ((Int64) -> Int64).self,
         in: path("SwiftImportProvider")
     )
     for caller in ["SwiftImportCaller", "SwiftImportCallerControl"] {
-        let oracle = try runtime.swiftFunction(
+        let oracle = try await runtime.swiftFunction(
             named: caller + ".importedScalar(_:)",
             as: ((Int64) -> Int64).self,
             in: path(caller)
@@ -69,17 +69,17 @@ private struct ImportPayload: ABIBridgeValue {
         try check(try unsafe oracle.unsafeInvoke(40) == 41, "\(caller): restored scalar dispatch")
     }
     let caller = "SwiftImportCallerControl"
-    let text = try runtime.swiftFunction(
+    let text = try await runtime.swiftFunction(
         named: "SwiftImportProvider.text(_:)",
         as: ((String) -> String).self,
         in: path("SwiftImportProvider")
     )
-    let newText = try runtime.swiftFunction(
+    let newText = try await runtime.swiftFunction(
         named: "SwiftImportProvider.replacementText(_:)",
         as: ((String) -> String).self,
         in: path("SwiftImportProvider")
     )
-    let textOracle = try runtime.swiftFunction(
+    let textOracle = try await runtime.swiftFunction(
         named: caller + ".importedText(_:)",
         as: ((String) -> String).self,
         in: path(caller)
@@ -94,17 +94,17 @@ private struct ImportPayload: ABIBridgeValue {
     try check(try unsafe textOracle.unsafeInvoke(input) == "original:" + input, "String dispatch restored")
 
     let suffix = "(Swift.Int64) -> SwiftImportProvider.ReplacementPayload"
-    let large = try runtime.swiftFunction(
+    let large = try await runtime.swiftFunction(
         named: "SwiftImportProvider.payload" + suffix,
         as: ((Int64) -> ImportPayload).self,
         in: path("SwiftImportProvider")
     )
-    let newLarge = try runtime.swiftFunction(
+    let newLarge = try await runtime.swiftFunction(
         named: "SwiftImportProvider.replacementPayload" + suffix,
         as: ((Int64) -> ImportPayload).self,
         in: path("SwiftImportProvider")
     )
-    let largeOracle = try runtime.swiftFunction(
+    let largeOracle = try await runtime.swiftFunction(
         named: caller + ".importedPayload(_:)",
         as: ((Int64) -> Int64).self,
         in: path(caller)
@@ -123,7 +123,7 @@ private struct ImportPayload: ABIBridgeValue {
     )
     let method = try type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
     let newMethod = try type.method(named: "replacementScalar(_:)", as: ((Int64) -> Int64).self)
-    let methodOracle = try runtime.swiftFunction(
+    let methodOracle = try await runtime.swiftFunction(
         named: caller + ".importedValueMethod(_:)",
         as: ((Int64) -> Int64).self,
         in: path(caller)

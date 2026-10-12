@@ -20,7 +20,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
         guard condition else { throw ArchitectureValidationFailure(description: message) }
         checks.append(message)
     }
-    let make = try runtime.swiftFunction(
+    let make = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.makeOpaque(_:_:)",
         as: ((ErrorToken, Int64) -> NativeSwiftValue).self)
     let counts = ArgumentCounts()
@@ -46,7 +46,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
     copy = nil
     try check(observed == nil && counts.destructions == 1, "Final opaque release destroys its hidden payload exactly once")
 
-    let integer = try runtime.swiftFunction(
+    let integer = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.makeOpaqueInteger(_:)",
         as: ((Int64) -> NativeSwiftValue).self)
     try unsafe integer.unsafeInvoke(42).withCopy {
@@ -76,7 +76,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
         checks.append("A consumed owner reports its ownership state")
     }
 
-    let makeTicket = try runtime.swiftFunction(
+    let makeTicket = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.makeOpaqueTicket(_:)",
         as: ((ErrorToken) -> NativeSwiftValue).self)
     let ticketCounts = ArgumentCounts()
@@ -173,12 +173,12 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
                   "Result adapters retain native resources without extending receiver access")
     }
 
-    let empty = try runtime.swiftFunction(
+    let empty = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.makeOpaqueEmpty()",
         as: (() -> NativeSwiftValue).self)
     try unsafe empty.unsafeInvoke().withCopy { try check($0 is Void, "Empty opaque values preserve their runtime type") }
 
-    let throwing = try runtime.swiftFunction(
+    let throwing = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.makeOpaqueThrowing(_:_:)",
         as: ((ErrorToken, Bool) throws(SmallError) -> NativeSwiftValue).self)
     do {
@@ -196,7 +196,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
         try check(($0 as? any ExistentialValue)?.number == 42, "Opaque getter resolves the property's descriptor")
     }
 
-    let async = try runtime.swiftFunction(
+    let async = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.makeOpaqueAsync(_:_:_:)",
         as: (@concurrent (AsyncValueGate, ErrorToken, Bool) async throws(SmallError) -> NativeSwiftValue).self)
     for cancel in [false, true] {
@@ -216,14 +216,14 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
     }
     for (name, expected) in [("makeOpaqueClassAny", 41), ("makeOpaqueClassProtocol", 42),
                               ("makeOpaqueSuperclass", 43), ("makeOpaqueUnconstrainedClass", 44)] {
-        let call = try runtime.swiftFunction(
+        let call = try await runtime.swiftFunction(
             named: "SwiftValueFixtures." + name + "(_:)",
             as: ((ErrorToken) -> NativeSwiftValue).self)
         try unsafe call.unsafeInvoke(ErrorToken()).withCopy {
             try check(($0 as? OpaqueBase)?.number == Int64(expected), name + " follows its declared class constraint")
         }
     }
-    let objc = try runtime.swiftFunction(
+    let objc = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.makeOpaqueObjC(_:)",
         as: ((ErrorToken) -> NativeSwiftValue).self)
     try unsafe objc.unsafeInvoke(ErrorToken()).withCopy { try check($0 is NSObject, "ObjC protocol constraint uses a direct object result") }
@@ -248,7 +248,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
     try unsafe extensionObject.unsafeInvoke(on: owner).withCopy {
         try check(($0 as? any ExistentialObjectValue)?.number == 49, "Imported class protocol descriptor is authenticated through its indirect reference")
     }
-    let directAsync = try runtime.swiftFunction(
+    let directAsync = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.makeOpaqueClassAsync(_:_:)",
         as: (@concurrent (AsyncValueGate, ErrorToken) async -> NativeSwiftValue).self)
     let directGate = AsyncValueGate()
@@ -258,19 +258,19 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
     }
     await directGate.waitUntilSuspended(); await directGate.open()
     try check(try await directTask.value == 46, "Async class-constrained opaque result resumes with a direct object pointer")
-    let genericOpaque = try runtime.swiftFunction(
+    let genericOpaque = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.makeRuntimeOpaque<A>(A) -> some",
         as: ((String) -> NativeSwiftValue).self, genericArguments: [.type(String.self)])
     let genericValue = try unsafe genericOpaque.unsafeInvoke("generic")
     try check(try genericValue.withCopy { $0 as? String } == "generic", "Opaque descriptors bind function generic metadata")
-    let pair = try runtime.swiftFunction(
+    let pair = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.makeRuntimeOpaquePair<A, B>(A, B) -> (some, some)",
         as: ((String, Int) -> (NativeSwiftValue, NativeSwiftValue)).self,
         genericArguments: [.type(String.self), .type(Int.self)])
     let pairValue = try unsafe pair.unsafeInvoke("pair", 42)
     try check(try pairValue.0.withCopy { $0 as? String } == "pair" && pairValue.1.withCopy { $0 as? Int } == 42,
         "Tuple results resolve independent opaque type indexes")
-    let nested = try runtime.swiftFunction(
+    let nested = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.makeRuntimeOpaqueClosure<A>(A) -> () -> some",
         as: ((String) -> NativeSwiftClosure<() -> NativeSwiftValue>).self, genericArguments: [.type(String.self)])
     let nestedValue = try unsafe nested.unsafeInvoke("nested")
@@ -296,7 +296,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
     try check(try methodValue.withCopy { ($0 as? (String, Int))?.1 } == 42,
         "Opaque members combine enclosing and introduced type bindings")
     for name in ["makeOptionalOpaqueObject", "makeOptionalClassOpaqueObject"] {
-        let call = try runtime.swiftFunction(
+        let call = try await runtime.swiftFunction(
             named: "SwiftValueFixtures.\(name)(SwiftValueFixtures.ErrorToken, Swift.Bool) -> some?",
             as: ((ErrorToken, Bool) -> NativeSwiftValue).self)
         for present in [false, true] {
@@ -305,7 +305,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
                 name + " preserves the formal result convention with present=\(present)")
         }
     }
-    let optionalClosure = try runtime.swiftFunction(
+    let optionalClosure = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.makeOptionalOpaqueClosure(SwiftValueFixtures.ErrorToken) -> (Swift.Bool) -> some?",
         as: ((ErrorToken) -> NativeSwiftClosure<(Bool) -> NativeSwiftValue>).self)
     let optionalBody = try unsafe optionalClosure.unsafeInvoke(ErrorToken())
@@ -314,7 +314,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
         try check(try value.withCopy { ($0 as? any ExistentialValue)?.number } == (present ? 42 : nil),
             "Returned optional opaque closure authenticates its indirect result with present=\(present)")
     }
-    let throwingOptionalFactory = try runtime.swiftFunction(
+    let throwingOptionalFactory = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.makeOptionalOpaqueThrowingClosure(SwiftValueFixtures.ErrorToken) -> (Swift.Bool) throws(SwiftValueFixtures.SmallError) -> some?",
         as: ((ErrorToken) -> NativeSwiftClosure<(Bool) throws(SmallError) -> NativeSwiftValue>).self)
     let throwingOptional = try unsafe throwingOptionalFactory.unsafeInvoke(ErrorToken())
@@ -323,7 +323,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
         try check(error.withUnderlyingError { ($0 as? SmallError)?.code } == 42,
             "Opaque closures retain typed error storage in the erased function convention")
     }
-    let asyncOptionalFactory = try runtime.swiftFunction(
+    let asyncOptionalFactory = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.makeOptionalOpaqueAsyncClosure(SwiftValueFixtures.ErrorToken) -> @Sendable (Swift.Bool) async -> some?",
         as: ((ErrorToken) -> NativeSwiftClosure<@Sendable @concurrent (Bool) async -> NativeSwiftValue>).self)
     let asyncOptional = try unsafe asyncOptionalFactory.unsafeInvoke(ErrorToken())
@@ -332,21 +332,21 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
         try check(try value.withCopy { ($0 as? any ExistentialValue)?.number } == (present ? 42 : nil),
             "Async opaque closure preserves indirect storage with present=\(present)")
     }
-    let opaqueBox = try runtime.swiftFunction(
+    let opaqueBox = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.makeInlineOpaqueBox(SwiftValueFixtures.ErrorToken) -> SwiftValueFixtures.InlineOpaqueBox<some>",
         as: ((ErrorToken) -> NativeSwiftValue).self)
     let boxedValue = try unsafe opaqueBox.unsafeInvoke(ErrorToken())
     try check(try boxedValue.withCopy { ($0 as? any CustomStringConvertible)?.description } == "42",
         "A nominal inline opaque field preserves formal indirection")
     let tupleDeclaration = "SwiftValueFixtures.makeOpaqueTupleClosure() -> ((Swift.Int64, Swift.String, SwiftValueFixtures.ErrorToken)) -> some"
-    let tupleFactory = try runtime.swiftFunction(
+    let tupleFactory = try await runtime.swiftFunction(
         named: tupleDeclaration,
         as: (() -> NativeSwiftClosure<((Int64, String, ErrorToken)) -> NativeSwiftValue>).self)
     let tupleBody = try unsafe tupleFactory.unsafeInvoke()
     let tupleArgument = try unsafe tupleBody.unsafeInvoke((Int64(42), "tuple", ErrorToken()))
     try check(try tupleArgument.withCopy { $0 as? String } == "42:tuple",
         "Opaque returned closures materialize managed tuple inputs as contiguous native values")
-    let erasedTupleFactory = try runtime.swiftFunction(
+    let erasedTupleFactory = try await runtime.swiftFunction(
         named: tupleDeclaration,
         as: (() -> NativeSwiftValue).self
     )
@@ -354,7 +354,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
     let nativeTuple = try erasedTuple.take(as: (((Int64, String, ErrorToken)) -> String).self)
     try check(nativeTuple((43, "erased", ErrorToken())) == "43:erased",
         "Erased opaque closures convert tuple storage before an ordinary Swift call")
-    let consumeTupleFactory = try runtime.swiftFunction(
+    let consumeTupleFactory = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.makeOpaqueConsumingTupleClosure() -> (__owned (Swift.Int64, Swift.String, SwiftValueFixtures.ErrorToken)) -> some",
         as: (() -> NativeSwiftClosure<(NativeSwiftConsuming<(Int64, String, ErrorToken)>) -> NativeSwiftValue>).self)
     let consumeTuple = try unsafe consumeTupleFactory.unsafeInvoke()
@@ -373,33 +373,33 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
         guard condition else { throw ArchitectureValidationFailure(description: message) }
         checks.append(message)
     }
-    let make = try runtime.swiftFunction(
+    let make = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.makeOpaqueTicket(_:)",
         as: ((ErrorToken) -> NativeSwiftValue).self)
     let counts = ArgumentCounts()
     let original = try unsafe make.unsafeInvoke(ErrorToken { counts.destroyed() })
     let arguments: [NativeSwiftGenericArgument] = [.type(original.type)]
-    let borrow = try runtime.swiftFunction(
+    let borrow = try await runtime.swiftFunction(
         named:
             "SwiftValueFixtures.borrowRuntimeValue<A where A: ~Swift.Copyable>(A) -> Swift.Int64",
         as: ((NativeSwiftValue) -> Int64).self, genericArguments: arguments)
     try check(try unsafe borrow.unsafeInvoke(original) == Int64(MemoryLayout<OpaqueTicket>.size),
               "Generic argument borrowing uses the noncopyable value's native storage")
     do {
-        _ = try runtime.swiftFunction(
+        _ = try await runtime.swiftFunction(
             named: "SwiftValueFixtures.copyRuntimeValue<A>(A) -> A",
             as: ((NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: arguments)
         throw ArchitectureValidationFailure(description: "A Copyable requirement accepted a noncopyable value")
     } catch ABIResolutionError.signatureMismatch {
         checks.append("Implicit Copyable requirements reject noncopyable generic substitutions")
     }
-    let move = try runtime.swiftFunction(
+    let move = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.moveRuntimeValue<A where A: ~Swift.Copyable>(__owned A) -> A",
         as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self, genericArguments: arguments)
     let moved = try unsafe move.unsafeInvoke(NativeSwiftConsuming(original))
     try check(original.isConsumed && !moved.isConsumed && counts.destructions == 0,
               "Generic native results own the transferred noncopyable value")
-    let replace = try runtime.swiftFunction(
+    let replace = try await runtime.swiftFunction(
         named:
             "SwiftValueFixtures.replaceRuntimeValue<A where A: ~Swift.Copyable>(inout A, __owned A) -> ()",
         as: ((NativeSwiftInout<NativeSwiftValue>, NativeSwiftConsuming<NativeSwiftValue>) -> Void).self,
@@ -416,7 +416,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
     try check(!moved.isConsumed && replacement.isConsumed && counts.destructions == 1,
               "Runtime inout replaces and destroys the original native payload exactly once")
     if #available(macOS 26, iOS 26, tvOS 26, watchOS 26, visionOS 26, *) {
-        let asynchronous = try runtime.swiftFunction(
+        let asynchronous = try await runtime.swiftFunction(
             named: "SwiftValueFixtures.borrowRuntimeValueAsync<A where A: ~Swift.Copyable>(A, SwiftValueFixtures.AsyncValueGate) async -> Swift.Int64",
             as: (nonisolated(nonsending) (NativeSwiftBorrowedValue, AsyncValueGate) async -> Int64).self,
             genericArguments: arguments)
@@ -435,7 +435,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
         try check(try await operation.value == Int64(MemoryLayout<OpaqueTicket>.size),
                   "An async borrowed generic argument completes using retained native storage")
     }
-    let moveAsync = try runtime.swiftFunction(
+    let moveAsync = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.moveRuntimeValueAsync<A where A: ~Swift.Copyable>(__owned A) async -> A",
         as: (nonisolated(nonsending) (NativeSwiftConsuming<NativeSwiftValue>) async -> NativeSwiftValue).self,
         genericArguments: arguments)
@@ -471,7 +471,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
     let unboxed = try unsafe takeBox.unsafeInvoke(on: box)
     try check(box.isConsumed && !unboxed.isConsumed && counts.destructions == 1,
               "Ordinary generic members transfer runtime result ownership")
-    let consume = try runtime.swiftFunction(
+    let consume = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.consumeRuntimeValueAndThrow<A where A: ~Swift.Copyable>(__owned A) throws -> ()",
         as: ((NativeSwiftConsuming<NativeSwiftValue>) throws -> Void).self, genericArguments: arguments)
     do {
@@ -481,7 +481,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
         try error.withUnderlyingError { try check($0 is SmallError && unboxed.isConsumed && counts.destructions == 2,
             "A native error consumes and destroys the runtime argument exactly once") }
     }
-    let integer = try runtime.swiftFunction(
+    let integer = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.makeOpaqueInteger(_:)",
         as: ((Int64) -> NativeSwiftValue).self
     )
@@ -517,7 +517,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
         as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self)
     let noncopyable = try unsafe makeNoncopyable.unsafeInvoke(NativeSwiftConsuming(ticket))
     try check(!noncopyable.isCopyable, "Conditional Copyable conformance checks the actual noncopyable type argument")
-    let metatype = try runtime.swiftFunction(
+    let metatype = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.runtimeValueMetatype<A>(A) -> (Swift.Int64.Type, A)",
         as: ((String) -> NativeSwiftValue).self, genericArguments: [.type(String.self)])
     let metatypeResult = try unsafe metatype.unsafeInvoke("retained").take(as: (Int64.Type, String).self)
@@ -530,7 +530,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
         named: "read()",
         as: (() -> Int64).self,
         receiverABI: .opaque(named: scopedType.name))
-    let scopedMake = try runtime.swiftFunction(
+    let scopedMake = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.makeRuntimeScoped(_:_:)",
         as: ((RuntimeScopedOwner, Bool) throws -> NativeSwiftBorrowedValue).self)
     var escapedResult: NativeSwiftBorrowedValue?
@@ -578,7 +578,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
     } catch is NativeSwiftError {
         try check(scopedCounts.destructions == 4, "Native scoped failure leaves uninitialized result storage untouched")
     }
-    let scopedAsyncMake = try runtime.swiftFunction(
+    let scopedAsyncMake = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.makeRuntimeScopedAsync(_:_:)",
         as: (nonisolated(nonsending) (RuntimeScopedOwner, Bool) async throws -> NativeSwiftBorrowedValue).self)
     let asyncScopedCounts = ArgumentCounts()
@@ -605,17 +605,17 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
 
 @MainActor private func validateRuntimeClassArguments() async throws -> [String] {
     let runtime = ABIRuntime()
-    let make = try runtime.swiftFunction(
+    let make = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.makeOpaqueClassAny(_:)",
         as: ((ErrorToken) -> NativeSwiftValue).self)
     let original = try unsafe make.unsafeInvoke(ErrorToken {})
-    let copy = try runtime.swiftFunction(
+    let copy = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.copyRuntimeValue<A>(A) -> A",
         as: ((NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: [.type(OpaqueBase.self)])
     let copied = try unsafe copy.unsafeInvoke(original)
     let object = try copied.take(as: OpaqueBase.self)
     guard object.number == 41 else { throw ArchitectureValidationFailure(description: "Runtime subclass upcast lost its value") }
-    let borrowedCopy = try runtime.swiftFunction(
+    let borrowedCopy = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.copyRuntimeValue<A>(A) -> A",
         as: ((NativeSwiftBorrowedValue) -> NativeSwiftValue).self, genericArguments: [.type(AnyObject.self)])
     try original.withBorrowedValue { value in
@@ -624,7 +624,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
             throw ArchitectureValidationFailure(description: "Runtime AnyObject upcast changed object identity")
         }
     }
-    let replace = try runtime.swiftFunction(
+    let replace = try await runtime.swiftFunction(
         named:
             "SwiftValueFixtures.replaceRuntimeValue<A where A: ~Swift.Copyable>(inout A, __owned A) -> ()",
         as: ((NativeSwiftInout<NativeSwiftValue>, NativeSwiftConsuming<NativeSwiftValue>) -> Void).self,
@@ -637,7 +637,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
     guard !original.isConsumed && !replacement.isConsumed else {
         throw ArchitectureValidationFailure(description: "Rejected inout upcast consumed a value")
     }
-    let move = try runtime.swiftFunction(
+    let move = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.moveRuntimeValue<A where A: ~Swift.Copyable>(__owned A) -> A",
         as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self,
         genericArguments: [.type(OpaqueBase.self)], declaredAs: "<A where A: ~Swift.Copyable>(__owned A) -> A")

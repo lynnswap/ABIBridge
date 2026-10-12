@@ -27,7 +27,7 @@ struct SwiftGenericValueReceiverTests {
     @MainActor @Test func objectConstraintsAcceptObjectiveCExistentialSpecializations() async throws {
         let runtime = ABIRuntime()
         let object: AnyObject = NSObject()
-        let free = try runtime.swiftFunction(
+        let free = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.objectConstraintGeneric<A where A: AnyObject>(A) -> A",
             as: ((AnyObject) -> AnyObject).self, genericArguments: [.type(AnyObject.self)])
         #expect(try unsafe free.unsafeInvoke(object) === object)
@@ -63,12 +63,12 @@ struct SwiftGenericValueReceiverTests {
         #expect(try unsafe superProject.unsafeInvoke(on: GenericSuperclassValue<any NSCopying & NSObject>(constrained)) === constrained)
 
         let protocolValue: any GenericObjCConstraint = GenericObjCValue()
-        let protocolCall = try runtime.swiftFunction(
+        let protocolCall = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.objcConstraintGeneric<A where A: ManagedSwiftFixtures.GenericObjCConstraint>(A) -> A",
             as: ((any GenericObjCConstraint) -> any GenericObjCConstraint).self,
             genericArguments: [.type((any GenericObjCConstraint).self)])
         #expect(try unsafe protocolCall.unsafeInvoke(protocolValue) === protocolValue)
-        let pair = try runtime.swiftFunction(
+        let pair = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.objcSuperclassPairGeneric<A where A: __C.NSObject>(A, __C.NSObject) -> A",
             as: ((NSObject, any NSObjectProtocol) -> NSObject).self, genericArguments: [.type(NSObject.self)])
         let instance = NSObject()
@@ -324,7 +324,7 @@ struct SwiftGenericValueReceiverTests {
         #expect(try unsafe read.unsafeInvoke(on: value) == 81)
         let result = try unsafe paired.unsafeInvoke(on: value, "member")
         #expect(result.0 == 81 && result.1 == "member")
-        let function = try runtime.swiftFunction(
+        let function = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.phantomGeneric<A>(ManagedSwiftFixtures.GenericPhantom<A>) -> ManagedSwiftFixtures.GenericPhantom<A>",
             as: ((GenericPhantom<String>) -> GenericPhantom<String>).self, genericArguments: [.type(String.self)])
         #expect(try unsafe function.unsafeInvoke(value).number == 81)
@@ -352,11 +352,11 @@ struct SwiftGenericValueReceiverTests {
 
     @Test func nominalArgumentsAndOptionalArraysUseFormalLayouts() async throws {
         let runtime = ABIRuntime()
-        let function = try runtime.swiftFunction(
+        let function = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.boxedGeneric<A>(ManagedSwiftFixtures.GenericValueBox<A>) -> ManagedSwiftFixtures.GenericValueBox<A>",
             as: ((GenericValueBox<Int>) -> GenericValueBox<Int>).self, genericArguments: [.type(Int.self)])
         #expect(try unsafe function.unsafeInvoke(GenericValueBox(31)).value == 31)
-        let array = try runtime.swiftFunction(
+        let array = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.optionalArrayGeneric<A>(Swift.Optional<Swift.Array<A>>) -> Swift.Optional<Swift.Array<A>>",
             as: (([Int]?) -> [Int]?).self, genericArguments: [.type(Int.self)])
         #expect(try unsafe array.unsafeInvoke([1, 2, 3]) == [1, 2, 3])

@@ -128,7 +128,7 @@ struct SwiftConstrainedExtensionTests {
         )
         #expect(try unsafe noWitness.unsafeInvoke() == "parent")
         do {
-            _ = try runtime.swiftFunction(
+            _ = try await runtime.swiftFunction(
                 named:
                     "ManagedSwiftFixtures.associatedConstraintGeneric<A where A: Swift.Collection, A.Element == Swift.Int>(A) -> Swift.Int",
                 as: ((Bool) -> Int).self,

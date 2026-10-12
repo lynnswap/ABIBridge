@@ -141,7 +141,7 @@ struct SymbolResolutionTests {
                 """
         )
         defer { fixture.cleanup() }
-        let function = try ABIRuntime().swiftFunction(
+        let function = try await ABIRuntime().swiftFunction(
             named: module + ".compilerGeneration()",
             as: (() -> Int32).self,
             in: .path(fixture.libraryURL)
@@ -192,7 +192,7 @@ struct SymbolResolutionTests {
         defer { fixture.cleanup() }
         #expect(try fixture.exportedSymbols().isEmpty)
         let runtime = ABIRuntime()
-        let function = try runtime.swiftFunction(
+        let function = try await runtime.swiftFunction(
             named: module + ".echo()",
             as: (() -> Void).self,
             in: .path(fixture.libraryURL)

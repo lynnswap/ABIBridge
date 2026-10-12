@@ -279,11 +279,11 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         checks.append("C/C++ typed calls, indirect results, bound ownership, and authenticated virtual dispatch")
         try check(ABIValidateAuthenticatedFunction(), "Unmodified function-pointer authentication")
     case "swift":
-        let sum = try runtime.swiftFunction(
+        let sum = try await runtime.swiftFunction(
             named: "ArchitectureValidation.architectureSum(_:_:_:_:_:_:_:_:_:_:)",
             as: ((Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Int).self)
         try check(unsafe sum.unsafeInvoke(1,2,3,4,5,6,7,8,9,10) == architectureSum(1,2,3,4,5,6,7,8,9,10), "Swift register/stack arguments")
-        let decorate = try runtime.swiftFunction(
+        let decorate = try await runtime.swiftFunction(
             named: "ArchitectureValidation.architectureDecorate(_:)",
             as: ((String) -> String).self
         )

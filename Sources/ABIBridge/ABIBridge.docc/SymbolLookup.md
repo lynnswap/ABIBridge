@@ -17,7 +17,9 @@ Image enumeration is always loaded-only. Automatic enumeration includes images w
 
 A `NativeImage` retains its loaded image. Reuse that handle to resolve several declarations in the same scope. The runtime caches raw symbol data and decoded declaration indexes; C++ members with a plain qualified owner reuse that owner's index.
 
-Lookup is synchronous and prepares the indexes it needs automatically. Callable factories also prepare the supplied signature and return a handle ready for invocation. `ABIRuntime` and `NativeSwiftType` remain actors, with `nonisolated` synchronous lookup methods. Missing preparation runs on the calling thread; joining preparation already in progress blocks that thread until the required work finishes. This also applies to a caller on `MainActor`.
+Synchronous lookup prepares the indexes it needs automatically. Callable factories also prepare the supplied signature and return a handle ready for invocation. `ABIRuntime` and `NativeSwiftType` remain actors, with `nonisolated` synchronous lookup methods. Missing preparation runs on the calling thread; joining preparation already in progress blocks that thread until the required work finishes. This also applies to a caller on `MainActor`.
+
+`swiftFunction` also has async overloads with the same arguments. Awaiting the factory runs search and preparation on a worker queue while the caller suspends, reusing completed results and joining only required work in progress. Swift selects these overloads in async contexts; no earlier `prepare(_:)` is required. See <doc:SwiftFunctionInvocation> for `MainActor` examples and explicit selection of synchronous lookup.
 
 Native invocation follows the target's actor-isolation and thread-affinity requirements. A synchronous native function stays synchronous; an async native signature requires `await` when invoking the returned handle.
 

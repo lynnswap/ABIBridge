@@ -7,7 +7,7 @@ Describe each native Swift parameter's convention with a typed argument wrapper.
 For a native declaration `@concurrent func append(_ text: inout String, _ suffix: consuming String) async throws`:
 
 ```swift
-let append = try ABIRuntime.shared.swiftFunction(
+let append = try await ABIRuntime.shared.swiftFunction(
     named: "Example.append(_:_:)",
     as: (@concurrent (NativeSwiftInout<String>, NativeSwiftConsuming<String>) async throws -> Void).self
 )

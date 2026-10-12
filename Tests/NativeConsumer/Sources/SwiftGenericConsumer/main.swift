@@ -21,7 +21,7 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
     let runtime = ABIRuntime()
     typealias TextBody = NativeSwiftClosure<() -> String>
     typealias NumberBody = NativeSwiftClosure<() -> Int64>
-    let closurePack = try runtime.swiftFunction(
+    let closurePack = try await runtime.swiftFunction(
         named: "ManagedSwiftFixtures.closurePackGeneric<each A>(repeat () -> A) -> (repeat A)",
         as: ((TextBody, NumberBody) -> (String, Int64)).self,
         genericArguments: [.pack([.type(String.self), .type(Int64.self)])])
@@ -62,7 +62,7 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
     let returnedBody = try unsafe returnedCallback.unsafeInvoke()
     let returnedValue = try unsafe returnedBody.unsafeInvoke(40)
     precondition(returnedValue == 42)
-    let objectIdentity = try runtime.swiftFunction(
+    let objectIdentity = try await runtime.swiftFunction(
         named: "ManagedSwiftFixtures.objectConstraintGeneric<A where A: AnyObject>(A) -> A",
         as: ((AnyObject) -> AnyObject).self, genericArguments: [.type(AnyObject.self)])
     let originalObject = NSObject()
@@ -120,26 +120,26 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
         named: "ManagedSwiftFixtures.GenericSourceBox",
         genericArguments: [.type(argument)]
     )
-    let pack = try runtime.swiftFunction(
+    let pack = try await runtime.swiftFunction(
         named: "ManagedSwiftFixtures.constrainedPackGeneric<each A where A: Swift.Equatable>(repeat A) -> (repeat A)",
         as: ((Int64, String) -> (Int64, String)).self,
         genericArguments: [.pack([.type(Int64.self), .type(String.self)])],
         declaredAs: "<each A where A: Swift.Equatable> (repeat A) -> (repeat A)")
     let packed = try unsafe pack.unsafeInvoke(43, "pack")
     precondition(packed == (43, "pack"))
-    let transform = try runtime.swiftFunction(
+    let transform = try await runtime.swiftFunction(
         named: "ManagedSwiftFixtures.transformGeneric<A, B>([A], (A) throws -> B) throws -> [B]",
         as: (([Int64], NativeSwiftBorrowing<NativeSwiftClosure<(Int64) throws -> String>>) throws -> [String]).self,
         genericArguments: [.type(Int64.self), .type(String.self)])
     let callback = try NativeSwiftClosure<(Int64) throws -> String> { "value: \($0)" }
     let transformed = try unsafe transform.unsafeInvoke([1, 2], .init(callback))
     precondition(transformed == ["value: 1", "value: 2"])
-    let select = try runtime.swiftFunction(
+    let select = try await runtime.swiftFunction(
         named: "ManagedSwiftFixtures.selectGeneric<A, B where A == B.Element, B: Swift.Collection>(A, B) -> A",
         as: ((String, [String]) -> String).self, genericArguments: [.type(String.self), .type([String].self)])
     let selected = try unsafe select.unsafeInvoke("fallback", ["element"])
     precondition(selected == "element")
-    let suspended = try runtime.swiftFunction(
+    let suspended = try await runtime.swiftFunction(
         named: "ManagedSwiftFixtures.suspendedGeneric<A>(A) async -> A",
         as: (nonisolated(nonsending) (String) async -> String).self, genericArguments: [.type(String.self)])
     let resumed = try unsafe await suspended.unsafeInvoke("resumed")

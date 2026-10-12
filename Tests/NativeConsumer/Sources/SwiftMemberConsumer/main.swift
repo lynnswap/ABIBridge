@@ -59,7 +59,7 @@ func prepare(_ path: String, extensionPath: String) async throws -> [NativeBound
         named: "extendedScore(_:)",
         as: ((Int) -> Int).self
     )
-    let makePrivate = try runtime.swiftFunction(
+    let makePrivate = try await runtime.swiftFunction(
         named: "SwiftFunctionFixture.makePrivateRenderer(_:)", as: ((Int) -> AnyObject).self, in: scope
     )
     let privateReceiver = try unsafe makePrivate.unsafeInvoke(40)
@@ -80,7 +80,7 @@ func prepare(_ path: String, extensionPath: String) async throws -> [NativeBound
     let reusedValue = try unsafe reusable.unsafeInvoke(on: privateReceiver, 2)
     let reboundValue = try unsafe rebound.unsafeInvoke(2)
     precondition(reusedValue == 42 && reboundValue == 42)
-    let makeGeneric = try runtime.swiftFunction(
+    let makeGeneric = try await runtime.swiftFunction(
         named: "SwiftFunctionFixture.makeGenericRenderer(_:)", as: ((Int) -> AnyObject).self, in: scope
     )
     let genericReceiver = try unsafe makeGeneric.unsafeInvoke(41)
@@ -94,7 +94,7 @@ func prepare(_ path: String, extensionPath: String) async throws -> [NativeBound
     )
     let genericValue = try unsafe genericGetter.unsafeInvoke()
     precondition(genericValue == 41)
-    let makeConstrained = try runtime.swiftFunction(
+    let makeConstrained = try await runtime.swiftFunction(
         named: "SwiftFunctionFixture.makeConstrainedRenderer(_:)", as: ((Int) -> AnyObject).self, in: scope
     )
     let constrainedReceiver = try unsafe makeConstrained.unsafeInvoke(40)

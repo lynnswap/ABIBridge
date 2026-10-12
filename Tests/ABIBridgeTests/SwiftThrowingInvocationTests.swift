@@ -84,7 +84,7 @@ struct SwiftThrowingInvocationTests {
     }
 
     @Test func hiddenErrorOutputSpillsAfterOrdinaryStackArguments() async throws {
-        let call = try ABIRuntime.shared.swiftFunction(
+        let call = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.stackedErrorResult(_:_:_:_:_:_:_:_:_:_:)",
             as: ((Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, ErrorLifetimeToken, Bool)
                 throws(LargeFailure) -> Int64).self
@@ -106,10 +106,10 @@ struct SwiftThrowingInvocationTests {
 
     @Test func effectMismatchIsRejectedBeforeReplacementPreparation() async throws {
         let runtime = ABIRuntime.shared
-        let untyped = try runtime.swiftFunction(
+        let untyped = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.untypedResult(_:_:)",
             as: ((ErrorLifetimeToken, Bool) throws -> String).self)
-        let typed = try runtime.swiftFunction(
+        let typed = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.managedErrorResult(_:_:)",
             as: ((ErrorLifetimeToken, Bool) throws(ManagedFailure) -> String).self)
         do {
@@ -119,7 +119,7 @@ struct SwiftThrowingInvocationTests {
     }
 
     @Test func untypedErrorsPreserveValuesAndOwnership() async throws {
-        let call = try ABIRuntime.shared.swiftFunction(
+        let call = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.untypedResult(_:_:)",
             as: ((ErrorLifetimeToken, Bool) throws -> String).self
         )
@@ -142,7 +142,7 @@ struct SwiftThrowingInvocationTests {
     }
 
     @Test func cocoaErrorRetainsItsUserInfo() async throws {
-        let call = try ABIRuntime.shared.swiftFunction(
+        let call = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.cocoaErrorResult(_:_:)",
             as: ((ErrorLifetimeToken, Bool) throws -> String).self
         )
@@ -160,7 +160,7 @@ struct SwiftThrowingInvocationTests {
         func check<Failure: Error>(
             _ failure: Failure.Type, name: String, inspect: (Failure, ErrorLifetimeToken) -> Bool
         ) async throws {
-            let call = try ABIRuntime.shared.swiftFunction(
+            let call = try await ABIRuntime.shared.swiftFunction(
                 named: "ManagedSwiftFixtures." + name + "(_:_:)",
                 as: ((ErrorLifetimeToken, Bool) throws(Failure) -> String).self
             )
@@ -189,19 +189,19 @@ struct SwiftThrowingInvocationTests {
 
     @Test func zeroPayloadAndMixedResultBanksDoNotHideFailure() async throws {
         let runtime = ABIRuntime.shared
-        let zero = try runtime.swiftFunction(
+        let zero = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.scalarErrorResult(_:_:)",
             as: ((ErrorLifetimeToken, Bool) throws(ScalarFailure) -> String).self
         )
-        let floating = try runtime.swiftFunction(
+        let floating = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.scalarErrorFloatingResult(_:_:)",
             as: ((ErrorLifetimeToken, Bool) throws(ScalarFailure) -> Double).self
         )
-        let empty = try runtime.swiftFunction(
+        let empty = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.scalarErrorVoidResult(_:_:)",
             as: ((ErrorLifetimeToken, Bool) throws(ScalarFailure) -> Void).self
         )
-        let floatingError = try runtime.swiftFunction(
+        let floatingError = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.floatingErrorResult(_:_:)",
             as: ((ErrorLifetimeToken, Bool) throws(FloatingFailure) -> String).self
         )
@@ -220,7 +220,7 @@ struct SwiftThrowingInvocationTests {
     }
 
     @Test func indirectResultAndErrorInitializeOnlyTheirSelectedStorage() async throws {
-        let call = try ABIRuntime.shared.swiftFunction(
+        let call = try await ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.bothIndirectResult(_:_:)",
             as: ((ErrorLifetimeToken, Bool) throws(LargeFailure) -> ErrorSuccessPayload).self
         )

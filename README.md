@@ -57,6 +57,20 @@ let decorate = try runtime.swiftFunction(
 let message = try unsafe decorate.unsafeInvoke("Hello")
 ```
 
+From an async context, await the same factory to search and prepare on a worker queue without blocking `MainActor`. No explicit `prepare` call is needed:
+
+```swift
+@MainActor
+func makeMessage() async throws -> String {
+    let decorate = try await ABIRuntime.shared.swiftFunction(
+        named: "Example.decorate(_:)", as: ((String) -> String).self
+    )
+    return try unsafe decorate.unsafeInvoke("Hello")
+}
+```
+
+Swift selects the async overload in an async context and requires `await`; synchronous contexts use the synchronous overload. The native signature determines whether invocation itself needs `await`. See [Swift function calls](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftfunctioninvocation) for both forms.
+
 Generic declarations use the same callable handles with explicit type arguments:
 
 ```swift

@@ -26,7 +26,7 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
         in: provider
     )
     let adding = try counter.method(named: "adding(_:)", as: ((Int64) -> Int64).self)
-    let addCaller = try runtime.swiftFunction(
+    let addCaller = try await runtime.swiftFunction(
         named: "SwiftImportCallerControl.hookValueAdd(_:)",
         as: ((Int64) -> Int64).self, in: caller)
     let addHook = try await unsafe adding.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call, value in
@@ -43,7 +43,7 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
         as: ((Int64) -> Int64).self,
         mutating: true
     )
-    let incrementCaller = try runtime.swiftFunction(
+    let incrementCaller = try await runtime.swiftFunction(
         named: "SwiftImportCallerControl.hookValueIncrement(_:_:)",
         as: ((Int64, Int64) -> Int64).self, in: caller)
     let incrementHook = try await unsafe increment.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call, delta in
@@ -69,7 +69,7 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
             as: ((Int64) -> Int64).self,
             consuming: consuming
         )
-        let call = try runtime.swiftFunction(
+        let call = try await runtime.swiftFunction(
             named: "SwiftImportCallerControl." + callName + "(_:_:)",
             as: ((Int64, Int64) -> Int64).self, in: caller)
         let hook = try await unsafe method.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call, value in
@@ -89,7 +89,7 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
         in: provider
     )
     let consume = try textType.method(named: "consume()", as: (() -> String).self, consuming: true)
-    let textCaller = try runtime.swiftFunction(
+    let textCaller = try await runtime.swiftFunction(
         named: "SwiftImportCallerControl.hookValueConsumeText(_:)",
         as: ((String) -> String).self, in: caller)
     let consumed = try await unsafe consume.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call in
@@ -117,7 +117,7 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
         as: ((String) -> String).self,
         mutating: true
     )
-    let appendCaller = try runtime.swiftFunction(
+    let appendCaller = try await runtime.swiftFunction(
         named: "SwiftImportCallerControl.hookValueAppendText(_:_:)",
         as: ((String, String) -> String).self, in: caller)
     let appendHook = try await unsafe append.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call, suffix in
@@ -134,7 +134,7 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
     let stack = try counter.method(
         named: "stack(_:_:_:_:_:_:_:_:_:_:_:_:)",
         as: ((Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64) -> Int64).self)
-    let stackCaller = try runtime.swiftFunction(
+    let stackCaller = try await runtime.swiftFunction(
         named: "SwiftImportCallerControl.hookValueStack()",
         as: (() -> Int64).self,
         in: caller

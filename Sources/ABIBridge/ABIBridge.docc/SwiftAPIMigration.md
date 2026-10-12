@@ -4,7 +4,7 @@ Update clients of the earlier result-and-argument handle types to complete funct
 
 ## Resolve and prepare handles synchronously
 
-Remove `await` from `ABIRuntime` symbol lookup, image enumeration, and callable or Swift type factories. Swift type member factories and bound Swift/C++ method lookup are also synchronous:
+Remove `await` from `ABIRuntime` symbol lookup, image enumeration, C/C++ callable factories, and Swift type factories. Swift type member factories and bound Swift/C++ method lookup are also synchronous:
 
 ```swift
 // Before
@@ -17,6 +17,8 @@ let read = try type.method(named: "read()", as: (() -> Int64).self)
 ```
 
 `ABIRuntime` and `NativeSwiftType` remain actors. These methods are `nonisolated`, so synchronous callers can use them without earlier preparation. Cold lookup runs on the caller's thread; if a required preparation stage is running, the caller waits for it. `removeCachedResults()` is also synchronous.
+
+`swiftFunction` supports both synchronous and async lookup. Keep `await` in async contexts to search and prepare on a worker queue while the caller suspends. Synchronous contexts select the synchronous overload; an async context can deliberately select it through a synchronous closure. See <doc:SwiftFunctionInvocation>.
 
 Optional `prepare(_:)` remains asynchronous. Its closure overload runs synchronous factories on a worker queue and shares their preparation with later lookup. See <doc:SymbolLookup>. Keep `await` for invoking native async signatures and for hook installation APIs that remain asynchronous.
 
@@ -61,7 +63,7 @@ let run = try await runtime.swiftFunction(
 )
 
 // After
-let run = try runtime.swiftFunction(
+let run = try await runtime.swiftFunction(
     named: "Example.run(_:)",
     as: ((NativeSwiftClosure<() -> String>) -> String).self,
     genericArguments: [.type(String.self)]
@@ -88,7 +90,7 @@ let value = try unsafe make.unsafeInvoke("title")
 value.withValue { print($0) }
 
 // After
-let make = try runtime.swiftFunction(
+let make = try await runtime.swiftFunction(
     named: "Example.makeSummary(_:)",
     as: ((String) -> NativeSwiftValue).self
 )
@@ -134,7 +136,7 @@ Nested native closures now appear as `NativeSwiftClosure<Signature>` arguments o
 Replace the earlier `inheritsCallerIsolation: false` setting with an `@concurrent` signature for a concurrent native async declaration. Use `nonisolated(nonsending)` for a caller-isolated declaration, including when the consumer's default differs from the provider's:
 
 ```swift
-let run = try runtime.swiftFunction(
+let run = try await runtime.swiftFunction(
     named: "Example.runAsync(_:)",
     as: (nonisolated(nonsending) (String) async throws -> String).self
 )
