@@ -5,8 +5,9 @@ import Foundation
 /// Use ``shared`` to reuse indexes across callers, or create a runtime to own an
 /// independent cache. Explicit resolution scopes acquire images by default. Image handles and
 /// resolved symbols keep their images alive until the last owner releases them.
-/// Searches prepare their indexes on demand. Swift function factories offer
-/// async overloads that run search and ABI preparation on an independent worker.
+/// Searches prepare their indexes on demand. Swift `resolve…` factories search
+/// and prepare on an independent worker; `resolve…AndWait` factories run synchronously
+/// on the caller's thread, waiting for required preparation already in progress.
 /// Use `prepare(_:)` to start the same work early without occupying the caller's actor.
 ///
 /// See <doc:SymbolLookup> for search scopes and the raw-address contract.
@@ -140,10 +141,7 @@ public actor ABIRuntime {
     public nonisolated func prepare<Value: Sendable>(
         _ operation: @escaping @Sendable (ABIRuntime) throws -> Value
     ) async throws -> Value {
-        let result: Result<Value, any Error> = await NativePreparation.run {
-            Result { try operation(self) }
-        }
-        return try result.get()
+        try await NativePreparation.run { try operation(self) }
     }
 
     /// Releases cached declarations and image indexes.

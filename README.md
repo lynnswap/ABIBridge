@@ -51,30 +51,30 @@ Retain the returned handle for repeated calls. Creating the handle and calling a
 For an already-loaded module defining `func decorate(_ value: String) -> String`:
 
 ```swift
-let decorate = try runtime.swiftFunction(
+let decorate = try runtime.resolveSwiftFunctionAndWait(
     named: "Example.decorate(_:)", as: ((String) -> String).self
 )
 let message = try unsafe decorate.unsafeInvoke("Hello")
 ```
 
-From an async context, await the same factory to search and prepare on a worker queue without blocking `MainActor`. No explicit `prepare` call is needed:
+Use `resolveSwiftFunction` to search and prepare on a worker queue without blocking `MainActor`. No explicit `prepare` call is needed:
 
 ```swift
 @MainActor
 func makeMessage() async throws -> String {
-    let decorate = try await ABIRuntime.shared.swiftFunction(
+    let decorate = try await ABIRuntime.shared.resolveSwiftFunction(
         named: "Example.decorate(_:)", as: ((String) -> String).self
     )
     return try unsafe decorate.unsafeInvoke("Hello")
 }
 ```
 
-Swift selects the async overload in an async context and requires `await`; synchronous contexts use the synchronous overload. The native signature determines whether invocation itself needs `await`. See [Swift function calls](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftfunctioninvocation) for both forms.
+Choose `resolveSwiftFunctionAndWait` for synchronous lookup, including inside an async function. The native signature determines whether invocation itself needs `await`. See [Swift function calls](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftfunctioninvocation) for both forms.
 
 Generic declarations use the same callable handles with explicit type arguments:
 
 ```swift
-let echo = try runtime.swiftFunction(
+let echo = try runtime.resolveSwiftFunctionAndWait(
     named: "Example.echo(_:)", as: ((String) -> String).self,
     genericArguments: [.type(String.self)]
 )
@@ -83,20 +83,20 @@ let message = try unsafe echo.unsafeInvoke("Hello")
 
 See [Swift generic calls](https://lynnswap.github.io/ABIBridge/documentation/abibridge/genericswiftvalues) for constraints, packs, generic types, and members. Ordinary tuples can combine runtime value handles and closures. Use `NativeSwiftInout` to replace a closure or tuple through a native call; see [Swift closure values](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftclosurevalues) and [argument conventions](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftargumentconventions).
 
-### Resolve a Swift type and member without blocking MainActor
+### Resolve a Swift type and its members without blocking MainActor
 
-`swiftType`, Swift `method(named:)`, and instance `getter(named:)` also have synchronous and async lookup overloads. For a native renderer with `func title() -> String`:
+Swift types and members use async `resolve` factories, including initializers, instance and static methods, getters, and setters. Their `AndWait` variants select synchronous lookup explicitly. For a native renderer with `func title() -> String`:
 
 ```swift
 @MainActor
 func readTitle(from renderer: AnyObject) async throws -> String {
-    let type = try await ABIRuntime.shared.swiftType(named: "Example.Renderer")
-    let title = try await type.method(named: "title()", as: (() -> String).self)
+    let type = try await ABIRuntime.shared.resolveSwiftType(named: "Example.Renderer")
+    let title = try await type.resolveMethod(named: "title()", as: (() -> String).self)
     return try unsafe title.unsafeInvoke(on: renderer)
 }
 ```
 
-Awaited lookup suspends while a worker performs the required search and preparation. Bound object lookup keeps the receiver in the caller's isolation domain. See [Swift types and members](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftmemberinvocation) for getters and optional preparation started ahead of time.
+Awaited lookup suspends while a worker performs the required search and preparation. Bound object lookup keeps the receiver in the caller's isolation domain. `ABIRuntime` and `NativeSwiftType` remain actors. See [Swift types and members](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftmemberinvocation) for construction, property access, and optional preparation started ahead of time.
 
 ### Call an existing Objective-C instance
 
@@ -120,7 +120,7 @@ For a native factory returning `some View`, add the optional `ABIBridgeSwiftUI` 
 ```swift
 import ABIBridgeSwiftUI
 
-let makePanel = try runtime.swiftFunction(
+let makePanel = try runtime.resolveSwiftFunctionAndWait(
     named: "Example.makePanel(_:)", as: ((String) -> NativeSwiftValue).self
 )
 let panel = try NativeSwiftView(unsafe makePanel.unsafeInvoke("Hello"))

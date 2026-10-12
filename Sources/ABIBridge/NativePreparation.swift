@@ -16,4 +16,11 @@ enum NativePreparation {
             workers.async { continuation.resume(returning: operation()) }
         }
     }
+
+    static func run<Value: Sendable>(
+        _ operation: @escaping @Sendable () throws -> Value
+    ) async throws -> Value {
+        let result: Result<Value, any Error> = await run { Result(catching: operation) }
+        return try result.get()
+    }
 }

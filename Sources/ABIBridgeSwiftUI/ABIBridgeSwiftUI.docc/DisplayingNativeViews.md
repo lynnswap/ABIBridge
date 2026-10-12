@@ -21,7 +21,7 @@ import SwiftUI
 
 @MainActor
 func loadPanel(title: String) throws -> NativeSwiftView {
-    let make = try ABIRuntime.shared.swiftFunction(
+    let make = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
         named: "Example.makePanel(_:)",
         as: ((String) -> NativeSwiftValue).self
     )

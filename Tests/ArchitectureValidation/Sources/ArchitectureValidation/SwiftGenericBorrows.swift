@@ -44,7 +44,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
         guard condition else { throw ArchitectureValidationFailure(description: message) }
         checks.append(message)
     }
-    let produce = try await runtime.swiftFunction(
+    let produce = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.produceGeneric<A>(() -> A) -> A",
         as: ((NativeSwiftClosure<() -> Bool>) -> Bool).self, genericArguments: [.type(Bool.self)])
     var applications = 0
@@ -53,11 +53,11 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     }
     try check(scalar && applications == 1, "Generic Bool result and scoped callback preserve caller isolation")
 
-    let stringType = try await runtime.swiftType(named: "Swift.String")
-    let string = try await runtime.swiftFunction(
+    let stringType = try await runtime.resolveSwiftType(named: "Swift.String")
+    let string = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.produceGeneric<A>(() -> A) -> A",
         as: ((NativeSwiftClosure<() -> String>) -> String).self, genericArguments: [.type(stringType)])
-    let reference = try await runtime.swiftFunction(
+    let reference = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.referenceProducedString(_:)",
         as: ((String) -> String).self
     )
@@ -71,7 +71,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     }
     checks.append("Capturing generic String callback matches compiler calls across repeated authenticated entries")
 
-    let echo = try await runtime.swiftFunction(
+    let echo = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.replayGeneric<A>(A) -> A",
         as: ((GenericBorrowPointer?) -> GenericBorrowPointer?).self, genericArguments: [.type(GenericBorrowPointer?.self)])
     let pointer = GenericBorrowPointer(0x1000, 42)
@@ -80,7 +80,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
 
     typealias ClosureData = NativeSwiftClosure<() -> Int64>
     let closureData = try ClosureData { Int64(42) }
-    let copyClosureData = try await runtime.swiftFunction(
+    let copyClosureData = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.callRuntimeCallbackCopy<A>((A) -> A, A) -> A",
         as: ((NativeSwiftClosure<(ClosureData) -> ClosureData>, ClosureData) -> ClosureData).self,
         genericArguments: [.type(ClosureData.self)])
@@ -89,7 +89,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     try check(try unsafe copiedClosureData.unsafeInvoke() == 42,
         "Callbacks copy and return a closure wrapper bound as native generic data")
     typealias ConsumingClosureDataReader = NativeSwiftClosure<(NativeSwiftConsuming<ClosureData>) -> Int64>
-    let consumeClosureData = try await runtime.swiftFunction(
+    let consumeClosureData = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.visitNonthrowingConsumingRuntimeValue<A where A: ~Swift.Copyable>(__owned A, (__owned A) -> Swift.Int64) -> Swift.Int64",
         as: ((NativeSwiftConsuming<ClosureData>, ConsumingClosureDataReader) -> Int64).self,
         genericArguments: [.type(ClosureData.self)])
@@ -100,7 +100,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     try check(unsafe consumeClosureData.unsafeInvoke(NativeSwiftConsuming(closureData), consumeClosureBody) == 42,
         "Consuming callback inputs preserve closure wrappers bound as ordinary generic data")
     typealias BorrowingClosureDataReader = NativeSwiftClosure<(NativeSwiftBorrowing<ClosureData>) throws -> Int64>
-    let borrowClosureData = try await runtime.swiftFunction(
+    let borrowClosureData = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.visitRuntimeCallback<A where A: ~Swift.Copyable>(A, (A) throws -> Swift.Int64) throws -> Swift.Int64",
         as: ((ClosureData, BorrowingClosureDataReader) throws -> Int64).self,
         genericArguments: [.type(ClosureData.self)])
@@ -108,7 +108,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     try check(unsafe borrowClosureData.unsafeInvoke(closureData, borrowClosureBody) == 42,
         "Borrowing callback inputs preserve closure wrappers bound as ordinary generic data")
     typealias AsyncClosureDataReader = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftBorrowing<ClosureData>) async throws -> Int64>
-    let readClosureData = try await runtime.swiftFunction(
+    let readClosureData = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.visitRuntimeCallbackAsync<A where A: ~Swift.Copyable>(A, nonisolated(nonsending) (A) async throws -> Swift.Int64) async throws -> Swift.Int64",
         as: (nonisolated(nonsending) (ClosureData, AsyncClosureDataReader) async throws -> Int64).self,
         genericArguments: [.type(ClosureData.self)])
@@ -119,35 +119,35 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     try check(try unsafe await readClosureData.unsafeInvoke(closureData, AsyncClosureDataReader(readClosureBody)) == 42,
         "Async callbacks preserve owned closure wrappers used as generic data across suspension")
 
-    let type = try await runtime.swiftType(named: "SwiftValueFixtures.BorrowedRuntimeRecord")
-    let text = try await type.getter(
+    let type = try await runtime.resolveSwiftType(named: "SwiftValueFixtures.BorrowedRuntimeRecord")
+    let text = try await type.resolveGetter(
         named: "text",
         as: (() -> String).self,
         receiverABI: .opaque(named: type.name)
     )
-    let changed = try await type.getter(
+    let changed = try await type.resolveGetter(
         named: "changed",
         as: (() -> AnyObject?).self,
         receiverABI: .opaque(named: type.name)
     )
-    let length = try await type.method(
+    let length = try await type.resolveMethod(
         named: "length()",
         as: (() -> Int).self,
         receiverABI: .opaque(named: type.name)
     )
-    let cancel = try await type.method(
+    let cancel = try await type.resolveMethod(
         named: "cancel()",
         as: (() -> Void).self,
         receiverABI: .opaque(named: type.name)
     )
-    let observe = try await runtime.swiftFunction(
+    let observe = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.observeGeneric<A>(() -> A, Swift.String, Swift.AnyObject, Swift.UnsafeMutablePointer<Swift.Int32>, (SwiftValueFixtures.BorrowedRuntimeRecord) -> ()) -> A",
         as: ((NativeSwiftClosure<() -> Bool>, String, AnyObject, UnsafeMutablePointer<Int32>, NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Void>) -> Bool).self,
         genericArguments: [.type(Bool.self)], valueABIs: [type: .opaque(named: type.name)])
-    let fire = try await runtime.swiftFunction(
+    let fire = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.fireBorrowedRecord(_:_:_:)",
         as: ((String, AnyObject, UnsafeMutablePointer<Int32>) -> Void).self)
-    let clear = try await runtime.swiftFunction(
+    let clear = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.clearBorrowedRecord()",
         as: (() -> Void).self
     )
@@ -204,41 +204,41 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
         guard condition else { throw ArchitectureValidationFailure(description: message) }
         checks.append(message)
     }
-    let copyValue = try await runtime.swiftFunction(
+    let copyValue = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.copyRuntimeValue<A>(A) -> A",
         as: ((String) -> NativeSwiftValue).self, genericArguments: [.type(String.self)])
     let value = try unsafe copyValue.unsafeInvoke("runtime")
     do {
         typealias Reader = NativeSwiftClosure<(NativeSwiftValue, NativeSwiftValue) -> Int64>
         typealias AsyncReader = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftValue, NativeSwiftValue) async -> Int64>
-        let factory = try await runtime.swiftFunction(
+        let factory = try await runtime.resolveSwiftFunction(
             named: "SwiftValueFixtures.makeMixedRuntimeReader<A, B>(A.Type, B.Type) -> (A, B) -> Swift.Int64",
             as: ((Int64.Type, NativeSwiftValue.Type) -> Reader).self,
             genericArguments: [.type(Int64.self), .type(NativeSwiftValue.self)])
         let reader = try unsafe factory.unsafeInvoke(Int64.self, NativeSwiftValue.self)
-        let correct = try await runtime.swiftFunction(
+        let correct = try await runtime.resolveSwiftFunction(
             named: "SwiftValueFixtures.callMixedRuntimeReader<A, B>((A, B) -> Swift.Int64, A, B) -> Swift.Int64",
             as: ((Reader, Int64, NativeSwiftValue) -> Int64).self,
             genericArguments: [.type(Int64.self), .type(NativeSwiftValue.self)])
         try check(try unsafe correct.unsafeInvoke(reader, 35, value) == 42, "Mixed runtime payload and ordinary handle inputs preserve their native positions")
-        let swapped = try await runtime.swiftFunction(
+        let swapped = try await runtime.resolveSwiftFunction(
             named: "SwiftValueFixtures.callMixedRuntimeReader<A, B>((A, B) -> Swift.Int64, A, B) -> Swift.Int64",
             as: ((Reader, NativeSwiftValue, Int64) -> Int64).self,
             genericArguments: [.type(NativeSwiftValue.self), .type(Int64.self)])
         do { _ = try unsafe swapped.unsafeInvoke(reader, value, 35) as Int64; throw ArchitectureValidationFailure(description: "Swapped runtime arguments were accepted") }
         catch ABIResolutionError.signatureMismatch { checks.append("Swapped runtime payload and ordinary handle inputs fail before native invocation") }
 
-        let asyncFactory = try await runtime.swiftFunction(
+        let asyncFactory = try await runtime.resolveSwiftFunction(
             named: "SwiftValueFixtures.makeMixedRuntimeAsyncReader<A, B>(A.Type, B.Type) -> nonisolated(nonsending) (A, B) async -> Swift.Int64",
             as: ((Int64.Type, NativeSwiftValue.Type) -> AsyncReader).self,
             genericArguments: [.type(Int64.self), .type(NativeSwiftValue.self)])
         let asyncReader = try unsafe asyncFactory.unsafeInvoke(Int64.self, NativeSwiftValue.self)
-        let asyncCorrect = try await runtime.swiftFunction(
+        let asyncCorrect = try await runtime.resolveSwiftFunction(
             named: "SwiftValueFixtures.callMixedRuntimeAsyncReader<A, B>(nonisolated(nonsending) (A, B) async -> Swift.Int64, A, B) async -> Swift.Int64",
             as: (nonisolated(nonsending) (AsyncReader, Int64, NativeSwiftValue) async -> Int64).self,
             genericArguments: [.type(Int64.self), .type(NativeSwiftValue.self)])
         try check(try unsafe await asyncCorrect.unsafeInvoke(asyncReader, 35, value) == 42, "Mixed async closure inputs preserve their native positions across suspension")
-        let asyncSwapped = try await runtime.swiftFunction(
+        let asyncSwapped = try await runtime.resolveSwiftFunction(
             named: "SwiftValueFixtures.callMixedRuntimeAsyncReader<A, B>(nonisolated(nonsending) (A, B) async -> Swift.Int64, A, B) async -> Swift.Int64",
             as: (nonisolated(nonsending) (AsyncReader, NativeSwiftValue, Int64) async -> Int64).self,
             genericArguments: [.type(NativeSwiftValue.self), .type(Int64.self)])
@@ -248,18 +248,18 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     do {
         typealias Inner = NativeSwiftClosure<(Int64) -> Int64>
         typealias Producer = NativeSwiftClosure<() -> Inner>
-        let factory = try await runtime.swiftFunction(
+        let factory = try await runtime.resolveSwiftFunction(
             named: "SwiftValueFixtures.makeRawRuntimeProducer<A>(A) -> () -> A",
             as: ((Inner) -> Producer).self, genericArguments: [.type(Inner.self)])
         let producer = try unsafe factory.unsafeInvoke(Inner { $0 + 7 })
         try check(try unsafe producer.unsafeInvoke().unsafeInvoke(35) == 42, "Native generic closure data results retain the ordinary Swift wrapper")
-        let call = try await runtime.swiftFunction(
+        let call = try await runtime.resolveSwiftFunction(
             named: "SwiftValueFixtures.callNonthrowingNestedRuntimeProducer<A>(() -> (A) -> A, A) -> A",
             as: ((Producer, Int64) -> Int64).self, genericArguments: [.type(Int64.self)])
         do { _ = try unsafe call.unsafeInvoke(producer, 35) as Int64; throw ArchitectureValidationFailure(description: "Raw closure data was treated as a native function result") }
         catch ABIResolutionError.signatureMismatch { checks.append("Raw generic closure data cannot be reinterpreted as a native function result") }
     }
-    let visit = try await runtime.swiftFunction(
+    let visit = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.visitRuntimeCallback<A where A: ~Swift.Copyable>(A, (A) throws -> Swift.Int64) throws -> Swift.Int64",
         as: ((NativeSwiftValue, NativeSwiftClosure<(NativeSwiftBorrowedValue) throws -> Int64>) throws -> Int64).self,
         genericArguments: [.type(value.type)])
@@ -275,7 +275,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     } catch NativeSwiftBorrowError.expiredBorrow {
         checks.append("Common callback borrow expires after native completion")
     }
-    let copyInput = try await runtime.swiftFunction(
+    let copyInput = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.visitRuntimeCallback<A where A: ~Swift.Copyable>(A, (A) throws -> Swift.Int64) throws -> Swift.Int64",
         as: ((NativeSwiftValue, NativeSwiftClosure<(NativeSwiftValue) throws -> Int64>) throws -> Int64).self,
         genericArguments: [.type(value.type)])
@@ -283,7 +283,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     try check(unsafe copyInput.unsafeInvoke(value, owned) == 7 && !value.isConsumed,
         "Common callback input can take an independent copy without consuming its native caller's value")
     typealias AsyncBody = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftBorrowedValue) async throws -> Int64>
-    let visitAsync = try await runtime.swiftFunction(
+    let visitAsync = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.visitRuntimeCallbackAsync<A where A: ~Swift.Copyable>(A, nonisolated(nonsending) (A) async throws -> Swift.Int64) async throws -> Swift.Int64",
         as: (nonisolated(nonsending) (NativeSwiftValue, AsyncBody) async throws -> Int64).self,
         genericArguments: [.type(value.type)])
@@ -294,32 +294,32 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     try check(unsafe await visitAsync.unsafeInvoke(value, AsyncBody(operation)) == 7,
         "Common async callback input preserves its native borrow across suspension")
     typealias Copy = NativeSwiftClosure<(NativeSwiftValue) -> NativeSwiftValue>
-    let make = try await runtime.swiftFunction(
+    let make = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.bindingClosure<A>(A) -> (A) -> A",
         as: ((String) -> Copy).self, genericArguments: [.type(String.self)])
     let copy = try unsafe make.unsafeInvoke("returned")
     let result = try unsafe copy.unsafeInvoke(value)
     try check(result.take(as: String.self) == "returned", "Returned runtime closure authenticates native arguments and owned results")
-    let makeConcrete = try await runtime.swiftFunction(
+    let makeConcrete = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.makeConcreteRuntimeCallback() -> (Swift.String) -> Swift.String", as: (() -> Copy).self)
     let concrete = try unsafe makeConcrete.unsafeInvoke()
     try check(unsafe concrete.unsafeInvoke(value).take(as: String.self) == "runtime!",
         "Nongeneric returned runtime closure preserves its concrete authenticated value ABI")
-    let apply = try await runtime.swiftFunction(
+    let apply = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.callRuntimeCallbackCopy<A>((A) -> A, A) -> A",
         as: ((Copy, NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: [.type(value.type)])
     let passedBack = try unsafe apply.unsafeInvoke(copy, value)
     try check(passedBack.take(as: String.self) == "returned" && !value.isConsumed,
         "Returned runtime closure can be passed back through its native value declaration")
     typealias AsyncCopy = NativeSwiftClosure<nonisolated(nonsending) @Sendable (NativeSwiftValue) async -> NativeSwiftValue>
-    let makeAsync = try await runtime.swiftFunction(
+    let makeAsync = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.bindingAsyncClosure<A where A: Swift.Sendable>(A) -> nonisolated(nonsending) @Sendable (A) async -> A",
         as: ((String) -> AsyncCopy).self, genericArguments: [.type(String.self)])
     let asyncCopy = try unsafe makeAsync.unsafeInvoke("async returned")
     let asyncResult = try unsafe await asyncCopy.unsafeInvoke(value)
     try check(asyncResult.take(as: String.self) == "async returned", "Returned async runtime closure authenticates after native suspension")
     typealias HostCopy = NativeSwiftClosure<(NativeSwiftValue) throws -> NativeSwiftValue>
-    let applyHost = try await runtime.swiftFunction(
+    let applyHost = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.callRuntimeCallbackResult<A>((A) throws -> A, A) throws -> A",
         as: ((HostCopy, String) throws -> String).self, genericArguments: [.type(String.self)])
     let hostCopy = try HostCopy { value in state.owned = value; return value }
@@ -334,7 +334,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
             "Runtime callback result conversion errors propagate through native throws")
     }
     typealias AsyncHostCopy = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftValue) async throws -> NativeSwiftValue>
-    let applyAsyncHost = try await runtime.swiftFunction(
+    let applyAsyncHost = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.callRuntimeAsyncCallbackResult<A>(nonisolated(nonsending) (A) async throws -> A, A) async throws -> A",
         as: (nonisolated(nonsending) (AsyncHostCopy, String) async throws -> String).self, genericArguments: [.type(String.self)])
     let copyAsync: nonisolated(nonsending) @Sendable (NativeSwiftValue) async throws -> NativeSwiftValue = { value in
@@ -344,13 +344,13 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     try check(unsafe await applyAsyncHost.unsafeInvoke(AsyncHostCopy(copyAsync), "async host result") == "async host result",
         "Async host runtime callback returns an owned native value after suspension")
     typealias NestedBody = NativeSwiftClosure<(Copy, NativeSwiftValue) throws -> NativeSwiftValue>
-    let visitNested = try await runtime.swiftFunction(
+    let visitNested = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.visitNestedRuntime<A>(A, ((A) -> A, A) throws -> A) throws -> A",
         as: ((NativeSwiftValue, NestedBody) throws -> NativeSwiftValue).self, genericArguments: [.type(String.self)])
     let nestedBody = try NestedBody { callback, value in try unsafe callback.unsafeInvoke(value) }
     try check(unsafe visitNested.unsafeInvoke(value, nestedBody).take(as: String.self) == "runtime",
         "Nested runtime callback input uses its generic authenticated value plan")
-    let makeNestedCaller = try await runtime.swiftFunction(
+    let makeNestedCaller = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.makeNestedRuntimeCaller<A>(A.Type) -> ((A) -> A, A) -> A",
         as: ((String.Type) -> NativeSwiftClosure<(Copy, NativeSwiftValue) -> NativeSwiftValue>).self,
         genericArguments: [.type(String.self)])
@@ -358,14 +358,14 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     try check(unsafe nestedCaller.unsafeInvoke(copy, value).take(as: String.self) == "returned",
         "Returned closure passes nested runtime closures through the generic native interface")
     typealias NestedProducer = NativeSwiftClosure<() throws -> NativeSwiftClosure<(String) -> String>>
-    let produceNested = try await runtime.swiftFunction(
+    let produceNested = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.callNestedRuntimeProducer<A>(() throws -> (A) -> A, A) throws -> A",
         as: ((NestedProducer, String) throws -> String).self, genericArguments: [.type(String.self)])
     let nestedProducer = try NestedProducer { try NativeSwiftClosure { (value: String) in value + "!" } }
     try check(unsafe produceNested.unsafeInvoke(nestedProducer, "nested") == "nested!",
         "Host callback results reabstract nested closures to native generic authentication")
     typealias NestedPackBody = NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>, NativeSwiftClosure<(String) -> String>) throws -> Int64>
-    let visitNestedPack = try await runtime.swiftFunction(
+    let visitNestedPack = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.visitNestedRuntimePack<each A>(_: repeat A.Type, body: (repeat (A) -> A) throws -> Swift.Int64) throws -> Swift.Int64",
         as: ((Int64.Type, String.Type, NestedPackBody) throws -> Int64).self,
         genericArguments: [.pack([.type(Int64.self), .type(String.self)])])
@@ -377,7 +377,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
         "Nested closure parameter packs retain each native generic function signature")
     typealias NestedAsyncCopy = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftValue) async -> NativeSwiftValue>
     typealias NestedAsyncBody = NativeSwiftClosure<nonisolated(nonsending) (NestedAsyncCopy, NativeSwiftValue) async throws -> NativeSwiftValue>
-    let visitNestedAsync = try await runtime.swiftFunction(
+    let visitNestedAsync = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.visitNestedRuntimeAsync<A>(A, nonisolated(nonsending) (nonisolated(nonsending) (A) async -> A, A) async throws -> A) async throws -> A",
         as: (nonisolated(nonsending) (String, NestedAsyncBody) async throws -> String).self,
         genericArguments: [.type(String.self)])
@@ -388,7 +388,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     try check(unsafe await visitNestedAsync.unsafeInvoke("nested async", NestedAsyncBody(nestedAsyncBody)) == "nested async",
         "Nested async runtime closures preserve native authentication and scoped values after suspension")
     typealias ConsumingInput = NativeSwiftClosure<(NativeSwiftConsuming<NativeSwiftValue>) -> Int64>
-    let consumeInput = try await runtime.swiftFunction(
+    let consumeInput = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.visitNonthrowingConsumingRuntimeValue<A where A: ~Swift.Copyable>(__owned A, (__owned A) -> Swift.Int64) -> Swift.Int64",
         as: ((NativeSwiftConsuming<NativeSwiftValue>, ConsumingInput) -> Int64).self, genericArguments: [.type(String.self)])
     let consumed = try unsafe copyValue.unsafeInvoke("consumed")
@@ -398,7 +398,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     try check(state.owned!.take(as: String.self) == "consumed",
         "Consumed callback input retains its payload after native return")
     typealias ConsumingAsyncInput = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftConsuming<NativeSwiftValue>) async throws -> Int64>
-    let consumeAsync = try await runtime.swiftFunction(
+    let consumeAsync = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.visitConsumingRuntimeValueAsync<A where A: ~Swift.Copyable>(__owned A, nonisolated(nonsending) (__owned A) async throws -> Swift.Int64) async throws -> Swift.Int64",
         as: (nonisolated(nonsending) (NativeSwiftConsuming<NativeSwiftValue>, ConsumingAsyncInput) async throws -> Int64).self,
         genericArguments: [.type(String.self)])
@@ -413,10 +413,10 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     try check(state.owned!.take(as: String.self) == "suspended",
         "Async consuming input retains its payload beyond callback completion")
     typealias MutableInput = NativeSwiftClosure<(NativeSwiftBorrowedValue) throws -> Void>
-    let mutateInput = try await runtime.swiftFunction(
+    let mutateInput = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.visitRuntimeInout<A where A: ~Swift.Copyable>(inout A, (inout A) throws -> ()) throws -> ()",
         as: ((NativeSwiftInout<NativeSwiftValue>, MutableInput) throws -> Void).self, genericArguments: [.type(String.self)])
-    let replaceInput = try await runtime.swiftFunction(
+    let replaceInput = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.replaceRuntimeValue<A where A: ~Swift.Copyable>(inout A, __owned A) -> ()",
         as: ((NativeSwiftInout<NativeSwiftBorrowedValue>, NativeSwiftConsuming<NativeSwiftValue>) -> Void).self,
         genericArguments: [.type(String.self)])
@@ -432,7 +432,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     do { _ = try state.borrow!.copy(); throw ArchitectureValidationFailure(description: "Mutable borrow escaped") }
     catch NativeSwiftBorrowError.expiredBorrow { checks.append("Mutable callback borrow expires after native completion") }
     typealias TypedInout = NativeSwiftClosure<(NativeSwiftInout<String>) -> Void>
-    let typedInout = try await runtime.swiftFunction(
+    let typedInout = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.visitStringInout(_:_:)",
         as: ((NativeSwiftInout<String>, TypedInout) -> Void).self)
     let typedBuffer = NativeSwiftInout("before")
@@ -440,7 +440,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     try check(typedBuffer.value == "before after", "Known inout callback type authenticates and writes its buffer back")
     typealias OwnedCopy = NativeSwiftClosure<(String) -> String>
     typealias OwnedBody = NativeSwiftClosure<(NativeSwiftConsuming<OwnedCopy>) -> Void>
-    let ownedDelivery = try await runtime.swiftFunction(
+    let ownedDelivery = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.visitOwnedNested<A>(A, () -> (), (__owned (A) -> A) -> ()) -> ()",
         as: ((String, NativeSwiftClosure<() -> Void>, OwnedBody) -> Void).self, genericArguments: [.type(String.self)])
     let ownedDeaths = GenericBorrowCounter()
@@ -452,7 +452,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     try check(ownedDeaths.count == 1, "Consuming nested input releases its native capture once")
     typealias OwnedAsyncCopy = NativeSwiftClosure<nonisolated(nonsending) (String) async -> String>
     typealias OwnedAsyncBody = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftConsuming<OwnedAsyncCopy>) async -> Void>
-    let ownedAsyncDelivery = try await runtime.swiftFunction(
+    let ownedAsyncDelivery = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.visitOwnedNestedAsync<A>(A, () -> (), nonisolated(nonsending) (__owned nonisolated(nonsending) (A) async -> A) async -> ()) async -> ()",
         as: (nonisolated(nonsending) (String, NativeSwiftClosure<() -> Void>, OwnedAsyncBody) async -> Void).self,
         genericArguments: [.type(String.self)])
@@ -467,23 +467,23 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     try check(ownedDeaths.count == 2, "Consuming async nested input releases its native capture once")
     typealias OwnedNumber = NativeSwiftClosure<(Int64) -> Int64>
     typealias OwnedCaller = NativeSwiftClosure<(NativeSwiftConsuming<OwnedNumber>, Int64) -> Int64>
-    let ownedFactory = try await runtime.swiftFunction(
+    let ownedFactory = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.makeConcreteOwnedNestedCaller()",
         as: (() -> OwnedCaller).self
     )
-    let ownedCall = try await runtime.swiftFunction(
+    let ownedCall = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.callOwnedNestedRuntimeCaller<A>((__owned (A) -> A, A) -> A, A, () -> ()) -> A",
         as: ((OwnedCaller, Int64, NativeSwiftClosure<() -> Void>) -> Int64).self, genericArguments: [.type(Int64.self)])
     try check(try unsafe ownedCall.unsafeInvoke(ownedFactory.unsafeInvoke(), 42, NativeSwiftClosure { ownedDeaths.increment() }) == 42
         && ownedDeaths.count == 3, "Native consuming nested reabstraction authenticates and transfers exactly one owned context")
-    let fixedType = try await runtime.swiftType(named: "SwiftValueFixtures.RuntimeFixedPair")
+    let fixedType = try await runtime.resolveSwiftType(named: "SwiftValueFixtures.RuntimeFixedPair")
     let fixedABI = try NativeType.structure(named: fixedType.name, fields: [.int64, .int64])
     let fixedABIs = [fixedType: fixedABI]
-    let fixedMake = try await runtime.swiftFunction(
+    let fixedMake = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.makeRuntimeFixedPair(Swift.Int64, Swift.Int64) -> SwiftValueFixtures.RuntimeFixedPair",
         as: ((Int64, Int64) -> NativeSwiftValue).self, valueABIs: fixedABIs)
     let fixedValue = try unsafe fixedMake.unsafeInvoke(35, 7)
-    let fixedSum = try await fixedType.method(
+    let fixedSum = try await fixedType.resolveMethod(
         named: "sum()",
         as: (() -> Int64).self,
         receiverABI: fixedABI
@@ -494,12 +494,12 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
         do { return try unsafe fixedSum.unsafeInvoke(on: value) }
         catch { fixedState.failure = error; return -1 }
     }
-    let fixedInspect = try await runtime.swiftFunction(
+    let fixedInspect = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.inspectRuntimeFixedPair(SwiftValueFixtures.RuntimeFixedPair, (SwiftValueFixtures.RuntimeFixedPair) -> Swift.Int64) -> Swift.Int64",
         as: ((NativeSwiftValue, FixedBody) -> Int64).self, valueABIs: fixedABIs)
     try check(try unsafe fixedInspect.unsafeInvoke(fixedValue, fixedBody) == 42 && fixedState.failure == nil,
         "Explicit fixed Swift components authenticate a runtime-only callback input")
-    let fixedMember = try await fixedType.method(
+    let fixedMember = try await fixedType.resolveMethod(
         named: "inspect(_:)",
         as: ((FixedBody) -> Int64).self,
         valueABIs: fixedABIs, receiverABI: fixedABI)
@@ -525,16 +525,16 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     typealias Inspect = NativeSwiftClosure<(BorrowedSnapshot) throws -> Int64>
     let nativeSnapshot = "(lead: Swift.Int8, record: SwiftValueFixtures.RuntimeFixedPair, nested: (callback: (Swift.Int64) -> Swift.Int64, text: Swift.String, tail: Swift.Int8))"
     let abis = [type: abi]
-    let make = try await runtime.swiftFunction(
+    let make = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.makeCompositionSnapshot(Swift.AnyObject, Swift.Int64, Swift.Int64, Swift.String) -> " + nativeSnapshot,
         as: ((AnyObject, Int64, Int64, String) -> Snapshot).self, valueABIs: abis)
-    let echo = try await runtime.swiftFunction(
+    let echo = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.echoCompositionSnapshot(" + nativeSnapshot + ") -> " + nativeSnapshot,
         as: ((Snapshot) -> Snapshot).self, valueABIs: abis)
-    let inspect = try await runtime.swiftFunction(
+    let inspect = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.inspectCompositionSnapshot(" + nativeSnapshot + ", (" + nativeSnapshot + ") throws -> Swift.Int64) throws -> Swift.Int64",
         as: ((Snapshot, Inspect) throws -> Int64).self, valueABIs: abis)
-    let consume = try await runtime.swiftFunction(
+    let consume = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.consumeCompositionSnapshot(__owned " + nativeSnapshot + ") -> " + nativeSnapshot,
         as: ((NativeSwiftConsuming<Snapshot>) -> Snapshot).self, valueABIs: abis)
     let text = String(repeating: "tuple", count: 100)
@@ -552,10 +552,10 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     }
     try check(try unsafe inspect.unsafeInvoke(echoed, inspectBody) == 84,
         "Tuple callback inputs borrow native fields and authenticate their nested closure")
-    let makeWhole = try await runtime.swiftFunction(
+    let makeWhole = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.makeCompositionSnapshot(Swift.AnyObject, Swift.Int64, Swift.Int64, Swift.String) -> " + nativeSnapshot,
         as: ((AnyObject, Int64, Int64, String) -> NativeSwiftValue).self, valueABIs: abis)
-    let echoWhole = try await runtime.swiftFunction(
+    let echoWhole = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.echoCompositionSnapshot(" + nativeSnapshot + ") -> " + nativeSnapshot,
         as: ((NativeSwiftValue) -> NativeSwiftValue).self, valueABIs: abis)
     let whole = try unsafe makeWhole.unsafeInvoke(NSObject(), 35, 7, text)
@@ -570,7 +570,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     let takenWhole = try whole.take(as: CompositionSnapshot.self)
     try check(takenWhole.nested.callback(3) == 45 && takenWhole.nested.text == text,
         "Taking a runtime tuple preserves its authenticated closure field")
-    let makeStoredProducer = try await runtime.swiftFunction(
+    let makeStoredProducer = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.makeConcreteNestedProducer() -> () -> (Swift.Int64) -> Swift.Int64",
         as: (() -> NativeSwiftValue).self)
     let storedProducer = try unsafe makeStoredProducer.unsafeInvoke()
@@ -586,7 +586,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     typealias OwnedTuple = (Int8, NativeSwiftValue, Int64)
     typealias BorrowedTuple = (Int8, NativeSwiftBorrowedValue, Int64)
     typealias AsyncBody = NativeSwiftClosure<nonisolated(nonsending) (BorrowedTuple) async throws -> OwnedTuple>
-    let transform = try await runtime.swiftFunction(
+    let transform = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.transformRuntimeTupleAsync<A>((Swift.Int8, A, Swift.Int64), nonisolated(nonsending) ((Swift.Int8, A, Swift.Int64)) async throws -> (Swift.Int8, A, Swift.Int64)) async throws -> (Swift.Int8, A, Swift.Int64)",
         as: (nonisolated(nonsending) (OwnedTuple, AsyncBody) async throws -> OwnedTuple).self,
         genericArguments: [.type(type)])
@@ -612,11 +612,11 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
 
     typealias Edit = NativeSwiftClosure<(NativeSwiftInout<Callback>) throws -> Void>
     typealias EditPair = NativeSwiftClosure<(NativeSwiftInout<Callback>, NativeSwiftInout<Callback>) throws -> Int64>
-    let swap = try await runtime.swiftFunction(
+    let swap = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.swapRuntimeClosures<A>(inout (A) -> A, inout (A) -> A) -> ()",
         as: ((NativeSwiftInout<Callback>, NativeSwiftInout<Callback>) -> Void).self,
         genericArguments: [.type(Int64.self)])
-    let visit = try await runtime.swiftFunction(
+    let visit = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.visitRuntimeClosure<A>(inout (A) -> A, (inout (A) -> A) throws -> ()) throws -> ()",
         as: ((NativeSwiftInout<Callback>, Edit) throws -> Void).self, genericArguments: [.type(Int64.self)])
     let first = NativeSwiftInout(try Callback { $0 + 7 })
@@ -640,14 +640,14 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
 
     let state = GenericBorrowState()
     typealias Capture = NativeSwiftClosure<(Callback, Int64) throws -> Int64>
-    let capture = try await runtime.swiftFunction(
+    let capture = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.visitNestedRuntime<A>(A, ((A) -> A, A) throws -> A) throws -> A",
         as: ((Int64, Capture) throws -> Int64).self, genericArguments: [.type(Int64.self)])
     _ = try unsafe capture.unsafeInvoke(42, Capture { callback, value in state.closure = callback; return value })
     guard let expired = state.closure else { throw ArchitectureValidationFailure(description: "Missing scoped closure") }
     do { _ = try expired.copy(); throw ArchitectureValidationFailure(description: "Scoped closure did not expire") }
     catch NativeSwiftBorrowError.expiredBorrow { checks.append("The writeback failure control uses an expired native closure") }
-    let visitPair = try await runtime.swiftFunction(
+    let visitPair = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.visitRuntimeClosurePair<A>(inout (A) -> A, inout (A) -> A, (inout (A) -> A, inout (A) -> A) throws -> Swift.Int64) throws -> Swift.Int64",
         as: ((NativeSwiftInout<Callback>, NativeSwiftInout<Callback>, EditPair) throws -> Int64).self,
         genericArguments: [.type(Int64.self)])

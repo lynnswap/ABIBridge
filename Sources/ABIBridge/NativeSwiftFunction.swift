@@ -554,6 +554,9 @@ extension ABIRuntime {
 
     /// Resolves a concrete Swift free function by its source-level name.
     ///
+    /// Search and preparation run on the caller's thread, joining required work
+    /// already in progress. No explicit `prepare` call is needed.
+    ///
     /// - Parameters:
     ///   - name: A qualified label-only name, such as Example.decorate(_:), or a complete demangled declaration.
     ///   - signature: The complete Swift function type, including native error and async isolation conventions.
@@ -564,7 +567,7 @@ extension ABIRuntime {
     ///   - loading: Whether an explicit image may be acquired and initialized.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
     /// - Throws: A resolution, unsupported representation, or call preparation error.
-    public nonisolated func swiftFunction<Signature>(
+    public nonisolated func resolveSwiftFunctionAndWait<Signature>(
         named name: String,
         as signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument] = [],
@@ -587,12 +590,11 @@ extension ABIRuntime {
     /// Resolves and prepares a Swift function without blocking the caller's executor.
     ///
     /// Lookup, image acquisition, and ABI preparation run on an independent worker.
-    /// This uses the synchronous overload's indexes and call interfaces, joining any
+    /// This uses the synchronous API's indexes and call interfaces, joining any
     /// required preparation already in progress. Native invocation is a separate operation.
-    /// In an asynchronous context, Swift selects this overload and requires `await`.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
     /// - Throws: The same resolution, representation, and preparation errors as synchronous lookup.
-    public nonisolated func swiftFunction<Signature>(
+    public nonisolated func resolveSwiftFunction<Signature>(
         named name: String,
         as signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument] = [],
@@ -602,7 +604,7 @@ extension ABIRuntime {
         loading: ImageLoadingPolicy = .ifNeeded
     ) async throws -> NativeSwiftFunction<Signature> {
         try await prepare { runtime in
-            try runtime.swiftFunction(
+            try runtime.resolveSwiftFunctionAndWait(
                 named: name,
                 as: signature,
                 genericArguments: genericArguments,
@@ -616,6 +618,9 @@ extension ABIRuntime {
 
     /// Resolves a concrete Swift free function in an already retained image.
     ///
+    /// Search and preparation run on the caller's thread, joining required work
+    /// already in progress. No explicit `prepare` call is needed.
+    ///
     /// - Parameters:
     ///   - name: The qualified demangled declaration.
     ///   - signature: The complete Swift function type, including native error and async isolation conventions.
@@ -626,7 +631,7 @@ extension ABIRuntime {
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
     /// - Throws: A resolution, unsupported representation, or call preparation error.
-    public nonisolated func swiftFunction<Signature>(
+    public nonisolated func resolveSwiftFunctionAndWait<Signature>(
         named name: String,
         as signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument] = [],
@@ -648,13 +653,12 @@ extension ABIRuntime {
 
     /// Resolves and prepares a Swift function in a retained image on an independent worker.
     ///
-    /// This shares the synchronous overload's indexes and call interfaces, joining any
+    /// This shares the synchronous API's indexes and call interfaces, joining any
     /// required preparation already in progress while the caller suspends.
     /// Native invocation remains a separate operation.
-    /// In an asynchronous context, Swift selects this overload and requires `await`.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
     /// - Throws: The same resolution, representation, and preparation errors as synchronous lookup.
-    public nonisolated func swiftFunction<Signature>(
+    public nonisolated func resolveSwiftFunction<Signature>(
         named name: String,
         as signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument] = [],
@@ -664,7 +668,7 @@ extension ABIRuntime {
         loading: ImageLoadingPolicy = .ifNeeded
     ) async throws -> NativeSwiftFunction<Signature> {
         try await prepare { runtime in
-            try runtime.swiftFunction(
+            try runtime.resolveSwiftFunctionAndWait(
                 named: name,
                 as: signature,
                 genericArguments: genericArguments,

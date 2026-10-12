@@ -20,10 +20,10 @@ struct SwiftAsyncHookTests {
         """)
         defer { fixture.cleanup() }
         typealias Signature = nonisolated(nonsending) (Int64) async -> Int64
-        let function = try await fixture.runtime.swiftFunction(
+        let function = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.module + ".hookAsync(_:)",
             as: Signature.self, in: fixture.providerScope)
-        let oracle = try await fixture.runtime.swiftFunction(
+        let oracle = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.callerModule + ".importedAsync(_:)",
             as: Signature.self, in: fixture.callerScope)
         #expect(try unsafe await oracle.unsafeInvoke(1) == 2)
@@ -55,16 +55,16 @@ struct SwiftAsyncHookTests {
         @inline(never) public nonisolated(nonsending) func echoText(_ value: String) async -> String { await hookAsyncEcho(value) }
         """)
         defer { fixture.cleanup() }
-        let integer = try await fixture.runtime.swiftFunction(
+        let integer = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.module + ".hookAsyncEcho(_:)",
             as: (nonisolated(nonsending) (Int64) async -> Int64).self, genericArguments: [.type(Int64.self)], in: fixture.providerScope)
-        let text = try await fixture.runtime.swiftFunction(
+        let text = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.module + ".hookAsyncEcho(_:)",
             as: (nonisolated(nonsending) (String) async -> String).self, genericArguments: [.type(String.self)], in: fixture.providerScope)
-        let integerOracle = try await fixture.runtime.swiftFunction(
+        let integerOracle = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.callerModule + ".echoInteger(_:)",
             as: (nonisolated(nonsending) (Int64) async -> Int64).self, in: fixture.callerScope)
-        let textOracle = try await fixture.runtime.swiftFunction(
+        let textOracle = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.callerModule + ".echoText(_:)",
             as: (nonisolated(nonsending) (String) async -> String).self, in: fixture.callerScope)
         #expect(try unsafe await integerOracle.unsafeInvoke(1) == 1)
@@ -100,15 +100,15 @@ struct SwiftAsyncHookTests {
         """)
         defer { fixture.cleanup() }
         let name = fixture.module + ".AsyncHookOwner"
-        let type = try await fixture.runtime.swiftType(named: name, in: fixture.providerScope)
-        let method = try await type.method(
+        let type = try await fixture.runtime.resolveSwiftType(named: name, in: fixture.providerScope)
+        let method = try await type.resolveMethod(
             named: "value(_:)",
             as: (nonisolated(nonsending) (Int64) async -> Int64).self
         )
-        let make = try await fixture.runtime.swiftFunction(
+        let make = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.module + ".makeAsyncHookOwner() -> " + name,
             as: (() -> AnyObject).self, in: fixture.providerScope)
-        let oracle = try await fixture.runtime.swiftFunction(
+        let oracle = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.callerModule + ".importedAsyncMethod(" + name
                 + ", Swift.Int64) async -> Swift.Int64",
             as: (nonisolated(nonsending) (AnyObject, Int64) async -> Int64).self, in: fixture.callerScope)
@@ -144,15 +144,15 @@ struct SwiftAsyncHookTests {
         """)
         defer { fixture.cleanup() }
         let name = fixture.module + ".AsyncTextOwner"
-        let type = try await fixture.runtime.swiftType(named: name, in: fixture.providerScope)
-        let method = try await type.method(
+        let type = try await fixture.runtime.resolveSwiftType(named: name, in: fixture.providerScope)
+        let method = try await type.resolveMethod(
             named: "render(_:)",
             as: (nonisolated(nonsending) (String) async -> String).self
         )
-        let make = try await fixture.runtime.swiftFunction(
+        let make = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.module + ".makeAsyncTextOwner() -> " + name,
             as: (() -> AnyObject).self, in: fixture.providerScope)
-        let caller = try await fixture.runtime.swiftFunction(
+        let caller = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.callerModule + ".importedAsyncText(" + name
                 + ", Swift.String) async -> Swift.String",
             as: (nonisolated(nonsending) (AnyObject, String) async -> String).self, in: fixture.callerScope)
@@ -185,12 +185,12 @@ struct SwiftAsyncHookTests {
         """)
         defer { fixture.cleanup() }
         typealias Signature = nonisolated(nonsending) (Int64, UnsafeMutablePointer<Int64>) async throws(NSError) -> String
-        let function = try await fixture.runtime.swiftFunction(
+        let function = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.module + ".hookAsyncTyped(_:_:)",
             as: Signature.self,
             in: fixture.providerScope
         )
-        let oracle = try await fixture.runtime.swiftFunction(
+        let oracle = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.callerModule + ".importedAsyncTyped(_:_:)",
             as: Signature.self,
             in: fixture.callerScope
@@ -239,12 +239,12 @@ struct SwiftAsyncHookTests {
         """)
         defer { fixture.cleanup() }
         typealias Signature = nonisolated(nonsending) (Int64) async -> Int64
-        let function = try await fixture.runtime.swiftFunction(
+        let function = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.module + ".hookAsyncCancellation(_:)",
             as: Signature.self,
             in: fixture.providerScope
         )
-        let oracle = try await fixture.runtime.swiftFunction(
+        let oracle = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.callerModule + ".importedAsyncCancellation(_:)",
             as: Signature.self,
             in: fixture.callerScope
@@ -293,10 +293,10 @@ struct SwiftAsyncHookTests {
         @inline(never) public nonisolated(nonsending) func importedAsyncInherited(_ value: Int64) async -> Int64 { await hookAsyncInherited(value) }
         """)
         defer { fixture.cleanup() }
-        let actor = try await fixture.runtime.swiftFunction(
+        let actor = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.module + ".hookAsyncActor(_:)",
             as: (@Sendable @concurrent (Int64) async -> Int64).self, in: fixture.providerScope)
-        let actorOracle = try await fixture.runtime.swiftFunction(
+        let actorOracle = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.callerModule + ".importedAsyncActor(_:)",
             as: (@concurrent (Int64) async -> Int64).self, in: fixture.callerScope)
         _ = try unsafe await actorOracle.unsafeInvoke(1)
@@ -310,10 +310,10 @@ struct SwiftAsyncHookTests {
             }
         defer { hook.invalidate() }
         #expect(try unsafe await actorOracle.unsafeInvoke(1) == 112)
-        let inherited = try await fixture.runtime.swiftFunction(
+        let inherited = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.module + ".hookAsyncInherited(_:)",
             as: (nonisolated(nonsending) (Int64) async -> Int64).self, in: fixture.providerScope)
-        let inheritedOracle = try await fixture.runtime.swiftFunction(
+        let inheritedOracle = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.callerModule + ".importedAsyncInherited(_:)",
             as: (nonisolated(nonsending) (Int64) async -> Int64).self, in: fixture.callerScope)
         _ = try unsafe await inheritedOracle.unsafeInvoke(1)
@@ -342,10 +342,10 @@ struct SwiftAsyncHookTests {
         """)
         defer { fixture.cleanup() }
         typealias Signature = nonisolated(nonsending) (LargeFailure, Bool) async throws(LargeFailure) -> LargeFailure
-        let function = try await fixture.runtime.swiftFunction(
+        let function = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.module + ".hookAsyncError(_:_:)",
             as: Signature.self, genericArguments: [.type(LargeFailure.self)], in: fixture.providerScope)
-        let oracle = try await fixture.runtime.swiftFunction(
+        let oracle = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.callerModule + ".importedAsyncError(_:_:)",
             as: Signature.self, genericArguments: [.type(LargeFailure.self)], in: fixture.callerScope)
         let token = ErrorLifetimeToken()
@@ -376,12 +376,12 @@ struct SwiftAsyncHookTests {
         """)
         defer { fixture.cleanup() }
         typealias Signature = nonisolated(nonsending) (Int64) async -> Int64
-        let function = try await fixture.runtime.swiftFunction(
+        let function = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.module + ".hookAsyncReentrant(_:)",
             as: Signature.self,
             in: fixture.providerScope
         )
-        let oracle = try await fixture.runtime.swiftFunction(
+        let oracle = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.callerModule + ".importedAsyncReentrant(_:)",
             as: Signature.self,
             in: fixture.callerScope
@@ -423,17 +423,17 @@ struct SwiftAsyncHookTests {
         }
         """)
         defer { fixture.cleanup() }
-        let type = try await fixture.runtime.swiftType(
+        let type = try await fixture.runtime.resolveSwiftType(
             named: fixture.module + ".AsyncHookCounter",
             as: Int64.self,
             in: fixture.providerScope
         )
-        let method = try await type.method(
+        let method = try await type.resolveMethod(
             named: "advance(_:)",
             as: (nonisolated(nonsending) (Int64) async -> Int64).self,
             mutating: true
         )
-        let caller = try await fixture.runtime.swiftFunction(
+        let caller = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.callerModule + ".importedAsyncAdvance(_:_:)",
             as: (nonisolated(nonsending) (Int64, Int64) async -> Int64).self, in: fixture.callerScope)
         #expect(try unsafe await caller.unsafeInvoke(10, 2) == 1212)
@@ -469,12 +469,12 @@ struct SwiftAsyncHookTests {
         }
         """)
         defer { fixture.cleanup() }
-        let function = try await fixture.runtime.swiftFunction(
+        let function = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.module + ".hookAsyncStack(_:_:_:_:_:_:_:_:_:_:_:_:_:_:_:_:_:_:_:_:)",
             as: (@concurrent (Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64,
                               Double, Double, Double, Double, Double, Double, Double, Double, Double, Double) async -> Double).self,
             in: fixture.providerScope)
-        let caller = try await fixture.runtime.swiftFunction(
+        let caller = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.callerModule + ".importedAsyncStack()",
             as: (@concurrent () async -> Double).self, in: fixture.callerScope)
         #expect(try unsafe await caller.unsafeInvoke() == 82.5)
@@ -504,16 +504,16 @@ struct SwiftAsyncHookTests {
         }
         """)
         defer { fixture.cleanup() }
-        let type = try await fixture.runtime.swiftType(
+        let type = try await fixture.runtime.resolveSwiftType(
             named: fixture.module + ".AsyncConsumedOwner",
             in: fixture.providerScope
         )
-        let method = try await type.method(
+        let method = try await type.resolveMethod(
             named: "consume()",
             as: (nonisolated(nonsending) () async -> Int64).self,
             consuming: true
         )
-        let caller = try await fixture.runtime.swiftFunction(
+        let caller = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.callerModule + ".importedAsyncConsume(_:)",
             as: (nonisolated(nonsending) (UnsafeMutablePointer<Int64>) async -> Int64).self, in: fixture.callerScope)
         let deaths = UnsafeMutablePointer<Int64>.allocate(capacity: 1)
@@ -556,16 +556,16 @@ struct SwiftAsyncHookTests {
         }
         """)
         defer { fixture.cleanup() }
-        let function = try await fixture.runtime.swiftFunction(
+        let function = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.module + ".asyncHookPack(_:)",
             as: (nonisolated(nonsending) (Int64) async -> Int64).self, genericArguments: [.pack([.type(Int64.self)])], in: fixture.providerScope)
-        let one = try await fixture.runtime.swiftFunction(
+        let one = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.callerModule + ".asyncPackOne(_:)",
             as: (nonisolated(nonsending) (Int64) async -> Int64).self, in: fixture.callerScope)
-        let empty = try await fixture.runtime.swiftFunction(
+        let empty = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.callerModule + ".asyncPackEmpty()",
             as: (nonisolated(nonsending) () async -> Void).self, in: fixture.callerScope)
-        let ten = try await fixture.runtime.swiftFunction(
+        let ten = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.callerModule + ".asyncPackTen()",
             as: (nonisolated(nonsending) () async -> Int64).self, in: fixture.callerScope)
         _ = try unsafe await one.unsafeInvoke(1)

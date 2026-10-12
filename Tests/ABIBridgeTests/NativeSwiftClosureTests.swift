@@ -59,11 +59,11 @@ struct NativeSwiftClosureTests {
         typealias Inner = NativeSwiftClosure<(Int64) -> Int64>
         typealias Callback = NativeSwiftClosure<(Inner) throws -> Int64>
         let runtime = ABIRuntime.shared
-        let visit = try await runtime.swiftFunction(
+        let visit = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.visitOwnedNestedClosure(_:_:)",
             as: ((Inner, Callback) throws -> Int64).self
         )
-        let nativeConsume = try await runtime.swiftFunction(
+        let nativeConsume = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.consumeNestedClosure(_:)",
             as: ((NativeSwiftConsuming<Inner>) -> Int64).self
         )
@@ -86,7 +86,7 @@ struct NativeSwiftClosureTests {
         }
         #expect(destroyed.count == 1)
 
-        let visitStack = try await runtime.swiftFunction(
+        let visitStack = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.visitNestedClosure(_:)",
             as: ((Callback) throws -> Int64).self
         )
@@ -110,7 +110,7 @@ struct NativeSwiftClosureTests {
         typealias Callback = NativeSwiftClosure<
             nonisolated(nonsending) (Inner) async throws -> Void
         >
-        let visit = try await ABIRuntime.shared.swiftFunction(
+        let visit = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.visitEscapingNestedAsyncClosure(_:)",
             as: (nonisolated(nonsending) (Callback) async throws -> Void).self
         )
@@ -137,7 +137,7 @@ struct NativeSwiftClosureTests {
         typealias StackCallback = NativeSwiftClosure<
             nonisolated(nonsending) (Inner) async throws -> Int64
         >
-        let visitStack = try await ABIRuntime.shared.swiftFunction(
+        let visitStack = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.visitNestedAsyncClosure(_:)",
             as: (nonisolated(nonsending) (StackCallback) async throws -> Int64).self
         )
@@ -162,11 +162,11 @@ struct NativeSwiftClosureTests {
     @Test func initializersBorrowNonescapingClosureArguments() async throws {
         typealias Inner = NativeSwiftClosure<(Int64) -> Int64>
         let runtime = ABIRuntime.shared
-        let type = try await runtime.swiftType(
+        let type = try await runtime.resolveSwiftType(
             named: "ManagedSwiftFixtures.EvaluatedIntegerClosure",
             as: EvaluatedIntegerClosure.self
         )
-        let create = try type.initializer(
+        let create = try await type.resolveInitializer(
             named: "init(_:)",
             as: ((Inner) -> EvaluatedIntegerClosure).self
         )
@@ -179,7 +179,7 @@ struct NativeSwiftClosureTests {
         #expect(destroyed.count == 1)
 
         typealias Callback = NativeSwiftClosure<(Inner) throws -> Int64>
-        let visit = try await runtime.swiftFunction(
+        let visit = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.visitNestedClosure(_:)",
             as: ((Callback) throws -> Int64).self
         )
@@ -192,11 +192,11 @@ struct NativeSwiftClosureTests {
     @Test func directHostCallsForwardNativeClosureArgumentsAndResults() async throws {
         typealias Inner = NativeSwiftClosure<(Int64) -> Int64>
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeNoncapturingClosure()",
             as: (() -> Inner).self
         )
-        let makeGeneric = try await runtime.swiftFunction(
+        let makeGeneric = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeClosureGeneric<A>(A) -> (A) -> A",
             as: ((Int64) -> Inner).self,
             genericArguments: [.type(Int64.self)]
@@ -222,7 +222,7 @@ struct NativeSwiftClosureTests {
             let value: Inner
             init(_ value: Inner) { self.value = value }
         }
-        let make = try await ABIRuntime.shared.swiftFunction(
+        let make = try await ABIRuntime.shared.resolveSwiftFunction(
             named:
                 "ManagedSwiftFixtures.makeAsyncClosureGeneric<A where A: Swift.Sendable>(A) -> nonisolated(nonsending) @Sendable (A) async -> A",
             as: ((Int64) -> Inner).self,
@@ -240,11 +240,11 @@ struct NativeSwiftClosureTests {
         typealias Inner = NativeSwiftClosure<(Int64) -> Int64>
         typealias Producer = NativeSwiftClosure<() -> Inner>
         let runtime = ABIRuntime.shared
-        let factory = try await runtime.swiftFunction(
+        let factory = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeRetainedConcreteNestedProducer(_:)",
             as: ((NativeSwiftClosure<() -> Void>) -> Producer).self
         )
-        let take = try await runtime.swiftFunction(
+        let take = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.takeNestedRuntimeProducer<A>(() -> (A) -> A) -> (A) -> A",
             as: ((Producer) -> Inner).self,
             genericArguments: [.type(Int64.self)]
@@ -270,11 +270,11 @@ struct NativeSwiftClosureTests {
         let runtime = ABIRuntime.shared
         typealias Inner = NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>
         typealias Producer = NativeSwiftClosure<nonisolated(nonsending) () async -> Inner>
-        let factory = try await runtime.swiftFunction(
+        let factory = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeConcreteNestedAsyncProducer()",
             as: (() -> Producer).self
         )
-        let call = try await runtime.swiftFunction(
+        let call = try await runtime.resolveSwiftFunction(
             named:
                 "ManagedSwiftFixtures.callNestedRuntimeAsyncProducer<A>(nonisolated(nonsending) () async -> nonisolated(nonsending) (A) async -> A, A) async -> A",
             as: (nonisolated(nonsending) (Producer, Int64) async -> Int64).self,
@@ -288,11 +288,11 @@ struct NativeSwiftClosureTests {
         let runtime = ABIRuntime.shared
         typealias PackInner = NativeSwiftClosure<(Int64, String) -> Int64>
         typealias Caller = NativeSwiftClosure<(PackInner, Int64, String) -> Int64>
-        let packFactory = try await runtime.swiftFunction(
+        let packFactory = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeConcreteNestedPackCaller()",
             as: (() -> Caller).self
         )
-        let packCall = try await runtime.swiftFunction(
+        let packCall = try await runtime.resolveSwiftFunction(
             named:
                 "ManagedSwiftFixtures.callNestedRuntimePackCaller<each A>(_: repeat A, body: ((repeat A) -> Swift.Int64, repeat A) -> Swift.Int64) -> Swift.Int64",
             as: ((Int64, String, Caller) -> Int64).self,
@@ -308,33 +308,33 @@ struct NativeSwiftClosureTests {
         typealias Inner = NativeSwiftClosure<(Int64) -> Int64>
         typealias Caller = NativeSwiftClosure<(Inner, Int64) -> Int64>
         typealias Producer = NativeSwiftClosure<() -> Inner>
-        let concreteFactory = try await runtime.swiftFunction(
+        let concreteFactory = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeConcreteNestedCaller()",
             as: (() -> Caller).self
         )
-        let genericCall = try await runtime.swiftFunction(
+        let genericCall = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.callNestedRuntimeCaller<A>(((A) -> A, A) -> A, A) -> A",
             as: ((Caller, Int64) -> Int64).self,
             genericArguments: [.type(Int64.self)]
         )
         let concrete = try unsafe concreteFactory.unsafeInvoke()
         #expect(try unsafe genericCall.unsafeInvoke(concrete, 42) == 42)
-        let genericFactory = try await runtime.swiftFunction(
+        let genericFactory = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeNestedRuntimeCaller<A>(A.Type) -> ((A) -> A, A) -> A",
             as: ((Int64.Type) -> Caller).self,
             genericArguments: [.type(Int64.self)]
         )
-        let concreteCall = try await runtime.swiftFunction(
+        let concreteCall = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.callConcreteNestedCaller(_:)",
             as: ((Caller) -> Int64).self
         )
         let generic = try unsafe genericFactory.unsafeInvoke(Int64.self)
         #expect(try unsafe concreteCall.unsafeInvoke(generic) == 42)
-        let concreteProducerFactory = try await runtime.swiftFunction(
+        let concreteProducerFactory = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeConcreteNestedProducer()",
             as: (() -> Producer).self
         )
-        let genericProduce = try await runtime.swiftFunction(
+        let genericProduce = try await runtime.resolveSwiftFunction(
             named:
                 "ManagedSwiftFixtures.callNonthrowingNestedRuntimeProducer<A>(() -> (A) -> A, A) -> A",
             as: ((Producer, Int64) -> Int64).self,
@@ -343,12 +343,12 @@ struct NativeSwiftClosureTests {
         #expect(
             try unsafe genericProduce.unsafeInvoke(concreteProducerFactory.unsafeInvoke(), 35) == 42
         )
-        let genericProducerFactory = try await runtime.swiftFunction(
+        let genericProducerFactory = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeNestedRuntimeProducer<A>(A.Type) -> () -> (A) -> A",
             as: ((Int64.Type) -> Producer).self,
             genericArguments: [.type(Int64.self)]
         )
-        let concreteProduce = try await runtime.swiftFunction(
+        let concreteProduce = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.callConcreteNestedProducer(_:)",
             as: ((Producer) -> Int64).self
         )
@@ -362,11 +362,11 @@ struct NativeSwiftClosureTests {
         let runtime = ABIRuntime.shared
         typealias Inner = NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>
         typealias Caller = NativeSwiftClosure<nonisolated(nonsending) (Inner, Int64) async -> Int64>
-        let concreteFactory = try await runtime.swiftFunction(
+        let concreteFactory = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeConcreteNestedAsyncCaller()",
             as: (() -> Caller).self
         )
-        let genericCall = try await runtime.swiftFunction(
+        let genericCall = try await runtime.resolveSwiftFunction(
             named:
                 "ManagedSwiftFixtures.callNestedRuntimeAsyncCaller<A>(nonisolated(nonsending) (nonisolated(nonsending) (A) async -> A, A) async -> A, A) async -> A",
             as: (nonisolated(nonsending) (Caller, Int64) async -> Int64).self,
@@ -374,13 +374,13 @@ struct NativeSwiftClosureTests {
         )
         let concrete = try unsafe concreteFactory.unsafeInvoke()
         #expect(try unsafe await genericCall.unsafeInvoke(concrete, 42) == 42)
-        let genericFactory = try await runtime.swiftFunction(
+        let genericFactory = try await runtime.resolveSwiftFunction(
             named:
                 "ManagedSwiftFixtures.makeNestedRuntimeAsyncCaller<A>(A.Type) -> nonisolated(nonsending) (nonisolated(nonsending) (A) async -> A, A) async -> A",
             as: ((Int64.Type) -> Caller).self,
             genericArguments: [.type(Int64.self)]
         )
-        let concreteCall = try await runtime.swiftFunction(
+        let concreteCall = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.callConcreteNestedAsyncCaller(_:)",
             as: (nonisolated(nonsending) (Caller) async -> Int64).self
         )
@@ -391,7 +391,7 @@ struct NativeSwiftClosureTests {
     @Test func escapingNestedInputsCanBeCopiedBeyondTheirCallback() async throws {
         typealias Nested = NativeSwiftClosure<(Int64) -> Int64>
         typealias Callback = NativeSwiftClosure<(Nested) throws -> Void>
-        let visit = try await ABIRuntime.shared.swiftFunction(
+        let visit = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.visitEscapingNestedClosure(_:)",
             as: ((Callback) throws -> Void).self
         )
@@ -409,7 +409,7 @@ struct NativeSwiftClosureTests {
         let copiedAgain = try owned.value!.copy()
         owned.value = nil
         #expect(try unsafe copiedAgain.unsafeInvoke(8) == 50)
-        let echo = try await ABIRuntime.shared.swiftFunction(
+        let echo = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.echoClosure(_:)",
             as: ((Nested) -> Nested).self
         )
@@ -422,7 +422,7 @@ struct NativeSwiftClosureTests {
         typealias Callback = NativeSwiftClosure<
             nonisolated(nonsending) (Nested) async throws -> Void
         >
-        let visit = try await ABIRuntime.shared.swiftFunction(
+        let visit = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.visitEscapingNestedAsyncClosure(_:)",
             as: (nonisolated(nonsending) (Callback) async throws -> Void).self
         )
@@ -444,15 +444,15 @@ struct NativeSwiftClosureTests {
 
     @Test func nestedInputsBorrowStackContextsAndExpireAfterReturn() async throws {
         typealias Inner = NativeSwiftClosure<(Int64) -> Int64>
-        let apply = try await ABIRuntime.shared.swiftFunction(
+        let apply = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.applyIntegerClosure(_:_:)",
             as: ((Inner, Int64) -> Int64).self
         )
-        let echo = try await ABIRuntime.shared.swiftFunction(
+        let echo = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.echoClosure(_:)",
             as: ((Inner) -> Inner).self
         )
-        let visit = try await ABIRuntime.shared.swiftFunction(
+        let visit = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.visitNestedClosure(_:)",
             as: ((NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>) throws -> Int64>) throws
                 -> Int64).self
@@ -478,7 +478,7 @@ struct NativeSwiftClosureTests {
         typealias Callback = NativeSwiftClosure<
             nonisolated(nonsending) (Nested) async throws -> Int64
         >
-        let visit = try await ABIRuntime.shared.swiftFunction(
+        let visit = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.visitNestedAsyncClosure(_:)",
             as: (nonisolated(nonsending) (Callback) async throws -> Int64).self
         )
@@ -502,23 +502,23 @@ struct NativeSwiftClosureTests {
         typealias Sync = NativeSwiftClosure<(Int64) -> Int64>
         typealias Async = NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>
         let runtime = ABIRuntime.shared
-        let visitSync = try await runtime.swiftFunction(
+        let visitSync = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.visitClosureSynchronously(_:)",
             as: ((NativeSwiftClosure<(Sync) -> Void>) -> Void).self
         )
-        let visitAsync = try await runtime.swiftFunction(
+        let visitAsync = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.visitAsyncClosureSynchronously(_:)",
             as: ((NativeSwiftClosure<(Async) -> Void>) -> Void).self
         )
-        let forwardSync = try await runtime.swiftFunction(
+        let forwardSync = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.applyBorrowedClosureAsync(_:_:)",
             as: (nonisolated(nonsending) (Sync, Int64) async -> Int64).self
         )
-        let forwardAsync = try await runtime.swiftFunction(
+        let forwardAsync = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.applyBorrowedAsyncClosure(_:_:)",
             as: (nonisolated(nonsending) (Async, Int64) async -> Int64).self
         )
-        let inspect = try await runtime.swiftFunction(
+        let inspect = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.inspectAsyncClosureSynchronously(_:)",
             as: ((Async) -> Int64).self
         )
@@ -562,7 +562,7 @@ struct NativeSwiftClosureTests {
         typealias Callback = NativeSwiftClosure<
             nonisolated(nonsending) (Async) async throws -> Int64
         >
-        let visitSuspending = try await runtime.swiftFunction(
+        let visitSuspending = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.visitNestedAsyncClosure(_:)",
             as: (nonisolated(nonsending) (Callback) async throws -> Int64).self
         )
@@ -581,7 +581,7 @@ struct NativeSwiftClosureTests {
     }
 
     @Test func nestedResultsTransferOwnedContextsToTheNativeCaller() async throws {
-        let call = try await ABIRuntime.shared.swiftFunction(
+        let call = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.callClosureProducer(_:)",
             as: ((NativeSwiftClosure<() throws -> NativeSwiftClosure<(Int64) -> Int64>>) throws
                 -> Int64).self
@@ -668,7 +668,7 @@ struct NativeSwiftClosureTests {
     }
 
     @Test func sendableNativeCallersCanInvokeOneContextConcurrently() async throws {
-        let apply = try await ABIRuntime.shared.swiftFunction(
+        let apply = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.applyConcurrentClosure(_:)",
             as: ((NativeSwiftClosure<@Sendable (Int64) -> Int64>) -> Int64).self
         )
@@ -815,7 +815,7 @@ struct NativeSwiftClosureTests {
 
     @Test func preservesManagedResultsAndFloatingAggregates() async throws {
         let runtime = ABIRuntime.shared
-        let apply = try await runtime.swiftFunction(
+        let apply = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.applyStringClosure(_:_:)",
             as: ((NativeSwiftClosure<(String) -> String>, String) -> String).self
         )
@@ -823,14 +823,14 @@ struct NativeSwiftClosureTests {
         let callback = try NativeSwiftClosure { (value: String) in value + suffix }
         let input = String(repeating: "managed", count: 100)
         #expect(try unsafe apply.unsafeInvoke(callback, input) == input + suffix)
-        let make = try await runtime.swiftFunction(
+        let make = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeStringClosure(_:)",
             as: ((String) -> NativeSwiftClosure<(String) -> String>).self
         )
         let returned = try unsafe make.unsafeInvoke(input)
         #expect(try unsafe returned.unsafeInvoke(suffix) == input + suffix)
 
-        let applyObject = try await runtime.swiftFunction(
+        let applyObject = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.applyOptionalObjectClosure(_:_:)",
             as: ((NativeSwiftClosure<(LifetimeToken?) -> LifetimeToken?>, LifetimeToken?)
                 -> LifetimeToken?).self
@@ -840,7 +840,7 @@ struct NativeSwiftClosureTests {
         #expect(try unsafe applyObject.unsafeInvoke(identity, token) === token)
         #expect(try unsafe applyObject.unsafeInvoke(identity, nil) == nil)
 
-        let applyRect = try await runtime.swiftFunction(
+        let applyRect = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.applyRectClosure(_:_:)",
             as: ((NativeSwiftClosure<(CGRect) -> CGRect>, CGRect) -> CGRect).self
         )
@@ -854,11 +854,11 @@ struct NativeSwiftClosureTests {
 
     @Test func laterArgumentFailureReleasesTheEncodedClosureReference() async throws {
         let runtime = ABIRuntime.shared
-        let prototype = try await runtime.swiftFunction(
+        let prototype = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.applyIntegerClosure(_:_:)",
             as: ((NativeSwiftClosure<(Int64) -> Int64>, Int64) -> Int64).self
         )
-        let apply = try await runtime.swiftFunction(
+        let apply = try await runtime.resolveSwiftFunction(
             named: prototype.symbol.declaration.name,
             as: ((NativeSwiftClosure<(Int64) -> Int64>, RejectingClosureArgument) -> Int64).self
         )
@@ -880,7 +880,7 @@ struct NativeSwiftClosureTests {
     }
 
     @Test func explicitEmptyTupleMatchesTheCompiledCallback() async throws {
-        let apply = try await ABIRuntime.shared.swiftFunction(
+        let apply = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.applyEmptyTupleClosure(_:)",
             as: ((NativeSwiftClosure<(Void) -> Int64>) -> Int64).self
         )
@@ -901,12 +901,12 @@ struct NativeSwiftClosureTests {
         )
         defer { fixture.cleanup() }
         typealias Body = NativeSwiftClosure<(Int64) -> Int64>
-        let function = try await fixture.runtime.swiftFunction(
+        let function = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.module + ".hookIntegerBody(_:_:)",
             as: ((Body, Int64) -> Int64).self,
             in: fixture.providerScope
         )
-        let caller = try await fixture.runtime.swiftFunction(
+        let caller = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.callerModule + ".callHookIntegerBody(_:)",
             as: ((Int64) -> Int64).self,
             in: fixture.callerScope
@@ -942,7 +942,7 @@ struct NativeSwiftClosureTests {
     }
 
     @Test func passesConcreteCallbackToNonescapingNativeParameter() async throws {
-        let apply = try await ABIRuntime.shared.swiftFunction(
+        let apply = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.applyIntegerClosure(_:_:)",
             as: ((NativeSwiftClosure<(Int64) -> Int64>, Int64) -> Int64).self
         )
@@ -952,19 +952,19 @@ struct NativeSwiftClosureTests {
     }
 
     @Test func closureResultsDoNotRetainUncapturedReceivers() async throws {
-        let type = try await ABIRuntime.shared.swiftType(
+        let type = try await ABIRuntime.shared.resolveSwiftType(
             named: "ManagedSwiftFixtures.ClosurePropertyOwner",
             as: ClosurePropertyOwner.self
         )
-        let getter = try await type.getter(
+        let getter = try await type.resolveGetter(
             named: "callback",
             as: (() -> NativeSwiftClosure<(Int64) -> Int64>).self
         )
-        let method = try await type.method(
+        let method = try await type.resolveMethod(
             named: "readCallback()",
             as: (() -> NativeSwiftClosure<(Int64) -> Int64>).self
         )
-        let setter = try type.setter(
+        let setter = try await type.resolveSetter(
             named: "callback",
             as: NativeSwiftClosure<(Int64) -> Int64>.self
         )
@@ -992,15 +992,15 @@ struct NativeSwiftClosureTests {
 
     @Test func initializersTransferClosuresAndMethodsBorrowThem() async throws {
         let runtime = ABIRuntime.shared
-        let type = try await runtime.swiftType(
+        let type = try await runtime.resolveSwiftType(
             named: "ManagedSwiftFixtures.StoredIntegerClosure",
             as: StoredIntegerClosure.self
         )
-        let create = try type.initializer(
+        let create = try await type.resolveInitializer(
             named: "init(_:)",
             as: ((NativeSwiftClosure<(Int64) -> Int64>) -> StoredIntegerClosure).self
         )
-        let apply = try await type.method(
+        let apply = try await type.resolveMethod(
             named: "apply(_:_:)",
             as: ((NativeSwiftClosure<(Int64) -> Int64>, Int64) -> Int64).self
         )
@@ -1025,7 +1025,7 @@ struct NativeSwiftClosureTests {
     }
 
     @Test func escapingNativeCallbackOwnsCapturesAndEntryCode() async throws {
-        let retain = try await ABIRuntime.shared.swiftFunction(
+        let retain = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.retainIntegerClosure(_:)",
             as: ((NativeSwiftClosure<(Int64) -> Int64>) -> StoredIntegerClosure).self
         )
@@ -1050,7 +1050,7 @@ struct NativeSwiftClosureTests {
 
     @Test(arguments: [false, true])
     func repeatedNativeHandoffsPreserveOneOwningEntry(_ throughHostResult: Bool) async throws {
-        let echo = try await ABIRuntime.shared.swiftFunction(
+        let echo = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.echoClosure(_:)",
             as: ((NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftClosure<(Int64) -> Int64>)
                 .self
@@ -1097,7 +1097,7 @@ struct NativeSwiftClosureTests {
     }
 
     @Test func noncapturingNativeResultAllowsANilContext() async throws {
-        let make = try await ABIRuntime.shared.swiftFunction(
+        let make = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeNoncapturingClosure()",
             as: (() -> NativeSwiftClosure<(Int64) -> Int64>).self
         )
@@ -1106,7 +1106,7 @@ struct NativeSwiftClosureTests {
     }
 
     @Test func returnedNativeClosureOwnsItsCaptureContext() async throws {
-        let make = try await ABIRuntime.shared.swiftFunction(
+        let make = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeIntegerClosure(_:_:)",
             as: ((LifetimeToken, Int64) -> NativeSwiftClosure<(Int64) -> Int64>).self
         )
@@ -1162,10 +1162,10 @@ struct NativeSwiftClosureTests {
         var keeper: ClosurePropertyOwner? = ClosurePropertyOwner()
         do {
             let runtime = ABIRuntime()
-            let type = try await runtime.swiftType(
+            let type = try await runtime.resolveSwiftType(
                 named: "ManagedSwiftFixtures.ClosurePropertyOwner"
             )
-            let set = try type.setter(
+            let set = try await type.resolveSetter(
                 named: "callback",
                 as: NativeSwiftClosure<(Int64) -> Int64>.self
             )

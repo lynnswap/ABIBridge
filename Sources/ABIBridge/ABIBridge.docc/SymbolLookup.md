@@ -19,7 +19,7 @@ A `NativeImage` retains its loaded image. Reuse that handle to resolve several d
 
 Synchronous lookup prepares the indexes it needs automatically. Callable factories also prepare the supplied signature and return a handle ready for invocation. `ABIRuntime` and `NativeSwiftType` remain actors, with `nonisolated` synchronous lookup methods. Missing preparation runs on the calling thread; joining preparation already in progress blocks that thread until the required work finishes. This also applies to a caller on `MainActor`.
 
-`swiftFunction`, `swiftType`, Swift `method(named:)`, and instance `getter(named:)` also have async overloads with the same arguments. Awaiting these factories runs search and preparation on a worker queue while the caller suspends, reusing completed results and joining only required work in progress. Swift selects these overloads in async contexts; no earlier `prepare(_:)` is required. Bound object factories keep the receiver in the caller's isolation domain. See <doc:SwiftFunctionInvocation> and <doc:SwiftMemberInvocation> for `MainActor` examples and explicit selection of synchronous lookup.
+Swift function, type, and member lookup uses async factories whose names begin with `resolve`, including instance and static methods, initializers, getters, and setters. Their synchronous counterparts append `AndWait`. Awaiting these factories runs search and preparation on a worker queue while the caller suspends, reusing completed results and joining only required work in progress. Choose the factory name explicitly in either a synchronous or async calling context; no earlier `prepare(_:)` is required. Bound object factories keep the receiver in the caller's isolation domain. See <doc:SwiftFunctionInvocation> and <doc:SwiftMemberInvocation> for `MainActor` examples.
 
 Native invocation follows the target's actor-isolation and thread-affinity requirements. A synchronous native function stays synchronous; an async native signature requires `await` when invoking the returned handle.
 
@@ -28,7 +28,7 @@ Native invocation follows the target's actor-isolation and thread-affinity requi
 Automatic lookup works without configuration. When you know which framework provides a declaration, specify it to reduce the images searched, especially when probing for optional APIs that may be absent:
 
 ```swift
-let decorate = try runtime.swiftFunction(
+let decorate = try runtime.resolveSwiftFunctionAndWait(
     named: "Example.decorate(_:)", as: ((String) -> String).self,
     in: .framework(named: "Example")
 )

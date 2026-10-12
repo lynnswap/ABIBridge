@@ -24,30 +24,30 @@ func prepare(_ path: String, extensionPath: String) async throws -> [NativeBound
     defer { dlclose(original) }
     let runtime = ABIRuntime()
     let scope = ImageSelector.path(URL(fileURLWithPath: path))
-    let type = try await runtime.swiftType(named: "SwiftFunctionFixture.Renderer", in: scope)
-    let initialize = try type.initializer(
+    let type = try await runtime.resolveSwiftType(named: "SwiftFunctionFixture.Renderer", in: scope)
+    let initialize = try await type.resolveInitializer(
         named: "init(text:)", as: ((String) -> AnyObject).self
     )
     let object = try unsafe initialize.unsafeInvoke("initial")
-    let setText = try type.setter(named: "text", as: String.self)
+    let setText = try await type.resolveSetter(named: "text", as: String.self)
     try unsafe setText.unsafeInvoke(on: object, "ready")
-    let getText = try await type.getter(named: "text", as: (() -> String).self)
+    let getText = try await type.resolveGetter(named: "text", as: (() -> String).self)
     let text = try unsafe getText.unsafeInvoke(on: object)
     precondition(text == "ready")
-    let standard = try type.staticGetter(named: "standard", as: (() -> String).self)
+    let standard = try await type.resolveStaticGetter(named: "standard", as: (() -> String).self)
     let standardText = try unsafe standard.unsafeInvoke()
     precondition(standardText == "standard")
 
-    let pointType = try await runtime.swiftType(
+    let pointType = try await runtime.resolveSwiftType(
         named: "SwiftFunctionFixture.Point", as: ForeignPoint.self, in: type.image
     )
-    let pointInitializer = try pointType.initializer(
+    let pointInitializer = try await pointType.resolveInitializer(
         named: "init(x:y:)", as: ((Double, Double) -> ForeignPoint).self
     )
     var point = try unsafe pointInitializer.unsafeInvoke(2, 3)
-    let setX = try pointType.setter(named: "x", as: Double.self)
+    let setX = try await pointType.resolveSetter(named: "x", as: Double.self)
     try unsafe setX.unsafeInvoke(on: &point, 4)
-    let sum = try await pointType.method(named: "sum(_:)", as: ((Double) -> Double).self)
+    let sum = try await pointType.resolveMethod(named: "sum(_:)", as: ((Double) -> Double).self)
     let total = try unsafe sum.unsafeInvoke(on: point, 5)
     precondition(total == 12 && point.x == 4)
 
@@ -55,15 +55,15 @@ func prepare(_ path: String, extensionPath: String) async throws -> [NativeBound
         fatalError(String(cString: dlerror()))
     }
     defer { dlclose(extensionImage) }
-    let bound = try await runtime.object(object).method(
+    let bound = try await runtime.object(object).resolveMethod(
         named: "extendedScore(_:)",
         as: ((Int) -> Int).self
     )
-    let makePrivate = try await runtime.swiftFunction(
+    let makePrivate = try await runtime.resolveSwiftFunction(
         named: "SwiftFunctionFixture.makePrivateRenderer(_:)", as: ((Int) -> AnyObject).self, in: scope
     )
     let privateReceiver = try unsafe makePrivate.unsafeInvoke(40)
-    let privateBound = try await runtime.object(privateReceiver).method(
+    let privateBound = try await runtime.object(privateReceiver).resolveMethod(
         named: "score(_:)",
         as: ((Int) -> Int).self
     )
@@ -72,7 +72,7 @@ func prepare(_ path: String, extensionPath: String) async throws -> [NativeBound
     do {
         let temporary = try unsafe makePrivate.unsafeInvoke(1)
         releasedPrivate = temporary
-        reusable = try await runtime.object(temporary).method(named: "score(_:)", as: ((Int) -> Int).self)
+        reusable = try await runtime.object(temporary).resolveMethod(named: "score(_:)", as: ((Int) -> Int).self)
             .method
     }
     precondition(releasedPrivate == nil)
@@ -80,28 +80,28 @@ func prepare(_ path: String, extensionPath: String) async throws -> [NativeBound
     let reusedValue = try unsafe reusable.unsafeInvoke(on: privateReceiver, 2)
     let reboundValue = try unsafe rebound.unsafeInvoke(2)
     precondition(reusedValue == 42 && reboundValue == 42)
-    let makeGeneric = try await runtime.swiftFunction(
+    let makeGeneric = try await runtime.resolveSwiftFunction(
         named: "SwiftFunctionFixture.makeGenericRenderer(_:)", as: ((Int) -> AnyObject).self, in: scope
     )
     let genericReceiver = try unsafe makeGeneric.unsafeInvoke(41)
-    let genericBound = try await runtime.object(genericReceiver).method(
+    let genericBound = try await runtime.object(genericReceiver).resolveMethod(
         named: "score(_:)",
         as: ((Int) -> Int).self
     )
-    let genericGetter = try await runtime.object(genericReceiver).getter(
+    let genericGetter = try await runtime.object(genericReceiver).resolveGetter(
         named: "currentScore",
         as: (() -> Int).self
     )
     let genericValue = try unsafe genericGetter.unsafeInvoke()
     precondition(genericValue == 41)
-    let makeConstrained = try await runtime.swiftFunction(
+    let makeConstrained = try await runtime.resolveSwiftFunction(
         named: "SwiftFunctionFixture.makeConstrainedRenderer(_:)", as: ((Int) -> AnyObject).self, in: scope
     )
     let constrainedReceiver = try unsafe makeConstrained.unsafeInvoke(40)
-    let constrained = try await runtime.object(constrainedReceiver).method(
+    let constrained = try await runtime.object(constrainedReceiver).resolveMethod(
         named: "constrainedScore(_:)", as: ((Int) -> Int).self
     )
-    let constrainedGetter = try await runtime.object(constrainedReceiver).getter(
+    let constrainedGetter = try await runtime.object(constrainedReceiver).resolveGetter(
         named: "constrainedValue",
         as: (() -> Int).self
     )

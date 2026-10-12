@@ -7,8 +7,8 @@ Inspect a Swift method's receiver, edit object properties or arguments, and tran
 Resolve the class and method using source names and an ordinary Swift function type:
 
 ```swift
-let renderer = try await runtime.swiftType(named: "Rendering.Renderer")
-let render = try await renderer.method(
+let renderer = try await runtime.resolveSwiftType(named: "Rendering.Renderer")
+let render = try await renderer.resolveMethod(
     named: "render(_:)", as: ((String) -> String).self
 )
 let hook = try await unsafe render.hookVirtualCalls(
@@ -38,10 +38,10 @@ Virtual async methods use the class metadata's async descriptor slot. The publis
 Imported-member hooks also accept the concrete value representation selected during type lookup. For a native counter whose fixed storage is one `Int64`:
 
 ```swift
-let counter = try await runtime.swiftType(
+let counter = try await runtime.resolveSwiftType(
     named: "Rendering.Counter", as: Int64.self
 )
-let increment = try await counter.method(
+let increment = try await counter.resolveMethod(
     named: "increment(_:)", as: ((Int64) -> Int64).self,
     mutating: true
 )
@@ -73,7 +73,7 @@ The callback applies to every receiver reaching that dispatcher. It is not filte
 
 Receiver reads and continuations are valid while their callback is active. Synchronous access stays on the entering thread; asynchronous access stays on the same Swift task. Expired, cross-thread, or cross-task access throws `NativeSwiftHookInvocationError`. A copied class reference or managed value snapshot has its normal Swift ownership and can outlive the callback; a pointer adapter keeps its declared pointee-lifetime obligations. Saving the invocation itself does not retain the receiver instance or callback captures after return.
 
-A method resolved with `consuming: true` gets an independent owned receiver reference for each continuation. The bridge disposes of the unused incoming ownership if the closure skips the native implementation. Getter results and setter arguments keep their Swift ownership conventions; resolve a setter using `setter(named:as:)` so its consumed argument contract is established.
+A method resolved with `consuming: true` gets an independent owned receiver reference for each continuation. The bridge disposes of the unused incoming ownership if the closure skips the native implementation. Getter results and setter arguments keep their Swift ownership conventions; resolve a setter using `resolveSetter` or `resolveSetterAndWait` so its consumed argument contract is established.
 
 Synchronous callbacks stay on the incoming thread. `hookMainActorVirtualCalls` and `hookMainActorImportedCalls` express a caller-supplied MainActor contract. They report background entry and bypass that callback before decoding its arguments or receiver. Synchronous bodies enter directly. Async bodies resume on MainActor after suspension. The error observer must be thread-safe.
 

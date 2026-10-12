@@ -25,8 +25,8 @@ import SwiftReplacementFixtures
             _ = try runtime.resolve(declaration)
         }
     }
-    let base = try await runtime.swiftType(named: module + ".ReplacementRenderer")
-    let child = try await runtime.swiftType(
+    let base = try await runtime.resolveSwiftType(named: module + ".ReplacementRenderer")
+    let child = try await runtime.resolveSwiftType(
         named: module + ".InheritedRenderer",
         in: base.image,
         loading: .loadedOnly
@@ -35,7 +35,7 @@ import SwiftReplacementFixtures
         runtime.removeCachedResults()
         for pass in ["cold", "warm"] {
             try await measure("\(label) \(pass)", repetitions: pass == "warm" ? 100 : 1) {
-                let method = try await type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
+                let method = try await type.resolveMethod(named: "scalar(_:)", as: ((Int64) -> Int64).self)
                 guard try unsafe method.unsafeInvoke(on: receiver, 40) == 42 else {
                     throw ArchitectureValidationFailure(description: "Resolved method returned an unexpected result")
                 }

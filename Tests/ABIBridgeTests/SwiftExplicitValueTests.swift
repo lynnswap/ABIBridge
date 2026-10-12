@@ -25,7 +25,7 @@ private struct UndersizedSwiftValue: ABIBridgeSwiftValue {
 
 struct SwiftExplicitValueTests {
     @Test func directManagedStructUsesMixedRegistersAndOwnedResults() async throws {
-        let transform = try await ABIRuntime.shared.swiftFunction(
+        let transform = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.transformManagedVector(_:)",
             as: ((ManagedVector) -> ManagedVector).self
         )
@@ -50,7 +50,7 @@ struct SwiftExplicitValueTests {
     }
 
     @Test func enumPayloadsKeepTagsAndReferences() async throws {
-        let echo = try await ABIRuntime.shared.swiftFunction(
+        let echo = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.echoManagedChoice(_:)", as: ((ManagedChoice) -> ManagedChoice).self
         )
         let number = try unsafe echo.unsafeInvoke(.number(-42))
@@ -71,7 +71,7 @@ struct SwiftExplicitValueTests {
     }
 
     @Test func largeManagedValueUsesIndirectPhysicalStorage() async throws {
-        let echo = try await ABIRuntime.shared.swiftFunction(
+        let echo = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.echoLargeManagedValue(_:)",
             as: ((LargeManagedValue) -> LargeManagedValue).self
         )
@@ -80,7 +80,7 @@ struct SwiftExplicitValueTests {
         let result = try unsafe echo.unsafeInvoke(input)
         #expect(result.token === token)
         #expect(result.a == 1 && result.b == 2 && result.c == 3 && result.d == 4)
-        let apply = try await ABIRuntime.shared.swiftFunction(
+        let apply = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.applyLargeManagedValue(_:_:)",
             as: ((NativeSwiftClosure<(LargeManagedValue) -> LargeManagedValue>, LargeManagedValue) -> LargeManagedValue).self
         )
@@ -90,7 +90,7 @@ struct SwiftExplicitValueTests {
     }
 
     @Test func managedCallbacksUseTypedCopyingAndResultTransfer() async throws {
-        let apply = try await ABIRuntime.shared.swiftFunction(
+        let apply = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.applyManagedVector(_:_:)",
             as: ((NativeSwiftClosure<(ManagedVector) -> ManagedVector>, ManagedVector) -> ManagedVector).self
         )
@@ -101,7 +101,7 @@ struct SwiftExplicitValueTests {
         let input = ManagedVector(token: token, x: 1, y: 2)
         let result = try unsafe apply.unsafeInvoke(callback, input)
         #expect(result.token === token && result.x == 11 && result.y == 22)
-        let make = try await ABIRuntime.shared.swiftFunction(
+        let make = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeManagedVectorClosure(_:)",
             as: ((Double) -> NativeSwiftClosure<(ManagedVector) -> ManagedVector>).self
         )
@@ -111,12 +111,12 @@ struct SwiftExplicitValueTests {
     }
 
     @Test func enumCallbacksAndReturnedClosuresPreserveCases() async throws {
-        let apply = try await ABIRuntime.shared.swiftFunction(
+        let apply = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.applyManagedChoice(_:_:)",
             as: ((NativeSwiftClosure<(ManagedChoice) -> ManagedChoice>, ManagedChoice) -> ManagedChoice).self
         )
         let callback = try NativeSwiftClosure<(ManagedChoice) -> ManagedChoice> { $0 }
-        let make = try await ABIRuntime.shared.swiftFunction(
+        let make = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeManagedChoiceClosure()",
             as: (() -> NativeSwiftClosure<(ManagedChoice) -> ManagedChoice>).self
         )
@@ -139,15 +139,15 @@ struct SwiftExplicitValueTests {
     }
 
     @Test func memberInitializationAndSetterTransferOwnedEnumPayloads() async throws {
-        let type = try await ABIRuntime.shared.swiftType(
+        let type = try await ABIRuntime.shared.resolveSwiftType(
             named: "ManagedSwiftFixtures.ExplicitValueStore",
                                                          as: ExplicitValueStore.self)
-        let create = try type.initializer(
+        let create = try await type.resolveInitializer(
             named: "init(_:)",
             as: ((ManagedChoice) -> ExplicitValueStore).self
         )
-        let get = try await type.getter(named: "value", as: (() -> ManagedChoice).self)
-        let set = try type.setter(named: "value", as: ManagedChoice.self)
+        let get = try await type.resolveGetter(named: "value", as: (() -> ManagedChoice).self)
+        let set = try await type.resolveSetter(named: "value", as: ManagedChoice.self)
         var receiver: ExplicitValueStore?
         weak var observed: LifetimeToken?
         do {

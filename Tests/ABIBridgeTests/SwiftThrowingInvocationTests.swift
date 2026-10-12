@@ -52,10 +52,10 @@ extension ThrowingCounter: ABIBridgeSwiftValue {
 
 struct SwiftThrowingInvocationTests {
     @Test func mutationWritesBackEvenWhenNativeCodeThrows() async throws {
-        let type = try await ABIRuntime.shared.swiftType(
+        let type = try await ABIRuntime.shared.resolveSwiftType(
             named: "ManagedSwiftFixtures.ThrowingCounter",
                                                          as: ThrowingCounter.self)
-        let advance = try await type.method(
+        let advance = try await type.resolveMethod(
             named: "advance(_:)",
             as: ((Bool) throws(ScalarFailure) -> Int64).self, mutating: true)
         var value = ThrowingCounter(40)
@@ -63,19 +63,19 @@ struct SwiftThrowingInvocationTests {
         let error = try nativeFailure { try unsafe advance.unsafeInvoke(on: &value, true) }
         #expect(value.count == 42)
         error.withUnderlyingError { #expect(($0 as? ScalarFailure)?.code == 42) }
-        let getter = try await type.getter(
+        let getter = try await type.resolveGetter(
             named: "rejected",
             as: (() throws(ScalarFailure) -> Int64).self
         )
         let getterError = try nativeFailure { try unsafe getter.unsafeInvoke(on: value) }
         getterError.withUnderlyingError { #expect(($0 as? ScalarFailure)?.code == 42) }
-        let staticGetter = try type.staticGetter(
+        let staticGetter = try await type.resolveStaticGetter(
             named: "rejected",
             as: (() throws(ScalarFailure) -> Int64).self
         )
         let staticError = try nativeFailure { try unsafe staticGetter.unsafeInvoke() }
         staticError.withUnderlyingError { #expect(($0 as? ScalarFailure)?.code == 99) }
-        let staticMethod = try type.staticMethod(
+        let staticMethod = try await type.resolveStaticMethod(
             named: "result(_:)",
             as: ((Bool) throws(ScalarFailure) -> Int8).self)
         #expect(try unsafe staticMethod.unsafeInvoke(false) == 7)
@@ -84,7 +84,7 @@ struct SwiftThrowingInvocationTests {
     }
 
     @Test func hiddenErrorOutputSpillsAfterOrdinaryStackArguments() async throws {
-        let call = try await ABIRuntime.shared.swiftFunction(
+        let call = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.stackedErrorResult(_:_:_:_:_:_:_:_:_:_:)",
             as: ((Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, ErrorLifetimeToken, Bool)
                 throws(LargeFailure) -> Int64).self
@@ -97,7 +97,7 @@ struct SwiftThrowingInvocationTests {
 
     @Test func boundMembersUseTheSameThrowingContract() async throws {
         let owner = try ThrowingOwner(ErrorLifetimeToken(), false)
-        let call = try await ABIRuntime.shared.object(owner).method(
+        let call = try await ABIRuntime.shared.object(owner).resolveMethod(
             named: "value(_:)", as: ((Bool) throws(ManagedFailure) -> String).self)
         #expect(try unsafe call.unsafeInvoke(false) == String(repeating: "member", count: 100))
         let error = try nativeFailure { try unsafe call.unsafeInvoke(true) }
@@ -106,10 +106,10 @@ struct SwiftThrowingInvocationTests {
 
     @Test func effectMismatchIsRejectedBeforeReplacementPreparation() async throws {
         let runtime = ABIRuntime.shared
-        let untyped = try await runtime.swiftFunction(
+        let untyped = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.untypedResult(_:_:)",
             as: ((ErrorLifetimeToken, Bool) throws -> String).self)
-        let typed = try await runtime.swiftFunction(
+        let typed = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.managedErrorResult(_:_:)",
             as: ((ErrorLifetimeToken, Bool) throws(ManagedFailure) -> String).self)
         do {
@@ -119,7 +119,7 @@ struct SwiftThrowingInvocationTests {
     }
 
     @Test func untypedErrorsPreserveValuesAndOwnership() async throws {
-        let call = try await ABIRuntime.shared.swiftFunction(
+        let call = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.untypedResult(_:_:)",
             as: ((ErrorLifetimeToken, Bool) throws -> String).self
         )
@@ -142,7 +142,7 @@ struct SwiftThrowingInvocationTests {
     }
 
     @Test func cocoaErrorRetainsItsUserInfo() async throws {
-        let call = try await ABIRuntime.shared.swiftFunction(
+        let call = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.cocoaErrorResult(_:_:)",
             as: ((ErrorLifetimeToken, Bool) throws -> String).self
         )
@@ -160,7 +160,7 @@ struct SwiftThrowingInvocationTests {
         func check<Failure: Error>(
             _ failure: Failure.Type, name: String, inspect: (Failure, ErrorLifetimeToken) -> Bool
         ) async throws {
-            let call = try await ABIRuntime.shared.swiftFunction(
+            let call = try await ABIRuntime.shared.resolveSwiftFunction(
                 named: "ManagedSwiftFixtures." + name + "(_:_:)",
                 as: ((ErrorLifetimeToken, Bool) throws(Failure) -> String).self
             )
@@ -189,19 +189,19 @@ struct SwiftThrowingInvocationTests {
 
     @Test func zeroPayloadAndMixedResultBanksDoNotHideFailure() async throws {
         let runtime = ABIRuntime.shared
-        let zero = try await runtime.swiftFunction(
+        let zero = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.scalarErrorResult(_:_:)",
             as: ((ErrorLifetimeToken, Bool) throws(ScalarFailure) -> String).self
         )
-        let floating = try await runtime.swiftFunction(
+        let floating = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.scalarErrorFloatingResult(_:_:)",
             as: ((ErrorLifetimeToken, Bool) throws(ScalarFailure) -> Double).self
         )
-        let empty = try await runtime.swiftFunction(
+        let empty = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.scalarErrorVoidResult(_:_:)",
             as: ((ErrorLifetimeToken, Bool) throws(ScalarFailure) -> Void).self
         )
-        let floatingError = try await runtime.swiftFunction(
+        let floatingError = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.floatingErrorResult(_:_:)",
             as: ((ErrorLifetimeToken, Bool) throws(FloatingFailure) -> String).self
         )
@@ -220,7 +220,7 @@ struct SwiftThrowingInvocationTests {
     }
 
     @Test func indirectResultAndErrorInitializeOnlyTheirSelectedStorage() async throws {
-        let call = try await ABIRuntime.shared.swiftFunction(
+        let call = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.bothIndirectResult(_:_:)",
             as: ((ErrorLifetimeToken, Bool) throws(LargeFailure) -> ErrorSuccessPayload).self
         )
@@ -235,11 +235,11 @@ struct SwiftThrowingInvocationTests {
     }
 
     @Test func throwingInitializerAndMemberPreserveErrorAndArgumentOwnership() async throws {
-        let type = try await ABIRuntime.shared.swiftType(named: "ManagedSwiftFixtures.ThrowingOwner")
-        let initialize = try type.initializer(
+        let type = try await ABIRuntime.shared.resolveSwiftType(named: "ManagedSwiftFixtures.ThrowingOwner")
+        let initialize = try await type.resolveInitializer(
             named: "init(_:_:)", as: ((ErrorLifetimeToken, Bool) throws(ManagedFailure) -> ThrowingOwner).self
         )
-        let value = try await type.method(
+        let value = try await type.resolveMethod(
             named: "value(_:)",
             as: ((Bool) throws(ManagedFailure) -> String).self
         )

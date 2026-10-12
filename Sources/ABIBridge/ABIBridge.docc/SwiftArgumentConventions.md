@@ -7,7 +7,7 @@ Describe each native Swift parameter's convention with a typed argument wrapper.
 For a native declaration `@concurrent func append(_ text: inout String, _ suffix: consuming String) async throws`:
 
 ```swift
-let append = try await ABIRuntime.shared.swiftFunction(
+let append = try await ABIRuntime.shared.resolveSwiftFunction(
     named: "Example.append(_:_:)",
     as: (@concurrent (NativeSwiftInout<String>, NativeSwiftConsuming<String>) async throws -> Void).self
 )
@@ -36,8 +36,8 @@ Ordinary Swift values supply an independently encoded copy, so the original valu
 For a native initializer `init(_ title: borrowing String, _ content: consuming String)`:
 
 ```swift
-let type = try ABIRuntime.shared.swiftType(named: "Example.Document")
-let initialize = try type.initializer(
+let type = try ABIRuntime.shared.resolveSwiftTypeAndWait(named: "Example.Document")
+let initialize = try type.resolveInitializerAndWait(
     named: "init(_:_:)",
     as: ((NativeSwiftBorrowing<String>, NativeSwiftConsuming<String>) -> AnyObject).self
 )
@@ -56,7 +56,7 @@ For `func replaceCallback(_ callback: inout (Int64) -> Int64)`, put the closure 
 typealias Callback = NativeSwiftClosure<(Int64) -> Int64>
 let initial = try NativeSwiftClosure { (value: Int64) in value + 7 }
 let callback = NativeSwiftInout(initial)
-let replace = try ABIRuntime.shared.swiftFunction(
+let replace = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
     named: "Example.replaceCallback(_:)",
     as: ((NativeSwiftInout<Callback>) -> Void).self
 )

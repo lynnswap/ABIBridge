@@ -34,6 +34,8 @@ The public layer converts declaration requests to runtime records. The runtime r
 
 A `RuntimeSymbolResolver` owns each resolver's indexes and image leases. `ABIRuntime` delegates lookup to that owner and keeps its separate cache of typed Swift handles. Physical Swift call interfaces and closure authentication values use bounded shared caches in the runtime target. Upper call wrappers retain those physical owners; they do not duplicate the physical interface cache.
 
+Typed Swift lookup has async factories, such as `resolveSwiftType` and `resolveMethod`, and synchronous counterparts whose names append `AndWait`. Both use the same resolver indexes and physical call-interface caches, joining only required preparation in progress. Async lookup schedules preparation on a worker while the caller suspends; bound object receivers and native invocation stay in the caller's required isolation domain.
+
 Native callback entries retain the implementation and storage they need. The public layer supplies the callback functions and owns their typed bodies. Published native code continues to retain its lower owner after cache eviction or release of a temporary public wrapper. Hook publication and retirement keep their existing native registration path.
 
 Runtime errors preserve their category and associated data when the public layer converts them to `ABIResolutionError`. Mutation, cleanup, and partial-failure reporting keep their existing contracts.

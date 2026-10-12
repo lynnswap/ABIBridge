@@ -209,7 +209,7 @@ struct ManagedSwiftValueTests {
 
     @Test func metatypesDoNotEnableUnsupportedDirectCalls() async {
         #expect {
-            _ = try ABIRuntime.shared.swiftFunction(
+            _ = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
                 named: "ManagedSwiftFixtures.transformManaged(_:)", as: ((ManagedRecord) -> ManagedRecord).self
             )
         } throws: { error in
@@ -217,7 +217,7 @@ struct ManagedSwiftValueTests {
             return false
         }
         #expect {
-            _ = try ABIRuntime.shared.swiftFunction(
+            _ = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
                 named: "ManagedSwiftFixtures.transformOptional(_:)", as: ((Int64?) -> Int64?).self
             )
         } throws: { error in
@@ -225,7 +225,7 @@ struct ManagedSwiftValueTests {
             return false
         }
         #expect {
-            _ = try ABIRuntime.shared.swiftFunction(
+            _ = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
                 named: "ManagedSwiftFixtures.transformResilient(_:)", as: ((ResilientRecord) -> ResilientRecord).self
             )
         } throws: { error in

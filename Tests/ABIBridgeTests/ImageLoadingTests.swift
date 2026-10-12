@@ -229,13 +229,13 @@ struct ImageLoadingTests {
         let runtime = ABIRuntime()
         let scope = ImageSelector.path(fixture.libraryURL)
         #expect(try runtime.images(matching: scope).isEmpty)
-        let function = try await runtime.swiftFunction(
+        let function = try await runtime.resolveSwiftFunction(
             named: module + ".answer()",
             as: (() -> Int).self,
             in: scope
         )
         #expect(try unsafe function.unsafeInvoke() == 42)
-        let type = try await runtime.swiftType(named: module + ".Box", in: scope)
+        let type = try await runtime.resolveSwiftType(named: module + ".Box", in: scope)
         #expect(type.name == module + ".Box")
         #expect(type.image.identity == function.symbol.image.identity)
         runtime.removeCachedResults()

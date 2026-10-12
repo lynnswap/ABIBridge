@@ -4,16 +4,30 @@ Update clients of the earlier result-and-argument handle types to complete funct
 
 ## Choose synchronous or async lookup
 
-`swiftFunction`, `swiftType`, Swift `method(named:)`, and instance `getter(named:)` have matching synchronous and async overloads. Keep `await` in async contexts to search and prepare on a worker queue while the caller suspends:
+Choose async lookup or synchronous waiting by the factory name. Async factories search and prepare on a worker queue while the caller suspends; synchronous factories use the same arguments and append `AndWait` to the name:
+
+| Lookup | Async factory | Synchronous factory |
+| --- | --- | --- |
+| Swift function | `resolveSwiftFunction` | `resolveSwiftFunctionAndWait` |
+| Swift type | `resolveSwiftType` | `resolveSwiftTypeAndWait` |
+| Instance method | `resolveMethod` | `resolveMethodAndWait` |
+| Initializer | `resolveInitializer` | `resolveInitializerAndWait` |
+| Static method | `resolveStaticMethod` | `resolveStaticMethodAndWait` |
+| Instance getter | `resolveGetter` | `resolveGetterAndWait` |
+| Instance setter | `resolveSetter` | `resolveSetterAndWait` |
+| Static getter | `resolveStaticGetter` | `resolveStaticGetterAndWait` |
+| Static setter | `resolveStaticSetter` | `resolveStaticSetterAndWait` |
+
+For async type and method lookup:
 
 ```swift
-let type = try await runtime.swiftType(named: "Example.Counter")
-let read = try await type.method(named: "read()", as: (() -> Int64).self)
+let type = try await runtime.resolveSwiftType(named: "Example.Counter")
+let read = try await type.resolveMethod(named: "read()", as: (() -> Int64).self)
 ```
 
-Synchronous contexts select the synchronous overloads and omit `await`. Cold lookup runs on the caller's thread; if a required preparation stage is running, the caller waits for it. An async context can deliberately select synchronous lookup through a synchronous closure. Bound object method and getter lookup keeps the receiver in the caller's isolation domain. See <doc:SwiftFunctionInvocation> and <doc:SwiftMemberInvocation>.
+Use `AndWait` without `await` to choose synchronous lookup, including inside async functions. Cold lookup runs on the caller's thread; if a required preparation stage is running, the caller waits for it. Bound object method, getter, and setter lookup keeps the receiver in the caller's isolation domain. See <doc:SwiftFunctionInvocation> and <doc:SwiftMemberInvocation>.
 
-`ABIRuntime` and `NativeSwiftType` remain actors. Earlier preparation is optional for both lookup forms. Symbol lookup, image enumeration, C/C++ factories, Objective-C selector lookup, Swift static members, initializers, setters, and `removeCachedResults()` are synchronous; remove `await` from those operations.
+`ABIRuntime` and `NativeSwiftType` remain actors. Earlier preparation is optional for both lookup forms, and both share symbol indexes and prepared call interfaces. Raw symbol lookup, image enumeration, C/C++ factories, Objective-C selector lookup, and `removeCachedResults()` are synchronous; remove `await` from those operations.
 
 Optional `prepare(_:)` remains asynchronous. Its closure overload runs synchronous factories on a worker queue and shares their preparation with later lookup. See <doc:SymbolLookup>. Keep `await` for invoking native async signatures and for hook installation APIs that remain asynchronous.
 
@@ -33,14 +47,10 @@ let callback: NativeSwiftClosure<() -> String>
 
 Apply the same change to `NativeSwiftMethod`, `NativeBoundSwiftMethod`, and returned closures. The separate throwing and async closure types have been removed; use `NativeSwiftClosure<Signature>` with the native effects in `Signature`. Invocation remains throwing for bridge failures, even when the native declaration is nonthrowing. Async signatures use `await`.
 
-Swift getters now take a zero-argument function type so their error and isolation contracts remain visible:
+Swift getters now take a zero-argument function type in place of the earlier result type, such as `String.self`, so their error and isolation contracts remain visible:
 
 ```swift
-// Before
-let getter = try await type.getter(named: "text", as: String.self)
-
-// After
-let getter = try await type.getter(named: "text", as: (() -> String).self)
+let getter = try await type.resolveGetter(named: "text", as: (() -> String).self)
 ```
 
 Keep Objective-C selector lookup on its existing function-type interface. This getter change applies to Swift source declarations.
@@ -50,15 +60,7 @@ Keep Objective-C selector lookup on its existing function-type interface. This g
 Replace `substituting:` with `genericArguments:`. Each declared scalar parameter takes one `.type` argument; each declared type pack takes one `.pack` argument.
 
 ```swift
-// Before
-let run = try await runtime.swiftFunction(
-    named: "Example.run<A>(() -> A) -> A",
-    as: ((NativeSwiftClosure<String>) -> String).self,
-    substituting: String.self
-)
-
-// After
-let run = try await runtime.swiftFunction(
+let run = try await runtime.resolveSwiftFunction(
     named: "Example.run(_:)",
     as: ((NativeSwiftClosure<() -> String>) -> String).self,
     genericArguments: [.type(String.self)]
@@ -76,16 +78,7 @@ Label-only names select a declaration whose bound signature matches `as:`. Keep 
 Replace `NativeSwiftOpaqueValue` with ``NativeSwiftValue``. Use its public `type` handle for type identity, member lookup, and generic arguments, and `type.name` for the source-level name. The handle retains the type's implementation images. The earlier `withValue` operation made an `Any` copy; its replacement, `withCopy`, can report an invalid copy.
 
 ```swift
-// Before
-let make = try await runtime.swiftFunction(
-    named: "Example.makeSummary(_:)",
-    as: ((String) -> NativeSwiftOpaqueValue).self
-)
-let value = try unsafe make.unsafeInvoke("title")
-value.withValue { print($0) }
-
-// After
-let make = try await runtime.swiftFunction(
+let make = try await runtime.resolveSwiftFunction(
     named: "Example.makeSummary(_:)",
     as: ((String) -> NativeSwiftValue).self
 )
@@ -102,15 +95,7 @@ The same owner receives ordinary generic and opaque results. Assigning it shares
 Use ``NativeSwiftClosure`` with ``NativeSwiftBorrowedValue`` in its signature instead of `NativeSwiftBorrowingClosure`. Prepare ordinary members instead of `borrowedMethod` or `borrowedGetter`:
 
 ```swift
-// Before
-let read = try await type.borrowedMethod(named: "read()", as: (() -> Int64).self)
-let callback = try NativeSwiftBorrowingClosure<Int64>(borrowing: type) { view in
-    do { return try unsafe read.unsafeInvoke(on: view) }
-    catch { report(error); return 0 }
-}
-
-// After
-let read = try await type.method(
+let read = try await type.resolveMethod(
     named: "read()", as: (() -> Int64).self,
     receiverABI: .opaque(named: type.name)
 )
@@ -131,7 +116,7 @@ Nested native closures now appear as `NativeSwiftClosure<Signature>` arguments o
 Replace the earlier `inheritsCallerIsolation: false` setting with an `@concurrent` signature for a concurrent native async declaration. Use `nonisolated(nonsending)` for a caller-isolated declaration, including when the consumer's default differs from the provider's:
 
 ```swift
-let run = try await runtime.swiftFunction(
+let run = try await runtime.resolveSwiftFunction(
     named: "Example.runAsync(_:)",
     as: (nonisolated(nonsending) (String) async throws -> String).self
 )
@@ -145,7 +130,7 @@ Typed errors remain part of the signature, such as `(String) throws(MyError) -> 
 An owned result cannot represent a native `~Escapable` payload. Select ``NativeSwiftBorrowedValue`` as the result marker and process it in `withResult:`:
 
 ```swift
-let make = try runtime.swiftFunction(
+let make = try runtime.resolveSwiftFunctionAndWait(
     named: "Example.makeView(_:)",
     as: ((AnyObject) -> NativeSwiftBorrowedValue).self
 )

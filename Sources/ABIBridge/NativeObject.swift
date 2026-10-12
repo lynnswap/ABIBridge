@@ -138,6 +138,9 @@ public final class NativeObject {
 
     /// Resolves a Swift implementation for this object's concrete type.
     ///
+    /// Search and preparation run on the caller's thread, joining required work
+    /// already in progress. No explicit `prepare` call is needed.
+    ///
     /// The method retains the receiver and implementation image. Invocation
     /// remains on the caller's executor and calls the captured implementation.
     /// Existing generic class instances supply their enclosing type arguments.
@@ -150,15 +153,16 @@ public final class NativeObject {
     ///   - isConsuming: Whether the Swift member consumes its receiver copy.
     /// - Returns: A reusable method bound to this receiver.
     /// - Throws: A lookup or unsupported-representation error.
-    public nonisolated func method<Signature>(
-        named name: String, as signature: Signature.Type,
+    public nonisolated func resolveMethodAndWait<Signature>(
+        named name: String,
+        as signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument] = [],
         declaredAs declaredSignature: String? = nil,
         consuming isConsuming: Bool = false
     ) throws -> NativeBoundSwiftMethod<Signature> {
         let object = receiver!
         let type = try swiftType()
-        let method = try type.method(
+        let method = try type.resolveMethodAndWait(
             named: name,
             as: signature,
             genericArguments: genericArguments,
@@ -173,10 +177,10 @@ public final class NativeObject {
     /// Type lookup and ABI preparation run on an independent worker, joining
     /// required preparation already in progress. The receiver and returned
     /// bound handle remain in the caller's isolation domain; no native member
-    /// is invoked during lookup. In an async context this overload requires `await`.
+    /// is invoked during lookup.
     /// - Returns: A reusable method retaining this receiver.
     /// - Throws: The same lookup and representation errors as synchronous lookup.
-    public nonisolated(nonsending) func method<Signature>(
+    public nonisolated(nonsending) func resolveMethod<Signature>(
         named name: String,
         as signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument] = [],
@@ -186,7 +190,7 @@ public final class NativeObject {
         let objectType: AnyClass = Swift.type(of: receiver!)
         let method = try await runtime.prepare { runtime in
             let type = try Self.swiftType(for: objectType, in: runtime)
-            return try type.method(
+            return try type.resolveMethodAndWait(
                 named: name,
                 as: signature,
                 genericArguments: genericArguments,
@@ -199,6 +203,9 @@ public final class NativeObject {
 
     /// Resolves a Swift setter bound to this object.
     ///
+    /// Search and preparation run on the caller's thread, joining required work
+    /// already in progress. No explicit `prepare` call is needed.
+    ///
     /// The setter receives ownership of its ordinary incoming value.
     /// - Parameters:
     ///   - name: The Swift property name or complete relative setter declaration.
@@ -207,16 +214,45 @@ public final class NativeObject {
     ///   - isConsuming: Whether the setter also consumes a receiver copy.
     /// - Returns: A one-argument bound method.
     /// - Throws: A lookup or representation error.
-    public nonisolated func setter<Value>(
-        named name: String, as valueType: Value.Type, declaredAs declaredSignature: String? = nil,
+    public nonisolated func resolveSetterAndWait<Value>(
+        named name: String,
+        as valueType: Value.Type,
+        declaredAs declaredSignature: String? = nil,
         consuming isConsuming: Bool = false
     ) throws -> NativeBoundSwiftMethod<(Value) -> Void> {
-        let method = try swiftType().setter(
+        let method = try swiftType().resolveSetterAndWait(
             named: name,
             as: valueType,
             declaredAs: declaredSignature,
             consuming: isConsuming
         )
+        return NativeBoundSwiftMethod(method: method, receiver: receiver!)
+    }
+
+    /// Resolves a Swift setter without blocking the caller's executor.
+    ///
+    /// Type lookup and ABI preparation run on an independent worker, joining
+    /// required preparation already in progress. The receiver and returned
+    /// bound handle remain in the caller's isolation domain; lookup does not
+    /// set the property.
+    /// - Returns: A reusable setter retaining this receiver.
+    /// - Throws: The same lookup and representation errors as synchronous lookup.
+    public nonisolated(nonsending) func resolveSetter<Value>(
+        named name: String,
+        as valueType: Value.Type,
+        declaredAs declaredSignature: String? = nil,
+        consuming isConsuming: Bool = false
+    ) async throws -> NativeBoundSwiftMethod<(Value) -> Void> {
+        let objectType: AnyClass = Swift.type(of: receiver!)
+        let method = try await runtime.prepare { runtime in
+            let type = try Self.swiftType(for: objectType, in: runtime)
+            return try type.resolveSetterAndWait(
+                named: name,
+                as: valueType,
+                declaredAs: declaredSignature,
+                consuming: isConsuming
+            )
+        }
         return NativeBoundSwiftMethod(method: method, receiver: receiver!)
     }
 
@@ -431,12 +467,17 @@ struct ObjCMethodSignature<Result, each Argument> {
 
 extension NativeObject {
     /// Resolves a Swift property getter bound to this object.
+    ///
+    /// Search and preparation run on the caller's thread, joining required work
+    /// already in progress. No explicit `prepare` call is needed.
     /// Supply its complete zero-argument function type, including native errors and async isolation.
-    public nonisolated func getter<Signature>(
-        named name: String, as signature: Signature.Type, declaredAs declaredSignature: String? = nil,
+    public nonisolated func resolveGetterAndWait<Signature>(
+        named name: String,
+        as signature: Signature.Type,
+        declaredAs declaredSignature: String? = nil,
         consuming isConsuming: Bool = false
     ) throws -> NativeBoundSwiftMethod<Signature> {
-        let method = try swiftType().getter(
+        let method = try swiftType().resolveGetterAndWait(
             named: name,
             as: signature,
             declaredAs: declaredSignature,
@@ -450,10 +491,10 @@ extension NativeObject {
     /// Type lookup and ABI preparation run on an independent worker, joining
     /// required preparation already in progress. The receiver and returned
     /// bound handle remain in the caller's isolation domain; no native member
-    /// is invoked during lookup. In an async context this overload requires `await`.
+    /// is invoked during lookup.
     /// - Returns: A reusable getter retaining this receiver.
     /// - Throws: The same lookup and representation errors as synchronous lookup.
-    public nonisolated(nonsending) func getter<Signature>(
+    public nonisolated(nonsending) func resolveGetter<Signature>(
         named name: String,
         as signature: Signature.Type,
         declaredAs declaredSignature: String? = nil,
@@ -462,7 +503,7 @@ extension NativeObject {
         let objectType: AnyClass = Swift.type(of: receiver!)
         let method = try await runtime.prepare { runtime in
             let type = try Self.swiftType(for: objectType, in: runtime)
-            return try type.getter(
+            return try type.resolveGetterAndWait(
                 named: name,
                 as: signature,
                 declaredAs: declaredSignature,

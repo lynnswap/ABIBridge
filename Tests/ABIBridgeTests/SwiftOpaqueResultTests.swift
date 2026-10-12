@@ -23,13 +23,13 @@ struct SwiftOpaqueResultTests {
         let runtime = ABIRuntime.shared
         let counts = ArgumentCounts()
         let owner = RuntimeScopedOwner(42, counts)
-        let resultType = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeScopedResult")
-        let read = try await resultType.method(
+        let resultType = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.RuntimeScopedResult")
+        let read = try await resultType.resolveMethod(
             named: "read()",
             as: (() -> Int64).self,
             receiverABI: .opaque(named: resultType.name)
         )
-        let make = try await runtime.swiftFunction(
+        let make = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeRuntimeScoped(_:_:)",
             as: ((RuntimeScopedOwner, Bool) throws -> NativeSwiftBorrowedValue).self)
         var saved: NativeSwiftBorrowedValue?
@@ -59,20 +59,20 @@ struct SwiftOpaqueResultTests {
         let counts = ArgumentCounts()
         let owner = RuntimeScopedOwner(42, counts)
         let runtime = ABIRuntime.shared
-        let resultType = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeScopedResult")
-        let read = try await resultType.method(
+        let resultType = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.RuntimeScopedResult")
+        let read = try await resultType.resolveMethod(
             named: "read()",
             as: (() -> Int64).self,
             receiverABI: .opaque(named: resultType.name)
         )
-        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeScopedOwner")
-        let method = try await type.method(named: "scoped()", as: (() -> NativeSwiftBorrowedValue).self)
+        let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.RuntimeScopedOwner")
+        let method = try await type.resolveMethod(named: "scoped()", as: (() -> NativeSwiftBorrowedValue).self)
         let bound = try method.bind(to: owner)
         #expect(try unsafe bound.unsafeInvoke(withResult: { result in
             return try unsafe read.unsafeInvoke(on: result)
         }) == 42)
         #expect(counts.destructions == 1)
-        let async = try await type.method(
+        let async = try await type.resolveMethod(
             named: "scopedAsync()",
             as: (() async -> NativeSwiftBorrowedValue).self
         )
@@ -91,17 +91,17 @@ struct SwiftOpaqueResultTests {
         let runtime = ABIRuntime.shared
         let counts = ArgumentCounts()
         let owner = RuntimeScopedOwner(42, counts)
-        let make = try await runtime.swiftFunction(
+        let make = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeRuntimeScoped(_:_:)",
             as: ((RuntimeScopedOwner, Bool) throws -> NativeSwiftBorrowedValue).self)
         let output = try unsafe make.unsafeInvoke(owner, false, withResult: { _ in ScopedBodyOutput(number: 42) })
         #expect(output.number == 42)
         #expect(counts.destructions == 1)
-        let type = try await runtime.swiftType(
+        let type = try await runtime.resolveSwiftType(
             named: "ManagedSwiftFixtures.RuntimeScopedCounter",
             as: RejectingScopedCounter.self
         )
-        let sync = try await type.method(
+        let sync = try await type.resolveMethod(
             named: "scoped(_:_:)",
             as: ((RuntimeScopedOwner, Bool) throws -> NativeSwiftBorrowedValue).self, mutating: true)
         var receiver = RejectingScopedCounter(41)
@@ -113,7 +113,7 @@ struct SwiftOpaqueResultTests {
             #expect(error.writebackError is ScopedWritebackFailure)
         }
         #expect(counts.destructions == 2)
-        let async = try await type.method(
+        let async = try await type.resolveMethod(
             named: "scopedAsync(_:_:)",
             as: ((RuntimeScopedOwner, Bool) async throws -> NativeSwiftBorrowedValue).self, mutating: true)
         do {
@@ -134,13 +134,13 @@ struct SwiftOpaqueResultTests {
         let counts = ArgumentCounts()
         var owner: RuntimeScopedOwner? = RuntimeScopedOwner(42, counts)
         weak var observed = owner
-        let resultType = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeScopedResult")
-        let read = try await resultType.method(
+        let resultType = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.RuntimeScopedResult")
+        let read = try await resultType.resolveMethod(
             named: "read()",
             as: (() -> Int64).self,
             receiverABI: .opaque(named: resultType.name)
         )
-        let make = try await runtime.swiftFunction(
+        let make = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeRuntimeScopedAsync(_:_:)",
             as: ((RuntimeScopedOwner, Bool) async throws -> NativeSwiftBorrowedValue).self)
         let output = try unsafe await make.unsafeInvoke(owner!, false, withResult: { value in
@@ -168,19 +168,19 @@ struct SwiftOpaqueResultTests {
 
     @Test func genericOpaqueResultsBindCapturedTypesAndConformances() async throws {
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeGenericOpaque<A>(A) -> some",
             as: ((String) -> NativeSwiftValue).self, genericArguments: [.type(String.self)])
         let value = try unsafe make.unsafeInvoke("captured")
         let reference = makeGenericOpaque("reference")
         try value.withCopy { #expect(ObjectIdentifier(Swift.type(of: $0)) == ObjectIdentifier(Swift.type(of: reference))) }
-        let constrained = try await runtime.swiftFunction(
+        let constrained = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeConstrainedOpaque<A where A: ManagedSwiftFixtures.ExistentialValue>(A) -> some",
             as: ((InlineExistentialValue) -> NativeSwiftValue).self,
             genericArguments: [.type(InlineExistentialValue.self)])
         let constrainedValue = try unsafe constrained.unsafeInvoke(InlineExistentialValue(43))
         try constrainedValue.withCopy { #expect(($0 as? any ExistentialValue)?.number == 43) }
-        let object = try await runtime.swiftFunction(
+        let object = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeGenericOpaqueObject<A where A: ManagedSwiftFixtures.ExistentialObjectValue>(A) -> some",
             as: ((ExistentialObject) -> NativeSwiftValue).self,
             genericArguments: [.type(ExistentialObject.self)])
@@ -191,16 +191,16 @@ struct SwiftOpaqueResultTests {
 
     @Test func genericOpaqueMembersCombineEnclosingAndMethodBindings() async throws {
         let runtime = ABIRuntime.shared
-        let type = try await runtime.swiftType(
+        let type = try await runtime.resolveSwiftType(
             named: "ManagedSwiftFixtures.GenericOpaqueOwner",
             genericArguments: [.type(String.self)])
-        let initialize = try type.initializer(named: "init(_:)", as: ((String) -> AnyObject).self)
+        let initialize = try await type.resolveInitializer(named: "init(_:)", as: ((String) -> AnyObject).self)
         let owner = try unsafe initialize.unsafeInvoke("outer")
-        let getter = try await runtime.object(owner).getter(
+        let getter = try await runtime.object(owner).resolveGetter(
             named: "opaque",
             as: (() -> NativeSwiftValue).self
         )
-        let method = try await runtime.object(owner).method(
+        let method = try await runtime.object(owner).resolveMethod(
             named: "make(_:)",
             as: ((Int64) -> NativeSwiftValue).self, genericArguments: [.type(Int64.self)])
         let first = try unsafe getter.unsafeInvoke()
@@ -211,7 +211,7 @@ struct SwiftOpaqueResultTests {
     }
 
     @Test func returnedClosuresResolveNestedOpaqueMetadata() async throws {
-        let factory = try await ABIRuntime.shared.swiftFunction(
+        let factory = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeNestedOpaque()",
             as: (() -> NativeSwiftClosure<() -> NativeSwiftValue>).self)
         let closure = try unsafe factory.unsafeInvoke()
@@ -220,12 +220,12 @@ struct SwiftOpaqueResultTests {
     }
 
     @Test func opaqueResultsSharePreparationWithClosureArguments() async throws {
-        let call = try await ABIRuntime.shared.swiftFunction(
+        let call = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueUsingCallback(_:)",
             as: ((NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftValue).self)
         let value = try unsafe call.unsafeInvoke(NativeSwiftClosure { $0 + 1 })
         #expect(try value.take(as: Int64.self) == 42)
-        let typed = try await ABIRuntime.shared.swiftFunction(
+        let typed = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueUsingCallback((Swift.Int64) -> Swift.Int64) -> some",
             as: ((NativeSwiftClosure<(Int64) -> Int64>) -> Int64).self)
         #expect(try unsafe typed.unsafeInvoke(NativeSwiftClosure { $0 + 1 }) == 42)
@@ -235,7 +235,7 @@ struct SwiftOpaqueResultTests {
         let runtime = ABIRuntime.shared
         for (name, expected) in [("makeOpaqueClassAny", 41), ("makeOpaqueClassProtocol", 42),
                                  ("makeOpaqueSuperclass", 43), ("makeOpaqueUnconstrainedClass", 44)] {
-            let call = try await runtime.swiftFunction(
+            let call = try await runtime.resolveSwiftFunction(
                 named: "ManagedSwiftFixtures." + name + "(_:)",
                 as: ((ErrorLifetimeToken) -> NativeSwiftValue).self)
             let counts = ArgumentCounts()
@@ -254,7 +254,7 @@ struct SwiftOpaqueResultTests {
     }
 
     @Test func objcProtocolOpaqueConstraintReturnsOneObject() async throws {
-        let call = try await ABIRuntime.shared.swiftFunction(
+        let call = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueObjC(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self)
         let result = try unsafe call.unsafeInvoke(ErrorLifetimeToken())
@@ -263,14 +263,14 @@ struct SwiftOpaqueResultTests {
 
     @Test func directOpaqueResultsIntegrateWithErrorsAndAsyncCompletion() async throws {
         let runtime = ABIRuntime.shared
-        let call = try await runtime.swiftFunction(
+        let call = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueClassThrowing(_:_:)",
             as: ((ErrorLifetimeToken, Bool) throws(ScalarFailure) -> NativeSwiftValue).self)
         let token = ErrorLifetimeToken()
         try unsafe call.unsafeInvoke(token, false).withCopy { #expect(($0 as? any ExistentialObjectValue)?.number == 45) }
         do { _ = try unsafe call.unsafeInvoke(token, true); Issue.record("Expected direct opaque failure") }
         catch let error as NativeSwiftError { error.withUnderlyingError { #expect(($0 as? ScalarFailure)?.code == 42) } }
-        let async = try await runtime.swiftFunction(
+        let async = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueClassAsync(_:_:)",
             as: (@concurrent (AsyncGate, ErrorLifetimeToken) async -> NativeSwiftValue).self)
         let gate = AsyncGate()
@@ -283,14 +283,14 @@ struct SwiftOpaqueResultTests {
     }
 
     @Test func extensionMembersUseTheirMatchedOpaqueOrigin() async throws {
-        let type = try await ABIRuntime.shared.swiftType(named: "ManagedSwiftFixtures.OpaqueOwner")
+        let type = try await ABIRuntime.shared.resolveSwiftType(named: "ManagedSwiftFixtures.OpaqueOwner")
         let owner = OpaqueOwner(ErrorLifetimeToken())
-        let method = try await type.method(
+        let method = try await type.resolveMethod(
             named: "extensionOpaque(_:)",
             as: ((Int64) -> NativeSwiftValue).self
         )
-        let getter = try await type.getter(named: "extensionSummary", as: (() -> NativeSwiftValue).self)
-        let object = try await type.method(
+        let getter = try await type.resolveGetter(named: "extensionSummary", as: (() -> NativeSwiftValue).self)
+        let object = try await type.resolveMethod(
             named: "extensionClassOpaque()",
             as: (() -> NativeSwiftValue).self
         )
@@ -300,7 +300,7 @@ struct SwiftOpaqueResultTests {
     }
 
     @Test func hiddenManagedValueCanBeErasedAndOpenedWithoutItsConcreteType() async throws {
-        let call = try await ABIRuntime.shared.swiftFunction(
+        let call = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeOpaque(_:_:)",
             as: ((ErrorLifetimeToken, Int64) -> NativeSwiftValue).self)
         let token = ErrorLifetimeToken()
@@ -316,7 +316,7 @@ struct SwiftOpaqueResultTests {
     }
 
     @Test func copyingTheHandleKeepsTheHiddenPayloadUntilFinalRelease() async throws {
-        let call = try await ABIRuntime.shared.swiftFunction(
+        let call = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeOpaque(_:_:)",
             as: ((ErrorLifetimeToken, Int64) -> NativeSwiftValue).self)
         let counts = ArgumentCounts()
@@ -337,10 +337,10 @@ struct SwiftOpaqueResultTests {
 
     @Test func scalarAndEmptyUnderlyingValuesStillUseOpaqueIndirectResults() async throws {
         let runtime = ABIRuntime.shared
-        let integer = try await runtime.swiftFunction(
+        let integer = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
             as: ((Int64) -> NativeSwiftValue).self)
-        let empty = try await runtime.swiftFunction(
+        let empty = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueEmpty()",
             as: (() -> NativeSwiftValue).self)
         let value = try unsafe integer.unsafeInvoke(42)
@@ -352,7 +352,7 @@ struct SwiftOpaqueResultTests {
     }
 
     @Test func throwingCompletionDoesNotDestroyAnUninitializedResult() async throws {
-        let call = try await ABIRuntime.shared.swiftFunction(
+        let call = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueThrowing(_:_:)",
             as: ((ErrorLifetimeToken, Bool) throws(ScalarFailure) -> NativeSwiftValue).self)
         for fail in [false, true] {
@@ -375,7 +375,7 @@ struct SwiftOpaqueResultTests {
     }
 
     @Test func asyncOpaqueValuesKeepTaskStateAndOwnedResults() async throws {
-        let call = try await ABIRuntime.shared.swiftFunction(
+        let call = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueAsync(_:_:_:)",
             as: (@concurrent (AsyncGate, ErrorLifetimeToken, Bool) async throws(ScalarFailure) -> NativeSwiftValue).self)
         for cancel in [false, true] {
@@ -404,17 +404,17 @@ struct SwiftOpaqueResultTests {
     }
 
     @Test func methodsPropertiesAndStaticFunctionsFindTheirOpaqueDescriptors() async throws {
-        let type = try await ABIRuntime.shared.swiftType(named: "ManagedSwiftFixtures.OpaqueOwner")
+        let type = try await ABIRuntime.shared.resolveSwiftType(named: "ManagedSwiftFixtures.OpaqueOwner")
         let token = ErrorLifetimeToken(), owner = OpaqueOwner(token)
-        let method = try await type.method(named: "make(_:)", as: ((Int64) -> NativeSwiftValue).self)
-        let getter = try await type.getter(named: "summary", as: (() -> NativeSwiftValue).self)
-        let staticMethod = try type.staticMethod(
+        let method = try await type.resolveMethod(named: "make(_:)", as: ((Int64) -> NativeSwiftValue).self)
+        let getter = try await type.resolveGetter(named: "summary", as: (() -> NativeSwiftValue).self)
+        let staticMethod = try await type.resolveStaticMethod(
             named: "makeStatic(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self)
         try unsafe method.unsafeInvoke(on: owner, 41).withCopy { #expect(($0 as? any ExistentialValue)?.number == 41) }
         try unsafe getter.unsafeInvoke(on: owner).withCopy { #expect(($0 as? any ExistentialValue)?.number == 42) }
         try unsafe staticMethod.unsafeInvoke(token).withCopy { #expect(($0 as? any ExistentialValue)?.number == 43) }
-        let async = try await type.method(
+        let async = try await type.resolveMethod(
             named: "makeAsync(_:)",
             as: (@concurrent (AsyncGate) async -> NativeSwiftValue).self)
         let gate = AsyncGate()
@@ -429,7 +429,7 @@ struct SwiftOpaqueResultTests {
     @Test func opaqueContainersPreserveFormalIndirectionAndClosureAuthentication() async throws {
         let runtime = ABIRuntime.shared
         for name in ["makeOptionalOpaqueObject", "makeOptionalClassOpaqueObject"] {
-            let call = try await runtime.swiftFunction(
+            let call = try await runtime.resolveSwiftFunction(
                 named: "ManagedSwiftFixtures.\(name)(ManagedSwiftFixtures.ErrorLifetimeToken, Swift.Bool) -> some?",
                 as: ((ErrorLifetimeToken, Bool) -> NativeSwiftValue).self)
             for present in [false, true] {
@@ -437,7 +437,7 @@ struct SwiftOpaqueResultTests {
                 #expect(try result.withCopy { ($0 as? any ExistentialValue)?.number } == (present ? 42 : nil))
             }
         }
-        let factory = try await runtime.swiftFunction(
+        let factory = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeOptionalOpaqueClosure(ManagedSwiftFixtures.ErrorLifetimeToken) -> (Swift.Bool) -> some?",
             as: ((ErrorLifetimeToken) -> NativeSwiftClosure<(Bool) -> NativeSwiftValue>).self)
         let body = try unsafe factory.unsafeInvoke(ErrorLifetimeToken())
@@ -445,14 +445,14 @@ struct SwiftOpaqueResultTests {
             let result = try unsafe body.unsafeInvoke(present)
             #expect(try result.withCopy { ($0 as? any ExistentialValue)?.number } == (present ? 42 : nil))
         }
-        let throwingFactory = try await runtime.swiftFunction(
+        let throwingFactory = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeOptionalOpaqueThrowingClosure(ManagedSwiftFixtures.ErrorLifetimeToken) -> (Swift.Bool) throws(ManagedSwiftFixtures.ScalarFailure) -> some?",
             as: ((ErrorLifetimeToken) -> NativeSwiftClosure<(Bool) throws(ScalarFailure) -> NativeSwiftValue>).self)
         let throwing = try unsafe throwingFactory.unsafeInvoke(ErrorLifetimeToken())
         do { _ = try unsafe throwing.unsafeInvoke(false); Issue.record("Expected native failure") }
         catch let error as NativeSwiftError { #expect(error.withUnderlyingError { ($0 as? ScalarFailure)?.code } == 42) }
         #expect(try unsafe throwing.unsafeInvoke(true).withCopy { ($0 as? any ExistentialValue)?.number } == 42)
-        let asyncFactory = try await runtime.swiftFunction(
+        let asyncFactory = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeOptionalOpaqueAsyncClosure(ManagedSwiftFixtures.ErrorLifetimeToken) -> @Sendable (Swift.Bool) async -> some?",
             as: ((ErrorLifetimeToken) -> NativeSwiftClosure<@Sendable @concurrent (Bool) async -> NativeSwiftValue>).self)
         let async = try unsafe asyncFactory.unsafeInvoke(ErrorLifetimeToken())
@@ -460,7 +460,7 @@ struct SwiftOpaqueResultTests {
             let result = try unsafe await async.unsafeInvoke(present)
             #expect(try result.withCopy { ($0 as? any ExistentialValue)?.number } == (present ? 42 : nil))
         }
-        let box = try await runtime.swiftFunction(
+        let box = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeInlineOpaqueBox(ManagedSwiftFixtures.ErrorLifetimeToken) -> ManagedSwiftFixtures.InlineOpaqueBox<some>",
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self)
         let result = try unsafe box.unsafeInvoke(ErrorLifetimeToken())
@@ -470,17 +470,17 @@ struct SwiftOpaqueResultTests {
     @Test func opaqueReturnedClosuresMaterializeManagedTupleArguments() async throws {
         let runtime = ABIRuntime.shared
         let declaration = "ManagedSwiftFixtures.makeOpaqueTupleClosure() -> ((Swift.Int64, Swift.String, ManagedSwiftFixtures.ErrorLifetimeToken)) -> some"
-        let factory = try await runtime.swiftFunction(
+        let factory = try await runtime.resolveSwiftFunction(
             named: declaration,
             as: (() -> NativeSwiftClosure<((Int64, String, ErrorLifetimeToken)) -> NativeSwiftValue>).self)
         let body = try unsafe factory.unsafeInvoke()
-        let erasedFactory = try await runtime.swiftFunction(
+        let erasedFactory = try await runtime.resolveSwiftFunction(
             named: declaration,
             as: (() -> NativeSwiftValue).self
         )
         let erased = try unsafe erasedFactory.unsafeInvoke()
         let native = try erased.take(as: (((Int64, String, ErrorLifetimeToken)) -> String).self)
-        let consume = try await runtime.swiftFunction(
+        let consume = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueConsumingTupleClosure() -> (__owned (Swift.Int64, Swift.String, ManagedSwiftFixtures.ErrorLifetimeToken)) -> some",
             as: (() -> NativeSwiftClosure<(NativeSwiftConsuming<(Int64, String, ErrorLifetimeToken)>) -> NativeSwiftValue>).self)
         let consuming = try unsafe consume.unsafeInvoke()
@@ -499,7 +499,7 @@ struct SwiftOpaqueResultTests {
     }
 
     @Test func genericOpaqueTupleResultsResolveEveryUnderlyingIndex() async throws {
-        let call = try await ABIRuntime.shared.swiftFunction(
+        let call = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeGenericOpaquePair<A, B>(A, B) -> (some, some)",
             as: ((String, Int) -> (NativeSwiftValue, NativeSwiftValue)).self,
             genericArguments: [.type(String.self), .type(Int.self)])
@@ -509,20 +509,20 @@ struct SwiftOpaqueResultTests {
     }
 
     @Test func nestedAndGenericOpaqueContractsRequireDeclarationPlanning() async throws {
-        let nested = try await ABIRuntime.shared.swiftFunction(
+        let nested = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeNestedOpaque() -> () -> some",
             as: (() -> NativeSwiftValue).self)
         let nestedResult = try unsafe nested.unsafeInvoke()
         #expect(try nestedResult.withCopy { ($0 as? () -> Int64)?() } == 42)
         #expect(throws: ABIResolutionError.self) {
-            _ = try ABIRuntime.shared.swiftFunction(
+            _ = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
                 named: "ManagedSwiftFixtures.makeGenericOpaque<A>(A) -> some",
                 as: ((Int64) -> NativeSwiftValue).self)
         }
     }
 
     @Test func runtimeValueResultsPreserveNativeExistentials() async throws {
-        let echo = try await ABIRuntime.shared.swiftFunction(
+        let echo = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.echoAny(Any) -> Any",
             as: ((Any) -> NativeSwiftValue).self)
         let value = try unsafe echo.unsafeInvoke("runtime existential" as Any)
