@@ -6,11 +6,15 @@ import Testing
 
 @Suite(.serialized)
 struct SwiftVirtualReplacementTests {
-    @Test func sendableVirtualSignaturesPreserveCapturedImplementations() async throws {
+    @MainActor @Test(arguments: [false, true])
+    func sendableVirtualSignaturesPreserveCapturedImplementations(asynchronous: Bool) async throws {
         let fixture = try CompiledSwiftReplacementFixture(writable: false);
         defer { fixture.cleanup() }
         let name = fixture.module + ".ReplacementRenderer"
-        let type = try await fixture.runtime.resolveSwiftType(named: name, in: fixture.providerScope)
+        let type = try await fixture.runtime.resolveSwiftType(
+            named: name,
+            in: fixture.providerScope
+        )
         let make = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.module + ".makeRenderer() -> " + name,
             as: (() -> AnyObject).self,
@@ -35,21 +39,43 @@ struct SwiftVirtualReplacementTests {
             as: ((AnyObject, Int64) -> Int64).self,
             in: fixture.callerScope
         )
-        let ordinary = [
-            try unsafe target.prepareVirtualReplacement(with: replacement),
-            try unsafe target.prepareVirtualReplacement(with: sendableReplacement),
-        ]
+        let ordinary =
+            if asynchronous {
+                [
+                    try await unsafe target.prepareVirtualReplacement(with: replacement),
+                    try await unsafe target.prepareVirtualReplacement(with: sendableReplacement),
+                ]
+            } else {
+                [
+                    try unsafe target.prepareVirtualReplacementAndWait(with: replacement),
+                    try unsafe target.prepareVirtualReplacementAndWait(with: sendableReplacement),
+                ]
+            }
         for plan in ordinary {
+            #expect(plan.status == .prepared)
             try unsafe plan.install(); defer { try? plan.restore() }
             #expect(try unsafe oracle.unsafeInvoke(object, 40) == 240)
             #expect(try unsafe plan.original.unsafeInvoke(on: object, 40) == 42)
             try plan.restore()
         }
-        let sendable = [
-            try unsafe sendableTarget.prepareVirtualReplacement(with: replacement),
-            try unsafe sendableTarget.prepareVirtualReplacement(with: sendableReplacement),
-        ]
+        let sendable =
+            if asynchronous {
+                [
+                    try await unsafe sendableTarget.prepareVirtualReplacement(with: replacement),
+                    try await unsafe sendableTarget.prepareVirtualReplacement(
+                        with: sendableReplacement
+                    ),
+                ]
+            } else {
+                [
+                    try unsafe sendableTarget.prepareVirtualReplacementAndWait(with: replacement),
+                    try unsafe sendableTarget.prepareVirtualReplacementAndWait(
+                        with: sendableReplacement
+                    ),
+                ]
+            }
         for plan in sendable {
+            #expect(plan.status == .prepared)
             try unsafe plan.install(); defer { try? plan.restore() }
             #expect(try unsafe oracle.unsafeInvoke(object, 40) == 240)
             #expect(try unsafe plan.original.unsafeInvoke(on: object, 40) == 42)
@@ -62,7 +88,10 @@ struct SwiftVirtualReplacementTests {
         let fixture = try CompiledSwiftReplacementFixture(writable: false)
         defer { fixture.cleanup() }
         let baseName = fixture.module + ".ReplacementRenderer"
-        let base = try await fixture.runtime.resolveSwiftType(named: baseName, in: fixture.providerScope)
+        let base = try await fixture.runtime.resolveSwiftType(
+            named: baseName,
+            in: fixture.providerScope
+        )
         let inherited = try await fixture.runtime.resolveSwiftType(
             named: fixture.module + ".InheritedRenderer",
             in: fixture.providerScope
@@ -90,8 +119,11 @@ struct SwiftVirtualReplacementTests {
             objects.append(try unsafe make.unsafeInvoke())
         }
         for (index, type) in [base, inherited, overridden].enumerated() {
-            let method = try await type.resolveMethod(named: "scalar(_:)", as: ((Int64) -> Int64).self)
-            let plan = try unsafe method.prepareVirtualReplacement(with: replacement)
+            let method = try await type.resolveMethod(
+                named: "scalar(_:)",
+                as: ((Int64) -> Int64).self
+            )
+            let plan = try unsafe method.prepareVirtualReplacementAndWait(with: replacement)
             let original = plan.original
             #expect(plan.status == .prepared)
             #expect(
@@ -108,7 +140,7 @@ struct SwiftVirtualReplacementTests {
             }
             // A second preparation selects the immutable declaration metadata,
             // while its original captures the implementation installed above.
-            let second = try unsafe method.prepareVirtualReplacement(with: replacement)
+            let second = try unsafe method.prepareVirtualReplacementAndWait(with: replacement)
             #expect(second.address == plan.address)
             #expect(try unsafe second.original.unsafeInvoke(on: objects[index], 40) == 240)
             let directResult = try unsafe method.unsafeInvoke(on: objects[index], 40)
@@ -119,9 +151,12 @@ struct SwiftVirtualReplacementTests {
                 try unsafe original.unsafeInvoke(on: objects[index], 40) == (index == 2 ? 44 : 42)
             )
         }
-        let final = try await base.resolveMethod(named: "finalScalar(_:)", as: ((Int64) -> Int64).self)
+        let final = try await base.resolveMethod(
+            named: "finalScalar(_:)",
+            as: ((Int64) -> Int64).self
+        )
         #expect(throws: ABIResolutionError.self) {
-            try unsafe final.prepareVirtualReplacement(with: replacement)
+            try unsafe final.prepareVirtualReplacementAndWait(with: replacement)
         }
     }
 
@@ -129,7 +164,10 @@ struct SwiftVirtualReplacementTests {
         let fixture = try CompiledSwiftReplacementFixture(writable: false)
         defer { fixture.cleanup() }
         let name = fixture.module + ".ReplacementRenderer"
-        let type = try await fixture.runtime.resolveSwiftType(named: name, in: fixture.providerScope)
+        let type = try await fixture.runtime.resolveSwiftType(
+            named: name,
+            in: fixture.providerScope
+        )
         let make = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.module + ".makeRenderer() -> " + name,
             as: (() -> AnyObject).self,
@@ -141,7 +179,7 @@ struct SwiftVirtualReplacementTests {
             named: "replacementText(_:)",
             as: ((String) -> String).self
         )
-        let plan = try unsafe method.prepareVirtualReplacement(with: replacement)
+        let plan = try unsafe method.prepareVirtualReplacementAndWait(with: replacement)
         let oracle = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.callerModule + ".classText(\(name), Swift.String) -> Swift.String",
             as: ((AnyObject, String) -> String).self,
@@ -227,7 +265,7 @@ struct SwiftVirtualReplacementTests {
                 as: ((AnyObject, Int64) -> Int64).self,
                 in: .path(scope)
             )
-            let plan = try unsafe method.prepareVirtualReplacement(with: replacement)
+            let plan = try unsafe method.prepareVirtualReplacementAndWait(with: replacement)
             #expect(try unsafe oracle.unsafeInvoke(object, 40) == expected)
             try unsafe plan.install()
             defer { try? plan.restore() }
@@ -242,7 +280,10 @@ struct SwiftVirtualReplacementTests {
         defer { fixture.cleanup() }
         let childName = fixture.module + ".CoalescedChild",
             parentName = fixture.module + ".CoalescedParent"
-        let type = try await fixture.runtime.resolveSwiftType(named: childName, in: fixture.providerScope)
+        let type = try await fixture.runtime.resolveSwiftType(
+            named: childName,
+            in: fixture.providerScope
+        )
         let make = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.module + ".makeCoalescedChild() -> " + childName,
             as: (() -> AnyObject).self,
@@ -252,7 +293,10 @@ struct SwiftVirtualReplacementTests {
         let inherited = try await type.resolveMethod(named: "value()", as: (() -> Int64).self)
         let extra = try await type.resolveMethod(named: "extra()", as: (() -> Int64).self)
         let final = try await type.resolveMethod(named: "finalValue()", as: (() -> Int64).self)
-        let replacement = try await type.resolveMethod(named: "replacement()", as: (() -> Int64).self)
+        let replacement = try await type.resolveMethod(
+            named: "replacement()",
+            as: (() -> Int64).self
+        )
         let valueCall = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.callerModule + ".coalescedValue(" + parentName + ") -> Swift.Int64",
             as: ((AnyObject) -> Int64).self,
@@ -271,11 +315,11 @@ struct SwiftVirtualReplacementTests {
         // Establish that this fixture exercises the aliasing regression.
         #expect(inherited.symbol.address == extra.symbol.address)
         #expect(inherited.symbol.address == final.symbol.address)
-        let inheritedPlan = try unsafe inherited.prepareVirtualReplacement(with: replacement)
-        let extraPlan = try unsafe extra.prepareVirtualReplacement(with: replacement)
+        let inheritedPlan = try unsafe inherited.prepareVirtualReplacementAndWait(with: replacement)
+        let extraPlan = try unsafe extra.prepareVirtualReplacementAndWait(with: replacement)
         #expect(inheritedPlan.address != extraPlan.address)
         #expect(throws: ABIResolutionError.self) {
-            try unsafe final.prepareVirtualReplacement(with: replacement)
+            try unsafe final.prepareVirtualReplacementAndWait(with: replacement)
         }
         try unsafe inheritedPlan.install()
         defer { try? inheritedPlan.restore() }
@@ -326,7 +370,7 @@ struct SwiftVirtualReplacementTests {
         )
         defer { child.cleanup() }
         let runtime = ABIRuntime(), name = childModule + ".Child"
-        _ = try runtime.resolve(
+        _ = try runtime.resolveAndWait(
             .init(
                 name: "method descriptor for " + parentModule + ".Parent.value() -> Swift.Int64",
                 language: .swift,
@@ -336,7 +380,10 @@ struct SwiftVirtualReplacementTests {
         )
         let type = try await runtime.resolveSwiftType(named: name, in: .path(child.libraryURL))
         let method = try await type.resolveMethod(named: "value()", as: (() -> Int64).self)
-        let replacement = try await type.resolveMethod(named: "replacement()", as: (() -> Int64).self)
+        let replacement = try await type.resolveMethod(
+            named: "replacement()",
+            as: (() -> Int64).self
+        )
         let make = try await runtime.resolveSwiftFunction(
             named: childModule + ".make() -> " + name,
             as: (() -> AnyObject).self,
@@ -354,7 +401,7 @@ struct SwiftVirtualReplacementTests {
             in: .path(child.libraryURL)
         )
         #expect(throws: ABIResolutionError.self) {
-            try unsafe method.prepareVirtualReplacement(with: replacement)
+            try unsafe method.prepareVirtualReplacementAndWait(with: replacement)
         }
         #expect(try unsafe baseCall.unsafeInvoke(object) == 42)
         #expect(try unsafe childCall.unsafeInvoke(object) == 44)

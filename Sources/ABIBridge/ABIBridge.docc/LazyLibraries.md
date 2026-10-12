@@ -6,9 +6,9 @@ Read the libraries and imports recorded in `LC_LAZY_LOAD_DYLIB_INFO` without loa
 
 ```swift
 let runtime = ABIRuntime.shared
-let images = try runtime.images(matching: .framework(named: "Example"))
+let images = try await runtime.resolveImages(matching: .framework(named: "Example"))
 if let image = images.first {
-    let libraries = try await runtime.lazyLibraries(in: image)
+    let libraries = try await runtime.resolveLazyLibraries(in: image)
     for library in libraries {
         print(library.path ?? "Unavailable path")
         print(library.isInitialized as Any)
@@ -19,6 +19,8 @@ if let image = images.first {
     }
 }
 ```
+
+`resolveImages` and `resolveLazyLibraries` perform lookup and metadata reading on a worker while the caller suspends. Use `resolveImagesAndWait` and `resolveLazyLibrariesAndWait` for synchronous inspection. Neither form requires `prepare`.
 
 The source image stays retained while metadata is copied. Returned values own their strings and may outlive the image. Swift and C++ mangling is decoded where supported; `rawName` retains the exact recorded spelling. An import name does not establish a symbol's storage kind, function signature, or current address.
 
@@ -35,7 +37,7 @@ An empty result means there are no lazy-load commands. A command with an unreada
 ## Inspect a file
 
 ```swift
-let libraries = try await runtime.lazyLibraries(inFileAt: binaryURL)
+let libraries = try await runtime.resolveLazyLibraries(inFileAt: binaryURL)
 ```
 
 File inspection accepts a thin Mach-O file and reads it into owned storage. It does not accept universal/fat containers. File-reading failures propagate to the caller, and an invalid header or command table reports `ABIResolutionError.metadataUnavailable`. Individual malformed dependency payloads do not discard valid commands.

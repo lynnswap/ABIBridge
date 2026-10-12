@@ -6,12 +6,18 @@ import Testing
 private enum ManagedConversionError: Error { case rejected }
 
 private func storageType<Value>(for type: Value.Type) throws -> NativeType {
-    try .opaque(named: String(reflecting: type), size: MemoryLayout<Value>.stride,
-                alignment: MemoryLayout<Value>.alignment)
+    try .opaque(
+        named: String(reflecting: type),
+        size: MemoryLayout<Value>.stride,
+        alignment: MemoryLayout<Value>.alignment
+    )
 }
 
 private func copiedStorage<Value>(_ value: Value) throws -> NativeValue {
-    NativeValue(type: try storageType(for: Value.self), destroy: { destroyValue(Value.self, at: $0) }) { bytes in
+    NativeValue(
+        type: try storageType(for: Value.self),
+        destroy: { destroyValue(Value.self, at: $0) }
+    ) { bytes in
         withUnsafePointer(to: value) { copyValue(Value.self, from: $0, to: bytes.baseAddress!) }
     }
 }
@@ -20,13 +26,20 @@ private func readStorage<Value>(_ storage: NativeValue, as type: Value.Type) -> 
     unsafe storage.withUnsafeBytes { $0.baseAddress!.load(as: type) }
 }
 
-private func transformedStorage<Value>(_ value: Value, named name: String) async throws -> NativeValue {
-    let function = try ABIRuntime.shared.cFunction(
-        named: name, as: ((UnsafeRawPointer, UnsafeMutableRawPointer) -> Void).self
+private func transformedStorage<Value>(
+    _ value: Value,
+    named name: String
+) async throws -> NativeValue {
+    let function = try ABIRuntime.shared.resolveCFunctionAndWait(
+        named: name,
+        as: ((UnsafeRawPointer, UnsafeMutableRawPointer) -> Void).self
     )
     let input = try copiedStorage(value)
-    return try NativeValue(type: storageType(for: Value.self), retaining: function,
-                           destroy: { destroyValue(Value.self, at: $0) }) { output in
+    return try NativeValue(
+        type: storageType(for: Value.self),
+        retaining: function,
+        destroy: { destroyValue(Value.self, at: $0) }
+    ) { output in
         try unsafe input.withUnsafeBytes { input in
             try unsafe function.unsafeInvoke(input.baseAddress!, output.baseAddress!)
         }
@@ -48,7 +61,9 @@ private struct RejectingPointer: ABIBridgeValue {
     static let abiType = NativeType.pointer
     init() {}
     init(nativeValue: NativeValue) throws { throw ManagedConversionError.rejected }
-    static func nativeValue(from value: Self) throws -> NativeValue { throw ManagedConversionError.rejected }
+    static func nativeValue(from value: Self) throws -> NativeValue {
+        throw ManagedConversionError.rejected
+    }
 }
 
 private struct RejectedOwnedResult: ABIBridgeValue {
@@ -57,13 +72,17 @@ private struct RejectedOwnedResult: ABIBridgeValue {
     init(nativeValue: NativeValue) throws {
         let pointer = try unsafe nativeValue.read(as: UnsafeMutableRawPointer.self)
         let adopted = unsafe NativeValue(
-            adopting: pointer, as: try .opaque(named: "ResilientRecord"),
-            retaining: nativeValue, release: resilientRecordDestroy
+            adopting: pointer,
+            as: try .opaque(named: "ResilientRecord"),
+            retaining: nativeValue,
+            release: resilientRecordDestroy
         )
         try withExtendedLifetime(adopted) { throw ManagedConversionError.rejected }
     }
 
-    static func nativeValue(from value: Self) throws -> NativeValue { throw ManagedConversionError.rejected }
+    static func nativeValue(from value: Self) throws -> NativeValue {
+        throw ManagedConversionError.rejected
+    }
 }
 
 struct ManagedSwiftValueTests {
@@ -122,9 +141,17 @@ struct ManagedSwiftValueTests {
             weakToken = token
             let original = try copiedStorage(ResilientRecord(token: token, number: 7))
             let type = try storageType(for: ResilientRecord.self)
-            let temporary = UnsafeMutableRawPointer.allocate(byteCount: max(type.size, 1), alignment: type.alignment)
-            unsafe original.withUnsafeBytes { copyValue(ResilientRecord.self, from: $0.baseAddress!, to: temporary) }
-            result = NativeValue(type: type, destroy: { destroyValue(ResilientRecord.self, at: $0) }) { output in
+            let temporary = UnsafeMutableRawPointer.allocate(
+                byteCount: max(type.size, 1),
+                alignment: type.alignment
+            )
+            unsafe original.withUnsafeBytes {
+                copyValue(ResilientRecord.self, from: $0.baseAddress!, to: temporary)
+            }
+            result = NativeValue(
+                type: type,
+                destroy: { destroyValue(ResilientRecord.self, at: $0) }
+            ) { output in
                 moveValue(ResilientRecord.self, from: temporary, to: output.baseAddress!)
             }
             // moveValue left temporary uninitialized; only its allocation remains.
@@ -141,8 +168,9 @@ struct ManagedSwiftValueTests {
     }
 
     @Test func failedArgumentConversionCleansUpWithoutDestroyingOutput() async throws {
-        let function = try ABIRuntime.shared.cFunction(
-            named: "ABIManagedRecordTransform", as: ((ManagedArgument, RejectingPointer) -> Void).self
+        let function = try ABIRuntime.shared.resolveCFunctionAndWait(
+            named: "ABIManagedRecordTransform",
+            as: ((ManagedArgument, RejectingPointer) -> Void).self
         )
         var destroys = 0
         weak var weakToken: LifetimeToken?
@@ -163,22 +191,31 @@ struct ManagedSwiftValueTests {
 
     @Test func runtimeOnlyHandlesRetainCopiedResources() async throws {
         let runtime = ABIRuntime()
-        let create = try runtime.cFunction(
+        let create = try runtime.resolveCFunctionAndWait(
             named: "ABIResilientRecordCreate",
             as: ((Int64, UnsafeMutablePointer<Int32>) -> UnsafeMutableRawPointer).self
         )
-        let copy = try runtime.cFunction(
-            named: "ABIResilientRecordCopy", as: ((UnsafeRawPointer) -> UnsafeMutableRawPointer).self
+        let copy = try runtime.resolveCFunctionAndWait(
+            named: "ABIResilientRecordCopy",
+            as: ((UnsafeRawPointer) -> UnsafeMutableRawPointer).self
         )
-        let number = try runtime.cFunction(
-            named: "ABIResilientRecordNumber", as: ((UnsafeRawPointer) -> Int64).self
+        let number = try runtime.resolveCFunctionAndWait(
+            named: "ABIResilientRecordNumber",
+            as: ((UnsafeRawPointer) -> Int64).self
         )
-        let destructor = try runtime.resolve(.init(name: "ABIResilientRecordDestroy", language: .c))
+        let destructor = try runtime.resolveAndWait(
+            .init(name: "ABIResilientRecordDestroy", language: .c)
+        )
         typealias Destroy = @convention(c) (UnsafeMutableRawPointer) -> Void
         let destroy = unsafe destructor.withUnsafeAddress { unsafeBitCast($0, to: Destroy.self) }
         let opaque = try NativeType.opaque(named: "ResilientRecord")
         func adopt(_ pointer: UnsafeMutableRawPointer) -> NativeValue {
-            unsafe NativeValue(adopting: pointer, as: opaque, retaining: destructor, release: { destroy($0) })
+            unsafe NativeValue(
+                adopting: pointer,
+                as: opaque,
+                retaining: destructor,
+                release: { destroy($0) }
+            )
         }
         let destroyed = UnsafeMutablePointer<Int32>.allocate(capacity: 1)
         destroyed.initialize(to: 0)
@@ -189,20 +226,24 @@ struct ManagedSwiftValueTests {
         }
         original = nil
         #expect(destroyed.pointee == 0)
-        let actual = try unsafe duplicate!.withUnsafeBytes { try unsafe number.unsafeInvoke($0.baseAddress!) }
+        let actual = try unsafe duplicate!.withUnsafeBytes {
+            try unsafe number.unsafeInvoke($0.baseAddress!)
+        }
         #expect(actual == 41)
         duplicate = nil
         #expect(destroyed.pointee == 1)
     }
 
     @Test func failedResultConversionDestroysTransferredValue() async throws {
-        let create = try ABIRuntime.shared.cFunction(
+        let create = try ABIRuntime.shared.resolveCFunctionAndWait(
             named: "ABIResilientRecordCreate",
             as: ((Int64, UnsafeMutablePointer<Int32>) -> RejectedOwnedResult).self
         )
         var destroyed: Int32 = 0
         withUnsafeMutablePointer(to: &destroyed) { counter in
-            #expect(throws: ManagedConversionError.self) { try unsafe create.unsafeInvoke(41, counter) }
+            #expect(throws: ManagedConversionError.self) {
+                try unsafe create.unsafeInvoke(41, counter)
+            }
         }
         #expect(destroyed == 1)
     }
@@ -210,7 +251,8 @@ struct ManagedSwiftValueTests {
     @Test func metatypesDoNotEnableUnsupportedDirectCalls() async {
         #expect {
             _ = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
-                named: "ManagedSwiftFixtures.transformManaged(_:)", as: ((ManagedRecord) -> ManagedRecord).self
+                named: "ManagedSwiftFixtures.transformManaged(_:)",
+                as: ((ManagedRecord) -> ManagedRecord).self
             )
         } throws: { error in
             if case ABIResolutionError.unsupportedDeclaration = error { return true }
@@ -218,7 +260,8 @@ struct ManagedSwiftValueTests {
         }
         #expect {
             _ = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
-                named: "ManagedSwiftFixtures.transformOptional(_:)", as: ((Int64?) -> Int64?).self
+                named: "ManagedSwiftFixtures.transformOptional(_:)",
+                as: ((Int64?) -> Int64?).self
             )
         } throws: { error in
             if case ABIResolutionError.unsupportedDeclaration = error { return true }
@@ -226,7 +269,8 @@ struct ManagedSwiftValueTests {
         }
         #expect {
             _ = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
-                named: "ManagedSwiftFixtures.transformResilient(_:)", as: ((ResilientRecord) -> ResilientRecord).self
+                named: "ManagedSwiftFixtures.transformResilient(_:)",
+                as: ((ResilientRecord) -> ResilientRecord).self
             )
         } throws: { error in
             if case ABIResolutionError.unsupportedDeclaration = error { return true }

@@ -15,7 +15,7 @@ let storage = unsafe NativeValue(
 let counter = ABIRuntime.shared.cxxObject(
     storage, typeNamed: "Example::Counter"
 )
-let add = try counter.method(
+let add = try counter.resolveMethodAndWait(
     named: "add(int)",
     as: ((Int32) -> Int32).self
 )
@@ -26,14 +26,30 @@ The storage address becomes `this`. Bind the object's own storage, even when ano
 
 Supply member declarations relative to the class, including parameter types and qualifiers such as `current() const`. The runtime reuses its image and owner indexes across lookups. Framework, path, and retained-image scopes are available through `cxxObject(_:typeNamed:in:)`.
 
-A direct method handle calls the resolved implementation. For a virtual override, use a table-selected method. The supplied storage must represent a live object of the declared type or its correctly adjusted base subobject. Static members use `cxxFunction` without a receiver.
+A direct method handle calls the resolved implementation. For a virtual override, use a table-selected method. The supplied storage must represent a live object of the declared type or its correctly adjusted base subobject. Static members use `resolveCXXFunction` or `resolveCXXFunctionAndWait` without a receiver.
+
+## Resolve without blocking the caller
+
+Await `resolveMethod` to search and prepare on a worker. Its `AndWait` counterpart performs the same work synchronously. Both prepare on demand and join only required work already started by optional earlier `prepare`:
+
+```swift
+@MainActor
+func increment(_ counter: NativeCXXObject) async throws -> Int32 {
+    let add = try await counter.resolveMethod(
+        named: "add(int)", as: ((Int32) -> Int32).self
+    )
+    return try unsafe add.unsafeInvoke(5)
+}
+```
+
+The receiver remains in the caller's isolation domain. `resolveVirtualMethod` follows the same pattern: it captures the slot in that domain, then acquires implementation images and prepares the call interface on a worker. Named table selection uses `resolveEntry`; `resolveEntryAndWait` searches synchronously. Creating `cxxObject` scopes, binding prepared methods, and selecting explicit `entry(at:authentication:)` slots remain synchronous because they perform no search or call preparation.
 
 ## Reuse a prepared implementation with another receiver
 
 Object lookup returns `NativeBoundCXXMethod`, which retains its receiver storage. Its `method` property returns `NativeCXXMethod`, sharing the prepared target, adapter, and call signature without retaining that binding.
 
 ```swift
-let bound = try counter.method(
+let bound = try counter.resolveMethodAndWait(
     named: "add(int)", as: ((Int32) -> Int32).self
 )
 let add = bound.method
@@ -71,7 +87,7 @@ let table = try unsafe NativeVTable(
     entryCount: layout.entryCount,
     authentication: layout.vtableAuthentication
 )
-let current = try unsafe counter.virtualMethod(
+let current = try unsafe counter.resolveVirtualMethodAndWait(
     at: layout.currentSlot,
     in: table,
     authentication: layout.currentAuthentication,
@@ -89,10 +105,10 @@ Lookup captures the selected function pointer and retains its implementation ima
 When the table's image has recoverable original chained fixups and symbols, select an entry using its implementation declaration:
 
 ```swift
-let entry = try table.entry(
+let entry = try table.resolveEntryAndWait(
     named: "Example::Derived::current() const"
 )
-let current = try unsafe counter.virtualMethod(
+let current = try unsafe counter.resolveVirtualMethodAndWait(
     entry, as: (() -> Int32).self
 )
 let value = try unsafe current.unsafeInvoke()
@@ -126,10 +142,10 @@ Pass the target compiler's constants to `cxxVTablePointer(discriminator:)` and `
 Nontrivial C++ parameters and results can require copy constructors, destructors, invisible references, or indirect result storage that a plain C layout does not express. Resolve a C-compatible bridge and pass it to method lookup:
 
 ```swift
-let adapter = try ABIRuntime.shared.resolve(
+let adapter = try ABIRuntime.shared.resolveAndWait(
     NativeDeclaration(name: "ExampleInvokeTransform", language: .c)
 )
-let transform = try counter.method(
+let transform = try counter.resolveMethodAndWait(
     named: "transform(Example::Token) const",
     as: ((Token) -> Token).self,
     using: adapter
@@ -146,4 +162,4 @@ Bound methods retain the receiver, implementation, adapter image, and explicit c
 
 A `NativeVTable(readingFrom:...)` view retains its source receiver. Captured targets retain their implementation images without retaining that source receiver through table storage. Use `retainingCode:` for generated code whose owner must survive capture. A `NativeVTable(borrowing:...retaining:)` owner remains retained for both table storage and captured code.
 
-Perform lookup, calls, mutation, and final destruction on threads allowed by the native object. Handles do not make C++ instances Sendable. Independently owned receiver values must retain any dependencies required by their own destruction callbacks, as described in <doc:NativeValueAdapters>.
+Perform receiver inspection, invocation, mutation, and final destruction on threads allowed by the native object. Async resolution moves image lookup and call preparation to a worker while retaining the receiver and explicit code owners with the caller. Handles do not make C++ instances Sendable. Independently owned receiver values must retain any dependencies required by their own destruction callbacks, as described in <doc:NativeValueAdapters>.

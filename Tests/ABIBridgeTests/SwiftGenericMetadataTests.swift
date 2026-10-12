@@ -9,27 +9,41 @@ private func metadataPointer(_ type: Any.Type) -> UnsafeRawPointer {
 
 private enum GenericCallFailure: Error { case status(Int32) }
 
-private func genericStorage<Value: GenericMetric>(_ value: Value, runtime: ABIRuntime) async throws -> NativeValue {
-    let initialize = try runtime.cFunction(
+private func genericStorage<Value: GenericMetric>(
+    _ value: Value,
+    runtime: ABIRuntime
+) async throws -> NativeValue {
+    let initialize = try runtime.resolveCFunctionAndWait(
         named: "ABIGenericRecordInitialize",
         as: ((UnsafeRawPointer?, UnsafeRawPointer, UnsafeMutableRawPointer) -> Int32).self
     )
-    let destroy = try runtime.cFunction(
+    let destroy = try runtime.resolveCFunctionAndWait(
         named: "ABIGenericRecordDestroy",
         as: ((UnsafeRawPointer?, UnsafeMutableRawPointer) -> Int32).self
     )
-    let layout = try NativeType.opaque(named: String(reflecting: GenericRecord<Value>.self),
-                                      size: MemoryLayout<GenericRecord<Value>>.stride,
-                                      alignment: MemoryLayout<GenericRecord<Value>>.alignment)
+    let layout = try NativeType.opaque(
+        named: String(reflecting: GenericRecord<Value>.self),
+        size: MemoryLayout<GenericRecord<Value>>.stride,
+        alignment: MemoryLayout<GenericRecord<Value>>.alignment
+    )
     let argument = metadataPointer(Value.self)
     // The compiler-provided concrete metatype owns sizing; the retained handles
     // own adapter images through the last value destruction.
-    return try NativeValue(type: layout, retaining: (initialize, destroy), destroy: { address in
-        do { #expect(try unsafe destroy.unsafeInvoke(argument, address) == 0) }
-        catch { Issue.record(error) }
-    }) { output in
+    return try NativeValue(
+        type: layout,
+        retaining: (initialize, destroy),
+        destroy: { address in
+            do { #expect(try unsafe destroy.unsafeInvoke(argument, address) == 0) } catch {
+                Issue.record(error)
+            }
+        }
+    ) { output in
         try withUnsafePointer(to: value) { input in
-            let status = try unsafe initialize.unsafeInvoke(argument, UnsafeRawPointer(input), output.baseAddress!)
+            let status = try unsafe initialize.unsafeInvoke(
+                argument,
+                UnsafeRawPointer(input),
+                output.baseAddress!
+            )
             guard status == 0 else { throw GenericCallFailure.status(status) }
         }
     }
@@ -37,14 +51,17 @@ private func genericStorage<Value: GenericMetric>(_ value: Value, runtime: ABIRu
 
 struct SwiftGenericMetadataTests {
     @Test func metatypeSubstitutionsProduceCanonicalSpecializations() async throws {
-        let resolve = try ABIRuntime.shared.cFunction(
+        let resolve = try ABIRuntime.shared.resolveCFunctionAndWait(
             named: "ABIGenericRecordMetadata",
             as: ((UnsafeRawPointer?, UnsafeMutablePointer<UnsafeRawPointer?>) -> Int32).self
         )
         for (argument, expected): (Any.Type, Any.Type) in [
             (ManagedRecord.self, GenericRecord<ManagedRecord>.self),
             (ResilientRecord.self, GenericRecord<ResilientRecord>.self),
-            (ConditionalMetric<ManagedRecord>.self, GenericRecord<ConditionalMetric<ManagedRecord>>.self)
+            (
+                ConditionalMetric<ManagedRecord>.self,
+                GenericRecord<ConditionalMetric<ManagedRecord>>.self
+            ),
         ] {
             for _ in 0..<100 {
                 var result: UnsafeRawPointer?
@@ -55,20 +72,25 @@ struct SwiftGenericMetadataTests {
                 #expect(result == metadataPointer(expected))
             }
         }
-        #expect(metadataPointer(GenericRecord<ManagedRecord>.self) != metadataPointer(GenericRecord<ResilientRecord>.self))
+        #expect(
+            metadataPointer(GenericRecord<ManagedRecord>.self)
+                != metadataPointer(GenericRecord<ResilientRecord>.self)
+        )
     }
 
     @Test func missingMetadataAndUnsatisfiedConstraintsLeaveOutputUntouched() async throws {
-        let resolve = try ABIRuntime.shared.cFunction(
+        let resolve = try ABIRuntime.shared.resolveCFunctionAndWait(
             named: "ABIGenericRecordMetadata",
             as: ((UnsafeRawPointer?, UnsafeMutablePointer<UnsafeRawPointer?>) -> Int32).self
         )
         for (argument, expected): (UnsafeRawPointer?, Int32) in [
             (nil, 1), (metadataPointer(String.self), 2),
-            (metadataPointer(ConditionalMetric<String>.self), 2)
+            (metadataPointer(ConditionalMetric<String>.self), 2),
         ] {
             var result: UnsafeRawPointer? = metadataPointer(Int.self)
-            let status = try withUnsafeMutablePointer(to: &result) { try unsafe resolve.unsafeInvoke(argument, $0) }
+            let status = try withUnsafeMutablePointer(to: &result) {
+                try unsafe resolve.unsafeInvoke(argument, $0)
+            }
             #expect(status == expected)
             #expect(result == metadataPointer(Int.self))
         }
@@ -76,7 +98,7 @@ struct SwiftGenericMetadataTests {
 
     @Test func constrainedGenericCallsPreserveManagedAndResilientValues() async throws {
         let runtime = ABIRuntime()
-        let measure = try runtime.cFunction(
+        let measure = try runtime.resolveCFunctionAndWait(
             named: "ABIGenericRecordMeasure",
             as: ((UnsafeRawPointer?, UnsafeRawPointer, UnsafeMutablePointer<Int64>) -> Int32).self
         )
@@ -85,12 +107,18 @@ struct SwiftGenericMetadataTests {
             var actual: Int64 = -1
             let status = try unsafe storage.withUnsafeBytes { input in
                 try withUnsafeMutablePointer(to: &actual) {
-                    try unsafe measure.unsafeInvoke(metadataPointer(Value.self), input.baseAddress!, $0)
+                    try unsafe measure.unsafeInvoke(
+                        metadataPointer(Value.self),
+                        input.baseAddress!,
+                        $0
+                    )
                 }
             }
             #expect(status == 0)
             #expect(actual == measureGenericRecord(makeGenericRecord(value)))
-            let copy = unsafe storage.withUnsafeBytes { $0.baseAddress!.load(as: GenericRecord<Value>.self) }
+            let copy = unsafe storage.withUnsafeBytes {
+                $0.baseAddress!.load(as: GenericRecord<Value>.self)
+            }
             #expect(copy.value.metric == value.metric)
         }
         let token = LifetimeToken()
@@ -107,7 +135,10 @@ struct SwiftGenericMetadataTests {
             let runtime = ABIRuntime()
             let token = LifetimeToken { destroyed += 1 }
             observed = token
-            stored = try await genericStorage(ResilientRecord(token: token, number: 42), runtime: runtime)
+            stored = try await genericStorage(
+                ResilientRecord(token: token, number: 42),
+                runtime: runtime
+            )
             runtime.removeCachedResults()
         }
         withExtendedLifetime(stored) {
@@ -124,15 +155,18 @@ struct SwiftGenericMetadataTests {
     }
 
     @Test func rejectedGenericCallDoesNotInitializeResult() async throws {
-        let initialize = try ABIRuntime.shared.cFunction(
+        let initialize = try ABIRuntime.shared.resolveCFunctionAndWait(
             named: "ABIGenericRecordInitialize",
             as: ((UnsafeRawPointer?, UnsafeRawPointer, UnsafeMutableRawPointer) -> Int32).self
         )
         var input: Int64 = 42, output: Int64 = 99
         let status = try withUnsafePointer(to: &input) { input in
             try withUnsafeMutablePointer(to: &output) { output in
-                try unsafe initialize.unsafeInvoke(metadataPointer(Int64.self), UnsafeRawPointer(input),
-                                                    UnsafeMutableRawPointer(output))
+                try unsafe initialize.unsafeInvoke(
+                    metadataPointer(Int64.self),
+                    UnsafeRawPointer(input),
+                    UnsafeMutableRawPointer(output)
+                )
             }
         }
         #expect(status == 2)

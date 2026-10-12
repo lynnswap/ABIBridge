@@ -40,7 +40,34 @@ private nonisolated(nonsending) func nativeAsyncClosureError<Value>(
 private nonisolated(nonsending) func isOnMainThread() async -> Bool { pthread_main_np() != 0 }
 private final class AsyncCallbackCapture: Sendable {}
 
+private struct SwiftClosurePreparationValue: ABIBridgeSwiftValue {
+    var raw: Int64
+    static var swiftABIType: NativeType {
+        SwiftPreparationValue.preparationThreads.withLock { $0.append(pthread_main_np() != 0) }
+        return .int64
+    }
+}
+
+private nonisolated(nonsending) func coldHostClosureBody() async -> SwiftClosurePreparationValue {
+    MainActor.preconditionIsolated()
+    let observations = SwiftPreparationValue.preparationThreads.withLock { $0 }
+    #expect(!observations.isEmpty)
+    #expect(observations.allSatisfy { !$0 })
+    return .init(raw: 42)
+}
+
 struct NativeSwiftAsyncClosureTests {
+    @MainActor @Test func coldHostInvocationPreparesAwayFromCallerActor() async throws {
+        SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() }
+        defer { SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() } }
+        let callback = try NativeSwiftClosure<
+            nonisolated(nonsending) @Sendable () async -> SwiftClosurePreparationValue
+        >(coldHostClosureBody)
+        let value = try unsafe await callback.unsafeInvoke()
+        #expect(value.raw == 42)
+        MainActor.preconditionIsolated()
+    }
+
     @MainActor @Test func directConcurrentCallbackUsesTheDefaultGenericExecutor() async throws {
         let body: @Sendable () async -> Bool = isOnMainThread
         let concurrent = try NativeSwiftClosure<@Sendable @concurrent () async -> Bool>(body)

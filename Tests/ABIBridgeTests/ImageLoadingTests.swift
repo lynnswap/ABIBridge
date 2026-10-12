@@ -28,18 +28,18 @@ struct ImageLoadingTests {
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
         let scope = ImageSelector.path(fixture.libraryURL)
-        #expect(try runtime.images(matching: scope).isEmpty)
+        #expect(try runtime.resolveImagesAndWait(matching: scope).isEmpty)
         let declaration = NativeDeclaration(name: name + "::answer()", language: .cxx)
         #expect(throws: ABIResolutionError.imageNotLoaded) {
-            _ = try runtime.resolve(declaration, in: scope, loading: .loadedOnly)
+            _ = try runtime.resolveAndWait(declaration, in: scope, loading: .loadedOnly)
         }
-        var first: NativeFunction<Int32>? = try runtime.cxxFunction(
+        var first: NativeFunction<Int32>? = try runtime.resolveCXXFunctionAndWait(
             named: declaration.name,
             as: (() -> Int32).self,
             in: scope
         )
         #expect(try unsafe first!.unsafeInvoke() == 42)
-        var second: NativeFunction<Int32>? = try runtime.cxxFunction(
+        var second: NativeFunction<Int32>? = try runtime.resolveCXXFunctionAndWait(
             named: declaration.name,
             as: (() -> Int32).self,
             in: first!.symbol.image
@@ -49,7 +49,7 @@ struct ImageLoadingTests {
         first = nil
         #expect(try unsafe second!.unsafeInvoke() == 42)
         second = nil
-        #expect(try runtime.images(matching: scope).isEmpty)
+        #expect(try runtime.resolveImagesAndWait(matching: scope).isEmpty)
     }
 
     @Test func installNamesAndSymlinksSelectTheActualImage() async throws {
@@ -65,13 +65,13 @@ struct ImageLoadingTests {
             name: fixture.namespace + "::add(int, int)",
             language: .cxx
         )
-        #expect(try runtime.images(matching: .installName(alias.path)).isEmpty)
-        let first = try runtime.resolve(declaration, in: .installName(alias.path))
-        let second = try runtime.resolve(declaration, in: .path(fixture.libraryURL))
+        #expect(try runtime.resolveImagesAndWait(matching: .installName(alias.path)).isEmpty)
+        let first = try runtime.resolveAndWait(declaration, in: .installName(alias.path))
+        let second = try runtime.resolveAndWait(declaration, in: .path(fixture.libraryURL))
         #expect(first.image.identity == second.image.identity)
-        let inspected = try runtime.images(matching: .installName(alias.path))
+        let inspected = try runtime.resolveImagesAndWait(matching: .installName(alias.path))
         #expect(inspected.map(\.identity) == [first.image.identity])
-        let fromLease = try runtime.resolve(declaration, in: inspected[0])
+        let fromLease = try runtime.resolveAndWait(declaration, in: inspected[0])
         #expect(fromLease.image.identity == first.image.identity)
         runtime.removeCachedResults()
     }
@@ -91,15 +91,16 @@ struct ImageLoadingTests {
             language: .cxx
         )
         #expect(throws: ABIResolutionError.imageNotLoaded) {
-            _ = try runtime.resolve(
+            _ = try runtime.resolveAndWait(
                 declaration,
                 in: .installName(alias),
                 loading: .loadedOnly
             )
         }
-        #expect(try runtime.images(matching: .installName(path)).isEmpty)
-        let identity = try runtime.resolve(declaration, in: .installName(path)).image.identity
-        let retained = try runtime.cxxFunction(
+        #expect(try runtime.resolveImagesAndWait(matching: .installName(path)).isEmpty)
+        let identity = try runtime.resolveAndWait(declaration, in: .installName(path)).image
+            .identity
+        let retained = try runtime.resolveCXXFunctionAndWait(
             named: declaration.name,
             as: ((Int32, Int32) -> Int32).self,
             in: .installName(alias),
@@ -108,7 +109,9 @@ struct ImageLoadingTests {
         #expect(retained.symbol.image.identity == identity)
         #expect(try unsafe retained.unsafeInvoke(20, 22) == 42)
         #expect(
-            try runtime.images(matching: .installName(alias)).map(\.identity) == [identity]
+            try runtime.resolveImagesAndWait(matching: .installName(alias)).map(\.identity) == [
+                identity
+            ]
         )
         runtime.removeCachedResults()
         #expect(try unsafe retained.unsafeInvoke(20, 22) == 42)
@@ -123,7 +126,7 @@ struct ImageLoadingTests {
             language: .cxx,
             kind: .data
         )
-        let results = runtime.resolve([
+        let results = runtime.resolveAndWait([
             .init(declaration, loading: .loadedOnly),
             .init(declaration, in: [.path(fixture.libraryURL)]),
             .init(declaration, loading: .loadedOnly),
@@ -149,7 +152,7 @@ struct ImageLoadingTests {
             declaration,
             in: [.framework(named: UUID().uuidString), .path(fixture.libraryURL)]
         )
-        let result = try runtime.resolve(request)
+        let result = try runtime.resolveAndWait(request)
         #expect(unsafe result.withUnsafeAddress { $0.load(as: Int32.self) } == 42)
         runtime.removeCachedResults()
     }
@@ -173,7 +176,7 @@ struct ImageLoadingTests {
         try FileManager.default.moveItem(at: dependency.libraryURL, to: saved)
         let runtime = ABIRuntime()
         do {
-            _ = try runtime.cFunction(
+            _ = try runtime.resolveCFunctionAndWait(
                 named: "ABILoadedValue",
                 as: (() -> Int32).self,
                 in: .path(fixture.libraryURL)
@@ -184,7 +187,7 @@ struct ImageLoadingTests {
             #expect(message.contains(dependency.directory.lastPathComponent))
         }
         try FileManager.default.moveItem(at: saved, to: dependency.libraryURL)
-        let function = try runtime.cFunction(
+        let function = try runtime.resolveCFunctionAndWait(
             named: "ABILoadedValue",
             as: (() -> Int32).self,
             in: .path(fixture.libraryURL)
@@ -198,16 +201,16 @@ struct ImageLoadingTests {
         let declaration = NativeDeclaration(name: "getpid", language: .c)
         let invalid = URL(string: "https://example.invalid/library")!
         #expect(throws: ABIResolutionError.invalidImageTarget(invalid.absoluteString)) {
-            _ = try runtime.resolve(declaration, in: .path(invalid))
+            _ = try runtime.resolveAndWait(declaration, in: .path(invalid))
         }
         #expect(throws: ABIResolutionError.invalidImageTarget("bad\0name")) {
-            _ = try runtime.resolve(declaration, in: .installName("bad\0name"))
+            _ = try runtime.resolveAndWait(declaration, in: .installName("bad\0name"))
         }
         let missing = FileManager.default.temporaryDirectory.appendingPathComponent(
             UUID().uuidString + ".dylib"
         )
         do {
-            _ = try runtime.resolve(.init(declaration, in: [.path(missing), .automatic]))
+            _ = try runtime.resolveAndWait(.init(declaration, in: [.path(missing), .automatic]))
             Issue.record("Loader failure must not be hidden by automatic fallback")
         } catch ABIResolutionError.imageLoadFailed(let target, let message) {
             #expect(target == missing.path)
@@ -228,7 +231,7 @@ struct ImageLoadingTests {
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
         let scope = ImageSelector.path(fixture.libraryURL)
-        #expect(try runtime.images(matching: scope).isEmpty)
+        #expect(try runtime.resolveImagesAndWait(matching: scope).isEmpty)
         let function = try await runtime.resolveSwiftFunction(
             named: module + ".answer()",
             as: (() -> Int).self,
@@ -277,10 +280,10 @@ struct ImageLoadingTests {
             kind: .data
         )
         do {
-            _ = try runtime.resolve(declaration, in: .framework(named: name))
+            _ = try runtime.resolveAndWait(declaration, in: .framework(named: name))
             Issue.record("A framework name must not select between two loaded images")
         } catch ABIResolutionError.ambiguousImage(let candidates) { #expect(candidates.count == 2) }
-        let inspected = try runtime.resolve(
+        let inspected = try runtime.resolveAndWait(
             declaration,
             in: .framework(named: name),
             loading: .loadedOnly
@@ -301,12 +304,12 @@ struct ImageLoadingTests {
         let scope = ImageSelector.path(fixture.libraryURL)
         let clock = ContinuousClock()
         let coldStart = clock.now
-        let first = try runtime.resolve(declaration, in: scope)
+        let first = try runtime.resolveAndWait(declaration, in: scope)
         let cold = coldStart.duration(to: clock.now)
         for policy in [ImageLoadingPolicy.loadedOnly, .ifNeeded] {
             let start = clock.now
             for _ in 0..<100 {
-                let next = try runtime.resolve(declaration, in: scope, loading: policy)
+                let next = try runtime.resolveAndWait(declaration, in: scope, loading: policy)
                 #expect(next.image.identity == first.image.identity)
             }
             print(

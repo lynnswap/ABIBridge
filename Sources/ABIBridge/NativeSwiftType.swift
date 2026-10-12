@@ -922,7 +922,7 @@ extension ABIRuntime {
         genericArguments: [NativeSwiftGenericArgument] = []
     ) throws -> NativeSwiftType {
         let revision = swiftTypeCache.revision
-        let descriptor = try resolve(
+        let descriptor = try resolveAndWait(
             .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data),
             in: scope,
             loading: loading
@@ -975,7 +975,7 @@ extension ABIRuntime {
         genericArguments: [NativeSwiftGenericArgument] = []
     ) throws -> NativeSwiftType {
         let revision = swiftTypeCache.revision
-        let descriptor = try resolve(
+        let descriptor = try resolveAndWait(
             .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data),
             in: image,
             loading: loading
@@ -1031,7 +1031,7 @@ extension ABIRuntime {
         genericArguments: [NativeSwiftGenericArgument] = []
     ) throws -> NativeSwiftType {
         let revision = swiftTypeCache.revision
-        let descriptor = try resolve(
+        let descriptor = try resolveAndWait(
             .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data),
             in: scope,
             loading: loading
@@ -1088,7 +1088,7 @@ extension ABIRuntime {
         genericArguments: [NativeSwiftGenericArgument] = []
     ) throws -> NativeSwiftType {
         let revision = swiftTypeCache.revision
-        let descriptor = try resolve(
+        let descriptor = try resolveAndWait(
             .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data),
             in: image,
             loading: loading

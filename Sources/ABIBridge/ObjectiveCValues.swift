@@ -4,8 +4,8 @@ import ABIBridgeCore
 import Foundation
 import ObjCTypeDecodeKit
 
-struct ObjCValueCodec<Value> {
-    enum Kind { case void, boolean, bytes, object, classObject, pointer, block }
+struct ObjCValueCodec<Value>: Sendable {
+    enum Kind: Sendable { case void, boolean, bytes, object, classObject, pointer, block }
     let kind: Kind
     let size: Int
     let alignment: Int

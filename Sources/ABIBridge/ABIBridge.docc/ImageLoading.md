@@ -7,7 +7,7 @@ Resolve declarations in an explicitly selected library without a separate loadin
 On a platform that provides JavaScriptCore, the framework does not need to be imported into the source file:
 
 ```swift
-let create = try runtime.cFunction(
+let create = try runtime.resolveCFunctionAndWait(
     named: "JSContextGroupCreate",
     as: (() -> UnsafeMutableRawPointer?).self,
     in: .framework(named: "JavaScriptCore")
@@ -16,12 +16,12 @@ let create = try runtime.cFunction(
 
 Explicit framework and file-URL scopes default to ``ImageLoadingPolicy/ifNeeded``. The native loader acquires the selected image and performs its normal initialization before resolution proceeds. A catalog entry or process-lifetime mapping alone is not used as an initialization guarantee. Ordinary dyld reentrancy rules still apply when resolution is called from an initializer.
 
-Loading runs on the resolution thread: the caller for synchronous lookup, or a worker for async preparation and Swift factories. If the library requires an initialization context, acquire it there and then use `loading: .loadedOnly`. See <doc:SymbolLookup> for choosing synchronous or async lookup.
+Loading runs on the resolution thread: the caller for synchronous lookup, or a worker for async preparation and resolution factories. If the library requires an initialization context, acquire it there and then use `loading: .loadedOnly`. See <doc:SymbolLookup> for choosing synchronous or async lookup.
 
 Framework lookup first checks matching loaded images, then application and system public/private framework locations, including shared-cache-only images. Multiple candidates throw `ABIResolutionError.ambiguousImage`; use an executable URL to distinguish them. Discovery does not guarantee loadability.
 
 ```swift
-let function = try runtime.cxxFunction(
+let function = try runtime.resolveCXXFunctionAndWait(
     named: "Example::Renderer::version()",
     as: (() -> Int32).self,
     in: .path(binaryURL)
@@ -35,7 +35,7 @@ The URL identifies the Mach-O executable, not its enclosing framework directory.
 Use ``ImageSelector/installName(_:)`` for loader syntax rather than constructing a file URL from it:
 
 ```swift
-let symbol = try runtime.resolve(
+let symbol = try runtime.resolveAndWait(
     declaration,
     in: .installName("@rpath/Example.framework/Example")
 )
@@ -50,7 +50,7 @@ Automatic scope never searches for an unloaded library by guessing from a declar
 To resolve within an explicit scope without requesting loading or initialization:
 
 ```swift
-let symbol = try runtime.resolve(
+let symbol = try runtime.resolveAndWait(
     declaration, in: .path(binaryURL), loading: .loadedOnly
 )
 ```
@@ -63,7 +63,7 @@ Resolved symbols, functions, types, and runtime indexes retain their image owner
 
 Loading may execute constructors and acquire dependencies even when the requested declaration is subsequently missing. These effects cannot be rolled back as a transaction. `ABIResolutionError.imageLoadFailed(target:message:)` preserves the original dyld diagnostic. Loader failures stop ordered fallback; they are not silently treated as a missing declaration. A later operation can retry acquisition after its cause is addressed.
 
-Only the requested explicit target is acquired. ABIBridge uses its existing symbol indexes to locate definitions afterward; it does not treat the import names returned by `lazyLibraries` as addresses or traverse mutable binding chains. Batch scope snapshots are refreshed after acquisition attempts, including failures that may have changed loader state.
+Only the requested explicit target is acquired. ABIBridge uses its existing symbol indexes to locate definitions afterward; it does not treat the import names returned by `resolveLazyLibraries` or `resolveLazyLibrariesAndWait` as addresses or traverse mutable binding chains. Batch scope snapshots are refreshed after acquisition attempts, including failures that may have changed loader state.
 
 ## Native consumers
 

@@ -8,7 +8,7 @@ Resolve a source-level name and supply its signature as a Swift function type.
 import ABIBridge
 
 let runtime = ABIRuntime.shared
-let processID = try runtime.cFunction(
+let processID = try runtime.resolveCFunctionAndWait(
     named: "getpid",
     as: (() -> Int32).self
 )
@@ -18,13 +18,27 @@ let value = try unsafe processID.unsafeInvoke()
 The runtime searches loaded images automatically. Use a framework or executable-path scope to select a particular loaded binary:
 
 ```swift
-let add = try runtime.cxxFunction(
+let add = try runtime.resolveCXXFunctionAndWait(
     named: "Example::Math::add(int, int)",
     as: ((Int32, Int32) -> Int32).self,
     in: .framework(named: "Example")
 )
 let sum = try unsafe add.unsafeInvoke(20, 22)
 ```
+
+Both examples use synchronous `AndWait` lookup. Await `resolveCFunction` or `resolveCXXFunction` to run search, image acquisition, and call-interface preparation on a worker:
+
+```swift
+@MainActor
+func processIdentifier() async throws -> Int32 {
+    let processID = try await ABIRuntime.shared.resolveCFunction(
+        named: "getpid", as: (() -> Int32).self
+    )
+    return try unsafe processID.unsafeInvoke()
+}
+```
+
+Neither form needs `prepare`. If earlier preparation is still running, lookup joins only the required shared indexes and call interfaces. Invocation remains synchronous and runs where the caller invokes it. See <doc:SymbolLookup> for optional earlier preparation.
 
 A complete demangled C++ declaration selects the overload. Parameters and results must have C-compatible representations; see <doc:CXXObjectInvocation> for member calls. Pass reference parameters as addresses with the declared access and lifetime. Nontrivial values require a compiler adapter to handle construction, destruction, and call lowering.
 
@@ -53,7 +67,7 @@ There is no fixed argument-count limit. Swift calling conventions use the separa
 Include every concrete argument in `as:` and set `variadicFrom:` to the zero-based index of the first anonymous argument. For `int printf(const char *format, ...)`, the fixed prefix has one parameter:
 
 ```swift
-let printValue = try runtime.cFunction(
+let printValue = try runtime.resolveCFunctionAndWait(
     named: "printf",
     as: ((UnsafePointer<CChar>, Float) -> Int32).self,
     variadicFrom: 1
@@ -71,7 +85,7 @@ Use ``NativeSignature`` when layouts are known at runtime. Its `parameters:` lis
 let signature = NativeSignature(
     parameters: [.pointer], variadicParameters: [.float], returns: .int32
 )
-let printValue = try runtime.cFunction(named: "printf", signature: signature)
+let printValue = try runtime.resolveCFunctionAndWait(named: "printf", signature: signature)
 ```
 
 Reuse a handle for the same concrete tail; prepare another handle when its types or count change. The libffi path requires at least one fixed parameter. Native C++ `function<Signature>` wrappers use the consumer compiler's variadic function type directly. Callback entry also requires a known concrete tail, which cannot be inferred from an import name.
@@ -81,12 +95,12 @@ Reuse a handle for the same concrete tail; prepare another handle when its types
 A function handle retains its resolved image and prepared signature. Clearing the runtime's cached indexes does not invalidate existing handles. To reuse an image explicitly:
 
 ```swift
-let images = try runtime.images(matching: .framework(named: "Example"))
+let images = try runtime.resolveImagesAndWait(matching: .framework(named: "Example"))
 if let image = images.first {
-    let start = try runtime.cFunction(
+    let start = try runtime.resolveCFunctionAndWait(
         named: "ExampleStart", as: (() -> Void).self, in: image
     )
-    let stop = try runtime.cFunction(
+    let stop = try runtime.resolveCFunctionAndWait(
         named: "ExampleStop", as: (() -> Void).self, in: image
     )
 }
@@ -101,7 +115,7 @@ Handles are Sendable and can reuse their immutable signatures concurrently. Ever
 Use `Unmanaged<T>` for a native reference represented by a pointer. For example, a provider's `ExampleCopyValue` returning `CFTypeRef` at +1 can be called as follows:
 
 ```swift
-let copy = try runtime.cFunction(
+let copy = try runtime.resolveCFunctionAndWait(
     named: "ExampleCopyValue",
     as: ((Unmanaged<CFString>) -> Unmanaged<CFString>).self
 )

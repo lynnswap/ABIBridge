@@ -372,9 +372,10 @@ NSMethodSignature *receiverSignature(id receiver, SEL selector, NSError **error)
 
 }
 
-ABIObjCInvocation *ABICopyObjCInvocation(
+static ABIObjCInvocation *copyReceiverInvocation(
     id receiver, SEL selector, int32_t returnsRetained, int32_t consumesReceiver,
-    const size_t *consumedParameters, size_t consumedParameterCount, NSError **error)
+    const size_t *consumedParameters, size_t consumedParameterCount, bool prepareImages,
+    NSError **error)
 {
     if (error) *error = nil;
     if (!receiver || !selector || returnsRetained < -1 || returnsRetained > 1
@@ -396,10 +397,29 @@ ABIObjCInvocation *ABICopyObjCInvocation(
     auto plan = std::make_unique<ABIObjCInvocation>(nil, signature, selector, *ownership);
     plan->classMethod = class_isMetaClass(cls);
     plan->receiverType = plan->classMethod ? (Class)receiver : cls;
-    if (!retainImplementationImage(*plan, nullptr, class_getImageName(plan->receiverType), error)) return nullptr;
+    if (prepareImages && !ABIObjCPrepareInvocationPlan(plan.get(), error)) return nullptr;
     auto bound = std::make_unique<ABIObjCInvocation>(receiver, signature, selector, *ownership);
     bound->parent = plan.release();
     return bound.release();
+}
+
+ABIObjCInvocation *ABICopyObjCInvocation(
+    id receiver, SEL selector, int32_t returnsRetained, int32_t consumesReceiver,
+    const size_t *consumedParameters, size_t consumedParameterCount, NSError **error) {
+    return copyReceiverInvocation(receiver, selector, returnsRetained, consumesReceiver,
+                                  consumedParameters, consumedParameterCount, true, error);
+}
+
+ABIObjCInvocation *ABICopyObjCInvocationMetadata(
+    id receiver, SEL selector, int32_t returnsRetained, int32_t consumesReceiver,
+    const size_t *consumedParameters, size_t consumedParameterCount, NSError **error) {
+    return copyReceiverInvocation(receiver, selector, returnsRetained, consumesReceiver,
+                                  consumedParameters, consumedParameterCount, false, error);
+}
+
+BOOL ABIObjCPrepareInvocationPlan(ABIObjCInvocation *plan, NSError **error) {
+    if (error) *error = nil;
+    return retainImplementationImage(*plan, nullptr, class_getImageName(plan->receiverType), error);
 }
 
 ABIObjCInvocation *ABICopyObjCInvocationPlan(ABIObjCInvocation *invocation) {

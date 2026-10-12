@@ -7,8 +7,10 @@ public final class MethodExtractionReceiver {
     public let value: Int64
     public init(_ value: Int64) { self.value = value }
     @inline(never) public func adding(_ extra: Int64) -> Int64 { value + extra }
-    @inline(never) nonisolated(nonsending)
-    public func addingLater(_ extra: Int64) async throws -> Int64 {
+    @inline(never)
+    nonisolated(nonsending)
+        public func addingLater(_ extra: Int64) async throws -> Int64
+    {
         await Task.yield()
         if extra < 0 { throw NSError(domain: "MethodExtraction", code: 42) }
         return value + extra
@@ -25,9 +27,15 @@ private final class ExtractedCounterOwner {
     let pointer = ABIValidationCreateCounter()!
     deinit { ABIValidationDeleteCounter(pointer) }
     func storage() throws -> NativeValue {
-        try unsafe NativeValue(borrowing: pointer,
-            as: .opaque(named: "ABIArchitecture::Counter", size: Int(ABIValidationCounterSize()), alignment: Int(ABIValidationCounterAlignment())),
-            retaining: self)
+        try unsafe NativeValue(
+            borrowing: pointer,
+            as: .opaque(
+                named: "ABIArchitecture::Counter",
+                size: Int(ABIValidationCounterSize()),
+                alignment: Int(ABIValidationCounterAlignment())
+            ),
+            retaining: self
+        )
     }
 }
 
@@ -44,23 +52,41 @@ private final class ExtractedCounterOwner {
     do {
         let receiver = MethodExtractionReceiver(1)
         originalSwift = receiver
-        sync = try await runtime.object(receiver).resolveMethod(named: "adding(_:)", as: ((Int64) -> Int64).self)
-            .method
+        sync = try await runtime.object(receiver).resolveMethod(
+            named: "adding(_:)",
+            as: ((Int64) -> Int64).self
+        )
+        .method
         async = try await runtime.object(receiver).resolveMethod(
             named: "addingLater(_:)",
-            as: (nonisolated(nonsending) (Int64) async throws -> Int64).self).method
+            as: (nonisolated(nonsending) (Int64) async throws -> Int64).self
+        ).method
     }
-    try check(originalSwift == nil, "Extracted synchronous and async Swift methods release their original receiver")
+    try check(
+        originalSwift == nil,
+        "Extracted synchronous and async Swift methods release their original receiver"
+    )
     let receiver = MethodExtractionReceiver(35)
-    try check(try unsafe sync.unsafeInvoke(on: receiver, 7) == 42, "Extracted Swift method invokes a different compatible receiver")
+    try check(
+        try unsafe sync.unsafeInvoke(on: receiver, 7) == 42,
+        "Extracted Swift method invokes a different compatible receiver"
+    )
     let bound = try sync.bind(to: receiver)
-    try check(try unsafe bound.unsafeInvoke(8) == 43, "Swift rebinding reuses the prepared implementation")
+    try check(
+        try unsafe bound.unsafeInvoke(8) == 43,
+        "Swift rebinding reuses the prepared implementation"
+    )
     let asyncBound = try async.bind(to: receiver)
     let result = try unsafe await asyncBound.unsafeInvoke(7)
-    try check(result == 42, "Extracted async method rebinds and preserves suspension and its result")
+    try check(
+        result == 42,
+        "Extracted async method rebinds and preserves suspension and its result"
+    )
     do {
         _ = try unsafe await async.unsafeInvoke(on: receiver, -1)
-        throw ArchitectureValidationFailure(description: "Reused async method lost its native error")
+        throw ArchitectureValidationFailure(
+            description: "Reused async method lost its native error"
+        )
     } catch let error as NativeSwiftError {
         var code = 0
         error.withUnderlyingError { code = ($0 as NSError).code }
@@ -71,21 +97,44 @@ private final class ExtractedCounterOwner {
     let message: NativeObjCMethod<Int64, Int64> = try autoreleasepool {
         let object = MethodExtractionObject(1)
         originalObject = object
-        return try runtime.object(object).method(selector: "adding:", as: ((Int64) -> Int64).self).method
+        return try runtime.object(object).resolveMethodAndWait(
+            selector: "adding:",
+            as: ((Int64) -> Int64).self
+        ).method
     }
     try check(originalObject == nil, "Extracted Objective-C message releases the source binding")
     let object = MethodExtractionObject(35)
     let rebound = try message.bind(to: object)
-    let captured = try runtime.objcImplementation(on: MethodExtractionObject.self, selector: "adding:", as: ((Int64) -> Int64).self)
-    try check(try unsafe rebound.unsafeInvoke(7) == 42, "Extracted Objective-C message binds another receiver")
+    let captured = try runtime.resolveObjCImplementationAndWait(
+        on: MethodExtractionObject.self,
+        selector: "adding:",
+        as: ((Int64) -> Int64).self
+    )
+    try check(
+        try unsafe rebound.unsafeInvoke(7) == 42,
+        "Extracted Objective-C message binds another receiver"
+    )
     let failures = Mutex<[String]>([])
-    let hook = try unsafe runtime.hookMethod(on: MethodExtractionObject.self, selector: "adding:",
-        as: ((Int64) -> Int64).self, onFailure: { error in failures.withLock { $0.append(String(describing: error)) } }) { call, value in try call.proceed(value) + 100 }
+    let hook = try unsafe runtime.hookMethod(
+        on: MethodExtractionObject.self,
+        selector: "adding:",
+        as: ((Int64) -> Int64).self,
+        onFailure: { error in failures.withLock { $0.append(String(describing: error)) } }
+    ) { call, value in try call.proceed(value) + 100 }
     defer { hook.invalidate() }
-    try check(try unsafe message.unsafeInvoke(on: object, 7) == 142, "Extracted Objective-C message observes current dispatch")
-    try check(try unsafe captured.unsafeInvoke(on: object, 7) == 42, "Captured Objective-C implementation preserves its selected entry")
+    try check(
+        try unsafe message.unsafeInvoke(on: object, 7) == 142,
+        "Extracted Objective-C message observes current dispatch"
+    )
+    try check(
+        try unsafe captured.unsafeInvoke(on: object, 7) == 42,
+        "Captured Objective-C implementation preserves its selected entry"
+    )
     hook.invalidate()
-    try check(failures.withLock { $0.isEmpty }, "Reused Objective-C messages complete without callback failures")
+    try check(
+        failures.withLock { $0.isEmpty },
+        "Reused Objective-C messages complete without callback failures"
+    )
 
     weak var originalCounter: ExtractedCounterOwner?
     let direct: NativeCXXMethod<Int32, Int32>
@@ -95,25 +144,44 @@ private final class ExtractedCounterOwner {
         originalCounter = owner
         let storage = try owner.storage()
         let counter = runtime.cxxObject(storage, typeNamed: "ABIArchitecture::Counter")
-        direct = try counter.method(named: "add(int)", as: ((Int32) -> Int32).self).method
-        let table = try unsafe NativeVTable(readingFrom: storage, entryCount: 1,
-            authentication: .cxxVTablePointer(discriminator: ABIValidationTableDiscriminator()))
-        let entry = try table.entry(
+        direct = try counter.resolveMethodAndWait(named: "add(int)", as: ((Int32) -> Int32).self)
+            .method
+        let table = try unsafe NativeVTable(
+            readingFrom: storage,
+            entryCount: 1,
+            authentication: .cxxVTablePointer(discriminator: ABIValidationTableDiscriminator())
+        )
+        let entry = try table.resolveEntryAndWait(
             named: "ABIArchitecture::Counter::current() const",
             using: runtime
         )
-        virtual = try unsafe counter.virtualMethod(entry, as: (() -> Int32).self).method
+        virtual = try unsafe counter.resolveVirtualMethodAndWait(entry, as: (() -> Int32).self)
+            .method
     }
-    try check(originalCounter == nil, "Extracted C++ direct and vtable methods release the source receiver")
+    try check(
+        originalCounter == nil,
+        "Extracted C++ direct and vtable methods release the source receiver"
+    )
     let other = ExtractedCounterOwner()
     let storage = try other.storage()
-    try check(try unsafe direct.unsafeInvoke(on: storage, 2) == 42, "Extracted C++ implementation uses an explicit new receiver")
+    try check(
+        try unsafe direct.unsafeInvoke(on: storage, 2) == 42,
+        "Extracted C++ implementation uses an explicit new receiver"
+    )
     let reboundCounter = direct.bind(to: storage)
-    try check(try unsafe reboundCounter.unsafeInvoke(3) == 45, "C++ binding shares the captured implementation")
-    try check(try unsafe virtual.unsafeInvoke(on: storage) == 45, "Captured vtable entry remains authenticated after source release")
+    try check(
+        try unsafe reboundCounter.unsafeInvoke(3) == 45,
+        "C++ binding shares the captured implementation"
+    )
+    try check(
+        try unsafe virtual.unsafeInvoke(on: storage) == 45,
+        "Captured vtable entry remains authenticated after source release"
+    )
     if let error = ABIValidateExtractedObjCImplementations() {
         throw ArchitectureValidationFailure(description: String(cString: error))
     }
-    checks.append("C and Objective-C++ captured implementations preserve receiver independence, rebinding, dispatch and assignment reentry")
+    checks.append(
+        "C and Objective-C++ captured implementations preserve receiver independence, rebinding, dispatch and assignment reentry"
+    )
     return checks
 }

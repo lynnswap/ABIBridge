@@ -9,7 +9,8 @@ import Testing
 
 @Suite(.serialized)
 struct SwiftImportedReplacementTests {
-    @Test func sendableFunctionSignaturesCanReplaceEitherAnnotation() async throws {
+    @MainActor @Test(arguments: [false, true])
+    func sendableFunctionSignaturesCanReplaceEitherAnnotation(asynchronous: Bool) async throws {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
         let target = try await fixture.runtime.resolveSwiftFunction(
             named: fixture.module + ".scalar(_:)",
@@ -36,33 +37,63 @@ struct SwiftImportedReplacementTests {
             as: ((Int64) -> Int64).self,
             in: fixture.callerScope
         )
-        let ordinary = [
-            try await unsafe target.prepareImportedReplacement(
-                with: replacement,
-                in: fixture.callerScope
-            ),
-            try await unsafe target.prepareImportedReplacement(
-                with: sendableReplacement,
-                in: fixture.callerScope
-            ),
-        ]
+        let ordinary =
+            if asynchronous {
+                [
+                    try await unsafe target.prepareImportedReplacement(
+                        with: replacement,
+                        in: fixture.callerScope
+                    ),
+                    try await unsafe target.prepareImportedReplacement(
+                        with: sendableReplacement,
+                        in: fixture.callerScope
+                    ),
+                ]
+            } else {
+                [
+                    try unsafe target.prepareImportedReplacementAndWait(
+                        with: replacement,
+                        in: fixture.callerScope
+                    ),
+                    try unsafe target.prepareImportedReplacementAndWait(
+                        with: sendableReplacement,
+                        in: fixture.callerScope
+                    ),
+                ]
+            }
         for plan in ordinary {
+            #expect(plan.slots.allSatisfy { $0.status == .prepared })
             try unsafe plan.install(); defer { try? plan.restore() }
             #expect(try unsafe oracle.unsafeInvoke(40) == 140)
             #expect(try unsafe plan.slots[0].original!.unsafeInvoke(40) == 41)
             try plan.restore()
         }
-        let sendable = [
-            try await unsafe sendableTarget.prepareImportedReplacement(
-                with: replacement,
-                in: fixture.callerScope
-            ),
-            try await unsafe sendableTarget.prepareImportedReplacement(
-                with: sendableReplacement,
-                in: fixture.callerScope
-            ),
-        ]
+        let sendable =
+            if asynchronous {
+                [
+                    try await unsafe sendableTarget.prepareImportedReplacement(
+                        with: replacement,
+                        in: fixture.callerScope
+                    ),
+                    try await unsafe sendableTarget.prepareImportedReplacement(
+                        with: sendableReplacement,
+                        in: fixture.callerScope
+                    ),
+                ]
+            } else {
+                [
+                    try unsafe sendableTarget.prepareImportedReplacementAndWait(
+                        with: replacement,
+                        in: fixture.callerScope
+                    ),
+                    try unsafe sendableTarget.prepareImportedReplacementAndWait(
+                        with: sendableReplacement,
+                        in: fixture.callerScope
+                    ),
+                ]
+            }
         for plan in sendable {
+            #expect(plan.slots.allSatisfy { $0.status == .prepared })
             try unsafe plan.install(); defer { try? plan.restore() }
             #expect(try unsafe oracle.unsafeInvoke(40) == 140)
             #expect(try unsafe plan.slots[0].original!.unsafeInvoke(40) == 41)
@@ -71,7 +102,8 @@ struct SwiftImportedReplacementTests {
         #expect(try unsafe oracle.unsafeInvoke(40) == 41)
     }
 
-    @Test func sendableImportedMembersKeepTheirReceiverAndOriginal() async throws {
+    @MainActor @Test(arguments: [false, true])
+    func sendableImportedMembersKeepTheirReceiverAndOriginal(asynchronous: Bool) async throws {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
         let type = try await fixture.runtime.resolveSwiftType(
             named: fixture.module + ".ReplacementValue",
@@ -96,33 +128,65 @@ struct SwiftImportedReplacementTests {
             as: ((Int64) -> Int64).self,
             in: fixture.callerScope
         )
-        let ordinary = [
-            try await unsafe target.prepareImportedReplacement(
-                with: replacement,
-                in: fixture.callerScope
-            ),
-            try await unsafe target.prepareImportedReplacement(
-                with: sendableReplacement,
-                in: fixture.callerScope
-            ),
-        ]
+        let ordinary =
+            if asynchronous {
+                [
+                    try await unsafe target.prepareImportedReplacement(
+                        with: replacement,
+                        in: fixture.callerScope
+                    ),
+                    try await unsafe target.prepareImportedReplacement(
+                        with: sendableReplacement,
+                        in: fixture.callerScope
+                    ),
+                ]
+            } else {
+                [
+                    try unsafe target.prepareImportedReplacementAndWait(
+                        with: replacement,
+                        in: fixture.callerScope
+                    ),
+                    try unsafe target.prepareImportedReplacementAndWait(
+                        with: sendableReplacement,
+                        in: fixture.callerScope
+                    ),
+                ]
+            }
         for plan in ordinary {
+            #expect(plan.slots.allSatisfy { $0.status == .prepared })
+            #expect(plan.slots.allSatisfy { $0.status == .prepared })
             try unsafe plan.install(); defer { try? plan.restore() }
             #expect(try unsafe oracle.unsafeInvoke(2) == 142)
             #expect(try unsafe plan.slots[0].original!.unsafeInvoke(on: Int64(40), 2) == 42)
             try plan.restore()
         }
-        let sendable = [
-            try await unsafe sendableTarget.prepareImportedReplacement(
-                with: replacement,
-                in: fixture.callerScope
-            ),
-            try await unsafe sendableTarget.prepareImportedReplacement(
-                with: sendableReplacement,
-                in: fixture.callerScope
-            ),
-        ]
+        let sendable =
+            if asynchronous {
+                [
+                    try await unsafe sendableTarget.prepareImportedReplacement(
+                        with: replacement,
+                        in: fixture.callerScope
+                    ),
+                    try await unsafe sendableTarget.prepareImportedReplacement(
+                        with: sendableReplacement,
+                        in: fixture.callerScope
+                    ),
+                ]
+            } else {
+                [
+                    try unsafe sendableTarget.prepareImportedReplacementAndWait(
+                        with: replacement,
+                        in: fixture.callerScope
+                    ),
+                    try unsafe sendableTarget.prepareImportedReplacementAndWait(
+                        with: sendableReplacement,
+                        in: fixture.callerScope
+                    ),
+                ]
+            }
         for plan in sendable {
+            #expect(plan.slots.allSatisfy { $0.status == .prepared })
+            #expect(plan.slots.allSatisfy { $0.status == .prepared })
             try unsafe plan.install(); defer { try? plan.restore() }
             #expect(try unsafe oracle.unsafeInvoke(2) == 142)
             #expect(try unsafe plan.slots[0].original!.unsafeInvoke(on: Int64(40), 2) == 42)

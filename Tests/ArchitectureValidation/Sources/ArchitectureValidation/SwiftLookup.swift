@@ -6,15 +6,24 @@ import SwiftReplacementFixtures
 @MainActor func validateSwiftLookup() async throws -> [String] {
     let runtime = ABIRuntime()
     let module = "SwiftReplacementFixtures"
-    let declaration = NativeDeclaration(name: "nominal type descriptor for \(module).ReplacementRenderer", language: .swift, kind: .data)
+    let declaration = NativeDeclaration(
+        name: "nominal type descriptor for \(module).ReplacementRenderer",
+        language: .swift,
+        kind: .data
+    )
     var checks: [String] = []
-    @MainActor func measure(_ label: String, repetitions: Int = 1, operation: @MainActor () async throws -> Void) async throws {
+    @MainActor func measure(
+        _ label: String,
+        repetitions: Int = 1,
+        operation: @MainActor () async throws -> Void
+    ) async throws {
         print("LOOKUP started: \(label)")
         fflush(nil)
         let start = ContinuousClock.now
         for _ in 0..<repetitions { try await operation() }
         let duration = start.duration(to: .now)
-        let seconds = Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
+        let seconds =
+            Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
         let result = "\(label): \(seconds / Double(repetitions)) s (mean of \(repetitions))"
         checks.append(result)
         print("LOOKUP completed: \(result)")
@@ -22,7 +31,7 @@ import SwiftReplacementFixtures
     }
     for pass in ["cold", "warm"] {
         try await measure("nominal descriptor \(pass)", repetitions: pass == "warm" ? 100 : 1) {
-            _ = try runtime.resolve(declaration)
+            _ = try runtime.resolveAndWait(declaration)
         }
     }
     let base = try await runtime.resolveSwiftType(named: module + ".ReplacementRenderer")
@@ -31,21 +40,32 @@ import SwiftReplacementFixtures
         in: base.image,
         loading: .loadedOnly
     )
-    for (label, type, receiver) in [("direct method", base, ReplacementRenderer()), ("inherited method", child, InheritedRenderer())] {
+    for (label, type, receiver) in [
+        ("direct method", base, ReplacementRenderer()),
+        ("inherited method", child, InheritedRenderer()),
+    ] {
         runtime.removeCachedResults()
         for pass in ["cold", "warm"] {
             try await measure("\(label) \(pass)", repetitions: pass == "warm" ? 100 : 1) {
-                let method = try await type.resolveMethod(named: "scalar(_:)", as: ((Int64) -> Int64).self)
+                let method = try await type.resolveMethod(
+                    named: "scalar(_:)",
+                    as: ((Int64) -> Int64).self
+                )
                 guard try unsafe method.unsafeInvoke(on: receiver, 40) == 42 else {
-                    throw ArchitectureValidationFailure(description: "Resolved method returned an unexpected result")
+                    throw ArchitectureValidationFailure(
+                        description: "Resolved method returned an unexpected result"
+                    )
                 }
             }
         }
     }
     runtime.removeCachedResults()
-    for typeName in ["ABIBridge.ABIRuntime", "ArchitectureValidation.ArchitectureCounter", "SwiftReplacementFixtures.ReplacementRenderer"] {
+    for typeName in [
+        "ABIBridge.ABIRuntime", "ArchitectureValidation.ArchitectureCounter",
+        "SwiftReplacementFixtures.ReplacementRenderer",
+    ] {
         try await measure("different module: \(typeName)") {
-            _ = try runtime.resolve(
+            _ = try runtime.resolveAndWait(
                 .init(
                     name: "nominal type descriptor for " + typeName,
                     language: .swift,
@@ -59,23 +79,37 @@ import SwiftReplacementFixtures
         let absent = NativeDeclaration(name: module + ".missing() -> ()", language: .swift)
         try await measure("absent module: \(module)") {
             do {
-                _ = try runtime.resolve(absent)
-                throw ArchitectureValidationFailure(description: "Absent module unexpectedly resolved")
-            } catch ABIResolutionError.declarationNotFound(let declaration) where declaration == absent {}
+                _ = try runtime.resolveAndWait(absent)
+                throw ArchitectureValidationFailure(
+                    description: "Absent module unexpectedly resolved"
+                )
+            } catch ABIResolutionError.declarationNotFound(let declaration)
+                where declaration == absent
+            {}
         }
     }
     runtime.removeCachedResults()
-    let scopedAbsent = NativeDeclaration(name: "ABIBridgeAbsentScoped.missing() -> ()", language: .swift)
+    let scopedAbsent = NativeDeclaration(
+        name: "ABIBridgeAbsentScoped.missing() -> ()",
+        language: .swift
+    )
     for pass in ["cold", "warm"] {
-        try await measure("absent module in Foundation \(pass)", repetitions: pass == "warm" ? 100 : 1) {
+        try await measure(
+            "absent module in Foundation \(pass)",
+            repetitions: pass == "warm" ? 100 : 1
+        ) {
             do {
-                _ = try runtime.resolve(
+                _ = try runtime.resolveAndWait(
                     scopedAbsent,
                     in: .framework(named: "Foundation"),
                     loading: .loadedOnly
                 )
-                throw ArchitectureValidationFailure(description: "Absent module unexpectedly resolved in Foundation")
-            } catch ABIResolutionError.declarationNotFound(let declaration) where declaration == scopedAbsent {}
+                throw ArchitectureValidationFailure(
+                    description: "Absent module unexpectedly resolved in Foundation"
+                )
+            } catch ABIResolutionError.declarationNotFound(let declaration)
+                where declaration == scopedAbsent
+            {}
         }
     }
     return checks

@@ -6,16 +6,16 @@ struct ImageAcquisitionPlatformTests {
     @Test func systemFrameworkAcquisitionMatchesItsCatalogImage() async throws {
         let runtime = ABIRuntime()
         let scope = ImageSelector.framework(named: "CoreFoundation")
-        let before = try runtime.images(matching: scope)
+        let before = try runtime.resolveImagesAndWait(matching: scope)
         let image = try #require(before.first)
-        let function = try runtime.cFunction(
+        let function = try runtime.resolveCFunctionAndWait(
             named: "CFRunLoopGetTypeID",
             as: (() -> UInt).self,
             in: scope
         )
         #expect(function.symbol.image.identity == image.identity)
         #expect(try unsafe function.unsafeInvoke() == CFRunLoopGetTypeID())
-        let fromLease = try runtime.cFunction(
+        let fromLease = try runtime.resolveCFunctionAndWait(
             named: "CFRunLoopGetTypeID",
             as: (() -> UInt).self,
             in: image

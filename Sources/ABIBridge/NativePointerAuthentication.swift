@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeRuntime
 
 /// An explicit pointer-authentication schema supplied by a native adapter.
 ///
@@ -52,11 +53,17 @@ public enum NativePointerAuthentication: Sendable, Hashable {
     /// - Returns: The authenticated pointer, or nil for a stored null.
     /// - Throws: An out-of-bounds error for an unavailable field extent.
     @unsafe public func readPointer(
-        from storage: NativeValue, at offset: Int = 0
+        from storage: NativeValue,
+        at offset: Int = 0
     ) throws -> UnsafeRawPointer? {
         let field = try storage.view(at: offset, as: .pointer)
         return unsafe field.withUnsafeBytes {
-            ABIUnsafeReadAuthenticatedPointer($0.baseAddress, keyCode, discriminator, addressDiversity)
+            ABIUnsafeReadAuthenticatedPointer(
+                $0.baseAddress,
+                keyCode,
+                discriminator,
+                addressDiversity
+            )
         }
     }
 
@@ -109,22 +116,39 @@ public final class NativeVTable {
     ///
     /// The caller must establish readability and the actual table format.
     @unsafe public convenience init(
-        borrowing address: UnsafeRawPointer, entryCount: Int, retaining owner: Any? = nil
+        borrowing address: UnsafeRawPointer,
+        entryCount: Int,
+        retaining owner: Any? = nil
     ) throws {
-        try unsafe self.init(borrowing: address, entryCount: entryCount, retaining: owner, retainingCode: owner)
+        try unsafe self.init(
+            borrowing: address,
+            entryCount: entryCount,
+            retaining: owner,
+            retainingCode: owner
+        )
     }
 
     @unsafe private init(
-        borrowing address: UnsafeRawPointer, entryCount: Int,
-        retaining owner: Any?, retainingCode codeOwner: Any?
+        borrowing address: UnsafeRawPointer,
+        entryCount: Int,
+        retaining owner: Any?,
+        retainingCode codeOwner: Any?
     ) throws {
-        let (size, overflow) = entryCount.multipliedReportingOverflow(by: MemoryLayout<UnsafeRawPointer>.size)
-        guard entryCount >= 0, !overflow else { throw NativeDispatchError.invalidEntryCount(entryCount) }
+        let (size, overflow) = entryCount.multipliedReportingOverflow(
+            by: MemoryLayout<UnsafeRawPointer>.size
+        )
+        guard entryCount >= 0, !overflow else {
+            throw NativeDispatchError.invalidEntryCount(entryCount)
+        }
         self.entryCount = entryCount
         self.codeOwner = codeOwner
         storage = unsafe NativeValue(
             borrowing: UnsafeMutableRawPointer(mutating: address),
-            as: try .opaque(named: "vtable", size: size, alignment: MemoryLayout<UnsafeRawPointer>.alignment),
+            as: try .opaque(
+                named: "vtable",
+                size: size,
+                alignment: MemoryLayout<UnsafeRawPointer>.alignment
+            ),
             retaining: owner
         )
     }
@@ -139,50 +163,83 @@ public final class NativeVTable {
     ///   - codeOwner: An optional owner for generated code retained by captured targets and shared hooks.
     /// - Throws: A bounds, null-vtable, or invalid-entry-count error.
     @unsafe public convenience init(
-        readingFrom receiver: NativeValue, at offset: Int = 0, entryCount: Int,
-        authentication: NativePointerAuthentication, retainingCode codeOwner: Any? = nil
+        readingFrom receiver: NativeValue,
+        at offset: Int = 0,
+        entryCount: Int,
+        authentication: NativePointerAuthentication,
+        retainingCode codeOwner: Any? = nil
     ) throws {
         guard let address = try unsafe authentication.readPointer(from: receiver, at: offset) else {
             throw NativeDispatchError.missingVTable
         }
         try unsafe self.init(
-            borrowing: address, entryCount: entryCount, retaining: receiver, retainingCode: codeOwner
+            borrowing: address,
+            entryCount: entryCount,
+            retaining: receiver,
+            retainingCode: codeOwner
         )
     }
 
-    func target(at index: Int, authentication: NativePointerAuthentication, retaining image: NativeImage? = nil) throws -> VirtualCallTarget {
+    func slot(at index: Int) throws -> (bits: UInt, address: UInt) {
         guard index >= 0, index < entryCount else {
             throw NativeDispatchError.entryOutOfBounds(index: index, count: entryCount)
         }
-        return try unsafe storage.withUnsafeBytes {
-            var failure: OpaquePointer?
-            guard let handle = ABICopyVirtualCallTarget(
-                $0.baseAddress!.advanced(by: index * MemoryLayout<UnsafeRawPointer>.size),
-                authentication.keyCode, authentication.discriminator, authentication.addressDiversity,
-                &failure
-            ) else { throw consumeNativeCallFailure(failure) }
-            return VirtualCallTarget(handle: handle, retaining: codeOwner, image: image)
+        return unsafe storage.withUnsafeBytes {
+            let slot = $0.baseAddress!.advanced(by: index * MemoryLayout<UnsafeRawPointer>.size)
+            return (slot.loadUnaligned(as: UInt.self), UInt(bitPattern: slot))
         }
+    }
+
+    static func prepareTarget(
+        _ slot: (bits: UInt, address: UInt),
+        authentication: NativePointerAuthentication
+    ) throws -> RuntimeImplementation {
+        guard
+            let implementation = try withRuntimeErrors({
+                try RuntimeImplementation(
+                    bits: slot.bits,
+                    storage: UnsafeRawPointer(bitPattern: slot.address)!,
+                    authentication: authentication.runtimeValue,
+                    retaining: nil
+                )
+            })
+        else { throw ABIResolutionError.invalidAddress }
+        return implementation
+    }
+
+    func target(
+        at index: Int,
+        authentication: NativePointerAuthentication,
+        retaining image: NativeImage? = nil
+    ) throws -> VirtualCallTarget {
+        let implementation = try Self.prepareTarget(slot(at: index), authentication: authentication)
+        return target(capturing: implementation, retaining: image)
+    }
+
+    func target(
+        capturing implementation: RuntimeImplementation,
+        retaining image: NativeImage?
+    ) -> VirtualCallTarget {
+        VirtualCallTarget(implementation: implementation, retaining: codeOwner, image: image)
     }
 }
 
 // An explicit code owner may execute native destruction on final release.
 // Keep the implementation images leased until that release finishes.
 final class VirtualCallTarget {
-    let handle: OpaquePointer
+    private let implementation: RuntimeImplementation
     private var owner: Any?
     private let image: NativeImage?
-    init(handle: OpaquePointer, retaining owner: Any?, image: NativeImage?) {
-        self.handle = handle
+
+    init(implementation: RuntimeImplementation, retaining owner: Any?, image: NativeImage?) {
+        self.implementation = implementation
         self.owner = owner
         self.image = image
     }
+
     deinit {
-        // A replaced target may belong to a different image than its table.
-        withExtendedLifetime(image) {
-            owner = nil
-            ABIReleaseVirtualCallTarget(handle)
-        }
+        withExtendedLifetime((image, implementation)) { owner = nil }
     }
-    var function: ABIUnmanagedFunction? { ABIVirtualCallTargetFunction(handle) }
+
+    var function: ABIUnmanagedFunction? { implementation.function }
 }

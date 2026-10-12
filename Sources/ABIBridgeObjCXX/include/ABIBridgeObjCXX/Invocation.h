@@ -14,6 +14,14 @@ FOUNDATION_EXPORT ABIObjCInvocation * _Nullable ABICopyObjCInvocation(
     id receiver, SEL selector, int32_t returnsRetained, int32_t consumesReceiver,
     const size_t * _Nullable consumedParameters, size_t consumedParameterCount,
     NSError * _Nullable * _Nullable error);
+/// Captures a receiver's signature and ownership on its caller's executor, without acquiring image leases. Use ABICopyObjCInvocationPlan to prepare only its receiver-independent parent before invocation.
+FOUNDATION_EXPORT ABIObjCInvocation * _Nullable ABICopyObjCInvocationMetadata(
+    id receiver, SEL selector, int32_t returnsRetained, int32_t consumesReceiver,
+    const size_t * _Nullable consumedParameters, size_t consumedParameterCount,
+    NSError * _Nullable * _Nullable error);
+/// Acquires a freshly captured receiver-independent plan's image lease. Finish this operation before publishing or invoking that plan; it must not race with another preparation of the same plan.
+FOUNDATION_EXPORT BOOL ABIObjCPrepareInvocationPlan(
+    ABIObjCInvocation *plan, NSError * _Nullable * _Nullable error);
 /// Captures a concrete IMP and signature without retaining an instance. The class and selector must remain valid during lookup. Generated classes must remain registered and generated IMPs must remain callable for its lifetime.
 FOUNDATION_EXPORT ABIObjCInvocation * _Nullable ABICopyObjCImplementation(
     Class type, SEL selector, BOOL classMethod, int32_t returnsRetained,

@@ -10,7 +10,8 @@ private struct PaddedValue: BitwiseCopyable, ABIBridgeValue {
 
 private struct LargeValue: ABIBridgeValue {
     static let abiType = try! NativeType.structure(
-        named: "ABIBridgeFixture::LargeResult", fields: Array(repeating: .int, count: 8)
+        named: "ABIBridgeFixture::LargeResult",
+        fields: Array(repeating: .int, count: 8)
     )
     let storage: NativeValue
     init(nativeValue: NativeValue) { storage = nativeValue }
@@ -34,33 +35,53 @@ struct SwiftConsumer {
         defer { if let loader { dlclose(loader) } }
 
         try await MainActor.run {
-            let factory = try ABIRuntime.shared.object(NSData.self as AnyObject).method(
-                selector: "data", as: (() -> NSData).self
-            )
+            let factory = try ABIRuntime.shared.object(NSData.self as AnyObject)
+                .resolveMethodAndWait(
+                    selector: "data",
+                    as: (() -> NSData).self
+                )
             let data = try unsafe factory.unsafeInvoke()
             precondition(data.length == 0)
             let receiver = BlockReceiver()
             let object = ABIRuntime.shared.object(receiver)
             do {
-                _ = try object.method(selector: "missingHandler", as: (() -> Void).self)
+                _ = try object.resolveMethodAndWait(
+                    selector: "missingHandler",
+                    as: (() -> Void).self
+                )
                 preconditionFailure("Missing selectors must fail lookup")
             } catch let ABIResolutionError.declarationNotFound(request) {
-                precondition(request.language == .objectiveC && request.name.contains("missingHandler"))
+                precondition(
+                    request.language == .objectiveC && request.name.contains("missingHandler")
+                )
             }
             do {
-                _ = try object.method(selector: "setHandler:", as: ((Int32) -> Void).self)
+                _ = try object.resolveMethodAndWait(
+                    selector: "setHandler:",
+                    as: ((Int32) -> Void).self
+                )
                 preconditionFailure("An integer cannot describe a block parameter")
             } catch let ABIResolutionError.signatureMismatch(details) {
                 precondition(details.position == .argument(0))
                 precondition(details.declaration?.name.contains("setHandler:") == true)
                 precondition(details.expected == "Swift.Int32" && details.found == ["@?"])
             }
-            let setter = try object.method(selector: "setHandler:", as: ((ConsumerBlock?) -> Void).self)
-            let getter = try object.method(selector: "handler", as: (() -> ConsumerBlock?).self)
-            let unboundSetter = try ABIRuntime.shared.objcMethod(
-                on: BlockReceiver.self, selector: #selector(setter: BlockReceiver.handler), as: ((ConsumerBlock?) -> Void).self
+            let setter = try object.resolveMethodAndWait(
+                selector: "setHandler:",
+                as: ((ConsumerBlock?) -> Void).self
             )
-            let boundSetter: NativeBoundObjCMethod<Void, ConsumerBlock?> = try unboundSetter.bind(to: receiver)
+            let getter = try object.resolveMethodAndWait(
+                selector: "handler",
+                as: (() -> ConsumerBlock?).self
+            )
+            let unboundSetter = try ABIRuntime.shared.resolveObjCMethodAndWait(
+                on: BlockReceiver.self,
+                selector: #selector(setter: BlockReceiver.handler),
+                as: ((ConsumerBlock?) -> Void).self
+            )
+            let boundSetter: NativeBoundObjCMethod<Void, ConsumerBlock?> = try unboundSetter.bind(
+                to: receiver
+            )
             let captured = NSNumber(value: 31)
             let block: ConsumerBlock = { captured.int32Value + $0 }
             try unsafe unboundSetter.unsafeInvoke(on: receiver, block)
@@ -69,8 +90,9 @@ struct SwiftConsumer {
             let extracted: NativeObjCMethod<ConsumerBlock?> = try autoreleasepool {
                 let temporary = BlockReceiver()
                 observedOriginal = temporary
-                return try ABIRuntime.shared.object(temporary).method(
-                    selector: #selector(getter: BlockReceiver.handler), as: (() -> ConsumerBlock?).self
+                return try ABIRuntime.shared.object(temporary).resolveMethodAndWait(
+                    selector: #selector(getter: BlockReceiver.handler),
+                    as: (() -> ConsumerBlock?).self
                 ).method
             }
             precondition(observedOriginal == nil)
@@ -82,8 +104,10 @@ struct SwiftConsumer {
             precondition(returned?(11) == 42)
             let cleared = try unsafe getter.unsafeInvoke()
             precondition(cleared == nil)
-            let capturedGetter = try ABIRuntime.shared.objcImplementation(
-                on: BlockReceiver.self, selector: #selector(getter: BlockReceiver.handler), as: (() -> ConsumerBlock?).self
+            let capturedGetter = try ABIRuntime.shared.resolveObjCImplementationAndWait(
+                on: BlockReceiver.self,
+                selector: #selector(getter: BlockReceiver.handler),
+                as: (() -> ConsumerBlock?).self
             )
             try unsafe setter.unsafeInvoke(block)
             let capturedBlock = try unsafe capturedGetter.unsafeInvoke(on: receiver)
@@ -93,42 +117,56 @@ struct SwiftConsumer {
             precondition(storedBlock(11) == 42)
             let nilIvar = try object.value(forIvar: "handler", as: ConsumerBlock?.self)
             precondition(nilIvar == nil)
-            let capturedFactory = try ABIRuntime.shared.objcImplementation(
-                on: NSData.self, selector: "data", as: (() -> NSData).self, classMethod: true
+            let capturedFactory = try ABIRuntime.shared.resolveObjCImplementationAndWait(
+                on: NSData.self,
+                selector: "data",
+                as: (() -> NSData).self,
+                classMethod: true
             )
             let capturedData = try unsafe capturedFactory.unsafeInvoke(on: NSData.self as AnyObject)
             precondition(capturedData.length == 0)
         }
         let runtime = ABIRuntime()
-        let processID = try runtime.cFunction(named: "getpid", as: (() -> Int32).self)
+        let processID = try runtime.resolveCFunctionAndWait(named: "getpid", as: (() -> Int32).self)
         let pid = try unsafe processID.unsafeInvoke()
         precondition(pid == getpid())
 
-        let images = try runtime.images(matching: .path(url))
+        let images = try runtime.resolveImagesAndWait(matching: .path(url))
         guard let image = images.first else { throw Failure.missingImage }
-        let add = try runtime.cxxFunction(
+        let add = try runtime.resolveCXXFunctionAndWait(
             named: "ABIBridgeFixture::add(int, int)",
-            as: ((Int32, Int32) -> Int32).self, in: image
+            as: ((Int32, Int32) -> Int32).self,
+            in: image
         )
-        let cAdd = try runtime.cFunction(
+        let cAdd = try runtime.resolveCFunctionAndWait(
             named: "ABIBridgeFixtureCAdd",
-            as: ((Int32, Int32) -> Int32).self, in: .path(url)
+            as: ((Int32, Int32) -> Int32).self,
+            in: .path(url)
         )
-        let large = try runtime.cxxFunction(
-            named: "ABIBridgeFixture::large(long)", as: ((Int) -> LargeValue).self, in: image
-        )
-        let dynamic = try runtime.cxxFunction(
+        let large = try runtime.resolveCXXFunctionAndWait(
             named: "ABIBridgeFixture::large(long)",
-            signature: .init(parameters: [.int], returns: LargeValue.abiType), in: image
+            as: ((Int) -> LargeValue).self,
+            in: image
         )
-        let padded = try runtime.cxxFunction(
+        let dynamic = try runtime.resolveCXXFunctionAndWait(
+            named: "ABIBridgeFixture::large(long)",
+            signature: .init(parameters: [.int], returns: LargeValue.abiType),
+            in: image
+        )
+        let padded = try runtime.resolveCXXFunctionAndWait(
             named: "ABIBridgeFixture::shift(ABIBridgeFixture::Padded)",
-            as: ((PaddedValue) -> PaddedValue).self, in: image)
-        let paddedC = try runtime.cFunction(
+            as: ((PaddedValue) -> PaddedValue).self,
+            in: image
+        )
+        let paddedC = try runtime.resolveCFunctionAndWait(
             named: "ABIBridgeFixtureShiftPadded",
-            signature: .init(parameters: [PaddedValue.abiType], returns: PaddedValue.abiType), in: image)
+            signature: .init(parameters: [PaddedValue.abiType], returns: PaddedValue.abiType),
+            in: image
+        )
         let paddedResult = try unsafe padded.unsafeInvoke(PaddedValue(value: 2, tag: 3))
-        let rawResult = try unsafe paddedC.unsafeInvoke(with: [NativeValue(copying: PaddedValue(value: 2, tag: 3), as: PaddedValue.abiType)])
+        let rawResult = try unsafe paddedC.unsafeInvoke(with: [
+            NativeValue(copying: PaddedValue(value: 2, tag: 3), as: PaddedValue.abiType)
+        ])
         let readResult = try unsafe rawResult.read(as: PaddedValue.self)
         precondition(paddedResult.value == 3.5 && paddedResult.tag == 5)
         precondition(readResult.value == 3.5 && readResult.tag == 5)
@@ -141,10 +179,14 @@ struct SwiftConsumer {
         precondition(sum == 42 && cSum == 42)
         let typedResult = try unsafe large.unsafeInvoke(10)
         let typedLast = try unsafe typedResult.storage.field(at: 7).read(as: Int.self)
-        let dynamicResult = try unsafe dynamic.unsafeInvoke(with: [NativeValue(copying: Int(20), as: .int)])
+        let dynamicResult = try unsafe dynamic.unsafeInvoke(with: [
+            NativeValue(copying: Int(20), as: .int)
+        ])
         let wrapped = try dynamicResult.cast(to: LargeValue.self)
         let dynamicLast = try unsafe wrapped.storage.field(at: 7).read(as: Int.self)
         precondition(typedLast == 17 && dynamicLast == 27)
-        print("Swift consumer passed: typed C/C++ functions, native wrappers, runtime signatures, and image lifetime.")
+        print(
+            "Swift consumer passed: typed C/C++ functions, native wrappers, runtime signatures, and image lifetime."
+        )
     }
 }

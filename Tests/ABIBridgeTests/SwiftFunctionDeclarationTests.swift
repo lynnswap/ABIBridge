@@ -11,7 +11,9 @@ import Testing
 struct SwiftFunctionDeclarationTests {
     @Test func arrowOperatorsResolveByLabelsAndCompleteDeclarations() async throws {
         let runtime = ABIRuntime()
-        let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.ArrowOperatorValue")
+        let type = try await runtime.resolveSwiftType(
+            named: "ManagedSwiftFixtures.ArrowOperatorValue"
+        )
         let generic = try await runtime.resolveSwiftType(
             named: "ManagedSwiftFixtures.GenericOperatorBox",
             genericArguments: [.type(Int64.self)]
@@ -75,7 +77,7 @@ struct SwiftFunctionDeclarationTests {
                 "\(module).\(name)<A where A: \(module).HasCallback, A.Callback == (Swift.Int) -> Swift.String>(A)\(effects) -> Swift.String"
             // Establish that the complete spelling identifies an actual compiler
             // symbol before testing rejection at the invocation boundary.
-            _ = try runtime.resolve(
+            _ = try runtime.resolveAndWait(
                 .init(name: declaration, language: .swift),
                 in: .path(fixture.libraryURL),
                 loading: .loadedOnly
@@ -108,7 +110,10 @@ struct SwiftFunctionDeclarationTests {
         let declaration =
             "(extension in Example):Example.Box<A where A == (Swift.Int) -> Swift.String>.value() \(effects) -> Swift.String"
         do {
-            _ = try await ABIRuntime().resolveSwiftFunction(named: declaration, as: (() -> String).self)
+            _ = try await ABIRuntime().resolveSwiftFunction(
+                named: declaration,
+                as: (() -> String).self
+            )
             Issue.record("An outer effect was accepted by a synchronous nonthrowing metatype")
         } catch ABIResolutionError.unsupportedDeclaration {}
     }

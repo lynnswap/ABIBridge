@@ -1,22 +1,37 @@
-# Migrating Swift calls and values
+# Migrating resolution, Swift calls, and values
 
-Update clients of the earlier result-and-argument handle types to complete function signatures, declaration-ordered generic arguments, and the shared runtime value interface.
+Choose async or synchronous resolution explicitly, then update earlier Swift callable and value handles to complete signatures, declaration-ordered generic arguments, and the shared runtime value interface.
 
 ## Choose synchronous or async lookup
 
-Select lookup behavior by factory name. Async lookup prepares on a worker queue while the caller suspends; synchronous lookup appends `AndWait` and takes the same arguments:
+Factories named `resolve…` perform search and call preparation on a worker while the caller suspends. Their synchronous `AndWait` counterparts take the same arguments and can block the caller. Both work without `prepare` and join only required preparation already in progress:
 
-| Lookup | Async factory | Synchronous factory |
+| Operation | Async factory | Synchronous factory |
 | --- | --- | --- |
+| Raw symbol or symbol request batch | `resolve` | `resolveAndWait` |
+| Loaded images | `resolveImages` | `resolveImagesAndWait` |
+| Lazy-library metadata | `resolveLazyLibraries` | `resolveLazyLibrariesAndWait` |
+| C function | `resolveCFunction` | `resolveCFunctionAndWait` |
+| C++ function | `resolveCXXFunction` | `resolveCXXFunctionAndWait` |
+| Objective-C message by class | `resolveObjCMethod` | `resolveObjCMethodAndWait` |
+| Captured Objective-C implementation | `resolveObjCImplementation` | `resolveObjCImplementationAndWait` |
 | Swift function | `resolveSwiftFunction` | `resolveSwiftFunctionAndWait` |
 | Swift type | `resolveSwiftType` | `resolveSwiftTypeAndWait` |
-| Instance method | `resolveMethod` | `resolveMethodAndWait` |
-| Initializer | `resolveInitializer` | `resolveInitializerAndWait` |
-| Static method | `resolveStaticMethod` | `resolveStaticMethodAndWait` |
-| Instance getter | `resolveGetter` | `resolveGetterAndWait` |
-| Instance setter | `resolveSetter` | `resolveSetterAndWait` |
-| Static getter | `resolveStaticGetter` | `resolveStaticGetterAndWait` |
-| Static setter | `resolveStaticSetter` | `resolveStaticSetterAndWait` |
+| Swift, Objective-C, or C++ instance method | `resolveMethod` | `resolveMethodAndWait` |
+| Swift initializer | `resolveInitializer` | `resolveInitializerAndWait` |
+| Swift static method | `resolveStaticMethod` | `resolveStaticMethodAndWait` |
+| Swift instance getter | `resolveGetter` | `resolveGetterAndWait` |
+| Swift instance setter | `resolveSetter` | `resolveSetterAndWait` |
+| Swift static getter | `resolveStaticGetter` | `resolveStaticGetterAndWait` |
+| Swift static setter | `resolveStaticSetter` | `resolveStaticSetterAndWait` |
+| C++ virtual method | `resolveVirtualMethod` | `resolveVirtualMethodAndWait` |
+| Named C++ virtual-table entry | `resolveEntry` | `resolveEntryAndWait` |
+| Swift enum payload | `resolveEnumPayload` | `resolveEnumPayloadAndWait` |
+| Stored Swift closure | `resolveClosure` | `resolveClosureAndWait` |
+| Compiled Swift virtual replacement plan | `prepareVirtualReplacement` | `prepareVirtualReplacementAndWait` |
+| Compiled Swift imported replacement plan | `prepareImportedReplacement` | `prepareImportedReplacementAndWait` |
+
+Compiled replacement planning follows the same suffix rule. Rename earlier synchronous `prepareVirtualReplacement` calls to `prepareVirtualReplacementAndWait`, or add `await` to prepare on a worker. `prepareImportedReplacementAndWait` adds synchronous planning alongside the async factory. These methods create uninstalled plans; publication and restoration remain explicit synchronous operations. See <doc:SwiftVirtualReplacements> and <doc:SwiftImportedReplacements>.
 
 For async type and method lookup:
 
@@ -27,9 +42,45 @@ let read = try await type.resolveMethod(named: "read()", as: (() -> Int64).self)
 
 Use `AndWait` without `await` for synchronous lookup, including inside an async function. It can block during cold lookup or while joining preparation. Bound member lookup keeps the receiver in the caller's isolation domain; see <doc:SwiftFunctionInvocation> and <doc:SwiftMemberInvocation>.
 
-`ABIRuntime` and `NativeSwiftType` remain actors, and earlier preparation is optional. Remove `await` from raw symbol lookup, image enumeration, C/C++ factories, Objective-C selector lookup, and `removeCachedResults()`; those operations are synchronous.
+`ABIRuntime` and `NativeSwiftType` remain actors. Replace the earlier C/C++ `cFunction` and `cxxFunction` factories with `resolveCFunction` and `resolveCXXFunction`, or their `AndWait` variants. The same rename applies to `images`, `lazyLibraries`, `objcMethod`, `objcImplementation`, C++ `method` and `virtualMethod`, Objective-C `method(selector:)`, and named vtable `entry`. Earlier synchronous raw `resolve` calls become `resolveAndWait`, or add `await` to use async resolution. The old factory names have no compatibility aliases.
 
-Optional `prepare(_:)` remains asynchronous. Its closure overload runs synchronous factories on a worker queue and shares their preparation with later lookup. See <doc:SymbolLookup>. Keep `await` for invoking native async signatures and for hook installation APIs that remain asynchronous.
+For C or C++ lookup from `MainActor`, call the async factory directly:
+
+```swift
+@MainActor
+func calculate() async throws -> Int32 {
+    let add = try await ABIRuntime.shared.resolveCXXFunction(
+        named: "Example::Math::add(int, int)",
+        as: ((Int32, Int32) -> Int32).self,
+        in: .framework(named: "Example")
+    )
+    return try unsafe add.unsafeInvoke(20, 22)
+}
+```
+
+Resolution suspends for search, loading, and ABI preparation. It does not change the invocation's execution requirements. Bound Objective-C resolution keeps receiver-specific dynamic resolution and forwarding-signature callbacks on the caller's executor; its image and call preparation run on the worker.
+
+Optional `prepare(_:)` remains asynchronous. Use synchronous `AndWait` factories inside its closure to prepare known requirements ahead of time:
+
+```swift
+async let prepared = runtime.prepare { runtime in
+    try runtime.resolveCXXFunctionAndWait(
+        named: "Example::Math::add(int, int)",
+        as: ((Int32, Int32) -> Int32).self,
+        in: .framework(named: "Example")
+    )
+}
+let add = try await runtime.resolveCXXFunction(
+    named: "Example::Math::add(int, int)",
+    as: ((Int32, Int32) -> Int32).self,
+    in: .framework(named: "Example")
+)
+_ = try await prepared
+```
+
+The closure and its result must be Sendable. Use the same runtime so lookup shares indexes and call interfaces with preparation; it joins required work without waiting for the whole closure. See <doc:SymbolLookup>.
+
+`object`, `cxxObject`, `bind`, and explicit `entry(at:authentication:)` create views or bindings without search or ABI preparation and remain synchronous. Memory reads, value copies, and `removeCachedResults()` also remain synchronous. Keep `await` for invoking native async signatures and for hook installation APIs that are asynchronous.
 
 ## Use a complete callable signature
 

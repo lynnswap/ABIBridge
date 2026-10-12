@@ -84,7 +84,9 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         )
         typealias Inspect = NativeSwiftClosure<(BorrowedSnapshot) throws -> Int64>
         let runtime = ABIRuntime.shared
-        let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair")
+        let type = try await runtime.resolveSwiftType(
+            named: "ManagedSwiftFixtures.RuntimeFixedPair"
+        )
         let abi = try NativeType.structure(named: type.name, fields: [.int64, .int64])
         let abis = [type: abi]
         let nativeSnapshot =
@@ -114,7 +116,11 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
             as: ((Snapshot, Inspect) throws -> Int64).self,
             valueABIs: abis
         )
-        let sum = try await type.resolveMethod(named: "sum()", as: (() -> Int64).self, receiverABI: abi)
+        let sum = try await type.resolveMethod(
+            named: "sum()",
+            as: (() -> Int64).self,
+            receiverABI: abi
+        )
         let text = String(repeating: "composed tuple ", count: 80)
         let deaths = RuntimeValueDeaths()
         #expect(MemoryLayout<NativeSwiftValue>.size != MemoryLayout<RuntimeFixedPair>.size)
@@ -147,7 +153,9 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func wholeRuntimeTuplesUseSwiftStorageForCopyTakeAndInout() async throws {
         let runtime = ABIRuntime.shared
-        let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair")
+        let type = try await runtime.resolveSwiftType(
+            named: "ManagedSwiftFixtures.RuntimeFixedPair"
+        )
         let abi = try NativeType.structure(named: type.name, fields: [.int64, .int64])
         let native =
             "(lead: Swift.Int8, record: ManagedSwiftFixtures.RuntimeFixedPair, nested: (callback: (Swift.Int64) -> Swift.Int64, text: Swift.String, tail: Swift.Int8))"
@@ -599,7 +607,9 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func explicitRuntimeValueABIsComposeAcrossCallbacksAndMembers() async throws {
         let runtime = ABIRuntime.shared
-        let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair")
+        let type = try await runtime.resolveSwiftType(
+            named: "ManagedSwiftFixtures.RuntimeFixedPair"
+        )
         let abi = try NativeType.structure(named: type.name, fields: [.int64, .int64])
         let abis = [type: abi]
         let make = try await runtime.resolveSwiftFunction(
@@ -610,7 +620,11 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         )
         let value = try unsafe make.unsafeInvoke(35, 7)
         #expect(abis[value.type] == abi)
-        let sum = try await type.resolveMethod(named: "sum()", as: (() -> Int64).self, receiverABI: abi)
+        let sum = try await type.resolveMethod(
+            named: "sum()",
+            as: (() -> Int64).self,
+            receiverABI: abi
+        )
         typealias Body = NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Int64>
         let body = try Body { value in
             do { return try unsafe sum.unsafeInvoke(on: value) } catch {
@@ -2458,7 +2472,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
             runtime.removeCachedResults()
             factory.close()
             let expected = try #require(
-                try runtime.images(matching: .path(provider.libraryURL)).first
+                try runtime.resolveImagesAndWait(matching: .path(provider.libraryURL)).first
             )
             #expect(value.type.image.identity == expected.identity)
             let getter = try await value.type.resolveGetter(named: "value", as: (() -> Int64).self)

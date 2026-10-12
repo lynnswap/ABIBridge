@@ -11,8 +11,13 @@ import Testing
 }
 
 extension SwiftABIBytes3: ABIBridgeValue {
-    public static let abiType = try! NativeType.structure(named: "ThreeBytes", fields: [.uint8, .uint8, .uint8])
-    public init(nativeValue: NativeValue) throws { self = try unsafe nativeValue.read(as: Self.self) }
+    public static let abiType = try! NativeType.structure(
+        named: "ThreeBytes",
+        fields: [.uint8, .uint8, .uint8]
+    )
+    public init(nativeValue: NativeValue) throws {
+        self = try unsafe nativeValue.read(as: Self.self)
+    }
     public static func nativeValue(from value: Self) throws -> NativeValue {
         try .init(copying: value, as: abiType)
     }
@@ -22,12 +27,18 @@ extension SwiftABIBytes3: ABIBridgeValue {
     public var integer: Int8
     public var floating: Float
 }
-@inline(never) public func swiftABIMixedFields(_ value: SwiftABIMixedFields) -> SwiftABIMixedFields {
+@inline(never) public func swiftABIMixedFields(_ value: SwiftABIMixedFields) -> SwiftABIMixedFields
+{
     .init(integer: value.integer - 1, floating: value.floating + 2.5)
 }
 extension SwiftABIMixedFields: ABIBridgeValue {
-    public static let abiType = try! NativeType.structure(named: "MixedFields", fields: [.int8, .float])
-    public init(nativeValue: NativeValue) throws { self = try unsafe nativeValue.read(as: Self.self) }
+    public static let abiType = try! NativeType.structure(
+        named: "MixedFields",
+        fields: [.int8, .float]
+    )
+    public init(nativeValue: NativeValue) throws {
+        self = try unsafe nativeValue.read(as: Self.self)
+    }
     public static func nativeValue(from value: Self) throws -> NativeValue {
         try .init(copying: value, as: abiType)
     }
@@ -35,7 +46,9 @@ extension SwiftABIMixedFields: ABIBridgeValue {
 
 private func withGuardedThreeBytes(_ body: (UnsafeMutableRawPointer) throws -> Void) throws {
     let page = Int(getpagesize())
-    let allocation = try #require(mmap(nil, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0))
+    let allocation = try #require(
+        mmap(nil, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0)
+    )
     try #require(allocation != MAP_FAILED)
     defer { munmap(allocation, page * 2) }
     try #require(mprotect(allocation.advanced(by: page), page, PROT_NONE) == 0)
@@ -55,11 +68,13 @@ struct SwiftCallBoundaryTests {
     }
 
     @Test func coalescedComponentsRespectGuardedArgumentAndResultExtents() async throws {
-        let symbol = try ABIRuntime.shared.resolve(
+        let symbol = try ABIRuntime.shared.resolveAndWait(
             .init(
-            name: "ABIBridgeTests.swiftABIBytes(ABIBridgeTests.SwiftABIBytes3) -> ABIBridgeTests.SwiftABIBytes3",
-            language: .swift
-        ))
+                name:
+                    "ABIBridgeTests.swiftABIBytes(ABIBridgeTests.SwiftABIBytes3) -> ABIBridgeTests.SwiftABIBytes3",
+                language: .swift
+            )
+        )
         var failure: OpaquePointer?
         defer { if let failure { ABIReleaseResolutionFailure(failure) } }
         let byte = try #require(ABICreateScalarType(Int32(ABIValueUInt8), &failure))
@@ -84,7 +99,12 @@ struct SwiftCallBoundaryTests {
                 let success = unsafe symbol.withUnsafeAddress { address in
                     arguments.withUnsafeBufferPointer {
                         ABIUnsafeInvokeSwiftCallInterface(
-                            interface, ABIUnsafeFunctionAtAddress(address), output, $0.baseAddress, nil, &failure
+                            interface,
+                            ABIUnsafeFunctionAtAddress(address),
+                            output,
+                            $0.baseAddress,
+                            nil,
+                            &failure
                         )
                     }
                 }
@@ -98,7 +118,8 @@ struct SwiftCallBoundaryTests {
 
     @Test func typedWrappersSupportOddSizedTrivialValues() async throws {
         let function = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ABIBridgeTests.swiftABIBytes(ABIBridgeTests.SwiftABIBytes3) -> ABIBridgeTests.SwiftABIBytes3",
+            named:
+                "ABIBridgeTests.swiftABIBytes(ABIBridgeTests.SwiftABIBytes3) -> ABIBridgeTests.SwiftABIBytes3",
             as: ((SwiftABIBytes3) -> SwiftABIBytes3).self
         )
         let result = try unsafe function.unsafeInvoke(.init(a: 1, b: 2, c: 3))

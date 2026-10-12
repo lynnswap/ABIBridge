@@ -29,7 +29,7 @@ struct SearchBenchmark {
                 for _ in 0..<5 {
                     let runtime = ABIRuntime()
                     let start = ContinuousClock.now
-                    let symbol = try runtime.resolve(declaration, in: .path(path))
+                    let symbol = try runtime.resolveAndWait(declaration, in: .path(path))
                     first.append(seconds(start.duration(to: .now)) * 1000)
                     guard let handle = dlopen(path.path, RTLD_NOW | RTLD_LOCAL) else {
                         fatalError("Provider failed to load")
@@ -43,12 +43,12 @@ struct SearchBenchmark {
                     }
                 }
                 let runtime = ABIRuntime()
-                let initial = try runtime.resolve(declaration, in: .path(path))
+                let initial = try runtime.resolveAndWait(declaration, in: .path(path))
                 var repeated: [Double] = []
                 for _ in 0..<5 {
                     let start = ContinuousClock.now
                     for _ in 0..<1000 {
-                        let symbol = try runtime.resolve(declaration, in: .path(path))
+                        let symbol = try runtime.resolveAndWait(declaration, in: .path(path))
                         unsafe symbol.withUnsafeAddress { address in
                             unsafe initial.withUnsafeAddress { precondition(address == $0) }
                         }
@@ -59,8 +59,11 @@ struct SearchBenchmark {
                 for _ in 0..<5 {
                     let start = ContinuousClock.now
                     for _ in 0..<1000 {
-                        let symbol = try runtime.resolve(
-                            declaration, in: initial.image, loading: .loadedOnly)
+                        let symbol = try runtime.resolveAndWait(
+                            declaration,
+                            in: initial.image,
+                            loading: .loadedOnly
+                        )
                         unsafe symbol.withUnsafeAddress { address in
                             unsafe initial.withUnsafeAddress { precondition(address == $0) }
                         }
@@ -128,17 +131,21 @@ struct SearchBenchmark {
                 for _ in 0..<3 {
                     let start = ContinuousClock.now
                     let result = try region.pointers(
-                        toVTable: addressPoint, options: .init(normalization: .none))
+                        toVTable: addressPoint,
+                        options: .init(normalization: .none)
+                    )
                     samples.append(seconds(start.duration(to: .now)) * 1000)
                     precondition(
                         result.isComplete && result.failures.isEmpty && result.visitedCount == count
                     )
                     precondition(
                         result.candidates.count
-                            == (density == "empty" ? 0 : density == "single" ? 1 : 2))
+                            == (density == "empty" ? 0 : density == "single" ? 1 : 2)
+                    )
                     precondition(
                         result.distinctCount
-                            == (density == "empty" ? 0 : density == "distinct" ? 2 : 1))
+                            == (density == "empty" ? 0 : density == "distinct" ? 2 : 1)
+                    )
                 }
                 print("Pointer bytes=\(bytes) \(density) full=\(median(samples)) ms")
             }
@@ -149,11 +156,15 @@ struct SearchBenchmark {
                     let result = try region.pointers(
                         toVTable: addressPoint,
                         options: .init(
-                            normalization: .none, policy: .first,
-                            hintOffset: bytes - MemoryLayout<UInt>.size))
+                            normalization: .none,
+                            policy: .first,
+                            hintOffset: bytes - MemoryLayout<UInt>.size
+                        )
+                    )
                     precondition(
                         result.visitedCount == 1
-                            && result.candidates[0].offset == bytes - MemoryLayout<UInt>.size)
+                            && result.candidates[0].offset == bytes - MemoryLayout<UInt>.size
+                    )
                 }
                 hint.append(seconds(start.duration(to: .now)) * 1e6 / 100)
             }

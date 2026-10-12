@@ -70,7 +70,7 @@ final class CompiledSwiftReplacementFixture {
     var providerScope: ImageSelector { .path(provider.libraryURL) }
     var callerScope: ImageSelector { .path(caller.libraryURL) }
     func symbol(_ name: String) async throws -> ResolvedSymbol {
-        try runtime.resolve(
+        try runtime.resolveAndWait(
             .init(name: module + "." + name, language: .swift),
             in: providerScope
         )
@@ -87,7 +87,7 @@ final class CompiledSwiftReplacementFixture {
             named: module + ".ReplacementRenderer",
             in: providerScope
         )
-        let descriptor = try runtime.resolve(
+        let descriptor = try runtime.resolveAndWait(
             .init(
                 name: "nominal type descriptor for " + type.name,
                 language: .swift,

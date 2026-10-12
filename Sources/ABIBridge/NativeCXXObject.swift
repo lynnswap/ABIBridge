@@ -1,6 +1,6 @@
 import ABIBridgeCore
 
-private enum CXXImageScope {
+private enum CXXImageScope: Sendable {
     case selector(ImageSelector)
     case image(NativeImage)
 }
@@ -49,7 +49,13 @@ public final class NativeCXXObject {
     private let scope: CXXImageScope
     private let loading: ImageLoadingPolicy
 
-    fileprivate init(runtime: ABIRuntime, storage: NativeValue, typeName: String, scope: CXXImageScope, loading: ImageLoadingPolicy) {
+    fileprivate init(
+        runtime: ABIRuntime,
+        storage: NativeValue,
+        typeName: String,
+        scope: CXXImageScope,
+        loading: ImageLoadingPolicy
+    ) {
         self.runtime = runtime
         self.storage = storage
         self.typeName = typeName
@@ -59,7 +65,7 @@ public final class NativeCXXObject {
 
     /// Resolves a direct member implementation and binds this receiver.
     ///
-    /// Include parameter types and qualifiers in the relative declaration, such as add(int) or current() const. Lookup reuses the runtime's owner indexes. Use virtualMethod for a vtable-selected implementation.
+    /// Include parameter types and qualifiers in the relative declaration, such as add(int) or current() const. Lookup reuses the runtime's owner indexes. Use resolveVirtualMethod or resolveVirtualMethodAndWait for a vtable-selected implementation. Search and call preparation run synchronously on the caller's thread and join required work already in progress.
     ///
     /// - Parameters:
     ///   - name: The member declaration relative to the class name.
@@ -68,7 +74,7 @@ public final class NativeCXXObject {
     ///     generic C function pointer, the receiver pointer, then explicit arguments.
     /// - Returns: A method retaining its receiver and implementation images.
     /// - Throws: A resolution, adapter, or call-signature error.
-    public nonisolated func method<Result, each Argument>(
+    public nonisolated func resolveMethodAndWait<Result, each Argument>(
         named name: String,
         as signature: ((repeat each Argument) -> Result).Type,
         using adapter: ResolvedSymbol? = nil
@@ -77,29 +83,90 @@ public final class NativeCXXObject {
         let symbol: ResolvedSymbol
         switch scope {
         case .selector(let selector):
-            symbol = try runtime.resolve(declaration, in: selector, loading: loading)
+            symbol = try runtime.resolveAndWait(declaration, in: selector, loading: loading)
         case .image(let image):
-            symbol = try runtime.resolve(declaration, in: image, loading: loading)
+            symbol = try runtime.resolveAndWait(declaration, in: image, loading: loading)
         }
-        let method = try prepareCXXMethod(symbol: symbol, adapter: adapter, as: signature)
+        let method = try NativeCXXMethod<Result, repeat each Argument>(
+            target: .symbol(symbol),
+            adapter: adapter
+        )
         return method.bind(to: storage)
     }
 
-    /// Captures a selected virtual entry and binds this receiver/subobject. The entry retains its original adjustment thunk and authentication schema; the caller must supply the corresponding live base-subobject view.
-    @unsafe public func virtualMethod<Result, each Argument>(
+    /// Resolves a direct member without blocking the caller's executor.
+    ///
+    /// Search and call preparation run on a worker and join required work already in progress. The receiver and bound handle remain in the caller's isolation domain; resolution does not invoke the member.
+    public nonisolated(nonsending) func resolveMethod<Result, each Argument>(
+        named name: String,
+        as signature: ((repeat each Argument) -> Result).Type,
+        using adapter: ResolvedSymbol? = nil
+    ) async throws -> NativeBoundCXXMethod<Result, repeat each Argument> {
+        let declaration = NativeDeclaration(name: typeName + "::" + name, language: .cxx)
+        let runtime = runtime
+        let scope = scope
+        let loading = loading
+        let prepared = try await NativePreparation.run {
+            let symbol: ResolvedSymbol
+            switch scope {
+            case .selector(let selector):
+                symbol = try runtime.resolveAndWait(declaration, in: selector, loading: loading)
+            case .image(let image):
+                symbol = try runtime.resolveAndWait(declaration, in: image, loading: loading)
+            }
+            let call: CFunctionCall<Result, repeat each Argument> = try prepareCXXCall(
+                adapter: adapter
+            )
+            return (symbol, call)
+        }
+        return NativeCXXMethod<Result, repeat each Argument>(
+            target: .symbol(prepared.0),
+            adapter: adapter,
+            call: prepared.1
+        ).bind(to: storage)
+    }
+
+    /// Captures a selected virtual entry and binds this receiver/subobject.
+    ///
+    /// Image acquisition and call preparation run synchronously on the caller's thread and join required ABI preparation already in progress. The entry retains its original adjustment thunk and authentication schema; the caller must supply the corresponding live base-subobject view.
+    @unsafe public func resolveVirtualMethodAndWait<Result, each Argument>(
         _ entry: NativeVTable.Entry,
         as signature: ((repeat each Argument) -> Result).Type,
         using adapter: ResolvedSymbol? = nil
     ) throws -> NativeBoundCXXMethod<Result, repeat each Argument> {
         try NativeCXXMethod<Result, repeat each Argument>(
-            target: .virtual(entry.table.target(at: entry.index, authentication: entry.authentication, retaining: entry.image)),
+            target: .virtual(
+                entry.table.target(
+                    at: entry.index,
+                    authentication: entry.authentication,
+                    retaining: entry.image
+                )
+            ),
             adapter: adapter
         ).bind(to: storage)
     }
 
+    /// Resolves a selected virtual entry without blocking the caller's executor.
+    ///
+    /// The slot is captured in the caller's isolation domain. Image acquisition and call preparation run on a worker; the receiver and explicit code owner remain with the caller.
+    @unsafe public nonisolated(nonsending) func resolveVirtualMethod<Result, each Argument>(
+        _ entry: NativeVTable.Entry,
+        as signature: ((repeat each Argument) -> Result).Type,
+        using adapter: ResolvedSymbol? = nil
+    ) async throws -> NativeBoundCXXMethod<Result, repeat each Argument> {
+        try unsafe await resolveVirtualMethod(
+            at: entry.index,
+            in: entry.table,
+            authentication: entry.authentication,
+            as: signature,
+            using: adapter,
+            retaining: entry.image
+        )
+    }
+
     /// Captures an absolute virtual-function entry and binds this receiver.
     ///
-    /// The slot, authentication schema, receiver adjustment, and C-compatible signature must match the target ABI. Authentication failure can fault; it is not a recoverable Swift error.
+    /// Image acquisition and call preparation run synchronously on the caller's thread and join required ABI preparation already in progress. The slot, authentication schema, receiver adjustment, and C-compatible signature must match the target ABI. Authentication failure can fault; it is not a recoverable Swift error.
     ///
     /// - Parameters:
     ///   - index: A function-slot index within the declared table.
@@ -109,24 +176,76 @@ public final class NativeCXXObject {
     ///   - adapter: A C-compatible bridge receiving target, receiver, and arguments.
     /// - Returns: A method retaining the selected entry's image, code owner, and receiver.
     /// - Throws: A slot-bounds, null-entry, image-lifetime, or signature error.
-    @unsafe public func virtualMethod<Result, each Argument>(
-        at index: Int, in table: NativeVTable,
+    @unsafe public func resolveVirtualMethodAndWait<Result, each Argument>(
+        at index: Int,
+        in table: NativeVTable,
         authentication: NativePointerAuthentication,
         as signature: ((repeat each Argument) -> Result).Type,
         using adapter: ResolvedSymbol? = nil
     ) throws -> NativeBoundCXXMethod<Result, repeat each Argument> {
         try NativeCXXMethod<Result, repeat each Argument>(
-            target: .virtual(table.target(at: index, authentication: authentication)), adapter: adapter
+            target: .virtual(table.target(at: index, authentication: authentication)),
+            adapter: adapter
+        ).bind(to: storage)
+    }
+
+    /// Resolves an absolute virtual-function entry without blocking the caller's executor.
+    ///
+    /// The original slot address remains the authentication identity. The caller supplies the table bounds, live subobject, and C-compatible signature, as for synchronous resolution.
+    @unsafe public nonisolated(nonsending) func resolveVirtualMethod<Result, each Argument>(
+        at index: Int,
+        in table: NativeVTable,
+        authentication: NativePointerAuthentication,
+        as signature: ((repeat each Argument) -> Result).Type,
+        using adapter: ResolvedSymbol? = nil
+    ) async throws -> NativeBoundCXXMethod<Result, repeat each Argument> {
+        try unsafe await resolveVirtualMethod(
+            at: index,
+            in: table,
+            authentication: authentication,
+            as: signature,
+            using: adapter,
+            retaining: nil
+        )
+    }
+
+    @unsafe private nonisolated(nonsending) func resolveVirtualMethod<Result, each Argument>(
+        at index: Int,
+        in table: NativeVTable,
+        authentication: NativePointerAuthentication,
+        as signature: ((repeat each Argument) -> Result).Type,
+        using adapter: ResolvedSymbol?,
+        retaining image: NativeImage?
+    ) async throws -> NativeBoundCXXMethod<Result, repeat each Argument> {
+        let slot = try table.slot(at: index)
+        let prepared = try await NativePreparation.run {
+            let implementation = try NativeVTable.prepareTarget(
+                slot,
+                authentication: authentication
+            )
+            let call: CFunctionCall<Result, repeat each Argument> = try prepareCXXCall(
+                adapter: adapter
+            )
+            return (implementation, call)
+        }
+        let target = table.target(capturing: prepared.0, retaining: image)
+        return NativeCXXMethod<Result, repeat each Argument>(
+            target: .virtual(target),
+            adapter: adapter,
+            call: prepared.1
         ).bind(to: storage)
     }
 }
 
-private func prepareCXXMethod<Result, each Argument>(
-    symbol: ResolvedSymbol,
-    adapter: ResolvedSymbol?,
-    as signature: ((repeat each Argument) -> Result).Type
-) throws -> NativeCXXMethod<Result, repeat each Argument> {
-    try NativeCXXMethod(target: .symbol(symbol), adapter: adapter)
+private func prepareCXXCall<Result, each Argument>(
+    adapter: ResolvedSymbol?
+) throws -> CFunctionCall<Result, repeat each Argument> {
+    if let adapter, adapter.declaration.kind != .function {
+        throw ABIResolutionError.unsupportedDeclaration(
+            "A method adapter must be an executable function."
+        )
+    }
+    return try CFunctionCall(hiddenPointerCount: adapter == nil ? 1 : 2)
 }
 
 /// A prepared direct or table-selected C++ implementation with an explicit receiver.
@@ -138,31 +257,42 @@ public struct NativeCXXMethod<Result, each Argument> {
     private let call: CFunctionCall<Result, repeat each Argument>
 
     fileprivate init(target: CXXCallTarget, adapter: ResolvedSymbol?) throws {
-        if let adapter, adapter.declaration.kind != .function {
-            throw ABIResolutionError.unsupportedDeclaration("A method adapter must be an executable function.")
-        }
+        self.init(target: target, adapter: adapter, call: try prepareCXXCall(adapter: adapter))
+    }
+
+    fileprivate init(
+        target: CXXCallTarget,
+        adapter: ResolvedSymbol?,
+        call: CFunctionCall<Result, repeat each Argument>
+    ) {
         self.target = target
         self.adapter = adapter
-        call = try CFunctionCall(hiddenPointerCount: adapter == nil ? 1 : 2)
+        self.call = call
     }
 
     /// Retains receiver storage for repeated calls without preparing the method again.
     ///
     /// The storage must describe the live object or adjusted subobject expected by this captured entry point. Binding does not inspect C++ object layout.
-    public func bind(to receiver: NativeValue) -> NativeBoundCXXMethod<Result, repeat each Argument> {
+    public func bind(to receiver: NativeValue) -> NativeBoundCXXMethod<Result, repeat each Argument>
+    {
         NativeBoundCXXMethod(method: self, receiver: receiver)
     }
 
     /// Calls the captured implementation on a live receiver or adjusted subobject.
     ///
     /// Direct calls require C-compatible values. A compiled native adapter handles nontrivial ownership and special result ABIs. Foreign exceptions must not cross this boundary. Custom result wrappers retain the method and receiver; raw pointer results remain borrowed. Honor the object's thread requirements.
-    @unsafe public func unsafeInvoke(on receiver: NativeValue, _ values: repeat each Argument) throws -> Result {
+    @unsafe public func unsafeInvoke(
+        on receiver: NativeValue,
+        _ values: repeat each Argument
+    ) throws -> Result {
         let binding = CXXMethodBinding(receiver: receiver, method: self)
         return try unsafe invoke(on: receiver, retaining: binding, repeat each values)
     }
 
     @unsafe fileprivate func invoke(
-        on receiver: NativeValue, retaining owner: Any, _ values: repeat each Argument
+        on receiver: NativeValue,
+        retaining owner: Any,
+        _ values: repeat each Argument
     ) throws -> Result {
         try unsafe receiver.withUnsafeMutableBytes { bytes in
             let receiverAddress = UnsafeRawPointer(bytes.baseAddress!)
@@ -175,13 +305,16 @@ public struct NativeCXXMethod<Result, each Argument> {
                         try unsafe call.unsafeInvoke(
                             ABIUnsafeFunctionAtAddress($0),
                             hiddenPointers: [targetBits, receiverAddress],
-                            retainingResultOwner: owner, repeat each values
+                            retainingResultOwner: owner,
+                            repeat each values
                         )
                     }
                 }
                 return try unsafe call.unsafeInvoke(
-                    target, hiddenPointers: [receiverAddress],
-                    retainingResultOwner: owner, repeat each values
+                    target,
+                    hiddenPointers: [receiverAddress],
+                    retainingResultOwner: owner,
+                    repeat each values
                 )
             }
         }
@@ -219,10 +352,18 @@ extension ABIRuntime {
     ///   - loading: Whether an explicit target may be acquired and initialized.
     /// - Returns: A receiver scope using this runtime's shared indexes.
     public nonisolated func cxxObject(
-        _ storage: NativeValue, typeNamed typeName: String, in scope: ImageSelector = .automatic,
+        _ storage: NativeValue,
+        typeNamed typeName: String,
+        in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
     ) -> NativeCXXObject {
-        .init(runtime: self, storage: storage, typeName: typeName, scope: .selector(scope), loading: loading)
+        .init(
+            runtime: self,
+            storage: storage,
+            typeName: typeName,
+            scope: .selector(scope),
+            loading: loading
+        )
     }
 
     /// Creates a C++ receiver scope within an already retained image.
@@ -234,9 +375,17 @@ extension ABIRuntime {
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A receiver scope retaining its storage and image.
     public nonisolated func cxxObject(
-        _ storage: NativeValue, typeNamed typeName: String, in image: NativeImage,
+        _ storage: NativeValue,
+        typeNamed typeName: String,
+        in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
     ) -> NativeCXXObject {
-        .init(runtime: self, storage: storage, typeName: typeName, scope: .image(image), loading: loading)
+        .init(
+            runtime: self,
+            storage: storage,
+            typeName: typeName,
+            scope: .image(image),
+            loading: loading
+        )
     }
 }

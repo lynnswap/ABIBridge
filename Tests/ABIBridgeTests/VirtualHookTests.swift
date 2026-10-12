@@ -86,7 +86,10 @@ struct VirtualHookTests {
                 entryCount: 2,
                 retaining: library
             )
-            return try view.entry(named: "\(self.name)::Derived::\(name)", using: runtime)
+            return try view.resolveEntryAndWait(
+                named: "\(self.name)::Derived::\(name)",
+                using: runtime
+            )
         }
         func object(secondary: Bool = false) throws -> NativeCXXObject {
             runtime.cxxObject(
@@ -103,7 +106,10 @@ struct VirtualHookTests {
     @Test func sharedOrderInvalidationAndCapturedCalls() async throws {
         let fixture = try Fixture(); defer { fixture.library.cleanup() }
         let entry = try await fixture.entry()
-        let before = try unsafe fixture.object().virtualMethod(entry, as: ((Int32) -> Int32).self)
+        let before = try unsafe fixture.object().resolveVirtualMethodAndWait(
+            entry,
+            as: ((Int32) -> Int32).self
+        )
         let declaration = entry.declaration
         let first = try unsafe entry.hookSharedCalls(
             as: ((Int32) -> Int32).self,
@@ -114,7 +120,10 @@ struct VirtualHookTests {
             #expect(call.description.contains("::Derived::value(int) const"))
             return try call.proceed(value + 1) + 10
         }
-        let captured = try unsafe fixture.object().virtualMethod(entry, as: ((Int32) -> Int32).self)
+        let captured = try unsafe fixture.object().resolveVirtualMethodAndWait(
+            entry,
+            as: ((Int32) -> Int32).self
+        )
         let second = try unsafe entry.hookSharedCalls(
             as: ((Int32) -> Int32).self,
             onFailure: { Issue.record(Comment(rawValue: "\($0)")) }
@@ -150,7 +159,7 @@ struct VirtualHookTests {
                 authentication: .unsigned,
                 retainingCode: owner
             )
-            let entry = try table.entry(
+            let entry = try table.resolveEntryAndWait(
                 named: "\(fixture.name)::Derived::value(int) const",
                 using: fixture.runtime
             )
@@ -181,7 +190,7 @@ struct VirtualHookTests {
             return try call.proceed(value) + 1
         }
         defer { first.invalidate() }
-        let method = try unsafe fixture.object(secondary: true).virtualMethod(
+        let method = try unsafe fixture.object(secondary: true).resolveVirtualMethodAndWait(
             adjusted,
             as: ((Int32) -> Int32).self
         )
@@ -195,7 +204,7 @@ struct VirtualHookTests {
             return try call.proceed()
         }
         defer { second.invalidate() }
-        let returned = try unsafe fixture.object(secondary: true).virtualMethod(
+        let returned = try unsafe fixture.object(secondary: true).resolveVirtualMethodAndWait(
             identity,
             as: (() -> UnsafeMutableRawPointer?).self
         )

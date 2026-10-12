@@ -12,7 +12,7 @@ let method = try type.resolveMethodAndWait(
 let replacement = try type.resolveMethodAndWait(
     named: "debugRender(_:)", as: ((String) -> String).self
 )
-let plan = try unsafe method.prepareVirtualReplacement(with: replacement)
+let plan = try unsafe method.prepareVirtualReplacementAndWait(with: replacement)
 let previous = plan.original
 // Initialize any state needed by debugRender before publishing its pointer.
 try unsafe plan.install()
@@ -21,6 +21,14 @@ try unsafe plan.install()
 let result = try unsafe previous.unsafeInvoke(on: renderer, "Preview")
 try plan.restore()
 ```
+
+`prepareVirtualReplacementAndWait` searches and captures the predecessor synchronously. Await `prepareVirtualReplacement` to perform that work on a worker without blocking the caller's executor:
+
+```swift
+let plan = try unsafe await method.prepareVirtualReplacement(with: replacement)
+```
+
+Both forms reuse the method's runtime indexes and join any required preparation already in progress. Neither requires an earlier `ABIRuntime.prepare` call. They create an uninstalled plan; `install()` and `restore()` remain explicit synchronous operations on the caller's thread.
 
 Preparation changes no pointers. `original` captures the current nonnull entry, including an earlier interposer, as a nonoptional handle.
 

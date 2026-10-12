@@ -115,6 +115,21 @@ NSInteger ABIVariadicCompilerOracle(ABIVariadicFixture *receiver) { return [rece
 @implementation ABIConsumedInitializerFixture
 @end
 
+static BOOL workerLookupResolutionOnMainThread;
+static NSInteger workerLookupIncrement(id receiver, SEL selector, NSInteger value) {
+    return value + 1;
+}
+@implementation ABIWorkerLookupFixture
++ (BOOL)resolutionRequestedOnMainThread { return workerLookupResolutionOnMainThread; }
++ (BOOL)resolveInstanceMethod:(SEL)selector {
+    if (sel_isEqual(selector, NSSelectorFromString(@"workerIncrement:"))) {
+        workerLookupResolutionOnMainThread = [NSThread isMainThread];
+        return class_addMethod(self, selector, (IMP)workerLookupIncrement, "q@:q");
+    }
+    return [super resolveInstanceMethod:selector];
+}
+@end
+
 @implementation ABIForwardingFixture
 - (instancetype)init {
     if ((self = [super init])) { _answerEncoding = @"q@:"; }
@@ -122,6 +137,7 @@ NSInteger ABIVariadicCompilerOracle(ABIVariadicFixture *receiver) { return [rece
 }
 - (NSMethodSignature *)methodSignatureForSelector:(SEL)selector {
     if (sel_isEqual(selector, NSSelectorFromString(@"answer"))) {
+        _signatureRequestedOnMainThread = [NSThread isMainThread];
         return self.answerEncoding
             ? [NSMethodSignature signatureWithObjCTypes:self.answerEncoding.UTF8String] : nil;
     }
