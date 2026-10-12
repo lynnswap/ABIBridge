@@ -1,0 +1,725 @@
+@testable import ABIBridge
+@testable import ABIBridgeRuntime
+import ABIBridgeTestSupport
+import Foundation
+import ManagedSwiftFixtures
+import Synchronization
+import Testing
+
+private func runtimeProjectionChoice(
+    _ kind: Int64,
+    token: ErrorLifetimeToken = ErrorLifetimeToken()
+) async throws -> NativeSwiftValue {
+    let make = try await ABIRuntime.shared.resolveSwiftFunction(
+        named: "ManagedSwiftFixtures.makeRuntimeProjectionChoice(_:_:)",
+        as: ((Int64, ErrorLifetimeToken) -> NativeSwiftValue).self
+    )
+    return try unsafe make.unsafeInvoke(kind, token)
+}
+
+private func invokeProjectionPreparation(_ body: RuntimeProjectionPreparationSignature) -> Int64 {
+    body(
+        Int64(35),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0)
+    )
+}
+
+private func invokeProjectionPreparation(
+    _ body: NativeSwiftClosure<RuntimeProjectionPreparationSignature>
+) throws -> Int64 {
+    try unsafe body.unsafeInvoke(
+        Int64(35),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0),
+        Int64(0)
+    )
+}
+
+private enum ProjectionPreparationFailure: Error { case timedOut }
+private final class ProjectionPreparationGate: Sendable {
+    let release = DispatchSemaphore(value: 0)
+    let entered = Mutex(false)
+    let observations = Mutex<[Bool]>([])
+    func observe() throws {
+        observations.withLock { $0.append(Thread.isMainThread) }
+        entered.withLock { $0 = true }
+        guard release.wait(timeout: .now() + 5) == .success else {
+            throw ProjectionPreparationFailure.timedOut
+        }
+    }
+}
+
+@Suite(.serialized)
+struct SwiftRuntimeValueProjectionTests {
+    @Test func enumCaseSelectionPreservesNilAndLookupFailures() async throws {
+        let value = try await runtimeProjectionChoice(1)
+        let payload = try #require(try await value.resolveEnumPayload(forCase: "text"))
+        #expect(try payload.take(as: String.self) == "payload")
+        #expect(try await value.resolveEnumPayload(forCase: "empty") == nil)
+        #expect(throws: NativeSwiftValueError.enumCaseNotFound(name: "missing")) {
+            try value.resolveEnumPayloadAndWait(forCase: "missing")
+        }
+        #expect(!value.isConsumed)
+        guard case .text(let text) = try value.take(as: RuntimeProjectionChoice.self) else {
+            Issue.record("The original enum case changed after payload projection")
+            return
+        }
+        #expect(text == "payload")
+        let empty = try await runtimeProjectionChoice(0)
+        #expect(try await empty.resolveEnumPayload(forCase: "empty") == nil)
+        #expect(try await empty.resolveEnumPayload(forCase: "text") == nil)
+        let overloaded = try await runtimeProjectionChoice(7)
+        #expect(throws: NativeSwiftValueError.ambiguousEnumCase(name: "repeated")) {
+            try overloaded.resolveEnumPayloadAndWait(forCase: "repeated")
+        }
+        #expect(!overloaded.isConsumed)
+    }
+
+    @Test(arguments: [Int64(2), 3])
+    func tuplePayloadsKeepTheRuntimeShape(_ kind: Int64) async throws {
+        let value = try await runtimeProjectionChoice(kind)
+        let payload = try #require(
+            try await value.resolveEnumPayload(forCase: kind == 2 ? "tuple" : "values")
+        )
+        let first = try payload.copyTupleElement(at: 0)
+        let second = try payload.copyTupleElement(at: 1)
+        #expect(try first.take(as: Int64.self) == 40)
+        #expect(try second.take(as: Int64.self) == 2)
+        #expect(throws: NativeSwiftValueError.tupleElementIndexOutOfBounds(index: 2, count: 2)) {
+            try payload.copyTupleElement(at: 2)
+        }
+        #expect(!value.isConsumed && !payload.isConsumed)
+        let tuple = try payload.take(as: (Int64, Int64).self)
+        #expect(tuple.0 + tuple.1 == 42)
+    }
+
+    @Test func labeledSingleValuesKeepTheirOuterTuple() async throws {
+        let value = try await runtimeProjectionChoice(4)
+        let payload = try #require(try await value.resolveEnumPayload(forCase: "labeled"))
+        let nested = try payload.copyTupleElement(at: 0)
+        #expect(throws: NativeSwiftValueError.tupleElementIndexOutOfBounds(index: 1, count: 1)) {
+            try payload.copyTupleElement(at: 1)
+        }
+        let text = try nested.copyTupleElement(at: 1)
+        #expect(try text.take(as: String.self) == "nested")
+        let original = try nested.take(as: (Int64, String).self)
+        #expect(original.0 == 42 && original.1 == "nested")
+        #expect(!payload.isConsumed && !value.isConsumed)
+    }
+
+    @Test(arguments: [false, true])
+    func projectedLargePayloadsOwnTheirStorageAfterTheEnumDies(indirect: Bool) async throws {
+        let counts = ArgumentCounts()
+        var copied: NativeSwiftValue?
+        do {
+            let value = try await runtimeProjectionChoice(
+                indirect ? 6 : 5,
+                token: ErrorLifetimeToken { counts.destroyed() }
+            )
+            let container: NativeSwiftValue
+            if indirect {
+                container = try #require(try await value.resolveEnumPayload(forCase: "indirect"))
+                #expect(container.type.name == value.type.name)
+            } else {
+                container = value
+            }
+            copied = try #require(try await container.resolveEnumPayload(forCase: "large"))
+            #expect(!value.isConsumed && !container.isConsumed)
+        }
+        #expect(counts.destructions == 0)
+        do {
+            let payload = try #require(copied).take(as: RuntimeProjectionLarge.self)
+            #expect(payload.first + payload.second + payload.third + payload.fourth == 100)
+            #expect(payload.text == String(repeating: "owned payload ", count: 80))
+        }
+        copied = nil
+        #expect(counts.destructions == 1)
+    }
+
+    @Test func genericAndOptionalPayloadTypesComeFromTheirInstantiatedMetadata() async throws {
+        let make = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeProjectionGeneric(_:)",
+            as: ((String) -> NativeSwiftValue).self,
+            genericArguments: [.type(String.self)]
+        )
+        let value = try unsafe make.unsafeInvoke("generic payload")
+        let payload = try #require(try await value.resolveEnumPayload(forCase: "value"))
+        #expect(try payload.take(as: String.self) == "generic payload")
+        #expect(!value.isConsumed)
+        let optional = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeProjectionOptional(_:)",
+            as: ((Bool) -> NativeSwiftValue).self
+        )
+        let some = try unsafe optional.unsafeInvoke(true)
+        #expect(
+            try #require(try await some.resolveEnumPayload(forCase: "some")).take(as: Int64.self)
+                == 42
+        )
+        let none = try unsafe optional.unsafeInvoke(false)
+        #expect(try await none.resolveEnumPayload(forCase: "none") == nil)
+        #expect(try await none.resolveEnumPayload(forCase: "some") == nil)
+    }
+
+    @Test func projectedGenericValuesResolveTheirUninstantiatedGetterOwner() async throws {
+        typealias Box = ExplicitBox<Int64>
+        let make = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeProjectionGeneric(_:)",
+            as: ((Box) -> NativeSwiftValue).self,
+            genericArguments: [.type(Box.self)]
+        )
+        let container = try unsafe make.unsafeInvoke(Box(42))
+        let payload = try #require(try await container.resolveEnumPayload(forCase: "value"))
+        #expect(payload.type.name == String(reflecting: Box.self))
+        let getter = try await payload.type.resolveGetter(
+            named: "value",
+            as: (() -> Int64).self,
+            receiverABI: .opaque(named: payload.type.name)
+        )
+        #expect(try unsafe getter.unsafeInvoke(on: payload) == 42)
+        #expect(!container.isConsumed && !payload.isConsumed)
+    }
+
+    @Test func projectionErrorsLeaveTheSourceOwned() async throws {
+        let make = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
+            as: ((Int64) -> NativeSwiftValue).self
+        )
+        let value = try unsafe make.unsafeInvoke(42)
+        #expect(throws: ABIResolutionError.self) {
+            try value.resolveEnumPayloadAndWait(forCase: "some")
+        }
+        #expect(throws: ABIResolutionError.self) { try value.copyTupleElement(at: 0) }
+        #expect(throws: ABIResolutionError.self) { try value.copyUnderlyingValue() }
+        #expect(throws: ABIResolutionError.self) {
+            try value.resolveClosureAndWait(as: (() -> Int64).self)
+        }
+        #expect(try value.take(as: Int64.self) == 42)
+        #expect(throws: NativeSwiftValueError.consumedValue) { try value.copyUnderlyingValue() }
+        let counts = ArgumentCounts()
+        let move = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeProjectionMoveOnly(_:)",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
+        )
+        let owned = try unsafe move.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
+        #expect(throws: NativeSwiftValueError.noncopyableType) {
+            try owned.resolveEnumPayloadAndWait(forCase: "ticket")
+        }
+        #expect(!owned.isConsumed && counts.destructions == 0)
+        do {
+            let moved = try owned.take(as: RuntimeProjectionMoveOnly.self)
+            withExtendedLifetime(moved) { #expect(owned.isConsumed) }
+        }
+        #expect(counts.destructions == 1)
+    }
+
+    @Test(arguments: [false, true])
+    func opaqueExistentialsCopyTheInlineOrBoxedConcreteValue(boxed: Bool) async throws {
+        let echo = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.echoExistential(_:)",
+            as: ((any ExistentialValue) -> NativeSwiftValue).self
+        )
+        let value: NativeSwiftValue
+        if boxed {
+            value = try unsafe echo.unsafeInvoke(BoxedExistentialValue(ErrorLifetimeToken(), 42))
+        } else {
+            value = try unsafe echo.unsafeInvoke(InlineExistentialValue(42))
+        }
+        let underlying = try value.copyUnderlyingValue()
+        #expect(underlying.type.name != value.type.name)
+        if boxed {
+            #expect(try underlying.take(as: BoxedExistentialValue.self).number == 42)
+        } else {
+            #expect(try underlying.take(as: InlineExistentialValue.self).number == 42)
+        }
+        #expect(!value.isConsumed)
+        try value.withCopy { #expect(($0 as? any ExistentialValue)?.number == 42) }
+    }
+
+    @Test func classAndErrorExistentialsRetainTheConcreteOwner() async throws {
+        let runtime = ABIRuntime.shared
+        let objectEcho = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.echoClassExistential(_:)",
+            as: ((any ExistentialObjectValue) -> NativeSwiftValue).self
+        )
+        let errorEcho = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.echoErrorExistential(_:)",
+            as: ((any Error) -> NativeSwiftValue).self
+        )
+        let classErrorEcho = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.echoRuntimeProjectionClassFailure(_:)",
+            as: ((any RuntimeProjectionClassFailure) -> NativeSwiftValue).self
+        )
+        let counts = ArgumentCounts()
+        var object: NativeSwiftValue?
+        var error: NativeSwiftValue?
+        var classError: NativeSwiftValue?
+        weak var observed: ExistentialObject?
+        weak var observedError: ReferenceFailure?
+        do {
+            let original = ExistentialObject(ErrorLifetimeToken { counts.destroyed() }, 42)
+            observed = original
+            let container = try unsafe objectEcho.unsafeInvoke(original)
+            object = try container.copyUnderlyingValue()
+            #expect(!container.isConsumed)
+            let failure = ReferenceFailure(ErrorLifetimeToken { counts.destroyed() }, 43)
+            observedError = failure
+            let errorContainer = try unsafe errorEcho.unsafeInvoke(failure)
+            error = try errorContainer.copyUnderlyingValue()
+            let classContainer = try unsafe classErrorEcho.unsafeInvoke(failure)
+            classError = try classContainer.copyUnderlyingValue()
+        }
+        #expect(observed != nil && observedError != nil && counts.destructions == 0)
+        do {
+            #expect(try #require(object).take(as: ExistentialObject.self) === observed)
+            #expect(try #require(error).take(as: ReferenceFailure.self) === observedError)
+            #expect(try #require(classError).take(as: ReferenceFailure.self).code == 43)
+        }
+        object = nil; error = nil; classError = nil
+        #expect(observed == nil && observedError == nil && counts.destructions == 2)
+    }
+
+    @Test func bridgedErrorsKeepTheirProjectedObjectAfterTheContainerDies() async throws {
+        let echo = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.echoErrorExistential(_:)",
+            as: ((any Error) -> NativeSwiftValue).self
+        )
+        let original = NSError(domain: "RuntimeProjectionError", code: 42)
+        var copied: NativeSwiftValue?
+        do {
+            let container = try unsafe echo.unsafeInvoke(original)
+            copied = try container.copyUnderlyingValue()
+            #expect(!container.isConsumed)
+        }
+        let value = try #require(copied)
+        let copiedMetadata = await value.type.metadata
+        #expect(ObjectIdentifier(copiedMetadata) == ObjectIdentifier(type(of: original)))
+        try value.withCopy {
+            let error = try #require($0 as? NSError)
+            #expect(error === original)
+            #expect(error.domain == "RuntimeProjectionError" && error.code == 42)
+        }
+    }
+
+    @Test(arguments: [Int64(0), 1, 2])
+    func unsupportedClassErrorPayloadsLeaveTheOriginalEnumOwned(_ kind: Int64) async throws {
+        let make = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeProjectionUnsupportedErrorPayload(_:_:)",
+            as: ((Int64, ErrorLifetimeToken) -> NativeSwiftValue).self
+        )
+        let counts = ArgumentCounts()
+        do {
+            let value = try unsafe make.unsafeInvoke(
+                kind,
+                ErrorLifetimeToken { counts.destroyed() }
+            )
+            let name = ["direct", "tuple", "optional"][Int(kind)]
+            do {
+                _ = try value.resolveEnumPayloadAndWait(forCase: name)
+                Issue.record("A payload with unsupported class-error storage was copied")
+            } catch ABIResolutionError.unsupportedDeclaration {}
+            #expect(!value.isConsumed && counts.destructions == 0)
+            let original = try value.take(as: RuntimeProjectionUnsupportedErrorPayload.self)
+            let failure: any Error & AnyObject
+            switch original {
+            case .direct(let error):
+                #expect(kind == 0)
+                failure = error
+            case .tuple(let pair):
+                #expect(kind == 1 && pair.0 == 7)
+                failure = pair.1
+            case .optional(let error):
+                #expect(kind == 2)
+                failure = try #require(error)
+            case .closure:
+                Issue.record("A payload-copy fixture unexpectedly produced a closure")
+                return
+            }
+            #expect(try #require(failure as? ReferenceFailure).code == 42)
+            #expect(counts.destructions == 0)
+        }
+        #expect(counts.destructions == 1)
+    }
+
+    @Test func unsupportedStoredClosureResultIsRejectedBeforeInvocation() async throws {
+        let make = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeProjectionUnsupportedErrorPayload(_:_:)",
+            as: ((Int64, ErrorLifetimeToken) -> NativeSwiftValue).self
+        )
+        let counts = ArgumentCounts()
+        do {
+            let value = try unsafe make.unsafeInvoke(3, ErrorLifetimeToken { counts.destroyed() })
+            do {
+                _ = try await value.resolveEnumPayload(forCase: "closure")
+                Issue.record("A closure with unsupported class-error result storage was resolved")
+            } catch ABIResolutionError.unsupportedDeclaration {}
+            #expect(!value.isConsumed && counts.destructions == 0)
+            let original = try value.take(as: RuntimeProjectionUnsupportedErrorPayload.self)
+            guard case .closure(let native) = original else {
+                Issue.record("The original enum case changed after closure resolution failed")
+                return
+            }
+            let failure = native()
+            #expect(try #require(failure as? ReferenceFailure).code == 42)
+            #expect(counts.destructions == 0)
+        }
+        #expect(counts.destructions == 1)
+    }
+
+    @Test func extendedExistentialsPreserveTheirSpecializedUnderlyingType() async throws {
+        let make = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeGenericExtendedCollection(_:)",
+            as: ((Int) -> NativeSwiftValue).self,
+            genericArguments: [.type(Int.self)]
+        )
+        let container = try unsafe make.unsafeInvoke(42)
+        let underlying = try container.copyUnderlyingValue()
+        #expect(try underlying.take(as: [Int].self) == [42])
+        #expect(!container.isConsumed)
+    }
+
+    @MainActor @Test
+    func projectedMainActorClosuresRetainCapturesAndEraseTheNativeResult() async throws {
+        typealias Signature = @MainActor () -> NativeSwiftValue
+        let make = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeProjectionRoot(_:)",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
+        )
+        let counts = ArgumentCounts()
+        var closure: NativeSwiftClosure<Signature>?
+        do {
+            let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
+            let payload = try #require(try await value.resolveEnumPayload(forCase: "preview"))
+            let existential = try payload.copyTupleElement(at: 0)
+            let source = try existential.copyUnderlyingValue()
+            #expect(existential.type.name != source.type.name)
+            let previewType = try await ABIRuntime.shared.resolveSwiftType(
+                named: "ManagedSwiftFixtures.RuntimeProjectionPreview"
+            )
+            let body = try await source.type.resolveGetter(
+                named: "body",
+                as: (() -> NativeSwiftValue).self,
+                valueABIs: [previewType: NativeType.opaque(named: previewType.name)],
+                receiverABI: NativeType.opaque(named: source.type.name)
+            )
+            let preview = try unsafe body.unsafeInvoke(on: source)
+            let bodyType = try await ABIRuntime.shared.resolveSwiftType(
+                named: "ManagedSwiftFixtures.RuntimeProjectionBody"
+            )
+            let associated = try #require(
+                try await preview.resolveEnumPayload(
+                    forCase: "singlePreview",
+                    valueABIs: [bodyType: .opaque(named: bodyType.name)]
+                )
+            )
+            let function = try associated.copyTupleElement(at: 0)
+            closure = try await function.resolveClosure(as: Signature.self)
+            #expect(!function.isConsumed && !value.isConsumed && !source.isConsumed)
+            #expect(throws: ABIResolutionError.self) {
+                try function.resolveClosureAndWait(as: (() -> NativeSwiftValue).self)
+            }
+        }
+        #expect(counts.destructions == 0)
+        do {
+            let result = try unsafe #require(closure).unsafeInvoke()
+            #expect(result.type.name == String(reflecting: RuntimeProjectionBody.self))
+            let body = try result.take(as: RuntimeProjectionBody.self)
+            #expect(body.number == 42)
+            MainActor.assertIsolated()
+        }
+        closure = nil
+        #expect(counts.destructions == 1)
+    }
+
+    @MainActor @Test
+    func formalGenericClosureResultsUseTheirBoundTypeWithoutAnABIOverride() async throws {
+        let make = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeProjectionGenericPreview(_:)",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
+        )
+        let container = try unsafe make.unsafeInvoke(ErrorLifetimeToken())
+        let payload = try #require(try await container.resolveEnumPayload(forCase: "singlePreview"))
+        let function = try payload.copyTupleElement(at: 0)
+        let closure = try await function.resolveClosure(
+            as: (@MainActor () -> NativeSwiftValue).self
+        )
+        let result = try unsafe closure.unsafeInvoke()
+        #expect(result.type.name == String(reflecting: RuntimeProjectionBody.self))
+        #expect(try result.take(as: RuntimeProjectionBody.self).number == 42)
+        #expect(!container.isConsumed && !payload.isConsumed && !function.isConsumed)
+        MainActor.assertIsolated()
+    }
+
+    @MainActor @Test
+    func projectedAsyncMainActorClosuresPreserveSuspensionAndTypedFailure() async throws {
+        typealias Signature = @MainActor (Bool) async throws(ScalarFailure) -> NativeSwiftValue
+        let make = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeProjectionAsyncClosure(_:)",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
+        )
+        let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken())
+        let closure = try value.resolveClosureAndWait(as: Signature.self)
+        let result = try unsafe await closure.unsafeInvoke(false)
+        #expect(try result.take(as: RuntimeProjectionBody.self).number == 42)
+        do {
+            _ = try unsafe await closure.unsafeInvoke(true)
+            Issue.record("The closure's native typed error did not escape")
+        } catch let error as NativeSwiftError {
+            #expect(error.withUnderlyingError { ($0 as? ScalarFailure)?.code } == 42)
+        }
+        #expect(throws: ABIResolutionError.self) {
+            try value.resolveClosureAndWait(
+                as: (@MainActor (Bool) throws(ScalarFailure) -> NativeSwiftValue).self
+            )
+        }
+        #expect(throws: ABIResolutionError.self) {
+            try value.resolveClosureAndWait(
+                as: (@MainActor (Bool) async -> NativeSwiftValue).self
+            )
+        }
+        #expect(!value.isConsumed)
+        MainActor.assertIsolated()
+    }
+
+    @Test func plainSynchronousAndCallerIsolatedAsyncClosuresKeepTheirEffects() async throws {
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeProjectionPlainClosure(_:)",
+            as: ((Int64) -> NativeSwiftValue).self
+        )
+        let synchronous = try unsafe make.unsafeInvoke(7)
+        let closure = try synchronous.resolveClosureAndWait(as: ((Int64) -> Int64).self)
+        #expect(try unsafe closure.unsafeInvoke(35) == 42)
+        let makeAsync = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeProjectionAsyncPlainClosure(_:)",
+            as: ((Int64) -> NativeSwiftValue).self
+        )
+        let asynchronous = try unsafe makeAsync.unsafeInvoke(7)
+        let asyncClosure = try await asynchronous.resolveClosure(
+            as: (nonisolated(nonsending) (Int64) async -> Int64).self
+        )
+        #expect(try unsafe await asyncClosure.unsafeInvoke(35) == 42)
+        #expect(throws: ABIResolutionError.self) {
+            try synchronous.resolveClosureAndWait(as: ((String) -> String).self)
+        }
+        #expect(throws: ABIResolutionError.self) {
+            try asynchronous.resolveClosureAndWait(as: ((Int64) -> Int64).self)
+        }
+        #expect(!synchronous.isConsumed && !asynchronous.isConsumed)
+        let native = try synchronous.take(as: ((Int64) -> Int64).self)
+        #expect(native(35) == 42)
+        #expect(throws: NativeSwiftValueError.consumedValue) {
+            try synchronous.resolveClosureAndWait(as: ((Int64) -> Int64).self)
+        }
+        await #expect(throws: NativeSwiftValueError.consumedValue) {
+            _ = try await synchronous.resolveClosure(as: ((Int64) -> Int64).self)
+        }
+        #expect(try unsafe closure.unsafeInvoke(35) == 42)
+    }
+
+    @MainActor @Test
+    func storedClosureOwnershipUsesExplicitWrappersForConsumptionAndMutation() async throws {
+        let runtime = ABIRuntime.shared
+        let makeTicket = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
+        )
+        let counts = ArgumentCounts()
+        let ticket = try unsafe makeTicket.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
+        let makeConsumer = try await runtime.resolveSwiftFunction(
+            named:
+                "ManagedSwiftFixtures.makeRuntimeConsumer<A where A: ~Swift.Copyable>(A.Type) -> (__owned A) -> Swift.Int64",
+            as: ((RuntimeTicket.Type) -> NativeSwiftValue).self,
+            genericArguments: [.type(ticket.type)]
+        )
+        let consumerValue = try unsafe makeConsumer.unsafeInvoke(RuntimeTicket.self)
+        #expect(throws: ABIResolutionError.self) {
+            try consumerValue.resolveClosureAndWait(as: ((NativeSwiftValue) -> Int64).self)
+        }
+        let consume = try consumerValue.resolveClosureAndWait(
+            as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self
+        )
+        #expect(
+            try unsafe consume.unsafeInvoke(NativeSwiftConsuming(ticket))
+                == MemoryLayout<RuntimeTicket>.size
+        )
+        #expect(ticket.isConsumed && counts.destructions == 1 && !consumerValue.isConsumed)
+
+        let makeSwap = try await runtime.resolveSwiftFunction(
+            named:
+                "ManagedSwiftFixtures.makeRuntimeSwap<A where A: ~Swift.Copyable>(A.Type) -> (inout A, inout A) -> ()",
+            as: ((Int64.Type) -> NativeSwiftValue).self,
+            genericArguments: [.type(Int64.self)]
+        )
+        let swapValue = try unsafe makeSwap.unsafeInvoke(Int64.self)
+        let swap = try await swapValue.resolveClosure(
+            as: ((NativeSwiftInout<NativeSwiftValue>, NativeSwiftInout<NativeSwiftValue>) -> Void)
+                .self
+        )
+        let makeInteger = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
+            as: ((Int64) -> NativeSwiftValue).self
+        )
+        let first = NativeSwiftInout(try unsafe makeInteger.unsafeInvoke(40))
+        let second = NativeSwiftInout(try unsafe makeInteger.unsafeInvoke(2))
+        try unsafe swap.unsafeInvoke(first, second)
+        #expect(try first.value.take(as: Int64.self) == 2)
+        #expect(try second.value.take(as: Int64.self) == 40)
+        #expect(!swapValue.isConsumed)
+    }
+
+    @MainActor @Test
+    func enumClosurePreparationJoinsRequiredWorkAndCanonicalizesBothFieldPatterns() async throws {
+        typealias Signature = RuntimeProjectionPreparationSignature
+        let make = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeProjectionPreparationClosure(_:)",
+            as: ((Int64) -> NativeSwiftValue).self
+        )
+        let container = try unsafe make.unsafeInvoke(7)
+        let gate = ProjectionPreparationGate()
+        let integer = try RuntimeValueType(
+            indirectSwiftSize: MemoryLayout<Int64>.size,
+            alignment: MemoryLayout<Int64>.alignment
+        )
+        let parameters = Array(repeating: integer, count: 17)
+        let key = RuntimeCallInterfaceKey(result: integer, parameters: parameters)
+        let preparation = Task.detached {
+            try await NativePreparation.run {
+                try RuntimeSwiftCallInterface.cache.interface(for: key) {
+                    try gate.observe()
+                    return try RuntimeSwiftCallInterface(result: integer, parameters: parameters)
+                }
+            }
+        }
+        defer { gate.release.signal() }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !gate.entered.withLock({ $0 }) {
+            guard ContinuousClock.now < deadline else {
+                throw ProjectionPreparationFailure.timedOut
+            }
+            await Task.yield()
+        }
+        let progress = Task { @MainActor in
+            defer { gate.release.signal() }
+            MainActor.assertIsolated()
+            #expect(throws: NativeSwiftValueError.valueInUse) {
+                try container.take(as: RuntimeProjectionPreparationContainer.self)
+            }
+        }
+        let result: Result<NativeSwiftValue, any Error>
+        do {
+            result = .success(try #require(try await container.resolveEnumPayload(forCase: "body")))
+        } catch {
+            result = .failure(error)
+        }
+        await progress.value
+        let prepared = try await preparation.value
+        let value = try result.get()
+        let closure = try await value.resolveClosure(as: Signature.self)
+        guard case .synchronous(_, let call) = closure.call else {
+            Issue.record("Expected the stored synchronous closure's prepared call interface")
+            return
+        }
+        #expect(call.interface.runtime === prepared)
+        let observations = gate.observations.withLock { $0 }
+        #expect(!observations.isEmpty && observations.allSatisfy { !$0 })
+        #expect(try invokeProjectionPreparation(closure) == 42)
+        let concreteMetadata = await value.type.metadata
+        try value.withCopy { copied in
+            let native = try #require(copied as? Signature)
+            #expect(invokeProjectionPreparation(native) == 42)
+        }
+        let runtime = ABIRuntime.shared
+        let export = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+            as: ((NativeSwiftValue) -> Signature).self,
+            genericArguments: [.type(value.type)]
+        )
+        let exported = try unsafe export.unsafeInvoke(value)
+        #expect(invokeProjectionPreparation(exported) == 42)
+        let apply = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.applyRuntimeProjectionPreparationClosure(_:)",
+            as: ((NativeSwiftValue) -> Int64).self
+        )
+        #expect(try unsafe apply.unsafeInvoke(value) == 42)
+        #expect(!container.isConsumed && !value.isConsumed)
+        #expect(invokeProjectionPreparation(try value.take(as: Signature.self)) == 42)
+
+        let makeGeneric = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeProjectionGenericPreparationClosure(_:)",
+            as: ((Int64) -> NativeSwiftValue).self
+        )
+        let generic = try unsafe makeGeneric.unsafeInvoke(7)
+        let genericValue = try #require(try generic.resolveEnumPayloadAndWait(forCase: "value"))
+        let genericMetadata = await genericValue.type.metadata
+        #expect(ObjectIdentifier(concreteMetadata) == ObjectIdentifier(genericMetadata))
+        let genericClosure = try genericValue.resolveClosureAndWait(as: Signature.self)
+        #expect(try invokeProjectionPreparation(genericClosure) == 42)
+        try genericValue.withCopy { copied in
+            let native = try #require(copied as? Signature)
+            #expect(invokeProjectionPreparation(native) == 42)
+        }
+        #expect(!generic.isConsumed && !genericValue.isConsumed)
+        #expect(invokeProjectionPreparation(try genericValue.take(as: Signature.self)) == 42)
+        MainActor.assertIsolated()
+    }
+
+    #if os(macOS)
+    @MainActor @Test
+    func legacyMainActorFunctionMetadataAcceptsTheSwiftSixSendableSignature() async throws {
+        let module =
+            "ProjectionLegacy_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+        let fixture = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                public func make() -> some Any {
+                    let body: @MainActor (Int64) -> Int64 = { $0 + 7 }
+                    return body
+                }
+                """,
+            linkArguments: ["-swift-version", "5"]
+        )
+        defer { fixture.cleanup() }
+        let make = try await ABIRuntime().resolveSwiftFunction(
+            named: module + ".make()",
+            as: (() -> NativeSwiftValue).self,
+            in: .path(fixture.libraryURL)
+        )
+        let value = try unsafe make.unsafeInvoke()
+        let metadata = try value.withCopy { try RuntimeFunctionMetadata(type(of: $0)) }
+        #expect(!metadata.isSendable)
+        let host = try RuntimeFunctionMetadata((@MainActor (Int64) -> Int64).self)
+        #expect(host.isSendable)
+        let closure = try await value.resolveClosure(as: (@MainActor (Int64) -> Int64).self)
+        #expect(try unsafe closure.unsafeInvoke(35) == 42)
+        MainActor.assertIsolated()
+    }
+    #endif
+}

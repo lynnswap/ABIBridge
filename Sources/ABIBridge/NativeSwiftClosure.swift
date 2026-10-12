@@ -221,6 +221,24 @@ public struct NativeSwiftClosure<Signature> {
             repeat each values
         )
     }
+
+    /// Calls a MainActor-isolated native closure while preserving its isolation.
+    @MainActor
+    @unsafe public func unsafeInvoke<Result, Failure: Error, each Argument>(
+        _ values: repeat each Argument
+    ) throws -> Result
+    where Signature == @MainActor (repeat each Argument) throws(Failure) -> Result {
+        guard case .synchronous(let storage, let prepared) = try call.resolved() else {
+            preconditionFailure("A synchronous closure has a synchronous call plan.")
+        }
+        return try unsafe prepared.unsafeInvoke(
+            function: storage.implementation.function,
+            context: storage.value.context.map { UnsafeRawPointer($0) },
+            retaining: storage,
+            retainingCode: storage.codeOwner,
+            repeat each values
+        )
+    }
 }
 
 extension NativeSwiftClosure: SwiftClosureValue {
@@ -263,10 +281,17 @@ extension NativeSwiftClosure: SwiftClosureValue {
         try makeClosureCodec(generic: nil)
     }
 
-    static func makeClosureCodec(generic: SwiftGenericClosurePlan?) throws -> SwiftClosureCodec {
+    static func makeClosureCodec(
+        generic: SwiftGenericClosurePlan?,
+        preparingFunction function: UInt? = nil
+    ) throws -> SwiftClosureCodec {
         let signature = try SwiftFunctionSignature(Signature.self)
         if signature.isAsync {
-            return try makeAsyncClosureCodec(signature: signature, generic: generic)
+            return try makeAsyncClosureCodec(
+                signature: signature,
+                generic: generic,
+                preparingFunction: function
+            )
         }
         let discriminator = try generic?.discriminator ?? signature.closureDiscriminator()
         let prepared = try SwiftCall(
@@ -283,6 +308,18 @@ extension NativeSwiftClosure: SwiftClosureValue {
         } else {
             interface = prepared.interface
         }
+        let nativeImplementation = try function.map { bits in
+            guard
+                let entry = ABIAuthenticateSwiftClosureFunction(
+                    UnsafeRawPointer(bitPattern: bits),
+                    discriminator
+                )
+            else {
+                throw ABIInvocationError.unexpectedNilResult(expected: "a Swift closure")
+            }
+            return try SwiftImplementation(function: entry, retaining: nil)
+        }
+        let forwardingEntry = try prepared.interface.closureEntry()
         let makeValue:
             @Sendable (ABISwiftClosureValue, Any?, Bool, SwiftValueCodeLifetime?) throws -> Any = {
                 value,
@@ -294,15 +331,16 @@ extension NativeSwiftClosure: SwiftClosureValue {
                     adopting: value,
                     discriminator: discriminator,
                     retaining: owner,
-                    codeLifetime: codeLifetime
+                    codeLifetime: codeLifetime,
+                    implementation: nativeImplementation
                 )
                 if ABIIsSwiftClosureCallbackFunction(original.implementation.function) {
                     return Self(call: .synchronous(original, prepared))
                 }
                 // Native copies retain only the closure's heap context. Forwarding keeps
                 // implementation images alive until the final native copy is destroyed.
-                let callback = try SwiftClosureContext(
-                    interface: prepared.interface,
+                let callback = SwiftClosureContext(
+                    entry: forwardingEntry,
                     body: SwiftThrowingClosureBody(
                         retainingCode: original.codeOwner,
                         codeLifetime: original.codeLifetime,

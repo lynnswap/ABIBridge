@@ -57,7 +57,7 @@ package final class RuntimeSwiftCallInterface: @unchecked Sendable {
 }
 
 extension RuntimeSwiftCallInterface {
-    private static let cache = RuntimeCallInterfaceCache<RuntimeSwiftCallInterface>()
+    static let cache = RuntimeCallInterfaceCache<RuntimeSwiftCallInterface>()
 
     package static func cached(
         result: RuntimeValueType,

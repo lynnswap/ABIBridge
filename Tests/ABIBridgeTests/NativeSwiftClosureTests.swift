@@ -55,6 +55,37 @@ private final class NestedClosureCapture: @unchecked Sendable {
 }
 
 struct NativeSwiftClosureTests {
+    @MainActor @Test func resolvedMainActorClosurePreservesIsolationAcrossNativeParameters()
+        async throws
+    {
+        typealias Isolated = NativeSwiftClosure<@MainActor (Int64) -> Int64>
+        typealias Ordinary = NativeSwiftClosure<(Int64) -> Int64>
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeIsolatedIntegerClosure(_:)",
+            as: ((Int64) -> NativeSwiftValue).self
+        )
+        let value = try unsafe make.unsafeInvoke(7)
+        let closure = try await value.resolveClosure(as: (@MainActor (Int64) -> Int64).self)
+        let apply = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.applyIsolatedIntegerClosure(_:_:)",
+            as: ((Isolated, Int64) -> Int64).self
+        )
+        #expect(try unsafe apply.unsafeInvoke(closure, 35) == 42)
+        await #expect(throws: ABIResolutionError.self) {
+            try await runtime.resolveSwiftFunction(
+                named: "ManagedSwiftFixtures.applyIntegerClosure(_:_:)",
+                as: ((Isolated, Int64) -> Int64).self
+            )
+        }
+        await #expect(throws: ABIResolutionError.self) {
+            try await runtime.resolveSwiftFunction(
+                named: "ManagedSwiftFixtures.applyIsolatedIntegerClosure(_:_:)",
+                as: ((Ordinary, Int64) -> Int64).self
+            )
+        }
+    }
+
     @Test func consumingDirectInputsRetainEscapingBorrows() async throws {
         typealias Inner = NativeSwiftClosure<(Int64) -> Int64>
         typealias Callback = NativeSwiftClosure<(Inner) throws -> Int64>

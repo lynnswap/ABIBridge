@@ -548,11 +548,41 @@ const char *valueFields(const void *metadata) {
     const auto kind = read<uint32_t>(descriptor) & 0x1f;
     return kind == 17 || kind == 18 ? relative(descriptor + 16) : nullptr;
 }
+
+const char *enumCasePayloadReference(const void *metadata, size_t index) {
+    const char *fields = valueFields(metadata);
+    if (!fields || index >= read<uint32_t>(fields + 12)) return nullptr;
+    const char *field = fields + 16 + index * read<uint16_t>(fields + 10);
+    return relative(field + 4);
+}
 }
 
 size_t ABISwiftTypeFieldCount(const void *metadata) {
     const char *fields = valueFields(metadata);
     return fields ? read<uint32_t>(fields + 12) : 0;
+}
+
+bool ABISwiftGetEnumCaseInfo(const void *metadata, size_t index, ABISwiftEnumCaseInfo *result) {
+    const char *fields = valueFields(metadata);
+    if (!fields || index >= read<uint32_t>(fields + 12)) return false;
+    const char *field = fields + 16 + index * read<uint16_t>(fields + 10);
+    result->name = relative(field + 8);
+    result->hasPayload = relative(field + 4) != nullptr;
+    result->indirect = (read<uint32_t>(field) & 1) != 0;
+    return result->name != nullptr;
+}
+
+const void *ABISwiftEnumCasePayloadMetadata(const void *metadata, size_t index) {
+    const char *reference = enumCasePayloadReference(metadata, index);
+    if (!reference) return nullptr;
+    const char *descriptor = typeContextDescriptor(metadata);
+    return swift_getTypeByMangledNameInContext(reference, symbolicNameLength(reference),
+        descriptor, genericArguments(metadata, descriptor));
+}
+
+ABISwiftSyntax *ABICopySwiftEnumCasePayloadSyntax(const void *metadata, size_t index) {
+    const char *reference = enumCasePayloadReference(metadata, index);
+    return reference ? ABICopySwiftTypeSyntax(reference, symbolicNameLength(reference)) : nullptr;
 }
 
 namespace {

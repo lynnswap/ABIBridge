@@ -97,6 +97,39 @@ These conventions also apply through async suspension. An async call started wit
 
 A `some P` result contains the actual hidden value. Class constraints select an owned object pointer; otherwise the result is indirect, even for a hidden integer or class instance. `withCopy` then lets Swift build an `Any` container. Declarations returning `any P` already use an existential container and follow <doc:SwiftExistentialValues>.
 
+## Copy contained runtime values
+
+An enum, tuple, or existential can contain a value whose type is unavailable to the consumer. Copy that value into another ``NativeSwiftValue`` and use its retained type for member lookup:
+
+- `resolveEnumPayload(forCase:valueABIs:)` returns the specified case's entire runtime payload and prepares any function values for owned runtime storage. A different active case or a case without a payload returns `nil`. An unknown or ambiguous case name throws. Use `resolveEnumPayloadAndWait(forCase:valueABIs:)` for synchronous resolution.
+- `copyTupleElement(at:)` copies the actual tuple element at a zero-based index. A non-tuple value or an out-of-range index throws.
+- `copyUnderlyingValue()` opens an existential such as `Any` or `any P`. Nested existential containers are opened until the concrete type is reached. An Optional, enum, or other concrete container keeps its own type. A nonexistential receiver throws.
+
+For a native enum with `case item(any Payload)` whose concrete payload is a resilient value implementing `read() -> Int64`:
+
+```swift
+if let payload = try await result.resolveEnumPayload(forCase: "item") {
+    let concrete = try payload.copyUnderlyingValue()
+    let read = try await concrete.type.resolveMethod(
+        named: "read()", as: (() -> Int64).self,
+        receiverABI: .opaque(named: concrete.type.name)
+    )
+    print(try unsafe read.unsafeInvoke(on: concrete))
+}
+```
+
+The payload retains its actual runtime shape. A labeled single associated value, such as `case item(value: Int)`, is a one-element tuple; use `copyTupleElement(at: 0)` to copy its value. Runtime metadata can describe `case pair((Int, Int))` and `case pair(Int, Int)` with the same tuple payload, so extraction does not reconstruct source parameter boundaries.
+
+These operations leave the original owner unchanged and retain the copied value's metadata, witnesses, and code images independently. Class values keep ordinary shared reference identity. The copied type must be Copyable and Escapable; enum extraction also requires a Copyable enum.
+
+An enum's concrete function fields can use a different calling convention from a generic function field with the same runtime type. Enum resolution uses the field declaration and generic bindings to adapt functions, including function elements in structural tuples, before publishing the owned payload. The async resolver prepares away from the caller's executor and joins required shared stages; copying and captured-context binding stay on the caller's executor. The synchronous `AndWait` resolver can block. Both work without an explicit `prepare`. Supply `valueABIs` when a projected function's parameters or result contain a closed nominal type whose calling convention requires an explicit descriptor.
+
+Tuple and existential copies use already established value conventions and run synchronously without symbol-index search. Member or closure preparation uses the async `resolve…` or synchronous `resolve…AndWait` operation afterward. See <doc:SwiftClosureValues> for calling an extracted closure.
+
+Member invocation keeps its existing ABI requirements. A getter returning a closed nominal enum or struct can require `valueABIs:` even when `NativeSwiftValue` receives the result. Supply an established direct representation or formally indirect `.opaque` convention as described in <doc:BorrowedSwiftValues>; storage dimensions alone do not establish that calling convention.
+
+The `any Error & AnyObject` composition has incompatible native and generic storage layouts in the tested Swift 6.3 and 6.4 toolchains. Projection rejects this composition, including tuple and Optional payloads containing it, before copying. Ordinary `any Error` and class-bound protocols inheriting `Error` use their supported storage representations. See <doc:SwiftExistentialValues> for the existing native-call boundary.
+
 ## Scope
 
 Owned opaque results must be Escapable. Their generic bindings and nested tuple or closure positions are resolved from the matched declaration. Copyability comes from the concrete metadata; `some ~Copyable` results use the same owned storage and can be moved without Any erasure. Nonescapable results use the scoped body described below. Opaque callback results and managed hook bodies require separate contracts; this owned-result API does not extend their lifetime.

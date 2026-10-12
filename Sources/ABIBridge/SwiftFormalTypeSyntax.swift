@@ -302,6 +302,7 @@ extension SwiftFormalType {
     var nominalDeclaration: (name: String, arguments: [Self])? {
         switch self {
         case .nominal(let name, let arguments): return (name, arguments)
+        case .reference(let descriptor, let arguments): return (descriptor.name, arguments)
         case .objectiveCClass(let name): return (name, [])
         case .nested(let parent, let name, let arguments):
             guard let context = parent.nominalDeclaration else { return nil }

@@ -44,6 +44,28 @@ Returning a closure does not capture temporary receiver or argument storage. Res
 
 Calling stays on the caller's executor. The caller must satisfy the returned closure's actor, thread, and argument requirements. The wrapper is not Sendable: an arbitrary returned context may contain isolated or otherwise non-Sendable state.
 
+## Resolve a closure stored in a runtime value
+
+Use `resolveClosure(as:)` when a ``NativeSwiftValue`` already owns the native function value, including a closure extracted from an enum or tuple with the APIs in <doc:SwiftOpaqueResults>. Owned runtime values use the maximally abstracted function convention; enum payload resolution adapts concrete function fields to that convention before returning. The native function metadata supplies its parameter and result types. `NativeSwiftValue` in the requested signature represents the actual native argument or result, including a runtime-only type.
+
+```swift
+@MainActor
+func makeBody(from closureValue: NativeSwiftValue) async throws -> NativeSwiftValue {
+    let make = try await closureValue.resolveClosure(
+        as: (@MainActor () -> NativeSwiftValue).self
+    )
+    return try unsafe make.unsafeInvoke()
+}
+```
+
+The async resolver prepares on a worker while the caller suspends. `resolveClosureAndWait(as:)` performs the same preparation synchronously and can block its caller. Neither requires an explicit `prepare`; existing preparation for a required stage is shared. Resolving copies the context without consuming the original value, and the returned handle keeps its captures and code alive independently.
+
+Include the native sync or async effect, declared error type, parameter ownership, and MainActor isolation in the signature. A MainActor signature uses a MainActor-isolated `unsafeInvoke`. For an async native body, use `(@MainActor () async -> NativeSwiftValue).self` and call `try unsafe await make.unsafeInvoke()`. Awaiting resolution does not make a synchronous native body asynchronous.
+
+The unsupported `any Error & AnyObject` storage composition described in <doc:SwiftExistentialValues> also throws during resolution when it appears in a native argument or result, including a `NativeSwiftValue` marker.
+
+An existential containing a closure first needs `copyUnderlyingValue()`. A non-function value or incompatible signature throws before native invocation. Values and closure contexts remain non-Sendable in the caller's isolation domain; only preparation information crosses to the worker.
+
 ## Nested closure inputs and results
 
 Use `NativeSwiftClosure` inside the callback's signature for a native closure parameter. For `func visit(_ body: ((Int64) -> Int64) throws -> Int64) rethrows -> Int64`:

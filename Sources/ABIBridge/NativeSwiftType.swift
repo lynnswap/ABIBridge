@@ -101,9 +101,9 @@ public actor NativeSwiftType: Hashable {
         hasher.combine(ObjectIdentifier(metadata))
     }
 
-    /// The qualified source-level name of the nominal type.
+    /// The qualified type name. Runtime values can include instantiated generic arguments.
     public nonisolated let name: String
-    /// The image defining the nominal type descriptor.
+    /// An image retained with this type's metadata and implementations.
     public nonisolated let image: NativeImage
 
     let metadata: Any.Type
@@ -116,6 +116,7 @@ public actor NativeSwiftType: Hashable {
         genericMetadata?.arguments ?? []
     }
     private nonisolated let cachedReceiver = Mutex<SwiftReceiverCodec?>(nil)
+    private nonisolated let cachedDeclarationName = Mutex<String?>(nil)
 
     init(
         name: String,
@@ -146,6 +147,23 @@ public actor NativeSwiftType: Hashable {
             genericMetadata: genericMetadata,
             codeLifetime: lifetime
         )
+    }
+
+    private nonisolated func declarationName() throws -> String {
+        if let cached = cachedDeclarationName.withLock({ $0 }) { return cached }
+        // Runtime value construction retains metadata without scanning symbols.
+        // A member lookup needs the declaration's uninstantiated owner name.
+        let resolved = try swiftTypeDeclarationName(
+            metadata,
+            in: image,
+            suggestedName: name,
+            resolver: resolver
+        )
+        return cachedDeclarationName.withLock { cached in
+            if let cached { return cached }
+            cached = resolved
+            return resolved
+        }
     }
 
     nonisolated func receiverPlan(
@@ -257,7 +275,7 @@ public actor NativeSwiftType: Hashable {
         var originalRequest: NativeDeclaration?
         var ownerClass: AnyClass? = metadata as? AnyClass
         var ownerImage = image
-        var ownerName = name
+        var ownerName = try declarationName()
         var hasUnavailableExtensions = false
         var preparationFailure: (any Error)?
         while true {
@@ -519,7 +537,8 @@ public actor NativeSwiftType: Hashable {
     private nonisolated func initializerResultName(
         _ signature: Any.Type
     ) throws -> String {
-        try SwiftFunctionSignature(signature).result is any NativeOptionalValue.Type
+        let name = try declarationName()
+        return try SwiftFunctionSignature(signature).result is any NativeOptionalValue.Type
             ? "Swift.Optional<" + name + ">" : name
     }
     /// Resolves a concrete allocating initializer.
@@ -669,7 +688,7 @@ public actor NativeSwiftType: Hashable {
         } else {
             let valueName =
                 valueType == (representation ?? metadata)
-                ? self.name : try swiftFunctionTypeName(valueType)
+                ? try declarationName() : try swiftFunctionTypeName(valueType)
             member = name + accessor + valueName
         }
         return .init(
