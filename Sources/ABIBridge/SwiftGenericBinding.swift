@@ -870,10 +870,21 @@ struct SwiftGenericBinding: Sendable {
             let expected = try constraints.map { try types($0.value, packIndex: packIndex)[0] }
             let expectedSuperclass = try superclass.map { try types($0, packIndex: packIndex)[0] }
             guard let shape else {
-                let references: [(UnsafeRawPointer, Any)] = try String(base.dropFirst(4)).split(
-                    separator: "&"
-                ).map { value in
-                    let name = value.trimmingCharacters(in: .whitespaces)
+                let name = String(base.dropFirst(4))
+                if constraints.isEmpty, superclass == nil, metatypeDepth == 0,
+                    let known = knownTypes[try Self.key(name)]
+                {
+                    return known
+                }
+                let protocols = name.split(separator: "&").map {
+                    $0.trimmingCharacters(in: .whitespaces)
+                }
+                let classBound = protocols.contains {
+                    ["AnyObject", "Swift.AnyObject"].contains($0)
+                }
+                let references: [(UnsafeRawPointer, Any)] = try protocols.filter {
+                    !["Any", "Swift.Any", "AnyObject", "Swift.AnyObject"].contains($0)
+                }.map { name in
                     if let protocolValue = NSProtocolFromString(
                         name.hasPrefix("__C.") ? String(name.dropFirst(4)) : name
                     ) {
@@ -900,12 +911,13 @@ struct SwiftGenericBinding: Sendable {
                 var metadata = withExtendedLifetime(references) {
                     addresses.withUnsafeBufferPointer {
                         unsafeBitCast(
-                            ABISwiftSuperclassExistentialMetadata(
+                            ABISwiftExistentialTypeMetadata(
                                 expectedSuperclass.map {
                                     unsafeBitCast($0, to: UnsafeRawPointer.self)
                                 },
                                 $0.baseAddress,
-                                $0.count
+                                $0.count,
+                                classBound
                             )!,
                             to: Any.Type.self
                         )

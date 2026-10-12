@@ -1776,7 +1776,6 @@ struct SwiftGenericCallPlan: Sendable {
                 {
                     return try SwiftGenericParameters.storageType(actual)
                 }
-                return try SwiftValueCodec<Value>().type
             case .reference(_, let arguments):
                 if actual is AnyClass { return try CValueType(scalar: ABIValuePointer) }
                 if try SwiftGenericValueLayout.isIndirect(
@@ -1786,7 +1785,6 @@ struct SwiftGenericCallPlan: Sendable {
                 ) {
                     return try SwiftGenericParameters.storageType(actual)
                 }
-                return try SwiftValueCodec<Value>().type
             case .nested:
                 if actual is AnyClass { return try CValueType(scalar: ABIValuePointer) }
                 if try SwiftGenericValueLayout.isIndirect(
@@ -1796,7 +1794,6 @@ struct SwiftGenericCallPlan: Sendable {
                 ) {
                     return try SwiftGenericParameters.storageType(actual)
                 }
-                return try SwiftValueCodec<Value>().type
             case .metatype(let instance):
                 guard let metatype = SwiftMetatypeMetadata(actual) else {
                     throw ABIResolutionError.signatureMismatch(
@@ -1827,6 +1824,12 @@ struct SwiftGenericCallPlan: Sendable {
                     "Generic ownership arguments require their underlying value convention."
                 )
             }
+            if formal.nominalDeclaration != nil, formal.opaqueIndices.isEmpty,
+                let explicit = try binding.explicitValueType(actual)
+            {
+                return explicit
+            }
+            return try SwiftValueCodec<Value>().type
         }
         return try _openExistential(actual, do: prepare)
     }

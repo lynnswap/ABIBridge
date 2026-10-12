@@ -10,6 +10,25 @@ import Foundation
 import Testing
 
 struct SwiftExistentialValueTests {
+    @Test func erasedProtocolGetterResultsResolveFromTheirDescriptors() async throws {
+        let runtime = ABIRuntime()
+        let type = try await runtime.resolveSwiftType(
+            named: "ManagedSwiftFixtures.ExistentialGetterOwner"
+        )
+        let receiver = ExistentialGetterOwner(42)
+        let typed = try await type.resolveGetter(
+            named: "value",
+            as: (() -> any ExistentialValue).self
+        )
+        #expect(try unsafe typed.unsafeInvoke(on: receiver).number == 42)
+        let erased = try await type.resolveGetter(
+            named: "value",
+            as: (() -> NativeSwiftValue).self
+        )
+        let value = try unsafe erased.unsafeInvoke(on: receiver)
+        #expect(try value.withCopy { ($0 as? any ExistentialValue)?.number } == 42)
+    }
+
     @Test func superclassTypePacksUseConsistentCompilerContainers() async throws {
         let runtime = ABIRuntime()
         for pack in [[], [Int.self, String.self]] as [[Any.Type]] {

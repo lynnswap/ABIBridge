@@ -7,6 +7,11 @@ public protocol ExistentialObjectA: AnyObject {}
 public protocol ExistentialObjectB: AnyObject {}
 public protocol ExistentialObjectC: AnyObject {}
 public protocol ExistentialObjectD: AnyObject {}
+public final class ExistentialGetterOwner {
+    private let number: Int64
+    public init(_ number: Int64) { self.number = number }
+    public var value: any ExistentialValue { InlineExistentialValue(number) }
+}
 public protocol ExistentialPackMarker: AnyObject { var number: Int64 { get } }
 public class ExistentialPackBase<each Value> {
     public let number: Int64
