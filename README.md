@@ -30,6 +30,8 @@ let symbol = try await runtime.resolve(
 )
 ```
 
+Lookup prepares the required image and symbol indexes automatically. It suspends while preparation runs outside `MainActor`, so no preparation-completion flag is needed. Use the optional `prepare(_:)` API to resolve known requirements ahead of time; a lookup that arrives during preparation shares the required index work. See [symbol lookup](https://lynnswap.github.io/ABIBridge/documentation/abibridge/symbollookup) for examples.
+
 ### Call C++ by its declaration
 
 To call that function, provide its signature as a Swift function type. Specifying a framework acquires it when needed:
@@ -41,6 +43,8 @@ let add = try await runtime.cxxFunction(
 )
 let sum = try unsafe add.unsafeInvoke(20, 22)
 ```
+
+Retain the returned handle for repeated calls. Creating these runtime handles is asynchronous; calling a synchronous native function through them remains synchronous and follows the function's thread-affinity contract.
 
 ### Call Swift by its source-level name
 

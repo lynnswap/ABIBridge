@@ -356,6 +356,16 @@ package final class SymbolIndex {
     }
     private var sourceSymbols: [SourceScope: [IndexedSymbol]] = [:]
     private var sharedCacheScopes: Set<SymbolCandidateScope> = []
+    private struct SharedCacheScanKey: Hashable {
+        let candidates: SymbolCandidateScope
+        let source: SharedCacheSymbols.Source
+    }
+    private var sharedCacheScans: [SharedCacheScanKey: SharedCacheSymbolScan] = [:]
+    #if DEBUG
+    package var hasSharedCacheWaiters: Bool {
+        sharedCacheScans.values.contains { $0.waitingCallerCount > 0 }
+    }
+    #endif
     private enum SwiftBucket { case knownModule, fallback }
     private struct Scope: Hashable, Sendable {
         let language: RuntimeLanguage
@@ -428,6 +438,33 @@ package final class SymbolIndex {
             }
         default: return false
         }
+    }
+
+    package func sharedCacheScan(
+        for query: SymbolQuery,
+        source: SharedCacheSymbols.Source,
+        includingSwiftFallback: Bool,
+        capturing sources: SharedCacheSymbols.CapturedSymbols
+    ) -> SharedCacheSymbolScan {
+        let key = SharedCacheScanKey(
+            candidates: query.candidateScope,
+            source: source
+        )
+        // Fallback coverage only grows within an index, so an existing scan's
+        // choice also satisfies callers with an older coverage observation.
+        if let scan = sharedCacheScans[key] { return scan }
+        let scan = SharedCacheSymbolScan(
+            sources: sources,
+            query: query,
+            includingSwiftFallback: includingSwiftFallback
+        )
+        sharedCacheScans[key] = scan
+        return scan
+    }
+
+    package func removeSharedCacheScans(for query: SymbolQuery) -> [SharedCacheSymbolScan] {
+        let keys = sharedCacheScans.keys.filter { $0.candidates == query.candidateScope }
+        return keys.compactMap { sharedCacheScans.removeValue(forKey: $0) }
     }
 
     package func appendSharedCacheSymbols(_ more: [IndexedSymbol], matching query: SymbolQuery) {

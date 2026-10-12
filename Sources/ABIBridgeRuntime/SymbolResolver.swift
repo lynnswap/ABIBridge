@@ -4,9 +4,29 @@ import Darwin
 // Loader operations run outside the index lock: constructors and destructors
 // may reenter the native API while dyld holds its own lock.
 package final class RuntimeSymbolResolver: Sendable {
-    package init() {}
+    package init() {
+        #if DEBUG
+        sharedCacheCapture = nil
+        #endif
+    }
     package static let shared = RuntimeSymbolResolver()
     private let state = Mutex(ResolutionState())
+
+    #if DEBUG
+    private let sharedCacheCapture: (@Sendable (
+        RuntimeImage, RuntimeDeclaration, SharedCacheSymbols.Source
+    ) -> SharedCacheSymbols.CapturedSymbols?)?
+
+    package init(capturingSharedCacheSymbols capture: @escaping @Sendable (
+        RuntimeImage, RuntimeDeclaration, SharedCacheSymbols.Source
+    ) -> SharedCacheSymbols.CapturedSymbols?) {
+        sharedCacheCapture = capture
+    }
+
+    package var hasSharedCacheWaiters: Bool {
+        state.withLock { state in state.indexes.values.contains(where: \.hasSharedCacheWaiters) }
+    }
+    #endif
 
     private struct Scope: Hashable {
         let selector: RuntimeImageSelector
@@ -551,23 +571,65 @@ package final class RuntimeSymbolResolver: Sendable {
             candidates.indices.filter { !candidates[$0].hasSharedCacheSymbols(for: query) }
                 .map { ($0, !candidates[$0].hasSharedSwiftFallback) }
         }
-        // Host-cache discovery may call dyld, so perform it outside the lock.
+        // Discovery can enter dyld. Only scans of captured sources become
+        // joinable, and each image/scope is independent of the rest of a batch.
         let cache = SharedCacheSymbols()
-        let additions = missing.map { index, includeFallback in
-            (
-                candidates[index],
-                cache.symbols(
-                    in: candidates[index].image,
-                    matching: query,
-                    includingSwiftFallback: includeFallback
-                )
-            )
+        func capture(_ index: SymbolIndex, source: SharedCacheSymbols.Source)
+            -> SharedCacheSymbols.CapturedSymbols?
+        {
+            #if DEBUG
+            if let sharedCacheCapture {
+                return sharedCacheCapture(index.image, query.declaration, source)
+            }
+            #endif
+            return cache.capture(in: index.image, source: source)
         }
-        state.withLock { _ in
-            for (index, symbols) in additions where !index.hasSharedCacheSymbols(for: query) {
-                index.appendSharedCacheSymbols(symbols, matching: query)
+        for (position, includeFallback) in missing {
+            let index = candidates[position]
+            if state.withLock({ _ in index.hasSharedCacheSymbols(for: query) }) { continue }
+            var symbols: [IndexedSymbol] = []
+            if let sources = capture(index, source: .loaded) {
+                guard let loaded = scanSharedCacheSymbols(
+                    sources, source: .loaded, for: query, in: index,
+                    includingSwiftFallback: includeFallback
+                ) else { continue }
+                symbols = loaded.symbols
+                if !loaded.foundDefinitions, let sources = capture(index, source: .file),
+                    let file = scanSharedCacheSymbols(
+                        sources, source: .file, for: query, in: index,
+                        includingSwiftFallback: includeFallback
+                    )
+                {
+                    symbols += file.symbols
+                }
+            }
+            let retired = state.withLock { _ in
+                if !index.hasSharedCacheSymbols(for: query) {
+                    index.appendSharedCacheSymbols(symbols, matching: query)
+                }
+                return index.removeSharedCacheScans(for: query)
+            }
+            withExtendedLifetime(retired) {}
+        }
+    }
+
+    private func scanSharedCacheSymbols(
+        _ sources: SharedCacheSymbols.CapturedSymbols,
+        source: SharedCacheSymbols.Source,
+        for query: SymbolQuery,
+        in index: SymbolIndex,
+        includingSwiftFallback: Bool
+    ) -> SharedCacheSymbols.Extraction? {
+        let scan = withExtendedLifetime(sources) {
+            state.withLock { _ -> SharedCacheSymbolScan? in
+                if index.hasSharedCacheSymbols(for: query) { return nil }
+                return index.sharedCacheScan(
+                    for: query, source: source,
+                    includingSwiftFallback: includingSwiftFallback, capturing: sources
+                )
             }
         }
+        return scan?.result()
     }
 
     private func select(

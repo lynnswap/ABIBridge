@@ -17,6 +17,8 @@ Image enumeration is always loaded-only. Automatic enumeration includes images w
 
 A `NativeImage` retains its loaded image. Reuse that handle to resolve several declarations in the same scope. The runtime caches raw symbol data and decoded declaration indexes; C++ members with a plain qualified owner reuse that owner's index.
 
+Lookup prepares the indexes it needs automatically. Image acquisition, symbol indexing, and declaration resolution run outside `MainActor`; an asynchronous caller suspends until the result is available. The runtime's asynchronous callable factories also prepare the supplied signature and return a handle ready for invocation. Synchronous native functions remain synchronous when invoked, following the target's actor-isolation and thread-affinity requirements.
+
 ## Keep repeated lookup work small
 
 Automatic lookup works without configuration. When you know which framework provides a declaration, specify it to reduce the images searched, especially when probing for optional APIs that may be absent:
@@ -35,6 +37,31 @@ Retain the callable handle and invoke it repeatedly to avoid resolving the same 
 A Swift module name does not necessarily identify its containing framework: a statically linked module can live in the executable, and a framework can contain several modules. Select the image that actually supplies the declaration. An explicit framework scope does not search its dependencies or fall back to the whole process. If the provider can vary, list its possible frameworks in a ``NativeSymbolRequest``. Append `.automatic` only when a final process-wide search is needed.
 
 An automatic search must check every available image to establish absence or detect ambiguity. Its first lookup can therefore cost substantially more than a framework-scoped lookup. The runtime reuses indexes and caches automatic results while the loaded-image catalog is unchanged. Keep those caches between lookups; `removeCachedResults()` makes subsequent lookups rebuild them. Batch requests also reuse their image scopes, as described below.
+
+## Prepare known requirements ahead of time
+
+Use `prepare(_:)` when you want to start resolving a known ``NativeSymbolRequest`` before it is needed. Preparation is optional: ordinary lookup performs the same work when no preparation has started.
+
+```swift
+let request = NativeSymbolRequest(
+    .init(name: "Example::Math::add(int, int)", language: .cxx),
+    in: [.framework(named: "Example")]
+)
+let preparation = Task { try await runtime.prepare(request) }
+
+// The callable can be requested while preparation is still running.
+let add = try await runtime.cxxFunction(
+    named: "Example::Math::add(int, int)",
+    as: ((Int32, Int32) -> Int32).self,
+    in: .framework(named: "Example")
+)
+let sum = try unsafe add.unsafeInvoke(20, 22)
+let symbol = try await preparation.value
+```
+
+Preparation and ordinary lookup share this runtime's image and symbol indexes. If a required index is already being built, lookup joins that work without awaiting completion of the entire preparation batch. The caller needs no readiness flag or separate recovery path when preparation is unfinished.
+
+`prepare(request)` returns a ``ResolvedSymbol`` and reports the same lookup errors as `resolve(request)`. `prepare(requests)` returns one `Result` per input, preserving order and partial success. Both use the request's existing image scopes, aliases, fallbacks, and loading policy. Preparation resolves declarations and warms their indexes; a callable factory also prepares the signature supplied through its `as:` argument.
 
 ## Describe the declaration
 

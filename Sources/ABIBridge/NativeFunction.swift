@@ -148,15 +148,15 @@ extension ABIRuntime {
     ///   - loading: Whether an explicit image may be acquired and initialized.
     /// - Returns: A reusable function retaining its image and prepared signature.
     /// - Throws: A resolution error, unsupported representation, or call preparation error.
-    public func cFunction<Result, each Argument>(
+    @concurrent public nonisolated func cFunction<Result, each Argument>(
         named name: String,
         as signature: ((repeat each Argument) -> Result).Type,
         variadicFrom: Int? = nil,
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
-    ) throws -> NativeFunction<Result, repeat each Argument> {
+    ) async throws -> NativeFunction<Result, repeat each Argument> {
         try NativeFunction(
-            symbol: resolve(.init(name: name, language: .c), in: scope, loading: loading),
+            symbol: resolver.resolve(.init(name: name, language: .c), in: scope, loading: loading),
             variadicFrom: variadicFrom
         )
     }
@@ -171,15 +171,15 @@ extension ABIRuntime {
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable typed function retaining the image.
     /// - Throws: A resolution error, unsupported representation, or call preparation error.
-    public func cFunction<Result, each Argument>(
+    @concurrent public nonisolated func cFunction<Result, each Argument>(
         named name: String,
         as signature: ((repeat each Argument) -> Result).Type,
         variadicFrom: Int? = nil,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
-    ) throws -> NativeFunction<Result, repeat each Argument> {
+    ) async throws -> NativeFunction<Result, repeat each Argument> {
         try NativeFunction(
-            symbol: resolve(.init(name: name, language: .c), in: image, loading: loading),
+            symbol: resolver.resolve(.init(name: name, language: .c), in: image, loading: loading),
             variadicFrom: variadicFrom
         )
     }
@@ -197,15 +197,15 @@ extension ABIRuntime {
     ///   - loading: Whether an explicit image may be acquired and initialized.
     /// - Returns: A reusable function retaining its image and prepared signature.
     /// - Throws: A resolution error, unsupported representation, or call preparation error.
-    public func cxxFunction<Result, each Argument>(
+    @concurrent public nonisolated func cxxFunction<Result, each Argument>(
         named name: String,
         as signature: ((repeat each Argument) -> Result).Type,
         variadicFrom: Int? = nil,
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
-    ) throws -> NativeFunction<Result, repeat each Argument> {
+    ) async throws -> NativeFunction<Result, repeat each Argument> {
         try NativeFunction(
-            symbol: resolve(.init(name: name, language: .cxx), in: scope, loading: loading),
+            symbol: resolver.resolve(.init(name: name, language: .cxx), in: scope, loading: loading),
             variadicFrom: variadicFrom
         )
     }
@@ -220,15 +220,15 @@ extension ABIRuntime {
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable typed function retaining the image.
     /// - Throws: A resolution error, unsupported representation, or call preparation error.
-    public func cxxFunction<Result, each Argument>(
+    @concurrent public nonisolated func cxxFunction<Result, each Argument>(
         named name: String,
         as signature: ((repeat each Argument) -> Result).Type,
         variadicFrom: Int? = nil,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
-    ) throws -> NativeFunction<Result, repeat each Argument> {
+    ) async throws -> NativeFunction<Result, repeat each Argument> {
         try NativeFunction(
-            symbol: resolve(.init(name: name, language: .cxx), in: image, loading: loading),
+            symbol: resolver.resolve(.init(name: name, language: .cxx), in: image, loading: loading),
             variadicFrom: variadicFrom
         )
     }
