@@ -16,7 +16,7 @@ let create = try runtime.cFunction(
 
 Explicit framework and file-URL scopes default to ``ImageLoadingPolicy/ifNeeded``. The native loader acquires the selected image and performs its normal initialization before resolution proceeds. A catalog entry or process-lifetime mapping alone is not used as an initialization guarantee. Ordinary dyld reentrancy rules still apply when resolution is called from an initializer.
 
-Loading occurs synchronously on the thread performing resolution. Ordinary lookup uses the caller's thread; asynchronous `prepare(_:)` uses a worker queue. `ABIRuntime` remains an actor, but its synchronous lookup methods are `nonisolated`. If a library requires a particular initialization context, acquire it there before using `loading: .loadedOnly`.
+Loading occurs synchronously on the thread performing resolution. Synchronous lookup uses the caller's thread; asynchronous `prepare(_:)` and all awaited Swift function, type, and member factories use a worker queue. `ABIRuntime` remains an actor, but its synchronous lookup methods are `nonisolated`. If a library requires a particular initialization context, acquire it there before using `loading: .loadedOnly`.
 
 Framework names first select matching loaded images. Otherwise, discovery checks the application's framework directories and the system's public/private framework locations, including shared-cache-only images. Multiple candidates report `ABIResolutionError.ambiguousImage`; use a concrete executable URL to distinguish them. Presence in a directory or cache does not establish loadability.
 

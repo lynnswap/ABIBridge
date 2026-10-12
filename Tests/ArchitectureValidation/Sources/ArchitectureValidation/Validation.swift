@@ -279,11 +279,11 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         checks.append("C/C++ typed calls, indirect results, bound ownership, and authenticated virtual dispatch")
         try check(ABIValidateAuthenticatedFunction(), "Unmodified function-pointer authentication")
     case "swift":
-        let sum = try runtime.swiftFunction(
+        let sum = try await runtime.resolveSwiftFunction(
             named: "ArchitectureValidation.architectureSum(_:_:_:_:_:_:_:_:_:_:)",
             as: ((Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Int).self)
         try check(unsafe sum.unsafeInvoke(1,2,3,4,5,6,7,8,9,10) == architectureSum(1,2,3,4,5,6,7,8,9,10), "Swift register/stack arguments")
-        let decorate = try runtime.swiftFunction(
+        let decorate = try await runtime.resolveSwiftFunction(
             named: "ArchitectureValidation.architectureDecorate(_:)",
             as: ((String) -> String).self
         )
@@ -296,7 +296,7 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         do {
             let receiver = ArchitectureCounter(40)
             observed = receiver
-            bound = try runtime.object(receiver).method(
+            bound = try await runtime.object(receiver).resolveMethod(
                 named: "adding(_:)",
                 as: ((Int) -> Int).self
             )
@@ -316,16 +316,16 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
             try check(receiver.value == 41, "Private Swift compiler accessor control")
             receiver.value = 40
             let object = runtime.object(receiver)
-            privateMethod = try object.method(named: "adding(_:)", as: ((Int) -> Int).self)
-            let complete = try object.method(
+            privateMethod = try await object.resolveMethod(named: "adding(_:)", as: ((Int) -> Int).self)
+            let complete = try await object.resolveMethod(
                 named: "adding(Swift.Int) -> Swift.Int",
                 as: ((Int) -> Int).self
             )
             try check(unsafe complete.unsafeInvoke(2) == 42, "Private Swift complete member declaration")
-            let inherited = try object.method(named: "inherited()", as: (() -> Int).self)
+            let inherited = try await object.resolveMethod(named: "inherited()", as: (() -> Int).self)
             try check(unsafe inherited.unsafeInvoke() == 42, "Private Swift superclass declaration")
-            let getter = try object.getter(named: "value", as: (() -> Int).self)
-            let setter = try object.setter(named: "value", as: Int.self)
+            let getter = try await object.resolveGetter(named: "value", as: (() -> Int).self)
+            let setter = try await object.resolveSetter(named: "value", as: Int.self)
             try unsafe setter.unsafeInvoke(50)
             try check(unsafe getter.unsafeInvoke() == 50, "Private Swift getter and setter")
         }

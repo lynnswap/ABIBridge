@@ -40,13 +40,13 @@ extension Container: ABIBridgeSwiftValue {
         let increment = try NativeSwiftClosure<(Int64) -> Int64> { $0 + 1 }
         let host: AnyObject
         if route == "host" {
-            let make = try runtime.swiftFunction(
+            let make = try await runtime.resolveSwiftFunction(
                 named: "SwiftUIFixtures.makeHost(_:_:_:)",
                 as: ((PanelModel, RenderEvents, NativeSwiftClosure<(Int64) -> Int64>) -> AnyObject).self)
             host = try unsafe make.unsafeInvoke(model, events, increment)
         } else {
             let name = route == "opaque" ? "makePanel" : "makeComposedPanel"
-            let make = try runtime.swiftFunction(
+            let make = try await runtime.resolveSwiftFunction(
                 named: "SwiftUIFixtures." + name + "(_:_:_:)",
                 as: ((PanelModel, RenderEvents, NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftValue).self)
             let result = try unsafe make.unsafeInvoke(model, events, increment)
@@ -100,7 +100,7 @@ private struct SwiftUIRender {
         guard value else { throw ArchitectureValidationFailure(description: message) }
         checks.append(message)
     }
-    let text = try runtime.swiftFunction(
+    let text = try await runtime.resolveSwiftFunction(
         named: "SwiftUIFixtures.echoText(_:)",
         as: ((Text) -> Text).self
     )
@@ -108,39 +108,39 @@ private struct SwiftUIRender {
         let result = try unsafe text.unsafeInvoke(input)
         try check(result == input && (try swiftUIImage(result)).matches(try swiftUIImage(input)), "Text preserves storage, modifiers, and rendered pixels")
     }
-    let image = try runtime.swiftFunction(
+    let image = try await runtime.resolveSwiftFunction(
         named: "SwiftUIFixtures.echoImage(_:)",
         as: ((Image) -> Image).self
     )
     let symbol = Image(systemName: "star.fill")
     let returned = try unsafe image.unsafeInvoke(symbol)
     try check(returned == symbol && (try swiftUIImage(returned)).matches(try swiftUIImage(symbol)), "Image retains its provider and renders identically")
-    let color = try runtime.swiftFunction(
+    let color = try await runtime.resolveSwiftFunction(
         named: "SwiftUIFixtures.echoColor(_:)",
         as: ((Color) -> Color).self
     )
     let original = Color(red: 0.25, green: 0.5, blue: 0.75)
     let returnedColor = try unsafe color.unsafeInvoke(original)
     try check(returnedColor == original && (try swiftUIImage(returnedColor)).matches(try swiftUIImage(original)), "Color retains its provider and renders identically")
-    let any = try runtime.swiftFunction(
+    let any = try await runtime.resolveSwiftFunction(
         named: "SwiftUIFixtures.echoAnyView(_:)",
         as: ((AnyView) -> AnyView).self
     )
     let erased = AnyView(Text("Erased").padding().background(Color.yellow))
     try check(try swiftUIImage(unsafe any.unsafeInvoke(erased)).matches(swiftUIImage(erased)), "AnyView preserves a compiler-composed view")
 
-    let container = try runtime.swiftFunction(
+    let container = try await runtime.resolveSwiftFunction(
         named: "SwiftUIFixtures.echoContainer(_:)",
         as: ((Container<Text>) -> Container<Text>).self)
     let content = Container(Text("Generic content"))
     try check(try swiftUIImage(unsafe container.unsafeInvoke(content)).matches(swiftUIImage(content)), "Imported Container<Text> uses its resilient indirect convention")
-    let wrap = try runtime.swiftFunction(
+    let wrap = try await runtime.resolveSwiftFunction(
         named: "SwiftUIFixtures.wrapText(_:)",
         as: ((Text) -> Container<Text>).self)
     let input = Text("Compiler adapter")
     try check(try swiftUIImage(unsafe wrap.unsafeInvoke(input)).matches(swiftUIImage(SwiftUIFixtures.wrap(input))), "Compiled specialization supplies generic View metadata and witnesses")
 
-    let opaque = try runtime.swiftFunction(
+    let opaque = try await runtime.resolveSwiftFunction(
         named: "SwiftUIFixtures.makeComposedPanel(_:_:_:)",
         as: ((PanelModel, RenderEvents, NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftValue).self)
     let model = PanelModel(), events = RenderEvents()
@@ -151,7 +151,7 @@ private struct SwiftUIRender {
     let after = try swiftUIImage(view)
     try check(!before.matches(after), "Private some View composition renders an observable state change")
     try check(after.matches(swiftUIImage(SwiftUIFixtures.makeComposedPanel(model, events, { $0 + 1 }))), "Opaque View erasure matches the ordinary compiler call")
-    let number = try runtime.swiftFunction(
+    let number = try await runtime.resolveSwiftFunction(
         named: "SwiftUIFixtures.makeNumber()",
         as: (() -> NativeSwiftValue).self
     )

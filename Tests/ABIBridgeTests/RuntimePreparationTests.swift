@@ -2,6 +2,7 @@ import ABIBridgeTestSupport
 #if os(macOS)
 import ABIBridge
 import Foundation
+import Synchronization
 import Testing
 
 @Suite(.serialized)
@@ -159,6 +160,233 @@ struct RuntimePreparationTests {
         MainActor.assertIsolated()
     }
 
+    @MainActor @Test(arguments: [false, true], [false, true])
+    func swiftLookupSelectsTheCallingThreadOrAnIndependentWorker(
+        asynchronous: Bool,
+        typeLookup: Bool
+    ) async throws {
+        let dependency = try FixtureLibrary(
+            load: false,
+            cxxSource: """
+                #include <pthread.h>
+                static int preparationThread = -1;
+                __attribute__((constructor)) static void initialize() {
+                    preparationThread = pthread_main_np();
+                }
+                extern "C" int ABISwiftPreparationThread() { return preparationThread; }
+                """
+        )
+        defer { dependency.cleanup() }
+        let module = "SwiftPreparation_" + dependency.namespace
+        let fixture = try FixtureLibrary(
+            load: false,
+            swiftModule: module,
+            swiftSource: """
+                @_silgen_name("ABISwiftPreparationThread") private func preparationThread() -> Int32
+                public func thread() -> Int32 { preparationThread() }
+                public final class Receiver { public init() {} }
+                """,
+            linkArguments: [dependency.libraryURL.path]
+        )
+        defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        let name = module + ".thread()"
+        let image = ImageSelector.path(fixture.libraryURL)
+
+        if typeLookup {
+            let typeName = module + ".Receiver"
+            let type: NativeSwiftType
+            if asynchronous {
+                type = try await runtime.resolveSwiftType(named: typeName, in: image)
+            } else {
+                type = try runtime.resolveSwiftTypeAndWait(named: typeName, in: image)
+            }
+            let retained = try await runtime.resolveSwiftType(
+                named: typeName,
+                in: type.image,
+                loading: .loadedOnly
+            )
+            #expect(type === retained)
+            let represented = try await runtime.resolveSwiftType(
+                named: typeName,
+                as: AnyObject.self,
+                in: image
+            )
+            let retainedRepresentation = try await runtime.resolveSwiftType(
+                named: typeName,
+                as: AnyObject.self,
+                in: type.image,
+                loading: .loadedOnly
+            )
+            #expect(represented === retainedRepresentation)
+        }
+
+        let function: NativeSwiftFunction<() -> Int32>
+        if asynchronous {
+            function = try await runtime.resolveSwiftFunction(
+                named: name,
+                as: (() -> Int32).self,
+                in: image
+            )
+        } else {
+            function = try runtime.resolveSwiftFunctionAndWait(
+                named: name,
+                as: (() -> Int32).self,
+                in: image
+            )
+        }
+        MainActor.assertIsolated()
+        #expect(try unsafe function.unsafeInvoke() == (asynchronous ? 0 : 1))
+
+        let retained = try await runtime.resolveSwiftFunction(
+            named: name,
+            as: (() -> Int32).self,
+            in: function.symbol.image,
+            loading: .loadedOnly
+        )
+        #expect(retained.symbol.declaration == function.symbol.declaration)
+        #expect(try unsafe retained.unsafeInvoke() == (asynchronous ? 0 : 1))
+        MainActor.assertIsolated()
+    }
+
+    @MainActor @Test(arguments: [false, true])
+    func asynchronousMemberPreparationKeepsReceiverIsolation(bound: Bool) async throws {
+        let runtime = ABIRuntime()
+        let receiver = SwiftPreparationReceiver()
+        let type = try await runtime.resolveSwiftType(
+            named: "ABIBridgeTests.SwiftPreparationReceiver"
+        )
+        let object = runtime.object(receiver)
+        SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() }
+        defer { SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() } }
+
+        if bound {
+            let method = try await object.resolveMethod(
+                named: "read()",
+                as: (() -> SwiftPreparationValue).self
+            )
+            let getter = try await object.resolveGetter(
+                named: "value",
+                as: (() -> SwiftPreparationValue).self
+            )
+            let setter = try await object.resolveSetter(
+                named: "value",
+                as: SwiftPreparationValue.self
+            )
+            let observations = SwiftPreparationValue.preparationThreads.withLock { $0 }
+            #expect(!observations.isEmpty)
+            #expect(observations.allSatisfy { !$0 })
+            MainActor.assertIsolated()
+            receiver.raw = 43
+            #expect(try unsafe method.unsafeInvoke().raw == 43)
+            #expect(try unsafe getter.unsafeInvoke().raw == 43)
+            try unsafe setter.unsafeInvoke(SwiftPreparationValue(raw: 44))
+            #expect(receiver.raw == 44)
+        } else {
+            let method = try await type.resolveMethod(
+                named: "read()",
+                as: (() -> SwiftPreparationValue).self
+            )
+            let getter = try await type.resolveGetter(
+                named: "value",
+                as: (() -> SwiftPreparationValue).self
+            )
+            let setter = try await type.resolveSetter(
+                named: "value",
+                as: SwiftPreparationValue.self
+            )
+            let observations = SwiftPreparationValue.preparationThreads.withLock { $0 }
+            #expect(!observations.isEmpty)
+            #expect(observations.allSatisfy { !$0 })
+            MainActor.assertIsolated()
+            receiver.raw = 43
+            #expect(try unsafe method.unsafeInvoke(on: receiver).raw == 43)
+            #expect(try unsafe getter.unsafeInvoke(on: receiver).raw == 43)
+            try unsafe setter.unsafeInvoke(on: receiver, SwiftPreparationValue(raw: 44))
+            #expect(receiver.raw == 44)
+        }
+    }
+
+    @MainActor @Test
+    func asynchronousInitializerAndStaticPreparationRunAwayFromMainActor() async throws {
+        let runtime = ABIRuntime()
+        let type = try await runtime.resolveSwiftType(
+            named: "ABIBridgeTests.SwiftPreparationReceiver"
+        )
+        let originalStaticValue = SwiftPreparationReceiver.staticValue
+        defer { SwiftPreparationReceiver.staticValue = originalStaticValue }
+        SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() }
+        defer { SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() } }
+
+        let initialize = try await type.resolveInitializer(
+            named: "init(value:)",
+            as: ((SwiftPreparationValue) -> AnyObject).self
+        )
+        let read = try await type.resolveStaticMethod(
+            named: "readStatic()",
+            as: (() -> SwiftPreparationValue).self
+        )
+        let getter = try await type.resolveStaticGetter(
+            named: "staticValue",
+            as: (() -> SwiftPreparationValue).self
+        )
+        let setter = try await type.resolveStaticSetter(
+            named: "staticValue",
+            as: SwiftPreparationValue.self
+        )
+        let observations = SwiftPreparationValue.preparationThreads.withLock { $0 }
+        #expect(!observations.isEmpty)
+        #expect(observations.allSatisfy { !$0 })
+        MainActor.assertIsolated()
+
+        let receiver =
+            try unsafe initialize.unsafeInvoke(SwiftPreparationValue(raw: 43))
+            as! SwiftPreparationReceiver
+        #expect(receiver.raw == 43)
+        try unsafe setter.unsafeInvoke(SwiftPreparationValue(raw: 44))
+        #expect(try unsafe getter.unsafeInvoke().raw == 44)
+        #expect(try unsafe read.unsafeInvoke().raw == 44)
+    }
+
+    @Test func asynchronousSwiftLookupPreservesLookupFailures() async throws {
+        let runtime = ABIRuntime()
+        let missing = NativeDeclaration(
+            name: "ABIBridgeTests.swiftPreparationMissing() -> Swift.Int32",
+            language: .swift
+        )
+        await #expect(throws: ABIResolutionError.declarationNotFound(missing)) {
+            try await runtime.resolveSwiftFunction(
+                named: missing.name,
+                as: (() -> Int32).self
+            )
+        }
+        let function = try await runtime.resolveSwiftFunction(
+            named: "ABIBridgeTests.swiftABIAnswer()",
+            as: (() -> Int32).self
+        )
+        #expect(try unsafe function.unsafeInvoke() == 42)
+
+        let missingType = NativeDeclaration(
+            name: "nominal type descriptor for ABIBridgeTests.SwiftPreparationMissing",
+            language: .swift,
+            kind: .data
+        )
+        await #expect(throws: ABIResolutionError.declarationNotFound(missingType)) {
+            try await runtime.resolveSwiftType(named: "ABIBridgeTests.SwiftPreparationMissing")
+        }
+        let type = try await runtime.resolveSwiftType(
+            named: "ABIBridgeTests.SwiftPreparationReceiver"
+        )
+        await #expect(throws: ABIResolutionError.self) {
+            try await type.resolveGetter(named: "missing", as: (() -> Int64).self)
+        }
+        let getter = try await type.resolveGetter(
+            named: "value",
+            as: (() -> SwiftPreparationValue).self
+        )
+        #expect(try unsafe getter.unsafeInvoke(on: SwiftPreparationReceiver()).raw == 42)
+    }
+
     @Test func failedPreparationDoesNotDisableLaterSynchronousLookup() async throws {
         let fixture = try FixtureLibrary(load: false)
         defer { fixture.cleanup() }
@@ -178,6 +406,34 @@ struct RuntimePreparationTests {
             in: image
         )
         #expect(try unsafe demanded.unsafeInvoke(19, 23) == 42)
+    }
+}
+
+@frozen public struct SwiftPreparationValue: BitwiseCopyable, ABIBridgeValue {
+    public var raw: Int64
+    static let preparationThreads = Mutex<[Bool]>([])
+    public static var abiType: NativeType {
+        preparationThreads.withLock { $0.append(Thread.isMainThread) }
+        return .int64
+    }
+}
+
+public final class SwiftPreparationReceiver {
+    public var raw: Int64 = 42
+    private static let staticRaw = Mutex<Int64>(42)
+    public init() {}
+    public init(value: SwiftPreparationValue) { raw = value.raw }
+    @inline(never) public func read() -> SwiftPreparationValue { .init(raw: raw) }
+    public var value: SwiftPreparationValue {
+        get { .init(raw: raw) }
+        set { raw = newValue.raw }
+    }
+    @inline(never) public static func readStatic() -> SwiftPreparationValue {
+        .init(raw: staticRaw.withLock { $0 })
+    }
+    public static var staticValue: SwiftPreparationValue {
+        get { .init(raw: staticRaw.withLock { $0 }) }
+        set { staticRaw.withLock { $0 = newValue.raw } }
     }
 }
 #endif

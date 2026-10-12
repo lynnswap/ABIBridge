@@ -4,7 +4,7 @@ Receive a runtime-only value in a native callback and call its members using its
 
 ## Prepare the type and members
 
-Resolve the nominal type with `ABIRuntime.swiftType(named:in:loading:)` and prepare ordinary `getter` or `method` handles. The same handle accepts an owned NativeSwiftValue or an active NativeSwiftBorrowedValue. Supply an opaque `receiverABI` for formally indirect self, or established fixed components for a direct value. Metadata supplies storage dimensions; it cannot establish the declaration's passing convention. Generic member planning supplies self conventions encoded by its formal declaration.
+Resolve the nominal type with `ABIRuntime.resolveSwiftType` and prepare ordinary `resolveGetter` or `resolveMethod` handles. Use their `AndWait` variants for synchronous lookup. The same handle accepts an owned NativeSwiftValue or an active NativeSwiftBorrowedValue. Supply an opaque `receiverABI` for formally indirect self, or established fixed components for a direct value. Metadata supplies storage dimensions; it cannot establish the declaration's passing convention. Generic member planning supplies self conventions encoded by its formal declaration.
 
 For an independently compiled module with a resilient `Record`, a `text: String` getter and `func visit(_ body: (Record) -> Void)`, a consumer can prepare everything before native callback entry:
 
@@ -14,9 +14,9 @@ nonisolated(nonsending) func visitRecords(
     onFailure: @escaping @Sendable (any Error) -> Void
 ) async throws {
     let runtime = ABIRuntime.shared
-    let type = try runtime.swiftType(named: "Example.Record")
-    let text = try type.getter(named: "text", as: (() -> String).self, receiverABI: .opaque(named: type.name))
-    let visit = try runtime.swiftFunction(
+    let type = try await runtime.resolveSwiftType(named: "Example.Record")
+    let text = try await type.resolveGetter(named: "text", as: (() -> String).self, receiverABI: .opaque(named: type.name))
+    let visit = try await runtime.resolveSwiftFunction(
         named: "Example.visit((Example.Record) -> ()) -> ()",
         as: ((NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Void>) -> Void).self,
         valueABIs: [type: .opaque(named: type.name)]

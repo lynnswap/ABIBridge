@@ -30,7 +30,7 @@ struct Benchmark {
         let object = ABIRuntime().object(PreparationBox("value"))
         let name = "add(Swift.Int64) -> Swift.Int64"
         let firstStart = ContinuousClock.now
-        let first = try object.method(named: name, as: ((Int64) -> Int64).self)
+        let first = try object.resolveMethodAndWait(named: name, as: ((Int64) -> Int64).self)
         let firstValue = try unsafe first.unsafeInvoke(35)
         precondition(firstValue == 42)
         print("Swift generic member first preparation: \(seconds(firstStart.duration(to: .now))*1000) ms")
@@ -40,7 +40,7 @@ struct Benchmark {
             var checksum: Int64 = 0
             let start = ContinuousClock.now
             for value in 0..<count {
-                let method = try object.method(named: name, as: ((Int64) -> Int64).self)
+                let method = try object.resolveMethodAndWait(named: name, as: ((Int64) -> Int64).self)
                 checksum += try unsafe method.unsafeInvoke(Int64(value))
             }
             samples.append(seconds(start.duration(to: .now)) * 1e6 / Double(count))
@@ -55,17 +55,17 @@ struct Benchmark {
         let runtime = ABIRuntime()
         let source = ImageSelector.automatic
         let start = ContinuousClock.now
-        let regular = try runtime.swiftFunction(
+        let regular = try await runtime.resolveSwiftFunction(
             named: "BenchmarkSwiftProvider.add(_:_:)", as: ((Int64, Int64) -> Int64).self,
             in: source)
         print("Swift regular first preparation: \(seconds(start.duration(to:.now))*1000) ms")
         let genericStart = ContinuousClock.now
-        let generic = try runtime.swiftFunction(
+        let generic = try await runtime.resolveSwiftFunction(
             named: "BenchmarkSwiftProvider.identity(_:)", as: ((Int64) -> Int64).self,
             genericArguments: [.type(Int64.self)], in: source)
         print("Swift generic first preparation: \(seconds(genericStart.duration(to:.now))*1000) ms")
         let constrainedStart = ContinuousClock.now
-        let constrained = try runtime.swiftFunction(
+        let constrained = try await runtime.resolveSwiftFunction(
             named: "BenchmarkSwiftProvider.hashEcho(_:)", as: ((Int64) -> Int64).self,
             genericArguments: [.type(Int64.self)], in: source)
         print(
@@ -158,7 +158,7 @@ struct Benchmark {
             precondition(result === object)
             return value
         }
-        let decorate = try runtime.swiftFunction(
+        let decorate = try await runtime.resolveSwiftFunction(
             named: "BenchmarkSwiftProvider.decorate(_:)",
             as: ((String) -> String).self
         )
@@ -169,7 +169,7 @@ struct Benchmark {
         try measure("Swift prepared String", n: iterations, delta: 65) {
             $0 + Int64(try unsafe decorate.unsafeInvoke(input).utf8.count)
         }
-        let apply = try runtime.swiftFunction(
+        let apply = try await runtime.resolveSwiftFunction(
             named: "BenchmarkSwiftProvider.apply(_:_:)",
             as: ((NativeSwiftClosure<(Int64) -> Int64>, Int64) -> Int64).self, in: source)
         let callback = try NativeSwiftClosure<(Int64) -> Int64> { $0 + 1 }

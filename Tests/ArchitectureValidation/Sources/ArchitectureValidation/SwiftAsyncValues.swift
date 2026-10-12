@@ -8,7 +8,7 @@ import SwiftValueFixtures
         guard condition else { throw ArchitectureValidationFailure(description: message) }
         checks.append(message)
     }
-    let text = try runtime.swiftFunction(
+    let text = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.asyncText(_:_:)",
         as: (@concurrent (AsyncValueGate, ErrorToken) async -> String).self)
     let gate = AsyncValueGate(), token = ErrorToken()
@@ -21,7 +21,7 @@ import SwiftValueFixtures
     try check(try await task.value == String(repeating: "async", count: 100),
               "Native async completion returns owned String storage to the caller executor")
 
-    let inherited = try runtime.swiftFunction(
+    let inherited = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.asyncInherited(_:_:)",
         as: (nonisolated(nonsending) (AsyncValueGate, Int64) async -> Int64).self)
     let inheritedGate = AsyncValueGate()
@@ -35,7 +35,7 @@ import SwiftValueFixtures
     await inheritedGate.waitUntilSuspended(); await inheritedGate.open()
     try check(try await inheritedTask.value == 42, "Caller-isolation payload and task-local values survive suspension")
 
-    let failing = try runtime.swiftFunction(
+    let failing = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.asyncFailure(_:_:)",
         as: (@concurrent (AsyncValueGate, ErrorToken) async throws -> String).self)
     for cancel in [false, true] {
@@ -55,7 +55,7 @@ import SwiftValueFixtures
         }
     }
 
-    let large = try runtime.swiftFunction(
+    let large = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.asyncLarge(_:_:_:)",
         as: (@concurrent (AsyncValueGate, ErrorToken, Bool) async throws(LargeError) -> LargeError).self)
     for fail in [false, true] {
@@ -72,14 +72,14 @@ import SwiftValueFixtures
         }
     }
 
-    let stack = try runtime.swiftFunction(
+    let stack = try await runtime.resolveSwiftFunction(
         named: "SwiftValueFixtures.asyncStack(_:_:_:_:_:_:_:_:_:_:)",
         as: (@concurrent (Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64) async -> Int64).self)
     try check(try unsafe await stack.unsafeInvoke(1, 2, 3, 4, 5, 6, 7, 8, 9, 10) == 385,
               "Async tail transfer preserves stack arguments")
 
-    let type = try runtime.swiftType(named: "SwiftValueFixtures.AsyncValueOwner")
-    let member = try type.method(
+    let type = try await runtime.resolveSwiftType(named: "SwiftValueFixtures.AsyncValueOwner")
+    let member = try await type.resolveMethod(
         named: "text(_:)",
         as: (@concurrent (AsyncValueGate) async -> String).self
     )

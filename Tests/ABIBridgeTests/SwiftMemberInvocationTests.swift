@@ -155,16 +155,16 @@ struct SwiftMemberInvocationTests {
         do {
             let original = SwiftMemberRenderer(text: "original")
             observedOriginal = original
-            render = try runtime.object(original).method(
+            render = try await runtime.object(original).resolveMethod(
                 named: "render(_:)",
                 as: ((Int) -> Int).self
             ).method
-            getter = try runtime.object(original).getter(
+            getter = try await runtime.object(original).resolveGetter(
                 named: "consumedText",
                 as: (() -> String).self,
                 consuming: true
             ).method
-            setter = try runtime.object(original).setter(
+            setter = try await runtime.object(original).resolveSetter(
                 named: "consumedText",
                 as: String.self,
                 consuming: true
@@ -185,11 +185,11 @@ struct SwiftMemberInvocationTests {
         withExtendedLifetime((render, getter, setter)) { #expect(observedReceiver == nil) }
         let incompatible = try render.bind(to: NSObject())
         #expect(throws: ABIInvocationError.self) { try unsafe incompatible.unsafeInvoke(0) }
-        let adaptedType = try runtime.swiftType(
+        let adaptedType = try await runtime.resolveSwiftType(
             named: "ABIBridgeTests.SwiftMemberRenderer",
             as: AnyObject.self
         )
-        let adapted = try adaptedType.method(named: "render(_:)", as: ((Int) -> Int).self)
+        let adapted = try await adaptedType.resolveMethod(named: "render(_:)", as: ((Int) -> Int).self)
         let adaptedBinding = try adapted.bind(to: NSObject())
         #expect(throws: ABIInvocationError.self) { try unsafe adaptedBinding.unsafeInvoke(0) }
     }
@@ -199,14 +199,14 @@ struct SwiftMemberInvocationTests {
         let receiver = second ? makeSecondPrivateReceiver() : makeFirstPrivateReceiver()
         let runtime = ABIRuntime()
         let object = runtime.object(receiver)
-        let title = try object.method(named: member, as: (() -> String).self)
+        let title = try await object.resolveMethod(named: member, as: (() -> String).self)
         #expect(try unsafe title.unsafeInvoke() == (second ? "22" : "11"))
-        let echo = try object.method(named: "echo(_:)", as: ((Int) -> Int).self)
+        let echo = try await object.resolveMethod(named: "echo(_:)", as: ((Int) -> Int).self)
         #expect(try unsafe echo.unsafeInvoke(1) == (second ? 23 : 12))
-        let inherited = try object.method(named: "inherited()", as: (() -> Int).self)
+        let inherited = try await object.resolveMethod(named: "inherited()", as: (() -> Int).self)
         #expect(try unsafe inherited.unsafeInvoke() == (second ? 22 : 11))
-        let getter = try object.getter(named: "value", as: (() -> Int).self)
-        let setter = try object.setter(named: "value", as: Int.self)
+        let getter = try await object.resolveGetter(named: "value", as: (() -> Int).self)
+        let setter = try await object.resolveSetter(named: "value", as: Int.self)
         runtime.removeCachedResults()
         try unsafe setter.unsafeInvoke(42)
         #expect(try unsafe getter.unsafeInvoke() == 42)
@@ -217,7 +217,7 @@ struct SwiftMemberInvocationTests {
         let runtime = ABIRuntime()
         let receiver = SwiftMemberLookupReceiver()
         let owner = "ABIBridgeTests.SwiftMemberLookupReceiver"
-        let type = try runtime.swiftType(named: owner)
+        let type = try await runtime.resolveSwiftType(named: owner)
         let expected: String
         switch operation {
         case "method": expected = owner + ".missing() -> Swift.Int"
@@ -230,17 +230,17 @@ struct SwiftMemberInvocationTests {
         do {
             switch operation {
             case "method":
-                _ = try runtime.object(receiver).method(named: "missing()", as: (() -> Int).self)
+                _ = try await runtime.object(receiver).resolveMethod(named: "missing()", as: (() -> Int).self)
             case "getter":
-                _ = try runtime.object(receiver).getter(named: "missing", as: (() -> Int).self)
+                _ = try await runtime.object(receiver).resolveGetter(named: "missing", as: (() -> Int).self)
             case "setter":
-                _ = try runtime.object(receiver).setter(named: "missing", as: Int.self)
+                _ = try await runtime.object(receiver).resolveSetter(named: "missing", as: Int.self)
             case "staticMethod":
-                _ = try type.staticMethod(named: "missing()", as: (() -> Int).self)
+                _ = try await type.resolveStaticMethod(named: "missing()", as: (() -> Int).self)
             case "staticGetter":
-                _ = try type.staticGetter(named: "missing", as: (() -> Int).self)
+                _ = try await type.resolveStaticGetter(named: "missing", as: (() -> Int).self)
             default:
-                _ = try type.staticSetter(named: "missing", as: Int.self)
+                _ = try await type.resolveStaticSetter(named: "missing", as: Int.self)
             }
             Issue.record("A missing member unexpectedly resolved")
         } catch let ABIResolutionError.declarationNotFound(request) {
@@ -250,18 +250,18 @@ struct SwiftMemberInvocationTests {
 
     @MainActor @Test func consumingAccessorsPreserveCallerReferencesAndValues() async throws {
         let runtime = ABIRuntime()
-        let type = try runtime.swiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
-        let get = try type.getter(named: "consumedText", as: (() -> String).self, consuming: true)
-        let set = try type.setter(named: "consumedText", as: String.self, consuming: true)
+        let type = try await runtime.resolveSwiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
+        let get = try await type.resolveGetter(named: "consumedText", as: (() -> String).self, consuming: true)
+        let set = try await type.resolveSetter(named: "consumedText", as: String.self, consuming: true)
         var value: SwiftMemberRenderer? = .init(text: String(repeating: "a", count: 100))
         weak let observed = value
         #expect(try unsafe get.unsafeInvoke(on: value!) == value?.text)
         try unsafe set.unsafeInvoke(on: value!, String(repeating: "b", count: 100))
         #expect(value?.text == String(repeating: "b", count: 100))
-        var boundGet: NativeBoundSwiftMethod<() -> String>? = try runtime.object(value!).getter(
+        var boundGet: NativeBoundSwiftMethod<() -> String>? = try await runtime.object(value!).resolveGetter(
             named: "consumedText", as: (() -> String).self, consuming: true
         )
-        var boundSet: NativeBoundSwiftMethod<(String) -> Void>? = try runtime.object(value!).setter(
+        var boundSet: NativeBoundSwiftMethod<(String) -> Void>? = try await runtime.object(value!).resolveSetter(
             named: "consumedText", as: String.self, consuming: true
         )
         value = nil
@@ -272,13 +272,13 @@ struct SwiftMemberInvocationTests {
         boundSet = nil
         #expect(observed == nil)
 
-        let pointType = try runtime.swiftType(named: "ABIBridgeTests.SwiftMemberPoint")
-        let getValue = try pointType.getter(
+        let pointType = try await runtime.resolveSwiftType(named: "ABIBridgeTests.SwiftMemberPoint")
+        let getValue = try await pointType.resolveGetter(
             named: "consumedValue",
             as: (() -> Int64).self,
             consuming: true
         )
-        let setValue = try pointType.setter(named: "consumedValue", as: Int64.self, consuming: true)
+        let setValue = try await pointType.resolveSetter(named: "consumedValue", as: Int64.self, consuming: true)
         var point = SwiftMemberPoint(value: 12)
         #expect(try unsafe getValue.unsafeInvoke(on: point) == 12)
         try unsafe setValue.unsafeInvoke(on: point, 7)
@@ -290,9 +290,9 @@ struct SwiftMemberInvocationTests {
 
     @MainActor @Test func consumingReceiversTransferAnIndependentCopy() async throws {
         let runtime = ABIRuntime()
-        let type = try runtime.swiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
-        let consume = try type.method(named: "consumeText()", as: (() -> Int).self, consuming: true)
-        let invalidResult = try type.method(
+        let type = try await runtime.resolveSwiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
+        let consume = try await type.resolveMethod(named: "consumeText()", as: (() -> Int).self, consuming: true)
+        let invalidResult = try await type.resolveMethod(
             named: "consumeReturningNil() -> Swift.Optional<Swift.UnsafeRawPointer>",
             as: (() -> UnsafeRawPointer).self, consuming: true
         )
@@ -301,19 +301,19 @@ struct SwiftMemberInvocationTests {
         #expect(try unsafe consume.unsafeInvoke(on: value!) == 100)
         #expect(throws: ABIInvocationError.self) { try unsafe invalidResult.unsafeInvoke(on: value!) }
         #expect(value?.text.count == 100)
-        let rawType = try runtime.swiftType(
+        let rawType = try await runtime.resolveSwiftType(
             named: type.name,
             as: UnsafeRawPointer.self,
             in: type.image
         )
-        let rawConsume = try rawType.method(
+        let rawConsume = try await rawType.resolveMethod(
             named: "consumeText()",
             as: (() -> Int).self,
             consuming: true
         )
         let pointer = UnsafeRawPointer(Unmanaged.passUnretained(value!).toOpaque())
         #expect(try unsafe rawConsume.unsafeInvoke(on: pointer) == 100)
-        var bound: NativeBoundSwiftMethod<() -> Int>? = try runtime.object(value!).method(
+        var bound: NativeBoundSwiftMethod<() -> Int>? = try await runtime.object(value!).resolveMethod(
             named: "consumeText()", as: (() -> Int).self, consuming: true
         )
         value = nil
@@ -322,16 +322,16 @@ struct SwiftMemberInvocationTests {
         bound = nil
         #expect(observed == nil)
 
-        let pointType = try runtime.swiftType(named: "ABIBridgeTests.SwiftMemberPoint")
-        let take = try pointType.method(
+        let pointType = try await runtime.resolveSwiftType(named: "ABIBridgeTests.SwiftMemberPoint")
+        let take = try await pointType.resolveMethod(
             named: "consumeValue()",
             as: (() -> Int64).self,
             consuming: true
         )
         let point = SwiftMemberPoint(value: 42)
         #expect(try unsafe take.unsafeInvoke(on: point) == 42 && point.value == 42)
-        let largeType = try runtime.swiftType(named: "ABIBridgeTests.SwiftMemberLarge")
-        let change = try largeType.method(
+        let largeType = try await runtime.resolveSwiftType(named: "ABIBridgeTests.SwiftMemberLarge")
+        let change = try await largeType.resolveMethod(
             named: "consumeAfterChanging(_:)", as: ((Int64) -> Int64).self, consuming: true
         )
         let large = SwiftMemberLarge(a: 1, b: 2, c: 3, d: 4, e: 5)
@@ -340,18 +340,18 @@ struct SwiftMemberInvocationTests {
 
     @Test func throwingDeclarationsNeedEffectsAndInitializersCanBorrow() async throws {
         let runtime = ABIRuntime()
-        let type = try runtime.swiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
+        let type = try await runtime.resolveSwiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
         let member = "typedFailure() throws(ABIBridgeTests.SwiftMemberFailure) -> Swift.Int"
         _ = try runtime.resolve(
             .init(name: type.name + "." + member, language: .swift),
             in: type.image
         )
         do {
-            _ = try type.method(named: member, as: (() -> Int).self)
+            _ = try await type.resolveMethod(named: member, as: (() -> Int).self)
             Issue.record("Typed-throwing members need a throwing function metatype")
         } catch ABIResolutionError.unsupportedDeclaration {}
         do {
-            _ = try runtime.swiftFunction(
+            _ = try await runtime.resolveSwiftFunction(
                 named: "ABIBridgeTests.swiftMemberTypedFailure() throws(ABIBridgeTests.SwiftMemberFailure) -> Swift.Int",
                 as: (() -> Int).self, in: type.image
             )
@@ -362,7 +362,7 @@ struct SwiftMemberInvocationTests {
             .init(name: type.name + ".__allocating_" + initializer, language: .swift),
             in: type.image
         )
-        let make = try type.initializer(
+        let make = try await type.resolveInitializer(
             named: initializer,
             as: ((NativeSwiftBorrowing<SwiftMemberRenderer>) -> SwiftMemberRenderer).self)
         let child = SwiftMemberRenderer(text: "borrowed")
@@ -371,24 +371,24 @@ struct SwiftMemberInvocationTests {
     }
 
     @Test func operatorsResolveByLabelsAndReportFixityAmbiguity() async throws {
-        let type = try ABIRuntime.shared.swiftType(named: "ABIBridgeTests.SwiftMemberPoint")
-        let greater = try type.staticMethod(
+        let type = try await ABIRuntime.shared.resolveSwiftType(named: "ABIBridgeTests.SwiftMemberPoint")
+        let greater = try await type.resolveStaticMethod(
             named: ">(_:_:)",
             as: ((SwiftMemberPoint, SwiftMemberPoint) -> Bool).self
         )
         #expect(try unsafe greater.unsafeInvoke(.init(value: 42), .init(value: 1)))
         do {
-            _ = try type.staticMethod(
+            _ = try await type.resolveStaticMethod(
                 named: "~~~(_:)",
                 as: ((SwiftMemberPoint) -> SwiftMemberPoint).self
             )
             Issue.record("Both prefix and postfix implementations match")
         } catch ABIResolutionError.ambiguousDeclaration {}
-        let prefix = try type.staticMethod(
+        let prefix = try await type.resolveStaticMethod(
             named: "~~~ prefix(_:)",
             as: ((SwiftMemberPoint) -> SwiftMemberPoint).self
         )
-        let postfix = try type.staticMethod(
+        let postfix = try await type.resolveStaticMethod(
             named: "~~~ postfix(_:)",
             as: ((SwiftMemberPoint) -> SwiftMemberPoint).self
         )
@@ -397,18 +397,18 @@ struct SwiftMemberInvocationTests {
     }
 
     @Test func membersFromAnotherModulesExtensionResolveWithoutItsQualifier() async throws {
-        let imported = try ABIRuntime.shared.object(NSObject()).method(
+        let imported = try await ABIRuntime.shared.object(NSObject()).resolveMethod(
             named: "bridgeImportedExtension(_:)", as: ((Int) -> Int).self
         )
         #expect(try unsafe imported.unsafeInvoke(41) == 42)
         let value = try NativeValue(copying: Int64(42), as: .int64)
         let object = ABIRuntime.shared.object(value)
-        let method = try object.method(named: "bridgeExtensionCount(_:)", as: ((Int) -> Int).self)
+        let method = try await object.resolveMethod(named: "bridgeExtensionCount(_:)", as: ((Int) -> Int).self)
         #expect(try unsafe method.unsafeInvoke(2) == value.bridgeExtensionCount(2))
-        let getter = try object.getter(named: "bridgeExtensionSize", as: (() -> Int).self)
+        let getter = try await object.resolveGetter(named: "bridgeExtensionSize", as: (() -> Int).self)
         #expect(try unsafe getter.unsafeInvoke() == value.type.size)
-        let type = try ABIRuntime.shared.swiftType(named: "ABIBridge.NativeValue")
-        let staticMethod = try type.staticMethod(
+        let type = try await ABIRuntime.shared.resolveSwiftType(named: "ABIBridge.NativeValue")
+        let staticMethod = try await type.resolveStaticMethod(
             named: "bridgeExtensionStatic(_:)",
             as: ((Int) -> Int).self
         )
@@ -416,10 +416,10 @@ struct SwiftMemberInvocationTests {
     }
 
     @Test func repeatedWritebackReleasesIntermediateValues() async throws {
-        let type = try ABIRuntime.shared.swiftType(
+        let type = try await ABIRuntime.shared.resolveSwiftType(
             named: "ABIBridgeTests.SwiftMemberPointer", as: SwiftPointerView.self
         )
-        let advance = try type.method(named: "advance()", as: (() -> Void).self, mutating: true)
+        let advance = try await type.resolveMethod(named: "advance()", as: (() -> Void).self, mutating: true)
         weak var observed: SwiftPointerAllocation?
         do {
             var value: SwiftPointerView = {
@@ -443,10 +443,10 @@ struct SwiftMemberInvocationTests {
     }
 
     @Test func writebackKeepsReceiverOwnedResourcesAlive() async throws {
-        let type = try ABIRuntime.shared.swiftType(
+        let type = try await ABIRuntime.shared.resolveSwiftType(
             named: "ABIBridgeTests.SwiftMemberPointer", as: SwiftPointerView.self
         )
-        let advance = try type.method(named: "advance()", as: (() -> Void).self, mutating: true)
+        let advance = try await type.resolveMethod(named: "advance()", as: (() -> Void).self, mutating: true)
         weak var observed: SwiftPointerAllocation?
         do {
             var value: SwiftPointerView = {
@@ -465,17 +465,17 @@ struct SwiftMemberInvocationTests {
     }
 
     @Test func largeValueReceiversUseIndirectSwiftContext() async throws {
-        let type = try ABIRuntime.shared.swiftType(named: "ABIBridgeTests.SwiftMemberLarge")
-        let sum = try type.method(named: "sum(_:)", as: ((Int64) -> Int64).self)
+        let type = try await ABIRuntime.shared.resolveSwiftType(named: "ABIBridgeTests.SwiftMemberLarge")
+        let sum = try await type.resolveMethod(named: "sum(_:)", as: ((Int64) -> Int64).self)
         let value = SwiftMemberLarge(a: 1, b: 2, c: 3, d: 4, e: 5)
         #expect(try unsafe sum.unsafeInvoke(on: value, 6) == value.sum(6))
     }
 
     @Test func resultAndWritebackFailuresRemainAvailable() async throws {
-        let type = try ABIRuntime.shared.swiftType(
+        let type = try await ABIRuntime.shared.resolveSwiftType(
             named: "ABIBridgeTests.SwiftMemberPoint", as: RejectingSwiftPoint.self
         )
-        let change = try type.method(
+        let change = try await type.resolveMethod(
             named: "changeReturningNil(Swift.Int64) -> Swift.Optional<Swift.UnsafeRawPointer>",
             as: ((Int64) -> UnsafeRawPointer).self, mutating: true
         )
@@ -491,28 +491,28 @@ struct SwiftMemberInvocationTests {
 
     @MainActor @Test func inheritedImplementationsResolveThroughTheirDeclaringClass() async throws {
         let object = SwiftMemberDerived(text: "derived")
-        let method = try ABIRuntime.shared.object(object).method(
+        let method = try await ABIRuntime.shared.object(object).resolveMethod(
             named: "render(_:)", as: ((Int) -> Int).self
         )
         #expect(try unsafe method.unsafeInvoke(5) == object.render(5))
-        let type = try ABIRuntime.shared.swiftType(named: "ABIBridgeTests.SwiftMemberDerived")
-        let getter = try type.getter(named: "text", as: (() -> String).self)
+        let type = try await ABIRuntime.shared.resolveSwiftType(named: "ABIBridgeTests.SwiftMemberDerived")
+        let getter = try await type.resolveGetter(named: "text", as: (() -> String).self)
         #expect(try unsafe getter.unsafeInvoke(on: object) == object.text)
     }
 
     @MainActor @Test func propertyAccessorsPreserveIncomingObjectOwnership() async throws {
-        let type = try ABIRuntime.shared.swiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
-        let text = try type.getter(named: "text", as: (() -> String).self)
-        let setText = try type.setter(named: "text", as: String.self)
+        let type = try await ABIRuntime.shared.resolveSwiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
+        let text = try await type.resolveGetter(named: "text", as: (() -> String).self)
+        let setText = try await type.resolveSetter(named: "text", as: String.self)
         let object = SwiftMemberRenderer(text: "old")
         let bound = ABIRuntime.shared.object(object)
-        let boundGet = try bound.getter(named: "text", as: (() -> String).self)
-        let boundSet = try bound.setter(named: "text", as: String.self)
+        let boundGet = try await bound.resolveGetter(named: "text", as: (() -> String).self)
+        let boundSet = try await bound.resolveSetter(named: "text", as: String.self)
         try unsafe boundSet.unsafeInvoke("bound")
         #expect(try unsafe boundGet.unsafeInvoke() == "bound")
         try unsafe setText.unsafeInvoke(on: object, String(repeating: "abc", count: 100))
         #expect(try unsafe text.unsafeInvoke(on: object) == String(repeating: "abc", count: 100))
-        let setObject = try type.setter(named: "object", as: SwiftMemberRenderer?.self)
+        let setObject = try await type.resolveSetter(named: "object", as: SwiftMemberRenderer?.self)
         var child: SwiftMemberRenderer? = .init(text: "child")
         weak let observed = child
         try unsafe setObject.unsafeInvoke(on: object, child)
@@ -520,26 +520,26 @@ struct SwiftMemberInvocationTests {
         #expect(observed != nil && object.object?.text == "child")
         try unsafe setObject.unsafeInvoke(on: object, nil)
         #expect(observed == nil)
-        let standard = try type.staticGetter(named: "standard", as: (() -> String).self)
+        let standard = try await type.resolveStaticGetter(named: "standard", as: (() -> String).self)
         #expect(try unsafe standard.unsafeInvoke() == SwiftMemberRenderer.standard)
-        let count = try type.staticGetter(named: "count", as: (() -> Int).self)
-        let setCount = try type.staticSetter(named: "count", as: Int.self)
+        let count = try await type.resolveStaticGetter(named: "count", as: (() -> Int).self)
+        let setCount = try await type.resolveStaticSetter(named: "count", as: Int.self)
         try unsafe setCount.unsafeInvoke(42)
         #expect(try unsafe count.unsafeInvoke() == SwiftMemberRenderer.count)
         SwiftMemberRenderer.count = 0
-        let pointType = try ABIRuntime.shared.swiftType(named: "ABIBridgeTests.SwiftMemberPoint")
-        let value = try pointType.getter(named: "value", as: (() -> Int64).self)
-        let setValue = try pointType.setter(named: "value", as: Int64.self)
+        let pointType = try await ABIRuntime.shared.resolveSwiftType(named: "ABIBridgeTests.SwiftMemberPoint")
+        let value = try await pointType.resolveGetter(named: "value", as: (() -> Int64).self)
+        let setValue = try await pointType.resolveSetter(named: "value", as: Int64.self)
         var point = SwiftMemberPoint(value: 1)
         try unsafe setValue.unsafeInvoke(on: &point, 7)
         #expect(try unsafe value.unsafeInvoke(on: point) == 7)
     }
 
     @MainActor @Test func initializersAndStaticMethodsSupplyMetadataAndOwnership() throws {
-        let rendererType = try ABIRuntime.shared.swiftType(
+        let rendererType = try ABIRuntime.shared.resolveSwiftTypeAndWait(
             named: "ABIBridgeTests.SwiftMemberRenderer"
         )
-        let initialize = try rendererType.initializer(
+        let initialize = try rendererType.resolveInitializerAndWait(
             named: "init(text:)", as: ((String) -> SwiftMemberRenderer).self
         )
         var renderer: SwiftMemberRenderer? = try unsafe initialize.unsafeInvoke(String(repeating: "ab", count: 100))
@@ -547,7 +547,7 @@ struct SwiftMemberInvocationTests {
         #expect(renderer?.text == String(repeating: "ab", count: 100))
         renderer = nil
         #expect(observed == nil)
-        let withChild = try rendererType.initializer(
+        let withChild = try rendererType.resolveInitializerAndWait(
             named: "init(child:)", as: ((SwiftMemberRenderer) -> SwiftMemberRenderer).self
         )
         var child: SwiftMemberRenderer? = .init(text: "child")
@@ -557,17 +557,17 @@ struct SwiftMemberInvocationTests {
         #expect(parent?.object === childReference && childReference != nil)
         parent = nil
         #expect(childReference == nil)
-        let failable = try rendererType.initializer(
+        let failable = try rendererType.resolveInitializerAndWait(
             named: "init(nonemptyText:)", as: ((String) -> SwiftMemberRenderer?).self
         )
         #expect(try unsafe failable.unsafeInvoke("") == nil)
         #expect(try unsafe failable.unsafeInvoke("ok")?.text == "ok")
-        let staticMethod = try rendererType.staticMethod(
+        let staticMethod = try rendererType.resolveStaticMethodAndWait(
             named: "decorate(_:)", as: ((String) -> String).self
         )
         #expect(try unsafe staticMethod.unsafeInvoke("hello") == SwiftMemberRenderer.decorate("hello"))
-        let pointType = try ABIRuntime.shared.swiftType(named: "ABIBridgeTests.SwiftMemberPoint")
-        let pointInitializer = try pointType.initializer(
+        let pointType = try ABIRuntime.shared.resolveSwiftTypeAndWait(named: "ABIBridgeTests.SwiftMemberPoint")
+        let pointInitializer = try pointType.resolveInitializerAndWait(
             named: "init(value:)", as: ((Int64) -> SwiftMemberPoint).self
         )
         #expect(try unsafe pointInitializer.unsafeInvoke(42).value == 42)
@@ -577,7 +577,7 @@ struct SwiftMemberInvocationTests {
         var object: SwiftMemberRenderer? = .init(text: "abc")
         weak let observed = object
         var method: NativeBoundSwiftMethod<(Int) -> Int>? = try ABIRuntime.shared.object(object!)
-            .method(
+            .resolveMethodAndWait(
             named: "render(_:)", as: ((Int) -> Int).self
         )
         object = nil
@@ -588,8 +588,8 @@ struct SwiftMemberInvocationTests {
     }
 
     @MainActor @Test func classMembersUseTheBoundClassContext() async throws {
-        let type = try ABIRuntime.shared.swiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
-        let render = try type.method(named: "render(_:)", as: ((Int) -> Int).self)
+        let type = try await ABIRuntime.shared.resolveSwiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
+        let render = try await type.resolveMethod(named: "render(_:)", as: ((Int) -> Int).self)
         let object = SwiftMemberRenderer(text: "abc")
         #expect(try unsafe render.unsafeInvoke(on: object, 5) == object.render(5))
         #expect(throws: ABIInvocationError.self) { try unsafe render.unsafeInvoke(on: 1, 5) }
@@ -597,11 +597,11 @@ struct SwiftMemberInvocationTests {
 
     @Test func valueAndEnumMembersUseTheirSwiftReceiverLayouts() async throws {
         let runtime = ABIRuntime()
-        let point = try runtime.swiftType(named: "ABIBridgeTests.SwiftMemberPoint")
-        let read = try point.method(named: "read(_:)", as: ((Int64) -> Int64).self)
+        let point = try await runtime.resolveSwiftType(named: "ABIBridgeTests.SwiftMemberPoint")
+        let read = try await point.resolveMethod(named: "read(_:)", as: ((Int64) -> Int64).self)
         var value = SwiftMemberPoint(value: 10)
         #expect(try unsafe read.unsafeInvoke(on: value, 5) == value.read(5))
-        let change = try point.method(
+        let change = try await point.resolveMethod(
             named: "change(_:)",
             as: ((Int64) -> Void).self,
             mutating: true
@@ -609,14 +609,14 @@ struct SwiftMemberInvocationTests {
         #expect(throws: ABIResolutionError.self) { try unsafe change.unsafeInvoke(on: value, 42) }
         try unsafe change.unsafeInvoke(on: &value, 42)
         #expect(value.value == 42)
-        let mode = try runtime.swiftType(named: "ABIBridgeTests.SwiftMemberMode")
-        let modeRead = try mode.method(named: "read(_:)", as: ((Int) -> Int).self)
+        let mode = try await runtime.resolveSwiftType(named: "ABIBridgeTests.SwiftMemberMode")
+        let modeRead = try await mode.resolveMethod(named: "read(_:)", as: ((Int) -> Int).self)
         #expect(try unsafe modeRead.unsafeInvoke(on: SwiftMemberMode.second, 7) == SwiftMemberMode.second.read(7))
     }
 
     @Test func valueMutationSurvivesAResultConversionFailure() async throws {
-        let type = try ABIRuntime.shared.swiftType(named: "ABIBridgeTests.SwiftMemberPoint")
-        let change = try type.method(
+        let type = try await ABIRuntime.shared.resolveSwiftType(named: "ABIBridgeTests.SwiftMemberPoint")
+        let change = try await type.resolveMethod(
             named: "changeReturningNil(Swift.Int64) -> Swift.Optional<Swift.UnsafeRawPointer>",
             as: ((Int64) -> UnsafeRawPointer).self, mutating: true
         )
@@ -630,22 +630,22 @@ struct SwiftMemberInvocationTests {
         let known: [Any.Type] = [SwiftMemberRenderer.self, SwiftMemberPoint.self, SwiftMemberMode.self]
         for expected in known {
             let qualified = String(reflecting: expected)
-            let first = try runtime.swiftType(named: qualified)
-            let second = try runtime.swiftType(named: qualified, in: first.image)
+            let first = try await runtime.resolveSwiftType(named: qualified)
+            let second = try await runtime.resolveSwiftType(named: qualified, in: first.image)
             #expect(first === second)
             #expect(first.name == qualified)
             runtime.removeCachedResults()
-            let next = try runtime.swiftType(named: qualified, in: first.image)
+            let next = try await runtime.resolveSwiftType(named: qualified, in: first.image)
             #expect(next !== first && next.image == first.image)
         }
     }
 
     @Test func missingGenericArgumentsFailBeforeCallingTheAccessor() async throws {
         #expect(throws: ABIResolutionError.self) {
-            _ = try ABIRuntime.shared.swiftType(named: "ABIBridgeTests.SwiftMemberGeneric")
+            _ = try ABIRuntime.shared.resolveSwiftTypeAndWait(named: "ABIBridgeTests.SwiftMemberGeneric")
         }
         #expect(throws: ABIResolutionError.self) {
-            _ = try ABIRuntime.shared.swiftType(named: "ABIBridgeTests.MissingSwiftType")
+            _ = try ABIRuntime.shared.resolveSwiftTypeAndWait(named: "ABIBridgeTests.MissingSwiftType")
         }
     }
 }

@@ -33,17 +33,17 @@ private final class BorrowCapture: Sendable {
 struct SwiftBorrowedValueTests {
     @Test func borrowedGenericMembersSupplyTheirEnclosingMetadata() async throws {
         let runtime = ABIRuntime()
-        let argument = try runtime.swiftType(named: "ManagedSwiftFixtures.ResilientRecord")
-        let type = try runtime.swiftType(
+        let argument = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.ResilientRecord")
+        let type = try await runtime.resolveSwiftType(
             named: "ManagedSwiftFixtures.GenericRecord",
             genericArguments: [.type(argument)]
         )
-        let method = try type.method(
+        let method = try await type.resolveMethod(
             named: "measure()",
             as: (() -> Int64).self,
             receiverABI: .opaque(named: type.name)
         )
-        let getter = try type.getter(
+        let getter = try await type.resolveGetter(
             named: "measured",
             as: (() -> Int64).self,
             receiverABI: .opaque(named: type.name)
@@ -55,7 +55,7 @@ struct SwiftBorrowedValueTests {
                 return try unsafe (method.unsafeInvoke(on: value), getter.unsafeInvoke(on: value))
             } catch { errors.record { throw error }; return (-1, -1) }
         }
-        let visit = try runtime.swiftFunction(
+        let visit = try await runtime.resolveSwiftFunction(
             named:
                 "ManagedSwiftFixtures.visitBorrowedGenericRecord(Swift.Int64, (ManagedSwiftFixtures.GenericRecord<ManagedSwiftFixtures.ResilientRecord>) -> (Swift.Int64, Swift.Int64)) -> (Swift.Int64, Swift.Int64)",
             as: ((Int64, NativeSwiftClosure<(NativeSwiftBorrowedValue) -> (Int64, Int64)>) -> (
@@ -70,28 +70,28 @@ struct SwiftBorrowedValueTests {
 
     @Test func runtimeOnlyValuesUseScopedSelfAndOwnedResults() async throws {
         let runtime = ABIRuntime.shared
-        let type = try runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeRecord")
-        let text = try type.getter(
+        let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.RuntimeRecord")
+        let text = try await type.resolveGetter(
             named: "text",
             as: (() -> String).self,
             receiverABI: .opaque(named: type.name)
         )
-        let changed = try type.getter(
+        let changed = try await type.resolveGetter(
             named: "changed",
             as: (() -> AnyObject?).self,
             receiverABI: .opaque(named: type.name)
         )
-        let length = try type.method(
+        let length = try await type.resolveMethod(
             named: "length()",
             as: (() -> Int64).self,
             receiverABI: .opaque(named: type.name)
         )
-        let cancel = try type.method(
+        let cancel = try await type.resolveMethod(
             named: "cancel()",
             as: (() -> Void).self,
             receiverABI: .opaque(named: type.name)
         )
-        let visit = try runtime.swiftFunction(
+        let visit = try await runtime.resolveSwiftFunction(
             named:
                 "ManagedSwiftFixtures.visitRuntimeRecord(Swift.AnyObject, Swift.String, Swift.UnsafeMutablePointer<Swift.Int32>, (ManagedSwiftFixtures.RuntimeRecord) -> ()) -> ()",
             as: ((
@@ -100,7 +100,7 @@ struct SwiftBorrowedValueTests {
             ) -> Void).self,
             valueABIs: [type: .opaque(named: type.name)]
         )
-        let reference = try runtime.swiftFunction(
+        let reference = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.referenceRuntimeRecord(_:_:_:)",
             as: ((AnyObject, String, UnsafeMutablePointer<Int32>) -> String).self
         )
@@ -149,13 +149,13 @@ struct SwiftBorrowedValueTests {
     func aSynchronousNativeBorrowCannotBeginAnAsyncMember(_ inoutReceiver: Bool) async throws {
         guard #available(macOS 26, iOS 26, tvOS 26, watchOS 26, visionOS 26, *) else { return }
         let runtime = ABIRuntime.shared
-        let type = try runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeRecord")
-        let length = try type.method(
+        let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.RuntimeRecord")
+        let length = try await type.resolveMethod(
             named: "lengthAsync()",
             as: (() async -> Int64).self,
             receiverABI: .opaque(named: type.name)
         )
-        let visit = try runtime.swiftFunction(
+        let visit = try await runtime.resolveSwiftFunction(
             named:
                 "ManagedSwiftFixtures.visitRuntimeRecord(Swift.AnyObject, Swift.String, Swift.UnsafeMutablePointer<Swift.Int32>, (ManagedSwiftFixtures.RuntimeRecord) -> ()) -> ()",
             as: ((
@@ -189,19 +189,19 @@ struct SwiftBorrowedValueTests {
 
     @Test func activeBorrowsRejectAnotherThreadAndDifferentNativeType() async throws {
         let runtime = ABIRuntime.shared
-        let type = try runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeRecord")
-        let text = try type.getter(
+        let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.RuntimeRecord")
+        let text = try await type.resolveGetter(
             named: "text",
             as: (() -> String).self,
             receiverABI: .opaque(named: type.name)
         )
-        let other = try runtime.swiftType(named: "Swift.String")
-        let otherMember = try other.getter(
+        let other = try await runtime.resolveSwiftType(named: "Swift.String")
+        let otherMember = try await other.resolveGetter(
             named: "count",
             as: (() -> Int).self,
             receiverABI: .opaque(named: other.name)
         )
-        let visit = try runtime.swiftFunction(
+        let visit = try await runtime.resolveSwiftFunction(
             named:
                 "ManagedSwiftFixtures.visitRuntimeRecord(Swift.AnyObject, Swift.String, Swift.UnsafeMutablePointer<Swift.Int32>, (ManagedSwiftFixtures.RuntimeRecord) -> ()) -> ()",
             as: ((
@@ -241,23 +241,23 @@ struct SwiftBorrowedValueTests {
 
     @Test func nativeRetentionKeepsCallbackAliveAndCreatesFreshBorrows() async throws {
         let runtime = ABIRuntime.shared
-        let type = try runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeRecord")
-        let text = try type.getter(
+        let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.RuntimeRecord")
+        let text = try await type.resolveGetter(
             named: "text",
             as: (() -> String).self,
             receiverABI: .opaque(named: type.name)
         )
-        let save = try runtime.swiftFunction(
+        let save = try await runtime.resolveSwiftFunction(
             named:
                 "ManagedSwiftFixtures.saveRuntimeCallback((ManagedSwiftFixtures.RuntimeRecord) -> ()) -> ()",
             as: ((NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Void>) -> Void).self,
             valueABIs: [type: .opaque(named: type.name)]
         )
-        let fire = try runtime.swiftFunction(
+        let fire = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.fireRuntimeCallback(_:_:_:)",
             as: ((AnyObject, String, UnsafeMutablePointer<Int32>) -> Void).self
         )
-        let clear = try runtime.swiftFunction(
+        let clear = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.clearRuntimeCallback()",
             as: (() -> Void).self
         )

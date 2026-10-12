@@ -141,7 +141,7 @@ struct SymbolResolutionTests {
                 """
         )
         defer { fixture.cleanup() }
-        let function = try ABIRuntime().swiftFunction(
+        let function = try await ABIRuntime().resolveSwiftFunction(
             named: module + ".compilerGeneration()",
             as: (() -> Int32).self,
             in: .path(fixture.libraryURL)
@@ -192,7 +192,7 @@ struct SymbolResolutionTests {
         defer { fixture.cleanup() }
         #expect(try fixture.exportedSymbols().isEmpty)
         let runtime = ABIRuntime()
-        let function = try runtime.swiftFunction(
+        let function = try await runtime.resolveSwiftFunction(
             named: module + ".echo()",
             as: (() -> Void).self,
             in: .path(fixture.libraryURL)
@@ -457,28 +457,28 @@ struct SymbolResolutionTests {
             )
             Issue.record("The parent source name exists in both images")
         } catch ABIResolutionError.ambiguousDeclaration {}
-        let type = try runtime.swiftType(
+        let type = try await runtime.resolveSwiftType(
             named: module + ".Child",
             in: .path(first.libraryURL)
         )
-        let initialize = try type.initializer(named: "init()", as: (() -> AnyObject).self)
+        let initialize = try await type.resolveInitializer(named: "init()", as: (() -> AnyObject).self)
         let child = try unsafe initialize.unsafeInvoke()
-        let method = try type.method(named: "answer()", as: (() -> Int).self)
+        let method = try await type.resolveMethod(named: "answer()", as: (() -> Int).self)
         #expect(method.symbol.image.identity == type.image.identity)
         #expect(try unsafe method.unsafeInvoke(on: child) == 42)
-        let bound = try runtime.object(child).method(named: "answer()", as: (() -> Int).self)
+        let bound = try await runtime.object(child).resolveMethod(named: "answer()", as: (() -> Int).self)
         #expect(try unsafe bound.unsafeInvoke() == 42)
-        let otherType = try runtime.swiftType(
+        let otherType = try await runtime.resolveSwiftType(
             named: module + ".Child",
             in: .path(second.libraryURL)
         )
-        let otherInitialize = try otherType.initializer(
+        let otherInitialize = try await otherType.resolveInitializer(
             named: "init()",
             as: (() -> AnyObject).self
         )
         let otherChild = try unsafe otherInitialize.unsafeInvoke()
         for (object, expected) in [(child, 42), (otherChild, 7), (child, 42)] {
-            let method = try runtime.object(object).method(
+            let method = try await runtime.object(object).resolveMethod(
                 named: "answer()",
                 as: (() -> Int).self
             )

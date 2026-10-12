@@ -98,37 +98,37 @@ extension ConstrainedOuter.Inner where First == Int, Second == String {
 struct SwiftConstrainedExtensionTests {
     @Test func objectiveCClassesAndProtocolsKeepDistinctSameTypeIdentities() async throws {
         let runtime = ABIRuntime()
-        let concrete = try runtime.object(ConstrainedBox<NSObject>(NSObject())).method(
+        let concrete = try await runtime.object(ConstrainedBox<NSObject>(NSObject())).resolveMethod(
             named: "classIdentity()",
             as: (() -> String).self
         )
         #expect(try unsafe concrete.unsafeInvoke() == "class")
         let existential = runtime.object(ConstrainedBox<any NSObjectProtocol>(NSObject()))
         do {
-            _ = try existential.method(named: "classIdentity()", as: (() -> String).self)
+            _ = try await existential.resolveMethod(named: "classIdentity()", as: (() -> String).self)
             Issue.record("An Objective-C protocol existential is not its same-named class")
         } catch ABIResolutionError.declarationNotFound {}
     }
 
     @Test func inapplicableAssociatedRequirementsDoNotHideOtherCandidates() async throws {
         let runtime = ABIRuntime()
-        let method = try runtime.object(ConstrainedPair<Bool, String>()).method(
+        let method = try await runtime.object(ConstrainedPair<Bool, String>()).resolveMethod(
             named: "associatedChoice()",
             as: (() -> String).self
         )
         #expect(try unsafe method.unsafeInvoke() == "string")
-        let inherited = try runtime.object(ConstraintChild<Bool>()).method(
+        let inherited = try await runtime.object(ConstraintChild<Bool>()).resolveMethod(
             named: "inheritedChoice()",
             as: (() -> String).self
         )
         #expect(try unsafe inherited.unsafeInvoke() == "requires witness")
-        let noWitness = try runtime.object(ConstraintChild<ConstraintPlainValue>()).method(
+        let noWitness = try await runtime.object(ConstraintChild<ConstraintPlainValue>()).resolveMethod(
             named: "inheritedChoice()",
             as: (() -> String).self
         )
         #expect(try unsafe noWitness.unsafeInvoke() == "parent")
         do {
-            _ = try runtime.swiftFunction(
+            _ = try await runtime.resolveSwiftFunction(
                 named:
                     "ManagedSwiftFixtures.associatedConstraintGeneric<A where A: Swift.Collection, A.Element == Swift.Int>(A) -> Swift.Int",
                 as: ((Bool) -> Int).self,
@@ -176,7 +176,7 @@ struct SwiftConstrainedExtensionTests {
         )
         defer { conformance.cleanup() }
         let runtime = ABIRuntime()
-        let baseType = try runtime.swiftType(
+        let baseType = try await runtime.resolveSwiftType(
             named: baseModule + ".Base",
             in: .path(base.libraryURL)
         )
@@ -208,22 +208,22 @@ struct SwiftConstrainedExtensionTests {
                     + (importsConformance ? [conformance.libraryURL.path] : [])
             )
             defer { provider.cleanup() }
-            let objectType = try runtime.swiftType(
+            let objectType = try await runtime.resolveSwiftType(
                 named: module + ".ObjectBox",
                 in: .path(provider.libraryURL),
                 genericArguments: [.type(baseType)]
             )
-            let classScore = try objectType.staticMethod(
+            let classScore = try await objectType.resolveStaticMethod(
                 named: "score()",
                 as: (() -> Int).self
             )
             #expect(try unsafe classScore.unsafeInvoke() == 42)
-            let initialize = try objectType.initializer(
+            let initialize = try await objectType.resolveInitializer(
                 named: "init()",
                 as: (() -> AnyObject).self
             )
             let object = try unsafe initialize.unsafeInvoke()
-            let classEntry = try runtime.object(object).method(
+            let classEntry = try await runtime.object(object).resolveMethod(
                 named: "entry(_:_:)",
                 as: ((DeclaredFailure, Bool) throws(DeclaredFailure) -> Int).self,
                 genericArguments: [.type(DeclaredFailure.self)]
@@ -239,13 +239,13 @@ struct SwiftConstrainedExtensionTests {
                     }
                 )
             }
-            let box = try runtime.swiftType(
+            let box = try await runtime.resolveSwiftType(
                 named: module + ".Box",
                 in: .path(provider.libraryURL),
                 genericArguments: [.type(baseType)]
             )
             do {
-                _ = try box.staticMethod(
+                _ = try await box.resolveStaticMethod(
                     named: "entry(_:_:)",
                     as: ((DeclaredFailure, Bool) throws(DeclaredFailure) -> Int).self,
                     genericArguments: [.type(DeclaredFailure.self)]
@@ -258,7 +258,7 @@ struct SwiftConstrainedExtensionTests {
             }
             let witness = importsConformance ? "" : ", A: " + baseModule + ".Score"
             let prefix = "<A, A1 where A: " + baseModule + ".Base" + witness + ", A1: Swift.Error> "
-            let entry = try box.staticMethod(
+            let entry = try await box.resolveStaticMethod(
                 named: "entry(_:_:)",
                 as: ((DeclaredFailure, Bool) throws(DeclaredFailure) -> Int).self,
                 genericArguments: [.type(DeclaredFailure.self)],
@@ -275,7 +275,7 @@ struct SwiftConstrainedExtensionTests {
                     }
                 )
             }
-            let getter = try box.staticGetter(
+            let getter = try await box.resolveStaticGetter(
                 named: "score",
                 as: (() -> Int).self,
                 declaredAs: "<A where A: " + baseModule + ".Base" + witness + "> () -> Swift.Int"
@@ -327,12 +327,12 @@ struct SwiftConstrainedExtensionTests {
         let object = runtime.object(
             Unmanaged<AnyObject>.fromOpaque(try unsafe make.unsafeInvoke()).takeRetainedValue()
         )
-        let method = try object.method(
+        let method = try await object.resolveMethod(
             named: module + ".Box.echo(Swift.Array<A>) -> Swift.Array<A>",
             as: (([String]) -> [String]).self
         )
         #expect(try unsafe method.unsafeInvoke(["external"]) == ["external"])
-        let getter = try object.getter(
+        let getter = try await object.resolveGetter(
             named: module + ".Box.empty.getter : Swift.Array<A>",
             as: (() -> [String]).self
         )
@@ -347,24 +347,24 @@ struct SwiftConstrainedExtensionTests {
         let number: ConstrainedBox<Int> = inherited ? ConstrainedChild(42) : ConstrainedBox(42)
         let text = ConstrainedBox(String(repeating: "text", count: 100))
         do {
-            _ = try runtime.object(ConstrainedBox(1.5)).method(
+            _ = try await runtime.object(ConstrainedBox(1.5)).resolveMethod(
                 named: "title(_:)",
                 as: ((String) -> String).self
             )
             Issue.record("A mismatched specialization resolved")
         } catch ABIResolutionError.declarationNotFound {}
-        let numberMethod = try runtime.object(number).method(
+        let numberMethod = try await runtime.object(number).resolveMethod(
             named: "title(_:)",
             as: ((String) -> String).self
         )
-        let textMethod = try runtime.object(text).method(
+        let textMethod = try await runtime.object(text).resolveMethod(
             named: "title(_:)",
             as: ((String) -> String).self
         )
         #expect(try unsafe numberMethod.unsafeInvoke("number:") == number.title("number:"))
         #expect(try unsafe textMethod.unsafeInvoke("text:") == text.title("text:"))
-        let getter = try runtime.object(number).getter(named: "number", as: (() -> Int).self)
-        let setter = try runtime.object(number).setter(named: "number", as: Int.self)
+        let getter = try await runtime.object(number).resolveGetter(named: "number", as: (() -> Int).self)
+        let setter = try await runtime.object(number).resolveSetter(named: "number", as: Int.self)
         number.number = 43
         #expect(number.number == 43)
         try unsafe setter.unsafeInvoke(44)
@@ -389,7 +389,7 @@ struct SwiftConstrainedExtensionTests {
             (tuple, "tupleLabels()", tuple.tupleLabels()),
         ]
         for (receiver, member, expected) in inputs {
-            let method = try runtime.object(receiver).method(
+            let method = try await runtime.object(receiver).resolveMethod(
                 named: member,
                 as: (() -> String).self
             )
@@ -410,12 +410,12 @@ struct SwiftConstrainedExtensionTests {
         for (receiver, member) in inputs {
             do {
                 if member == "title(_:)" {
-                    _ = try runtime.object(receiver).method(
+                    _ = try await runtime.object(receiver).resolveMethod(
                         named: member,
                         as: ((String) -> String).self
                     )
                 } else {
-                    _ = try runtime.object(receiver).method(
+                    _ = try await runtime.object(receiver).resolveMethod(
                         named: member,
                         as: (() -> String).self
                     )
@@ -438,7 +438,7 @@ struct SwiftConstrainedExtensionTests {
             (ConstrainedPair<String, [String: Int]>(), "dictionary()", "dictionary"),
         ]
         for (receiver, member, expected) in inputs {
-            let method = try runtime.object(receiver).method(
+            let method = try await runtime.object(receiver).resolveMethod(
                 named: member,
                 as: (() -> String).self
             )
@@ -451,7 +451,7 @@ struct SwiftConstrainedExtensionTests {
         let runtime = ABIRuntime()
         let receiver = ConstrainedPair<Int, String>()
         do {
-            _ = try runtime.object(receiver).method(
+            _ = try await runtime.object(receiver).resolveMethod(
                 named: declaration,
                 as: (() -> String).self
             )
@@ -460,14 +460,14 @@ struct SwiftConstrainedExtensionTests {
             #expect(candidates.count == 2)
         }
         let child = ConstraintChild<Int>()
-        let inherited = try runtime.object(child).method(
+        let inherited = try await runtime.object(child).resolveMethod(
             named: "inheritedChoice()",
             as: (() -> String).self
         )
         #expect(try unsafe inherited.unsafeInvoke() == "requires witness")
         runtime.removeCachedResults()
         do {
-            _ = try runtime.object(receiver).method(
+            _ = try await runtime.object(receiver).resolveMethod(
                 named: declaration,
                 as: (() -> String).self
             )
@@ -480,7 +480,7 @@ struct SwiftConstrainedExtensionTests {
     func completeAsyncExtensionDeclarationsKeepTheirDescriptor(declaration: String) async throws {
         let receiver = AsyncConstrainedBox(42)
         #expect(await receiver.result() == 42)
-        let method = try ABIRuntime().object(receiver).method(
+        let method = try await ABIRuntime().object(receiver).resolveMethod(
             named: declaration, as: (() async -> Int).self
         )
         #expect(try await unsafe method.unsafeInvoke() == 42)
@@ -522,7 +522,7 @@ struct SwiftConstrainedExtensionTests {
         let receiver = Unmanaged<AnyObject>.fromOpaque(try unsafe make.unsafeInvoke())
             .takeRetainedValue()
         let object = runtime.object(receiver)
-        let original = try object.method(named: "choice()", as: (() -> String).self)
+        let original = try await object.resolveMethod(named: "choice()", as: (() -> String).self)
         #expect(try unsafe original.unsafeInvoke() == "requires witness")
         let alternative = try FixtureLibrary(
             swiftModule: "ConstraintLookupExtension",
@@ -536,7 +536,7 @@ struct SwiftConstrainedExtensionTests {
         )
         defer { alternative.cleanup() }
         do {
-            _ = try object.method(named: "choice()", as: (() -> String).self)
+            _ = try await object.resolveMethod(named: "choice()", as: (() -> String).self)
             Issue.record("Applicable extensions in separate images must remain ambiguous")
         } catch ABIResolutionError.ambiguousDeclaration {}
     }
@@ -614,21 +614,21 @@ struct SwiftConstrainedExtensionTests {
                 try unsafe make.unsafeInvoke(Int32(kind))
             ).takeRetainedValue()
             if kind == 5 {
-                let method = try runtime.object(receiver).method(
+                let method = try await runtime.object(receiver).resolveMethod(
                     named: member,
                     as: (() -> String).self
                 )
                 #expect(try unsafe method.unsafeInvoke() == "concrete")
             } else if kind == 6 {
                 do {
-                    _ = try runtime.object(receiver).method(
+                    _ = try await runtime.object(receiver).resolveMethod(
                         named: member,
                         as: (() -> String).self
                     )
                     Issue.record("An unrelated metatype constraint hid a proven mismatch")
                 } catch ABIResolutionError.declarationNotFound {}
             } else {
-                let method = try runtime.object(receiver).method(
+                let method = try await runtime.object(receiver).resolveMethod(
                     named: member,
                     as: (() -> String).self
                 )
@@ -733,7 +733,7 @@ struct SwiftConstrainedExtensionTests {
             let receiver = Unmanaged<AnyObject>.fromOpaque(try unsafe make.unsafeInvoke(kind))
                 .takeRetainedValue()
             if kind < 3 || kind == 9 {
-                let method = try runtime.object(receiver).method(
+                let method = try await runtime.object(receiver).resolveMethod(
                     named: "concrete()",
                     as: (() -> String).self
                 )
@@ -745,13 +745,13 @@ struct SwiftConstrainedExtensionTests {
                     : kind == 18 || kind == 11
                         ? "wrapped()"
                         : kind == 19 ? "unicodeProjection()" : "projected()"
-                let method = try runtime.object(receiver).method(
+                let method = try await runtime.object(receiver).resolveMethod(
                     named: member,
                     as: (() -> String).self
                 )
                 #expect(try unsafe method.unsafeInvoke() == "bound")
                 if kind == 13 || kind == 14 {
-                    let relative = try runtime.object(receiver).method(
+                    let relative = try await runtime.object(receiver).resolveMethod(
                         named: kind == 13 ? "relative()" : "relativeChain()",
                         as: (() -> String).self
                     )
@@ -760,7 +760,7 @@ struct SwiftConstrainedExtensionTests {
             } else {
                 if kind == 7 {
                     do {
-                        _ = try runtime.object(receiver).method(
+                        _ = try await runtime.object(receiver).resolveMethod(
                             named: "mixed()",
                             as: (() -> String).self
                         )
@@ -772,7 +772,7 @@ struct SwiftConstrainedExtensionTests {
                 }
                 do {
                     let member = kind == 8 ? "mixed()" : kind >= 10 ? "wrapped()" : "projected()"
-                    _ = try runtime.object(receiver).method(
+                    _ = try await runtime.object(receiver).resolveMethod(
                         named: member,
                         as: (() -> String).self
                     )
@@ -780,7 +780,7 @@ struct SwiftConstrainedExtensionTests {
                 } catch ABIResolutionError.declarationNotFound {}
                 if kind == 3 || kind == 5 {
                     do {
-                        _ = try runtime.object(receiver).method(
+                        _ = try await runtime.object(receiver).resolveMethod(
                             named: kind == 3 ? "relative()" : "relativeChain()",
                             as: (() -> String).self
                         )
@@ -791,7 +791,7 @@ struct SwiftConstrainedExtensionTests {
                 }
                 if kind == 3 {
                     do {
-                        _ = try runtime.object(receiver).method(
+                        _ = try await runtime.object(receiver).resolveMethod(
                             named: "unicodeProjection()",
                             as: (() -> String).self
                         )
@@ -810,7 +810,7 @@ struct SwiftConstrainedExtensionTests {
         #expect(ConstrainedPair<Int, Bool>().overlap() == "first")
         #expect(ConstrainedPair<Bool, String>().overlap() == "second")
         do {
-            _ = try ABIRuntime().object(ConstrainedPair<Int, String>()).method(
+            _ = try await ABIRuntime().object(ConstrainedPair<Int, String>()).resolveMethod(
                 named: "overlap()",
                 as: (() -> String).self
             )
@@ -828,7 +828,7 @@ struct SwiftConstrainedExtensionTests {
             let receiver = ConstrainedBox(String(repeating: "retained", count: 100))
             observed = receiver
             #expect(receiver.title("") == receiver.value)
-            method = try runtime.object(receiver).method(
+            method = try await runtime.object(receiver).resolveMethod(
                 named: "title(_:)",
                 as: ((String) -> String).self
             )

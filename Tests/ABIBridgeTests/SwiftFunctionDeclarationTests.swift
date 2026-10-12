@@ -11,8 +11,8 @@ import Testing
 struct SwiftFunctionDeclarationTests {
     @Test func arrowOperatorsResolveByLabelsAndCompleteDeclarations() async throws {
         let runtime = ABIRuntime()
-        let type = try runtime.swiftType(named: "ManagedSwiftFixtures.ArrowOperatorValue")
-        let generic = try runtime.swiftType(
+        let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.ArrowOperatorValue")
+        let generic = try await runtime.resolveSwiftType(
             named: "ManagedSwiftFixtures.GenericOperatorBox",
             genericArguments: [.type(Int64.self)]
         )
@@ -21,25 +21,25 @@ struct SwiftFunctionDeclarationTests {
             genericSecond = GenericOperatorBox<Int64>(7)
         for operation in ["-->", "->>"] {
             let expected = operation == "-->" ? (Int64(35) --> Int64(7)) : (Int64(35) ->> Int64(7))
-            let function = try runtime.swiftFunction(
+            let function = try await runtime.resolveSwiftFunction(
                 named: "ManagedSwiftFixtures." + operation + "(_:_:)",
                 as: ((Int64, Int64) -> Int64).self
             )
             #expect(try unsafe function.unsafeInvoke(35, 7) == expected)
-            let complete = try runtime.swiftFunction(
+            let complete = try await runtime.resolveSwiftFunction(
                 named: "ManagedSwiftFixtures." + operation
                     + " infix(Swift.Int64, Swift.Int64) -> Swift.Int64",
                 as: ((Int64, Int64) -> Int64).self,
                 in: function.symbol.image
             )
             #expect(try unsafe complete.unsafeInvoke(35, 7) == expected)
-            let method = try type.staticMethod(
+            let method = try await type.resolveStaticMethod(
                 named: operation + "(_:_:)",
                 as: ((ArrowOperatorValue, ArrowOperatorValue) -> Int64).self
             )
             let memberControl = operation == "-->" ? (first --> second) : (first ->> second)
             #expect(try unsafe method.unsafeInvoke(first, second) == memberControl)
-            let genericMethod = try generic.staticMethod(
+            let genericMethod = try await generic.resolveStaticMethod(
                 named: operation + "(_:_:)",
                 as: ((GenericOperatorBox<Int64>, GenericOperatorBox<Int64>) -> Int64).self
             )
@@ -81,7 +81,7 @@ struct SwiftFunctionDeclarationTests {
                 loading: .loadedOnly
             )
             do {
-                _ = try runtime.swiftFunction(
+                _ = try await runtime.resolveSwiftFunction(
                     named: declaration,
                     as: ((Int) -> String).self,
                     in: .path(fixture.libraryURL),
@@ -90,7 +90,7 @@ struct SwiftFunctionDeclarationTests {
                 Issue.record("A generic declaration was prepared without metadata or witnesses")
             } catch ABIResolutionError.unsupportedDeclaration {}
             do {
-                _ = try runtime.swiftFunction(
+                _ = try await runtime.resolveSwiftFunction(
                     named: declaration,
                     as: ((Int) async throws -> String).self,
                     in: .path(fixture.libraryURL),
@@ -108,7 +108,7 @@ struct SwiftFunctionDeclarationTests {
         let declaration =
             "(extension in Example):Example.Box<A where A == (Swift.Int) -> Swift.String>.value() \(effects) -> Swift.String"
         do {
-            _ = try ABIRuntime().swiftFunction(named: declaration, as: (() -> String).self)
+            _ = try await ABIRuntime().resolveSwiftFunction(named: declaration, as: (() -> String).self)
             Issue.record("An outer effect was accepted by a synchronous nonthrowing metatype")
         } catch ABIResolutionError.unsupportedDeclaration {}
     }

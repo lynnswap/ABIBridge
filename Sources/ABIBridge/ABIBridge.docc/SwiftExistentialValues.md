@@ -5,7 +5,7 @@ Use Any or an imported protocol existential in the existing function metatype. S
 For a loaded module declaring `func echo(_ value: any Summary) -> any Summary`:
 
 ```swift
-let echo = try ABIRuntime.shared.swiftFunction(
+let echo = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
     named: "Example.echo(_:)",
     as: ((any Summary) -> any Summary).self
 )
@@ -36,7 +36,7 @@ Keep implementation images alive while their values can execute native code, inc
 Use a matching parameterized protocol in a typed signature:
 
 ```swift
-let echo = try runtime.swiftFunction(
+let echo = try runtime.resolveSwiftFunctionAndWait(
     named: "Example.echoCollection(_:)",
     as: ((any Collection<Int>) -> any Collection<Int>).self
 )

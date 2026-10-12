@@ -28,11 +28,11 @@ extension Box: ABIBridgeSwiftValue where Value == Int64 {
 }
 
 let runtime = ABIRuntime()
-let transform = try runtime.swiftFunction(
+let transform = try runtime.resolveSwiftFunctionAndWait(
     named: "SwiftExplicitValueConsumer.change(_:)",
     as: ((Record) -> Record).self
 )
-let apply = try runtime.swiftFunction(
+let apply = try runtime.resolveSwiftFunctionAndWait(
     named: "SwiftExplicitValueConsumer.apply(_:_:)",
     as: ((NativeSwiftClosure<(Choice) -> Choice>, Choice) -> Choice).self
 )
@@ -49,7 +49,7 @@ do {
 withExtendedLifetime(result) { precondition(observed != nil) }
 result = nil
 precondition(observed == nil)
-let boxed = try runtime.swiftFunction(
+let boxed = try runtime.resolveSwiftFunctionAndWait(
     named: "SwiftExplicitValueConsumer.applyBox(_:_:)",
     as: ((NativeSwiftClosure<(Box<Int64>) -> Box<Int64>>, Box<Int64>) -> Box<Int64>).self
 )
@@ -67,7 +67,7 @@ print("Explicit Swift value consumer passed")
     if fail { throw Failure(code: 42) }
     return String(repeating: "success", count: 100)
 }
-let checkedCall = try runtime.swiftFunction(
+let checkedCall = try runtime.resolveSwiftFunctionAndWait(
     named: "SwiftExplicitValueConsumer.checked(_:)",
     as: ((Bool) throws(Failure) -> String).self)
 let success = try unsafe checkedCall.unsafeInvoke(false)
@@ -88,7 +88,7 @@ let throwingCallback = try NativeSwiftClosure<(Int64) throws(Failure) -> Int64> 
     if value < 0 { throw Failure(code: 42) }
     return value + 7
 }
-let invokeThrowingCall = try runtime.swiftFunction(
+let invokeThrowingCall = try runtime.resolveSwiftFunctionAndWait(
     named: "SwiftExplicitValueConsumer.invokeThrowing(_:_:)",
     as: ((NativeSwiftClosure<(Int64) throws(Failure) -> Int64>, Int64) throws(Failure) -> Int64).self)
 let callbackResult = try unsafe invokeThrowingCall.unsafeInvoke(throwingCallback, 35)

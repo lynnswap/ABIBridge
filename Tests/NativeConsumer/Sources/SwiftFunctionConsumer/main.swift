@@ -13,19 +13,19 @@ func validateHooks(providerPath: String, callerPath: String) async throws {
     let runtime = ABIRuntime()
     let provider = ImageSelector.path(URL(fileURLWithPath: providerPath))
     let importer = ImageSelector.path(URL(fileURLWithPath: callerPath))
-    let integer = try runtime.swiftFunction(
+    let integer = try await runtime.resolveSwiftFunction(
         named: "SwiftFunctionFixture.hookEcho(_:)",
         as: ((Int64) -> Int64).self, genericArguments: [.type(Int64.self)], in: provider)
-    let text = try runtime.swiftFunction(
+    let text = try await runtime.resolveSwiftFunction(
         named: "SwiftFunctionFixture.hookEcho(_:)",
         as: ((String) -> String).self, genericArguments: [.type(String.self)], in: provider)
-    let intCaller = try runtime.swiftFunction(
+    let intCaller = try await runtime.resolveSwiftFunction(
         named: "SwiftExtensionFixture.importedHookInteger(_:)",
         as: ((Int64) -> Int64).self, in: importer)
-    let textCaller = try runtime.swiftFunction(
+    let textCaller = try await runtime.resolveSwiftFunction(
         named: "SwiftExtensionFixture.importedHookString(_:)",
         as: ((String) -> String).self, in: importer)
-    let arrayCaller = try runtime.swiftFunction(
+    let arrayCaller = try await runtime.resolveSwiftFunction(
         named: "SwiftExtensionFixture.importedHookArray(_:)",
         as: (([String]) -> [String]).self, in: importer)
     check(try unsafe intCaller.unsafeInvoke(40) == 40)
@@ -47,10 +47,10 @@ func validateHooks(providerPath: String, callerPath: String) async throws {
     intHook.invalidate(); textHook.invalidate()
     check(try unsafe textCaller.unsafeInvoke("value") == "value")
 
-    let throwing = try runtime.swiftFunction(
+    let throwing = try await runtime.resolveSwiftFunction(
         named: "SwiftFunctionFixture.hookThrowing(_:)",
         as: ((Int64) throws(NSError) -> Int64).self, in: provider)
-    let throwingCaller = try runtime.swiftFunction(
+    let throwingCaller = try await runtime.resolveSwiftFunction(
         named: "SwiftExtensionFixture.importedHookThrowing(_:)",
         as: ((Int64) throws(NSError) -> Int64).self, in: importer)
     check(try unsafe throwingCaller.unsafeInvoke(1) == 2)
@@ -86,15 +86,15 @@ func validateAsyncHooks(providerPath: String, callerPath: String) async throws {
     let failures = Mutex(0)
     let failure: @Sendable (any Error) -> Void = { _ in failures.withLock { $0 += 1 } }
     typealias Echo = nonisolated(nonsending) (Int64) async -> Int64
-    let integer = try runtime.swiftFunction(
+    let integer = try await runtime.resolveSwiftFunction(
         named: "SwiftFunctionFixture.hookAsyncEcho(_:)",
         as: Echo.self, genericArguments: [.type(Int64.self)], in: provider)
-    let integerCaller = try runtime.swiftFunction(
+    let integerCaller = try await runtime.resolveSwiftFunction(
         named: "SwiftExtensionFixture.importedAsyncHookInteger(_:)",
         as: Echo.self,
         in: importer
     )
-    let textCaller = try runtime.swiftFunction(
+    let textCaller = try await runtime.resolveSwiftFunction(
         named: "SwiftExtensionFixture.importedAsyncHookString(_:)",
         as: (nonisolated(nonsending) (String) async -> String).self, in: importer)
     check(try unsafe await integerCaller.unsafeInvoke(1) == 1)
@@ -109,12 +109,12 @@ func validateAsyncHooks(providerPath: String, callerPath: String) async throws {
     integerHook.invalidate()
     check(try unsafe await integerCaller.unsafeInvoke(1) == 1)
     typealias Throwing = nonisolated(nonsending) (Int64) async throws(NSError) -> String
-    let throwing = try runtime.swiftFunction(
+    let throwing = try await runtime.resolveSwiftFunction(
         named: "SwiftFunctionFixture.hookAsyncThrowing(_:)",
         as: Throwing.self,
         in: provider
     )
-    let throwingCaller = try runtime.swiftFunction(
+    let throwingCaller = try await runtime.resolveSwiftFunction(
         named: "SwiftExtensionFixture.importedAsyncHookThrowing(_:)",
         as: Throwing.self,
         in: importer
@@ -133,17 +133,17 @@ func validateAsyncHooks(providerPath: String, callerPath: String) async throws {
         error.withUnderlyingError { check(($0 as NSError).domain == "native-async-hook-consumer") }
     }
     errorHook.invalidate()
-    let type = try runtime.swiftType(named: "SwiftFunctionFixture.AsyncHookRenderer", in: provider)
-    let method = try type.method(
+    let type = try await runtime.resolveSwiftType(named: "SwiftFunctionFixture.AsyncHookRenderer", in: provider)
+    let method = try await type.resolveMethod(
         named: "render(_:)",
         as: (nonisolated(nonsending) (String) async -> String).self
     )
-    let make = try runtime.swiftFunction(
+    let make = try await runtime.resolveSwiftFunction(
         named:
             "SwiftFunctionFixture.makeAsyncHookRenderer() -> SwiftFunctionFixture.AsyncHookRenderer",
         as: (() -> AnyObject).self, in: provider)
     let object = try unsafe make.unsafeInvoke()
-    let methodCaller = try runtime.swiftFunction(
+    let methodCaller = try await runtime.resolveSwiftFunction(
         named: "SwiftExtensionFixture.importedAsyncHookMethod(SwiftFunctionFixture.AsyncHookRenderer, Swift.String) async -> Swift.String",
         as: (nonisolated(nonsending) (AnyObject, String) async -> String).self, in: importer)
     let identity = ObjectIdentifier(object)
@@ -161,15 +161,15 @@ func validateAsyncHooks(providerPath: String, callerPath: String) async throws {
 
 @MainActor
 func prepareGenericGetters(type: NativeSwiftType, object: NativeObject) async throws {
-    _ = try type.getter(
+    _ = try await type.resolveGetter(
         named: "checked",
         as: (() throws -> String).self,
                        declaredAs: "() throws(B) -> A")
-    _ = try type.staticGetter(
+    _ = try await type.resolveStaticGetter(
         named: "checkedType",
         as: (() throws -> String.Type).self,
                              declaredAs: "() throws(B) -> A.Type")
-    _ = try object.getter(
+    _ = try await object.resolveGetter(
         named: "delayedChecked",
         as: (() async throws -> String).self,
                                declaredAs: "() async throws(B) -> A")
@@ -177,7 +177,7 @@ func prepareGenericGetters(type: NativeSwiftType, object: NativeObject) async th
 
 func prepare<Signature>(named name: String, as signature: Signature.Type, in scope: ImageSelector,
                         using runtime: ABIRuntime) async throws -> NativeSwiftFunction<Signature> {
-    try runtime.swiftFunction(named: name, as: signature, in: scope)
+    try await runtime.resolveSwiftFunction(named: name, as: signature, in: scope)
 }
 
 // Compile the Sendable entry points outside ABIBridge; the independent provider
@@ -237,7 +237,7 @@ func prepare(_ path: String) async throws -> NativeSwiftFunction<(String) -> Str
         .init(name: "SwiftFunctionFixture.answer() -> Swift.Int64", language: .swift), in: [scope]
     )
     async let preparation = runtime.prepare(request)
-    let answer = try runtime.swiftFunction(
+    let answer = try await runtime.resolveSwiftFunction(
         named: "SwiftFunctionFixture.answer()", as: (() -> Int64).self, in: scope
     )
     let prepared = try await preparation
@@ -249,7 +249,7 @@ func prepare(_ path: String) async throws -> NativeSwiftFunction<(String) -> Str
     let function = try await prepare(
         named: "SwiftFunctionFixture.decorate(_:)", as: ((String) -> String).self, in: scope, using: runtime
     )
-    let transform = try runtime.swiftFunction(
+    let transform = try await runtime.resolveSwiftFunction(
         named: "SwiftFunctionFixture.transform(SwiftFunctionFixture.Three) -> SwiftFunctionFixture.Three",
         as: ((ThreeValue) -> ThreeValue).self, in: scope
     )

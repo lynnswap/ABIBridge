@@ -5,11 +5,11 @@ Select a class method by its source declaration and replace the entry in that cl
 ## Prepare and publish
 
 ```swift
-let type = try runtime.swiftType(named: "Rendering.Renderer")
-let method = try type.method(
+let type = try runtime.resolveSwiftTypeAndWait(named: "Rendering.Renderer")
+let method = try type.resolveMethodAndWait(
     named: "render(_:)", as: ((String) -> String).self
 )
-let replacement = try type.method(
+let replacement = try type.resolveMethodAndWait(
     named: "debugRender(_:)", as: ((String) -> String).self
 )
 let plan = try unsafe method.prepareVirtualReplacement(with: replacement)
@@ -28,7 +28,7 @@ The replacement is compiled Swift code with the same physical receiver, argument
 
 ## Understand the class scope
 
-The type used for `method(named:as:)` determines the metadata to change. Looking up an inherited method on `PreviewRenderer` changes the copy in `PreviewRenderer` metadata, including when the symbol itself belongs to its superclass. An override uses the original introducing method descriptor to find the inherited slot and its pointer-authentication discriminator. The declaring class's override table must reference that descriptor; an unrelated same-named method in a superclass is not sufficient.
+The type used for `resolveMethod` or `resolveMethodAndWait` determines the metadata to change. Looking up an inherited method on `PreviewRenderer` changes the copy in `PreviewRenderer` metadata, including when the symbol itself belongs to its superclass. An override uses the original introducing method descriptor to find the inherited slot and its pointer-authentication discriminator. The declaring class's override table must reference that descriptor; an unrelated same-named method in a superclass is not sufficient.
 
 Existing superclass, sibling and subclass metadata copies are unchanged. A subclass initialized after installation can inherit a modified entry; restoration of the selected class does not rewrite copies made elsewhere. Coordinate metadata initialization if this boundary matters to the application.
 

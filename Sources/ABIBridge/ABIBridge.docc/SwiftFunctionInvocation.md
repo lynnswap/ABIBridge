@@ -1,13 +1,13 @@
 # Calling concrete Swift functions
 
-Resolve a synchronous Swift function by source-level name and invoke it with ordinary Swift values.
+Resolve a Swift function by source-level name and invoke it with ordinary Swift values.
 
 ## Resolve and call
 
 For an already-loaded module defining `func decorate(_ value: String) -> String`:
 
 ```swift
-let decorate = try ABIRuntime.shared.swiftFunction(
+let decorate = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
     named: "Example.decorate(_:)",
     as: ((String) -> String).self
 )
@@ -18,15 +18,56 @@ A label-only name obtains its parameter and result type names from the function 
 
 The framework/path and retained-image overloads use the same symbol indexes as other runtime lookups. Explicit targets are acquired by default; `loading: .loadedOnly` opts out. See <doc:ImageLoading>.
 
+## Await lookup and preparation
+
+`resolveSwiftFunction` searches and prepares the call interface on a worker queue while the caller suspends. `resolveSwiftFunctionAndWait` performs the same work synchronously on the caller's thread. Both share symbol indexes and call layouts, joining only required work if earlier preparation is still running. Neither invokes the native function body.
+
+From `MainActor`, await the factory to keep lookup and preparation from blocking the actor:
+
+```swift
+@MainActor
+func makeMessage() async throws -> String {
+    let decorate = try await ABIRuntime.shared.resolveSwiftFunction(
+        named: "Example.decorate(_:)",
+        as: ((String) -> String).self
+    )
+    return try unsafe decorate.unsafeInvoke("Hello")
+}
+```
+
+The native signature controls invocation separately. A synchronous signature runs on the caller's executor; an async signature also requires `await` when invoking the handle:
+
+```swift
+@MainActor
+func loadContents() async throws -> String {
+    let load = try await ABIRuntime.shared.resolveSwiftFunction(
+        named: "Example.load(_:)",
+        as: (@concurrent (String) async throws -> String).self
+    )
+    return try unsafe await load.unsafeInvoke("settings")
+}
+```
+
+The factory name selects lookup behavior. Use `resolveSwiftFunctionAndWait` for synchronous lookup in either a synchronous or async function:
+
+```swift
+let decorate = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
+    named: "Example.decorate(_:)",
+    as: ((String) -> String).self
+)
+```
+
+The `AndWait` operation can block the caller until the required search and preparation finish. Use optional `prepare(_:)` when starting that work ahead of a later call; neither factory requires earlier preparation.
+
 ## Complete callable signatures
 
 Prepared functions, methods, bound methods, and closures use one complete function type as their generic parameter:
 
 ```swift
-let decorate: NativeSwiftFunction<(String) -> String> = try runtime.swiftFunction(
+let decorate: NativeSwiftFunction<(String) -> String> = try runtime.resolveSwiftFunctionAndWait(
     named: "Example.decorate(_:)", as: ((String) -> String).self
 )
-let load: NativeSwiftFunction<@concurrent (String) async throws -> String> = try runtime.swiftFunction(
+let load: NativeSwiftFunction<@concurrent (String) async throws -> String> = try runtime.resolveSwiftFunctionAndWait(
     named: "Example.load(_:)", as: (@concurrent (String) async throws -> String).self
 )
 ```
@@ -37,7 +78,7 @@ When migrating existing annotations, replace the result-first argument list with
 
 The separate async function/method types and throwing/async/concurrent closure types have been removed. Use NativeSwiftClosure with the corresponding function type, including `@Sendable` when the native closure declaration includes it. Returned closure wrappers and bound methods retain their original isolation requirements and are not Sendable merely because their signature is Sendable.
 
-Getter lookup now takes a complete zero-argument function type: replace `getter(named: "text", as: String.self)` with `getter(named: "text", as: (() -> String).self)`. The same rule applies to staticGetter and bound-object getters. Include native errors and async isolation in that function type. Use `@concurrent` in place of the former `inheritsCallerIsolation: false` override.
+Getter lookup takes a complete zero-argument function type, such as `resolveGetter(named: "text", as: (() -> String).self)`. The same rule applies to `resolveStaticGetter`, bound-object getters, and their `AndWait` variants. Include native errors and async isolation in that function type. Use `@concurrent` in place of the former `inheritsCallerIsolation: false` override.
 
 ## Supported representations
 
@@ -67,7 +108,7 @@ Swift object, String, and Array arguments stay alive through the call, including
 
 The function retains its implementation image. Keep an image owner alive while a foreign value can execute code from that image, including destruction. A loaded Swift image can also be retained by the Swift runtime independently of explicit loader references.
 
-The prepared handle is Sendable and can be reused concurrently. Each call uses separate argument, result, and register storage. Calling remains synchronous on the caller's executor; satisfy the declaration's actor and thread requirements.
+The prepared handle is Sendable and can be reused concurrently. Each call uses separate argument, result, and register storage. Synchronous invocation runs on the caller's executor; satisfy the declaration's actor and thread requirements. Async invocation preserves the caller's task and resumes on the caller's executor; see <doc:SwiftAsyncABI>.
 
 ## Declaration conventions
 
