@@ -162,7 +162,7 @@ struct NativeSwiftClosureTests {
     @Test func initializersBorrowNonescapingClosureArguments() async throws {
         typealias Inner = NativeSwiftClosure<(Int64) -> Int64>
         let runtime = ABIRuntime.shared
-        let type = try runtime.swiftType(
+        let type = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.EvaluatedIntegerClosure",
             as: EvaluatedIntegerClosure.self
         )
@@ -952,15 +952,15 @@ struct NativeSwiftClosureTests {
     }
 
     @Test func closureResultsDoNotRetainUncapturedReceivers() async throws {
-        let type = try ABIRuntime.shared.swiftType(
+        let type = try await ABIRuntime.shared.swiftType(
             named: "ManagedSwiftFixtures.ClosurePropertyOwner",
             as: ClosurePropertyOwner.self
         )
-        let getter = try type.getter(
+        let getter = try await type.getter(
             named: "callback",
             as: (() -> NativeSwiftClosure<(Int64) -> Int64>).self
         )
-        let method = try type.method(
+        let method = try await type.method(
             named: "readCallback()",
             as: (() -> NativeSwiftClosure<(Int64) -> Int64>).self
         )
@@ -992,7 +992,7 @@ struct NativeSwiftClosureTests {
 
     @Test func initializersTransferClosuresAndMethodsBorrowThem() async throws {
         let runtime = ABIRuntime.shared
-        let type = try runtime.swiftType(
+        let type = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.StoredIntegerClosure",
             as: StoredIntegerClosure.self
         )
@@ -1000,7 +1000,7 @@ struct NativeSwiftClosureTests {
             named: "init(_:)",
             as: ((NativeSwiftClosure<(Int64) -> Int64>) -> StoredIntegerClosure).self
         )
-        let apply = try type.method(
+        let apply = try await type.method(
             named: "apply(_:_:)",
             as: ((NativeSwiftClosure<(Int64) -> Int64>, Int64) -> Int64).self
         )
@@ -1162,7 +1162,7 @@ struct NativeSwiftClosureTests {
         var keeper: ClosurePropertyOwner? = ClosurePropertyOwner()
         do {
             let runtime = ABIRuntime()
-            let type = try runtime.swiftType(
+            let type = try await runtime.swiftType(
                 named: "ManagedSwiftFixtures.ClosurePropertyOwner"
             )
             let set = try type.setter(

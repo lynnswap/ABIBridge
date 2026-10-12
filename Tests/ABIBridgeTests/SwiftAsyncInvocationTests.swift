@@ -20,10 +20,10 @@ private struct RejectingAsyncRecord: ABIBridgeValue {
 
 struct SwiftAsyncInvocationTests {
     @Test func objectAdapterBindingsValidateTheReceiverBeforeAsyncInvocation() async throws {
-        let type = try ABIRuntime.shared.swiftType(
+        let type = try await ABIRuntime.shared.swiftType(
             named: "ManagedSwiftFixtures.AsyncOwner", as: AnyObject.self
         )
-        let method = try type.method(
+        let method = try await type.method(
             named: "value(_:)", as: (@concurrent (AsyncGate) async -> String).self
         )
         let bound = try method.bind(to: ErrorLifetimeToken())
@@ -39,10 +39,10 @@ struct SwiftAsyncInvocationTests {
             let token = ErrorLifetimeToken()
             let owner = AsyncMemberOwner(token, gate)
             observed = owner; observedToken = token
-            let type = try ABIRuntime.shared.swiftType(
+            let type = try await ABIRuntime.shared.swiftType(
                 named: "ManagedSwiftFixtures.AsyncMemberOwner"
             )
-            let call = try type.method(
+            let call = try await type.method(
                 named: "value(_:)",
                 as: (@concurrent (Bool) async throws(ManagedFailure) -> String).self)
             let task = Task { try unsafe await call.unsafeInvoke(on: owner, true) }
@@ -58,10 +58,10 @@ struct SwiftAsyncInvocationTests {
     }
 
     @Test func nativeAndWritebackFailuresRemainAvailableTogether() async throws {
-        let type = try ABIRuntime.shared.swiftType(
+        let type = try await ABIRuntime.shared.swiftType(
             named: "ManagedSwiftFixtures.AsyncMutableRecord",
                                                          as: RejectingAsyncRecord.self)
-        let call = try type.method(
+        let call = try await type.method(
             named: "advance(_:_:)",
             as: (nonisolated(nonsending) (AsyncGate, Bool) async throws(ScalarFailure) -> Int64).self, mutating: true)
         let gate = AsyncGate()
@@ -151,15 +151,15 @@ struct SwiftAsyncInvocationTests {
     @Test func classesActorsAndBoundMethodsUseExplicitReceivers() async throws {
         let runtime = ABIRuntime.shared
         let gate = AsyncGate(), owner = AsyncOwner(ErrorLifetimeToken())
-        let type = try runtime.swiftType(named: "ManagedSwiftFixtures.AsyncOwner")
-        let method = try type.method(
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.AsyncOwner")
+        let method = try await type.method(
             named: "value(_:)",
             as: (@concurrent (AsyncGate) async -> String).self
         )
         let task = Task { try unsafe await method.unsafeInvoke(on: owner, gate) }
         await gate.waitUntilSuspended(); await gate.open()
         #expect(try await task.value == String(repeating: "value:42", count: 100))
-        let bound = try runtime.object(owner).method(
+        let bound = try await runtime.object(owner).method(
             named: "value(_:)",
             as: (@concurrent (AsyncGate) async -> String).self)
         let secondGate = AsyncGate()
@@ -167,8 +167,8 @@ struct SwiftAsyncInvocationTests {
         await secondGate.waitUntilSuspended(); await secondGate.open()
         #expect(try await second.value == String(repeating: "value:42", count: 100))
         let actor = AsyncCounter(35), actorGate = AsyncGate()
-        let actorType = try runtime.swiftType(named: "ManagedSwiftFixtures.AsyncCounter")
-        let add = try actorType.method(
+        let actorType = try await runtime.swiftType(named: "ManagedSwiftFixtures.AsyncCounter")
+        let add = try await actorType.method(
             named: "add(_:_:)",
             as: (@concurrent (Int64, AsyncGate) async -> Int64).self)
         let added = Task { try unsafe await add.unsafeInvoke(on: actor, 7, actorGate) }
@@ -178,7 +178,7 @@ struct SwiftAsyncInvocationTests {
 
     @Test func initializersGettersAndStaticMembersComposeWithAsync() async throws {
         let runtime = ABIRuntime.shared
-        let type = try runtime.swiftType(named: "ManagedSwiftFixtures.AsyncMemberOwner")
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.AsyncMemberOwner")
         let initialize = try type.initializer(
             named: "init(_:_:_:)",
             as: (@concurrent (ErrorLifetimeToken, AsyncGate, Bool) async throws(ManagedFailure) -> AsyncMemberOwner).self)
@@ -188,11 +188,11 @@ struct SwiftAsyncInvocationTests {
         await gate.waitUntilSuspended(); await gate.open()
         let owner = try await creation.value
         #expect(owner.token === token)
-        let getter = try type.getter(named: "delayed", as: (@concurrent () async -> String).self)
+        let getter = try await type.getter(named: "delayed", as: (@concurrent () async -> String).self)
         let get = Task { try unsafe await getter.unsafeInvoke(on: owner) }
         await gate.waitUntilSuspended(); await gate.open()
         #expect(try await get.value == "getter")
-        let bound = try runtime.object(owner).getter(
+        let bound = try await runtime.object(owner).getter(
             named: "delayed",
             as: (@concurrent () async -> String).self
         )
@@ -217,11 +217,11 @@ struct SwiftAsyncInvocationTests {
     }
 
     @Test func mutatingReceiverWritesBackAfterNativeError() async throws {
-        let type = try ABIRuntime.shared.swiftType(
+        let type = try await ABIRuntime.shared.swiftType(
             named: "ManagedSwiftFixtures.AsyncMutableRecord",
             as: AsyncMutableRecord.self
         )
-        let advance = try type.method(
+        let advance = try await type.method(
             named: "advance(_:_:)",
             as: (nonisolated(nonsending) (AsyncGate, Bool) async throws(ScalarFailure) -> Int64).self, mutating: true)
         let gate = AsyncGate()

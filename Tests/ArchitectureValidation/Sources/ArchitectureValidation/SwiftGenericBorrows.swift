@@ -53,7 +53,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     }
     try check(scalar && applications == 1, "Generic Bool result and scoped callback preserve caller isolation")
 
-    let stringType = try runtime.swiftType(named: "Swift.String")
+    let stringType = try await runtime.swiftType(named: "Swift.String")
     let string = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.produceGeneric<A>(() -> A) -> A",
         as: ((NativeSwiftClosure<() -> String>) -> String).self, genericArguments: [.type(stringType)])
@@ -119,23 +119,23 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     try check(try unsafe await readClosureData.unsafeInvoke(closureData, AsyncClosureDataReader(readClosureBody)) == 42,
         "Async callbacks preserve owned closure wrappers used as generic data across suspension")
 
-    let type = try runtime.swiftType(named: "SwiftValueFixtures.BorrowedRuntimeRecord")
-    let text = try type.getter(
+    let type = try await runtime.swiftType(named: "SwiftValueFixtures.BorrowedRuntimeRecord")
+    let text = try await type.getter(
         named: "text",
         as: (() -> String).self,
         receiverABI: .opaque(named: type.name)
     )
-    let changed = try type.getter(
+    let changed = try await type.getter(
         named: "changed",
         as: (() -> AnyObject?).self,
         receiverABI: .opaque(named: type.name)
     )
-    let length = try type.method(
+    let length = try await type.method(
         named: "length()",
         as: (() -> Int).self,
         receiverABI: .opaque(named: type.name)
     )
-    let cancel = try type.method(
+    let cancel = try await type.method(
         named: "cancel()",
         as: (() -> Void).self,
         receiverABI: .opaque(named: type.name)
@@ -476,14 +476,14 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
         as: ((OwnedCaller, Int64, NativeSwiftClosure<() -> Void>) -> Int64).self, genericArguments: [.type(Int64.self)])
     try check(try unsafe ownedCall.unsafeInvoke(ownedFactory.unsafeInvoke(), 42, NativeSwiftClosure { ownedDeaths.increment() }) == 42
         && ownedDeaths.count == 3, "Native consuming nested reabstraction authenticates and transfers exactly one owned context")
-    let fixedType = try runtime.swiftType(named: "SwiftValueFixtures.RuntimeFixedPair")
+    let fixedType = try await runtime.swiftType(named: "SwiftValueFixtures.RuntimeFixedPair")
     let fixedABI = try NativeType.structure(named: fixedType.name, fields: [.int64, .int64])
     let fixedABIs = [fixedType: fixedABI]
     let fixedMake = try await runtime.swiftFunction(
         named: "SwiftValueFixtures.makeRuntimeFixedPair(Swift.Int64, Swift.Int64) -> SwiftValueFixtures.RuntimeFixedPair",
         as: ((Int64, Int64) -> NativeSwiftValue).self, valueABIs: fixedABIs)
     let fixedValue = try unsafe fixedMake.unsafeInvoke(35, 7)
-    let fixedSum = try fixedType.method(
+    let fixedSum = try await fixedType.method(
         named: "sum()",
         as: (() -> Int64).self,
         receiverABI: fixedABI
@@ -499,7 +499,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
         as: ((NativeSwiftValue, FixedBody) -> Int64).self, valueABIs: fixedABIs)
     try check(try unsafe fixedInspect.unsafeInvoke(fixedValue, fixedBody) == 42 && fixedState.failure == nil,
         "Explicit fixed Swift components authenticate a runtime-only callback input")
-    let fixedMember = try fixedType.method(
+    let fixedMember = try await fixedType.method(
         named: "inspect(_:)",
         as: ((FixedBody) -> Int64).self,
         valueABIs: fixedABIs, receiverABI: fixedABI)

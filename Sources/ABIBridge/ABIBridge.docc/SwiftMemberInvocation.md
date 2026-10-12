@@ -17,6 +17,22 @@ try unsafe setImage.unsafeInvoke(image, true)
 
 The handle retains its receiver and implementation images. Existing objects supply their runtime class metadata, including imported Objective-C classes with Swift extension methods. Bound handles stay in the caller's isolation domain.
 
+Swift `method(named:)` and `getter(named:)` also support async lookup. Awaiting a bound factory moves search and call-interface preparation to a worker queue while retaining and binding the receiver in the caller's isolation domain:
+
+```swift
+@MainActor
+func update(_ renderer: AnyObject, image: UIImage) async throws {
+    let object = ABIRuntime.shared.object(renderer)
+    let setImage = try await object.method(
+        named: "setImage(_:animated:)",
+        as: ((UIImage?, Bool) -> Void).self
+    )
+    try unsafe setImage.unsafeInvoke(image, true)
+}
+```
+
+The native method remains synchronous here and executes on `MainActor`. Lookup does not invoke the native method or make its receiver Sendable.
+
 ## Reuse a discovered implementation with another object
 
 A bound method's `method` property returns its prepared explicit-receiver handle. Keeping that value does not keep the original receiver binding alive. This also works for getters, setters, and async members.
@@ -67,6 +83,54 @@ try unsafe stop.unsafeInvoke(on: renderer)
 Type lookup obtains the nominal descriptor and requests complete metadata. For a generic type, supply `genericArguments: [.type(String.self)]`, or the corresponding arguments and packs in outer-to-inner declaration order. Type handles share the runtime's symbol indexes, retain their defining image and argument owners, and remain valid after removeCachedResults().
 
 Methods capture the selected implementation. Lookup prefers declarations in the type's defining image, then searches extension-qualified implementations in loaded images, and then walks superclass declarations in each superclass's defining image. Calls do not perform virtual redispatch. Existing receiver metadata also supplies the context for concrete members declared by a generic superclass.
+
+## Await type and member preparation
+
+`ABIRuntime.swiftType`, `NativeSwiftType.method(named:)`, and `NativeSwiftType.getter(named:)` have synchronous and async overloads with the same arguments. `ABIRuntime` and `NativeSwiftType` remain actors. Async lookup performs search, metadata preparation, and call-interface preparation on a worker queue while the caller suspends. The same indexes and call layouts serve both overloads; an awaited lookup reuses completed work and joins only required preparation already in progress.
+
+Use these overloads on `MainActor` without an earlier `prepare` call:
+
+```swift
+@MainActor
+func readText(
+    from renderer: AnyObject, using runtime: ABIRuntime = .shared
+) async throws -> String {
+    let type = try await runtime.swiftType(named: "Example.Renderer")
+    let getText = try await type.getter(named: "text", as: (() -> String).self)
+    return try unsafe getText.unsafeInvoke(on: renderer)
+}
+```
+
+Lookup and native invocation have separate effects. The example awaits preparation but invokes a synchronous getter. An async native method or getter uses an async function metatype and also requires `await` for `unsafeInvoke`; see <doc:SwiftAsyncABI>. Preparing the handle does not invoke the native body.
+
+Optional `prepare(_:)` can start the same work ahead of lookup. Keep the receiver outside its Sendable worker closure:
+
+```swift
+@MainActor
+func readTextWithPreparation(from renderer: AnyObject) async throws -> String {
+    let runtime = ABIRuntime.shared
+    async let preparation = runtime.prepare { runtime in
+        let type = try runtime.swiftType(named: "Example.Renderer")
+        return try type.getter(named: "text", as: (() -> String).self)
+    }
+
+    let text = try await readText(from: renderer, using: runtime)
+    _ = try await preparation
+    return text
+}
+```
+
+If preparation is still running, `readText` suspends until the work needed for its type and getter is ready. It does not wait for the entire preparation closure before lookup. The final `await preparation` observes that closure's result after reading the property.
+
+Swift selects the async overload in an async context and requires `await`. Synchronous functions and closures select the synchronous overload, which can block the caller during cold lookup or while joining preparation. To deliberately choose synchronous getter lookup inside an async function, use a synchronous closure:
+
+```swift
+let getText = try { () throws -> NativeSwiftMethod<() -> String> in
+    try type.getter(named: "text", as: (() -> String).self)
+}()
+```
+
+Static members, initializers, setters, Objective-C selector lookup, and C/C++ member lookup use their synchronous factories. Use <doc:SymbolLookup> for preparing those factories on a worker ahead of time.
 
 ## Initializers and static members
 

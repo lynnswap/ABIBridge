@@ -47,7 +47,7 @@ import SwiftValueFixtures
     }
     try check(counts.destructions == 2, "Consuming copies destroy their final references exactly once")
 
-    let type = try runtime.swiftType(named: "SwiftValueFixtures.ArgumentOwner")
+    let type = try await runtime.swiftType(named: "SwiftValueFixtures.ArgumentOwner")
     let make = try type.initializer(
         named: "init(_:_:_:)",
         as: ((NativeSwiftBorrowing<String>, NativeSwiftConsuming<String>, NativeSwiftBorrowing<ErrorToken>) -> ArgumentOwner).self)

@@ -30,7 +30,9 @@ struct Benchmark {
         let object = ABIRuntime().object(PreparationBox("value"))
         let name = "add(Swift.Int64) -> Swift.Int64"
         let firstStart = ContinuousClock.now
-        let first = try object.method(named: name, as: ((Int64) -> Int64).self)
+        let first = try { () throws -> NativeBoundSwiftMethod<(Int64) -> Int64> in
+            try object.method(named: name, as: ((Int64) -> Int64).self)
+        }()
         let firstValue = try unsafe first.unsafeInvoke(35)
         precondition(firstValue == 42)
         print("Swift generic member first preparation: \(seconds(firstStart.duration(to: .now))*1000) ms")
@@ -40,7 +42,9 @@ struct Benchmark {
             var checksum: Int64 = 0
             let start = ContinuousClock.now
             for value in 0..<count {
-                let method = try object.method(named: name, as: ((Int64) -> Int64).self)
+                let method = try { () throws -> NativeBoundSwiftMethod<(Int64) -> Int64> in
+                    try object.method(named: name, as: ((Int64) -> Int64).self)
+                }()
                 checksum += try unsafe method.unsafeInvoke(Int64(value))
             }
             samples.append(seconds(start.duration(to: .now)) * 1e6 / Double(count))

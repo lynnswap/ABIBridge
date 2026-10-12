@@ -19,7 +19,7 @@ A `NativeImage` retains its loaded image. Reuse that handle to resolve several d
 
 Synchronous lookup prepares the indexes it needs automatically. Callable factories also prepare the supplied signature and return a handle ready for invocation. `ABIRuntime` and `NativeSwiftType` remain actors, with `nonisolated` synchronous lookup methods. Missing preparation runs on the calling thread; joining preparation already in progress blocks that thread until the required work finishes. This also applies to a caller on `MainActor`.
 
-`swiftFunction` also has async overloads with the same arguments. Awaiting the factory runs search and preparation on a worker queue while the caller suspends, reusing completed results and joining only required work in progress. Swift selects these overloads in async contexts; no earlier `prepare(_:)` is required. See <doc:SwiftFunctionInvocation> for `MainActor` examples and explicit selection of synchronous lookup.
+`swiftFunction`, `swiftType`, Swift `method(named:)`, and instance `getter(named:)` also have async overloads with the same arguments. Awaiting these factories runs search and preparation on a worker queue while the caller suspends, reusing completed results and joining only required work in progress. Swift selects these overloads in async contexts; no earlier `prepare(_:)` is required. Bound object factories keep the receiver in the caller's isolation domain. See <doc:SwiftFunctionInvocation> and <doc:SwiftMemberInvocation> for `MainActor` examples and explicit selection of synchronous lookup.
 
 Native invocation follows the target's actor-isolation and thread-affinity requirements. A synchronous native function stays synchronous; an async native signature requires `await` when invoking the returned handle.
 

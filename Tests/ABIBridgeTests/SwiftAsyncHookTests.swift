@@ -100,8 +100,8 @@ struct SwiftAsyncHookTests {
         """)
         defer { fixture.cleanup() }
         let name = fixture.module + ".AsyncHookOwner"
-        let type = try fixture.runtime.swiftType(named: name, in: fixture.providerScope)
-        let method = try type.method(
+        let type = try await fixture.runtime.swiftType(named: name, in: fixture.providerScope)
+        let method = try await type.method(
             named: "value(_:)",
             as: (nonisolated(nonsending) (Int64) async -> Int64).self
         )
@@ -144,8 +144,8 @@ struct SwiftAsyncHookTests {
         """)
         defer { fixture.cleanup() }
         let name = fixture.module + ".AsyncTextOwner"
-        let type = try fixture.runtime.swiftType(named: name, in: fixture.providerScope)
-        let method = try type.method(
+        let type = try await fixture.runtime.swiftType(named: name, in: fixture.providerScope)
+        let method = try await type.method(
             named: "render(_:)",
             as: (nonisolated(nonsending) (String) async -> String).self
         )
@@ -423,12 +423,12 @@ struct SwiftAsyncHookTests {
         }
         """)
         defer { fixture.cleanup() }
-        let type = try fixture.runtime.swiftType(
+        let type = try await fixture.runtime.swiftType(
             named: fixture.module + ".AsyncHookCounter",
             as: Int64.self,
             in: fixture.providerScope
         )
-        let method = try type.method(
+        let method = try await type.method(
             named: "advance(_:)",
             as: (nonisolated(nonsending) (Int64) async -> Int64).self,
             mutating: true
@@ -504,11 +504,11 @@ struct SwiftAsyncHookTests {
         }
         """)
         defer { fixture.cleanup() }
-        let type = try fixture.runtime.swiftType(
+        let type = try await fixture.runtime.swiftType(
             named: fixture.module + ".AsyncConsumedOwner",
             in: fixture.providerScope
         )
-        let method = try type.method(
+        let method = try await type.method(
             named: "consume()",
             as: (nonisolated(nonsending) () async -> Int64).self,
             consuming: true

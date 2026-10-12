@@ -2,23 +2,18 @@
 
 Update clients of the earlier result-and-argument handle types to complete function signatures, declaration-ordered generic arguments, and the shared runtime value interface.
 
-## Resolve and prepare handles synchronously
+## Choose synchronous or async lookup
 
-Remove `await` from `ABIRuntime` symbol lookup, image enumeration, C/C++ callable factories, and Swift type factories. Swift type member factories and bound Swift/C++ method lookup are also synchronous:
+`swiftFunction`, `swiftType`, Swift `method(named:)`, and instance `getter(named:)` have matching synchronous and async overloads. Keep `await` in async contexts to search and prepare on a worker queue while the caller suspends:
 
 ```swift
-// Before
 let type = try await runtime.swiftType(named: "Example.Counter")
 let read = try await type.method(named: "read()", as: (() -> Int64).self)
-
-// After
-let type = try runtime.swiftType(named: "Example.Counter")
-let read = try type.method(named: "read()", as: (() -> Int64).self)
 ```
 
-`ABIRuntime` and `NativeSwiftType` remain actors. These methods are `nonisolated`, so synchronous callers can use them without earlier preparation. Cold lookup runs on the caller's thread; if a required preparation stage is running, the caller waits for it. `removeCachedResults()` is also synchronous.
+Synchronous contexts select the synchronous overloads and omit `await`. Cold lookup runs on the caller's thread; if a required preparation stage is running, the caller waits for it. An async context can deliberately select synchronous lookup through a synchronous closure. Bound object method and getter lookup keeps the receiver in the caller's isolation domain. See <doc:SwiftFunctionInvocation> and <doc:SwiftMemberInvocation>.
 
-`swiftFunction` supports both synchronous and async lookup. Keep `await` in async contexts to search and prepare on a worker queue while the caller suspends. Synchronous contexts select the synchronous overload; an async context can deliberately select it through a synchronous closure. See <doc:SwiftFunctionInvocation>.
+`ABIRuntime` and `NativeSwiftType` remain actors. Earlier preparation is optional for both lookup forms. Symbol lookup, image enumeration, C/C++ factories, Objective-C selector lookup, Swift static members, initializers, setters, and `removeCachedResults()` are synchronous; remove `await` from those operations.
 
 Optional `prepare(_:)` remains asynchronous. Its closure overload runs synchronous factories on a worker queue and shares their preparation with later lookup. See <doc:SymbolLookup>. Keep `await` for invoking native async signatures and for hook installation APIs that remain asynchronous.
 
@@ -45,7 +40,7 @@ Swift getters now take a zero-argument function type so their error and isolatio
 let getter = try await type.getter(named: "text", as: String.self)
 
 // After
-let getter = try type.getter(named: "text", as: (() -> String).self)
+let getter = try await type.getter(named: "text", as: (() -> String).self)
 ```
 
 Keep Objective-C selector lookup on its existing function-type interface. This getter change applies to Swift source declarations.
@@ -115,7 +110,7 @@ let callback = try NativeSwiftBorrowingClosure<Int64>(borrowing: type) { view in
 }
 
 // After
-let read = try type.method(
+let read = try await type.method(
     named: "read()", as: (() -> Int64).self,
     receiverABI: .opaque(named: type.name)
 )

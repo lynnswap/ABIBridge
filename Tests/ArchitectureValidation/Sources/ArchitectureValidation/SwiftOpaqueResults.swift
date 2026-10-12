@@ -35,7 +35,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
         try check(($0 as? any ExistentialValue)?.number == 42 && ($0 as? any ExistentialLabel)?.label.count == 600,
                   "Opaque metadata supports an aligned hidden managed value and existing protocol witnesses")
     }
-    let underlyingType = try runtime.swiftType(named: stored!.type.name, in: stored!.type.image)
+    let underlyingType = try await runtime.swiftType(named: stored!.type.name, in: stored!.type.image)
     try check(underlyingType.image.identity == stored!.type.image.identity,
               "Opaque values expose the underlying declaration name for type lookup")
     var copy = stored
@@ -104,20 +104,20 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
     let memberCounts = ArgumentCounts()
     let memberValue = try unsafe makeTicket.unsafeInvoke(ErrorToken { memberCounts.destroyed() })
     let selfABI = try NativeType.opaque(named: memberValue.type.name)
-    let readMember = try memberValue.type.method(
+    let readMember = try await memberValue.type.method(
         named: "read()",
         as: (() -> Int64).self,
         receiverABI: selfABI
     )
-    let addMember = try memberValue.type.method(
+    let addMember = try await memberValue.type.method(
         named: "add(_:)",
         as: ((Int64) -> Void).self,
         receiverABI: selfABI, mutating: true)
-    let adaptedRead = try memberValue.type.method(
+    let adaptedRead = try await memberValue.type.method(
         named: "read() -> Swift.Int64",
         as: (() -> OpaqueWordResult).self, receiverABI: selfABI)
     let retainedReadResult = try unsafe adaptedRead.unsafeInvoke(on: memberValue)
-    let takeMember = try memberValue.type.method(
+    let takeMember = try await memberValue.type.method(
         named: "takeNumber() async -> Swift.Int64",
         as: (nonisolated(nonsending) () async -> OpaqueWordResult).self,
         receiverABI: selfABI, consuming: true)
@@ -145,7 +145,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
         checks.append("Ordinary member calls reject an expired borrowed receiver")
     }
     if #available(macOS 26, iOS 26, tvOS 26, watchOS 26, visionOS 26, *) {
-        let readAfter = try memberValue.type.method(
+        let readAfter = try await memberValue.type.method(
             named: "readAfter(_:)",
             as: (nonisolated(nonsending) (AsyncValueGate) async -> Int64).self, receiverABI: selfABI)
         let gate = AsyncValueGate()
@@ -189,9 +189,9 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
             "Throwing opaque calls keep error storage separate from uninitialized result storage") }
     }
 
-    let type = try runtime.swiftType(named: "SwiftValueFixtures.OpaqueOwner")
+    let type = try await runtime.swiftType(named: "SwiftValueFixtures.OpaqueOwner")
     let owner = OpaqueOwner(ErrorToken())
-    let getter = try type.getter(named: "summary", as: (() -> NativeSwiftValue).self)
+    let getter = try await type.getter(named: "summary", as: (() -> NativeSwiftValue).self)
     try unsafe getter.unsafeInvoke(on: owner).withCopy {
         try check(($0 as? any ExistentialValue)?.number == 42, "Opaque getter resolves the property's descriptor")
     }
@@ -227,15 +227,15 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
         named: "SwiftValueFixtures.makeOpaqueObjC(_:)",
         as: ((ErrorToken) -> NativeSwiftValue).self)
     try unsafe objc.unsafeInvoke(ErrorToken()).withCopy { try check($0 is NSObject, "ObjC protocol constraint uses a direct object result") }
-    let extensionMethod = try type.method(
+    let extensionMethod = try await type.method(
         named: "extensionOpaque(_:)",
         as: ((Int64) -> NativeSwiftValue).self
     )
-    let extensionGetter = try type.getter(
+    let extensionGetter = try await type.getter(
         named: "extensionSummary",
         as: (() -> NativeSwiftValue).self
     )
-    let extensionObject = try type.method(
+    let extensionObject = try await type.method(
         named: "extensionClassOpaque()",
         as: (() -> NativeSwiftValue).self
     )
@@ -276,7 +276,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
     let nestedValue = try unsafe nested.unsafeInvoke("nested")
     try check(try unsafe nestedValue.unsafeInvoke().withCopy { $0 as? String } == "nested",
         "Returned closures preserve generic opaque result metadata and authentication")
-    let genericOwner = try runtime.swiftType(
+    let genericOwner = try await runtime.swiftType(
         named: "SwiftValueFixtures.RuntimeOpaqueOwner",
         genericArguments: [.type(String.self)]
     )
@@ -285,10 +285,10 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
         as: ((String) -> AnyObject).self
     )
     let genericInstance = try unsafe genericInitializer.unsafeInvoke("owner")
-    let genericGetter = try genericOwner.getter(named: "opaque", as: (() -> NativeSwiftValue).self)
+    let genericGetter = try await genericOwner.getter(named: "opaque", as: (() -> NativeSwiftValue).self)
     let getterValue = try unsafe genericGetter.unsafeInvoke(on: genericInstance)
     try check(try getterValue.withCopy { $0 as? String } == "owner", "Opaque getters bind enclosing generic metadata")
-    let genericMethod = try genericOwner.method(
+    let genericMethod = try await genericOwner.method(
         named: "make(_:)",
         as: ((Int) -> NativeSwiftValue).self,
         genericArguments: [.type(Int.self)])
@@ -442,7 +442,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
     let final = try unsafe await moveAsync.unsafeInvoke(NativeSwiftConsuming(moved))
     try check(moved.isConsumed && !final.isConsumed && counts.destructions == 1,
               "Async generic results preserve a noncopyable ownership transfer")
-    let boxType = try runtime.swiftType(
+    let boxType = try await runtime.swiftType(
         named: "SwiftValueFixtures.RuntimeValueBox",
         genericArguments: arguments
     )
@@ -457,13 +457,13 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
     } catch NativeSwiftValueError.noncopyableType {
         checks.append("Runtime Copyable constraints protect generic types whose value-witness flags omit noncopyability")
     }
-    let takeBox = try boxType.method(
+    let takeBox = try await boxType.method(
         named: "takeValue()",
         as: (() -> NativeSwiftValue).self,
         consuming: true
     )
     do {
-        _ = try boxType.method(named: "copiedValue()", as: (() -> NativeSwiftValue).self)
+        _ = try await boxType.method(named: "copiedValue()", as: (() -> NativeSwiftValue).self)
         throw ArchitectureValidationFailure(description: "A noncopyable argument selected a Copyable-only member")
     } catch ABIResolutionError.declarationNotFound {
         checks.append("A member's Copyable requirement overrides nominal suppression")
@@ -486,7 +486,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
         as: ((Int64) -> NativeSwiftValue).self
     )
     let scalar = try unsafe integer.unsafeInvoke(42)
-    let conditional = try runtime.swiftType(
+    let conditional = try await runtime.swiftType(
         named: "SwiftValueFixtures.RuntimeConditionalValueBox",
         genericArguments: [.type(scalar.type)]
     )
@@ -497,18 +497,18 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
     let copied = try copyable.copy()
     try check(copyable.isCopyable && (try copied.take(as: RuntimeConditionalValueBox<Int64>.self)).value == 42,
               "Conditional Copyable conformance permits a native generic value copy")
-    let copyableBoxType = try runtime.swiftType(
+    let copyableBoxType = try await runtime.swiftType(
         named: "SwiftValueFixtures.RuntimeValueBox",
         genericArguments: [.type(Int64.self)])
     let makeCopyableBox = try copyableBoxType.initializer(
         named: "init(_:)",
         as: ((NativeSwiftConsuming<Int64>) -> NativeSwiftValue).self)
     let copyableBox = try unsafe makeCopyableBox.unsafeInvoke(NativeSwiftConsuming(Int64(42)))
-    let copyMember = try copyableBoxType.method(named: "copiedValue()", as: (() -> Int64).self)
+    let copyMember = try await copyableBoxType.method(named: "copiedValue()", as: (() -> Int64).self)
     try check(try unsafe copyMember.unsafeInvoke(on: copyableBox) == 42,
               "A Copyable-only member accepts a copyable argument on a noncopyable nominal owner")
     let ticket = try unsafe make.unsafeInvoke(ErrorToken {})
-    let noncopyableType = try runtime.swiftType(
+    let noncopyableType = try await runtime.swiftType(
         named: "SwiftValueFixtures.RuntimeConditionalValueBox",
         genericArguments: [.type(ticket.type)]
     )
@@ -525,8 +525,8 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
               "Runtime result storage restores elided singleton metatypes alongside managed generic fields")
     let scopedCounts = ArgumentCounts()
     let scopedOwner = RuntimeScopedOwner(42, scopedCounts)
-    let scopedType = try runtime.swiftType(named: "SwiftValueFixtures.RuntimeScopedResult")
-    let scopedRead = try scopedType.method(
+    let scopedType = try await runtime.swiftType(named: "SwiftValueFixtures.RuntimeScopedResult")
+    let scopedRead = try await scopedType.method(
         named: "read()",
         as: (() -> Int64).self,
         receiverABI: .opaque(named: scopedType.name))
@@ -552,15 +552,15 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
     } catch RuntimeTicketFailure.rejected {
         try check(scopedCounts.destructions == 2, "A throwing result body destroys native storage exactly once")
     }
-    let scopedOwnerType = try runtime.swiftType(named: "SwiftValueFixtures.RuntimeScopedOwner")
-    let scopedMethod = try scopedOwnerType.method(
+    let scopedOwnerType = try await runtime.swiftType(named: "SwiftValueFixtures.RuntimeScopedOwner")
+    let scopedMethod = try await scopedOwnerType.method(
         named: "scoped()",
         as: (() -> NativeSwiftBorrowedValue).self
     )
     let scopedBound = try scopedMethod.bind(to: scopedOwner)
     try check(try unsafe scopedBound.unsafeInvoke(withResult: { try unsafe scopedRead.unsafeInvoke(on: $0) }) == 42,
         "Bound methods preserve the receiver while a nonescapable result body runs")
-    let scopedAsync = try scopedOwnerType.method(
+    let scopedAsync = try await scopedOwnerType.method(
         named: "scopedAsync()",
         as: (() async -> NativeSwiftBorrowedValue).self
     )

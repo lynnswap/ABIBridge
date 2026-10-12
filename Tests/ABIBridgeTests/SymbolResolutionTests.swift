@@ -457,18 +457,18 @@ struct SymbolResolutionTests {
             )
             Issue.record("The parent source name exists in both images")
         } catch ABIResolutionError.ambiguousDeclaration {}
-        let type = try runtime.swiftType(
+        let type = try await runtime.swiftType(
             named: module + ".Child",
             in: .path(first.libraryURL)
         )
         let initialize = try type.initializer(named: "init()", as: (() -> AnyObject).self)
         let child = try unsafe initialize.unsafeInvoke()
-        let method = try type.method(named: "answer()", as: (() -> Int).self)
+        let method = try await type.method(named: "answer()", as: (() -> Int).self)
         #expect(method.symbol.image.identity == type.image.identity)
         #expect(try unsafe method.unsafeInvoke(on: child) == 42)
-        let bound = try runtime.object(child).method(named: "answer()", as: (() -> Int).self)
+        let bound = try await runtime.object(child).method(named: "answer()", as: (() -> Int).self)
         #expect(try unsafe bound.unsafeInvoke() == 42)
-        let otherType = try runtime.swiftType(
+        let otherType = try await runtime.swiftType(
             named: module + ".Child",
             in: .path(second.libraryURL)
         )
@@ -478,7 +478,7 @@ struct SymbolResolutionTests {
         )
         let otherChild = try unsafe otherInitialize.unsafeInvoke()
         for (object, expected) in [(child, 42), (otherChild, 7), (child, 42)] {
-            let method = try runtime.object(object).method(
+            let method = try await runtime.object(object).method(
                 named: "answer()",
                 as: (() -> Int).self
             )

@@ -83,6 +83,21 @@ let message = try unsafe echo.unsafeInvoke("Hello")
 
 See [Swift generic calls](https://lynnswap.github.io/ABIBridge/documentation/abibridge/genericswiftvalues) for constraints, packs, generic types, and members. Ordinary tuples can combine runtime value handles and closures. Use `NativeSwiftInout` to replace a closure or tuple through a native call; see [Swift closure values](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftclosurevalues) and [argument conventions](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftargumentconventions).
 
+### Resolve a Swift type and member without blocking MainActor
+
+`swiftType`, Swift `method(named:)`, and instance `getter(named:)` also have synchronous and async lookup overloads. For a native renderer with `func title() -> String`:
+
+```swift
+@MainActor
+func readTitle(from renderer: AnyObject) async throws -> String {
+    let type = try await ABIRuntime.shared.swiftType(named: "Example.Renderer")
+    let title = try await type.method(named: "title()", as: (() -> String).self)
+    return try unsafe title.unsafeInvoke(on: renderer)
+}
+```
+
+Awaited lookup suspends while a worker performs the required search and preparation. Bound object lookup keeps the receiver in the caller's isolation domain. See [Swift types and members](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftmemberinvocation) for getters and optional preparation started ahead of time.
+
 ### Call an existing Objective-C instance
 
 For a `renderer` exposing `setImage:animated:`, pass ordinary Swift values:

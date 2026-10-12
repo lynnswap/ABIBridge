@@ -116,13 +116,13 @@ private struct ImportPayload: ABIBridgeValue {
         return try unsafe largeOracle.unsafeInvoke(40) == 710 && previous.a == 40 && previous.e == 44
     }
     try check(try unsafe largeOracle.unsafeInvoke(40) == 210, "Indirect result dispatch restored")
-    let type = try runtime.swiftType(
+    let type = try await runtime.swiftType(
         named: "SwiftImportProvider.ReplacementValue",
         as: Int64.self,
         in: path("SwiftImportProvider")
     )
-    let method = try type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
-    let newMethod = try type.method(named: "replacementScalar(_:)", as: ((Int64) -> Int64).self)
+    let method = try await type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
+    let newMethod = try await type.method(named: "replacementScalar(_:)", as: ((Int64) -> Int64).self)
     let methodOracle = try await runtime.swiftFunction(
         named: caller + ".importedValueMethod(_:)",
         as: ((Int64) -> Int64).self,

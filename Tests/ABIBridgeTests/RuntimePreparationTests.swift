@@ -2,6 +2,7 @@ import ABIBridgeTestSupport
 #if os(macOS)
 import ABIBridge
 import Foundation
+import Synchronization
 import Testing
 
 @Suite(.serialized)
@@ -159,9 +160,10 @@ struct RuntimePreparationTests {
         MainActor.assertIsolated()
     }
 
-    @MainActor @Test(arguments: [false, true])
-    func swiftFunctionLookupSelectsTheCallingThreadOrAnIndependentWorker(
-        asynchronous: Bool
+    @MainActor @Test(arguments: [false, true], [false, true])
+    func swiftLookupSelectsTheCallingThreadOrAnIndependentWorker(
+        asynchronous: Bool,
+        typeLookup: Bool
     ) async throws {
         let dependency = try FixtureLibrary(
             load: false,
@@ -182,6 +184,7 @@ struct RuntimePreparationTests {
             swiftSource: """
                 @_silgen_name("ABISwiftPreparationThread") private func preparationThread() -> Int32
                 public func thread() -> Int32 { preparationThread() }
+                public final class Receiver { public init() {} }
                 """,
             linkArguments: [dependency.libraryURL.path]
         )
@@ -189,6 +192,34 @@ struct RuntimePreparationTests {
         let runtime = ABIRuntime()
         let name = module + ".thread()"
         let image = ImageSelector.path(fixture.libraryURL)
+
+        if typeLookup {
+            let typeName = module + ".Receiver"
+            let type: NativeSwiftType
+            if asynchronous {
+                type = try await runtime.swiftType(named: typeName, in: image)
+            } else {
+                type = try { try runtime.swiftType(named: typeName, in: image) }()
+            }
+            let retained = try await runtime.swiftType(
+                named: typeName,
+                in: type.image,
+                loading: .loadedOnly
+            )
+            #expect(type === retained)
+            let represented = try await runtime.swiftType(
+                named: typeName,
+                as: AnyObject.self,
+                in: image
+            )
+            let retainedRepresentation = try await runtime.swiftType(
+                named: typeName,
+                as: AnyObject.self,
+                in: type.image,
+                loading: .loadedOnly
+            )
+            #expect(represented === retainedRepresentation)
+        }
 
         let function: NativeSwiftFunction<() -> Int32>
         if asynchronous {
@@ -216,6 +247,50 @@ struct RuntimePreparationTests {
         MainActor.assertIsolated()
     }
 
+    @MainActor @Test(arguments: [false, true])
+    func asynchronousMemberPreparationKeepsReceiverIsolation(bound: Bool) async throws {
+        let runtime = ABIRuntime()
+        let receiver = SwiftPreparationReceiver()
+        let type = try await runtime.swiftType(named: "ABIBridgeTests.SwiftPreparationReceiver")
+        let object = runtime.object(receiver)
+        SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() }
+        defer { SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() } }
+
+        if bound {
+            let method = try await object.method(
+                named: "read()",
+                as: (() -> SwiftPreparationValue).self
+            )
+            let getter = try await object.getter(
+                named: "value",
+                as: (() -> SwiftPreparationValue).self
+            )
+            let observations = SwiftPreparationValue.preparationThreads.withLock { $0 }
+            #expect(!observations.isEmpty)
+            #expect(observations.allSatisfy { !$0 })
+            MainActor.assertIsolated()
+            receiver.raw = 43
+            #expect(try unsafe method.unsafeInvoke().raw == 43)
+            #expect(try unsafe getter.unsafeInvoke().raw == 43)
+        } else {
+            let method = try await type.method(
+                named: "read()",
+                as: (() -> SwiftPreparationValue).self
+            )
+            let getter = try await type.getter(
+                named: "value",
+                as: (() -> SwiftPreparationValue).self
+            )
+            let observations = SwiftPreparationValue.preparationThreads.withLock { $0 }
+            #expect(!observations.isEmpty)
+            #expect(observations.allSatisfy { !$0 })
+            MainActor.assertIsolated()
+            receiver.raw = 43
+            #expect(try unsafe method.unsafeInvoke(on: receiver).raw == 43)
+            #expect(try unsafe getter.unsafeInvoke(on: receiver).raw == 43)
+        }
+    }
+
     @Test func asynchronousSwiftLookupPreservesLookupFailures() async throws {
         let runtime = ABIRuntime()
         let missing = NativeDeclaration(
@@ -233,6 +308,21 @@ struct RuntimePreparationTests {
             as: (() -> Int32).self
         )
         #expect(try unsafe function.unsafeInvoke() == 42)
+
+        let missingType = NativeDeclaration(
+            name: "nominal type descriptor for ABIBridgeTests.SwiftPreparationMissing",
+            language: .swift,
+            kind: .data
+        )
+        await #expect(throws: ABIResolutionError.declarationNotFound(missingType)) {
+            try await runtime.swiftType(named: "ABIBridgeTests.SwiftPreparationMissing")
+        }
+        let type = try await runtime.swiftType(named: "ABIBridgeTests.SwiftPreparationReceiver")
+        await #expect(throws: ABIResolutionError.self) {
+            try await type.getter(named: "missing", as: (() -> Int64).self)
+        }
+        let getter = try await type.getter(named: "value", as: (() -> SwiftPreparationValue).self)
+        #expect(try unsafe getter.unsafeInvoke(on: SwiftPreparationReceiver()).raw == 42)
     }
 
     @Test func failedPreparationDoesNotDisableLaterSynchronousLookup() async throws {
@@ -255,5 +345,20 @@ struct RuntimePreparationTests {
         )
         #expect(try unsafe demanded.unsafeInvoke(19, 23) == 42)
     }
+}
+
+@frozen public struct SwiftPreparationValue: BitwiseCopyable, ABIBridgeValue {
+    public var raw: Int64
+    static let preparationThreads = Mutex<[Bool]>([])
+    public static var abiType: NativeType {
+        preparationThreads.withLock { $0.append(Thread.isMainThread) }
+        return .int64
+    }
+}
+
+public final class SwiftPreparationReceiver {
+    public var raw: Int64 = 42
+    @inline(never) public func read() -> SwiftPreparationValue { .init(raw: raw) }
+    public var value: SwiftPreparationValue { .init(raw: raw) }
 }
 #endif

@@ -133,8 +133,8 @@ func validateAsyncHooks(providerPath: String, callerPath: String) async throws {
         error.withUnderlyingError { check(($0 as NSError).domain == "native-async-hook-consumer") }
     }
     errorHook.invalidate()
-    let type = try runtime.swiftType(named: "SwiftFunctionFixture.AsyncHookRenderer", in: provider)
-    let method = try type.method(
+    let type = try await runtime.swiftType(named: "SwiftFunctionFixture.AsyncHookRenderer", in: provider)
+    let method = try await type.method(
         named: "render(_:)",
         as: (nonisolated(nonsending) (String) async -> String).self
     )
@@ -161,7 +161,7 @@ func validateAsyncHooks(providerPath: String, callerPath: String) async throws {
 
 @MainActor
 func prepareGenericGetters(type: NativeSwiftType, object: NativeObject) async throws {
-    _ = try type.getter(
+    _ = try await type.getter(
         named: "checked",
         as: (() throws -> String).self,
                        declaredAs: "() throws(B) -> A")
@@ -169,7 +169,7 @@ func prepareGenericGetters(type: NativeSwiftType, object: NativeObject) async th
         named: "checkedType",
         as: (() throws -> String.Type).self,
                              declaredAs: "() throws(B) -> A.Type")
-    _ = try object.getter(
+    _ = try await object.getter(
         named: "delayedChecked",
         as: (() async throws -> String).self,
                                declaredAs: "() async throws(B) -> A")

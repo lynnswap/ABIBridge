@@ -78,8 +78,8 @@ import SwiftValueFixtures
     try check(try unsafe await stack.unsafeInvoke(1, 2, 3, 4, 5, 6, 7, 8, 9, 10) == 385,
               "Async tail transfer preserves stack arguments")
 
-    let type = try runtime.swiftType(named: "SwiftValueFixtures.AsyncValueOwner")
-    let member = try type.method(
+    let type = try await runtime.swiftType(named: "SwiftValueFixtures.AsyncValueOwner")
+    let member = try await type.method(
         named: "text(_:)",
         as: (@concurrent (AsyncValueGate) async -> String).self
     )

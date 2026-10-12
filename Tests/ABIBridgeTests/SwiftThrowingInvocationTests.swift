@@ -52,10 +52,10 @@ extension ThrowingCounter: ABIBridgeSwiftValue {
 
 struct SwiftThrowingInvocationTests {
     @Test func mutationWritesBackEvenWhenNativeCodeThrows() async throws {
-        let type = try ABIRuntime.shared.swiftType(
+        let type = try await ABIRuntime.shared.swiftType(
             named: "ManagedSwiftFixtures.ThrowingCounter",
                                                          as: ThrowingCounter.self)
-        let advance = try type.method(
+        let advance = try await type.method(
             named: "advance(_:)",
             as: ((Bool) throws(ScalarFailure) -> Int64).self, mutating: true)
         var value = ThrowingCounter(40)
@@ -63,7 +63,7 @@ struct SwiftThrowingInvocationTests {
         let error = try nativeFailure { try unsafe advance.unsafeInvoke(on: &value, true) }
         #expect(value.count == 42)
         error.withUnderlyingError { #expect(($0 as? ScalarFailure)?.code == 42) }
-        let getter = try type.getter(
+        let getter = try await type.getter(
             named: "rejected",
             as: (() throws(ScalarFailure) -> Int64).self
         )
@@ -97,7 +97,7 @@ struct SwiftThrowingInvocationTests {
 
     @Test func boundMembersUseTheSameThrowingContract() async throws {
         let owner = try ThrowingOwner(ErrorLifetimeToken(), false)
-        let call = try ABIRuntime.shared.object(owner).method(
+        let call = try await ABIRuntime.shared.object(owner).method(
             named: "value(_:)", as: ((Bool) throws(ManagedFailure) -> String).self)
         #expect(try unsafe call.unsafeInvoke(false) == String(repeating: "member", count: 100))
         let error = try nativeFailure { try unsafe call.unsafeInvoke(true) }
@@ -235,11 +235,11 @@ struct SwiftThrowingInvocationTests {
     }
 
     @Test func throwingInitializerAndMemberPreserveErrorAndArgumentOwnership() async throws {
-        let type = try ABIRuntime.shared.swiftType(named: "ManagedSwiftFixtures.ThrowingOwner")
+        let type = try await ABIRuntime.shared.swiftType(named: "ManagedSwiftFixtures.ThrowingOwner")
         let initialize = try type.initializer(
             named: "init(_:_:)", as: ((ErrorLifetimeToken, Bool) throws(ManagedFailure) -> ThrowingOwner).self
         )
-        let value = try type.method(
+        let value = try await type.method(
             named: "value(_:)",
             as: ((Bool) throws(ManagedFailure) -> String).self
         )

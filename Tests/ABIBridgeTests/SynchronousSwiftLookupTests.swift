@@ -6,35 +6,56 @@ import Testing
 
 @Suite(.serialized)
 struct SynchronousSwiftLookupTests {
-    @MainActor @Test
-    func synchronousDemandDoesNotWaitForTheEntireTypedPreparation() async throws {
+    @MainActor @Test(arguments: [false, true])
+    func swiftMemberDemandDoesNotWaitForTheEntireTypedPreparation(
+        asynchronous: Bool
+    ) async throws {
         let runtime = ABIRuntime()
         let pause = SwiftPreparationPause()
         let preparation = Task {
             try await runtime.prepare { runtime in
                 defer { pause.finish() }
                 let type = try runtime.swiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
+                let method = try type.method(named: "render(_:)", as: ((Int) -> Int).self)
                 let getter = try type.getter(named: "text", as: (() -> String).self)
                 pause.readyAndWait()
-                return getter
+                return (type, method, getter)
             }
         }
         defer { pause.release() }
         await pause.waitUntilReady()
 
-        let type = try runtime.swiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
-        let demanded = try type.getter(named: "text", as: (() -> String).self)
+        let type: NativeSwiftType
+        let method: NativeSwiftMethod<(Int) -> Int>
+        let getter: NativeSwiftMethod<() -> String>
+        if asynchronous {
+            type = try await runtime.swiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
+            method = try await type.method(named: "render(_:)", as: ((Int) -> Int).self)
+            getter = try await type.getter(named: "text", as: (() -> String).self)
+        } else {
+            (type, method, getter) = try {
+                let type = try runtime.swiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
+                return (
+                    type,
+                    try type.method(named: "render(_:)", as: ((Int) -> Int).self),
+                    try type.getter(named: "text", as: (() -> String).self)
+                )
+            }()
+        }
         let receiver = SwiftMemberRenderer(text: "observed")
-        #expect(try unsafe demanded.unsafeInvoke(on: receiver) == "observed")
+        #expect(try unsafe method.unsafeInvoke(on: receiver, 10) == 18)
+        #expect(try unsafe getter.unsafeInvoke(on: receiver) == "observed")
         #expect(!pause.hasFinished)
         MainActor.assertIsolated()
 
         pause.release()
         let prepared = try await preparation.value
+        #expect(type === prepared.0)
         runtime.removeCachedResults()
         receiver.text = "updated"
-        #expect(try unsafe demanded.unsafeInvoke(on: receiver) == "updated")
-        #expect(try unsafe prepared.unsafeInvoke(on: receiver) == "updated")
+        #expect(try unsafe method.unsafeInvoke(on: receiver, 10) == 17)
+        #expect(try unsafe getter.unsafeInvoke(on: receiver) == "updated")
+        #expect(try unsafe prepared.2.unsafeInvoke(on: receiver) == "updated")
     }
 
     @MainActor @Test

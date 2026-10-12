@@ -112,17 +112,17 @@ struct SwiftCollectionValueTests {
     }
 
     @Test func memberOwnershipMatchesOrdinaryCalls() async throws {
-        let type = try ABIRuntime.shared.swiftType(
+        let type = try await ABIRuntime.shared.swiftType(
             named: "ManagedSwiftFixtures.CollectionStore",
                                                          as: CollectionStore.self)
         let create = try type.initializer(
             named: "init(_:_:)",
             as: (([String], String?) -> CollectionStore).self
         )
-        let get = try type.getter(named: "values", as: (() -> [String]).self)
+        let get = try await type.getter(named: "values", as: (() -> [String]).self)
         let set = try type.setter(named: "values", as: [String].self)
         let title = try type.setter(named: "title", as: String?.self)
-        let append = try type.method(named: "append(_:)", as: ((String) -> [String]).self)
+        let append = try await type.method(named: "append(_:)", as: ((String) -> [String]).self)
         let long = String(repeating: "member", count: 100)
         let input = [long]
         let receiver = try unsafe create.unsafeInvoke(input, nil)
@@ -138,10 +138,10 @@ struct SwiftCollectionValueTests {
     }
 
     @Test func escapingCollectionCallbackKeepsItsCapture() async throws {
-        let type = try ABIRuntime.shared.swiftType(
+        let type = try await ABIRuntime.shared.swiftType(
             named: "ManagedSwiftFixtures.CollectionStore",
                                                          as: CollectionStore.self)
-        let retain = try type.method(
+        let retain = try await type.method(
             named: "retainCallback(_:)",
                                            as: ((NativeSwiftClosure<([String]) -> [String]>) -> Void).self)
         let receiver = CollectionStore([], nil)

@@ -117,7 +117,7 @@ private final class NestedClosureProbeCapture: @unchecked Sendable {
                 "Consuming a copied escaping borrow preserves the provider's original closure")
         }
         try check(destroyed.count == 1, "Consumed closure copies destroy captures exactly once")
-        let type = try runtime.swiftType(
+        let type = try await runtime.swiftType(
             named: "SwiftReplacementFixtures.EvaluatedIntegerClosure",
             as: EvaluatedIntegerClosure.self)
         let create = try type.initializer(

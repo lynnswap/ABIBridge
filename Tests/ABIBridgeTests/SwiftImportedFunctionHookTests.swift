@@ -13,14 +13,14 @@ struct SwiftImportedFunctionHookTests {
         let fixture = try CompiledSwiftReplacementFixture()
         defer { fixture.cleanup() }
         let runtime = fixture.runtime
-        let type = try runtime.swiftType(
+        let type = try await runtime.swiftType(
             named: fixture.module + ".HookTicket",
             in: fixture.providerScope
         )
         let consume = try await runtime.swiftFunction(
             named: fixture.module + ".consumeHookTicket(_:)",
             as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self, genericArguments: [.type(type)], in: fixture.providerScope)
-        let read = try type.method(named: "read()", as: (() -> Int64).self, receiverABI: .int64)
+        let read = try await type.method(named: "read()", as: (() -> Int64).self, receiverABI: .int64)
         let caller = try await runtime.swiftFunction(
             named: fixture.callerModule + ".callConsumeTicket(_:)",
             as: ((Int64) -> Int64).self, in: fixture.callerScope)
@@ -74,7 +74,7 @@ struct SwiftImportedFunctionHookTests {
         let fixture = try CompiledSwiftReplacementFixture()
         defer { fixture.cleanup() }
         let runtime = fixture.runtime
-        let type = try runtime.swiftType(
+        let type = try await runtime.swiftType(
             named: fixture.module + ".HookTicket",
             in: fixture.providerScope
         )
@@ -133,15 +133,15 @@ struct SwiftImportedFunctionHookTests {
         let fixture = try CompiledSwiftReplacementFixture()
         defer { fixture.cleanup() }
         let runtime = fixture.runtime
-        let valueType = try runtime.swiftType(
+        let valueType = try await runtime.swiftType(
             named: fixture.module + ".HookTicket",
             in: fixture.providerScope
         )
-        let type = try runtime.swiftType(
+        let type = try await runtime.swiftType(
             named: fixture.module + ".HookTicketRenderer",
             in: fixture.providerScope
         )
-        let move = try type.method(
+        let move = try await type.method(
             named: "move(_:)",
             as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self, genericArguments: [.type(valueType)])
         let caller = try await runtime.swiftFunction(
@@ -168,7 +168,7 @@ struct SwiftImportedFunctionHookTests {
         let fixture = try CompiledSwiftReplacementFixture()
         defer { fixture.cleanup() }
         let runtime = fixture.runtime
-        let type = try runtime.swiftType(
+        let type = try await runtime.swiftType(
             named: fixture.module + ".HookTicket",
             in: fixture.providerScope
         )
@@ -204,7 +204,7 @@ struct SwiftImportedFunctionHookTests {
         let fixture = try CompiledSwiftReplacementFixture()
         defer { fixture.cleanup() }
         let runtime = fixture.runtime
-        let type = try runtime.swiftType(
+        let type = try await runtime.swiftType(
             named: fixture.module + ".HookTicket",
             in: fixture.providerScope
         )
@@ -286,7 +286,7 @@ struct SwiftImportedFunctionHookTests {
     @Test func forwardingTransfersOwnershipToAChildHookThatKeepsTheValue() async throws {
         let fixture = try CompiledSwiftReplacementFixture()
         defer { fixture.cleanup() }
-        let type = try fixture.runtime.swiftType(
+        let type = try await fixture.runtime.swiftType(
             named: fixture.module + ".HookTicket",
             in: fixture.providerScope
         )
@@ -338,7 +338,7 @@ struct SwiftImportedFunctionHookTests {
         let fixture = try CompiledSwiftReplacementFixture()
         defer { fixture.cleanup() }
         let runtime = fixture.runtime
-        let type = try runtime.swiftType(
+        let type = try await runtime.swiftType(
             named: fixture.module + ".HookTicket",
             in: fixture.providerScope
         )
@@ -495,7 +495,7 @@ struct SwiftImportedFunctionHookTests {
     @Test func savedAdapterDoesNotRetainUnforwardedRuntimeInputs() async throws {
         let fixture = try CompiledSwiftReplacementFixture()
         defer { fixture.cleanup() }
-        let type = try fixture.runtime.swiftType(
+        let type = try await fixture.runtime.swiftType(
             named: fixture.module + ".HookTicket",
             in: fixture.providerScope
         )

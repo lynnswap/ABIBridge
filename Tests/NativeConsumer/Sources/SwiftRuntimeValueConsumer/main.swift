@@ -25,7 +25,7 @@ private struct Prepared {
     defer { dlclose(loader) }
     let runtime = ABIRuntime()
     let scope = ImageSelector.path(URL(fileURLWithPath: path))
-    let type = try runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeRecord", in: scope)
+    let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeRecord", in: scope)
     return try await Prepared(type: type,
         text: type.getter(named: "text", as: (() -> String).self, receiverABI: .opaque(named: type.name)),
         cancel: type.method(named: "cancel()", as: (() -> Void).self, receiverABI: .opaque(named: type.name)),
@@ -54,7 +54,7 @@ let superclassPackEcho = try await ABIRuntime.shared.swiftFunction(
 let superclassPackValue = try unsafe superclassPackFactory.unsafeInvoke(42)
 let superclassPackResult = try unsafe superclassPackEcho.unsafeInvoke(superclassPackValue)
 let superclassPackObject = try superclassPackResult.withCopy { $0 as AnyObject }
-let superclassPackRead = try ABIRuntime.shared.object(superclassPackObject).getter(
+let superclassPackRead = try await ABIRuntime.shared.object(superclassPackObject).getter(
     named: "number",
     as: (() -> Int64).self
 )
@@ -100,7 +100,7 @@ let moveTicket = try await runtime.swiftFunction(
     genericArguments: [.type(ticket.type)], in: source)
 let moved = try unsafe moveTicket.unsafeInvoke(NativeSwiftConsuming(ticket))
 guard ticket.isConsumed && !moved.isCopyable else { throw ConsumerError.wrongResult }
-let readTicket = try moved.type.method(
+let readTicket = try await moved.type.method(
     named: "read()",
     as: (() -> Int64).self,
     receiverABI: .opaque(named: moved.type.name))
@@ -128,7 +128,7 @@ do {
     throw ConsumerError.wrongResult
 } catch NativeSwiftBorrowError.expiredBorrow { }
 
-let readTicketAsync = try moved.type.method(
+let readTicketAsync = try await moved.type.method(
     named: "readAsync()",
     as: (nonisolated(nonsending) () async -> Int64).self,
     receiverABI: .opaque(named: moved.type.name))
@@ -295,7 +295,7 @@ let mutateInput = try await runtime.swiftFunction(
     named: "ManagedSwiftFixtures.visitRuntimeInout<A where A: ~Swift.Copyable>(inout A, (inout A) throws -> ()) throws -> ()",
     as: ((NativeSwiftInout<NativeSwiftValue>, InoutInput) throws -> Void).self,
     genericArguments: [.type(received.type)], in: source)
-let addTicket = try received.type.method(
+let addTicket = try await received.type.method(
     named: "add(_:)",
     as: ((Int64) -> Void).self,
     receiverABI: .opaque(named: received.type.name), mutating: true)
@@ -324,14 +324,14 @@ guard state.text == "destroyed" else { throw ConsumerError.wrongResult }
 print("Consuming nested closure inputs remain callable after delivery and release captures exactly once")
 
 
-let pairType = try runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair", in: source)
+let pairType = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair", in: source)
 let pairABI = try NativeType.structure(named: pairType.name, fields: [.int64, .int64])
 let pairABIs = [pairType: pairABI]
 let makePair = try await runtime.swiftFunction(
     named: "ManagedSwiftFixtures.makeRuntimeFixedPair(_:_:)",
     as: ((Int64, Int64) -> NativeSwiftValue).self, valueABIs: pairABIs, in: source)
 let pair = try unsafe makePair.unsafeInvoke(35, 7)
-let sumPair = try pairType.method(named: "sum()", as: (() -> Int64).self, receiverABI: pairABI)
+let sumPair = try await pairType.method(named: "sum()", as: (() -> Int64).self, receiverABI: pairABI)
 typealias PairBody = NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Int64>
 let inspectPair = try await runtime.swiftFunction(
     named: "ManagedSwiftFixtures.inspectRuntimeFixedPair(ManagedSwiftFixtures.RuntimeFixedPair, (ManagedSwiftFixtures.RuntimeFixedPair) -> Swift.Int64) -> Swift.Int64",
@@ -565,14 +565,14 @@ let opaqueClosure = try await runtime.swiftFunction(
     genericArguments: [.type(String.self)], in: source)
 let closureResult = try unsafe opaqueClosure.unsafeInvoke("closure")
 guard try unsafe closureResult.unsafeInvoke().withCopy({ $0 as? String }) == "closure" else { throw ConsumerError.wrongResult }
-let opaqueOwner = try runtime.swiftType(
+let opaqueOwner = try await runtime.swiftType(
     named: "ManagedSwiftFixtures.RuntimeOpaqueOwner",
     in: source, genericArguments: [.type(String.self)])
 let ownerInit = try opaqueOwner.initializer(named: "init(_:)", as: ((String) -> AnyObject).self)
 let instance = try unsafe ownerInit.unsafeInvoke("owner")
-let ownerGetter = try opaqueOwner.getter(named: "opaque", as: (() -> NativeSwiftValue).self)
+let ownerGetter = try await opaqueOwner.getter(named: "opaque", as: (() -> NativeSwiftValue).self)
 guard try unsafe ownerGetter.unsafeInvoke(on: instance).withCopy({ $0 as? String }) == "owner" else { throw ConsumerError.wrongResult }
-let ownerMethod = try opaqueOwner.method(
+let ownerMethod = try await opaqueOwner.method(
     named: "make(_:)",
     as: ((Int) -> NativeSwiftValue).self,
     genericArguments: [.type(Int.self)])
@@ -621,11 +621,11 @@ let scopedOwner = try unsafe scopedOwnerFactory.unsafeInvoke(42)
 let scopedCounts = try await runtime.swiftFunction(
     named: "ManagedSwiftFixtures.runtimeScopedDestructions(_:)",
     as: ((NativeSwiftValue) -> Int).self, in: source)
-let scopedType = try runtime.swiftType(
+let scopedType = try await runtime.swiftType(
     named: "ManagedSwiftFixtures.RuntimeScopedResult",
     in: source
 )
-let scopedRead = try scopedType.method(
+let scopedRead = try await scopedType.method(
     named: "read()",
     as: (() -> Int64).self,
     receiverABI: .opaque(named: scopedType.name)
@@ -643,7 +643,7 @@ do {
     _ = try unsafe scopedRead.unsafeInvoke(on: escapedScoped!)
     throw ConsumerError.wrongResult
 } catch NativeSwiftBorrowError.expiredBorrow { }
-let scopedMethod = try scopedOwner.type.method(
+let scopedMethod = try await scopedOwner.type.method(
     named: "scopedAsync()",
     as: (() async -> NativeSwiftBorrowedValue).self
 )
@@ -663,7 +663,7 @@ guard let callerLoader = dlopen(callerPath.path, RTLD_NOW | RTLD_LOCAL) else { t
 defer { dlclose(callerLoader) }
 let providerScope = ImageSelector.path(providerPath)
 let callerScope = ImageSelector.path(callerPath)
-let ticketType = try runtime.swiftType(named: "SwiftImportProvider.HookTicket", in: providerScope)
+let ticketType = try await runtime.swiftType(named: "SwiftImportProvider.HookTicket", in: providerScope)
 let ticketMove = try await runtime.swiftFunction(
     named: "SwiftImportProvider.moveHookTicket(_:)",
     as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self,

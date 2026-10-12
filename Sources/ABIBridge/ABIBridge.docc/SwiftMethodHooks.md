@@ -7,8 +7,8 @@ Inspect a Swift method's receiver, edit object properties or arguments, and tran
 Resolve the class and method using source names and an ordinary Swift function type:
 
 ```swift
-let renderer = try runtime.swiftType(named: "Rendering.Renderer")
-let render = try renderer.method(
+let renderer = try await runtime.swiftType(named: "Rendering.Renderer")
+let render = try await renderer.method(
     named: "render(_:)", as: ((String) -> String).self
 )
 let hook = try await unsafe render.hookVirtualCalls(
@@ -38,10 +38,10 @@ Virtual async methods use the class metadata's async descriptor slot. The publis
 Imported-member hooks also accept the concrete value representation selected during type lookup. For a native counter whose fixed storage is one `Int64`:
 
 ```swift
-let counter = try runtime.swiftType(
+let counter = try await runtime.swiftType(
     named: "Rendering.Counter", as: Int64.self
 )
-let increment = try counter.method(
+let increment = try await counter.method(
     named: "increment(_:)", as: ((Int64) -> Int64).self,
     mutating: true
 )

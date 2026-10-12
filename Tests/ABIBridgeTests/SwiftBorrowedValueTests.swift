@@ -33,17 +33,17 @@ private final class BorrowCapture: Sendable {
 struct SwiftBorrowedValueTests {
     @Test func borrowedGenericMembersSupplyTheirEnclosingMetadata() async throws {
         let runtime = ABIRuntime()
-        let argument = try runtime.swiftType(named: "ManagedSwiftFixtures.ResilientRecord")
-        let type = try runtime.swiftType(
+        let argument = try await runtime.swiftType(named: "ManagedSwiftFixtures.ResilientRecord")
+        let type = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.GenericRecord",
             genericArguments: [.type(argument)]
         )
-        let method = try type.method(
+        let method = try await type.method(
             named: "measure()",
             as: (() -> Int64).self,
             receiverABI: .opaque(named: type.name)
         )
-        let getter = try type.getter(
+        let getter = try await type.getter(
             named: "measured",
             as: (() -> Int64).self,
             receiverABI: .opaque(named: type.name)
@@ -70,23 +70,23 @@ struct SwiftBorrowedValueTests {
 
     @Test func runtimeOnlyValuesUseScopedSelfAndOwnedResults() async throws {
         let runtime = ABIRuntime.shared
-        let type = try runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeRecord")
-        let text = try type.getter(
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeRecord")
+        let text = try await type.getter(
             named: "text",
             as: (() -> String).self,
             receiverABI: .opaque(named: type.name)
         )
-        let changed = try type.getter(
+        let changed = try await type.getter(
             named: "changed",
             as: (() -> AnyObject?).self,
             receiverABI: .opaque(named: type.name)
         )
-        let length = try type.method(
+        let length = try await type.method(
             named: "length()",
             as: (() -> Int64).self,
             receiverABI: .opaque(named: type.name)
         )
-        let cancel = try type.method(
+        let cancel = try await type.method(
             named: "cancel()",
             as: (() -> Void).self,
             receiverABI: .opaque(named: type.name)
@@ -149,8 +149,8 @@ struct SwiftBorrowedValueTests {
     func aSynchronousNativeBorrowCannotBeginAnAsyncMember(_ inoutReceiver: Bool) async throws {
         guard #available(macOS 26, iOS 26, tvOS 26, watchOS 26, visionOS 26, *) else { return }
         let runtime = ABIRuntime.shared
-        let type = try runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeRecord")
-        let length = try type.method(
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeRecord")
+        let length = try await type.method(
             named: "lengthAsync()",
             as: (() async -> Int64).self,
             receiverABI: .opaque(named: type.name)
@@ -189,14 +189,14 @@ struct SwiftBorrowedValueTests {
 
     @Test func activeBorrowsRejectAnotherThreadAndDifferentNativeType() async throws {
         let runtime = ABIRuntime.shared
-        let type = try runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeRecord")
-        let text = try type.getter(
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeRecord")
+        let text = try await type.getter(
             named: "text",
             as: (() -> String).self,
             receiverABI: .opaque(named: type.name)
         )
-        let other = try runtime.swiftType(named: "Swift.String")
-        let otherMember = try other.getter(
+        let other = try await runtime.swiftType(named: "Swift.String")
+        let otherMember = try await other.getter(
             named: "count",
             as: (() -> Int).self,
             receiverABI: .opaque(named: other.name)
@@ -241,8 +241,8 @@ struct SwiftBorrowedValueTests {
 
     @Test func nativeRetentionKeepsCallbackAliveAndCreatesFreshBorrows() async throws {
         let runtime = ABIRuntime.shared
-        let type = try runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeRecord")
-        let text = try type.getter(
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeRecord")
+        let text = try await type.getter(
             named: "text",
             as: (() -> String).self,
             receiverABI: .opaque(named: type.name)

@@ -80,7 +80,7 @@ struct SwiftGenericCallTests {
 
     @Test func labelOnlyValueABIsUseTheProviderTypes() async throws {
         let runtime = ABIRuntime()
-        let type = try runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair")
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair")
         let abi = try NativeType.structure(named: type.name, fields: [.int64, .int64])
         let make = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeRuntimeFixedPair(_:_:)",
@@ -156,14 +156,14 @@ struct SwiftGenericCallTests {
     @MainActor @Test func ownedPackClosuresKeepIndependentNativeCaptures() async throws {
         typealias Owner = GenericClosurePackOwner<String, Int64>
         let runtime = ABIRuntime()
-        let type = try runtime.swiftType(
+        let type = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.GenericClosurePackOwner",
             genericArguments: [.pack([.type(String.self), .type(Int64.self)])])
         let initialize = try type.initializer(
             named: "init(_:)",
             as: ((NativeSwiftConsuming<NativeSwiftClosure<() -> String>>, NativeSwiftClosure<() -> Int64>) -> Owner).self)
-        let call = try type.method(named: "call()", as: (() -> (String, Int64)).self)
-        let apply = try type.method(
+        let call = try await type.method(named: "call()", as: (() -> (String, Int64)).self)
+        let apply = try await type.method(
             named: "apply(_:)",
             as: ((NativeSwiftBorrowing<NativeSwiftClosure<() -> String>>, NativeSwiftClosure<() -> Int64>) -> (String, Int64)).self)
         let state = GenericCaptureState()
@@ -301,7 +301,7 @@ struct SwiftGenericCallTests {
     }
 
     @Test func genericClosureInitializersAndSettersTransferIndependentCaptures() async throws {
-        let type = try ABIRuntime().swiftType(
+        let type = try await ABIRuntime().swiftType(
             named: "ManagedSwiftFixtures.GenericClosureOwner",
             genericArguments: [.type(String.self)])
         let initialize = try type.initializer(
@@ -1219,7 +1219,7 @@ struct SwiftGenericCallTests {
             let callback = try NativeSwiftClosure { value }
             #expect(try unsafe boolean.unsafeInvoke(callback) == referenceGenericBool(value))
         }
-        let stringType = try runtime.swiftType(named: "Swift.String")
+        let stringType = try await runtime.swiftType(named: "Swift.String")
         let string = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.runGeneric<A>(() -> A) -> A",
             as: ((NativeSwiftClosure<() -> String>) -> String).self, genericArguments: [.type(stringType)])

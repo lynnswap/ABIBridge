@@ -31,7 +31,7 @@ struct SwiftGenericValueReceiverTests {
             named: "ManagedSwiftFixtures.objectConstraintGeneric<A where A: AnyObject>(A) -> A",
             as: ((AnyObject) -> AnyObject).self, genericArguments: [.type(AnyObject.self)])
         #expect(try unsafe free.unsafeInvoke(object) === object)
-        let anyType = try runtime.swiftType(
+        let anyType = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.GenericObjectValue",
             genericArguments: [.type(AnyObject.self)])
         let make = try anyType.initializer(
@@ -39,24 +39,24 @@ struct SwiftGenericValueReceiverTests {
             as: ((AnyObject) -> GenericObjectValue<AnyObject>).self
         )
         let value = try unsafe make.unsafeInvoke(object)
-        let project = try anyType.method(named: "project()", as: (() -> AnyObject).self)
+        let project = try await anyType.method(named: "project()", as: (() -> AnyObject).self)
         #expect(try unsafe project.unsafeInvoke(on: value) === object)
 
         let objc: any NSObjectProtocol = NSObject()
-        let objcType = try runtime.swiftType(
+        let objcType = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.GenericObjectValue",
             genericArguments: [.type((any NSObjectProtocol).self)])
-        let objcProject = try objcType.method(
+        let objcProject = try await objcType.method(
             named: "project()",
             as: (() -> any NSObjectProtocol).self
         )
         #expect(try unsafe objcProject.unsafeInvoke(on: GenericObjectValue<any NSObjectProtocol>(objc)) === objc)
 
         let constrained: any NSCopying & NSObject = NSString(string: "class existential")
-        let superType = try runtime.swiftType(
+        let superType = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.GenericSuperclassValue",
             genericArguments: [.type((any NSCopying & NSObject).self)])
-        let superProject = try superType.method(
+        let superProject = try await superType.method(
             named: "project()",
             as: (() -> any NSCopying & NSObject).self
         )
@@ -77,7 +77,7 @@ struct SwiftGenericValueReceiverTests {
 
     @Test func memberWitnessesUseTheCanonicalRefinedSignature() async throws {
         let runtime = ABIRuntime()
-        let associatedType = try runtime.swiftType(
+        let associatedType = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.GenericAssociatedOwner",
             genericArguments: [.type(GenericAssociatedValue.self)])
         let associated = try associatedType.staticMethod(
@@ -91,7 +91,7 @@ struct SwiftGenericValueReceiverTests {
         } catch let error as NativeSwiftError {
             #expect(error.withUnderlyingError { ($0 as? GenericGetterFailure)?.code == 42 })
         }
-        let aliasedType = try runtime.swiftType(
+        let aliasedType = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.GenericAssociatedAliasOwner",
             genericArguments: [.type(GenericAssociatedValue.self), .type(String.self)])
         let aliased = try aliasedType.staticMethod(
@@ -105,12 +105,12 @@ struct SwiftGenericValueReceiverTests {
         } catch let error as NativeSwiftError {
             #expect(error.withUnderlyingError { ($0 as? GenericGetterFailure)?.code == 43 })
         }
-        let refined = try runtime.swiftType(
+        let refined = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.GenericHashOwner",
             genericArguments: [.type(String.self)])
         let hash = try refined.staticMethod(named: "refinedWitness(_:)", as: ((String) -> Int).self)
         #expect(try unsafe hash.unsafeInvoke("hash") == GenericHashOwner<String>.refinedWitness("hash"))
-        let concrete = try runtime.swiftType(
+        let concrete = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.GenericHashOwner",
             genericArguments: [.type(Int.self)])
         let additional = try concrete.staticMethod(
@@ -118,7 +118,7 @@ struct SwiftGenericValueReceiverTests {
             as: ((String) -> Int).self,
             genericArguments: [.type(String.self)])
         #expect(try unsafe additional.unsafeInvoke("concrete") == GenericHashOwner<Int>.concreteWitness("concrete"))
-        let ordered = try runtime.swiftType(
+        let ordered = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.GenericWitnessOwner",
             genericArguments: [.type(GenericWitnessValue.self)])
         let both = try ordered.staticMethod(named: "orderedWitnesses()", as: (() -> Int64).self)
@@ -127,18 +127,18 @@ struct SwiftGenericValueReceiverTests {
 
     @MainActor @Test func qualifiedMembersSelectTheRequestedConstraint() async throws {
         let runtime = ABIRuntime()
-        let type = try runtime.swiftType(
+        let type = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.GenericValueBox",
             genericArguments: [.type(Int.self)])
         let receiver = GenericValueBox(42)
         for (constraint, result) in [("Swift.Equatable", Int64(10)), ("Swift.Hashable", Int64(20))] {
             let prefix = constraint == "Swift.Equatable" ? "" : "(extension in ManagedSwiftFixtures):"
             let owner = prefix + "ManagedSwiftFixtures.GenericValueBox<A where A: " + constraint + ">"
-            let method = try type.method(
+            let method = try await type.method(
                 named: owner + ".selected() -> Swift.Int64",
                 as: (() -> Int64).self
             )
-            let getter = try type.getter(
+            let getter = try await type.getter(
                 named: owner + ".selectedValue.getter : Swift.Int64",
                 as: (() -> Int64).self
             )
@@ -156,11 +156,11 @@ struct SwiftGenericValueReceiverTests {
             #expect(try unsafe staticGetter.unsafeInvoke() == result + 4)
         }
         do {
-            _ = try type.method(named: "selected()", as: (() -> Int64).self)
+            _ = try await type.method(named: "selected()", as: (() -> Int64).self)
             Issue.record("Expected the short member name to remain ambiguous")
         } catch ABIResolutionError.ambiguousDeclaration {}
         do {
-            _ = try type.method(
+            _ = try await type.method(
                 named:
                     "(extension in ManagedSwiftFixtures):ManagedSwiftFixtures.GenericValueBox<A where A: Swift.Comparable>.selected() -> Swift.Int64",
                 as: (() -> Int64).self
@@ -168,7 +168,7 @@ struct SwiftGenericValueReceiverTests {
             Issue.record("An unavailable qualified declaration must not select another constraint")
         } catch ABIResolutionError.declarationNotFound {}
         do {
-            _ = try type.method(
+            _ = try await type.method(
                 named: "ManagedSwiftFixtures.GenericPhantom.read() -> Swift.Int64",
                 as: (() -> Int64).self
             )
@@ -176,13 +176,13 @@ struct SwiftGenericValueReceiverTests {
         } catch ABIResolutionError.declarationNotFound {}
     }
     @MainActor @Test func genericMembersUseDeclarationOwnershipDefaults() async throws {
-        let type = try ABIRuntime().swiftType(
+        let type = try await ABIRuntime().swiftType(
             named: "ManagedSwiftFixtures.GenericValueBox",
             genericArguments: [.type(String.self)])
         let create = try type.initializer(
             named: "init(_:)",
             as: ((NativeSwiftConsuming<String>) -> GenericValueBox<String>).self)
-        let replace = try type.method(
+        let replace = try await type.method(
             named: "replace(_:)",
             as: ((NativeSwiftBorrowing<String>) -> Void).self, mutating: true)
         let setter = try type.setter(named: "value", as: NativeSwiftConsuming<String>.self)
@@ -197,37 +197,37 @@ struct SwiftGenericValueReceiverTests {
     @MainActor @Test func nominalConstraintsAndNestedFieldsPreserveReceiverLayouts() async throws {
         let runtime = ABIRuntime()
         let object = NSObject()
-        let objectType = try runtime.swiftType(
+        let objectType = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.GenericObjectValue",
             genericArguments: [.type(NSObject.self)])
-        let objectProject = try objectType.method(named: "project()", as: (() -> NSObject).self)
+        let objectProject = try await objectType.method(named: "project()", as: (() -> NSObject).self)
         #expect(try unsafe objectProject.unsafeInvoke(on: GenericObjectValue(object)) === object)
-        let superclassType = try runtime.swiftType(
+        let superclassType = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.GenericSuperclassValue",
             genericArguments: [.type(NSObject.self)])
-        let superclassProject = try superclassType.method(
+        let superclassProject = try await superclassType.method(
             named: "project()",
             as: (() -> NSObject).self
         )
         #expect(try unsafe superclassProject.unsafeInvoke(on: GenericSuperclassValue(object)) === object)
         let text = String(repeating: "nested field", count: 100)
-        let nested = try runtime.swiftType(
+        let nested = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.GenericNestedValue",
             genericArguments: [.type(String.self)])
-        let project = try nested.method(named: "project()", as: (() -> String).self)
+        let project = try await nested.method(named: "project()", as: (() -> String).self)
         #expect(try unsafe project.unsafeInvoke(on: GenericNestedValue(text)) == text)
-        let sameType = try runtime.swiftType(
+        let sameType = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.GenericSameTypeValue",
             genericArguments: [.type([ManagedRecord].self)])
-        let number = try sameType.method(named: "number()", as: (() -> Int64).self)
+        let number = try await sameType.method(named: "number()", as: (() -> Int64).self)
         #expect(try unsafe number.unsafeInvoke(on: GenericSameTypeValue([ManagedRecord(token: LifetimeToken(), number: 79)])) == 79)
     }
 
     @MainActor @Test func sameTypeNominalExpressionsDetermineMetadataAndReceiverConvention() async throws {
-        let type = try ABIRuntime().swiftType(
+        let type = try await ABIRuntime().swiftType(
             named: "ManagedSwiftFixtures.GenericValueBox",
             genericArguments: [.type([String].self)])
-        let first = try type.method(
+        let first = try await type.method(
             named: "first()",
             as: (() -> String).self,
             genericArguments: [.type(String.self)])
@@ -237,40 +237,40 @@ struct SwiftGenericValueReceiverTests {
 
     @MainActor @Test func valuesAndEnumsUseUnboundFieldStorageWithoutAdapters() async throws {
         let runtime = ABIRuntime()
-        let record = try runtime.swiftType(
+        let record = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.GenericRecord",
             genericArguments: [.type(ResilientRecord.self)])
-        let project = try record.method(named: "project()", as: (() -> ResilientRecord).self)
-        let measure = try record.method(named: "measure()", as: (() -> Int64).self)
+        let project = try await record.method(named: "project()", as: (() -> ResilientRecord).self)
+        let measure = try await record.method(named: "measure()", as: (() -> Int64).self)
         let input = GenericRecord(ResilientRecord(token: LifetimeToken(), number: 42))
         #expect(try unsafe project.unsafeInvoke(on: input).number == 42)
         #expect(try unsafe measure.unsafeInvoke(on: input) == 42)
-        let type = try runtime.swiftType(
+        let type = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.GenericTypeEnum",
             genericArguments: [.type(String.self)])
-        let payload = try type.method(named: "payload()", as: (() -> String).self)
+        let payload = try await type.method(named: "payload()", as: (() -> String).self)
         let text = String(repeating: "enum", count: 100)
         #expect(try unsafe payload.unsafeInvoke(on: GenericTypeEnum.value(text)) == text)
     }
 
     @MainActor @Test func valueMembersShareInitializationMutationAndOwnership() async throws {
-        let type = try ABIRuntime().swiftType(
+        let type = try await ABIRuntime().swiftType(
             named: "ManagedSwiftFixtures.GenericValueBox",
             genericArguments: [.type(String.self)])
         let create = try type.initializer(
             named: "init(_:)",
             as: ((String) -> GenericValueBox<String>).self
         )
-        let project = try type.method(named: "project()", as: (() -> String).self)
-        let get = try type.getter(named: "value", as: (() -> String).self)
+        let project = try await type.method(named: "project()", as: (() -> String).self)
+        let get = try await type.getter(named: "value", as: (() -> String).self)
         let set = try type.setter(named: "value", as: String.self)
-        let replace = try type.method(
+        let replace = try await type.method(
             named: "replace(_:)",
             as: ((String) -> Void).self,
             mutating: true
         )
-        let take = try type.method(named: "take()", as: (() -> String).self, consuming: true)
-        let pair = try type.method(
+        let take = try await type.method(named: "take()", as: (() -> String).self, consuming: true)
+        let pair = try await type.method(
             named: "paired(_:)",
             as: ((Int64) -> (String, Int64, Bool)).self,
             genericArguments: [.type(Int64.self)])
@@ -291,20 +291,20 @@ struct SwiftGenericValueReceiverTests {
 
     @MainActor @Test func constrainedMembersUseTheirOwnReceiverConvention() async throws {
         let runtime = ABIRuntime()
-        let integer = try runtime.swiftType(
+        let integer = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.GenericValueBox",
             genericArguments: [.type(Int.self)])
-        let generic = try integer.method(named: "project()", as: (() -> Int).self)
-        let concrete = try integer.method(named: "concrete()", as: (() -> Int).self)
+        let generic = try await integer.method(named: "project()", as: (() -> Int).self)
+        let concrete = try await integer.method(named: "concrete()", as: (() -> Int).self)
         let value = GenericValueBox(42)
         #expect(try unsafe generic.unsafeInvoke(on: value) == 42)
         #expect(try unsafe concrete.unsafeInvoke(on: value) == 42)
         let object = NSObject()
-        let reference = try runtime.swiftType(
+        let reference = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.GenericValueBox",
             genericArguments: [.type(NSObject.self)])
-        let unbound = try reference.method(named: "project()", as: (() -> NSObject).self)
-        let bound = try reference.method(named: "reference()", as: (() -> NSObject).self)
+        let unbound = try await reference.method(named: "project()", as: (() -> NSObject).self)
+        let bound = try await reference.method(named: "reference()", as: (() -> NSObject).self)
         let boxed = GenericValueBox(object)
         #expect(try unsafe unbound.unsafeInvoke(on: boxed) === object)
         #expect(try unsafe bound.unsafeInvoke(on: boxed) === object)
@@ -312,11 +312,11 @@ struct SwiftGenericValueReceiverTests {
 
     @MainActor @Test func fixedStorageRetainsExplicitMetadataAndDirectReceiver() async throws {
         let runtime = ABIRuntime()
-        let type = try runtime.swiftType(
+        let type = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.GenericPhantom",
             genericArguments: [.type(String.self)])
-        let read = try type.method(named: "read()", as: (() -> Int64).self)
-        let paired = try type.method(
+        let read = try await type.method(named: "read()", as: (() -> Int64).self)
+        let paired = try await type.method(
             named: "paired(_:)",
             as: ((String) -> (Int64, String)).self,
             genericArguments: [.type(String.self)])
@@ -331,11 +331,11 @@ struct SwiftGenericValueReceiverTests {
     }
 
     @MainActor @Test func indirectValueReceiversComposeWithAsyncAndTypedErrors() async throws {
-        let type = try ABIRuntime().swiftType(
+        let type = try await ABIRuntime().swiftType(
             named: "ManagedSwiftFixtures.GenericValueBox",
             genericArguments: [.type(String.self)])
-        let asynchronous = try type.method(named: "asynchronously()", as: (() async -> String).self)
-        let throwing = try type.method(
+        let asynchronous = try await type.method(named: "asynchronously()", as: (() async -> String).self)
+        let throwing = try await type.method(
             named: "checked(_:fail:)",
             as: ((ScalarFailure, Bool) throws(ScalarFailure) -> String).self,
             genericArguments: [.type(ScalarFailure.self)])

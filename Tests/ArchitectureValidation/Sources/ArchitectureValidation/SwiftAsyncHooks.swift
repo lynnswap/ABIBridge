@@ -95,8 +95,8 @@ func validateAsyncMethodHooks(runtime: ABIRuntime, provider: ImageSelector, call
     }
     let failures = Mutex(0)
     let name = "SwiftImportProvider.AsyncHookRenderer"
-    let type = try runtime.swiftType(named: name, in: provider)
-    let method = try type.method(
+    let type = try await runtime.swiftType(named: name, in: provider)
+    let method = try await type.method(
         named: "render(_:)",
         as: (nonisolated(nonsending) (String) async throws(NSError) -> String).self)
     let make = try await runtime.swiftFunction(

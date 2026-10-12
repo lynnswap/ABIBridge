@@ -235,7 +235,7 @@ private struct RuntimeHookProbeError: Error {}
 
 @MainActor private func validateRuntimeHookOwnership(runtime: ABIRuntime, provider: ImageSelector,
     caller: ImageSelector) async throws -> [String] {
-    let type = try runtime.swiftType(named: "SwiftImportProvider.HookTicket", in: provider)
+    let type = try await runtime.swiftType(named: "SwiftImportProvider.HookTicket", in: provider)
     let consume = try await runtime.swiftFunction(
         named: "SwiftImportProvider.consumeHookTicket(_:)",
         as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self, genericArguments: [.type(type)], in: provider)
@@ -302,11 +302,11 @@ private struct RuntimeHookProbeError: Error {}
     }
     checks.append("Failure before continuation forwards the original noncopyable input exactly once")
     fourth.invalidate()
-    let renderer = try runtime.swiftType(
+    let renderer = try await runtime.swiftType(
         named: "SwiftImportProvider.HookTicketRenderer",
         in: provider
     )
-    let virtualMove = try renderer.method(
+    let virtualMove = try await renderer.method(
         named: "move(_:)",
         as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self, genericArguments: [.type(type)])
     let virtualCaller = try await runtime.swiftFunction(

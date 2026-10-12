@@ -44,9 +44,9 @@ private final class ExtractedCounterOwner {
     do {
         let receiver = MethodExtractionReceiver(1)
         originalSwift = receiver
-        sync = try runtime.object(receiver).method(named: "adding(_:)", as: ((Int64) -> Int64).self)
+        sync = try await runtime.object(receiver).method(named: "adding(_:)", as: ((Int64) -> Int64).self)
             .method
-        async = try runtime.object(receiver).method(
+        async = try await runtime.object(receiver).method(
             named: "addingLater(_:)",
             as: (nonisolated(nonsending) (Int64) async throws -> Int64).self).method
     }

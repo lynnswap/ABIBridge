@@ -11,8 +11,8 @@ import Testing
 struct SwiftFunctionDeclarationTests {
     @Test func arrowOperatorsResolveByLabelsAndCompleteDeclarations() async throws {
         let runtime = ABIRuntime()
-        let type = try runtime.swiftType(named: "ManagedSwiftFixtures.ArrowOperatorValue")
-        let generic = try runtime.swiftType(
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.ArrowOperatorValue")
+        let generic = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.GenericOperatorBox",
             genericArguments: [.type(Int64.self)]
         )

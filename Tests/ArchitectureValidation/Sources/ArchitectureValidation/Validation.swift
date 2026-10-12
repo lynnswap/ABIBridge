@@ -296,7 +296,7 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         do {
             let receiver = ArchitectureCounter(40)
             observed = receiver
-            bound = try runtime.object(receiver).method(
+            bound = try await runtime.object(receiver).method(
                 named: "adding(_:)",
                 as: ((Int) -> Int).self
             )
@@ -316,15 +316,15 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
             try check(receiver.value == 41, "Private Swift compiler accessor control")
             receiver.value = 40
             let object = runtime.object(receiver)
-            privateMethod = try object.method(named: "adding(_:)", as: ((Int) -> Int).self)
-            let complete = try object.method(
+            privateMethod = try await object.method(named: "adding(_:)", as: ((Int) -> Int).self)
+            let complete = try await object.method(
                 named: "adding(Swift.Int) -> Swift.Int",
                 as: ((Int) -> Int).self
             )
             try check(unsafe complete.unsafeInvoke(2) == 42, "Private Swift complete member declaration")
-            let inherited = try object.method(named: "inherited()", as: (() -> Int).self)
+            let inherited = try await object.method(named: "inherited()", as: (() -> Int).self)
             try check(unsafe inherited.unsafeInvoke() == 42, "Private Swift superclass declaration")
-            let getter = try object.getter(named: "value", as: (() -> Int).self)
+            let getter = try await object.getter(named: "value", as: (() -> Int).self)
             let setter = try object.setter(named: "value", as: Int.self)
             try unsafe setter.unsafeInvoke(50)
             try check(unsafe getter.unsafeInvoke() == 50, "Private Swift getter and setter")

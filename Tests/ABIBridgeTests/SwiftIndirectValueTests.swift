@@ -68,14 +68,14 @@ struct SwiftIndirectValueTests {
     }
 
     @Test func resilientInitializersAndMethodsUseMetadataAndValueStorage() async throws {
-        let type = try ABIRuntime.shared.swiftType(
+        let type = try await ABIRuntime.shared.swiftType(
             named: "ManagedSwiftFixtures.IndirectRecord",
                                                          as: IndirectRecord.self)
         let initialize = try type.initializer(
             named: "init(token:number:)",
                                                     as: ((LifetimeToken, Int64) -> IndirectRecord).self)
-        let advance = try type.method(named: "advanced(_:)", as: ((Int64) -> IndirectRecord).self)
-        let number = try type.getter(named: "number", as: (() -> Int64).self)
+        let advance = try await type.method(named: "advanced(_:)", as: ((Int64) -> IndirectRecord).self)
+        let number = try await type.getter(named: "number", as: (() -> Int64).self)
         let token = LifetimeToken()
         let original = try unsafe initialize.unsafeInvoke(token, 35)
         let result = try unsafe advance.unsafeInvoke(on: original, 7)

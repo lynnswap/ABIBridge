@@ -75,7 +75,7 @@ private func withSwiftVirtualCallback(
     expectedErrors: Int = 0,
     body: (OpaquePointer) throws -> Void
 ) async throws {
-    let type = try fixture.runtime.swiftType(
+    let type = try await fixture.runtime.swiftType(
         named: fixture.module + "." + typeName,
         in: fixture.providerScope
     )

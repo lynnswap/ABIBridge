@@ -20,13 +20,13 @@ struct SwiftValueHookTests {
         @inline(never) public func wideConsume(_ seed: Int64, _ delta: Int64) -> Int64 { WideValue(seed).consume(delta) }
         @inline(never) public func widePayload(_ seed: Int64, _ delta: Int64) -> Int64 { WideValue(seed).payload(delta).checksum }
         """); defer { fixture.cleanup() }
-        let type = try fixture.runtime.swiftType(
+        let type = try await fixture.runtime.swiftType(
             named: fixture.module + ".WideValue",
             as: SwiftABIFive.self,
             in: fixture.providerScope
         )
         for (member, caller, consuming) in [("sum", "wideSum", false), ("consume", "wideConsume", true)] {
-            let method = try type.method(
+            let method = try await type.method(
                 named: member + "(_:)",
                 as: ((Int64) -> Int64).self,
                 consuming: consuming
@@ -46,7 +46,7 @@ struct SwiftValueHookTests {
             hook.invalidate()
             #expect(try unsafe oracle.unsafeInvoke(40, 2) == 212)
         }
-        let method = try type.method(
+        let method = try await type.method(
             named: "payload(Swift.Int64) -> " + fixture.module + ".ReplacementPayload",
             as: ((Int64) -> SwiftABIFive).self
         )
@@ -66,12 +66,12 @@ struct SwiftValueHookTests {
 
     @Test func registerPassedSelfIsSeparateFromExplicitArguments() async throws {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
-        let type = try fixture.runtime.swiftType(
+        let type = try await fixture.runtime.swiftType(
             named: fixture.module + ".ReplacementValue",
             as: Int64.self,
             in: fixture.providerScope
         )
-        let method = try type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
+        let method = try await type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
         let oracle = try await fixture.runtime.swiftFunction(
             named: fixture.callerModule + ".importedValueMethod(_:)",
             as: ((Int64) -> Int64).self,
@@ -97,12 +97,12 @@ struct SwiftValueHookTests {
         """, callerExtra: """
         @inline(never) public func stackedValue() -> Int64 { ReplacementValue(40).stack(1,2,3,4,5,6,7,8,9,10,11,12) }
         """); defer { fixture.cleanup() }
-        let type = try fixture.runtime.swiftType(
+        let type = try await fixture.runtime.swiftType(
             named: fixture.module + ".ReplacementValue",
             as: Int64.self,
             in: fixture.providerScope
         )
-        let method = try type.method(
+        let method = try await type.method(
             named: "stack(_:_:_:_:_:_:_:_:_:_:_:_:)",
             as: ((Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64) -> Int64).self)
         let oracle = try await fixture.runtime.swiftFunction(
@@ -119,7 +119,7 @@ struct SwiftValueHookTests {
         hook.invalidate()
         #expect(try unsafe oracle.unsafeInvoke() == 118)
 
-        let scalar = try type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
+        let scalar = try await type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
         let scalarCaller = try await fixture.runtime.swiftFunction(
             named: fixture.callerModule + ".importedValueMethod(_:)",
             as: ((Int64) -> Int64).self,
@@ -150,12 +150,12 @@ struct SwiftValueHookTests {
             return value.count * 1000 + result
         }
         """); defer { fixture.cleanup() }
-        let type = try fixture.runtime.swiftType(
+        let type = try await fixture.runtime.swiftType(
             named: fixture.module + ".CounterValue",
             as: Int64.self,
             in: fixture.providerScope
         )
-        let method = try type.method(
+        let method = try await type.method(
             named: "increment(_:)",
             as: ((Int64) -> Int64).self,
             mutating: true
@@ -193,12 +193,12 @@ struct SwiftValueHookTests {
         """); defer { fixture.cleanup() }
         // A one-field String wrapper has String's established native storage and
         // ownership. This does not synthesize a general nontrivial struct adapter.
-        let type = try fixture.runtime.swiftType(
+        let type = try await fixture.runtime.swiftType(
             named: fixture.module + ".TextValue",
             as: String.self,
             in: fixture.providerScope
         )
-        let method = try type.method(named: "consume()", as: (() -> String).self, consuming: true)
+        let method = try await type.method(named: "consume()", as: (() -> String).self, consuming: true)
         let oracle = try await fixture.runtime.swiftFunction(
             named: fixture.callerModule + ".consumeTextValue(_:)",
             as: ((String) -> String).self,
@@ -234,12 +234,12 @@ struct SwiftValueHookTests {
             return result + "|" + value.text
         }
         """); defer { fixture.cleanup() }
-        let type = try fixture.runtime.swiftType(
+        let type = try await fixture.runtime.swiftType(
             named: fixture.module + ".MutableTextValue",
             as: String.self,
             in: fixture.providerScope
         )
-        let method = try type.method(
+        let method = try await type.method(
             named: "append(_:)",
             as: ((String) -> String).self,
             mutating: true
@@ -281,12 +281,12 @@ struct SwiftValueHookTests {
         var object: AnyObject? = try unsafe make.unsafeInvoke()
         weak var observed = object
         let identity = ObjectIdentifier(object!)
-        let type = try fixture.runtime.swiftType(
+        let type = try await fixture.runtime.swiftType(
             named: fixture.module + ".ReferenceValue",
             as: AnyObject.self,
             in: fixture.providerScope
         )
-        let method = try type.method(
+        let method = try await type.method(
             named: "consume(_:)",
             as: ((Int64) -> Int64).self,
             consuming: true
@@ -335,7 +335,7 @@ struct SwiftValueHookTests {
             as: (() -> AnyObject).self, in: fixture.providerScope)
         var object: AnyObject? = try unsafe make.unsafeInvoke()
         weak var observed = object
-        let type = try fixture.runtime.swiftType(
+        let type = try await fixture.runtime.swiftType(
             named: fixture.module + ".BoxValue",
             as: AnyObject.self,
             in: fixture.providerScope

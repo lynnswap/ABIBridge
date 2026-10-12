@@ -62,7 +62,14 @@ public final class NativeObject {
     deinit { withExtendedLifetime(runtime) { receiver = nil } }
 
     private nonisolated func swiftType() throws -> NativeSwiftType {
-        var type: AnyClass? = Swift.type(of: receiver!)
+        try Self.swiftType(for: Swift.type(of: receiver!), in: runtime)
+    }
+
+    private nonisolated static func swiftType(
+        for objectType: AnyClass,
+        in runtime: ABIRuntime
+    ) throws -> NativeSwiftType {
+        var type: AnyClass? = objectType
         var missing: (any Error)?
         while let current = type {
             do {
@@ -73,7 +80,8 @@ public final class NativeObject {
                 type = class_getSuperclass(current)
             }
         }
-        throw missing ?? ABIResolutionError.metadataUnavailable("No Swift declaring type for this object.")
+        throw missing
+            ?? ABIResolutionError.metadataUnavailable("No Swift declaring type for this object.")
     }
 
     /// Reads an Objective-C object or class ivar by its runtime name.
@@ -158,6 +166,35 @@ public final class NativeObject {
             consuming: isConsuming
         )
         return NativeBoundSwiftMethod(method: method, receiver: object)
+    }
+
+    /// Resolves a Swift method without blocking the caller's executor.
+    ///
+    /// Type lookup and ABI preparation run on an independent worker, joining
+    /// required preparation already in progress. The receiver and returned
+    /// bound handle remain in the caller's isolation domain; no native member
+    /// is invoked during lookup. In an async context this overload requires `await`.
+    /// - Returns: A reusable method retaining this receiver.
+    /// - Throws: The same lookup and representation errors as synchronous lookup.
+    public nonisolated(nonsending) func method<Signature>(
+        named name: String,
+        as signature: Signature.Type,
+        genericArguments: [NativeSwiftGenericArgument] = [],
+        declaredAs declaredSignature: String? = nil,
+        consuming isConsuming: Bool = false
+    ) async throws -> NativeBoundSwiftMethod<Signature> {
+        let objectType: AnyClass = Swift.type(of: receiver!)
+        let method = try await runtime.prepare { runtime in
+            let type = try Self.swiftType(for: objectType, in: runtime)
+            return try type.method(
+                named: name,
+                as: signature,
+                genericArguments: genericArguments,
+                declaredAs: declaredSignature,
+                consuming: isConsuming
+            )
+        }
+        return NativeBoundSwiftMethod(method: method, receiver: receiver!)
     }
 
     /// Resolves a Swift setter bound to this object.
@@ -405,6 +442,33 @@ extension NativeObject {
             declaredAs: declaredSignature,
             consuming: isConsuming
         )
+        return NativeBoundSwiftMethod(method: method, receiver: receiver!)
+    }
+
+    /// Resolves a Swift getter without blocking the caller's executor.
+    ///
+    /// Type lookup and ABI preparation run on an independent worker, joining
+    /// required preparation already in progress. The receiver and returned
+    /// bound handle remain in the caller's isolation domain; no native member
+    /// is invoked during lookup. In an async context this overload requires `await`.
+    /// - Returns: A reusable getter retaining this receiver.
+    /// - Throws: The same lookup and representation errors as synchronous lookup.
+    public nonisolated(nonsending) func getter<Signature>(
+        named name: String,
+        as signature: Signature.Type,
+        declaredAs declaredSignature: String? = nil,
+        consuming isConsuming: Bool = false
+    ) async throws -> NativeBoundSwiftMethod<Signature> {
+        let objectType: AnyClass = Swift.type(of: receiver!)
+        let method = try await runtime.prepare { runtime in
+            let type = try Self.swiftType(for: objectType, in: runtime)
+            return try type.getter(
+                named: name,
+                as: signature,
+                declaredAs: declaredSignature,
+                consuming: isConsuming
+            )
+        }
         return NativeBoundSwiftMethod(method: method, receiver: receiver!)
     }
 }

@@ -435,6 +435,41 @@ public actor NativeSwiftType: Hashable {
         return try prepareMethod(symbol, receiver: receiver)
     }
 
+    /// Resolves and prepares a method without blocking the caller's executor.
+    ///
+    /// An independent worker uses the synchronous overload's indexes and call
+    /// interfaces, joining required preparation already in progress. Receiver
+    /// values remain with the caller; lookup does not invoke the native member.
+    /// In an asynchronous context, Swift selects this overload and requires `await`.
+    /// - Returns: The same reusable handle as synchronous lookup.
+    /// - Throws: The same lookup, representation, and preparation errors.
+    public nonisolated func method<Signature>(
+        named name: String,
+        as signature: Signature.Type,
+        genericArguments: [NativeSwiftGenericArgument] = [],
+        declaredAs declaredSignature: String? = nil,
+        valueABIs: [NativeSwiftType: NativeType] = [:],
+        receiverABI: NativeType? = nil,
+        mutating isMutating: Bool = false,
+        consuming isConsuming: Bool = false
+    ) async throws -> NativeSwiftMethod<Signature> {
+        let result: Result<NativeSwiftMethod<Signature>, any Error> = await NativePreparation.run {
+            Result {
+                try self.method(
+                    named: name,
+                    as: signature,
+                    genericArguments: genericArguments,
+                    declaredAs: declaredSignature,
+                    valueABIs: valueABIs,
+                    receiverABI: receiverABI,
+                    mutating: isMutating,
+                    consuming: isConsuming
+                )
+            }
+        }
+        return try result.get()
+    }
+
     private nonisolated func genericPlan(
         _ member: (symbol: ResolvedSymbol, metadata: Any.Type),
         signature: Any.Type,
@@ -795,6 +830,30 @@ extension ABIRuntime {
         )
     }
 
+    /// Resolves a Swift type without blocking the caller's executor.
+    ///
+    /// Lookup, image acquisition, and metadata discovery run on an independent
+    /// worker using the synchronous overload's cache and joining required index
+    /// preparation already in progress. No explicit `prepare` call is needed.
+    /// In an asynchronous context, Swift selects this overload and requires `await`.
+    /// - Returns: The same reusable type handle as synchronous lookup.
+    /// - Throws: The same lookup and metadata errors.
+    public nonisolated func swiftType(
+        named name: String,
+        in scope: ImageSelector = .automatic,
+        loading: ImageLoadingPolicy = .ifNeeded,
+        genericArguments: [NativeSwiftGenericArgument] = []
+    ) async throws -> NativeSwiftType {
+        try await prepare { runtime in
+            try runtime.swiftType(
+                named: name,
+                in: scope,
+                loading: loading,
+                genericArguments: genericArguments
+            )
+        }
+    }
+
     /// Resolves a concrete Swift type within an already retained image.
     ///
     /// - Parameters:
@@ -823,6 +882,30 @@ extension ABIRuntime {
             genericArguments: genericArguments,
             revision: revision
         )
+    }
+
+    /// Resolves a Swift type without blocking the caller's executor.
+    ///
+    /// Lookup, image acquisition, and metadata discovery run on an independent
+    /// worker using the synchronous overload's cache and joining required index
+    /// preparation already in progress. No explicit `prepare` call is needed.
+    /// In an asynchronous context, Swift selects this overload and requires `await`.
+    /// - Returns: The same reusable type handle as synchronous lookup.
+    /// - Throws: The same lookup and metadata errors.
+    public nonisolated func swiftType(
+        named name: String,
+        in image: NativeImage,
+        loading: ImageLoadingPolicy = .ifNeeded,
+        genericArguments: [NativeSwiftGenericArgument] = []
+    ) async throws -> NativeSwiftType {
+        try await prepare { runtime in
+            try runtime.swiftType(
+                named: name,
+                in: image,
+                loading: loading,
+                genericArguments: genericArguments
+            )
+        }
     }
 
     /// Resolves a Swift type with an explicit receiver representation.
@@ -860,6 +943,32 @@ extension ABIRuntime {
         )
     }
 
+    /// Resolves a Swift type without blocking the caller's executor.
+    ///
+    /// Lookup, image acquisition, and metadata discovery run on an independent
+    /// worker using the synchronous overload's cache and joining required index
+    /// preparation already in progress. No explicit `prepare` call is needed.
+    /// In an asynchronous context, Swift selects this overload and requires `await`.
+    /// - Returns: The same reusable type handle as synchronous lookup.
+    /// - Throws: The same lookup and metadata errors.
+    public nonisolated func swiftType<Representation>(
+        named name: String,
+        as representation: Representation.Type,
+        in scope: ImageSelector = .automatic,
+        loading: ImageLoadingPolicy = .ifNeeded,
+        genericArguments: [NativeSwiftGenericArgument] = []
+    ) async throws -> NativeSwiftType {
+        try await prepare { runtime in
+            try runtime.swiftType(
+                named: name,
+                as: representation,
+                in: scope,
+                loading: loading,
+                genericArguments: genericArguments
+            )
+        }
+    }
+
     /// Resolves a Swift type and receiver adapter within a retained image.
     ///
     /// - Parameters:
@@ -890,6 +999,32 @@ extension ABIRuntime {
             genericArguments: genericArguments,
             revision: revision
         )
+    }
+
+    /// Resolves a Swift type without blocking the caller's executor.
+    ///
+    /// Lookup, image acquisition, and metadata discovery run on an independent
+    /// worker using the synchronous overload's cache and joining required index
+    /// preparation already in progress. No explicit `prepare` call is needed.
+    /// In an asynchronous context, Swift selects this overload and requires `await`.
+    /// - Returns: The same reusable type handle as synchronous lookup.
+    /// - Throws: The same lookup and metadata errors.
+    public nonisolated func swiftType<Representation>(
+        named name: String,
+        as representation: Representation.Type,
+        in image: NativeImage,
+        loading: ImageLoadingPolicy = .ifNeeded,
+        genericArguments: [NativeSwiftGenericArgument] = []
+    ) async throws -> NativeSwiftType {
+        try await prepare { runtime in
+            try runtime.swiftType(
+                named: name,
+                as: representation,
+                in: image,
+                loading: loading,
+                genericArguments: genericArguments
+            )
+        }
     }
 
     private nonisolated func makeSwiftType(
@@ -993,6 +1128,39 @@ extension NativeSwiftType {
             receiverABI: receiverABI
         )
         return try prepareMethod(symbol, receiver: receiver)
+    }
+
+    /// Resolves and prepares a getter without blocking the caller's executor.
+    ///
+    /// An independent worker uses the synchronous overload's indexes and call
+    /// interfaces, joining required preparation already in progress. Receiver
+    /// values remain with the caller; lookup does not invoke the native member.
+    /// In an asynchronous context, Swift selects this overload and requires `await`.
+    /// - Returns: The same reusable handle as synchronous lookup.
+    /// - Throws: The same lookup, representation, and preparation errors.
+    public nonisolated func getter<Signature>(
+        named name: String,
+        as signature: Signature.Type,
+        declaredAs declaredSignature: String? = nil,
+        valueABIs: [NativeSwiftType: NativeType] = [:],
+        receiverABI: NativeType? = nil,
+        mutating isMutating: Bool = false,
+        consuming isConsuming: Bool = false
+    ) async throws -> NativeSwiftMethod<Signature> {
+        let result: Result<NativeSwiftMethod<Signature>, any Error> = await NativePreparation.run {
+            Result {
+                try self.getter(
+                    named: name,
+                    as: signature,
+                    declaredAs: declaredSignature,
+                    valueABIs: valueABIs,
+                    receiverABI: receiverABI,
+                    mutating: isMutating,
+                    consuming: isConsuming
+                )
+            }
+        }
+        return try result.get()
     }
 
     /// Resolves a static getter using its complete zero-argument function type.

@@ -84,7 +84,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         )
         typealias Inspect = NativeSwiftClosure<(BorrowedSnapshot) throws -> Int64>
         let runtime = ABIRuntime.shared
-        let type = try runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair")
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair")
         let abi = try NativeType.structure(named: type.name, fields: [.int64, .int64])
         let abis = [type: abi]
         let nativeSnapshot =
@@ -114,7 +114,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
             as: ((Snapshot, Inspect) throws -> Int64).self,
             valueABIs: abis
         )
-        let sum = try type.method(named: "sum()", as: (() -> Int64).self, receiverABI: abi)
+        let sum = try await type.method(named: "sum()", as: (() -> Int64).self, receiverABI: abi)
         let text = String(repeating: "composed tuple ", count: 80)
         let deaths = RuntimeValueDeaths()
         #expect(MemoryLayout<NativeSwiftValue>.size != MemoryLayout<RuntimeFixedPair>.size)
@@ -147,7 +147,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func wholeRuntimeTuplesUseSwiftStorageForCopyTakeAndInout() async throws {
         let runtime = ABIRuntime.shared
-        let type = try runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair")
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair")
         let abi = try NativeType.structure(named: type.name, fields: [.int64, .int64])
         let native =
             "(lead: Swift.Int8, record: ManagedSwiftFixtures.RuntimeFixedPair, nested: (callback: (Swift.Int64) -> Swift.Int64, text: Swift.String, tail: Swift.Int8))"
@@ -432,12 +432,12 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
             input = try await make(RuntimeWeakRecord(object, 42))
         }
         let abi = try NativeType.opaque(named: input.type.name)
-        let number = try input.type.getter(
+        let number = try await input.type.getter(
             named: "number",
             as: (() -> Int64).self,
             receiverABI: abi
         )
-        let hasObject = try input.type.method(
+        let hasObject = try await input.type.method(
             named: "hasObject()",
             as: (() -> Bool).self,
             receiverABI: abi
@@ -599,7 +599,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func explicitRuntimeValueABIsComposeAcrossCallbacksAndMembers() async throws {
         let runtime = ABIRuntime.shared
-        let type = try runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair")
+        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair")
         let abi = try NativeType.structure(named: type.name, fields: [.int64, .int64])
         let abis = [type: abi]
         let make = try await runtime.swiftFunction(
@@ -610,7 +610,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         )
         let value = try unsafe make.unsafeInvoke(35, 7)
         #expect(abis[value.type] == abi)
-        let sum = try type.method(named: "sum()", as: (() -> Int64).self, receiverABI: abi)
+        let sum = try await type.method(named: "sum()", as: (() -> Int64).self, receiverABI: abi)
         typealias Body = NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Int64>
         let body = try Body { value in
             do { return try unsafe sum.unsafeInvoke(on: value) } catch {
@@ -624,14 +624,14 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
             valueABIs: abis
         )
         #expect(try unsafe inspect.unsafeInvoke(value, body) == 42)
-        let member = try type.method(
+        let member = try await type.method(
             named: "inspect(_:)",
             as: ((Body) -> Int64).self,
             valueABIs: abis,
             receiverABI: abi
         )
         #expect(try unsafe member.unsafeInvoke(on: value, body) == 42)
-        let storeType = try runtime.swiftType(
+        let storeType = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.RuntimeFixedPairStore"
         )
         let construct = try storeType.initializer(
@@ -641,7 +641,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         )
         let store = try unsafe construct.unsafeInvoke(value)
         #expect(value.isConsumed)
-        let getter = try storeType.getter(
+        let getter = try await storeType.getter(
             named: "value",
             as: (() -> NativeSwiftValue).self,
             valueABIs: abis
@@ -1009,12 +1009,12 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         )
         let counts = ArgumentCounts()
         let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
-        let read = try value.type.method(
+        let read = try await value.type.method(
             named: "read()",
             as: (() -> Int64).self,
             receiverABI: .opaque(named: value.type.name)
         )
-        let add = try value.type.method(
+        let add = try await value.type.method(
             named: "add(_:)",
             as: ((Int64) -> Void).self,
             receiverABI: .opaque(named: value.type.name),
@@ -1198,13 +1198,13 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
         )
         let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken {})
-        let add = try value.type.method(
+        let add = try await value.type.method(
             named: "addThenThrow(_:)",
             as: (nonisolated(nonsending) (Int64) async throws -> Void).self,
             receiverABI: .opaque(named: value.type.name),
             mutating: true
         )
-        let read = try value.type.method(
+        let read = try await value.type.method(
             named: "read()",
             as: (() -> Int64).self,
             receiverABI: .opaque(named: value.type.name)
@@ -1258,7 +1258,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         }
         #expect(try unsafe visit.unsafeInvoke(NativeSwiftConsuming(value), body) == 42)
         #expect(value.isConsumed && counts.destructions == 0)
-        let read = try value.type.method(
+        let read = try await value.type.method(
             named: "read()",
             as: (() -> Int64).self,
             receiverABI: .opaque(named: value.type.name)
@@ -1308,7 +1308,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
             as: (nonisolated(nonsending) (NativeSwiftValue, Borrower) async throws -> Int64).self,
             genericArguments: [.type(borrowed.type)]
         )
-        let read = try borrowed.type.method(
+        let read = try await borrowed.type.method(
             named: "readAsync()",
             as: (nonisolated(nonsending) () async -> Int64).self,
             receiverABI: .opaque(named: borrowed.type.name)
@@ -1512,7 +1512,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         )
         let identity = try HostCopy { $0 }
         #expect(try unsafe apply.unsafeInvoke(identity, "native") == "native")
-        let type = try runtime.swiftType(
+        let type = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.RuntimeCallbackHost",
             as: RuntimeCallbackHost.self
         )
@@ -1524,15 +1524,15 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         )
         #expect(try unsafe imageApply.unsafeInvoke(identity, "image") == "image")
         let host = RuntimeCallbackHost()
-        let method = try type.method(named: "copy()", as: (() -> Copy).self)
+        let method = try await type.method(named: "copy()", as: (() -> Copy).self)
         let methodCopy = try unsafe method.unsafeInvoke(on: host)
         #expect(try unsafe methodCopy.unsafeInvoke(input).take(as: String.self) == "concrete!")
-        let getter = try type.getter(named: "copier", as: (() -> Copy).self)
+        let getter = try await type.getter(named: "copier", as: (() -> Copy).self)
         #expect(
             try unsafe getter.unsafeInvoke(on: host).unsafeInvoke(input).take(as: String.self)
                 == "concrete!"
         )
-        let applyMethod = try type.method(
+        let applyMethod = try await type.method(
             named: "apply(_:_:)",
             as: ((HostCopy, String) throws -> String).self
         )
@@ -1632,7 +1632,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         do {
             let result = try unsafe produce.unsafeInvoke(body)
             #expect(source.isConsumed && !result.isCopyable && deaths.destructions == 0)
-            let read = try result.type.method(
+            let read = try await result.type.method(
                 named: "read()",
                 as: (() -> Int64).self,
                 receiverABI: .opaque(named: result.type.name)
@@ -1906,7 +1906,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         )
         let counts = ArgumentCounts()
         let original = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
-        let read = try original.type.method(
+        let read = try await original.type.method(
             named: "read()",
             as: (() -> Int64).self,
             receiverABI: .opaque(named: original.type.name)
@@ -1970,7 +1970,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
         )
         let original = try unsafe make.unsafeInvoke(ErrorLifetimeToken {})
-        let read = try original.type.method(
+        let read = try await original.type.method(
             named: "readAsync()",
             as: (() async -> Int64).self,
             receiverABI: .opaque(named: original.type.name)
@@ -2260,7 +2260,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         )
         let counts = ArgumentCounts()
         let ticket = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
-        let type = try runtime.swiftType(
+        let type = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.RuntimeValueBox",
             genericArguments: [.type(ticket.type)]
         )
@@ -2272,7 +2272,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         #expect(ticket.isConsumed && !box.isConsumed && !box.isCopyable)
         #expect(throws: NativeSwiftValueError.noncopyableType) { try box.copy() }
         #expect(throws: NativeSwiftValueError.noncopyableType) { try box.withCopy { _ in } }
-        let take = try type.method(
+        let take = try await type.method(
             named: "takeValue()",
             as: (() -> NativeSwiftValue).self,
             consuming: true
@@ -2293,7 +2293,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
             as: ((Int64) -> NativeSwiftValue).self
         )
         let integer = try unsafe makeInteger.unsafeInvoke(42)
-        let copyableType = try runtime.swiftType(
+        let copyableType = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.RuntimeConditionalValueBox",
             genericArguments: [.type(integer.type)]
         )
@@ -2310,7 +2310,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
             as: ((AnyObject) -> NativeSwiftValue).self
         )
         let ticket = try unsafe makeTicket.unsafeInvoke(NSObject())
-        let noncopyableType = try runtime.swiftType(
+        let noncopyableType = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.RuntimeConditionalValueBox",
             genericArguments: [.type(ticket.type)]
         )
@@ -2333,7 +2333,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func memberCopyableRequirementsOverrideNominalSuppression() async throws {
         let runtime = ABIRuntime.shared
-        let copyable = try runtime.swiftType(
+        let copyable = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.RuntimeValueBox",
             genericArguments: [.type(Int64.self)]
         )
@@ -2342,19 +2342,19 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
             as: ((NativeSwiftConsuming<Int64>) -> NativeSwiftValue).self
         )
         let box = try unsafe initialize.unsafeInvoke(NativeSwiftConsuming(Int64(42)))
-        let copy = try copyable.method(named: "copiedValue()", as: (() -> Int64).self)
+        let copy = try await copyable.method(named: "copiedValue()", as: (() -> Int64).self)
         #expect(try unsafe copy.unsafeInvoke(on: box) == 42)
         let make = try await runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeRuntimeTicket(_:)",
             as: ((AnyObject) -> NativeSwiftValue).self
         )
         let ticket = try unsafe make.unsafeInvoke(NSObject())
-        let noncopyable = try runtime.swiftType(
+        let noncopyable = try await runtime.swiftType(
             named: "ManagedSwiftFixtures.RuntimeValueBox",
             genericArguments: [.type(ticket.type)]
         )
         do {
-            _ = try noncopyable.method(
+            _ = try await noncopyable.method(
                 named: "copiedValue()",
                 as: (() -> NativeSwiftValue).self
             )
@@ -2461,11 +2461,11 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
                 try runtime.images(matching: .path(provider.libraryURL)).first
             )
             #expect(value.type.image.identity == expected.identity)
-            let getter = try value.type.getter(named: "value", as: (() -> Int64).self)
+            let getter = try await value.type.getter(named: "value", as: (() -> Int64).self)
             #expect(try unsafe getter.unsafeInvoke(on: value) == number)
             weak var observed: AnyObject?
             try value.withCopy { observed = $0 as AnyObject }
-            let take = try value.type.method(
+            let take = try await value.type.method(
                 named: "take()",
                 as: (() -> Int64).self,
                 consuming: true
@@ -2485,23 +2485,23 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         let counts = ArgumentCounts()
         let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
         let abi = try NativeType.opaque(named: value.type.name)
-        let read = try value.type.method(
+        let read = try await value.type.method(
             named: "read()",
             as: (() -> Int64).self,
             receiverABI: abi
         )
-        let getter = try value.type.getter(
+        let getter = try await value.type.getter(
             named: "number",
             as: (() -> Int64).self,
             receiverABI: abi
         )
-        let add = try value.type.method(
+        let add = try await value.type.method(
             named: "add(_:)",
             as: ((Int64) -> Void).self,
             receiverABI: abi,
             mutating: true
         )
-        let take = try value.type.method(
+        let take = try await value.type.method(
             named: "takeNumber()",
             as: (() -> Int64).self,
             receiverABI: abi,
@@ -2547,12 +2547,12 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         let counts = ArgumentCounts()
         let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
         let abi = try NativeType.opaque(named: value.type.name)
-        let read = try value.type.method(
+        let read = try await value.type.method(
             named: "readAfter(_:)",
             as: ((AsyncGate) async -> Int64).self,
             receiverABI: abi
         )
-        let add = try value.type.method(
+        let add = try await value.type.method(
             named: "add(_:)",
             as: ((Int64) -> Void).self,
             receiverABI: abi,
@@ -2588,23 +2588,23 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         let counts = ArgumentCounts()
         let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
         let abi = try NativeType.opaque(named: value.type.name)
-        let read = try value.type.method(
+        let read = try await value.type.method(
             named: "read() -> Swift.Int64",
             as: (() -> RuntimeWordResult).self,
             receiverABI: abi
         )
-        let readAsync = try value.type.method(
+        let readAsync = try await value.type.method(
             named: "readAsync() async -> Swift.Int64",
             as: (() async -> RuntimeWordResult).self,
             receiverABI: abi
         )
-        let add = try value.type.method(
+        let add = try await value.type.method(
             named: "add(_:)",
             as: ((Int64) -> Void).self,
             receiverABI: abi,
             mutating: true
         )
-        let take = try value.type.method(
+        let take = try await value.type.method(
             named: "takeNumberAsync() async -> Swift.Int64",
             as: (() async -> RuntimeWordResult).self,
             receiverABI: abi,
@@ -2631,17 +2631,17 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         do {
             let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
             let abi = try NativeType.opaque(named: value.type.name)
-            let read = try value.type.method(
+            let read = try await value.type.method(
                 named: "read() -> Swift.Int64",
                 as: (() -> RuntimeWordResult).self,
                 receiverABI: abi
             )
-            let readAsync = try value.type.method(
+            let readAsync = try await value.type.method(
                 named: "readAsync() async -> Swift.Int64",
                 as: (() async -> RuntimeWordResult).self,
                 receiverABI: abi
             )
-            let add = try value.type.method(
+            let add = try await value.type.method(
                 named: "add(_:)",
                 as: ((Int64) -> Void).self,
                 receiverABI: abi,
@@ -2671,18 +2671,18 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         let counts = ArgumentCounts()
         let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
         let abi = try NativeType.opaque(named: value.type.name)
-        let read = try value.type.method(
+        let read = try await value.type.method(
             named: "readAsync()",
             as: (() async -> Int64).self,
             receiverABI: abi
         )
-        let add = try value.type.method(
+        let add = try await value.type.method(
             named: "addThenThrow(_:)",
             as: ((Int64) async throws -> Void).self,
             receiverABI: abi,
             mutating: true
         )
-        let take = try value.type.method(
+        let take = try await value.type.method(
             named: "takeNumberAsync()",
             as: (() async -> Int64).self,
             receiverABI: abi,

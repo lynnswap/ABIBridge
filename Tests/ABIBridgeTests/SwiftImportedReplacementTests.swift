@@ -73,21 +73,21 @@ struct SwiftImportedReplacementTests {
 
     @Test func sendableImportedMembersKeepTheirReceiverAndOriginal() async throws {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
-        let type = try fixture.runtime.swiftType(
+        let type = try await fixture.runtime.swiftType(
             named: fixture.module + ".ReplacementValue",
             as: Int64.self,
             in: fixture.providerScope
         )
-        let target = try type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
-        let sendableTarget = try type.method(
+        let target = try await type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
+        let sendableTarget = try await type.method(
             named: "scalar(_:)",
             as: (@Sendable (Int64) -> Int64).self
         )
-        let replacement = try type.method(
+        let replacement = try await type.method(
             named: "replacementScalar(_:)",
             as: ((Int64) -> Int64).self
         )
-        let sendableReplacement = try type.method(
+        let sendableReplacement = try await type.method(
             named: "replacementScalar(_:)",
             as: (@Sendable (Int64) -> Int64).self
         )
@@ -233,13 +233,13 @@ struct SwiftImportedReplacementTests {
         #expect(try unsafe textOracle.unsafeInvoke(input) == "replacement:" + input)
         #expect(try unsafe plan.slots[0].original!.unsafeInvoke(input) == "original:" + input)
         try plan.restore()
-        let type = try fixture.runtime.swiftType(
+        let type = try await fixture.runtime.swiftType(
             named: fixture.module + ".ReplacementValue",
             as: Int64.self,
             in: fixture.providerScope
         )
-        let target = try type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
-        let replacement = try type.method(
+        let target = try await type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
+        let replacement = try await type.method(
             named: "replacementScalar(_:)",
             as: ((Int64) -> Int64).self
         )

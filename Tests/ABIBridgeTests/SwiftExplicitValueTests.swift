@@ -139,14 +139,14 @@ struct SwiftExplicitValueTests {
     }
 
     @Test func memberInitializationAndSetterTransferOwnedEnumPayloads() async throws {
-        let type = try ABIRuntime.shared.swiftType(
+        let type = try await ABIRuntime.shared.swiftType(
             named: "ManagedSwiftFixtures.ExplicitValueStore",
                                                          as: ExplicitValueStore.self)
         let create = try type.initializer(
             named: "init(_:)",
             as: ((ManagedChoice) -> ExplicitValueStore).self
         )
-        let get = try type.getter(named: "value", as: (() -> ManagedChoice).self)
+        let get = try await type.getter(named: "value", as: (() -> ManagedChoice).self)
         let set = try type.setter(named: "value", as: ManagedChoice.self)
         var receiver: ExplicitValueStore?
         weak var observed: LifetimeToken?

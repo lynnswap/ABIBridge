@@ -83,7 +83,7 @@ final class CompiledSwiftReplacementFixture {
     ) async throws {
         let original = try await symbol("ReplacementRenderer." + name)
         let replacement = try await symbol("ReplacementRenderer." + replacement)
-        let type = try runtime.swiftType(
+        let type = try await runtime.swiftType(
             named: module + ".ReplacementRenderer",
             in: providerScope
         )
@@ -249,7 +249,7 @@ struct SwiftReplacementTests {
             as: ((Int64) -> Int64).self,
             in: fixture.providerScope
         )
-        let captured = try fixture.runtime.object(object).method(
+        let captured = try await fixture.runtime.object(object).method(
             named: "scalar(_:)",
             as: ((Int64) -> Int64).self
         )

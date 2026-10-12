@@ -10,23 +10,23 @@ struct SwiftVirtualReplacementTests {
         let fixture = try CompiledSwiftReplacementFixture(writable: false);
         defer { fixture.cleanup() }
         let name = fixture.module + ".ReplacementRenderer"
-        let type = try fixture.runtime.swiftType(named: name, in: fixture.providerScope)
+        let type = try await fixture.runtime.swiftType(named: name, in: fixture.providerScope)
         let make = try await fixture.runtime.swiftFunction(
             named: fixture.module + ".makeRenderer() -> " + name,
             as: (() -> AnyObject).self,
             in: fixture.providerScope
         )
         let object = try unsafe make.unsafeInvoke()
-        let target = try type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
-        let sendableTarget = try type.method(
+        let target = try await type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
+        let sendableTarget = try await type.method(
             named: "scalar(_:)",
             as: (@Sendable (Int64) -> Int64).self
         )
-        let replacement = try type.method(
+        let replacement = try await type.method(
             named: "replacementScalar(_:)",
             as: ((Int64) -> Int64).self
         )
-        let sendableReplacement = try type.method(
+        let sendableReplacement = try await type.method(
             named: "replacementScalar(_:)",
             as: (@Sendable (Int64) -> Int64).self
         )
@@ -62,16 +62,16 @@ struct SwiftVirtualReplacementTests {
         let fixture = try CompiledSwiftReplacementFixture(writable: false)
         defer { fixture.cleanup() }
         let baseName = fixture.module + ".ReplacementRenderer"
-        let base = try fixture.runtime.swiftType(named: baseName, in: fixture.providerScope)
-        let inherited = try fixture.runtime.swiftType(
+        let base = try await fixture.runtime.swiftType(named: baseName, in: fixture.providerScope)
+        let inherited = try await fixture.runtime.swiftType(
             named: fixture.module + ".InheritedRenderer",
             in: fixture.providerScope
         )
-        let overridden = try fixture.runtime.swiftType(
+        let overridden = try await fixture.runtime.swiftType(
             named: fixture.module + ".OverridingRenderer",
             in: fixture.providerScope
         )
-        let replacement = try base.method(
+        let replacement = try await base.method(
             named: "replacementScalar(_:)",
             as: ((Int64) -> Int64).self
         )
@@ -90,7 +90,7 @@ struct SwiftVirtualReplacementTests {
             objects.append(try unsafe make.unsafeInvoke())
         }
         for (index, type) in [base, inherited, overridden].enumerated() {
-            let method = try type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
+            let method = try await type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
             let plan = try unsafe method.prepareVirtualReplacement(with: replacement)
             let original = plan.original
             #expect(plan.status == .prepared)
@@ -119,7 +119,7 @@ struct SwiftVirtualReplacementTests {
                 try unsafe original.unsafeInvoke(on: objects[index], 40) == (index == 2 ? 44 : 42)
             )
         }
-        let final = try base.method(named: "finalScalar(_:)", as: ((Int64) -> Int64).self)
+        let final = try await base.method(named: "finalScalar(_:)", as: ((Int64) -> Int64).self)
         #expect(throws: ABIResolutionError.self) {
             try unsafe final.prepareVirtualReplacement(with: replacement)
         }
@@ -129,15 +129,15 @@ struct SwiftVirtualReplacementTests {
         let fixture = try CompiledSwiftReplacementFixture(writable: false)
         defer { fixture.cleanup() }
         let name = fixture.module + ".ReplacementRenderer"
-        let type = try fixture.runtime.swiftType(named: name, in: fixture.providerScope)
+        let type = try await fixture.runtime.swiftType(named: name, in: fixture.providerScope)
         let make = try await fixture.runtime.swiftFunction(
             named: fixture.module + ".makeRenderer() -> " + name,
             as: (() -> AnyObject).self,
             in: fixture.providerScope
         )
         let object = try unsafe make.unsafeInvoke()
-        let method = try type.method(named: "text(_:)", as: ((String) -> String).self)
-        let replacement = try type.method(
+        let method = try await type.method(named: "text(_:)", as: ((String) -> String).self)
+        let replacement = try await type.method(
             named: "replacementText(_:)",
             as: ((String) -> String).self
         )
@@ -192,12 +192,12 @@ struct SwiftVirtualReplacementTests {
         )
         defer { child.cleanup() }
         let runtime = ABIRuntime(), childName = childModule + ".Child"
-        let type = try runtime.swiftType(named: childName, in: .path(child.libraryURL))
-        let parentType = try runtime.swiftType(
+        let type = try await runtime.swiftType(named: childName, in: .path(child.libraryURL))
+        let parentType = try await runtime.swiftType(
             named: parentModule + ".Parent",
             in: .path(parent.libraryURL)
         )
-        let replacement = try parentType.method(
+        let replacement = try await parentType.method(
             named: "replacement(_:)",
             as: ((Int64) -> Int64).self
         )
@@ -218,7 +218,7 @@ struct SwiftVirtualReplacementTests {
                 child.libraryURL, Int64(43)
             ),
         ] {
-            let method = try type.method(
+            let method = try await type.method(
                 named: methodName + "(_:)",
                 as: ((Int64) -> Int64).self
             )
@@ -242,17 +242,17 @@ struct SwiftVirtualReplacementTests {
         defer { fixture.cleanup() }
         let childName = fixture.module + ".CoalescedChild",
             parentName = fixture.module + ".CoalescedParent"
-        let type = try fixture.runtime.swiftType(named: childName, in: fixture.providerScope)
+        let type = try await fixture.runtime.swiftType(named: childName, in: fixture.providerScope)
         let make = try await fixture.runtime.swiftFunction(
             named: fixture.module + ".makeCoalescedChild() -> " + childName,
             as: (() -> AnyObject).self,
             in: fixture.providerScope
         )
         let object = try unsafe make.unsafeInvoke()
-        let inherited = try type.method(named: "value()", as: (() -> Int64).self)
-        let extra = try type.method(named: "extra()", as: (() -> Int64).self)
-        let final = try type.method(named: "finalValue()", as: (() -> Int64).self)
-        let replacement = try type.method(named: "replacement()", as: (() -> Int64).self)
+        let inherited = try await type.method(named: "value()", as: (() -> Int64).self)
+        let extra = try await type.method(named: "extra()", as: (() -> Int64).self)
+        let final = try await type.method(named: "finalValue()", as: (() -> Int64).self)
+        let replacement = try await type.method(named: "replacement()", as: (() -> Int64).self)
         let valueCall = try await fixture.runtime.swiftFunction(
             named: fixture.callerModule + ".coalescedValue(" + parentName + ") -> Swift.Int64",
             as: ((AnyObject) -> Int64).self,
@@ -334,9 +334,9 @@ struct SwiftVirtualReplacementTests {
             ),
             in: .path(parent.libraryURL)
         )
-        let type = try runtime.swiftType(named: name, in: .path(child.libraryURL))
-        let method = try type.method(named: "value()", as: (() -> Int64).self)
-        let replacement = try type.method(named: "replacement()", as: (() -> Int64).self)
+        let type = try await runtime.swiftType(named: name, in: .path(child.libraryURL))
+        let method = try await type.method(named: "value()", as: (() -> Int64).self)
+        let replacement = try await type.method(named: "replacement()", as: (() -> Int64).self)
         let make = try await runtime.swiftFunction(
             named: childModule + ".make() -> " + name,
             as: (() -> AnyObject).self,
