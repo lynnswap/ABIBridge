@@ -108,7 +108,7 @@ private struct WrongPair: ABIBridgeValue {
 
 struct NativeValueTests {
     @Test func laterArgumentFailureKeepsEarlierOwnersAliveUntilCleanup() async throws {
-        let function = try await ABIRuntime.shared.cFunction(
+        let function = try ABIRuntime.shared.cFunction(
             named: "ABICTransformPair",
             as: ((ScopedPair, RejectedCounter) -> PairValue).self
         )
@@ -120,7 +120,7 @@ struct NativeValueTests {
     }
 
     @Test func customWrappersUseTheirNativeLayout() async throws {
-        let function = try await ABIRuntime.shared.cFunction(
+        let function = try ABIRuntime.shared.cFunction(
             named: "ABICTransformPair", as: ((PairValue, UnsafeMutablePointer<Int32>) -> PairValue).self
         )
         var calls: Int32 = 0
@@ -136,7 +136,7 @@ struct NativeValueTests {
     }
 
     @Test func runtimeSignaturesReturnCastableValues() async throws {
-        let function = try await ABIRuntime.shared.cFunction(
+        let function = try ABIRuntime.shared.cFunction(
             named: "ABICTransformPair",
             signature: .init(parameters: [PairValue.abiType, .pointer], returns: PairValue.abiType)
         )
@@ -151,7 +151,7 @@ struct NativeValueTests {
     }
 
     @Test func runtimeSignaturesValidateArgumentsBeforeDispatch() async throws {
-        let function = try await ABIRuntime.shared.cFunction(
+        let function = try ABIRuntime.shared.cFunction(
             named: "ABICTransformPair",
             signature: .init(parameters: [PairValue.abiType, .pointer], returns: PairValue.abiType)
         )
@@ -196,13 +196,13 @@ struct NativeValueTests {
     }
 
     @Test func adoptedResourcesAndOptionalPointerWrappers() async throws {
-        let make = try await ABIRuntime.shared.cFunction(
+        let make = try ABIRuntime.shared.cFunction(
             named: "ABICCreateResource", as: ((UnsafeMutablePointer<Int32>) -> ResourceValue).self
         )
-        let read = try await ABIRuntime.shared.cFunction(
+        let read = try ABIRuntime.shared.cFunction(
             named: "ABICReadResource", as: ((ResourceValue) -> Int32).self
         )
-        let echo = try await ABIRuntime.shared.cFunction(
+        let echo = try ABIRuntime.shared.cFunction(
             named: "ABICPointer", as: ((BorrowedResource?) -> BorrowedResource?).self
         )
         var live: Int32 = 0
@@ -219,7 +219,7 @@ struct NativeValueTests {
     }
 
     @Test func failedConversionsReleaseAdoptedResources() async throws {
-        let make = try await ABIRuntime.shared.cFunction(
+        let make = try ABIRuntime.shared.cFunction(
             named: "ABICCreateResource", as: ((UnsafeMutablePointer<Int32>) -> RejectingResource).self
         )
         var live: Int32 = 0
@@ -230,7 +230,7 @@ struct NativeValueTests {
     }
 
     @Test func invalidArgumentLayoutStopsBeforeDispatchAndCleansUp() async throws {
-        let function = try await ABIRuntime.shared.cFunction(
+        let function = try ABIRuntime.shared.cFunction(
             named: "ABICTransformPair", as: ((WrongPair, UnsafeMutablePointer<Int32>) -> PairValue).self
         )
         let events = Events()
@@ -299,13 +299,13 @@ struct NativeValueTests {
         #expect(throws: NativeValueError.self) { try NativeType.opaque(named: "invalid", size: -1) }
         #expect(throws: NativeValueError.self) { try NativeType.opaque(named: "invalid", alignment: 3) }
         let opaque = try NativeType.opaque(named: "Opaque", size: 16, alignment: 8)
-        await #expect(throws: ABIResolutionError.self) {
-            _ = try await ABIRuntime.shared.cFunction(
+        #expect(throws: ABIResolutionError.self) {
+            _ = try ABIRuntime.shared.cFunction(
                 named: "ABICAnswer", signature: .init(parameters: [], returns: opaque)
             )
         }
-        await #expect(throws: ABIResolutionError.self) {
-            _ = try await ABIRuntime.shared.cFunction(
+        #expect(throws: ABIResolutionError.self) {
+            _ = try ABIRuntime.shared.cFunction(
                 named: "ABICAnswer", as: (() -> PairValue?).self
             )
         }

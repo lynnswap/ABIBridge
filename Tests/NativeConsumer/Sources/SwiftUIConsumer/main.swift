@@ -33,14 +33,14 @@ let library = URL(fileURLWithPath: CommandLine.arguments[1])
 let runtime = ABIRuntime()
 let measurePreparation = CommandLine.arguments.dropFirst(2).contains("--measure-preparation")
 let preparationStart = ContinuousClock.now
-let echo = try await runtime.swiftFunction(
+let echo = try runtime.swiftFunction(
     named: "SwiftUIPlugin.echo<A where A: SwiftUI.View>(A) -> A",
     as: ((Text) -> Text).self, genericArguments: [.type(Text.self)], in: .path(library))
 let firstPreparation = preparationStart.duration(to: .now)
 let echoed = try unsafe echo.unsafeInvoke(Text(verbatim: "Generic SwiftUI value"))
 if measurePreparation {
     let repeatedStart = ContinuousClock.now
-    let repeated = try await runtime.swiftFunction(
+    let repeated = try runtime.swiftFunction(
         named: "SwiftUIPlugin.echo<A where A: SwiftUI.View>(A) -> A",
         as: ((Text) -> Text).self, genericArguments: [.type(Text.self)], in: .path(library))
     let repeatedPreparation = repeatedStart.duration(to: .now)
@@ -53,14 +53,16 @@ if measurePreparation {
 }
 precondition(pixels(echoed) == pixels(Text(verbatim: "Generic SwiftUI value")))
 do {
-    _ = try await runtime.swiftFunction(
+    _ = try runtime.swiftFunction(
         named: "SwiftUIPlugin.echo<A where A: SwiftUI.View>(A) -> A",
         as: ((Int64) -> Int64).self, genericArguments: [.type(Int64.self)], in: .path(library))
     fatalError("Expected the View constraint to reject Int64")
 } catch ABIResolutionError.signatureMismatch {}
-let make = try await runtime.swiftFunction(named: "SwiftUIPlugin.makeView(_:_:)",
+let make = try runtime.swiftFunction(
+    named: "SwiftUIPlugin.makeView(_:_:)",
     as: ((String, NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftValue).self, in: .path(library))
-let host = try await runtime.swiftFunction(named: "SwiftUIPlugin.makeHost(_:_:)",
+let host = try runtime.swiftFunction(
+    named: "SwiftUIPlugin.makeHost(_:_:)",
     as: ((String, NativeSwiftClosure<(Int64) -> Int64>) -> NSView).self, in: .path(library))
 let title = "Unimportable SwiftUI provider"
 let expected = pixels(VStack { Text(verbatim: title); Text("Value: 42") }.padding().background(Color.yellow))
@@ -75,7 +77,7 @@ do {
 }
 var retainedView: NativeSwiftView? = try NativeSwiftView(opaque!)
 opaque = nil
-await runtime.removeCachedResults()
+runtime.removeCachedResults()
 precondition(observed != nil)
 var copiedView = retainedView
 retainedView = nil
@@ -85,7 +87,8 @@ copiedView = nil
 precondition(observed == nil)
 destroyed.state.withLock { precondition($0) }
 
-let number = try await runtime.swiftFunction(named: "SwiftUIPlugin.makeNumber()",
+let number = try runtime.swiftFunction(
+    named: "SwiftUIPlugin.makeNumber()",
     as: (() -> NativeSwiftValue).self, in: .path(library))
 let numberResult = try unsafe number.unsafeInvoke()
 do {

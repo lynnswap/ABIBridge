@@ -5,11 +5,11 @@ Select a class method by its source declaration and replace the entry in that cl
 ## Prepare and publish
 
 ```swift
-let type = try await runtime.swiftType(named: "Rendering.Renderer")
-let method = try await type.method(
+let type = try runtime.swiftType(named: "Rendering.Renderer")
+let method = try type.method(
     named: "render(_:)", as: ((String) -> String).self
 )
-let replacement = try await type.method(
+let replacement = try type.method(
     named: "debugRender(_:)", as: ((String) -> String).self
 )
 let plan = try unsafe method.prepareVirtualReplacement(with: replacement)

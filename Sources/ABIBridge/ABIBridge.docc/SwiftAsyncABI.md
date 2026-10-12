@@ -3,7 +3,7 @@
 Resolve an async function with its native function metatype, then await ``NativeSwiftFunction``:
 
 ```swift
-let load = try await ABIRuntime.shared.swiftFunction(
+let load = try ABIRuntime.shared.swiftFunction(
     named: "Example.load(_:)",
     as: (@concurrent (String) async throws -> String).self
 )
@@ -13,7 +13,7 @@ let contents = try unsafe await load.unsafeInvoke("settings")
 For a `nonisolated(nonsending)` declaration, use its caller-isolated metatype:
 
 ```swift
-let process = try await ABIRuntime.shared.swiftFunction(
+let process = try ABIRuntime.shared.swiftFunction(
     named: "Example.process(_:)",
     as: (nonisolated(nonsending) (String) async -> String).self
 )

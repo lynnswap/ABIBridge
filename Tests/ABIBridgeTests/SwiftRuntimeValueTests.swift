@@ -56,14 +56,14 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func ordinaryRuntimeResultsRequireScopedInvocation() async throws {
         let runtime = ABIRuntime.shared
-        let copy = try await runtime.swiftFunction(
+        let copy = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
             as: ((Int64) -> NativeSwiftBorrowedValue).self,
             genericArguments: [.type(Int64.self)]
         )
         #expect(throws: ABIResolutionError.self) { try unsafe copy.unsafeInvoke(42) }
         typealias Producer = NativeSwiftClosure<() -> NativeSwiftBorrowedValue>
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeRuntimeProducer<A>(A) -> () -> A",
             as: ((Int64) -> Producer).self,
             genericArguments: [.type(Int64.self)]
@@ -84,37 +84,37 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         )
         typealias Inspect = NativeSwiftClosure<(BorrowedSnapshot) throws -> Int64>
         let runtime = ABIRuntime.shared
-        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair")
+        let type = try runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair")
         let abi = try NativeType.structure(named: type.name, fields: [.int64, .int64])
         let abis = [type: abi]
         let nativeSnapshot =
             "(lead: Swift.Int8, record: ManagedSwiftFixtures.RuntimeFixedPair, nested: (callback: (Swift.Int64) -> Swift.Int64, text: Swift.String, tail: Swift.Int8))"
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.makeCompositionSnapshot(Swift.AnyObject, Swift.Int64, Swift.Int64, Swift.String) -> "
                 + nativeSnapshot,
             as: ((AnyObject, Int64, Int64, String) -> Snapshot).self,
             valueABIs: abis
         )
-        let echo = try await runtime.swiftFunction(
+        let echo = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.echoCompositionSnapshot(\(nativeSnapshot)) -> "
                 + nativeSnapshot,
             as: ((Snapshot) -> Snapshot).self,
             valueABIs: abis
         )
-        let consume = try await runtime.swiftFunction(
+        let consume = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.consumeCompositionSnapshot(__owned \(nativeSnapshot)) -> "
                 + nativeSnapshot,
             as: ((NativeSwiftConsuming<Snapshot>) -> Snapshot).self,
             valueABIs: abis
         )
-        let inspect = try await runtime.swiftFunction(
+        let inspect = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.inspectCompositionSnapshot(\(nativeSnapshot), (\(nativeSnapshot)) throws -> Swift.Int64) throws -> Swift.Int64",
             as: ((Snapshot, Inspect) throws -> Int64).self,
             valueABIs: abis
         )
-        let sum = try await type.method(named: "sum()", as: (() -> Int64).self, receiverABI: abi)
+        let sum = try type.method(named: "sum()", as: (() -> Int64).self, receiverABI: abi)
         let text = String(repeating: "composed tuple ", count: 80)
         let deaths = RuntimeValueDeaths()
         #expect(MemoryLayout<NativeSwiftValue>.size != MemoryLayout<RuntimeFixedPair>.size)
@@ -147,41 +147,41 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func wholeRuntimeTuplesUseSwiftStorageForCopyTakeAndInout() async throws {
         let runtime = ABIRuntime.shared
-        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair")
+        let type = try runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair")
         let abi = try NativeType.structure(named: type.name, fields: [.int64, .int64])
         let native =
             "(lead: Swift.Int8, record: ManagedSwiftFixtures.RuntimeFixedPair, nested: (callback: (Swift.Int64) -> Swift.Int64, text: Swift.String, tail: Swift.Int8))"
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.makeCompositionSnapshot(Swift.AnyObject, Swift.Int64, Swift.Int64, Swift.String) -> "
                 + native,
             as: ((AnyObject, Int64, Int64, String) -> NativeSwiftValue).self,
             valueABIs: [type: abi]
         )
-        let echo = try await runtime.swiftFunction(
+        let echo = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.echoCompositionSnapshot(\(native)) -> " + native,
             as: ((NativeSwiftValue) -> NativeSwiftValue).self,
             valueABIs: [type: abi]
         )
-        let copy = try await runtime.swiftFunction(
+        let copy = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
             as: ((NativeSwiftValue) -> NativeSwiftValue).self,
             genericArguments: [.type(CompositionSnapshot.self)]
         )
-        let mutate = try await runtime.swiftFunction(
+        let mutate = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.mutateCompositionSnapshot(inout \(native), Swift.Int64) -> ()",
             as: ((NativeSwiftInout<NativeSwiftValue>, Int64) -> Void).self,
             valueABIs: [type: abi]
         )
-        let mutateBorrow = try await runtime.swiftFunction(
+        let mutateBorrow = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.mutateCompositionSnapshot(inout \(native), Swift.Int64) -> ()",
             as: ((NativeSwiftInout<NativeSwiftBorrowedValue>, Int64) -> Void).self,
             valueABIs: [type: abi]
         )
         typealias Edit = NativeSwiftClosure<(NativeSwiftBorrowedValue) throws -> Void>
-        let edit = try await runtime.swiftFunction(
+        let edit = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.editCompositionSnapshot(inout \(native), (inout \(native)) throws -> ()) throws -> ()",
             as: ((NativeSwiftInout<NativeSwiftValue>, Edit) throws -> Void).self,
@@ -229,7 +229,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
     @MainActor @Test func genericFunctionDataDoesNotRequireCallablePreparation() async throws {
         typealias Value = @MainActor (Int64) -> Int64
         let runtime = ABIRuntime.shared
-        let copy = try await runtime.swiftFunction(
+        let copy = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
             as: ((@escaping Value) -> NativeSwiftValue).self,
             genericArguments: [.type(Value.self)]
@@ -238,7 +238,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         let value = try unsafe copy.unsafeInvoke(first)
         let callable = try value.take(as: Value.self)
         #expect(callable(35) == 42)
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeRuntimeProducer<A>(A) -> () -> A",
             as: ((@escaping Value) -> NativeSwiftClosure<() -> NativeSwiftValue>).self,
             genericArguments: [.type(Value.self)]
@@ -248,7 +248,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         let returned = try unsafe producer.unsafeInvoke().take(as: Value.self)
         #expect(returned(33) == 42)
         typealias Extended = @MainActor (any Collection<Int>) -> Int
-        let extendedCopy = try await runtime.swiftFunction(
+        let extendedCopy = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
             as: ((@escaping Extended) -> NativeSwiftValue).self,
             genericArguments: [.type(Extended.self)]
@@ -257,7 +257,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         let extendedValue = try unsafe extendedCopy.unsafeInvoke(extended).take(as: Extended.self)
         #expect(extendedValue([40, 2]) == 42)
         typealias Metatype = @MainActor (any RuntimeClassLeft<Int>.Type) -> Int
-        let metatypeCopy = try await runtime.swiftFunction(
+        let metatypeCopy = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
             as: ((@escaping Metatype) -> NativeSwiftValue).self,
             genericArguments: [.type(Metatype.self)]
@@ -273,12 +273,12 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         let runtime = ABIRuntime.shared
         typealias Callback = NativeSwiftClosure<(Int64) -> Int64>
         typealias Inspect = NativeSwiftClosure<(NativeSwiftBorrowedValue) throws -> Int64>
-        let invoke = try await runtime.swiftFunction(
+        let invoke = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.invokeCompositionClosure((Swift.Int64) -> Swift.Int64, Swift.Int64) -> Swift.Int64",
             as: ((NativeSwiftBorrowedValue, Int64) -> Int64).self
         )
-        let inspect = try await runtime.swiftFunction(
+        let inspect = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.inspectCompositionClosure((Swift.Int64) -> Swift.Int64, ((Swift.Int64) -> Swift.Int64) throws -> Swift.Int64) throws -> Swift.Int64",
             as: ((Callback, Inspect) throws -> Int64).self
@@ -299,13 +299,13 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         typealias Callback = NativeSwiftClosure<(Int64) -> Int64>
         typealias Edit = NativeSwiftClosure<(NativeSwiftInout<Callback>) throws -> Void>
         let runtime = ABIRuntime.shared
-        let swap = try await runtime.swiftFunction(
+        let swap = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.swapRuntimeClosures<A>(inout (A) -> A, inout (A) -> A) -> ()",
             as: ((NativeSwiftInout<Callback>, NativeSwiftInout<Callback>) -> Void).self,
             genericArguments: [.type(Int64.self)]
         )
-        let visit = try await runtime.swiftFunction(
+        let visit = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitRuntimeClosure<A>(inout (A) -> A, (inout (A) -> A) throws -> ()) throws -> ()",
             as: ((NativeSwiftInout<Callback>, Edit) throws -> Void).self,
@@ -343,7 +343,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
             (NativeSwiftInout<Callback>, NativeSwiftInout<Callback>) throws -> Int64
         >
         let runtime = ABIRuntime.shared
-        let acquire = try await runtime.swiftFunction(
+        let acquire = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitNestedClosure(((Swift.Int64) -> Swift.Int64) throws -> Swift.Int64) throws -> Swift.Int64",
             as: ((Capture) throws -> Int64).self
@@ -356,7 +356,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         _ = try unsafe acquire.unsafeInvoke(Capture(capture))
         let expired = try #require(saved.number)
         #expect(throws: NativeSwiftBorrowError.expiredBorrow) { try expired.copy() }
-        let visit = try await runtime.swiftFunction(
+        let visit = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitRuntimeClosurePair<A>(inout (A) -> A, inout (A) -> A, (inout (A) -> A, inout (A) -> A) throws -> Swift.Int64) throws -> Swift.Int64",
             as: ((NativeSwiftInout<Callback>, NativeSwiftInout<Callback>, Edit) throws -> Int64)
@@ -416,7 +416,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         >
         let runtime = ABIRuntime.shared
         func make<Value>(_ value: Value) async throws -> NativeSwiftValue {
-            let factory = try await runtime.swiftFunction(
+            let factory = try runtime.swiftFunction(
                 named: "ManagedSwiftFixtures.makeRuntimeProducer<A>(A) -> () -> A",
                 as: ((Value) -> NativeSwiftClosure<() -> NativeSwiftValue>).self,
                 genericArguments: [.type(Value.self)]
@@ -432,17 +432,17 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
             input = try await make(RuntimeWeakRecord(object, 42))
         }
         let abi = try NativeType.opaque(named: input.type.name)
-        let number = try await input.type.getter(
+        let number = try input.type.getter(
             named: "number",
             as: (() -> Int64).self,
             receiverABI: abi
         )
-        let hasObject = try await input.type.method(
+        let hasObject = try input.type.method(
             named: "hasObject()",
             as: (() -> Bool).self,
             receiverABI: abi
         )
-        let transform = try await runtime.swiftFunction(
+        let transform = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.transformRuntimeTuple<A>((Swift.Int8, A, Swift.Int64), ((Swift.Int8, A, Swift.Int64)) throws -> (Swift.Int8, A, Swift.Int64)) throws -> (Swift.Int8, A, Swift.Int64)",
             as: ((Owned, Body) throws -> Owned).self,
@@ -466,7 +466,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         }
         #expect(try unsafe hasObject.unsafeInvoke(on: input))
 
-        let pack = try await runtime.swiftFunction(
+        let pack = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.pairedPackGeneric<each A, B where A.shape == B.shape>(repeat (A, B)) -> (repeat (B, A))",
             as: (((Void, NativeSwiftValue)) -> (NativeSwiftValue, Void)).self,
@@ -478,7 +478,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         typealias PackBody = NativeSwiftClosure<
             (NativeSwiftBorrowedValue, Void) throws -> (NativeSwiftValue, Void)
         >
-        let transformPack = try await runtime.swiftFunction(
+        let transformPack = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.transformRuntimePack<each A>((repeat A) throws -> (repeat A), repeat A) throws -> (repeat A)",
             as: ((PackBody, NativeSwiftValue, Void) throws -> (NativeSwiftValue, Void)).self,
@@ -494,7 +494,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         #expect(try unsafe number.unsafeInvoke(on: callbackPacked.0) == 42)
         #expect(try unsafe hasObject.unsafeInvoke(on: callbackPacked.0))
 
-        let asynchronous = try await runtime.swiftFunction(
+        let asynchronous = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.transformRuntimeTupleAsync<A>((Swift.Int8, A, Swift.Int64), nonisolated(nonsending) ((Swift.Int8, A, Swift.Int64)) async throws -> (Swift.Int8, A, Swift.Int64)) async throws -> (Swift.Int8, A, Swift.Int64)",
             as: (nonisolated(nonsending) (Owned, AsyncBody) async throws -> Owned).self,
@@ -538,7 +538,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
             nonisolated(nonsending) (NativeSwiftBorrowedValue) async throws -> NativeSwiftValue
         >
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
             as: ((Whole) -> NativeSwiftValue).self,
             genericArguments: [.type(Whole.self)]
@@ -566,7 +566,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         var result: NativeSwiftValue?
         let task: Task<Void, any Error>
         if formalTuple {
-            let call = try await runtime.swiftFunction(
+            let call = try runtime.swiftFunction(
                 named: name,
                 as: (nonisolated(nonsending) (NativeSwiftValue, Body) async throws ->
                     NativeSwiftValue).self,
@@ -574,7 +574,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
             )
             task = Task { @MainActor in result = try unsafe await call.unsafeInvoke(input, body) }
         } else {
-            let call = try await runtime.swiftFunction(
+            let call = try runtime.swiftFunction(
                 named: name,
                 as: (nonisolated(nonsending) (Body, NativeSwiftValue) async throws ->
                     NativeSwiftValue).self,
@@ -599,10 +599,10 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func explicitRuntimeValueABIsComposeAcrossCallbacksAndMembers() async throws {
         let runtime = ABIRuntime.shared
-        let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair")
+        let type = try runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair")
         let abi = try NativeType.structure(named: type.name, fields: [.int64, .int64])
         let abis = [type: abi]
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.makeRuntimeFixedPair(Swift.Int64, Swift.Int64) -> ManagedSwiftFixtures.RuntimeFixedPair",
             as: ((Int64, Int64) -> NativeSwiftValue).self,
@@ -610,52 +610,52 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         )
         let value = try unsafe make.unsafeInvoke(35, 7)
         #expect(abis[value.type] == abi)
-        let sum = try await type.method(named: "sum()", as: (() -> Int64).self, receiverABI: abi)
+        let sum = try type.method(named: "sum()", as: (() -> Int64).self, receiverABI: abi)
         typealias Body = NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Int64>
         let body = try Body { value in
             do { return try unsafe sum.unsafeInvoke(on: value) } catch {
                 Issue.record(error); return -1
             }
         }
-        let inspect = try await runtime.swiftFunction(
+        let inspect = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.inspectRuntimeFixedPair(ManagedSwiftFixtures.RuntimeFixedPair, (ManagedSwiftFixtures.RuntimeFixedPair) -> Swift.Int64) -> Swift.Int64",
             as: ((NativeSwiftValue, Body) -> Int64).self,
             valueABIs: abis
         )
         #expect(try unsafe inspect.unsafeInvoke(value, body) == 42)
-        let member = try await type.method(
+        let member = try type.method(
             named: "inspect(_:)",
             as: ((Body) -> Int64).self,
             valueABIs: abis,
             receiverABI: abi
         )
         #expect(try unsafe member.unsafeInvoke(on: value, body) == 42)
-        let storeType = try await runtime.swiftType(
+        let storeType = try runtime.swiftType(
             named: "ManagedSwiftFixtures.RuntimeFixedPairStore"
         )
-        let construct = try await storeType.initializer(
+        let construct = try storeType.initializer(
             named: "init(_:)",
             as: ((NativeSwiftValue) -> RuntimeFixedPairStore).self,
             valueABIs: abis
         )
         let store = try unsafe construct.unsafeInvoke(value)
         #expect(value.isConsumed)
-        let getter = try await storeType.getter(
+        let getter = try storeType.getter(
             named: "value",
             as: (() -> NativeSwiftValue).self,
             valueABIs: abis
         )
         let first = try unsafe getter.unsafeInvoke(on: store)
         #expect(try unsafe sum.unsafeInvoke(on: first) == 42)
-        let echo = try await storeType.staticMethod(
+        let echo = try storeType.staticMethod(
             named: "echo(_:)",
             as: ((NativeSwiftValue) -> NativeSwiftValue).self,
             valueABIs: abis
         )
         let echoed = try unsafe echo.unsafeInvoke(first)
         #expect(try unsafe sum.unsafeInvoke(on: echoed) == 42 && !first.isConsumed)
-        let setter = try await storeType.setter(
+        let setter = try storeType.setter(
             named: "value",
             as: NativeSwiftValue.self,
             valueABIs: abis
@@ -665,7 +665,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         #expect(replacement.isConsumed)
         #expect(try unsafe sum.unsafeInvoke(on: getter.unsafeInvoke(on: store)) == 50)
         do {
-            _ = try await runtime.swiftFunction(
+            _ = try runtime.swiftFunction(
                 named:
                     "ManagedSwiftFixtures.makeRuntimeFixedPair(Swift.Int64, Swift.Int64) -> ManagedSwiftFixtures.RuntimeFixedPair",
                 as: ((Int64, Int64) -> NativeSwiftValue).self,
@@ -683,19 +683,19 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
             nonisolated(nonsending) (NativeSwiftBorrowing<Value>) async throws -> Int64
         >
         let runtime = ABIRuntime.shared
-        let consume = try await runtime.swiftFunction(
+        let consume = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitNonthrowingConsumingRuntimeValue<A where A: ~Swift.Copyable>(__owned A, (__owned A) -> Swift.Int64) -> Swift.Int64",
             as: ((NativeSwiftConsuming<Value>, Consume) -> Int64).self,
             genericArguments: [.type(Value.self)]
         )
-        let borrow = try await runtime.swiftFunction(
+        let borrow = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitRuntimeValue<A where A: ~Swift.Copyable>(A, (A) throws -> Swift.Int64) throws -> Swift.Int64",
             as: ((Value, Borrow) throws -> Int64).self,
             genericArguments: [.type(Value.self)]
         )
-        let borrowAsync = try await runtime.swiftFunction(
+        let borrowAsync = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitRuntimeValueAsync<A where A: ~Swift.Copyable>(A, nonisolated(nonsending) (A) async throws -> Swift.Int64) async throws -> Swift.Int64",
             as: (nonisolated(nonsending) (Value, AsyncBorrow) async throws -> Int64).self,
@@ -736,26 +736,26 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
             nonisolated(nonsending) (NativeSwiftValue, NativeSwiftValue) async -> Int64
         >
         let runtime = ABIRuntime.shared
-        let makeValue = try await runtime.swiftFunction(
+        let makeValue = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
             as: ((Int64) -> NativeSwiftValue).self
         )
         let value = try unsafe makeValue.unsafeInvoke(7)
-        let factory = try await runtime.swiftFunction(
+        let factory = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.makeMixedRuntimeReader<A, B>(A.Type, B.Type) -> (A, B) -> Swift.Int64",
             as: ((Int64.Type, NativeSwiftValue.Type) -> Reader).self,
             genericArguments: [.type(Int64.self), .type(NativeSwiftValue.self)]
         )
         let reader = try unsafe factory.unsafeInvoke(Int64.self, NativeSwiftValue.self)
-        let correct = try await runtime.swiftFunction(
+        let correct = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.callMixedRuntimeReader<A, B>((A, B) -> Swift.Int64, A, B) -> Swift.Int64",
             as: ((Reader, Int64, NativeSwiftValue) -> Int64).self,
             genericArguments: [.type(Int64.self), .type(NativeSwiftValue.self)]
         )
         #expect(try unsafe correct.unsafeInvoke(reader, 35, value) == 42)
-        let swapped = try await runtime.swiftFunction(
+        let swapped = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.callMixedRuntimeReader<A, B>((A, B) -> Swift.Int64, A, B) -> Swift.Int64",
             as: ((Reader, NativeSwiftValue, Int64) -> Int64).self,
@@ -765,14 +765,14 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
             try unsafe swapped.unsafeInvoke(reader, value, 35) as Int64
         }
 
-        let packFactory = try await runtime.swiftFunction(
+        let packFactory = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.makeRuntimePackReader<each A>(repeat A) -> (repeat A) -> Swift.Int64",
             as: ((Int64, NativeSwiftValue) -> Reader).self,
             genericArguments: [.pack([.type(Int64.self), .type(NativeSwiftValue.self)])]
         )
         let packReader = try unsafe packFactory.unsafeInvoke(35, value)
-        let packCall = try await runtime.swiftFunction(
+        let packCall = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.inspectRuntimePackReader<each A>((repeat A) -> Swift.Int64, repeat A) -> Swift.Int64",
             as: ((Reader, NativeSwiftValue, Int64) -> Int64).self,
@@ -783,14 +783,14 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         }
         #expect(try unsafe correct.unsafeInvoke(packReader, 35, value) == 42)
 
-        let asyncFactory = try await runtime.swiftFunction(
+        let asyncFactory = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.makeMixedRuntimeAsyncReader<A, B>(A.Type, B.Type) -> nonisolated(nonsending) (A, B) async -> Swift.Int64",
             as: ((Int64.Type, NativeSwiftValue.Type) -> AsyncReader).self,
             genericArguments: [.type(Int64.self), .type(NativeSwiftValue.self)]
         )
         let asyncReader = try unsafe asyncFactory.unsafeInvoke(Int64.self, NativeSwiftValue.self)
-        let asyncCorrect = try await runtime.swiftFunction(
+        let asyncCorrect = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.callMixedRuntimeAsyncReader<A, B>(nonisolated(nonsending) (A, B) async -> Swift.Int64, A, B) async -> Swift.Int64",
             as: (nonisolated(nonsending) (AsyncReader, Int64, NativeSwiftValue) async -> Int64)
@@ -798,7 +798,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
             genericArguments: [.type(Int64.self), .type(NativeSwiftValue.self)]
         )
         #expect(try unsafe await asyncCorrect.unsafeInvoke(asyncReader, 35, value) == 42)
-        let asyncSwapped = try await runtime.swiftFunction(
+        let asyncSwapped = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.callMixedRuntimeAsyncReader<A, B>(nonisolated(nonsending) (A, B) async -> Swift.Int64, A, B) async -> Swift.Int64",
             as: (nonisolated(nonsending) (AsyncReader, NativeSwiftValue, Int64) async -> Int64)
@@ -814,14 +814,14 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         typealias Inner = NativeSwiftClosure<(Int64) -> Int64>
         typealias Producer = NativeSwiftClosure<() -> Inner>
         let runtime = ABIRuntime.shared
-        let factory = try await runtime.swiftFunction(
+        let factory = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeRuntimeProducer<A>(A) -> () -> A",
             as: ((Inner) -> Producer).self,
             genericArguments: [.type(Inner.self)]
         )
         let producer = try unsafe factory.unsafeInvoke(Inner { $0 + 7 })
         #expect(try unsafe producer.unsafeInvoke().unsafeInvoke(35) == 42)
-        let call = try await runtime.swiftFunction(
+        let call = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.callNonthrowingNestedRuntimeProducer<A>(() -> (A) -> A, A) -> A",
             as: ((Producer, Int64) -> Int64).self,
@@ -836,7 +836,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         let runtime = ABIRuntime.shared
         typealias Copy = NativeSwiftClosure<(String) -> String>
         typealias Body = NativeSwiftClosure<(NativeSwiftConsuming<Copy>) -> Void>
-        let visit = try await runtime.swiftFunction(
+        let visit = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitOwnedNested<A>(A, () -> (), (__owned (A) -> A) -> ()) -> ()",
             as: ((String, NativeSwiftClosure<() -> Void>, Body) -> Void).self,
@@ -861,7 +861,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         #expect(counts.destructions == 1)
         typealias RuntimeCopy = NativeSwiftClosure<(NativeSwiftValue) -> NativeSwiftValue>
         typealias RuntimeBody = NativeSwiftClosure<(NativeSwiftConsuming<RuntimeCopy>) -> Void>
-        let runtimeVisit = try await runtime.swiftFunction(
+        let runtimeVisit = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitOwnedNested<A>(A, () -> (), (__owned (A) -> A) -> ()) -> ()",
             as: ((String, NativeSwiftClosure<() -> Void>, RuntimeBody) -> Void).self,
@@ -873,7 +873,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
             NativeSwiftClosure { counts.destroyed() },
             RuntimeBody { captured.nested = $0.value }
         )
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
             as: ((String) -> NativeSwiftValue).self,
             genericArguments: [.type(String.self)]
@@ -890,7 +890,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
     @Test func consumingNestedInputsReleaseTheirCaptureWhenTheHostThrows() async throws {
         typealias Copy = NativeSwiftClosure<(String) -> String>
         typealias Body = NativeSwiftClosure<(NativeSwiftConsuming<Copy>) throws -> Void>
-        let visit = try await ABIRuntime.shared.swiftFunction(
+        let visit = try ABIRuntime.shared.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitOwnedNestedThrowing<A>(A, () -> (), (__owned (A) -> A) throws -> ()) throws -> ()",
             as: ((String, NativeSwiftClosure<() -> Void>, Body) throws -> Void).self,
@@ -915,7 +915,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         typealias Body = NativeSwiftClosure<
             nonisolated(nonsending) (NativeSwiftConsuming<Copy>) async -> Void
         >
-        let visit = try await ABIRuntime.shared.swiftFunction(
+        let visit = try ABIRuntime.shared.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitOwnedNestedAsync<A>(A, () -> (), nonisolated(nonsending) (__owned nonisolated(nonsending) (A) async -> A) async -> ()) async -> ()",
             as: (nonisolated(nonsending) (String, NativeSwiftClosure<() -> Void>, Body) async ->
@@ -945,23 +945,23 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         let runtime = ABIRuntime.shared
         typealias Copy = NativeSwiftClosure<(Int64) -> Int64>
         typealias Caller = NativeSwiftClosure<(NativeSwiftConsuming<Copy>, Int64) -> Int64>
-        let concreteFactory = try await runtime.swiftFunction(
+        let concreteFactory = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeConcreteOwnedNestedCaller()",
             as: (() -> Caller).self
         )
-        let genericFactory = try await runtime.swiftFunction(
+        let genericFactory = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.makeOwnedNestedRuntimeCaller<A>(A.Type) -> (__owned (A) -> A, A) -> A",
             as: ((Int64.Type) -> Caller).self,
             genericArguments: [.type(Int64.self)]
         )
-        let genericCall = try await runtime.swiftFunction(
+        let genericCall = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.callOwnedNestedRuntimeCaller<A>((__owned (A) -> A, A) -> A, A, () -> ()) -> A",
             as: ((Caller, Int64, NativeSwiftClosure<() -> Void>) -> Int64).self,
             genericArguments: [.type(Int64.self)]
         )
-        let concreteCall = try await runtime.swiftFunction(
+        let concreteCall = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.callConcreteOwnedNestedCaller(_:_:_:)",
             as: ((Caller, Int64, NativeSwiftClosure<() -> Void>) -> Int64).self
         )
@@ -983,11 +983,11 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         typealias AsyncCaller = NativeSwiftClosure<
             nonisolated(nonsending) (NativeSwiftConsuming<AsyncCopy>, Int64) async -> Int64
         >
-        let asyncFactory = try await runtime.swiftFunction(
+        let asyncFactory = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeConcreteOwnedNestedAsyncCaller()",
             as: (() -> AsyncCaller).self
         )
-        let asyncCall = try await runtime.swiftFunction(
+        let asyncCall = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.callOwnedNestedRuntimeAsyncCaller<A>(nonisolated(nonsending) (__owned nonisolated(nonsending) (A) async -> A, A) async -> A, A, () -> ()) async -> A",
             as: (nonisolated(nonsending) (AsyncCaller, Int64, NativeSwiftClosure<() -> Void>) async
@@ -1003,25 +1003,25 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func runtimeInoutCallbacksMutateNoncopyableNativeStorageAndExpire() async throws {
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
         )
         let counts = ArgumentCounts()
         let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
-        let read = try await value.type.method(
+        let read = try value.type.method(
             named: "read()",
             as: (() -> Int64).self,
             receiverABI: .opaque(named: value.type.name)
         )
-        let add = try await value.type.method(
+        let add = try value.type.method(
             named: "add(_:)",
             as: ((Int64) -> Void).self,
             receiverABI: .opaque(named: value.type.name),
             mutating: true
         )
         typealias Body = NativeSwiftClosure<(NativeSwiftBorrowedValue) throws -> Void>
-        let visit = try await runtime.swiftFunction(
+        let visit = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitRuntimeInout<A where A: ~Swift.Copyable>(inout A, (inout A) throws -> ()) throws -> ()",
             as: ((NativeSwiftInout<NativeSwiftValue>, Body) throws -> Void).self,
@@ -1054,26 +1054,26 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func runtimeInoutCallbacksEnforceAccessDuringNestedNativeCalls() async throws {
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
             as: ((Int64) -> NativeSwiftValue).self
         )
         let value = try unsafe make.unsafeInvoke(42)
         typealias Body = NativeSwiftClosure<(NativeSwiftBorrowedValue) throws -> Void>
-        let visit = try await runtime.swiftFunction(
+        let visit = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitRuntimeInout<A where A: ~Swift.Copyable>(inout A, (inout A) throws -> ()) throws -> ()",
             as: ((NativeSwiftInout<NativeSwiftValue>, Body) throws -> Void).self,
             genericArguments: [.type(Int64.self)]
         )
-        let hold = try await runtime.swiftFunction(
+        let hold = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.holdRuntimeInout<A where A: ~Swift.Copyable>(inout A, () -> Swift.Bool) -> Swift.Bool",
             as: ((NativeSwiftInout<NativeSwiftBorrowedValue>, NativeSwiftClosure<() -> Bool>)
                 -> Bool).self,
             genericArguments: [.type(Int64.self)]
         )
-        let replace = try await runtime.swiftFunction(
+        let replace = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.replaceRuntimeValue<A where A: ~Swift.Copyable>(inout A, __owned A) -> ()",
             as: ((
@@ -1106,7 +1106,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
     @Test func typedInoutCallbacksWriteBackOnErrorAndReturnedClosuresSwapOwners() async throws {
         let runtime = ABIRuntime.shared
         typealias TextBody = NativeSwiftClosure<(NativeSwiftInout<String>) throws -> Void>
-        let visit = try await runtime.swiftFunction(
+        let visit = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitRuntimeInout<A where A: ~Swift.Copyable>(inout A, (inout A) throws -> ()) throws -> ()",
             as: ((NativeSwiftInout<String>, TextBody) throws -> Void).self,
@@ -1123,14 +1123,14 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         typealias Swap = NativeSwiftClosure<
             (NativeSwiftInout<NativeSwiftValue>, NativeSwiftInout<NativeSwiftValue>) -> Void
         >
-        let factory = try await runtime.swiftFunction(
+        let factory = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.makeRuntimeSwap<A where A: ~Swift.Copyable>(A.Type) -> (inout A, inout A) -> ()",
             as: ((Int64.Type) -> Swap).self,
             genericArguments: [.type(Int64.self)]
         )
         let swap = try unsafe factory.unsafeInvoke(Int64.self)
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
             as: ((Int64) -> NativeSwiftValue).self
         )
@@ -1145,7 +1145,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         typealias TextBody = NativeSwiftClosure<
             nonisolated(nonsending) (NativeSwiftInout<String>) async throws -> Void
         >
-        let visit = try await runtime.swiftFunction(
+        let visit = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitRuntimeInoutAsync<A where A: ~Swift.Copyable>(inout A, nonisolated(nonsending) (inout A) async throws -> ()) async throws -> ()",
             as: (nonisolated(nonsending) (NativeSwiftInout<String>, TextBody) async throws -> Void)
@@ -1166,21 +1166,21 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         } catch is NativeSwiftError {}
         #expect(buffer.value == "before after")
         typealias SyncBody = NativeSwiftClosure<(NativeSwiftInout<String>) -> Void>
-        let concrete = try await runtime.swiftFunction(
+        let concrete = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.visitStringInout(_:_:)",
             as: ((NativeSwiftInout<String>, SyncBody) -> Void).self
         )
         try unsafe concrete.unsafeInvoke(buffer, SyncBody { $0.value += "!" })
         #expect(buffer.value == "before after!")
         typealias Reader = NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Int64>
-        let factory = try await runtime.swiftFunction(
+        let factory = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.makeRuntimeInoutReader<A where A: ~Swift.Copyable>(A.Type) -> (inout A) -> Swift.Int64",
             as: ((Int64.Type) -> Reader).self,
             genericArguments: [.type(Int64.self)]
         )
         let reader = try unsafe factory.unsafeInvoke(Int64.self)
-        let inspect = try await runtime.swiftFunction(
+        let inspect = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.inspectRuntimeReader<A where A: ~Swift.Copyable>(A, (A) -> Swift.Int64) -> Swift.Int64",
             as: ((Int64, Reader) -> Int64).self,
@@ -1193,18 +1193,18 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func runtimeAsyncInoutCallbacksPreserveMutationAfterSuspensionAndFailure() async throws {
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
         )
         let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken {})
-        let add = try await value.type.method(
+        let add = try value.type.method(
             named: "addThenThrow(_:)",
             as: (nonisolated(nonsending) (Int64) async throws -> Void).self,
             receiverABI: .opaque(named: value.type.name),
             mutating: true
         )
-        let read = try await value.type.method(
+        let read = try value.type.method(
             named: "read()",
             as: (() -> Int64).self,
             receiverABI: .opaque(named: value.type.name)
@@ -1212,7 +1212,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         typealias Body = NativeSwiftClosure<
             nonisolated(nonsending) (NativeSwiftBorrowedValue) async throws -> Void
         >
-        let visit = try await runtime.swiftFunction(
+        let visit = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitRuntimeInoutAsync<A where A: ~Swift.Copyable>(inout A, nonisolated(nonsending) (inout A) async throws -> ()) async throws -> ()",
             as: (nonisolated(nonsending) (NativeSwiftInout<NativeSwiftValue>, Body) async throws ->
@@ -1237,7 +1237,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func consumingCallbackInputsTransferNoncopyableOwnership() async throws {
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
         )
@@ -1246,7 +1246,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         typealias Body = NativeSwiftClosure<
             (NativeSwiftConsuming<NativeSwiftValue>) throws -> Int64
         >
-        let visit = try await runtime.swiftFunction(
+        let visit = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitConsumingRuntimeValue<A where A: ~Swift.Copyable>(__owned A, (__owned A) throws -> Swift.Int64) throws -> Swift.Int64",
             as: ((NativeSwiftConsuming<NativeSwiftValue>, Body) throws -> Int64).self,
@@ -1258,7 +1258,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         }
         #expect(try unsafe visit.unsafeInvoke(NativeSwiftConsuming(value), body) == 42)
         #expect(value.isConsumed && counts.destructions == 0)
-        let read = try await value.type.method(
+        let read = try value.type.method(
             named: "read()",
             as: (() -> Int64).self,
             receiverABI: .opaque(named: value.type.name)
@@ -1280,14 +1280,14 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
     @Test func nonthrowingConsumingInputsAndExplicitAsyncBorrowsShareNativeOwnership() async throws
     {
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
         )
         let counts = ArgumentCounts()
         let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
         typealias Consumer = NativeSwiftClosure<(NativeSwiftConsuming<NativeSwiftValue>) -> Int64>
-        let visit = try await runtime.swiftFunction(
+        let visit = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitNonthrowingConsumingRuntimeValue<A where A: ~Swift.Copyable>(__owned A, (__owned A) -> Swift.Int64) -> Swift.Int64",
             as: ((NativeSwiftConsuming<NativeSwiftValue>, Consumer) -> Int64).self,
@@ -1302,13 +1302,13 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
             nonisolated(nonsending) (NativeSwiftBorrowing<NativeSwiftBorrowedValue>) async throws ->
                 Int64
         >
-        let inspect = try await runtime.swiftFunction(
+        let inspect = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitRuntimeValueAsync<A where A: ~Swift.Copyable>(A, nonisolated(nonsending) (A) async throws -> Swift.Int64) async throws -> Swift.Int64",
             as: (nonisolated(nonsending) (NativeSwiftValue, Borrower) async throws -> Int64).self,
             genericArguments: [.type(borrowed.type)]
         )
-        let read = try await borrowed.type.method(
+        let read = try borrowed.type.method(
             named: "readAsync()",
             as: (nonisolated(nonsending) () async -> Int64).self,
             receiverABI: .opaque(named: borrowed.type.name)
@@ -1329,7 +1329,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
     @Test func consumingConcreteAndReturnedCallbacksPreserveOwnership() async throws {
         let runtime = ABIRuntime.shared
         typealias TextBody = NativeSwiftClosure<(NativeSwiftConsuming<String>) -> Int64>
-        let apply = try await runtime.swiftFunction(
+        let apply = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.visitConsumingString(_:_:)",
             as: ((NativeSwiftConsuming<String>, TextBody) -> Int64).self
         )
@@ -1337,14 +1337,14 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         let body = try TextBody { Int64($0.value.count) }
         #expect(try unsafe apply.unsafeInvoke(NativeSwiftConsuming(text), body) == 42)
         #expect(try unsafe body.unsafeInvoke(NativeSwiftConsuming(text)) == 42)
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
         )
         let counts = ArgumentCounts()
         let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
         typealias Consumer = NativeSwiftClosure<(NativeSwiftConsuming<NativeSwiftValue>) -> Int64>
-        let factory = try await runtime.swiftFunction(
+        let factory = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.makeRuntimeConsumer<A where A: ~Swift.Copyable>(A.Type) -> (__owned A) -> Swift.Int64",
             as: ((RuntimeTicket.Type) -> Consumer).self,
@@ -1360,7 +1360,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func consumingAsyncCallbackInputsStayOwnedAcrossSuspension() async throws {
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
         )
@@ -1369,7 +1369,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         typealias Body = NativeSwiftClosure<
             nonisolated(nonsending) (NativeSwiftConsuming<NativeSwiftValue>) async throws -> Int64
         >
-        let visit = try await runtime.swiftFunction(
+        let visit = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitConsumingRuntimeValueAsync<A where A: ~Swift.Copyable>(__owned A, nonisolated(nonsending) (__owned A) async throws -> Swift.Int64) async throws -> Swift.Int64",
             as: (nonisolated(nonsending) (NativeSwiftConsuming<NativeSwiftValue>, Body) async throws
@@ -1398,7 +1398,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
             (NativeSwiftClosure<(Int64) -> Int64>, NativeSwiftClosure<(String) -> String>) throws ->
                 Int64
         >
-        let visitPack = try await runtime.swiftFunction(
+        let visitPack = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitNestedRuntimePack<each A>(_: repeat A.Type, body: (repeat (A) -> A) throws -> Swift.Int64) throws -> Swift.Int64",
             as: ((Int64.Type, String.Type, PackBody) throws -> Int64).self,
@@ -1420,7 +1420,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         typealias Body = NativeSwiftClosure<
             nonisolated(nonsending) (Copy, NativeSwiftValue) async throws -> NativeSwiftValue
         >
-        let visit = try await runtime.swiftFunction(
+        let visit = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitNestedRuntimeAsync<A>(A, nonisolated(nonsending) (nonisolated(nonsending) (A) async -> A, A) async throws -> A) async throws -> A",
             as: (nonisolated(nonsending) (String, Body) async throws -> String).self,
@@ -1440,12 +1440,12 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         let runtime = ABIRuntime.shared
         typealias Copy = NativeSwiftClosure<(NativeSwiftValue) -> NativeSwiftValue>
         typealias Body = NativeSwiftClosure<(Copy, NativeSwiftValue) throws -> NativeSwiftValue>
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
             as: ((Int64) -> NativeSwiftValue).self
         )
         let number = try unsafe make.unsafeInvoke(42)
-        let visit = try await runtime.swiftFunction(
+        let visit = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitNestedRuntime<A>(A, ((A) -> A, A) throws -> A) throws -> A",
             as: ((NativeSwiftValue, Body) throws -> NativeSwiftValue).self,
@@ -1461,13 +1461,13 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         #expect(throws: NativeSwiftBorrowError.expiredBorrow) {
             try unsafe saved.nested!.unsafeInvoke(number)
         }
-        let makeCaller = try await runtime.swiftFunction(
+        let makeCaller = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeNestedRuntimeCaller<A>(A.Type) -> ((A) -> A, A) -> A",
             as: ((Int64.Type) -> NativeSwiftClosure<(Copy, NativeSwiftValue) -> NativeSwiftValue>)
                 .self,
             genericArguments: [.type(Int64.self)]
         )
-        let copyFactory = try await runtime.swiftFunction(
+        let copyFactory = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeRuntimeCopy<A>(A.Type) -> (A) -> A",
             as: ((Int64.Type) -> Copy).self,
             genericArguments: [.type(Int64.self)]
@@ -1477,7 +1477,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         let called = try unsafe caller.unsafeInvoke(copy, number)
         #expect(try called.take(as: Int64.self) == 42)
         typealias Producer = NativeSwiftClosure<() throws -> NativeSwiftClosure<(Int64) -> Int64>>
-        let produce = try await runtime.swiftFunction(
+        let produce = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.callNestedRuntimeProducer<A>(() throws -> (A) -> A, A) throws -> A",
             as: ((Producer, Int64) throws -> Int64).self,
@@ -1491,12 +1491,12 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
     {
         let runtime = ABIRuntime.shared
         typealias Copy = NativeSwiftClosure<(NativeSwiftValue) -> NativeSwiftValue>
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.makeConcreteRuntimeCopy() -> (Swift.String) -> Swift.String",
             as: (() -> Copy).self
         )
-        let sourceFactory = try await runtime.swiftFunction(
+        let sourceFactory = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeRuntimeProducer<A>(A) -> () -> A",
             as: ((String) -> NativeSwiftClosure<() -> NativeSwiftValue>).self,
             genericArguments: [.type(String.self)]
@@ -1505,18 +1505,18 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         let callback = try unsafe make.unsafeInvoke()
         #expect(try unsafe callback.unsafeInvoke(input).take(as: String.self) == "concrete!")
         typealias HostCopy = NativeSwiftClosure<(NativeSwiftValue) throws -> NativeSwiftValue>
-        let apply = try await runtime.swiftFunction(
+        let apply = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.applyConcreteRuntimeCopy((Swift.String) throws -> Swift.String, Swift.String) throws -> Swift.String",
             as: ((HostCopy, String) throws -> String).self
         )
         let identity = try HostCopy { $0 }
         #expect(try unsafe apply.unsafeInvoke(identity, "native") == "native")
-        let type = try await runtime.swiftType(
+        let type = try runtime.swiftType(
             named: "ManagedSwiftFixtures.RuntimeCallbackHost",
             as: RuntimeCallbackHost.self
         )
-        let imageApply = try await runtime.swiftFunction(
+        let imageApply = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.applyConcreteRuntimeCopy((Swift.String) throws -> Swift.String, Swift.String) throws -> Swift.String",
             as: ((HostCopy, String) throws -> String).self,
@@ -1524,15 +1524,15 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         )
         #expect(try unsafe imageApply.unsafeInvoke(identity, "image") == "image")
         let host = RuntimeCallbackHost()
-        let method = try await type.method(named: "copy()", as: (() -> Copy).self)
+        let method = try type.method(named: "copy()", as: (() -> Copy).self)
         let methodCopy = try unsafe method.unsafeInvoke(on: host)
         #expect(try unsafe methodCopy.unsafeInvoke(input).take(as: String.self) == "concrete!")
-        let getter = try await type.getter(named: "copier", as: (() -> Copy).self)
+        let getter = try type.getter(named: "copier", as: (() -> Copy).self)
         #expect(
             try unsafe getter.unsafeInvoke(on: host).unsafeInvoke(input).take(as: String.self)
                 == "concrete!"
         )
-        let applyMethod = try await type.method(
+        let applyMethod = try type.method(
             named: "apply(_:_:)",
             as: ((HostCopy, String) throws -> String).self
         )
@@ -1541,13 +1541,13 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func hostRuntimeCallbackResultsMoveValuesAndReportConversionFailures() async throws {
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
             as: ((Int64) -> NativeSwiftValue).self
         )
         let original = try unsafe make.unsafeInvoke(42)
         typealias Copy = NativeSwiftClosure<(NativeSwiftValue) throws -> NativeSwiftValue>
-        let apply = try await runtime.swiftFunction(
+        let apply = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.callRuntimeThrowingCopy<A>((A) throws -> A, A) throws -> A",
             as: ((Copy, NativeSwiftValue) throws -> NativeSwiftValue).self,
@@ -1562,13 +1562,13 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         #expect(captured.owned?.isConsumed == true && !original.isConsumed)
 
         typealias Producer = NativeSwiftClosure<() throws -> NativeSwiftValue>
-        let produce = try await runtime.swiftFunction(
+        let produce = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.callRuntimeProducer<A where A: ~Swift.Copyable>(() throws -> A) throws -> A",
             as: ((Producer) throws -> NativeSwiftValue).self,
             genericArguments: [.type(Int64.self)]
         )
-        let stringFactory = try await runtime.swiftFunction(
+        let stringFactory = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeRuntimeProducer<A>(A) -> () -> A",
             as: ((String) -> NativeSwiftClosure<() -> NativeSwiftValue>).self,
             genericArguments: [.type(String.self)]
@@ -1614,12 +1614,12 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
     @Test func hostRuntimeCallbackResultsTransferNoncopyableOwnership() async throws {
         let runtime = ABIRuntime.shared
         let deaths = ArgumentCounts()
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
         )
         let source = try unsafe make.unsafeInvoke(ErrorLifetimeToken { deaths.destroyed() })
-        let produce = try await runtime.swiftFunction(
+        let produce = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.callRuntimeProducer<A where A: ~Swift.Copyable>(() throws -> A) throws -> A",
             as: ((NativeSwiftClosure<() throws -> NativeSwiftValue>) throws -> NativeSwiftValue)
@@ -1632,7 +1632,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         do {
             let result = try unsafe produce.unsafeInvoke(body)
             #expect(source.isConsumed && !result.isCopyable && deaths.destructions == 0)
-            let read = try await result.type.method(
+            let read = try result.type.method(
                 named: "read()",
                 as: (() -> Int64).self,
                 receiverABI: .opaque(named: result.type.name)
@@ -1647,7 +1647,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         typealias Copy = NativeSwiftClosure<
             nonisolated(nonsending) (NativeSwiftValue) async throws -> NativeSwiftValue
         >
-        let apply = try await runtime.swiftFunction(
+        let apply = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.callRuntimeThrowingAsyncCopy<A>(nonisolated(nonsending) (A) async throws -> A, A) async throws -> A",
             as: (nonisolated(nonsending) (Copy, String) async throws -> String).self,
@@ -1679,13 +1679,13 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func returnedRuntimeClosuresUseNativeArgumentsAndOwnedResults() async throws {
         let runtime = ABIRuntime.shared
-        let makeNumber = try await runtime.swiftFunction(
+        let makeNumber = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
             as: ((Int64) -> NativeSwiftValue).self
         )
         let number = try unsafe makeNumber.unsafeInvoke(42)
         typealias Copy = NativeSwiftClosure<(NativeSwiftValue) -> NativeSwiftValue>
-        let factory = try await runtime.swiftFunction(
+        let factory = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeRuntimeCopy<A>(A.Type) -> (A) -> A",
             as: ((Int64.Type) -> Copy).self,
             genericArguments: [.type(Int64.self)]
@@ -1693,14 +1693,14 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         let copy = try unsafe factory.unsafeInvoke(Int64.self)
         let result = try unsafe copy.unsafeInvoke(number)
         #expect(try result.take(as: Int64.self) == 42 && !number.isConsumed)
-        let invokeCopy = try await runtime.swiftFunction(
+        let invokeCopy = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.callRuntimeCopy<A>((A) -> A, A) -> A",
             as: ((Copy, NativeSwiftValue) -> NativeSwiftValue).self,
             genericArguments: [.type(Int64.self)]
         )
         let returned = try unsafe invokeCopy.unsafeInvoke(copy, number)
         #expect(try returned.take(as: Int64.self) == 42 && !number.isConsumed)
-        let neverFactory = try await runtime.swiftFunction(
+        let neverFactory = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.makeRuntimeNeverCopy<A, B where B: Swift.Error>(A.Type, B.Type) -> (A) throws(B) -> A",
             as: ((Int64.Type, Never.Type) -> Copy).self,
@@ -1714,7 +1714,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         typealias ThrowingCopy = NativeSwiftClosure<
             (NativeSwiftValue) throws(RuntimeTicketFailure) -> NativeSwiftValue
         >
-        let failingFactory = try await runtime.swiftFunction(
+        let failingFactory = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.makeRuntimeThrowingCopy<A, B where B: Swift.Error>(A.Type, B, Swift.Bool) -> (A) throws(B) -> A",
             as: ((Int64.Type, RuntimeTicketFailure, Bool) -> ThrowingCopy).self,
@@ -1727,7 +1727,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         )
         #expect(throws: NativeSwiftError.self) { try unsafe failing.unsafeInvoke(number) }
         #expect(!number.isConsumed)
-        let textFactory = try await runtime.swiftFunction(
+        let textFactory = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeRuntimeProducer<A>(A) -> () -> A",
             as: ((String) -> NativeSwiftClosure<() -> NativeSwiftValue>).self,
             genericArguments: [.type(String.self)]
@@ -1747,13 +1747,13 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         typealias Metadata = GenericMetatypeValue<String>.Type
         typealias Copy = NativeSwiftClosure<(NativeSwiftValue) -> NativeSwiftValue>
         let runtime = ABIRuntime.shared
-        let factory = try await runtime.swiftFunction(
+        let factory = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeRuntimeCopy<A>(A.Type) -> (A) -> A",
             as: ((Metadata.Type) -> Copy).self,
             genericArguments: [.type(Metadata.self)]
         )
         let copy = try unsafe factory.unsafeInvoke(Metadata.self)
-        let producer = try await runtime.swiftFunction(
+        let producer = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeRuntimeProducer<A>(A) -> () -> A",
             as: ((Metadata) -> NativeSwiftClosure<() -> NativeSwiftValue>).self,
             genericArguments: [.type(Metadata.self)]
@@ -1766,13 +1766,13 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func returnedRuntimeReadersBorrowNoncopyableValuesAndReenterNativeCode() async throws {
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
         )
         let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken {})
         typealias Reader = NativeSwiftClosure<(NativeSwiftValue) -> Int64>
-        let factory = try await runtime.swiftFunction(
+        let factory = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.makeRuntimeReader<A where A: ~Swift.Copyable>(A.Type) -> (A) -> Swift.Int64",
             as: ((RuntimeTicket.Type) -> Reader).self,
@@ -1780,7 +1780,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         )
         let reader = try unsafe factory.unsafeInvoke(RuntimeTicket.self)
         #expect(try unsafe reader.unsafeInvoke(value) == MemoryLayout<RuntimeTicket>.size)
-        let visit = try await runtime.swiftFunction(
+        let visit = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.inspectRuntimeReader<A where A: ~Swift.Copyable>(A, (A) -> Swift.Int64) -> Swift.Int64",
             as: ((NativeSwiftValue, Reader) -> Int64).self,
@@ -1797,7 +1797,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         }
         #expect(calls.withLock { $0 } == 0 && !value.isConsumed)
         typealias BorrowedReader = NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Int64>
-        let borrowedFactory = try await runtime.swiftFunction(
+        let borrowedFactory = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.makeRuntimeReader<A where A: ~Swift.Copyable>(A.Type) -> (A) -> Swift.Int64",
             as: ((RuntimeTicket.Type) -> BorrowedReader).self,
@@ -1814,7 +1814,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         #expect(throws: NativeSwiftBorrowError.expiredBorrow) {
             try unsafe borrowedReader.unsafeInvoke(expired)
         }
-        let wrong = try await runtime.swiftFunction(
+        let wrong = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.inspectRuntimeReader<A where A: ~Swift.Copyable>(A, (A) -> Swift.Int64) -> Swift.Int64",
             as: ((Int64, Reader) -> Int64).self,
@@ -1830,14 +1830,14 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         typealias Copy = NativeSwiftClosure<
             nonisolated(nonsending) (NativeSwiftValue) async -> NativeSwiftValue
         >
-        let factory = try await runtime.swiftFunction(
+        let factory = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.makeRuntimeAsyncCopy<A>(A.Type) -> nonisolated(nonsending) (A) async -> A",
             as: ((String.Type) -> Copy).self,
             genericArguments: [.type(String.self)]
         )
         let copy = try unsafe factory.unsafeInvoke(String.self)
-        let producer = try await runtime.swiftFunction(
+        let producer = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeRuntimeProducer<A>(A) -> () -> A",
             as: ((String) -> NativeSwiftClosure<() -> NativeSwiftValue>).self,
             genericArguments: [.type(String.self)]
@@ -1845,7 +1845,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         let source = try unsafe producer.unsafeInvoke("after suspension").unsafeInvoke()
         let output = try unsafe await copy.unsafeInvoke(source)
         #expect(try output.take(as: String.self) == "after suspension" && !source.isConsumed)
-        let neverFactory = try await runtime.swiftFunction(
+        let neverFactory = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.makeRuntimeNeverAsyncCopy<A, B where B: Swift.Error>(A.Type, B.Type) -> nonisolated(nonsending) (A) async throws(B) -> A",
             as: ((String.Type, Never.Type) -> Copy).self,
@@ -1854,7 +1854,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         let neverCopy = try unsafe neverFactory.unsafeInvoke(String.self, Never.self)
         let neverOutput = try unsafe await neverCopy.unsafeInvoke(source)
         #expect(try neverOutput.take(as: String.self) == "after suspension")
-        let apply = try await runtime.swiftFunction(
+        let apply = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.callRuntimeAsyncCopy<A>(nonisolated(nonsending) (A) async -> A, A) async -> A",
             as: (nonisolated(nonsending) (Copy, NativeSwiftValue) async -> NativeSwiftValue).self,
@@ -1867,27 +1867,27 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
     @Test func returnedRuntimePackClosuresCanBePassedBackToNativeCallers() async throws {
         let runtime = ABIRuntime.shared
         typealias Reader = NativeSwiftClosure<(NativeSwiftValue, String) -> Int64>
-        let factory = try await runtime.swiftFunction(
+        let factory = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.makeRuntimePackReader<each A>(repeat A) -> (repeat A) -> Swift.Int64",
             as: ((Int64, String) -> Reader).self,
             genericArguments: [.pack([.type(Int64.self), .type(String.self)])]
         )
         let reader = try unsafe factory.unsafeInvoke(Int64(1), "one")
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
             as: ((Int64) -> NativeSwiftValue).self
         )
         let value = try unsafe make.unsafeInvoke(42)
         #expect(try unsafe reader.unsafeInvoke(value, "two") == 42)
-        let inspect = try await runtime.swiftFunction(
+        let inspect = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.inspectRuntimePackReader<each A>((repeat A) -> Swift.Int64, repeat A) -> Swift.Int64",
             as: ((Reader, Int64, String) -> Int64).self,
             genericArguments: [.pack([.type(Int64.self), .type(String.self)])]
         )
         #expect(try unsafe inspect.unsafeInvoke(reader, Int64(2), "three") == 42)
-        let concreteFactory = try await runtime.swiftFunction(
+        let concreteFactory = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.makeConcreteRuntimeReader<A>(A) -> (Swift.Int64, Swift.String) -> Swift.Int64",
             as: ((Int64) -> Reader).self,
@@ -1900,18 +1900,18 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func runtimeCallbackInputsPreserveBorrowScopeAndIndependentCopies() async throws {
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
         )
         let counts = ArgumentCounts()
         let original = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
-        let read = try await original.type.method(
+        let read = try original.type.method(
             named: "read()",
             as: (() -> Int64).self,
             receiverABI: .opaque(named: original.type.name)
         )
-        let visit = try await runtime.swiftFunction(
+        let visit = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitRuntimeValue<A where A: ~Swift.Copyable>(A, (A) throws -> Swift.Int64) throws -> Swift.Int64",
             as: ((NativeSwiftValue, NativeSwiftClosure<(NativeSwiftBorrowedValue) throws -> Int64>)
@@ -1929,12 +1929,12 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         let expired = try #require(captured.borrowed)
         #expect(throws: NativeSwiftBorrowError.expiredBorrow) { try expired.copy() }
 
-        let makeNumber = try await runtime.swiftFunction(
+        let makeNumber = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
             as: ((Int64) -> NativeSwiftValue).self
         )
         let number = try unsafe makeNumber.unsafeInvoke(42)
-        let copy = try await runtime.swiftFunction(
+        let copy = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitRuntimeValue<A where A: ~Swift.Copyable>(A, (A) throws -> Swift.Int64) throws -> Swift.Int64",
             as: ((NativeSwiftValue, NativeSwiftClosure<(NativeSwiftValue) throws -> Int64>) throws
@@ -1950,7 +1950,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         #expect(retained !== number && !number.isConsumed)
         #expect(try retained.take(as: Int64.self) == 42)
 
-        let concrete = try await runtime.swiftFunction(
+        let concrete = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitConcreteRuntimeValue<A>(A, Swift.String, (Swift.String) throws -> Swift.Int64) throws -> Swift.Int64",
             as: ((Int64, String, NativeSwiftClosure<(NativeSwiftValue) throws -> Int64>) throws
@@ -1965,12 +1965,12 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func asyncRuntimeCallbacksKeepBorrowsUntilNativeCompletion() async throws {
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
         )
         let original = try unsafe make.unsafeInvoke(ErrorLifetimeToken {})
-        let read = try await original.type.method(
+        let read = try original.type.method(
             named: "readAsync()",
             as: (() async -> Int64).self,
             receiverABI: .opaque(named: original.type.name)
@@ -1978,7 +1978,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         typealias Body = NativeSwiftClosure<
             nonisolated(nonsending) (NativeSwiftBorrowedValue) async throws -> Int64
         >
-        let visit = try await runtime.swiftFunction(
+        let visit = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitRuntimeValueAsync<A where A: ~Swift.Copyable>(A, nonisolated(nonsending) (A) async throws -> Swift.Int64) async throws -> Swift.Int64",
             as: ((NativeSwiftValue, Body) async throws -> Int64).self,
@@ -2000,7 +2000,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
     }
 
     @Test func runtimeCallbackBorrowsRestoreElidedMetatypes() async throws {
-        let visit = try await ABIRuntime.shared.swiftFunction(
+        let visit = try ABIRuntime.shared.swiftFunction(
             named:
                 "ManagedSwiftFixtures.visitRuntimeMetatype<A>(ManagedSwiftFixtures.GenericMetatypeValue<A>.Type, (ManagedSwiftFixtures.GenericMetatypeValue<A>.Type) throws -> Swift.Int64) throws -> Swift.Int64",
             as: ((
@@ -2022,7 +2022,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
     }
 
     @Test func callbackBodiesCanPassRuntimeHandlesAsOrdinarySwiftReferences() async throws {
-        let make = try await ABIRuntime.shared.swiftFunction(
+        let make = try ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
             as: ((Int64) -> NativeSwiftValue).self
         )
@@ -2040,12 +2040,12 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func runtimeClassArgumentsRespectVarianceAndInoutReplacement() async throws {
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueClassAny(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
         )
         let original = try unsafe make.unsafeInvoke(ErrorLifetimeToken {})
-        let copy = try await runtime.swiftFunction(
+        let copy = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
             as: ((NativeSwiftValue) -> NativeSwiftValue).self,
             genericArguments: [.type(OpaqueBase.self)]
@@ -2053,7 +2053,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         let copied = try unsafe copy.unsafeInvoke(original)
         let object = try copied.take(as: OpaqueBase.self)
         #expect(object.number == 41)
-        let borrowedCopy = try await runtime.swiftFunction(
+        let borrowedCopy = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
             as: ((NativeSwiftBorrowedValue) -> NativeSwiftValue).self,
             genericArguments: [.type(AnyObject.self)]
@@ -2062,7 +2062,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
             let copied = try unsafe borrowedCopy.unsafeInvoke(value)
             #expect(try copied.take(as: AnyObject.self) === object)
         }
-        let replace = try await runtime.swiftFunction(
+        let replace = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.replaceRuntimeValue<A where A: ~Swift.Copyable>(inout A, __owned A) -> ()",
             as: ((NativeSwiftInout<NativeSwiftValue>, NativeSwiftConsuming<NativeSwiftValue>)
@@ -2078,7 +2078,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
             Issue.record("An inout Base argument accepted storage owned as a derived type")
         } catch ABIInvocationError.incompatibleValue {}
         #expect(!original.isConsumed && !replacement.isConsumed)
-        let move = try await runtime.swiftFunction(
+        let move = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.moveRuntimeValue<A where A: ~Swift.Copyable>(__owned A) -> A",
             as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self,
@@ -2091,7 +2091,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
     }
 
     @Test func runtimeResultsRestoreElidedSingletonMetatypes() async throws {
-        let function = try await ABIRuntime.shared.swiftFunction(
+        let function = try ABIRuntime.shared.swiftFunction(
             named:
                 "ManagedSwiftFixtures.valueMetatypeGeneric<A>(ManagedSwiftFixtures.GenericMetatypeValue<A>.Type, Swift.Int64) -> (ManagedSwiftFixtures.GenericMetatypeValue<A>.Type, Swift.Int64)",
             as: ((GenericMetatypeValue<String>.Type, Int64) -> NativeSwiftValue).self,
@@ -2107,21 +2107,21 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
     }
     @Test func genericRuntimeArgumentsAndResultsPreserveNativeOwnership() async throws {
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
         )
         let counts = ArgumentCounts()
         let original = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
         let arguments: [NativeSwiftGenericArgument] = [.type(original.type)]
-        let borrow = try await runtime.swiftFunction(
+        let borrow = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.borrowRuntimeValue<A where A: ~Swift.Copyable>(A) -> Swift.Int64",
             as: ((NativeSwiftValue) -> Int64).self,
             genericArguments: arguments
         )
         #expect(try unsafe borrow.unsafeInvoke(original) == Int64(MemoryLayout<RuntimeTicket>.size))
-        let borrowed = try await runtime.swiftFunction(
+        let borrowed = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.borrowRuntimeValue<A where A: ~Swift.Copyable>(A) -> Swift.Int64",
             as: ((NativeSwiftBorrowedValue) -> Int64).self,
@@ -2134,7 +2134,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         }
         #expect(!original.isConsumed && counts.destructions == 0)
         do {
-            _ = try await runtime.swiftFunction(
+            _ = try runtime.swiftFunction(
                 named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
                 as: ((NativeSwiftValue) -> NativeSwiftValue).self,
                 genericArguments: arguments
@@ -2143,7 +2143,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         } catch ABIResolutionError.signatureMismatch(let detail) {
             #expect(detail.expected == "A: Swift.Copyable")
         }
-        let move = try await runtime.swiftFunction(
+        let move = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.moveRuntimeValue<A where A: ~Swift.Copyable>(__owned A) -> A",
             as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self,
@@ -2153,7 +2153,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         let moved = try unsafe move.unsafeInvoke(NativeSwiftConsuming(original))
         #expect(original.isConsumed && !moved.isConsumed && !moved.isCopyable)
         #expect(counts.destructions == 0)
-        let consume = try await runtime.swiftFunction(
+        let consume = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.consumeRuntimeValueAndThrow<A where A: ~Swift.Copyable>(__owned A) throws -> ()",
             as: ((NativeSwiftConsuming<NativeSwiftValue>) throws -> Void).self,
@@ -2170,14 +2170,14 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func runtimeInoutTransfersTheReplacementAndProtectsConflictingAliases() async throws {
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
         )
         let counts = ArgumentCounts()
         let first = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
         let second = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
-        let replace = try await runtime.swiftFunction(
+        let replace = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.replaceRuntimeValue<A where A: ~Swift.Copyable>(inout A, __owned A) -> ()",
             as: ((NativeSwiftInout<NativeSwiftValue>, NativeSwiftConsuming<NativeSwiftValue>)
@@ -2200,13 +2200,13 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func runtimeTransferSurvivesALaterArgumentConversionFailure() async throws {
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
         )
         let counts = ArgumentCounts()
         let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
-        let move = try await runtime.swiftFunction(
+        let move = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.moveRuntimeValueAfterArgument<A where A: ~Swift.Copyable>(__owned A, Swift.Int64) -> A",
             as: ((NativeSwiftConsuming<NativeSwiftValue>, RuntimeRejectedArgument)
@@ -2226,12 +2226,12 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func copyableRuntimeResultsAndMismatchedArgumentsPreserveTheirOwners() async throws {
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
             as: ((Int64) -> NativeSwiftValue).self
         )
         let original = try unsafe make.unsafeInvoke(42)
-        let copy = try await runtime.swiftFunction(
+        let copy = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
             as: ((NativeSwiftValue) -> NativeSwiftValue).self,
             genericArguments: [.type(original.type)]
@@ -2239,7 +2239,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         let copied = try unsafe copy.unsafeInvoke(original)
         #expect(try copied.take(as: Int64.self) == 42)
         #expect(!original.isConsumed)
-        let makeTicket = try await runtime.swiftFunction(
+        let makeTicket = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
         )
@@ -2254,17 +2254,17 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func noncopyableNominalContextsPreserveTheirSuppressedRequirements() async throws {
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeRuntimeTicket(_:)",
             as: ((AnyObject) -> NativeSwiftValue).self
         )
         let counts = ArgumentCounts()
         let ticket = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
-        let type = try await runtime.swiftType(
+        let type = try runtime.swiftType(
             named: "ManagedSwiftFixtures.RuntimeValueBox",
             genericArguments: [.type(ticket.type)]
         )
-        let initialize = try await type.initializer(
+        let initialize = try type.initializer(
             named: "init(_:)",
             as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self
         )
@@ -2272,7 +2272,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         #expect(ticket.isConsumed && !box.isConsumed && !box.isCopyable)
         #expect(throws: NativeSwiftValueError.noncopyableType) { try box.copy() }
         #expect(throws: NativeSwiftValueError.noncopyableType) { try box.withCopy { _ in } }
-        let take = try await type.method(
+        let take = try type.method(
             named: "takeValue()",
             as: (() -> NativeSwiftValue).self,
             consuming: true
@@ -2288,16 +2288,16 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func runtimeCopyabilityEvaluatesConditionalConformance() async throws {
         let runtime = ABIRuntime.shared
-        let makeInteger = try await runtime.swiftFunction(
+        let makeInteger = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
             as: ((Int64) -> NativeSwiftValue).self
         )
         let integer = try unsafe makeInteger.unsafeInvoke(42)
-        let copyableType = try await runtime.swiftType(
+        let copyableType = try runtime.swiftType(
             named: "ManagedSwiftFixtures.RuntimeConditionalValueBox",
             genericArguments: [.type(integer.type)]
         )
-        let makeCopyable = try await copyableType.initializer(
+        let makeCopyable = try copyableType.initializer(
             named: "init(_:)",
             as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self
         )
@@ -2305,16 +2305,16 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         #expect(copyable.isCopyable)
         let copy = try copyable.copy()
         #expect(try copy.take(as: RuntimeConditionalValueBox<Int64>.self).value == 42)
-        let makeTicket = try await runtime.swiftFunction(
+        let makeTicket = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeRuntimeTicket(_:)",
             as: ((AnyObject) -> NativeSwiftValue).self
         )
         let ticket = try unsafe makeTicket.unsafeInvoke(NSObject())
-        let noncopyableType = try await runtime.swiftType(
+        let noncopyableType = try runtime.swiftType(
             named: "ManagedSwiftFixtures.RuntimeConditionalValueBox",
             genericArguments: [.type(ticket.type)]
         )
-        let makeNoncopyable = try await noncopyableType.initializer(
+        let makeNoncopyable = try noncopyableType.initializer(
             named: "init(_:)",
             as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self
         )
@@ -2322,7 +2322,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         #expect(!noncopyable.isCopyable)
         #expect(throws: NativeSwiftValueError.noncopyableType) { try noncopyable.copy() }
         do {
-            _ = try await runtime.swiftFunction(
+            _ = try runtime.swiftFunction(
                 named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
                 as: ((NativeSwiftValue) -> NativeSwiftValue).self,
                 genericArguments: [.type(noncopyable.type)]
@@ -2333,28 +2333,28 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func memberCopyableRequirementsOverrideNominalSuppression() async throws {
         let runtime = ABIRuntime.shared
-        let copyable = try await runtime.swiftType(
+        let copyable = try runtime.swiftType(
             named: "ManagedSwiftFixtures.RuntimeValueBox",
             genericArguments: [.type(Int64.self)]
         )
-        let initialize = try await copyable.initializer(
+        let initialize = try copyable.initializer(
             named: "init(_:)",
             as: ((NativeSwiftConsuming<Int64>) -> NativeSwiftValue).self
         )
         let box = try unsafe initialize.unsafeInvoke(NativeSwiftConsuming(Int64(42)))
-        let copy = try await copyable.method(named: "copiedValue()", as: (() -> Int64).self)
+        let copy = try copyable.method(named: "copiedValue()", as: (() -> Int64).self)
         #expect(try unsafe copy.unsafeInvoke(on: box) == 42)
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeRuntimeTicket(_:)",
             as: ((AnyObject) -> NativeSwiftValue).self
         )
         let ticket = try unsafe make.unsafeInvoke(NSObject())
-        let noncopyable = try await runtime.swiftType(
+        let noncopyable = try runtime.swiftType(
             named: "ManagedSwiftFixtures.RuntimeValueBox",
             genericArguments: [.type(ticket.type)]
         )
         do {
-            _ = try await noncopyable.method(
+            _ = try noncopyable.method(
                 named: "copiedValue()",
                 as: (() -> NativeSwiftValue).self
             )
@@ -2369,14 +2369,14 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
     @Test @MainActor func runtimeArgumentsKeepAccessThroughAsyncCompletion() async throws {
         guard #available(macOS 26, iOS 26, tvOS 26, watchOS 26, visionOS 26, *) else { return }
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
         )
         let counts = ArgumentCounts()
         let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
         let arguments: [NativeSwiftGenericArgument] = [.type(value.type)]
-        let borrow = try await runtime.swiftFunction(
+        let borrow = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.borrowRuntimeValueAsync<A where A: ~Swift.Copyable>(A, ManagedSwiftFixtures.AsyncGate) async -> Swift.Int64",
             as: ((NativeSwiftBorrowedValue, AsyncGate) async -> Int64).self,
@@ -2392,7 +2392,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         }
         await gate.open()
         #expect(try await task.value == Int64(MemoryLayout<RuntimeTicket>.size))
-        let move = try await runtime.swiftFunction(
+        let move = try runtime.swiftFunction(
             named:
                 "ManagedSwiftFixtures.moveRuntimeValueAsync<A where A: ~Swift.Copyable>(__owned A) async -> A",
             as: ((NativeSwiftConsuming<NativeSwiftValue>) async -> NativeSwiftValue).self,
@@ -2448,24 +2448,24 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         for (name, number) in [("make", Int64(42)), ("makeHidden", Int64(43))] {
             let value: NativeSwiftValue
             do {
-                let make = try await runtime.swiftFunction(
+                let make = try runtime.swiftFunction(
                     named: module + "Factory." + name + "()",
                     as: (() -> NativeSwiftValue).self,
                     in: .path(factory.libraryURL)
                 )
                 value = try unsafe make.unsafeInvoke().copy()
             }
-            await runtime.removeCachedResults()
+            runtime.removeCachedResults()
             factory.close()
             let expected = try #require(
-                try await runtime.images(matching: .path(provider.libraryURL)).first
+                try runtime.images(matching: .path(provider.libraryURL)).first
             )
             #expect(value.type.image.identity == expected.identity)
-            let getter = try await value.type.getter(named: "value", as: (() -> Int64).self)
+            let getter = try value.type.getter(named: "value", as: (() -> Int64).self)
             #expect(try unsafe getter.unsafeInvoke(on: value) == number)
             weak var observed: AnyObject?
             try value.withCopy { observed = $0 as AnyObject }
-            let take = try await value.type.method(
+            let take = try value.type.method(
                 named: "take()",
                 as: (() -> Int64).self,
                 consuming: true
@@ -2478,30 +2478,30 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func runtimeValuesUseOrdinaryMembersWithExplicitOwnership() async throws {
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
         )
         let counts = ArgumentCounts()
         let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
         let abi = try NativeType.opaque(named: value.type.name)
-        let read = try await value.type.method(
+        let read = try value.type.method(
             named: "read()",
             as: (() -> Int64).self,
             receiverABI: abi
         )
-        let getter = try await value.type.getter(
+        let getter = try value.type.getter(
             named: "number",
             as: (() -> Int64).self,
             receiverABI: abi
         )
-        let add = try await value.type.method(
+        let add = try value.type.method(
             named: "add(_:)",
             as: ((Int64) -> Void).self,
             receiverABI: abi,
             mutating: true
         )
-        let take = try await value.type.method(
+        let take = try value.type.method(
             named: "takeNumber()",
             as: (() -> Int64).self,
             receiverABI: abi,
@@ -2540,19 +2540,19 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
     {
         guard #available(macOS 26, iOS 26, tvOS 26, watchOS 26, visionOS 26, *) else { return }
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
         )
         let counts = ArgumentCounts()
         let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
         let abi = try NativeType.opaque(named: value.type.name)
-        let read = try await value.type.method(
+        let read = try value.type.method(
             named: "readAfter(_:)",
             as: ((AsyncGate) async -> Int64).self,
             receiverABI: abi
         )
-        let add = try await value.type.method(
+        let add = try value.type.method(
             named: "add(_:)",
             as: ((Int64) -> Void).self,
             receiverABI: abi,
@@ -2581,30 +2581,30 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func resultAdaptersDoNotRetainReceiverAccess() async throws {
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
         )
         let counts = ArgumentCounts()
         let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
         let abi = try NativeType.opaque(named: value.type.name)
-        let read = try await value.type.method(
+        let read = try value.type.method(
             named: "read() -> Swift.Int64",
             as: (() -> RuntimeWordResult).self,
             receiverABI: abi
         )
-        let readAsync = try await value.type.method(
+        let readAsync = try value.type.method(
             named: "readAsync() async -> Swift.Int64",
             as: (() async -> RuntimeWordResult).self,
             receiverABI: abi
         )
-        let add = try await value.type.method(
+        let add = try value.type.method(
             named: "add(_:)",
             as: ((Int64) -> Void).self,
             receiverABI: abi,
             mutating: true
         )
-        let take = try await value.type.method(
+        let take = try value.type.method(
             named: "takeNumberAsync() async -> Swift.Int64",
             as: (() async -> RuntimeWordResult).self,
             receiverABI: abi,
@@ -2622,7 +2622,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
     @Test @MainActor func borrowedResultAdaptersRetainResourcesAfterAccessEnds() async throws {
         guard #available(macOS 26, iOS 26, tvOS 26, watchOS 26, visionOS 26, *) else { return }
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
         )
@@ -2631,17 +2631,17 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         do {
             let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
             let abi = try NativeType.opaque(named: value.type.name)
-            let read = try await value.type.method(
+            let read = try value.type.method(
                 named: "read() -> Swift.Int64",
                 as: (() -> RuntimeWordResult).self,
                 receiverABI: abi
             )
-            let readAsync = try await value.type.method(
+            let readAsync = try value.type.method(
                 named: "readAsync() async -> Swift.Int64",
                 as: (() async -> RuntimeWordResult).self,
                 receiverABI: abi
             )
-            let add = try await value.type.method(
+            let add = try value.type.method(
                 named: "add(_:)",
                 as: ((Int64) -> Void).self,
                 receiverABI: abi,
@@ -2664,25 +2664,25 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func runtimeMemberAccessSurvivesSuspensionAndNativeFailure() async throws {
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
         )
         let counts = ArgumentCounts()
         let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
         let abi = try NativeType.opaque(named: value.type.name)
-        let read = try await value.type.method(
+        let read = try value.type.method(
             named: "readAsync()",
             as: (() async -> Int64).self,
             receiverABI: abi
         )
-        let add = try await value.type.method(
+        let add = try value.type.method(
             named: "addThenThrow(_:)",
             as: ((Int64) async throws -> Void).self,
             receiverABI: abi,
             mutating: true
         )
-        let take = try await value.type.method(
+        let take = try value.type.method(
             named: "takeNumberAsync()",
             as: (() async -> Int64).self,
             receiverABI: abi,
@@ -2700,7 +2700,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
     }
 
     @Test func aCopyOfATemporaryRetainsItsManagedPayload() async throws {
-        let make = try await ABIRuntime.shared.swiftFunction(
+        let make = try ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaque(_:_:)",
             as: ((ErrorLifetimeToken, Int64) -> NativeSwiftValue).self
         )
@@ -2717,7 +2717,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 
     @Test func opaqueNoncopyableValuesMoveWithoutAnyErasure() async throws {
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
         )
@@ -2741,7 +2741,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         }
         #expect(observed == nil && counts.destructions == 1)
 
-        let copyable = try await runtime.swiftFunction(
+        let copyable = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeCopyableNoncopyableOpaque()",
             as: (() -> NativeSwiftValue).self
         )
@@ -2753,7 +2753,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
     }
 
     @Test func ownedCopiesMovesAndScopedBorrowsHaveIndependentLifetimes() async throws {
-        let make = try await ABIRuntime.shared.swiftFunction(
+        let make = try ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
             as: ((Int64) -> NativeSwiftValue).self
         )
@@ -2780,7 +2780,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
     }
 
     @Test func aMismatchedTypedTakeLeavesTheOwnedValueUsable() async throws {
-        let make = try await ABIRuntime.shared.swiftFunction(
+        let make = try ABIRuntime.shared.swiftFunction(
             named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
             as: ((Int64) -> NativeSwiftValue).self
         )

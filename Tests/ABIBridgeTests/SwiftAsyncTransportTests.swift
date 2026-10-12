@@ -5,8 +5,10 @@ import Testing
 
 private func implementation(_ declaration: String) async throws -> SwiftAsyncImplementation {
     let runtime = ABIRuntime.shared
-    let symbol = try await runtime.resolve(.init(name: declaration, language: .swift))
-    let descriptor = try await runtime.resolve(.init(name: "async function pointer to " + declaration,
+    let symbol = try runtime.resolve(.init(name: declaration, language: .swift))
+    let descriptor = try runtime.resolve(
+        .init(
+            name: "async function pointer to " + declaration,
                                                      language: .swift, kind: .data))
     return try SwiftAsyncImplementation(symbol: symbol, descriptor: descriptor)
 }

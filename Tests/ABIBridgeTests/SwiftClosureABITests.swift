@@ -15,7 +15,7 @@ private func closureStorage<Value>(_ value: Value) throws -> NativeValue {
 
 struct SwiftClosureABITests {
     @Test func noncapturingAndCapturingInputsUseCompilerReabstraction() async throws {
-        let apply = try await ABIRuntime.shared.cFunction(
+        let apply = try ABIRuntime.shared.cFunction(
             named: "ABIIntegerClosureApply", as: ((UnsafeRawPointer, Int64) -> Int64).self
         )
         let bias: Int64 = 7
@@ -30,10 +30,10 @@ struct SwiftClosureABITests {
 
     @Test func nativeCalleeRetainsEscapingCaptureAfterInputRelease() async throws {
         let runtime = ABIRuntime.shared
-        let retain = try await runtime.cFunction(
+        let retain = try runtime.cFunction(
             named: "ABIIntegerClosureRetain", as: ((UnsafeRawPointer) -> UnsafeMutableRawPointer).self
         )
-        let call = try await runtime.cFunction(
+        let call = try runtime.cFunction(
             named: "ABIIntegerClosureCallRetained", as: ((UnsafeRawPointer, Int64) -> Int64).self
         )
         var owner: NativeValue?
@@ -62,7 +62,7 @@ struct SwiftClosureABITests {
     }
 
     @Test func returnedClosureOutlivesCallAndResultStorage() async throws {
-        let make = try await ABIRuntime.shared.cFunction(
+        let make = try ABIRuntime.shared.cFunction(
             named: "ABIIntegerClosureReturn",
             as: ((UnsafeRawPointer, Int64, UnsafeMutableRawPointer) -> Void).self
         )
@@ -96,7 +96,7 @@ struct SwiftClosureABITests {
     }
 
     @Test func sendableCallbackKeepsItsConcreteValueContract() async throws {
-        let apply = try await ABIRuntime.shared.cFunction(
+        let apply = try ABIRuntime.shared.cFunction(
             named: "ABISendableIntegerClosureApply", as: ((UnsafeRawPointer, Int64) -> Int64).self
         )
         let bias: Int64 = 7
@@ -107,7 +107,7 @@ struct SwiftClosureABITests {
     }
 
     @MainActor @Test func isolatedCallbackRunsUnderTheCallersExplicitActorContract() async throws {
-        let apply = try await ABIRuntime.shared.cFunction(
+        let apply = try ABIRuntime.shared.cFunction(
             named: "ABIIsolatedIntegerClosureApply", as: ((UnsafeRawPointer, Int64) -> Int64).self
         )
         var calls = 0

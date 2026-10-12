@@ -9,7 +9,7 @@ public struct NativeSwiftGenericArgument: Sendable {
     }
     let storage: Storage
 
-    indirect enum Identity: Hashable {
+    indirect enum Identity: Hashable, Sendable {
         case type(ObjectIdentifier)
         case pack([Identity])
     }

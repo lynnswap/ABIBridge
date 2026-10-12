@@ -55,7 +55,7 @@ final class SwiftAsyncCallInterface: @unchecked Sendable {
         inheritsCallerIsolation: Bool
     ) throws {
         runtime = try withRuntimeErrors {
-            try RuntimeSwiftAsyncCallInterface(
+            try RuntimeSwiftAsyncCallInterface.cached(
                 result: result.runtime,
                 parameters: parameters.map(\.runtime),
                 errorPlan: errorPlan.map {

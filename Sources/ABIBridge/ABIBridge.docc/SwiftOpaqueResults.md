@@ -5,7 +5,7 @@ Use NativeSwiftValue for a native declaration returning `some P`. The bridge obt
 For a loaded module declaring `func makeSummary(_ title: String) -> some Summary`:
 
 ```swift
-let make = try await ABIRuntime.shared.swiftFunction(
+let make = try ABIRuntime.shared.swiftFunction(
     named: "Example.makeSummary(_:)",
     as: ((String) -> NativeSwiftValue).self
 )
@@ -22,7 +22,7 @@ The same result type works with supported synchronous, throwing, and async funct
 For a generic factory, use its complete declaration and bind the generic arguments:
 
 ```swift
-let make = try await runtime.swiftFunction(
+let make = try runtime.swiftFunction(
     named: "Example.makeSummary<A>(A) -> some",
     as: ((String) -> NativeSwiftValue).self,
     genericArguments: [.type(String.self)]
@@ -56,10 +56,10 @@ Prepare members through the result's type and pass the owner directly. For a hid
 
 ```swift
 let selfABI = try NativeType.opaque(named: result.type.name)
-let read = try await result.type.method(
+let read = try result.type.method(
     named: "read()", as: (() -> Int64).self, receiverABI: selfABI
 )
-let add = try await result.type.method(
+let add = try result.type.method(
     named: "add(_:)", as: ((Int64) -> Void).self,
     receiverABI: selfABI, mutating: true
 )
@@ -76,7 +76,7 @@ Consuming members prepared with `consuming: true` transfer the owner's native va
 Bind a native generic parameter to the value's retained type. The signature uses NativeSwiftValue for owned runtime inputs and results, or NativeSwiftBorrowedValue for an active borrowed input. For a provider declaring `move<T: ~Copyable>(_ value: consuming T) -> T`:
 
 ```swift
-let move = try await runtime.swiftFunction(
+let move = try runtime.swiftFunction(
     named: "Provider.move<A where A: ~Swift.Copyable>(__owned A) -> A",
     as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self,
     genericArguments: [.type(result.type)]
@@ -108,7 +108,7 @@ Compiler controls compare provider descriptors and independently compiled caller
 Use `NativeSwiftBorrowedValue` as the result marker and `unsafeInvoke(..., withResult:)` when a native result must stay within its valid lifetime:
 
 ```swift
-let make = try await runtime.swiftFunction(
+let make = try runtime.swiftFunction(
     named: "Example.makeView(_:)",
     as: ((Owner) -> NativeSwiftBorrowedValue).self
 )

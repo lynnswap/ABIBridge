@@ -281,7 +281,7 @@ struct NativePointerSearchTests {
             borrowing: try #require(UnsafeMutableRawPointer(bitPattern: evidence.addressForInspection)),
             as: type, retaining: evidence
         )
-        let method = try await ABIRuntime.shared.cxxObject(storage, typeNamed: "ABICXXFixture::Derived")
+        let method = try ABIRuntime.shared.cxxObject(storage, typeNamed: "ABICXXFixture::Derived")
             .method(named: "value() const", as: (() -> Int32).self)
         candidate = nil
         #expect(try unsafe method.unsafeInvoke() == 110)

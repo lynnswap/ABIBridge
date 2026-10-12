@@ -50,3 +50,31 @@ package final class RuntimeSwiftAsyncCallInterface: @unchecked Sendable {
     }
     deinit { ABIReleaseSwiftAsyncCallInterface(handle) }
 }
+
+extension RuntimeSwiftAsyncCallInterface {
+    private static let cache = RuntimeCallInterfaceCache<RuntimeSwiftAsyncCallInterface>()
+
+    package static func cached(
+        result: RuntimeValueType,
+        parameters: [RuntimeValueType],
+        errorPlan: RuntimeErrorConvention?,
+        inheritsCallerIsolation: Bool
+    ) throws -> RuntimeSwiftAsyncCallInterface {
+        try cache.interface(
+            for: RuntimeCallInterfaceKey(
+                result: result,
+                parameters: parameters,
+                error: errorPlan?.type,
+                typedError: errorPlan?.isTyped ?? false,
+                inheritsCallerIsolation: inheritsCallerIsolation
+            )
+        ) {
+            try RuntimeSwiftAsyncCallInterface(
+                result: result,
+                parameters: parameters,
+                errorPlan: errorPlan,
+                inheritsCallerIsolation: inheritsCallerIsolation
+            )
+        }
+    }
+}

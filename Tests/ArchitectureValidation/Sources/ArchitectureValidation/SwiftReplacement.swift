@@ -7,14 +7,24 @@ import SwiftReplacementFixtures
 @MainActor func validateSwiftReplacement() async throws -> [String] {
     let runtime = ABIRuntime(), receiver = ReplacementRenderer()
     let module = "SwiftReplacementFixtures"
-    let descriptor = try await runtime.resolve(.init(name: "nominal type descriptor for \(module).ReplacementRenderer", language: .swift, kind: .data))
+    let descriptor = try runtime.resolve(
+        .init(
+            name: "nominal type descriptor for \(module).ReplacementRenderer",
+            language: .swift,
+            kind: .data
+        )
+    )
     var checks: [String] = []
     func check(_ value: Bool, _ message: String) throws {
         guard value else { throw ArchitectureValidationFailure(description: message) }
     }
     @MainActor func replace(_ name: String, with replacement: String, _ body: @MainActor () throws -> Void) async throws {
-        let target = try await runtime.resolve(.init(name: "\(module).ReplacementRenderer." + name, language: .swift))
-        let replacement = try await runtime.resolve(.init(name: "\(module).ReplacementRenderer." + replacement, language: .swift))
+        let target = try runtime.resolve(
+            .init(name: "\(module).ReplacementRenderer." + name, language: .swift)
+        )
+        let replacement = try runtime.resolve(
+            .init(name: "\(module).ReplacementRenderer." + replacement, language: .swift)
+        )
         let report = try unsafe descriptor.withUnsafeAddress { descriptor in
             let flags = descriptor.load(as: UInt32.self)
             try check(flags & 0x1f == 16 && flags & 0x80 == 0 && flags & 0x80000000 != 0, "Fixture class descriptor flags")
@@ -69,7 +79,10 @@ import SwiftReplacementFixtures
         }
         checks.append(report)
     }
-    let captured = try await runtime.object(receiver).method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
+    let captured = try runtime.object(receiver).method(
+        named: "scalar(_:)",
+        as: ((Int64) -> Int64).self
+    )
     try check(classScalar(receiver, 40) == 42, "Swift class scalar baseline")
     try await replace("scalar(Swift.Int64) -> Swift.Int64", with: "replacementScalar(Swift.Int64) -> Swift.Int64") {
         try check(classScalar(receiver, 40) == 240, "Compiler-generated class call uses replacement")
@@ -101,8 +114,8 @@ struct VirtualPayload: ABIBridgeValue {
 
 @MainActor private func validateSwiftVirtualReplacement() async throws -> [String] {
     let runtime = ABIRuntime(), module = "SwiftReplacementFixtures"
-    let base = try await runtime.swiftType(named: module + ".ReplacementRenderer")
-    let replacement = try await base.method(named: "replacementScalar(_:)", as: ((Int64) -> Int64).self)
+    let base = try runtime.swiftType(named: module + ".ReplacementRenderer")
+    let replacement = try base.method(named: "replacementScalar(_:)", as: ((Int64) -> Int64).self)
     let objects: [ReplacementRenderer] = [ReplacementRenderer(), InheritedRenderer(), OverridingRenderer()]
     let names = ["ReplacementRenderer", "InheritedRenderer", "OverridingRenderer"]
     var checks: [String] = []
@@ -123,8 +136,8 @@ struct VirtualPayload: ABIBridgeValue {
         try result.get()
     }
     for (index, name) in names.enumerated() {
-        let type = try await runtime.swiftType(named: module + "." + name)
-        let method = try await type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
+        let type = try runtime.swiftType(named: module + "." + name)
+        let method = try type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
         let plan = try unsafe method.prepareVirtualReplacement(with: replacement)
         try installed(plan) {
             for (other, object) in objects.enumerated() {
@@ -136,8 +149,11 @@ struct VirtualPayload: ABIBridgeValue {
         }
         try check(classScalar(objects[index], 40) == (index == 2 ? 44 : 42), "\(name) restored")
     }
-    let text = try await base.method(named: "text(_:)", as: ((String) -> String).self)
-    let textReplacement = try await base.method(named: "replacementText(_:)", as: ((String) -> String).self)
+    let text = try base.method(named: "text(_:)", as: ((String) -> String).self)
+    let textReplacement = try base.method(
+        named: "replacementText(_:)",
+        as: ((String) -> String).self
+    )
     let textPlan = try unsafe text.prepareVirtualReplacement(with: textReplacement)
     let input = String(repeating: "native Swift receiver", count: 100)
     try installed(textPlan) {
@@ -145,18 +161,21 @@ struct VirtualPayload: ABIBridgeValue {
         try check(try unsafe textPlan.original.unsafeInvoke(on: objects[0], input) == "method:" + input, "String predecessor remains callable")
     }
     let suffix = "(Swift.Int64) -> \(module).ReplacementPayload"
-    let payload = try await base.method(named: "payload" + suffix, as: ((Int64) -> VirtualPayload).self)
-    let payloadReplacement = try await base.method(named: "replacementPayload" + suffix, as: ((Int64) -> VirtualPayload).self)
+    let payload = try base.method(named: "payload" + suffix, as: ((Int64) -> VirtualPayload).self)
+    let payloadReplacement = try base.method(
+        named: "replacementPayload" + suffix,
+        as: ((Int64) -> VirtualPayload).self
+    )
     let payloadPlan = try unsafe payload.prepareVirtualReplacement(with: payloadReplacement)
     try installed(payloadPlan) {
         try check(classPayload(objects[0], 40) == 1210, "Public virtual replacement preserves indirect result")
         try check(try unsafe payloadPlan.original.unsafeInvoke(on: objects[0], 40).a == 42, "Indirect predecessor preserves caller result storage")
     }
     let child = CoalescedChild()
-    let childType = try await runtime.swiftType(named: module + ".CoalescedChild")
-    let valueMethod = try await childType.method(named: "value()", as: (() -> Int64).self)
-    let extraMethod = try await childType.method(named: "extra()", as: (() -> Int64).self)
-    let replacementMethod = try await childType.method(named: "replacement()", as: (() -> Int64).self)
+    let childType = try runtime.swiftType(named: module + ".CoalescedChild")
+    let valueMethod = try childType.method(named: "value()", as: (() -> Int64).self)
+    let extraMethod = try childType.method(named: "extra()", as: (() -> Int64).self)
+    let replacementMethod = try childType.method(named: "replacement()", as: (() -> Int64).self)
     let valuePlan = try unsafe valueMethod.prepareVirtualReplacement(with: replacementMethod)
     let extraPlan = try unsafe extraMethod.prepareVirtualReplacement(with: replacementMethod)
     try check(valuePlan.address != extraPlan.address, "Identical method bodies select distinct declaration slots")
@@ -169,8 +188,10 @@ struct VirtualPayload: ABIBridgeValue {
             "Child declaration replacement leaves coalesced inherited and final calls unchanged")
     }
     let externalReceiver = CallerOverridingRenderer()
-    let externalType = try await runtime.swiftType(named: "SwiftReplacementCaller.CallerOverridingRenderer")
-    let externalMethod = try await externalType.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
+    let externalType = try runtime.swiftType(
+        named: "SwiftReplacementCaller.CallerOverridingRenderer"
+    )
+    let externalMethod = try externalType.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
     let externalPlan = try unsafe externalMethod.prepareVirtualReplacement(with: replacement)
     try installed(externalPlan) {
         try check(classScalar(externalReceiver, 40) == 240, "Cross-module override descriptor selects and authenticates the base slot")

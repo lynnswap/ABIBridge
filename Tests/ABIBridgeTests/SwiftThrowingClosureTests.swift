@@ -35,12 +35,14 @@ struct SwiftThrowingClosureTests {
             if fail { throw ManagedFailure(token, 42) }
             return String(repeating: "callback", count: 100)
         }
-        let apply = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.applyTypedThrowing(_:_:)",
+        let apply = try ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.applyTypedThrowing(_:_:)",
             as: ((NativeSwiftClosure<(Bool) throws(ManagedFailure) -> String>, Bool) throws(ManagedFailure) -> String).self)
         #expect(try unsafe apply.unsafeInvoke(body, false) == String(repeating: "callback", count: 100))
         let failure = try closureFailure { try unsafe apply.unsafeInvoke(body, true) }
         failure.withUnderlyingError { #expect(($0 as? ManagedFailure)?.token === token) }
-        let catchInside = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.catchTypedThrowing(_:)",
+        let catchInside = try ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.catchTypedThrowing(_:)",
             as: ((NativeSwiftClosure<(Bool) throws(ManagedFailure) -> String>) -> Int64).self)
         #expect(try unsafe catchInside.unsafeInvoke(body) == 42)
     }
@@ -51,7 +53,8 @@ struct SwiftThrowingClosureTests {
             if fail { throw ManagedFailure(token, 43) }
             return "success"
         }
-        let apply = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.applyUntypedThrowing(_:_:)",
+        let apply = try ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.applyUntypedThrowing(_:_:)",
             as: ((NativeSwiftClosure<(Bool) throws -> String>, Bool) throws -> String).self)
         #expect(try unsafe apply.unsafeInvoke(body, false) == "success")
         let failure = try closureFailure { try unsafe apply.unsafeInvoke(body, true) }
@@ -67,7 +70,8 @@ struct SwiftThrowingClosureTests {
             if fail { throw LargeFailure(token) }
             return ErrorSuccessPayload(token)
         }
-        let apply = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.applyLargeThrowing(_:_:_:)",
+        let apply = try ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.applyLargeThrowing(_:_:_:)",
             as: ((NativeSwiftClosure<(ErrorLifetimeToken, Bool) throws(LargeFailure) -> ErrorSuccessPayload>,
                   ErrorLifetimeToken, Bool) throws(LargeFailure) -> ErrorSuccessPayload).self)
         let value = try unsafe apply.unsafeInvoke(body, token, false)
@@ -78,7 +82,8 @@ struct SwiftThrowingClosureTests {
             if fail { throw FloatingFailure(1.5) }
             return 2.5
         }
-        let floatApply = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.applyFloatingThrowing(_:_:)",
+        let floatApply = try ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.applyFloatingThrowing(_:_:)",
             as: ((NativeSwiftClosure<(Bool) throws(FloatingFailure) -> Double>, Bool) throws(FloatingFailure) -> Double).self)
         #expect(try unsafe floatApply.unsafeInvoke(floating, false) == 2.5)
         let floatError = try closureFailure { try unsafe floatApply.unsafeInvoke(floating, true) }
@@ -87,7 +92,8 @@ struct SwiftThrowingClosureTests {
 
     @Test func returnedClosuresKeepCapturesUntilTheirFinalRelease() async throws {
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeTypedThrowing(_:)",
+        let make = try runtime.swiftFunction(
+            named: "ManagedSwiftFixtures.makeTypedThrowing(_:)",
             as: ((ErrorLifetimeToken) -> NativeSwiftClosure<(Bool) throws(ManagedFailure) -> String>).self)
         weak var observed: ErrorLifetimeToken?
         var closure: NativeSwiftClosure<(Bool) throws(ManagedFailure) -> String>?
@@ -108,7 +114,7 @@ struct SwiftThrowingClosureTests {
 
     @Test func untypedReturnedClosuresAndFullDeclarationsPreserveEffects() async throws {
         let runtime = ABIRuntime.shared
-        let make = try await runtime.swiftFunction(
+        let make = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeUntypedThrowing(ManagedSwiftFixtures.ErrorLifetimeToken) -> (Swift.Bool) throws -> Swift.String",
             as: ((ErrorLifetimeToken) -> NativeSwiftClosure<(Bool) throws -> String>).self)
         let token = ErrorLifetimeToken()
@@ -119,7 +125,8 @@ struct SwiftThrowingClosureTests {
     }
 
     @Test func nativeEscapingStorageOwnsTheCallbackContext() async throws {
-        let retain = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.retainTypedThrowing(_:)",
+        let retain = try ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.retainTypedThrowing(_:)",
             as: ((NativeSwiftClosure<(Bool) throws(ManagedFailure) -> String>) -> StoredThrowingClosure).self)
         weak var observed: ThrowingCapture?
         var stored: StoredThrowingClosure?
@@ -141,7 +148,8 @@ struct SwiftThrowingClosureTests {
     }
 
     @Test func escapedErrorsDoNotRetainUnrelatedCallbackCaptures() async throws {
-        let identity = try await ABIRuntime.shared.swiftFunction(named: "ManagedSwiftFixtures.handoffScalarThrowing(_:)",
+        let identity = try ABIRuntime.shared.swiftFunction(
+            named: "ManagedSwiftFixtures.handoffScalarThrowing(_:)",
             as: ((NativeSwiftClosure<() throws(ScalarFailure) -> Int64>) -> NativeSwiftClosure<() throws(ScalarFailure) -> Int64>).self)
         for handoffs in [0, 1, 5] {
             weak var observed: ThrowingCapture?

@@ -10,11 +10,11 @@ private func metadataPointer(_ type: Any.Type) -> UnsafeRawPointer {
 private enum GenericCallFailure: Error { case status(Int32) }
 
 private func genericStorage<Value: GenericMetric>(_ value: Value, runtime: ABIRuntime) async throws -> NativeValue {
-    let initialize = try await runtime.cFunction(
+    let initialize = try runtime.cFunction(
         named: "ABIGenericRecordInitialize",
         as: ((UnsafeRawPointer?, UnsafeRawPointer, UnsafeMutableRawPointer) -> Int32).self
     )
-    let destroy = try await runtime.cFunction(
+    let destroy = try runtime.cFunction(
         named: "ABIGenericRecordDestroy",
         as: ((UnsafeRawPointer?, UnsafeMutableRawPointer) -> Int32).self
     )
@@ -37,7 +37,7 @@ private func genericStorage<Value: GenericMetric>(_ value: Value, runtime: ABIRu
 
 struct SwiftGenericMetadataTests {
     @Test func metatypeSubstitutionsProduceCanonicalSpecializations() async throws {
-        let resolve = try await ABIRuntime.shared.cFunction(
+        let resolve = try ABIRuntime.shared.cFunction(
             named: "ABIGenericRecordMetadata",
             as: ((UnsafeRawPointer?, UnsafeMutablePointer<UnsafeRawPointer?>) -> Int32).self
         )
@@ -59,7 +59,7 @@ struct SwiftGenericMetadataTests {
     }
 
     @Test func missingMetadataAndUnsatisfiedConstraintsLeaveOutputUntouched() async throws {
-        let resolve = try await ABIRuntime.shared.cFunction(
+        let resolve = try ABIRuntime.shared.cFunction(
             named: "ABIGenericRecordMetadata",
             as: ((UnsafeRawPointer?, UnsafeMutablePointer<UnsafeRawPointer?>) -> Int32).self
         )
@@ -76,7 +76,7 @@ struct SwiftGenericMetadataTests {
 
     @Test func constrainedGenericCallsPreserveManagedAndResilientValues() async throws {
         let runtime = ABIRuntime()
-        let measure = try await runtime.cFunction(
+        let measure = try runtime.cFunction(
             named: "ABIGenericRecordMeasure",
             as: ((UnsafeRawPointer?, UnsafeRawPointer, UnsafeMutablePointer<Int64>) -> Int32).self
         )
@@ -108,7 +108,7 @@ struct SwiftGenericMetadataTests {
             let token = LifetimeToken { destroyed += 1 }
             observed = token
             stored = try await genericStorage(ResilientRecord(token: token, number: 42), runtime: runtime)
-            await runtime.removeCachedResults()
+            runtime.removeCachedResults()
         }
         withExtendedLifetime(stored) {
             #expect(observed != nil)
@@ -124,7 +124,7 @@ struct SwiftGenericMetadataTests {
     }
 
     @Test func rejectedGenericCallDoesNotInitializeResult() async throws {
-        let initialize = try await ABIRuntime.shared.cFunction(
+        let initialize = try ABIRuntime.shared.cFunction(
             named: "ABIGenericRecordInitialize",
             as: ((UnsafeRawPointer?, UnsafeRawPointer, UnsafeMutableRawPointer) -> Int32).self
         )

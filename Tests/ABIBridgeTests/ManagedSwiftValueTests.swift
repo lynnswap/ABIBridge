@@ -21,7 +21,7 @@ private func readStorage<Value>(_ storage: NativeValue, as type: Value.Type) -> 
 }
 
 private func transformedStorage<Value>(_ value: Value, named name: String) async throws -> NativeValue {
-    let function = try await ABIRuntime.shared.cFunction(
+    let function = try ABIRuntime.shared.cFunction(
         named: name, as: ((UnsafeRawPointer, UnsafeMutableRawPointer) -> Void).self
     )
     let input = try copiedStorage(value)
@@ -141,7 +141,7 @@ struct ManagedSwiftValueTests {
     }
 
     @Test func failedArgumentConversionCleansUpWithoutDestroyingOutput() async throws {
-        let function = try await ABIRuntime.shared.cFunction(
+        let function = try ABIRuntime.shared.cFunction(
             named: "ABIManagedRecordTransform", as: ((ManagedArgument, RejectingPointer) -> Void).self
         )
         var destroys = 0
@@ -163,17 +163,17 @@ struct ManagedSwiftValueTests {
 
     @Test func runtimeOnlyHandlesRetainCopiedResources() async throws {
         let runtime = ABIRuntime()
-        let create = try await runtime.cFunction(
+        let create = try runtime.cFunction(
             named: "ABIResilientRecordCreate",
             as: ((Int64, UnsafeMutablePointer<Int32>) -> UnsafeMutableRawPointer).self
         )
-        let copy = try await runtime.cFunction(
+        let copy = try runtime.cFunction(
             named: "ABIResilientRecordCopy", as: ((UnsafeRawPointer) -> UnsafeMutableRawPointer).self
         )
-        let number = try await runtime.cFunction(
+        let number = try runtime.cFunction(
             named: "ABIResilientRecordNumber", as: ((UnsafeRawPointer) -> Int64).self
         )
-        let destructor = try await runtime.resolve(.init(name: "ABIResilientRecordDestroy", language: .c))
+        let destructor = try runtime.resolve(.init(name: "ABIResilientRecordDestroy", language: .c))
         typealias Destroy = @convention(c) (UnsafeMutableRawPointer) -> Void
         let destroy = unsafe destructor.withUnsafeAddress { unsafeBitCast($0, to: Destroy.self) }
         let opaque = try NativeType.opaque(named: "ResilientRecord")
@@ -196,7 +196,7 @@ struct ManagedSwiftValueTests {
     }
 
     @Test func failedResultConversionDestroysTransferredValue() async throws {
-        let create = try await ABIRuntime.shared.cFunction(
+        let create = try ABIRuntime.shared.cFunction(
             named: "ABIResilientRecordCreate",
             as: ((Int64, UnsafeMutablePointer<Int32>) -> RejectedOwnedResult).self
         )
@@ -208,24 +208,24 @@ struct ManagedSwiftValueTests {
     }
 
     @Test func metatypesDoNotEnableUnsupportedDirectCalls() async {
-        await #expect {
-            _ = try await ABIRuntime.shared.swiftFunction(
+        #expect {
+            _ = try ABIRuntime.shared.swiftFunction(
                 named: "ManagedSwiftFixtures.transformManaged(_:)", as: ((ManagedRecord) -> ManagedRecord).self
             )
         } throws: { error in
             if case ABIResolutionError.unsupportedDeclaration = error { return true }
             return false
         }
-        await #expect {
-            _ = try await ABIRuntime.shared.swiftFunction(
+        #expect {
+            _ = try ABIRuntime.shared.swiftFunction(
                 named: "ManagedSwiftFixtures.transformOptional(_:)", as: ((Int64?) -> Int64?).self
             )
         } throws: { error in
             if case ABIResolutionError.unsupportedDeclaration = error { return true }
             return false
         }
-        await #expect {
-            _ = try await ABIRuntime.shared.swiftFunction(
+        #expect {
+            _ = try ABIRuntime.shared.swiftFunction(
                 named: "ManagedSwiftFixtures.transformResilient(_:)", as: ((ResilientRecord) -> ResilientRecord).self
             )
         } throws: { error in

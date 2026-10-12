@@ -20,8 +20,8 @@ import ABIBridgeSwiftUI
 import SwiftUI
 
 @MainActor
-func loadPanel(title: String) async throws -> NativeSwiftView {
-    let make = try await ABIRuntime.shared.swiftFunction(
+func loadPanel(title: String) throws -> NativeSwiftView {
+    let make = try ABIRuntime.shared.swiftFunction(
         named: "Example.makePanel(_:)",
         as: ((String) -> NativeSwiftValue).self
     )

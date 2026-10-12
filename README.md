@@ -25,33 +25,33 @@ With ABIBridge, use the function's declaration name instead. The runtime finds t
 import ABIBridge
 
 let runtime = ABIRuntime.shared
-let symbol = try await runtime.resolve(
+let symbol = try runtime.resolve(
     NativeDeclaration(name: "Example::Math::add(int, int)", language: .cxx)
 )
 ```
 
-Lookup prepares the required image and symbol indexes automatically. It suspends while preparation runs outside `MainActor`, so no preparation-completion flag is needed. Use the optional `prepare(_:)` API to resolve known requirements ahead of time; a lookup that arrives during preparation shares the required index work. See [symbol lookup](https://lynnswap.github.io/ABIBridge/documentation/abibridge/symbollookup) for examples.
+Lookup is synchronous and prepares the required image and symbol indexes automatically. No preparation-completion flag is needed. Optional asynchronous `prepare(_:)` runs work on a worker queue; a lookup that arrives during preparation joins the work it needs. A synchronous lookup can block its caller, including `MainActor`, until that work finishes. See [symbol lookup](https://lynnswap.github.io/ABIBridge/documentation/abibridge/symbollookup) for examples.
 
 ### Call C++ by its declaration
 
 To call that function, provide its signature as a Swift function type. Specifying a framework acquires it when needed:
 
 ```swift
-let add = try await runtime.cxxFunction(
+let add = try runtime.cxxFunction(
     named: "Example::Math::add(int, int)", as: ((Int32, Int32) -> Int32).self,
     in: .framework(named: "Example")
 )
 let sum = try unsafe add.unsafeInvoke(20, 22)
 ```
 
-Retain the returned handle for repeated calls. Creating these runtime handles is asynchronous; calling a synchronous native function through them remains synchronous and follows the function's thread-affinity contract.
+Retain the returned handle for repeated calls. Creating the handle and calling a synchronous native function are both synchronous. Invocation follows the function's thread-affinity contract.
 
 ### Call Swift by its source-level name
 
 For an already-loaded module defining `func decorate(_ value: String) -> String`:
 
 ```swift
-let decorate = try await runtime.swiftFunction(
+let decorate = try runtime.swiftFunction(
     named: "Example.decorate(_:)", as: ((String) -> String).self
 )
 let message = try unsafe decorate.unsafeInvoke("Hello")
@@ -60,7 +60,7 @@ let message = try unsafe decorate.unsafeInvoke("Hello")
 Generic declarations use the same callable handles with explicit type arguments:
 
 ```swift
-let echo = try await runtime.swiftFunction(
+let echo = try runtime.swiftFunction(
     named: "Example.echo(_:)", as: ((String) -> String).self,
     genericArguments: [.type(String.self)]
 )
@@ -91,7 +91,7 @@ For a native factory returning `some View`, add the optional `ABIBridgeSwiftUI` 
 ```swift
 import ABIBridgeSwiftUI
 
-let makePanel = try await runtime.swiftFunction(
+let makePanel = try runtime.swiftFunction(
     named: "Example.makePanel(_:)", as: ((String) -> NativeSwiftValue).self
 )
 let panel = try NativeSwiftView(unsafe makePanel.unsafeInvoke("Hello"))

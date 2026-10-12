@@ -8,7 +8,7 @@ For a renderer exposing a synchronous Swift method:
 
 ```swift
 let object = ABIRuntime.shared.object(renderer)
-let setImage = try await object.method(
+let setImage = try object.method(
     named: "setImage(_:animated:)",
     as: ((UIImage?, Bool) -> Void).self
 )
@@ -22,7 +22,7 @@ The handle retains its receiver and implementation images. Existing objects supp
 A bound method's `method` property returns its prepared explicit-receiver handle. Keeping that value does not keep the original receiver binding alive. This also works for getters, setters, and async members.
 
 ```swift
-let bound = try await runtime.object(firstRenderer).method(
+let bound = try runtime.object(firstRenderer).method(
     named: "start()", as: (() -> Void).self
 )
 let start = bound.method
@@ -42,7 +42,7 @@ An existing object such as `Renderer<Content>` uses the same `object(...).method
 For example, given an existing `Renderer<Content>` with `func title() -> String`:
 
 ```swift
-let title = try await runtime.object(renderer).method(
+let title = try runtime.object(renderer).method(
     named: "title()", as: (() -> String).self
 )
 let text = try unsafe title.unsafeInvoke()
@@ -57,9 +57,9 @@ An absent declaration or specialization with no applicable candidate reports `AB
 ## Reuse a type
 
 ```swift
-let type = try await ABIRuntime.shared.swiftType(named: "Example.Renderer")
-let start = try await type.method(named: "start()", as: (() -> Void).self)
-let stop = try await type.method(named: "stop()", as: (() -> Void).self)
+let type = try ABIRuntime.shared.swiftType(named: "Example.Renderer")
+let start = try type.method(named: "start()", as: (() -> Void).self)
+let stop = try type.method(named: "stop()", as: (() -> Void).self)
 try unsafe start.unsafeInvoke(on: renderer)
 try unsafe stop.unsafeInvoke(on: renderer)
 ```
@@ -71,13 +71,13 @@ Methods capture the selected implementation. Lookup prefers declarations in the 
 ## Initializers and static members
 
 ```swift
-let initialize = try await type.initializer(
+let initialize = try type.initializer(
     named: "init(text:)",
     as: ((String) -> AnyObject).self
 )
 let renderer = try unsafe initialize.unsafeInvoke("Hello")
 
-let standard = try await type.staticGetter(named: "standard", as: (() -> String).self)
+let standard = try type.staticGetter(named: "standard", as: (() -> String).self)
 let value = try unsafe standard.unsafeInvoke()
 ```
 
@@ -88,8 +88,8 @@ Opaque some results use NativeSwiftValue for functions, methods, and getters; se
 ## Property accessors
 
 ```swift
-let getText = try await type.getter(named: "text", as: (() -> String).self)
-let setText = try await type.setter(named: "text", as: String.self)
+let getText = try type.getter(named: "text", as: (() -> String).self)
+let setText = try type.setter(named: "text", as: String.self)
 try unsafe setText.unsafeInvoke(on: renderer, "Updated")
 let text = try unsafe getText.unsafeInvoke(on: renderer)
 ```
@@ -103,7 +103,7 @@ For a throwing getter in a generic type, also supply its source function type wi
 ```swift
 // For a provider declared as Getter<Value, Failure: Error>, with a property
 // checked: Value { get throws(Failure) }, and arguments String/ProviderFailure:
-let checked = try await type.getter(
+let checked = try type.getter(
     named: "checked",
     as: (() throws(ProviderFailure) -> String).self,
     declaredAs: "() throws(B) -> A"
@@ -122,10 +122,10 @@ Concrete callback parameters and returned closures use the synchronous or async 
 For a supported fixed-layout value or a value conforming to ABIBridgeValue:
 
 ```swift
-let pointType = try await runtime.swiftType(
+let pointType = try runtime.swiftType(
     named: "Example.Point", as: Point.self
 )
-let translate = try await pointType.method(
+let translate = try pointType.method(
     named: "translate(_:)", as: ((Double) -> Void).self,
     mutating: true
 )
@@ -154,7 +154,7 @@ The unsafe boundary requires the actual declaration's ownership, effects, and ac
 An existing object can supply the identity of a file-private Swift class without exposing its compiler-generated private discriminator. The object member APIs match its live nominal descriptor to symbols in its defining image. Methods, getters, setters, and inherited members use that declaration owner; two same-named private classes in different files remain distinct.
 
 ```swift
-let method = try await runtime.object(receiver).method(
+let method = try runtime.object(receiver).method(
     named: "title()", as: (() -> String).self
 )
 let title = try unsafe method.unsafeInvoke()

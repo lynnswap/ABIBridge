@@ -7,7 +7,7 @@ Resolve a synchronous Swift function by source-level name and invoke it with ord
 For an already-loaded module defining `func decorate(_ value: String) -> String`:
 
 ```swift
-let decorate = try await ABIRuntime.shared.swiftFunction(
+let decorate = try ABIRuntime.shared.swiftFunction(
     named: "Example.decorate(_:)",
     as: ((String) -> String).self
 )
@@ -23,10 +23,10 @@ The framework/path and retained-image overloads use the same symbol indexes as o
 Prepared functions, methods, bound methods, and closures use one complete function type as their generic parameter:
 
 ```swift
-let decorate: NativeSwiftFunction<(String) -> String> = try await runtime.swiftFunction(
+let decorate: NativeSwiftFunction<(String) -> String> = try runtime.swiftFunction(
     named: "Example.decorate(_:)", as: ((String) -> String).self
 )
-let load: NativeSwiftFunction<@concurrent (String) async throws -> String> = try await runtime.swiftFunction(
+let load: NativeSwiftFunction<@concurrent (String) async throws -> String> = try runtime.swiftFunction(
     named: "Example.load(_:)", as: (@concurrent (String) async throws -> String).self
 )
 ```

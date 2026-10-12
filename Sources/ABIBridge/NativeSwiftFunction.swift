@@ -178,7 +178,7 @@ final class SwiftCallInterface: @unchecked Sendable {
 
     init(result: CValueType, parameters: [CValueType], errorPlan: SwiftErrorPlan? = nil) throws {
         runtime = try withRuntimeErrors {
-            try RuntimeSwiftCallInterface(
+            try RuntimeSwiftCallInterface.cached(
                 result: result.runtime,
                 parameters: parameters.map(\.runtime),
                 errorPlan: errorPlan.map {
@@ -564,7 +564,7 @@ extension ABIRuntime {
     ///   - loading: Whether an explicit image may be acquired and initialized.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
     /// - Throws: A resolution, unsupported representation, or call preparation error.
-    @concurrent public nonisolated func swiftFunction<Signature>(
+    public nonisolated func swiftFunction<Signature>(
         named name: String,
         as signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument] = [],
@@ -572,7 +572,7 @@ extension ABIRuntime {
         valueABIs: [NativeSwiftType: NativeType] = [:],
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
-    ) async throws -> NativeSwiftFunction<Signature> {
+    ) throws -> NativeSwiftFunction<Signature> {
         try prepareSwiftFunction(
             named: name,
             as: signature,
@@ -596,7 +596,7 @@ extension ABIRuntime {
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
     /// - Throws: A resolution, unsupported representation, or call preparation error.
-    @concurrent public nonisolated func swiftFunction<Signature>(
+    public nonisolated func swiftFunction<Signature>(
         named name: String,
         as signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument] = [],
@@ -604,7 +604,7 @@ extension ABIRuntime {
         valueABIs: [NativeSwiftType: NativeType] = [:],
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
-    ) async throws -> NativeSwiftFunction<Signature> {
+    ) throws -> NativeSwiftFunction<Signature> {
         try prepareSwiftFunction(
             named: name,
             as: signature,

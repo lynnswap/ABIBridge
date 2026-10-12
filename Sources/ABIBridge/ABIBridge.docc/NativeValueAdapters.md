@@ -29,7 +29,7 @@ struct Pair: BitwiseCopyable, ABIBridgeValue {
     var right: Double
 }
 
-let translate = try await ABIRuntime.shared.cxxFunction(
+let translate = try ABIRuntime.shared.cxxFunction(
     named: "Example::translate(Example::Pair)",
     as: ((Pair) -> Pair).self
 )
@@ -47,7 +47,7 @@ Raw-value enums need the native enum's representation. A Swift enum's raw value 
 A ``NativeSignature`` accepts native parameter and result descriptions. The resulting ``DynamicNativeFunction`` accepts native values and returns storage that you can cast:
 
 ```swift
-let translate = try await ABIRuntime.shared.cxxFunction(
+let translate = try ABIRuntime.shared.cxxFunction(
     named: "Example::translate(Example::Pair)",
     signature: .init(parameters: [Pair.abiType], returns: Pair.abiType)
 )

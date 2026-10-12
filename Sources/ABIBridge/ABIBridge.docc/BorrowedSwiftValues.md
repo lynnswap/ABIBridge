@@ -14,9 +14,9 @@ nonisolated(nonsending) func visitRecords(
     onFailure: @escaping @Sendable (any Error) -> Void
 ) async throws {
     let runtime = ABIRuntime.shared
-    let type = try await runtime.swiftType(named: "Example.Record")
-    let text = try await type.getter(named: "text", as: (() -> String).self, receiverABI: .opaque(named: type.name))
-    let visit = try await runtime.swiftFunction(
+    let type = try runtime.swiftType(named: "Example.Record")
+    let text = try type.getter(named: "text", as: (() -> String).self, receiverABI: .opaque(named: type.name))
+    let visit = try runtime.swiftFunction(
         named: "Example.visit((Example.Record) -> ()) -> ()",
         as: ((NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Void>) -> Void).self,
         valueABIs: [type: .opaque(named: type.name)]

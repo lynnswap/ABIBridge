@@ -7,7 +7,7 @@ Bind a declaration's type parameters with `genericArguments:` and pass its concr
 For a provider declaring `func run<T>(_ apply: () -> T) -> T`, use its qualified name and argument labels:
 
 ```swift
-let run = try await ABIRuntime.shared.swiftFunction(
+let run = try ABIRuntime.shared.swiftFunction(
     named: "Example.run(_:)",
     as: ((NativeSwiftClosure<() -> String>) -> String).self,
     genericArguments: [.type(String.self)]
@@ -30,7 +30,7 @@ The declaration determines the physical convention before substitution. An uncon
 Existing protocol conformances, including conditional conformances, supply the required witness tables. Same-type requirements and associated types are resolved against the supplied arguments. For example, given `func select<T, Values: Collection>(_ fallback: T, _ values: Values) -> T where Values.Element == T`:
 
 ```swift
-let select = try await runtime.swiftFunction(
+let select = try runtime.swiftFunction(
     named: "Example.select<A, B where A == B.Element, B: Swift.Collection>(A, B) -> A",
     as: ((String, [String]) -> String).self,
     genericArguments: [.type(String.self), .type([String].self)]
@@ -49,7 +49,7 @@ Use one `.pack` argument for each declared type pack, including an empty array f
 ```swift
 // Provider: func echo<each T: Equatable>(_ values: repeat each T)
 //           -> (repeat each T)
-let echo = try await runtime.swiftFunction(
+let echo = try runtime.swiftFunction(
     named: "Example.echo<each A where A: Swift.Equatable>(repeat A) -> (repeat A)",
     as: ((Int64, String) -> (Int64, String)).self,
     genericArguments: [.pack([.type(Int64.self), .type(String.self)])]
@@ -66,17 +66,17 @@ Pack expansion preserves the formal element pattern and shape. A nominal type su
 For `class Box<Value: Equatable>` with `init(_:)`, a `value` property, and `compare<Other: Equatable>(_:) -> (Value, Other, Bool)`:
 
 ```swift
-let boxType = try await runtime.swiftType(
+let boxType = try runtime.swiftType(
     named: "Example.Box", genericArguments: [.type(String.self)]
 )
-let initialize = try await boxType.initializer(
+let initialize = try boxType.initializer(
     named: "init(_:)", as: ((String) -> AnyObject).self
 )
 let box = try unsafe initialize.unsafeInvoke("hello")
-let value = try await runtime.object(box).getter(
+let value = try runtime.object(box).getter(
     named: "value", as: (() -> String).self
 )
-let compare = try await runtime.object(box).method(
+let compare = try runtime.object(box).method(
     named: "compare(_:)", as: ((Int64) -> (String, Int64, Bool)).self,
     genericArguments: [.type(Int64.self)]
 )
@@ -96,7 +96,7 @@ Most declarations need only `as:` and their generic arguments. An effectful gene
 For `Box<Value: Score>` with a static `score() -> Int` member in `extension Box where Value: Base`, a provider that compiled with the `Base: Score` conformance visible can use:
 
 ```swift
-let score = try await boxType.staticMethod(
+let score = try boxType.staticMethod(
     named: "score()", as: (() -> Int).self,
     declaredAs: "<A where A: BaseModule.Base> () -> Swift.Int"
 )
@@ -107,7 +107,7 @@ If that conformance was not visible to the provider, include its remaining witne
 
 ```swift
 // Same member symbol; a different canonical signature at compilation.
-let score = try await boxType.staticMethod(
+let score = try boxType.staticMethod(
     named: "score()", as: (() -> Int).self,
     declaredAs: "<A where A: BaseModule.Base, A: BaseModule.Score> () -> Swift.Int"
 )

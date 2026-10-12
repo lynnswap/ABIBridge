@@ -26,7 +26,7 @@ struct VirtualEntryTests {
         defer { library.cleanup() }
         let runtime = ABIRuntime()
         let name = "NullVirtual::target(int)"
-        let sparse = try await runtime.resolve(
+        let sparse = try runtime.resolve(
             .init(name: "sparse", language: .c, kind: .data),
             in: .path(library.libraryURL),
             loading: .loadedOnly
@@ -35,7 +35,7 @@ struct VirtualEntryTests {
             let table = try unsafe sparse.withUnsafeAddress {
                 try unsafe NativeVTable(borrowing: $0, entryCount: count, retaining: sparse)
             }
-            let entry = try await table.entry(named: name, using: runtime)
+            let entry = try table.entry(named: name, using: runtime)
             #expect(entry.index == 0 && entry.authentication == .unsigned)
         }
         try unsafe sparse.withUnsafeAddress {
@@ -48,8 +48,8 @@ struct VirtualEntryTests {
         let changed = try unsafe sparse.withUnsafeAddress {
             try unsafe NativeVTable(borrowing: $0, entryCount: 2, retaining: sparse)
         }
-        #expect(try await changed.entry(named: name, using: ABIRuntime()).index == 0)
-        let repeated = try await runtime.resolve(
+        #expect(try changed.entry(named: name, using: ABIRuntime()).index == 0)
+        let repeated = try runtime.resolve(
             .init(name: "repeated", language: .c, kind: .data),
             in: .path(library.libraryURL),
             loading: .loadedOnly
@@ -58,10 +58,10 @@ struct VirtualEntryTests {
             try unsafe NativeVTable(borrowing: $0, entryCount: 3, retaining: repeated)
         }
         do {
-            _ = try await duplicate.entry(named: name, using: runtime);
+            _ = try duplicate.entry(named: name, using: runtime);
             Issue.record("Null slots hid duplicate original entries")
         } catch ABIResolutionError.ambiguousDeclaration {}
-        let unknown = try await runtime.resolve(
+        let unknown = try runtime.resolve(
             .init(name: "unidentified", language: .c, kind: .data),
             in: .path(library.libraryURL),
             loading: .loadedOnly
@@ -77,10 +77,10 @@ struct VirtualEntryTests {
             try unsafe NativeVTable(borrowing: $0, entryCount: 2, retaining: unknown)
         }
         do {
-            _ = try await unidentified.entry(named: name, using: runtime);
+            _ = try unidentified.entry(named: name, using: runtime);
             Issue.record("A live zero replaced unavailable original identity")
         } catch ABIResolutionError.metadataUnavailable {}
-        let zeros = try await runtime.resolve(
+        let zeros = try runtime.resolve(
             .init(name: "zeros", language: .c, kind: .data),
             in: .path(library.libraryURL),
             loading: .loadedOnly
@@ -89,11 +89,11 @@ struct VirtualEntryTests {
             try unsafe NativeVTable(borrowing: $0, entryCount: 2, retaining: zeros)
         }
         do {
-            _ = try await empty.entry(named: name, using: runtime);
+            _ = try empty.entry(named: name, using: runtime);
             Issue.record("Zero-fill slots acquired a named target")
         } catch ABIResolutionError.declarationNotFound {}
         try FileManager.default.removeItem(at: library.libraryURL)
-        #expect(try await changed.entry(named: name, using: runtime).index == 0)
+        #expect(try changed.entry(named: name, using: runtime).index == 0)
     }
 
     private func fixture() throws -> FixtureLibrary {
@@ -165,7 +165,7 @@ struct VirtualEntryTests {
                 entryCount: kind == 0 ? 1 : 2,
                 retaining: library
             )
-            let entry = try await table.entry(named: name, using: runtime)
+            let entry = try table.entry(named: name, using: runtime)
             #expect(entry.index == slot && entry.authentication == .unsigned)
             let rawName = try #require(entry.symbolName)
             let decoded = try #require(DeclarationKey.demangle(rawName, language: .cxx))
@@ -195,7 +195,7 @@ struct VirtualEntryTests {
         let runtime = ABIRuntime()
         let address = try pointer(library, "ABINamedTable", 0)
         let table = try unsafe NativeVTable(borrowing: address, entryCount: 1, retaining: library)
-        let first = try await table.entry(
+        let first = try table.entry(
             named: "NamedVirtual::Derived::value(int) const",
             using: runtime
         )
@@ -204,20 +204,20 @@ struct VirtualEntryTests {
         bits.pointee = 0
         defer { bits.pointee = saved }
         // A separate resolver proves selection is independent of live targets.
-        let second = try await table.entry(
+        let second = try table.entry(
             named: "NamedVirtual::Derived::value(int) const",
             using: ABIRuntime()
         )
         #expect(second.index == first.index && second.symbolName == first.symbolName)
         try FileManager.default.removeItem(at: library.libraryURL)
-        let cached = try await table.entry(
+        let cached = try table.entry(
             named: "NamedVirtual::Derived::value(int) const",
             using: runtime
         )
         #expect(cached.symbolName == first.symbolName)
-        await runtime.removeCachedResults()
-        await #expect(throws: ABIResolutionError.self) {
-            _ = try await table.entry(
+        runtime.removeCachedResults()
+        #expect(throws: ABIResolutionError.self) {
+            _ = try table.entry(
                 named: "NamedVirtual::Derived::value(int) const",
                 using: runtime
             )
@@ -233,7 +233,7 @@ struct VirtualEntryTests {
         let runtime = ABIRuntime()
         let address = try pointer(library, "ABINamedTable", 0)
         let table = try unsafe NativeVTable(borrowing: address, entryCount: 1)
-        var entry: NativeVTable.Entry? = try await table.entry(
+        var entry: NativeVTable.Entry? = try table.entry(
             named: "NamedVirtual::Derived::value(int) const",
             using: runtime
         )
@@ -256,7 +256,7 @@ struct VirtualEntryTests {
             as: ((Int32) -> Int32).self
         )
         entry = nil
-        await runtime.removeCachedResults()
+        runtime.removeCachedResults()
         #expect(originalLease != nil)
         #expect(try unsafe method!.unsafeInvoke(2) == 102)
         method = nil
@@ -271,11 +271,11 @@ struct VirtualEntryTests {
         let bounded = try unsafe NativeVTable(borrowing: address, entryCount: 1, retaining: library)
         for _ in 0..<3 {
             #expect(
-                try await bounded.entry(named: "NamedVirtual::duplicate(int)", using: runtime).index
+                try bounded.entry(named: "NamedVirtual::duplicate(int)", using: runtime).index
                     == 0
             )
             do {
-                _ = try await table.entry(named: "NamedVirtual::duplicate(int)", using: runtime)
+                _ = try table.entry(named: "NamedVirtual::duplicate(int)", using: runtime)
                 Issue.record("Wider bounds must remain ambiguous after a narrower cached lookup")
             } catch ABIResolutionError.ambiguousDeclaration(_, let candidates) {
                 #expect(candidates.count == 2)
@@ -294,13 +294,13 @@ struct VirtualEntryTests {
         let address = try pointer(library, "ABINamedTable", 0)
         let table = try unsafe NativeVTable(borrowing: address, entryCount: 1, retaining: library)
         let missing = NativeDeclaration(name: "NamedVirtual::Derived::absent()", language: .cxx)
-        await #expect(throws: ABIResolutionError.declarationNotFound(missing)) {
-            _ = try await table.entry(named: missing.name, using: ABIRuntime())
+        #expect(throws: ABIResolutionError.declarationNotFound(missing)) {
+            _ = try table.entry(named: missing.name, using: ABIRuntime())
         }
         try FileManager.default.removeItem(at: library.libraryURL)
         try FileManager.default.copyItem(at: other.libraryURL, to: library.libraryURL)
-        await #expect(throws: ABIResolutionError.self) {
-            _ = try await table.entry(
+        #expect(throws: ABIResolutionError.self) {
+            _ = try table.entry(
                 named: "NamedVirtual::Derived::value(int) const",
                 using: ABIRuntime()
             )
@@ -308,8 +308,8 @@ struct VirtualEntryTests {
         let heap = UnsafeMutablePointer<UInt>.allocate(capacity: 1); defer { heap.deallocate() }
         heap.initialize(to: 0)
         let unknown = try unsafe NativeVTable(borrowing: heap, entryCount: 1)
-        await #expect(throws: ABIResolutionError.self) {
-            _ = try await unknown.entry(
+        #expect(throws: ABIResolutionError.self) {
+            _ = try unknown.entry(
                 named: "NamedVirtual::Derived::value(int) const",
                 using: ABIRuntime()
             )
@@ -337,7 +337,7 @@ struct VirtualEntryTests {
         let runtime = ABIRuntime()
         for name in ["Folded::first(int)", "Folded::second(int)", "Folded::first(int)"] {
             do {
-                _ = try await table.entry(named: name, using: runtime)
+                _ = try table.entry(named: name, using: runtime)
                 Issue.record(
                     "An address shared by two symbols cannot establish the original declaration"
                 )
@@ -366,7 +366,7 @@ struct VirtualEntryTests {
         let address = try pointer(library, "ABINamedTable", 0)
         let table = try unsafe NativeVTable(borrowing: address, entryCount: 1, retaining: library)
         do {
-            _ = try await table.entry(named: "Hidden::value(int)", using: ABIRuntime())
+            _ = try table.entry(named: "Hidden::value(int)", using: ABIRuntime())
             Issue.record("Unavailable original identity must require an adapter")
         } catch ABIResolutionError.metadataUnavailable {}
         #expect(try unsafe table.entry(at: 0, authentication: .unsigned).index == 0)

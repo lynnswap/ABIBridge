@@ -8,7 +8,8 @@ import SwiftValueFixtures
         guard condition else { throw ArchitectureValidationFailure(description: message) }
         checks.append(message)
     }
-    let mutate = try await runtime.swiftFunction(named: "SwiftValueFixtures.mutateArguments(_:_:_:_:)",
+    let mutate = try runtime.swiftFunction(
+        named: "SwiftValueFixtures.mutateArguments(_:_:_:_:)",
         as: ((NativeSwiftInout<String>, NativeSwiftInout<[String]>, NativeSwiftInout<Int64>, Bool) throws(SmallError) -> Void).self)
     let text = NativeSwiftInout(String(repeating: "text", count: 100))
     let values = NativeSwiftInout([String]())
@@ -22,7 +23,8 @@ import SwiftValueFixtures
         try error.withUnderlyingError { try check(($0 as? SmallError)?.code == 42 && count.value == 42 && values.value.count == 2, "Throwing completion preserves all inout mutations") }
     }
 
-    let consume = try await runtime.swiftFunction(named: "SwiftValueFixtures.consumeArgument(_:_:_:)",
+    let consume = try runtime.swiftFunction(
+        named: "SwiftValueFixtures.consumeArgument(_:_:_:)",
         as: ((NativeSwiftConsuming<LargeError>, NativeSwiftBorrowing<String>, Bool) throws(SmallError) -> String).self)
     let counts = ArgumentCounts()
     for fail in [false, true] {
@@ -45,14 +47,16 @@ import SwiftValueFixtures
     }
     try check(counts.destructions == 2, "Consuming copies destroy their final references exactly once")
 
-    let type = try await runtime.swiftType(named: "SwiftValueFixtures.ArgumentOwner")
-    let make = try await type.initializer(named: "init(_:_:_:)",
+    let type = try runtime.swiftType(named: "SwiftValueFixtures.ArgumentOwner")
+    let make = try type.initializer(
+        named: "init(_:_:_:)",
         as: ((NativeSwiftBorrowing<String>, NativeSwiftConsuming<String>, NativeSwiftBorrowing<ErrorToken>) -> ArgumentOwner).self)
     let token = ErrorToken()
     let owner = try unsafe make.unsafeInvoke(.init("first"), .init("second"), .init(token))
     try check(owner.first == "first" && owner.second == "second" && owner.token === token, "Allocating initializer mixes guaranteed and owned parameters")
 
-    let async = try await runtime.swiftFunction(named: "SwiftValueFixtures.asyncArguments(_:_:_:_:)",
+    let async = try runtime.swiftFunction(
+        named: "SwiftValueFixtures.asyncArguments(_:_:_:_:)",
         as: (@concurrent (AsyncValueGate, NativeSwiftInout<String>, NativeSwiftConsuming<String>, NativeSwiftBorrowing<String>) async throws(SmallError) -> String).self)
     for cancelled in [false, true] {
         let gate = AsyncValueGate()
@@ -72,7 +76,8 @@ import SwiftValueFixtures
         try check(buffer.value == "value!", "Inout storage survives suspension and \(cancelled ? "cancellation" : "normal completion")")
     }
 
-    let asyncMake = try await type.initializer(named: "init(_:_:_:_:_:)",
+    let asyncMake = try type.initializer(
+        named: "init(_:_:_:_:_:)",
         as: (@concurrent (NativeSwiftBorrowing<String>, NativeSwiftConsuming<String>, NativeSwiftBorrowing<ErrorToken>, AsyncValueGate, Bool) async throws(SmallError) -> ArgumentOwner).self)
     let gate = AsyncValueGate()
     let task = Task { try unsafe await asyncMake.unsafeInvoke(.init("async"), .init("owned"), .init(token), gate, false) }

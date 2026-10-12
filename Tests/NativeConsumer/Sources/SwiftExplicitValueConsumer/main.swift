@@ -28,8 +28,11 @@ extension Box: ABIBridgeSwiftValue where Value == Int64 {
 }
 
 let runtime = ABIRuntime()
-let transform = try await runtime.swiftFunction(named: "SwiftExplicitValueConsumer.change(_:)", as: ((Record) -> Record).self)
-let apply = try await runtime.swiftFunction(
+let transform = try runtime.swiftFunction(
+    named: "SwiftExplicitValueConsumer.change(_:)",
+    as: ((Record) -> Record).self
+)
+let apply = try runtime.swiftFunction(
     named: "SwiftExplicitValueConsumer.apply(_:_:)",
     as: ((NativeSwiftClosure<(Choice) -> Choice>, Choice) -> Choice).self
 )
@@ -46,7 +49,7 @@ do {
 withExtendedLifetime(result) { precondition(observed != nil) }
 result = nil
 precondition(observed == nil)
-let boxed = try await runtime.swiftFunction(
+let boxed = try runtime.swiftFunction(
     named: "SwiftExplicitValueConsumer.applyBox(_:_:)",
     as: ((NativeSwiftClosure<(Box<Int64>) -> Box<Int64>>, Box<Int64>) -> Box<Int64>).self
 )
@@ -64,7 +67,8 @@ print("Explicit Swift value consumer passed")
     if fail { throw Failure(code: 42) }
     return String(repeating: "success", count: 100)
 }
-let checkedCall = try await runtime.swiftFunction(named: "SwiftExplicitValueConsumer.checked(_:)",
+let checkedCall = try runtime.swiftFunction(
+    named: "SwiftExplicitValueConsumer.checked(_:)",
     as: ((Bool) throws(Failure) -> String).self)
 let success = try unsafe checkedCall.unsafeInvoke(false)
 precondition(success == String(repeating: "success", count: 100))
@@ -84,7 +88,8 @@ let throwingCallback = try NativeSwiftClosure<(Int64) throws(Failure) -> Int64> 
     if value < 0 { throw Failure(code: 42) }
     return value + 7
 }
-let invokeThrowingCall = try await runtime.swiftFunction(named: "SwiftExplicitValueConsumer.invokeThrowing(_:_:)",
+let invokeThrowingCall = try runtime.swiftFunction(
+    named: "SwiftExplicitValueConsumer.invokeThrowing(_:_:)",
     as: ((NativeSwiftClosure<(Int64) throws(Failure) -> Int64>, Int64) throws(Failure) -> Int64).self)
 let callbackResult = try unsafe invokeThrowingCall.unsafeInvoke(throwingCallback, 35)
 precondition(callbackResult == 42)
