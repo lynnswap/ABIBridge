@@ -9,7 +9,7 @@ See <doc:HookArguments> for editing object arguments, replacing references, and 
 Start with a ``NativeVTable`` whose address point, accessible function-entry count and base subobject are known. A native adapter can acquire the table using the target compiler; the table view does not infer object layout. See <doc:CXXObjectInvocation> for receiver and vptr acquisition.
 
 ```swift
-let entry = try await table.entry(
+let entry = try table.entry(
     named: "Example::Derived::value(int) const"
 )
 let hook = try unsafe entry.hookSharedCalls(

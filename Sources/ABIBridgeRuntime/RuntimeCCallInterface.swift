@@ -31,3 +31,27 @@ package final class RuntimeCCallInterface: @unchecked Sendable {
 
     deinit { ABIReleaseCallInterface(handle) }
 }
+
+extension RuntimeCCallInterface {
+    private static let cache = RuntimeCallInterfaceCache<RuntimeCCallInterface>()
+
+    package static func cached(
+        result: RuntimeValueType,
+        parameters: [RuntimeValueType],
+        fixedParameterCount: Int? = nil
+    ) throws -> RuntimeCCallInterface {
+        try cache.interface(
+            for: RuntimeCallInterfaceKey(
+                result: result,
+                parameters: parameters,
+                fixedParameterCount: fixedParameterCount
+            )
+        ) {
+            try RuntimeCCallInterface(
+                result: result,
+                parameters: parameters,
+                fixedParameterCount: fixedParameterCount
+            )
+        }
+    }
+}

@@ -57,66 +57,26 @@ package final class RuntimeSwiftCallInterface: @unchecked Sendable {
 }
 
 extension RuntimeSwiftCallInterface {
-    private struct Entry: Sendable {
-        let result: RuntimeValueType
-        let parameters: [RuntimeValueType]
-        let error: RuntimeValueType?
-        let typedError: Bool
-        let interface: RuntimeSwiftCallInterface
-
-        func matches(
-            result: RuntimeValueType,
-            parameters: [RuntimeValueType],
-            errorPlan: RuntimeErrorConvention?
-        ) -> Bool {
-            guard Self.equal(self.result, result), self.parameters.count == parameters.count,
-                typedError == (errorPlan?.isTyped ?? false)
-            else { return false }
-            switch (error, errorPlan?.type) {
-            case (.none, .none): break
-            case (.some(let first), .some(let second)):
-                guard Self.equal(first, second) else { return false }
-            default: return false
-            }
-            return zip(self.parameters, parameters).allSatisfy(Self.equal)
-        }
-
-        private static func equal(_ first: RuntimeValueType, _ second: RuntimeValueType) -> Bool {
-            first === second || ABIValueTypesEqual(first.handle, second.handle)
-        }
-    }
-
-    // Only native layouts are cached: no Swift metatypes, codecs, images or
-    // callback bodies. Active handles retain interfaces independently of eviction.
-    private static let cache = Mutex<[Entry]>([])
+    private static let cache = RuntimeCallInterfaceCache<RuntimeSwiftCallInterface>()
 
     package static func cached(
         result: RuntimeValueType,
         parameters: [RuntimeValueType],
         errorPlan: RuntimeErrorConvention? = nil
     ) throws -> RuntimeSwiftCallInterface {
-        try cache.withLock { entries in
-            if let entry = entries.last(where: {
-                $0.matches(result: result, parameters: parameters, errorPlan: errorPlan)
-            }) {
-                return entry.interface
-            }
-            let interface = try RuntimeSwiftCallInterface(
+        try cache.interface(
+            for: RuntimeCallInterfaceKey(
+                result: result,
+                parameters: parameters,
+                error: errorPlan?.type,
+                typedError: errorPlan?.isTyped ?? false
+            )
+        ) {
+            try RuntimeSwiftCallInterface(
                 result: result,
                 parameters: parameters,
                 errorPlan: errorPlan
             )
-            if entries.count == 64 { entries.removeFirst() }
-            entries.append(
-                Entry(
-                    result: result,
-                    parameters: parameters,
-                    error: errorPlan?.type,
-                    typedError: errorPlan?.isTyped ?? false,
-                    interface: interface
-                )
-            )
-            return interface
         }
     }
 }

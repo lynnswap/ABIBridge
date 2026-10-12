@@ -8,7 +8,7 @@ Resolve a source-level name and supply its signature as a Swift function type.
 import ABIBridge
 
 let runtime = ABIRuntime.shared
-let processID = try await runtime.cFunction(
+let processID = try runtime.cFunction(
     named: "getpid",
     as: (() -> Int32).self
 )
@@ -18,7 +18,7 @@ let value = try unsafe processID.unsafeInvoke()
 The runtime searches loaded images automatically. Use a framework or executable-path scope to select a particular loaded binary:
 
 ```swift
-let add = try await runtime.cxxFunction(
+let add = try runtime.cxxFunction(
     named: "Example::Math::add(int, int)",
     as: ((Int32, Int32) -> Int32).self,
     in: .framework(named: "Example")
@@ -53,7 +53,7 @@ There is no fixed argument-count limit. A Swift function using the Swift calling
 Include every concrete argument in `as:` and set `variadicFrom:` to the zero-based index of the first anonymous argument. For `int printf(const char *format, ...)`, the fixed prefix has one parameter:
 
 ```swift
-let printValue = try await runtime.cFunction(
+let printValue = try runtime.cFunction(
     named: "printf",
     as: ((UnsafePointer<CChar>, Float) -> Int32).self,
     variadicFrom: 1
@@ -71,7 +71,7 @@ Use ``NativeSignature`` when layouts are known at runtime. Its `parameters:` lis
 let signature = NativeSignature(
     parameters: [.pointer], variadicParameters: [.float], returns: .int32
 )
-let printValue = try await runtime.cFunction(named: "printf", signature: signature)
+let printValue = try runtime.cFunction(named: "printf", signature: signature)
 ```
 
 Each handle prepares one concrete call shape and may be reused concurrently with that shape. Prepare another handle for a different tail. The libffi path requires at least one fixed parameter; native C++ `function<Signature>` wrappers use the consumer compiler's variadic function type directly. Callback interfaces likewise require a known concrete tail for every entry; an import name does not reveal arbitrary callers' argument counts or types.
@@ -81,12 +81,12 @@ Each handle prepares one concrete call shape and may be reused concurrently with
 A function handle retains its resolved image and prepared signature. Clearing the runtime's cached indexes does not invalidate existing handles. To reuse an image explicitly:
 
 ```swift
-let images = try await runtime.images(matching: .framework(named: "Example"))
+let images = try runtime.images(matching: .framework(named: "Example"))
 if let image = images.first {
-    let start = try await runtime.cFunction(
+    let start = try runtime.cFunction(
         named: "ExampleStart", as: (() -> Void).self, in: image
     )
-    let stop = try await runtime.cFunction(
+    let stop = try runtime.cFunction(
         named: "ExampleStop", as: (() -> Void).self, in: image
     )
 }
@@ -101,7 +101,7 @@ Handles are Sendable and can reuse their immutable signatures concurrently. Ever
 Use `Unmanaged<T>` for a native reference represented by a pointer. For example, a provider's `ExampleCopyValue` returning `CFTypeRef` at +1 can be called as follows:
 
 ```swift
-let copy = try await runtime.cFunction(
+let copy = try runtime.cFunction(
     named: "ExampleCopyValue",
     as: ((Unmanaged<CFString>) -> Unmanaged<CFString>).self
 )

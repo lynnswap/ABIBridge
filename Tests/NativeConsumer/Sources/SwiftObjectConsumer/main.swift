@@ -8,20 +8,28 @@ struct SwiftObjectConsumer {
     enum Failure: Error { case missingPath, loadFailed, allocationFailed }
     final class ReceiverProbe { weak var storage: NativeValue? }
 
-    static func prepare(_ url: URL, observing probe: ReceiverProbe) async throws -> NativeBoundCXXMethod<Int32> {
+    static func prepare(_ url: URL, observing probe: ReceiverProbe) throws -> NativeBoundCXXMethod<Int32> {
         guard let loader = dlopen(url.path, RTLD_NOW | RTLD_LOCAL) else { throw Failure.loadFailed }
         defer { dlclose(loader) }
         let runtime = ABIRuntime()
-        let make = try await runtime.cFunction(
+        let make = try runtime.cFunction(
             named: "ABIBridgeFixtureCreateVirtualCounter", as: ((Int32) -> UnsafeMutableRawPointer?).self,
             in: .path(url)
         )
-        let size = try await runtime.cFunction(named: "ABIBridgeFixtureVirtualSize", as: (() -> Int).self, in: .path(url))
-        let alignment = try await runtime.cFunction(named: "ABIBridgeFixtureVirtualAlignment", as: (() -> Int).self, in: .path(url))
-        let tableDiscriminator = try await runtime.cFunction(
+        let size = try runtime.cFunction(
+            named: "ABIBridgeFixtureVirtualSize",
+            as: (() -> Int).self,
+            in: .path(url)
+        )
+        let alignment = try runtime.cFunction(
+            named: "ABIBridgeFixtureVirtualAlignment",
+            as: (() -> Int).self,
+            in: .path(url)
+        )
+        let tableDiscriminator = try runtime.cFunction(
             named: "ABIBridgeFixtureVTableDiscriminator", as: (() -> UInt).self, in: .path(url)
         )
-        let slotDiscriminator = try await runtime.cFunction(
+        let slotDiscriminator = try runtime.cFunction(
             named: "ABIBridgeFixtureSlotDiscriminator", as: (() -> UInt).self, in: .path(url)
         )
         guard let address = try unsafe make.unsafeInvoke(13) else { throw Failure.allocationFailed }
@@ -33,7 +41,7 @@ struct SwiftObjectConsumer {
         let storage = unsafe NativeValue(adopting: address, as: layout, release: { free($0) })
         probe.storage = storage
         let object = runtime.cxxObject(storage, typeNamed: "ABIBridgeFixture::VirtualCounter", in: .path(url))
-        let direct = try await object.method(named: "current() const", as: (() -> Int32).self)
+        let direct = try object.method(named: "current() const", as: (() -> Int32).self)
         let directValue = try unsafe direct.unsafeInvoke()
         precondition(directValue == 13)
         let table = try unsafe NativeVTable(
@@ -45,7 +53,7 @@ struct SwiftObjectConsumer {
             authentication: .cxxVirtualFunction(discriminator: slotDiscriminator.unsafeInvoke()),
             as: (() -> Int32).self
         )
-        await runtime.removeCachedResults()
+        runtime.removeCachedResults()
         guard let anotherAddress = try unsafe make.unsafeInvoke(42) else { throw Failure.allocationFailed }
         let another = unsafe NativeValue(adopting: anotherAddress, as: layout, release: { free($0) })
         return method.method.bind(to: another)
@@ -55,7 +63,9 @@ struct SwiftObjectConsumer {
         guard let loader = dlopen(url.path, RTLD_NOW | RTLD_LOCAL) else { throw Failure.loadFailed }
         defer { dlclose(loader) }
         let runtime = ABIRuntime()
-        guard let image = try await runtime.images(matching: .path(url)).first else { throw Failure.loadFailed }
+        guard let image = try runtime.images(matching: .path(url)).first else {
+            throw Failure.loadFailed
+        }
         let values = try await runtime.lazyLibraries(in: image)
         var error: OpaquePointer?
         guard let native = ABICopyLazyLibrariesForImage(image.identity.loadGeneration, &error) else { throw Failure.loadFailed }
@@ -63,15 +73,15 @@ struct SwiftObjectConsumer {
         return (image.identity.loadGeneration, values, native)
     }
 
-    @MainActor static func handedOffSymbol(_ url: URL) async throws -> ResolvedSymbol {
+    @MainActor static func handedOffSymbol(_ url: URL) throws -> ResolvedSymbol {
         guard let loader = dlopen(url.path, RTLD_NOW | RTLD_LOCAL) else { throw Failure.loadFailed }
         defer { dlclose(loader) }
         let runtime = ABIRuntime()
-        var original: ResolvedSymbol? = try await runtime.resolve(
+        var original: ResolvedSymbol? = try runtime.resolve(
             .init(name: "ABIBridgeFixture::counter", language: .cxx, kind: .data), in: .path(url))
         let exported = unsafe original!.copyNativeHandle()
         original = nil
-        await runtime.removeCachedResults()
+        runtime.removeCachedResults()
         guard let retained = ABIRetainResolvedSymbol(exported) else { throw Failure.loadFailed }
         ABIReleaseResolvedSymbol(exported)
         let symbol = unsafe ResolvedSymbol(retainingNativeHandle: retained)
@@ -86,7 +96,7 @@ struct SwiftObjectConsumer {
         if let snapshotLease { ABIReleaseImage(snapshotLease) }
         precondition(snapshotLease == nil, "Copied Swift/native diagnostics must not retain their source image")
         precondition(ABILazyLibraryListCount(native) == values.count)
-        var symbol: ResolvedSymbol? = try await handedOffSymbol(url)
+        var symbol: ResolvedSymbol? = try handedOffSymbol(url)
         let symbolGeneration = symbol!.image.identity.loadGeneration
         precondition(unsafe symbol!.withUnsafeAddress { $0.load(as: Int32.self) } == 42)
         symbol = nil
@@ -100,7 +110,7 @@ struct SwiftObjectConsumer {
         let url = URL(fileURLWithPath: CommandLine.arguments[1])
         try await checkSnapshotAndHandoffLifetime(url)
         let probe = ReceiverProbe()
-        var method: NativeBoundCXXMethod<Int32>? = try await prepare(url, observing: probe)
+        var method: NativeBoundCXXMethod<Int32>? = try prepare(url, observing: probe)
         precondition(probe.storage == nil)
         let value = try unsafe method!.unsafeInvoke()
         precondition(value == 42)

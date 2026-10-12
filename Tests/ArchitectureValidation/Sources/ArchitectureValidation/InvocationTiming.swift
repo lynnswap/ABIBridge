@@ -13,15 +13,27 @@ private final class InvocationTimingReceiver: NSObject {
 
 @MainActor func validateInvocationTiming() async throws -> [String] {
     let runtime = ABIRuntime()
-    let add = try await runtime.cFunction(named: "ABIValidationAdd", as: ((Int32, Int32) -> Int32).self)
-    let pointer = try await runtime.cFunction(named: "ABIValidationAdvance", as: ((UnsafeMutablePointer<CChar>, Int) -> UnsafeMutableRawPointer).self)
-    let sum = try await runtime.swiftFunction(named: "ArchitectureValidation.architectureSum(_:_:_:_:_:_:_:_:_:_:)", as: ((Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Int).self)
-    let decorate = try await runtime.swiftFunction(named: "ArchitectureValidation.architectureDecorate(_:)", as: ((String) -> String).self)
-    let mix = try await runtime.swiftFunction(named: "ArchitectureValidation.architectureTimingMix(_:_:_:_:)", as: ((Int32, Double, Float, UInt64) -> Double).self)
+    let add = try runtime.cFunction(named: "ABIValidationAdd", as: ((Int32, Int32) -> Int32).self)
+    let pointer = try runtime.cFunction(
+        named: "ABIValidationAdvance",
+        as: ((UnsafeMutablePointer<CChar>, Int) -> UnsafeMutableRawPointer).self
+    )
+    let sum = try runtime.swiftFunction(
+        named: "ArchitectureValidation.architectureSum(_:_:_:_:_:_:_:_:_:_:)",
+        as: ((Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Int).self
+    )
+    let decorate = try runtime.swiftFunction(
+        named: "ArchitectureValidation.architectureDecorate(_:)",
+        as: ((String) -> String).self
+    )
+    let mix = try runtime.swiftFunction(
+        named: "ArchitectureValidation.architectureTimingMix(_:_:_:_:)",
+        as: ((Int32, Double, Float, UInt64) -> Double).self
+    )
     let counter = ABIValidationCreateCounter()!
     defer { ABIValidationDeleteCounter(counter) }
     let cxxObject = runtime.cxxObject(unsafe NativeValue(borrowing: counter, as: try .opaque(named: "ABIArchitecture::Counter")), typeNamed: "ABIArchitecture::Counter")
-    let cxxMethod = try await cxxObject.method(named: "add(int)", as: ((Int32) -> Int32).self)
+    let cxxMethod = try cxxObject.method(named: "add(int)", as: ((Int32) -> Int32).self)
     let object = runtime.object(InvocationTimingReceiver())
     let method = try object.method(selector: "adding:", as: ((Int32) -> Int32).self)
     let echo = try object.method(selector: "echo:", as: ((NSObject?) -> NSObject?).self)

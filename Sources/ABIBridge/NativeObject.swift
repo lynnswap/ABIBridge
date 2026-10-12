@@ -61,12 +61,12 @@ public final class NativeObject {
 
     deinit { withExtendedLifetime(runtime) { receiver = nil } }
 
-    private nonisolated(nonsending) func swiftType() async throws -> NativeSwiftType {
+    private nonisolated func swiftType() throws -> NativeSwiftType {
         var type: AnyClass? = Swift.type(of: receiver!)
         var missing: (any Error)?
         while let current = type {
             do {
-                return try await runtime.swiftType(for: current)
+                return try runtime.swiftType(for: current)
             } catch let error as ABIResolutionError {
                 guard case .declarationNotFound = error else { throw error }
                 missing = error
@@ -142,15 +142,21 @@ public final class NativeObject {
     ///   - isConsuming: Whether the Swift member consumes its receiver copy.
     /// - Returns: A reusable method bound to this receiver.
     /// - Throws: A lookup or unsupported-representation error.
-    public nonisolated(nonsending) func method<Signature>(
+    public nonisolated func method<Signature>(
         named name: String, as signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument] = [],
         declaredAs declaredSignature: String? = nil,
         consuming isConsuming: Bool = false
-    ) async throws -> NativeBoundSwiftMethod<Signature> {
+    ) throws -> NativeBoundSwiftMethod<Signature> {
         let object = receiver!
-        let type = try await swiftType()
-        let method = try await type.method(named: name, as: signature, genericArguments: genericArguments, declaredAs: declaredSignature, consuming: isConsuming)
+        let type = try swiftType()
+        let method = try type.method(
+            named: name,
+            as: signature,
+            genericArguments: genericArguments,
+            declaredAs: declaredSignature,
+            consuming: isConsuming
+        )
         return NativeBoundSwiftMethod(method: method, receiver: object)
     }
 
@@ -164,11 +170,16 @@ public final class NativeObject {
     ///   - isConsuming: Whether the setter also consumes a receiver copy.
     /// - Returns: A one-argument bound method.
     /// - Throws: A lookup or representation error.
-    public nonisolated(nonsending) func setter<Value>(
+    public nonisolated func setter<Value>(
         named name: String, as valueType: Value.Type, declaredAs declaredSignature: String? = nil,
         consuming isConsuming: Bool = false
-    ) async throws -> NativeBoundSwiftMethod<(Value) -> Void> {
-        let method = try await swiftType().setter(named: name, as: valueType, declaredAs: declaredSignature, consuming: isConsuming)
+    ) throws -> NativeBoundSwiftMethod<(Value) -> Void> {
+        let method = try swiftType().setter(
+            named: name,
+            as: valueType,
+            declaredAs: declaredSignature,
+            consuming: isConsuming
+        )
         return NativeBoundSwiftMethod(method: method, receiver: receiver!)
     }
 
@@ -384,11 +395,16 @@ struct ObjCMethodSignature<Result, each Argument> {
 extension NativeObject {
     /// Resolves a Swift property getter bound to this object.
     /// Supply its complete zero-argument function type, including native errors and async isolation.
-    public nonisolated(nonsending) func getter<Signature>(
+    public nonisolated func getter<Signature>(
         named name: String, as signature: Signature.Type, declaredAs declaredSignature: String? = nil,
         consuming isConsuming: Bool = false
-    ) async throws -> NativeBoundSwiftMethod<Signature> {
-        let method = try await swiftType().getter(named: name, as: signature, declaredAs: declaredSignature, consuming: isConsuming)
+    ) throws -> NativeBoundSwiftMethod<Signature> {
+        let method = try swiftType().getter(
+            named: name,
+            as: signature,
+            declaredAs: declaredSignature,
+            consuming: isConsuming
+        )
         return NativeBoundSwiftMethod(method: method, receiver: receiver!)
     }
 }

@@ -14,7 +14,7 @@ import Synchronization
         guard value else { throw ArchitectureValidationFailure(description: message) }
         checks.append(message)
     }
-    try check(try await runtime.images(matching: scope).isEmpty, "Readiness fixture starts unloaded")
+    try check(try runtime.images(matching: scope).isEmpty, "Readiness fixture starts unloaded")
     let baseline = ABIImportedUIDCall()
     let installed = Mutex(false)
     let failures = Mutex<[String]>([])
@@ -28,8 +28,12 @@ import Synchronization
             }
         }) { call in try call.proceed() + 7 }
     defer { monitor.invalidate() }
-    let call = try await runtime.cFunction(named: "ABIReadinessUID", as: (() -> UInt32).self, in: scope)
-    let count = try await runtime.cFunction(named: "ABIReadinessInitializationCount", as: (() -> Int32).self, in: scope)
+    let call = try runtime.cFunction(named: "ABIReadinessUID", as: (() -> UInt32).self, in: scope)
+    let count = try runtime.cFunction(
+        named: "ABIReadinessInitializationCount",
+        as: (() -> Int32).self,
+        in: scope
+    )
     let deadline = ContinuousClock.now + .seconds(10)
     while !installed.withLock({ $0 }) && failures.withLock({ $0.isEmpty }) && ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(10))
@@ -43,7 +47,9 @@ import Synchronization
     try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: binary)
     let outcome: Result<Void, any Error>
     do {
-        let aliased = try await runtime.cFunction(named: "ABIReadinessUID", as: (() -> UInt32).self,
+        let aliased = try runtime.cFunction(
+            named: "ABIReadinessUID",
+            as: (() -> UInt32).self,
             in: .path(alias), loading: .loadedOnly)
         try check(aliased.symbol.image.identity == call.symbol.image.identity, "Loaded-only suffix alias resolves to the same ready image")
         try check(try unsafe aliased.unsafeInvoke() == baseline + 7, "Loaded-only alias remains callable through monitored imports")

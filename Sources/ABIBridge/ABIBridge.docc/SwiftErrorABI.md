@@ -3,7 +3,7 @@
 Include the declaration's native error type in the function metatype. The same API accepts nonthrowing functions, untyped `throws`, and concrete `throws(Failure)`.
 
 ```swift
-let load = try await ABIRuntime.shared.swiftFunction(
+let load = try ABIRuntime.shared.swiftFunction(
     named: "Example.load(_:)", as: ((String) throws -> String).self
 )
 do {
@@ -25,7 +25,7 @@ For `func checked(_ value: Int64) throws(CheckFailure) -> String`, pass `((Int64
 Instance and static methods and allocating initializers accept the same throwing function metatypes. A throwing getter uses a zero-argument signature:
 
 ```swift
-let getter = try await type.getter(
+let getter = try type.getter(
     named: "contents", as: (() throws -> String).self
 )
 let contents = try unsafe getter.unsafeInvoke(on: receiver)

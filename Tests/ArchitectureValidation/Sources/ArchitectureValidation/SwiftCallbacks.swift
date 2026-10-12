@@ -115,14 +115,16 @@ private final class CallbackValidationType {
 
 @MainActor func validateSwiftCallbacks() async throws -> [String] {
     let runtime = ABIRuntime(), receiver = ReplacementRenderer()
-    let type = try await runtime.swiftType(named: "SwiftReplacementFixtures.ReplacementRenderer")
+    let type = try runtime.swiftType(named: "SwiftReplacementFixtures.ReplacementRenderer")
     let integer = try CallbackValidationType(ABIValueInt64)
     var checks: [String] = []
     func flags(_ declaration: NativeDeclaration) async throws -> UInt32 {
-        let descriptor = try await runtime.resolve(.init(name: "method descriptor for " + declaration.name, language: .swift, kind: .data))
+        let descriptor = try runtime.resolve(
+            .init(name: "method descriptor for " + declaration.name, language: .swift, kind: .data)
+        )
         return unsafe descriptor.withUnsafeAddress { $0.load(as: UInt32.self) }
     }
-    let method = try await type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
+    let method = try type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
     let plan = try unsafe method.prepareVirtualReplacement(with: method)
     let scalarBox = CallbackValidationBox { call in
         let value = try readCallbackValue(call, argument: 0, as: Int64.self)
@@ -138,7 +140,7 @@ private final class CallbackValidationType {
     checks.append("Compiled class dispatch, typed continuation, edited scalar result and invalidation passed")
     let word = try CallbackValidationType(MemoryLayout<UInt>.size == 8 ? ABIValueUInt64 : ABIValueUInt32)
     let string = try CallbackValidationType(Array(repeating: word, count: MemoryLayout<String>.size / MemoryLayout<UInt>.size))
-    let text = try await type.method(named: "text(_:)", as: ((String) -> String).self)
+    let text = try type.method(named: "text(_:)", as: ((String) -> String).self)
     let textPlan = try unsafe text.prepareVirtualReplacement(with: text)
     let stringBox = CallbackValidationBox(destroy: { $0.assumingMemoryBound(to: String.self).deinitialize(count: 1) }) { call in
         let value = try readCallbackValue(call, argument: 0, as: String.self)
@@ -155,7 +157,8 @@ private final class CallbackValidationType {
     try requireCallback(classText(receiver, input) == "method:" + input, "String method restored")
     checks.append("Native Swift callback slots restored after releasing scoped code owners")
     let payloadType = try CallbackValidationType(Array(repeating: integer, count: 5))
-    let payload = try await type.method(named: "payload(Swift.Int64) -> SwiftReplacementFixtures.ReplacementPayload",
+    let payload = try type.method(
+        named: "payload(Swift.Int64) -> SwiftReplacementFixtures.ReplacementPayload",
         as: ((Int64) -> VirtualPayload).self)
     let payloadPlan = try unsafe payload.prepareVirtualReplacement(with: payload)
     let payloadBox = CallbackValidationBox { call in

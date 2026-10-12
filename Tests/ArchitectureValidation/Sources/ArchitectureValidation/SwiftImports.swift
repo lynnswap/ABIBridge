@@ -31,10 +31,22 @@ private struct ImportPayload: ABIBridgeValue {
         }
         try check(result.get(), message)
     }
-    let target = try await runtime.swiftFunction(named: "SwiftImportProvider.scalar(_:)", as: ((Int64) -> Int64).self, in: path("SwiftImportProvider"))
-    let replacement = try await runtime.swiftFunction(named: "SwiftImportProvider.replacementScalar(_:)", as: ((Int64) -> Int64).self, in: path("SwiftImportProvider"))
+    let target = try runtime.swiftFunction(
+        named: "SwiftImportProvider.scalar(_:)",
+        as: ((Int64) -> Int64).self,
+        in: path("SwiftImportProvider")
+    )
+    let replacement = try runtime.swiftFunction(
+        named: "SwiftImportProvider.replacementScalar(_:)",
+        as: ((Int64) -> Int64).self,
+        in: path("SwiftImportProvider")
+    )
     for caller in ["SwiftImportCaller", "SwiftImportCallerControl"] {
-        let oracle = try await runtime.swiftFunction(named: caller + ".importedScalar(_:)", as: ((Int64) -> Int64).self, in: path(caller))
+        let oracle = try runtime.swiftFunction(
+            named: caller + ".importedScalar(_:)",
+            as: ((Int64) -> Int64).self,
+            in: path(caller)
+        )
         let plan = try await unsafe target.prepareImportedReplacement(with: replacement, in: path(caller), using: runtime)
         try check(try unsafe oracle.unsafeInvoke(40) == 41, "\(caller): preparation leaves original dispatch")
         guard let original = plan.slots.first?.original else { throw ArchitectureValidationFailure(description: "Original scalar entry missing") }
@@ -57,9 +69,21 @@ private struct ImportPayload: ABIBridgeValue {
         try check(try unsafe oracle.unsafeInvoke(40) == 41, "\(caller): restored scalar dispatch")
     }
     let caller = "SwiftImportCallerControl"
-    let text = try await runtime.swiftFunction(named: "SwiftImportProvider.text(_:)", as: ((String) -> String).self, in: path("SwiftImportProvider"))
-    let newText = try await runtime.swiftFunction(named: "SwiftImportProvider.replacementText(_:)", as: ((String) -> String).self, in: path("SwiftImportProvider"))
-    let textOracle = try await runtime.swiftFunction(named: caller + ".importedText(_:)", as: ((String) -> String).self, in: path(caller))
+    let text = try runtime.swiftFunction(
+        named: "SwiftImportProvider.text(_:)",
+        as: ((String) -> String).self,
+        in: path("SwiftImportProvider")
+    )
+    let newText = try runtime.swiftFunction(
+        named: "SwiftImportProvider.replacementText(_:)",
+        as: ((String) -> String).self,
+        in: path("SwiftImportProvider")
+    )
+    let textOracle = try runtime.swiftFunction(
+        named: caller + ".importedText(_:)",
+        as: ((String) -> String).self,
+        in: path(caller)
+    )
     let textPlan = try await unsafe text.prepareImportedReplacement(with: newText, in: path(caller), using: runtime)
     try unsafe textPlan.install()
     let input = String(repeating: "owned Swift argument", count: 100)
@@ -70,9 +94,21 @@ private struct ImportPayload: ABIBridgeValue {
     try check(try unsafe textOracle.unsafeInvoke(input) == "original:" + input, "String dispatch restored")
 
     let suffix = "(Swift.Int64) -> SwiftImportProvider.ReplacementPayload"
-    let large = try await runtime.swiftFunction(named: "SwiftImportProvider.payload" + suffix, as: ((Int64) -> ImportPayload).self, in: path("SwiftImportProvider"))
-    let newLarge = try await runtime.swiftFunction(named: "SwiftImportProvider.replacementPayload" + suffix, as: ((Int64) -> ImportPayload).self, in: path("SwiftImportProvider"))
-    let largeOracle = try await runtime.swiftFunction(named: caller + ".importedPayload(_:)", as: ((Int64) -> Int64).self, in: path(caller))
+    let large = try runtime.swiftFunction(
+        named: "SwiftImportProvider.payload" + suffix,
+        as: ((Int64) -> ImportPayload).self,
+        in: path("SwiftImportProvider")
+    )
+    let newLarge = try runtime.swiftFunction(
+        named: "SwiftImportProvider.replacementPayload" + suffix,
+        as: ((Int64) -> ImportPayload).self,
+        in: path("SwiftImportProvider")
+    )
+    let largeOracle = try runtime.swiftFunction(
+        named: caller + ".importedPayload(_:)",
+        as: ((Int64) -> Int64).self,
+        in: path(caller)
+    )
     let largePlan = try await unsafe large.prepareImportedReplacement(with: newLarge, in: path(caller), using: runtime)
     try unsafe largePlan.install()
     try finish(largePlan, "Compiled indirect result and captured predecessor") {
@@ -80,10 +116,18 @@ private struct ImportPayload: ABIBridgeValue {
         return try unsafe largeOracle.unsafeInvoke(40) == 710 && previous.a == 40 && previous.e == 44
     }
     try check(try unsafe largeOracle.unsafeInvoke(40) == 210, "Indirect result dispatch restored")
-    let type = try await runtime.swiftType(named: "SwiftImportProvider.ReplacementValue", as: Int64.self, in: path("SwiftImportProvider"))
-    let method = try await type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
-    let newMethod = try await type.method(named: "replacementScalar(_:)", as: ((Int64) -> Int64).self)
-    let methodOracle = try await runtime.swiftFunction(named: caller + ".importedValueMethod(_:)", as: ((Int64) -> Int64).self, in: path(caller))
+    let type = try runtime.swiftType(
+        named: "SwiftImportProvider.ReplacementValue",
+        as: Int64.self,
+        in: path("SwiftImportProvider")
+    )
+    let method = try type.method(named: "scalar(_:)", as: ((Int64) -> Int64).self)
+    let newMethod = try type.method(named: "replacementScalar(_:)", as: ((Int64) -> Int64).self)
+    let methodOracle = try runtime.swiftFunction(
+        named: caller + ".importedValueMethod(_:)",
+        as: ((Int64) -> Int64).self,
+        in: path(caller)
+    )
     let methodPlan = try await unsafe method.prepareImportedReplacement(with: newMethod, in: path(caller), using: runtime)
     try unsafe methodPlan.install()
     try finish(methodPlan, "Compiled struct member preserves receiver context and captured predecessor") {

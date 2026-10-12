@@ -15,7 +15,7 @@ let storage = unsafe NativeValue(
 let counter = ABIRuntime.shared.cxxObject(
     storage, typeNamed: "Example::Counter"
 )
-let add = try await counter.method(
+let add = try counter.method(
     named: "add(int)",
     as: ((Int32) -> Int32).self
 )
@@ -33,7 +33,7 @@ A direct method handle calls the resolved implementation. For a virtual override
 Object lookup returns `NativeBoundCXXMethod`, which retains its receiver storage. Its `method` property returns `NativeCXXMethod`, sharing the prepared target, adapter, and call signature without retaining that binding.
 
 ```swift
-let bound = try await counter.method(
+let bound = try counter.method(
     named: "add(int)", as: ((Int32) -> Int32).self
 )
 let add = bound.method
@@ -91,7 +91,7 @@ Lookup captures the selected function pointer and retains its implementation ima
 When the table's image has recoverable original chained fixups and symbols, select an entry using its implementation declaration:
 
 ```swift
-let entry = try await table.entry(
+let entry = try table.entry(
     named: "Example::Derived::current() const"
 )
 let current = try unsafe counter.virtualMethod(
@@ -130,10 +130,10 @@ Function entries are authenticated and re-signed to the generic C function-point
 Nontrivial C++ parameters and results can require copy constructors, destructors, invisible references, or indirect result storage that a plain C layout does not express. Resolve a C-compatible bridge and pass it to method lookup:
 
 ```swift
-let adapter = try await ABIRuntime.shared.resolve(
+let adapter = try ABIRuntime.shared.resolve(
     NativeDeclaration(name: "ExampleInvokeTransform", language: .c)
 )
-let transform = try await counter.method(
+let transform = try counter.method(
     named: "transform(Example::Token) const",
     as: ((Token) -> Token).self,
     using: adapter

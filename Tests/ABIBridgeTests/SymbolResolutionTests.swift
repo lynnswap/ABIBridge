@@ -21,8 +21,8 @@ struct SymbolResolutionTests {
         let prefix = "_ZN\(fixture.namespace.utf8.count)\(fixture.namespace)7Counter"
         let deleting = NativeDeclaration(linkerName: prefix + "D0Ev", language: .cxx)
         let complete = NativeDeclaration(machOName: "_" + prefix + "D1Ev", language: .cxx)
-        let deletingSymbol = try await runtime.resolve(deleting, in: scope)
-        let completeSymbol = try await runtime.resolve(complete, in: scope)
+        let deletingSymbol = try runtime.resolve(deleting, in: scope)
+        let completeSymbol = try runtime.resolve(complete, in: scope)
         #expect(deletingSymbol.declaration.nameForm == .linker)
         #expect(completeSymbol.declaration.nameForm == .machO)
         #expect(
@@ -34,7 +34,7 @@ struct SymbolResolutionTests {
         defer { dlclose(library) }
         #expect(unsafe deletingSymbol.withUnsafeAddress { $0 == dlsym(library, prefix + "D0Ev") })
         #expect(unsafe completeSymbol.withUnsafeAddress { $0 == dlsym(library, prefix + "D1Ev") })
-        let results = await runtime.resolve([
+        let results = runtime.resolve([
             NativeSymbolRequest(
                 deleting,
                 alternatives: [
@@ -62,8 +62,8 @@ struct SymbolResolutionTests {
                 try unsafe results[index].get().withUnsafeAddress { $0.load(as: Int32.self) } == 73
             )
         }
-        await #expect(throws: ABIResolutionError.invalidAddress) {
-            _ = try await runtime.resolve(
+        #expect(throws: ABIResolutionError.invalidAddress) {
+            _ = try runtime.resolve(
                 .init(linkerName: prefix + "D0Ev", language: .cxx, kind: .data),
                 in: scope
             )
@@ -75,7 +75,7 @@ struct SymbolResolutionTests {
             .init(linkerName: prefix + "D0Ev\0suffix", language: .cxx),
         ] {
             do {
-                _ = try await runtime.resolve(query, in: scope)
+                _ = try runtime.resolve(query, in: scope)
                 Issue.record("Exact lookup must not guess prefixes or normalize whitespace")
             } catch ABIResolutionError.declarationNotFound {}
         }
@@ -111,8 +111,8 @@ struct SymbolResolutionTests {
         )
         #expect(sourceComposed != sourceDecomposed)
         let scope = ImageSelector.path(fixture.libraryURL)
-        let first = try await runtime.resolve(composed, in: scope)
-        let second = try await runtime.resolve(decomposed, in: scope)
+        let first = try runtime.resolve(composed, in: scope)
+        let second = try runtime.resolve(decomposed, in: scope)
         #expect(unsafe first.withUnsafeAddress { $0.load(as: Int32.self) } == 31)
         #expect(unsafe second.withUnsafeAddress { $0.load(as: Int32.self) } == 32)
         let linker = NativeDeclaration(
@@ -120,9 +120,9 @@ struct SymbolResolutionTests {
             language: .c,
             kind: .data
         )
-        let source = try await runtime.resolve(sourceDecomposed, in: scope)
+        let source = try runtime.resolve(sourceDecomposed, in: scope)
         #expect(unsafe source.withUnsafeAddress { $0.load(as: Int32.self) } == 32)
-        let alias = try await runtime.resolve(linker, in: scope)
+        let alias = try runtime.resolve(linker, in: scope)
         #expect(unsafe alias.withUnsafeAddress { $0.load(as: Int32.self) } == 32)
     }
 
@@ -141,7 +141,7 @@ struct SymbolResolutionTests {
                 """
         )
         defer { fixture.cleanup() }
-        let function = try await ABIRuntime().swiftFunction(
+        let function = try ABIRuntime().swiftFunction(
             named: module + ".compilerGeneration()",
             as: (() -> Int32).self,
             in: .path(fixture.libraryURL)
@@ -163,11 +163,11 @@ struct SymbolResolutionTests {
         let machOName = try #require(exported.first)
         let mangled = String(machOName.dropFirst())
         let scope = ImageSelector.path(fixture.libraryURL)
-        let symbol = try await runtime.resolve(
+        let symbol = try runtime.resolve(
             .init(linkerName: mangled, language: .swift),
             in: scope
         )
-        let literal = try await runtime.resolve(
+        let literal = try runtime.resolve(
             .init(machOName: "_" + mangled, language: .swift),
             in: scope
         )
@@ -177,7 +177,7 @@ struct SymbolResolutionTests {
         )
         #expect(symbol.declaration.language == .swift)
         fixture.close()
-        await runtime.removeCachedResults()
+        runtime.removeCachedResults()
         #expect(
             unsafe symbol.withUnsafeAddress { address in
                 var info = Dl_info()
@@ -192,7 +192,7 @@ struct SymbolResolutionTests {
         defer { fixture.cleanup() }
         #expect(try fixture.exportedSymbols().isEmpty)
         let runtime = ABIRuntime()
-        let function = try await runtime.swiftFunction(
+        let function = try runtime.swiftFunction(
             named: module + ".echo()",
             as: (() -> Void).self,
             in: .path(fixture.libraryURL)
@@ -213,22 +213,22 @@ struct SymbolResolutionTests {
             kind: .data
         )
         do {
-            _ = try await runtime.resolve(declaration, loading: .loadedOnly)
+            _ = try runtime.resolve(declaration, loading: .loadedOnly)
             Issue.record("Protocol descriptors in both loaded images must remain ambiguous")
         } catch ABIResolutionError.ambiguousDeclaration(_, let candidates) {
             #expect(candidates.count == 2)
         }
         let identity = try #require(
-            try await runtime.images(matching: .path(first.libraryURL)).first
+            try runtime.images(matching: .path(first.libraryURL)).first
         ).identity
-        let symbol = try await runtime.resolve(
+        let symbol = try runtime.resolve(
             declaration,
             in: .path(first.libraryURL),
             loading: .loadedOnly
         )
         #expect(symbol.image.identity == identity)
         first.close()
-        await runtime.removeCachedResults()
+        runtime.removeCachedResults()
         #expect(
             unsafe symbol.withUnsafeAddress { address in
                 var info = Dl_info()
@@ -264,7 +264,7 @@ struct SymbolResolutionTests {
             .init(missing, alternatives: [counter], in: [scope]),
             .init(counter, in: []),
         ]
-        let results = await runtime.resolve(requests)
+        let results = runtime.resolve(requests)
         #expect(results.count == requests.count)
         #expect(try results[0].get().declaration == counter)
         do {
@@ -279,12 +279,12 @@ struct SymbolResolutionTests {
             _ = try results[4].get()
             Issue.record("Empty scopes must not search all images")
         } catch ABIResolutionError.imageNotLoaded {}
-        #expect(await runtime.resolve([NativeSymbolRequest]()).isEmpty)
-        let again = try await runtime.resolve(requests[0])
+        #expect(runtime.resolve([NativeSymbolRequest]()).isEmpty)
+        let again = try runtime.resolve(requests[0])
         #expect(try results[0].get().image.identity == again.image.identity)
         first.close()
         other.close()
-        await runtime.removeCachedResults()
+        runtime.removeCachedResults()
         #expect(try unsafe results[0].get().withUnsafeAddress { $0.load(as: Int32.self) } == 42)
     }
 
@@ -306,7 +306,7 @@ struct SymbolResolutionTests {
             .init(add, alternatives: [wrongKind], in: [scope, .path(second.libraryURL)]),
             .init(add, in: [.automatic, scope]),
         ]
-        let results = await runtime.resolve(requests)
+        let results = runtime.resolve(requests)
         for index in [0, 2] {
             do {
                 _ = try results[index].get()
@@ -342,7 +342,7 @@ struct SymbolResolutionTests {
         let missing = NativeDeclaration(linkerName: "ABIBridgeLazyMissing", language: .cxx)
         let unsupported = NativeDeclaration(name: "selector:", language: .objectiveC)
         let scopes: [ImageSelector] = [.path(first.libraryURL), .path(second.libraryURL)]
-        let results = await runtime.resolve([
+        let results = runtime.resolve([
             NativeSymbolRequest(exact, fallbacks: [firstCounter, unsupported], in: scopes),
             .init(missing, fallbacks: [secondCounter, firstCounter, unsupported], in: scopes),
             .init(missing, alternatives: [exact], fallbacks: [unsupported], in: scopes),
@@ -353,7 +353,7 @@ struct SymbolResolutionTests {
         #expect(try results[0].get().image.identity == results[1].get().image.identity)
         first.close()
         second.close()
-        await runtime.removeCachedResults()
+        runtime.removeCachedResults()
         for result in results {
             #expect(try unsafe result.get().withUnsafeAddress { $0.load(as: Int32.self) } == 42)
         }
@@ -373,7 +373,7 @@ struct SymbolResolutionTests {
         )
         let wrongKind = NativeDeclaration(name: counter.name, language: .cxx)
         let missing = NativeDeclaration(name: "ABIBridgeLazyMissing", language: .c)
-        let results = await runtime.resolve([
+        let results = runtime.resolve([
             NativeSymbolRequest(missing, fallbacks: [add, counter], in: [.automatic, scope]),
             .init(add, alternatives: [counter], fallbacks: [add], in: [scope]),
             .init(wrongKind, fallbacks: [add], in: [scope]),
@@ -414,14 +414,14 @@ struct SymbolResolutionTests {
             language: .cxx,
             kind: .data
         )
-        var original: ResolvedSymbol? = try await runtime.resolve(
+        var original: ResolvedSymbol? = try runtime.resolve(
             declaration,
             in: .path(fixture.libraryURL)
         )
         let exported = unsafe original!.copyNativeHandle()
         original = nil
         fixture.close()
-        await runtime.removeCachedResults()
+        runtime.removeCachedResults()
 
         let retained = try #require(ABIRetainResolvedSymbol(exported))
         ABIReleaseResolvedSymbol(exported)
@@ -452,33 +452,33 @@ struct SymbolResolutionTests {
         defer { second.cleanup() }
         let runtime = ABIRuntime()
         do {
-            _ = try await runtime.resolve(
+            _ = try runtime.resolve(
                 .init(name: module + ".Parent.answer() -> Swift.Int", language: .swift)
             )
             Issue.record("The parent source name exists in both images")
         } catch ABIResolutionError.ambiguousDeclaration {}
-        let type = try await runtime.swiftType(
+        let type = try runtime.swiftType(
             named: module + ".Child",
             in: .path(first.libraryURL)
         )
-        let initialize = try await type.initializer(named: "init()", as: (() -> AnyObject).self)
+        let initialize = try type.initializer(named: "init()", as: (() -> AnyObject).self)
         let child = try unsafe initialize.unsafeInvoke()
-        let method = try await type.method(named: "answer()", as: (() -> Int).self)
+        let method = try type.method(named: "answer()", as: (() -> Int).self)
         #expect(method.symbol.image.identity == type.image.identity)
         #expect(try unsafe method.unsafeInvoke(on: child) == 42)
-        let bound = try await runtime.object(child).method(named: "answer()", as: (() -> Int).self)
+        let bound = try runtime.object(child).method(named: "answer()", as: (() -> Int).self)
         #expect(try unsafe bound.unsafeInvoke() == 42)
-        let otherType = try await runtime.swiftType(
+        let otherType = try runtime.swiftType(
             named: module + ".Child",
             in: .path(second.libraryURL)
         )
-        let otherInitialize = try await otherType.initializer(
+        let otherInitialize = try otherType.initializer(
             named: "init()",
             as: (() -> AnyObject).self
         )
         let otherChild = try unsafe otherInitialize.unsafeInvoke()
         for (object, expected) in [(child, 42), (otherChild, 7), (child, 42)] {
-            let method = try await runtime.object(object).method(
+            let method = try runtime.object(object).method(
                 named: "answer()",
                 as: (() -> Int).self
             )
@@ -514,14 +514,14 @@ struct SymbolResolutionTests {
                 throw NSError(domain: "ABIBridgeTests.Loader", code: 2)
             }
             for _ in 0..<8 {
-                await runtime.removeCachedResults()
-                let function = try await runtime.cFunction(named: "getpid", as: (() -> Int32).self)
+                runtime.removeCachedResults()
+                let function = try runtime.cFunction(named: "getpid", as: (() -> Int32).self)
                 #expect(try unsafe function.unsafeInvoke() == getpid())
             }
             group.cancelAll()
             #expect(try await group.next() ?? 0 > 0)
         }
-        await runtime.removeCachedResults()
+        runtime.removeCachedResults()
     }
 
     @Test(arguments: [false, true])
@@ -529,12 +529,12 @@ struct SymbolResolutionTests {
         let fixture = try FixtureLibrary(stripped: stripped)
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
-        let images = try await runtime.images(matching: .path(fixture.libraryURL))
+        let images = try runtime.images(matching: .path(fixture.libraryURL))
         let image = try #require(images.first)
         #expect(images.count == 1)
         #expect(image.identity.uuid != nil)
 
-        let function = try await runtime.resolve(
+        let function = try runtime.resolve(
             .init(name: "\(fixture.namespace)::add(int, int)", language: .cxx),
             in: image
         )
@@ -543,16 +543,16 @@ struct SymbolResolutionTests {
         #expect(actual == expected)
         #expect(function.source == .image)
 
-        let data = try await runtime.resolve(
+        let data = try runtime.resolve(
             .init(name: "\(fixture.namespace)::counter", language: .cxx, kind: .data),
             in: image
         )
         #expect(unsafe data.withUnsafeAddress { $0.load(as: Int32.self) } == 42)
-        let vtable = try await runtime.resolve(
+        let vtable = try runtime.resolve(
             .init(vtableFor: "\(fixture.namespace)::Counter"),
             in: image
         )
-        let legacyVTable = try await runtime.resolve(
+        let legacyVTable = try runtime.resolve(
             .init(name: "vtable for \(fixture.namespace)::Counter", language: .cxx, kind: .vtable),
             in: image
         )
@@ -579,16 +579,16 @@ struct SymbolResolutionTests {
         )
         let expectedVTable = try fixture.address(kind: 2)
         #expect(unsafe vtable.withUnsafeAddress { UInt(bitPattern: $0) } == expectedVTable)
-        let member = try await runtime.resolve(
+        let member = try runtime.resolve(
             .init(name: "\(fixture.namespace)::Counter::value() const", language: .cxx),
             in: image
         )
         #expect(unsafe member.withUnsafeAddress { UInt(bitPattern: $0) } != expectedVTable)
 
-        let again = try await runtime.resolve(function.declaration, in: image)
+        let again = try runtime.resolve(function.declaration, in: image)
         #expect(unsafe again.withUnsafeAddress { UInt(bitPattern: $0) } == actual)
-        await runtime.removeCachedResults()
-        let rebuilt = try await runtime.resolve(function.declaration, in: image)
+        runtime.removeCachedResults()
+        let rebuilt = try runtime.resolve(function.declaration, in: image)
         #expect(unsafe rebuilt.withUnsafeAddress { UInt(bitPattern: $0) } == actual)
         #expect(rebuilt.image.identity == image.identity)
     }
@@ -598,18 +598,18 @@ struct SymbolResolutionTests {
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
         let name = "\(fixture.namespace)::add(int, int)"
-        let function = try await runtime.cxxFunction(
+        let function = try runtime.cxxFunction(
             named: name,
             as: ((Int32, Int32) -> Int32).self,
             in: .path(fixture.libraryURL)
         )
         let image = function.symbol.image
-        let again = try await runtime.cxxFunction(
+        let again = try runtime.cxxFunction(
             named: name,
             as: ((Int32, Int32) -> Int32).self,
             in: image
         )
-        let address = try await runtime.cFunction(
+        let address = try runtime.cFunction(
             named: "ABIFixtureAddress",
             as: ((Int32) -> UInt).self,
             in: image
@@ -618,7 +618,7 @@ struct SymbolResolutionTests {
         #expect(try unsafe address.unsafeInvoke(0) == expectedAddress)
         #expect(function.symbol.image.identity == again.symbol.image.identity)
         fixture.close()
-        await runtime.removeCachedResults()
+        runtime.removeCachedResults()
         #expect(try unsafe function.unsafeInvoke(20, 22) == 42)
         #expect(try unsafe again.unsafeInvoke(12, 30) == 42)
     }
@@ -634,29 +634,29 @@ struct SymbolResolutionTests {
             language: .cxx
         )
 
-        await #expect(
+        #expect(
             throws: ABIResolutionError.declarationNotFound(
                 .init(name: "doesNotExist", language: .c)
             )
         ) {
-            _ = try await runtime.resolve(
+            _ = try runtime.resolve(
                 .init(name: "doesNotExist", language: .c),
                 in: .path(first.libraryURL)
             )
         }
-        await #expect(throws: ABIResolutionError.invalidAddress) {
-            _ = try await runtime.resolve(
+        #expect(throws: ABIResolutionError.invalidAddress) {
+            _ = try runtime.resolve(
                 .init(name: declaration.name, language: .cxx, kind: .data),
                 in: .path(first.libraryURL)
             )
         }
         do {
-            _ = try await runtime.resolve(declaration)
+            _ = try runtime.resolve(declaration)
             Issue.record("Expected two distinct definitions to be ambiguous")
         } catch ABIResolutionError.ambiguousDeclaration(_, let candidates) {
             #expect(candidates.count == 2)
         }
-        await runtime.removeCachedResults()
+        runtime.removeCachedResults()
     }
 
     @Test func lookupRetriesAfterLoadAndImageHandlesKeepAddressesAlive() async throws {
@@ -668,17 +668,17 @@ struct SymbolResolutionTests {
             language: .cxx,
             kind: .data
         )
-        await #expect(throws: ABIResolutionError.imageNotLoaded) {
-            _ = try await runtime.resolve(
+        #expect(throws: ABIResolutionError.imageNotLoaded) {
+            _ = try runtime.resolve(
                 request,
                 in: .path(fixture.libraryURL),
                 loading: .loadedOnly
             )
         }
         try fixture.load()
-        let resolved = try await runtime.resolve(request, in: .path(fixture.libraryURL))
+        let resolved = try runtime.resolve(request, in: .path(fixture.libraryURL))
         fixture.close()
-        await runtime.removeCachedResults()
+        runtime.removeCachedResults()
         #expect(unsafe resolved.withUnsafeAddress { $0.load(as: Int32.self) } == 42)
     }
 
@@ -703,7 +703,7 @@ struct SymbolResolutionTests {
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
         var image =
-            try #require(try await runtime.images(matching: .path(fixture.libraryURL)).first)
+            try #require(try runtime.images(matching: .path(fixture.libraryURL)).first)
             as NativeImage?
         let generation = image!.identity.loadGeneration
         let swift = try await runtime.lazyLibraries(in: image!)
@@ -719,9 +719,9 @@ struct SymbolResolutionTests {
 
     @Test func quickStartAndFrameworkScopeUseLoadedSystemImages() async throws {
         let runtime = ABIRuntime()
-        let foundations = try await runtime.images(matching: .framework(named: "Foundation"))
+        let foundations = try runtime.images(matching: .framework(named: "Foundation"))
         #expect(foundations.count == 1)
-        let symbol = try await runtime.resolve(.init(name: "getpid", language: .c))
+        let symbol = try runtime.resolve(.init(name: "getpid", language: .c))
         #expect(symbol.source == .image)
     }
 
@@ -729,7 +729,7 @@ struct SymbolResolutionTests {
         #expect(swiftFixtureEcho(41) == 42)
         let path = try #require(Bundle(for: FixtureBundleMarker.self).executableURL)
         let runtime = ABIRuntime()
-        let symbol = try await runtime.resolve(
+        let symbol = try runtime.resolve(
             .init(
                 name: "ABIBridgeTests.swiftFixtureEcho(Swift.Int32) -> Swift.Int32",
                 language: .swift
@@ -746,8 +746,8 @@ struct SymbolResolutionTests {
         let pointer = try #require(UnsafeRawPointer(bitPattern: address))
         #expect(pointer.load(as: Int32.self) == 42)
         let runtime = ABIRuntime()
-        await #expect(throws: ABIResolutionError.invalidAddress) {
-            _ = try await runtime.resolve(
+        #expect(throws: ABIResolutionError.invalidAddress) {
+            _ = try runtime.resolve(
                 .init(name: "\(fixture.namespace)::localCounter", language: .cxx, kind: .data),
                 in: .path(fixture.libraryURL)
             )
@@ -759,7 +759,7 @@ struct SymbolResolutionTests {
         let fixture = try FixtureLibrary(swiftModule: module, stripped: true)
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
-        let symbol = try await runtime.resolve(
+        let symbol = try runtime.resolve(
             .init(name: module + ".echo() -> ()", language: .swift),
             in: .path(fixture.libraryURL)
         )
@@ -811,7 +811,7 @@ struct SymbolResolutionTests {
     }
 
     private func generation(of url: URL, runtime: ABIRuntime) async throws -> UInt64 {
-        let images = try await runtime.images(matching: .path(url))
+        let images = try runtime.images(matching: .path(url))
         return try #require(images.first).identity.loadGeneration
     }
 }

@@ -42,7 +42,7 @@ In a caller that also imports `Example`, use ``NativeValue`` for the storage and
 import ABIBridge
 import Example
 
-let function = try await ABIRuntime.shared.cFunction(
+let function = try ABIRuntime.shared.cFunction(
     named: "ExampleTransformRecord",
     as: ((UnsafeRawPointer, UnsafeMutableRawPointer) -> Void).self
 )

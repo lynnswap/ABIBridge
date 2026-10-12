@@ -6,7 +6,7 @@ Read the libraries and imports recorded in `LC_LAZY_LOAD_DYLIB_INFO` without loa
 
 ```swift
 let runtime = ABIRuntime.shared
-let images = try await runtime.images(matching: .framework(named: "Example"))
+let images = try runtime.images(matching: .framework(named: "Example"))
 if let image = images.first {
     let libraries = try await runtime.lazyLibraries(in: image)
     for library in libraries {

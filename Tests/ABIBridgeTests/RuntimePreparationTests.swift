@@ -6,11 +6,12 @@ import Testing
 
 @Suite(.serialized)
 struct RuntimePreparationTests {
-    @Test func ordinaryLookupPreparesAColdImageAndProducesASynchronousHandle() async throws {
+    @MainActor @Test
+    func ordinaryLookupPreparesAColdImageAndProducesASynchronousHandle() throws {
         let fixture = try FixtureLibrary(load: false)
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
-        let add = try await runtime.cxxFunction(
+        let add = try runtime.cxxFunction(
             named: fixture.namespace + "::add(int, int)",
             as: ((Int32, Int32) -> Int32).self,
             in: .path(fixture.libraryURL)
@@ -30,7 +31,7 @@ struct RuntimePreparationTests {
         )
 
         let prepared = try await runtime.prepare(request)
-        let resolved = try await runtime.resolve(request)
+        let resolved = try runtime.resolve(request)
         #expect(prepared.declaration == request.declaration)
         #expect(prepared.image.identity == resolved.image.identity)
         #expect(
@@ -39,9 +40,9 @@ struct RuntimePreparationTests {
             }
         )
 
-        await runtime.removeCachedResults()
+        runtime.removeCachedResults()
         #expect(unsafe prepared.withUnsafeAddress { $0.load(as: Int32.self) } == 42)
-        let rebuilt = try await runtime.resolve(request)
+        let rebuilt = try runtime.resolve(request)
         #expect(rebuilt.image.identity == prepared.image.identity)
         #expect(unsafe rebuilt.withUnsafeAddress { $0.load(as: Int32.self) } == 42)
     }
@@ -102,7 +103,9 @@ struct RuntimePreparationTests {
     }
 
     @MainActor @Test(arguments: [false, true])
-    func coldAcquisitionFromMainActorInitializesTheImageOffMainThread(prepare: Bool) async throws {
+    func coldAcquisitionInitializesTheImageOnTheCallingThreadOrPreparationWorker(
+        prepare: Bool
+    ) async throws {
         MainActor.assertIsolated()
         let fixture = try FixtureLibrary(
             load: false,
@@ -125,11 +128,56 @@ struct RuntimePreparationTests {
         if prepare {
             symbol = try await runtime.prepare(request)
         } else {
-            symbol = try await runtime.resolve(request)
+            symbol = try runtime.resolve(request)
         }
 
-        #expect(unsafe symbol.withUnsafeAddress { $0.load(as: Int32.self) } == 0)
+        #expect(unsafe symbol.withUnsafeAddress { $0.load(as: Int32.self) } == (prepare ? 0 : 1))
         MainActor.assertIsolated()
+    }
+
+    @MainActor @Test
+    func synchronousDemandDoesNotDependOnAQueuedMainActorPreparationTask() async throws {
+        let fixture = try FixtureLibrary(load: false)
+        defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        let name = fixture.namespace + "::add(int, int)"
+        let image = ImageSelector.path(fixture.libraryURL)
+        let preparation = Task {
+            try await runtime.prepare {
+                try $0.cxxFunction(named: name, as: ((Int32, Int32) -> Int32).self, in: image)
+            }
+        }
+
+        let demanded = try runtime.cxxFunction(
+            named: name,
+            as: ((Int32, Int32) -> Int32).self,
+            in: image
+        )
+        #expect(try unsafe demanded.unsafeInvoke(19, 23) == 42)
+        let prepared = try await preparation.value
+        #expect(try unsafe prepared.unsafeInvoke(19, 23) == 42)
+        MainActor.assertIsolated()
+    }
+
+    @Test func failedPreparationDoesNotDisableLaterSynchronousLookup() async throws {
+        let fixture = try FixtureLibrary(load: false)
+        defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        let image = ImageSelector.path(fixture.libraryURL)
+        let missing = NativeDeclaration(name: fixture.namespace + "::missing", language: .cxx)
+        do {
+            _ = try await runtime.prepare { try $0.resolve(missing, in: image) }
+            Issue.record("A missing preparation requirement must report its lookup error")
+        } catch ABIResolutionError.declarationNotFound(let declaration) {
+            #expect(declaration == missing)
+        }
+
+        let demanded = try runtime.cxxFunction(
+            named: fixture.namespace + "::add(int, int)",
+            as: ((Int32, Int32) -> Int32).self,
+            in: image
+        )
+        #expect(try unsafe demanded.unsafeInvoke(19, 23) == 42)
     }
 }
 #endif

@@ -86,7 +86,7 @@ struct VirtualHookTests {
                 entryCount: 2,
                 retaining: library
             )
-            return try await view.entry(named: "\(self.name)::Derived::\(name)", using: runtime)
+            return try view.entry(named: "\(self.name)::Derived::\(name)", using: runtime)
         }
         func object(secondary: Bool = false) throws -> NativeCXXObject {
             runtime.cxxObject(
@@ -150,7 +150,7 @@ struct VirtualHookTests {
                 authentication: .unsigned,
                 retainingCode: owner
             )
-            let entry = try await table.entry(
+            let entry = try table.entry(
                 named: "\(fixture.name)::Derived::value(int) const",
                 using: fixture.runtime
             )

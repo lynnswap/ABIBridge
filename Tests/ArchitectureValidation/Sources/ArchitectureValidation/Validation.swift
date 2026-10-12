@@ -103,7 +103,7 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
             (UInt32(1), "ABIVTable::Derived::identity()", 1)
         ] {
             let table = try unsafe NativeVTable(borrowing: ABINamedVirtualTable(kind)!, entryCount: kind == 0 ? 1 : 2)
-            let entry = try await table.entry(named: name, using: runtime)
+            let entry = try table.entry(named: name, using: runtime)
             let receiver = ABINamedVirtualReceiver(kind)!
             let object = runtime.cxxObject(unsafe NativeValue(borrowing: receiver, as: try .opaque(named: "subobject")), typeNamed: "ABIVTable::Derived")
             let errors = ArchitectureHookErrors()
@@ -137,7 +137,7 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
             (UInt32(1), "ABIVTable::Derived::identity()", 1, UInt(62021))
         ] {
             let table = try unsafe NativeVTable(borrowing: ABINamedVirtualTable(kind)!, entryCount: kind == 0 ? 1 : 2)
-            let entry = try await table.entry(named: name, using: runtime)
+            let entry = try table.entry(named: name, using: runtime)
             let expected: NativePointerAuthentication = ABIValidationPACCompiled() ? .cxxVirtualFunction(discriminator: discriminator) : .unsigned
             try check(entry.index == slot && entry.authentication == expected, "Original metadata identifies \(name) and its compiler slot schema")
             let receiver = ABINamedVirtualReceiver(kind)!
@@ -151,7 +151,7 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
             }
             let start = ContinuousClock.now
             for _ in 0..<1000 {
-                let repeated = try await table.entry(named: name, using: runtime)
+                let repeated = try table.entry(named: name, using: runtime)
                 guard repeated.index == slot && repeated.authentication == expected else {
                     throw ArchitectureValidationFailure(description: "Repeated virtual lookup changed its selected entry")
                 }
@@ -279,10 +279,14 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         checks.append("C/C++ typed calls, indirect results, bound ownership, and authenticated virtual dispatch")
         try check(ABIValidateAuthenticatedFunction(), "Unmodified function-pointer authentication")
     case "swift":
-        let sum = try await runtime.swiftFunction(named: "ArchitectureValidation.architectureSum(_:_:_:_:_:_:_:_:_:_:)",
+        let sum = try runtime.swiftFunction(
+            named: "ArchitectureValidation.architectureSum(_:_:_:_:_:_:_:_:_:_:)",
             as: ((Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Int).self)
         try check(unsafe sum.unsafeInvoke(1,2,3,4,5,6,7,8,9,10) == architectureSum(1,2,3,4,5,6,7,8,9,10), "Swift register/stack arguments")
-        let decorate = try await runtime.swiftFunction(named: "ArchitectureValidation.architectureDecorate(_:)", as: ((String) -> String).self)
+        let decorate = try runtime.swiftFunction(
+            named: "ArchitectureValidation.architectureDecorate(_:)",
+            as: ((String) -> String).self
+        )
         for size in [0, 100, 4096] {
             let value = String(repeating: "a", count: size)
             try check(unsafe decorate.unsafeInvoke(value) == architectureDecorate(value), "Swift owned String result (\(size))")
@@ -292,7 +296,10 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         do {
             let receiver = ArchitectureCounter(40)
             observed = receiver
-            bound = try await runtime.object(receiver).method(named: "adding(_:)", as: ((Int) -> Int).self)
+            bound = try runtime.object(receiver).method(
+                named: "adding(_:)",
+                as: ((Int) -> Int).self
+            )
         }
         try check(observed != nil, "Swift bound receiver retention")
         try check(unsafe bound!.unsafeInvoke(2) == 42, "Swift context register")
@@ -309,44 +316,55 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
             try check(receiver.value == 41, "Private Swift compiler accessor control")
             receiver.value = 40
             let object = runtime.object(receiver)
-            privateMethod = try await object.method(named: "adding(_:)", as: ((Int) -> Int).self)
-            let complete = try await object.method(named: "adding(Swift.Int) -> Swift.Int", as: ((Int) -> Int).self)
+            privateMethod = try object.method(named: "adding(_:)", as: ((Int) -> Int).self)
+            let complete = try object.method(
+                named: "adding(Swift.Int) -> Swift.Int",
+                as: ((Int) -> Int).self
+            )
             try check(unsafe complete.unsafeInvoke(2) == 42, "Private Swift complete member declaration")
-            let inherited = try await object.method(named: "inherited()", as: (() -> Int).self)
+            let inherited = try object.method(named: "inherited()", as: (() -> Int).self)
             try check(unsafe inherited.unsafeInvoke() == 42, "Private Swift superclass declaration")
-            let getter = try await object.getter(named: "value", as: (() -> Int).self)
-            let setter = try await object.setter(named: "value", as: Int.self)
+            let getter = try object.getter(named: "value", as: (() -> Int).self)
+            let setter = try object.setter(named: "value", as: Int.self)
             try unsafe setter.unsafeInvoke(50)
             try check(unsafe getter.unsafeInvoke() == 50, "Private Swift getter and setter")
         }
-        await runtime.removeCachedResults()
+        runtime.removeCachedResults()
         try check(privateObserved != nil, "Private Swift receiver retention after cache removal")
         try check(unsafe privateMethod!.unsafeInvoke(2) == 52, "Private Swift context and retained owner")
         privateMethod = nil
         try check(privateObserved == nil, "Private Swift receiver release")
         checks += try await validateSwiftGenericReceivers()
     case "ffi":
-        let add = try await runtime.cFunction(named: "ABIValidationAdd", as: ((Int32, Int32) -> Int32).self)
+        let add = try runtime.cFunction(
+            named: "ABIValidationAdd",
+            as: ((Int32, Int32) -> Int32).self
+        )
         try check(unsafe add.unsafeInvoke(20,22) == ABIValidationAdd(20,22), "libffi signed function call")
-        let promoted = try await runtime.cFunction(named: "ABIValidationVariadicPromotions",
+        let promoted = try runtime.cFunction(
+            named: "ABIValidationVariadicPromotions",
             as: ((Int32, Float, Int8, UInt16, Bool) -> Double).self, variadicFrom: 1)
         try check(try unsafe promoted.unsafeInvoke(40, 1.5, -8, 65500, true)
             == ABIValidationVariadicOracle(40, 1.5, -8, 65500, true), "Variadic scalar promotions match the compiler calling convention")
-        let empty = try await runtime.cFunction(named: "ABIValidationVariadicSum",
+        let empty = try runtime.cFunction(
+            named: "ABIValidationVariadicSum",
             as: ((Int32) -> Double).self, variadicFrom: 1)
         try check(try unsafe empty.unsafeInvoke(0) == 0, "Variadic declarations accept an empty anonymous tail")
-        let stack = try await runtime.cFunction(named: "ABIValidationVariadicSum",
+        let stack = try runtime.cFunction(
+            named: "ABIValidationVariadicSum",
             as: ((Int32, Float, Double, Float, Double, Float, Double, Float, Double, Double, Double, Float, Double) -> Double).self,
             variadicFrom: 1)
         try check(try unsafe stack.unsafeInvoke(12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
             == ABIValidationVariadicStackOracle(), "Variadic register and stack tails match compiler calls")
-        let runtimeCall = try await runtime.cFunction(named: "ABIValidationVariadicSum",
+        let runtimeCall = try runtime.cFunction(
+            named: "ABIValidationVariadicSum",
             signature: .init(parameters: [.int32], variadicParameters: [.float, .double], returns: .double))
         let runtimeResult = try unsafe runtimeCall.unsafeInvoke(with: [try .init(copying: Int32(2), as: .int32),
             try .init(copying: Float(1.5), as: .float), try .init(copying: Double(2.5), as: .double)])
         try check(try unsafe runtimeResult.read(as: Double.self) == 4, "Runtime variadic signatures preserve input layouts and promoted native values")
         let largeType = try NativeType.structure(named: "ABIValidationLarge", fields: Array(repeating: .int64, count: 8))
-        let shift = try await runtime.cFunction(named: "ABIValidationShiftLarge",
+        let shift = try runtime.cFunction(
+            named: "ABIValidationShiftLarge",
             signature: NativeSignature(parameters: [largeType], returns: largeType))
         let input = NativeValue(type: largeType) { bytes in
             for index in 0..<8 {
@@ -367,7 +385,7 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
             as: try .opaque(named: "ABIArchitecture::Counter", size: Int(ABIValidationCounterSize()), alignment: Int(ABIValidationCounterAlignment())),
             release: { ABIValidationDeleteCounter($0) })
         let object = runtime.cxxObject(storage, typeNamed: "ABIArchitecture::Counter")
-        let method = try await object.method(named: "add(int)", as: ((Int32) -> Int32).self)
+        let method = try object.method(named: "add(int)", as: ((Int32) -> Int32).self)
         let directResult = try unsafe method.unsafeInvoke(2)
         try check(directResult == 42 && directResult == ABIValidationCounterOracle(address), "libffi C++ receiver call")
         let table = try unsafe NativeVTable(readingFrom: storage, entryCount: 1,
@@ -375,8 +393,12 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         let virtual = try unsafe object.virtualMethod(at: 0, in: table,
             authentication: .cxxVirtualFunction(discriminator: ABIValidationSlotDiscriminator()), as: (() -> Int32).self)
         try check(try unsafe virtual.unsafeInvoke() == ABIValidationCounterOracle(address), "libffi authenticated virtual call")
-        let adapter = try await runtime.resolve(.init(name: "ABIValidationCounterAdapter", language: .c))
-        let adapted = try await object.method(named: "add(int)", as: ((Int32) -> Int32).self, using: adapter)
+        let adapter = try runtime.resolve(.init(name: "ABIValidationCounterAdapter", language: .c))
+        let adapted = try object.method(
+            named: "add(int)",
+            as: ((Int32) -> Int32).self,
+            using: adapter
+        )
         let adaptedResult = try unsafe adapted.unsafeInvoke(3)
         try check(adaptedResult == 45 && adaptedResult == ABIValidationCounterOracle(address), "libffi adapter and signed target")
         let objcReceiver = ArchitectureObjCReceiver()

@@ -20,9 +20,14 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
     }
     let failures = Mutex<[String]>([])
     let failure: @Sendable (any Error) -> Void = { error in failures.withLock { $0.append(String(describing: error)) } }
-    let counter = try await runtime.swiftType(named: "SwiftImportProvider.HookCounter", as: Int64.self, in: provider)
-    let adding = try await counter.method(named: "adding(_:)", as: ((Int64) -> Int64).self)
-    let addCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.hookValueAdd(_:)",
+    let counter = try runtime.swiftType(
+        named: "SwiftImportProvider.HookCounter",
+        as: Int64.self,
+        in: provider
+    )
+    let adding = try counter.method(named: "adding(_:)", as: ((Int64) -> Int64).self)
+    let addCaller = try runtime.swiftFunction(
+        named: "SwiftImportCallerControl.hookValueAdd(_:)",
         as: ((Int64) -> Int64).self, in: caller)
     let addHook = try await unsafe adding.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call, value in
         guard try call.receiver(as: Int64.self) == 40 else { throw ArchitectureValidationFailure(description: "Register self snapshot") }
@@ -33,8 +38,13 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
     addHook.invalidate()
     try check(try unsafe addCaller.unsafeInvoke(2) == 42, "Value receiver fallback survives invalidation")
 
-    let increment = try await counter.method(named: "increment(_:)", as: ((Int64) -> Int64).self, mutating: true)
-    let incrementCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.hookValueIncrement(_:_:)",
+    let increment = try counter.method(
+        named: "increment(_:)",
+        as: ((Int64) -> Int64).self,
+        mutating: true
+    )
+    let incrementCaller = try runtime.swiftFunction(
+        named: "SwiftImportCallerControl.hookValueIncrement(_:_:)",
         as: ((Int64, Int64) -> Int64).self, in: caller)
     let incrementHook = try await unsafe increment.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call, delta in
         let before = try call.receiver(as: Int64.self)
@@ -48,10 +58,19 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
     try check(try unsafe incrementCaller.unsafeInvoke(40, 3) == 44044, "Failure after proceeding preserves receiver mutation and the completed result")
     incrementHook.invalidate()
 
-    let wide = try await runtime.swiftType(named: "SwiftImportProvider.HookWideValue", as: VirtualPayload.self, in: provider)
+    let wide = try runtime.swiftType(
+        named: "SwiftImportProvider.HookWideValue",
+        as: VirtualPayload.self,
+        in: provider
+    )
     for (member, callName, consuming) in [("sum", "hookWideValueSum", false), ("consume", "hookWideValueConsume", true)] {
-        let method = try await wide.method(named: member + "(_:)", as: ((Int64) -> Int64).self, consuming: consuming)
-        let call = try await runtime.swiftFunction(named: "SwiftImportCallerControl." + callName + "(_:_:)",
+        let method = try wide.method(
+            named: member + "(_:)",
+            as: ((Int64) -> Int64).self,
+            consuming: consuming
+        )
+        let call = try runtime.swiftFunction(
+            named: "SwiftImportCallerControl." + callName + "(_:_:)",
             as: ((Int64, Int64) -> Int64).self, in: caller)
         let hook = try await unsafe method.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call, value in
             let receiver = try call.receiver(as: VirtualPayload.self)
@@ -64,9 +83,14 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
         hook.invalidate()
     }
 
-    let textType = try await runtime.swiftType(named: "SwiftImportProvider.HookTextValue", as: String.self, in: provider)
-    let consume = try await textType.method(named: "consume()", as: (() -> String).self, consuming: true)
-    let textCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.hookValueConsumeText(_:)",
+    let textType = try runtime.swiftType(
+        named: "SwiftImportProvider.HookTextValue",
+        as: String.self,
+        in: provider
+    )
+    let consume = try textType.method(named: "consume()", as: (() -> String).self, consuming: true)
+    let textCaller = try runtime.swiftFunction(
+        named: "SwiftImportCallerControl.hookValueConsumeText(_:)",
         as: ((String) -> String).self, in: caller)
     let consumed = try await unsafe consume.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call in
         let value = try call.receiver(as: String.self)
@@ -88,8 +112,13 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
     consumed.invalidate()
     try check(try unsafe textCaller.unsafeInvoke(input) == "value:" + input, "Consumed value fallback retains its compiler convention")
 
-    let append = try await textType.method(named: "append(_:)", as: ((String) -> String).self, mutating: true)
-    let appendCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.hookValueAppendText(_:_:)",
+    let append = try textType.method(
+        named: "append(_:)",
+        as: ((String) -> String).self,
+        mutating: true
+    )
+    let appendCaller = try runtime.swiftFunction(
+        named: "SwiftImportCallerControl.hookValueAppendText(_:_:)",
         as: ((String, String) -> String).self, in: caller)
     let appendHook = try await unsafe append.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call, suffix in
         let before = try call.receiver(as: String.self)
@@ -102,9 +131,14 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
         "Mutating String self updates caller storage and subsequent snapshots")
     appendHook.invalidate()
 
-    let stack = try await counter.method(named: "stack(_:_:_:_:_:_:_:_:_:_:_:_:)",
+    let stack = try counter.method(
+        named: "stack(_:_:_:_:_:_:_:_:_:_:_:_:)",
         as: ((Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64) -> Int64).self)
-    let stackCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.hookValueStack()", as: (() -> Int64).self, in: caller)
+    let stackCaller = try runtime.swiftFunction(
+        named: "SwiftImportCallerControl.hookValueStack()",
+        as: (() -> Int64).self,
+        in: caller
+    )
     let stacked = try await unsafe stack.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call,a,b,c,d,e,f,g,h,i,j,k,l in
         guard try call.receiver(as: Int64.self) == 40 else { throw ArchitectureValidationFailure(description: "Stack self snapshot") }
         return try call.proceed(a+1,b,c,d,e,f,g,h,i,j,k,l+100)

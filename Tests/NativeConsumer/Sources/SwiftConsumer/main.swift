@@ -100,30 +100,32 @@ struct SwiftConsumer {
             precondition(capturedData.length == 0)
         }
         let runtime = ABIRuntime()
-        let processID = try await runtime.cFunction(named: "getpid", as: (() -> Int32).self)
+        let processID = try runtime.cFunction(named: "getpid", as: (() -> Int32).self)
         let pid = try unsafe processID.unsafeInvoke()
         precondition(pid == getpid())
 
-        let images = try await runtime.images(matching: .path(url))
+        let images = try runtime.images(matching: .path(url))
         guard let image = images.first else { throw Failure.missingImage }
-        let add = try await runtime.cxxFunction(
+        let add = try runtime.cxxFunction(
             named: "ABIBridgeFixture::add(int, int)",
             as: ((Int32, Int32) -> Int32).self, in: image
         )
-        let cAdd = try await runtime.cFunction(
+        let cAdd = try runtime.cFunction(
             named: "ABIBridgeFixtureCAdd",
             as: ((Int32, Int32) -> Int32).self, in: .path(url)
         )
-        let large = try await runtime.cxxFunction(
+        let large = try runtime.cxxFunction(
             named: "ABIBridgeFixture::large(long)", as: ((Int) -> LargeValue).self, in: image
         )
-        let dynamic = try await runtime.cxxFunction(
+        let dynamic = try runtime.cxxFunction(
             named: "ABIBridgeFixture::large(long)",
             signature: .init(parameters: [.int], returns: LargeValue.abiType), in: image
         )
-        let padded = try await runtime.cxxFunction(named: "ABIBridgeFixture::shift(ABIBridgeFixture::Padded)",
+        let padded = try runtime.cxxFunction(
+            named: "ABIBridgeFixture::shift(ABIBridgeFixture::Padded)",
             as: ((PaddedValue) -> PaddedValue).self, in: image)
-        let paddedC = try await runtime.cFunction(named: "ABIBridgeFixtureShiftPadded",
+        let paddedC = try runtime.cFunction(
+            named: "ABIBridgeFixtureShiftPadded",
             signature: .init(parameters: [PaddedValue.abiType], returns: PaddedValue.abiType), in: image)
         let paddedResult = try unsafe padded.unsafeInvoke(PaddedValue(value: 2, tag: 3))
         let rawResult = try unsafe paddedC.unsafeInvoke(with: [NativeValue(copying: PaddedValue(value: 2, tag: 3), as: PaddedValue.abiType)])
@@ -132,7 +134,7 @@ struct SwiftConsumer {
         precondition(readResult.value == 3.5 && readResult.tag == 5)
         dlclose(loader!)
         loader = nil
-        await runtime.removeCachedResults()
+        runtime.removeCachedResults()
 
         let sum = try unsafe add.unsafeInvoke(20, 22)
         let cSum = try unsafe cAdd.unsafeInvoke(12, 30)

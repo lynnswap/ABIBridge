@@ -52,10 +52,11 @@ struct CXXObjectInvocationTests {
             let original = try counter(1)
             observedOriginal = original
             let object = runtime.cxxObject(original, typeNamed: "ABICXXFixture::Counter")
-            add = try await object.method(named: "add(int)", as: ((Int32) -> Int32).self).method
-            address = try await object.method(named: "address()", as: (() -> BorrowedCounterValue).self).method
+            add = try object.method(named: "add(int)", as: ((Int32) -> Int32).self).method
+            address = try object.method(named: "address()", as: (() -> BorrowedCounterValue).self)
+                .method
         }
-        await runtime.removeCachedResults()
+        runtime.removeCachedResults()
         #expect(observedOriginal == nil)
         var second: NativeValue? = try counter(40)
         weak let observedSecond = second
@@ -116,11 +117,11 @@ struct CXXObjectInvocationTests {
     @MainActor @Test func directMethodsSupplyReceiverAndKeepCallerIsolation() async throws {
         let storage = try counter(10)
         let object = ABIRuntime.shared.cxxObject(storage, typeNamed: "ABICXXFixture::Counter")
-        let add = try await object.method(named: "add(int)", as: ((Int32) -> Int32).self)
-        let current = try await object.method(named: "current() const", as: (() -> Int32).self)
+        let add = try object.method(named: "add(int)", as: ((Int32) -> Int32).self)
+        let current = try object.method(named: "current() const", as: (() -> Int32).self)
         #expect(try unsafe add.unsafeInvoke(5) == 15)
         #expect(try unsafe current.unsafeInvoke() == 15)
-        let many = try await object.method(
+        let many = try object.method(
             named: "many(int, int, int, int, int, int, int, int, double) const",
             as: ((Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Double) -> Double).self
         )
@@ -131,7 +132,7 @@ struct CXXObjectInvocationTests {
     @Test func borrowedWrapperResultRetainsReceiverBinding() async throws {
         var storage: NativeValue? = try counter(42)
         weak let weakStorage = storage
-        var method: NativeBoundCXXMethod<BorrowedCounterValue>? = try await ABIRuntime.shared.cxxObject(
+        var method: NativeBoundCXXMethod<BorrowedCounterValue>? = try ABIRuntime.shared.cxxObject(
             storage!, typeNamed: "ABICXXFixture::Counter"
         ).method(named: "address()", as: (() -> BorrowedCounterValue).self)
         var result: BorrowedCounterValue? = try unsafe method!.unsafeInvoke()
@@ -147,8 +148,10 @@ struct CXXObjectInvocationTests {
     @Test func nativeAdapterHandlesNontrivialArgumentsAndResults() async throws {
         let storage = try counter(10)
         let object = ABIRuntime.shared.cxxObject(storage, typeNamed: "ABICXXFixture::Counter")
-        let adapter = try await ABIRuntime.shared.resolve(.init(name: "ABICXXTransformAdapter", language: .c))
-        let method = try await object.method(
+        let adapter = try ABIRuntime.shared.resolve(
+            .init(name: "ABICXXTransformAdapter", language: .c)
+        )
+        let method = try object.method(
             named: "transform(ABICXXFixture::Token) const",
             as: ((CXXToken) -> CXXToken).self, using: adapter
         )
@@ -168,11 +171,11 @@ struct CXXObjectInvocationTests {
     @Test func adaptersRequireExecutableSymbols() async throws {
         let object = ABIRuntime.shared.cxxObject(try counter(1), typeNamed: "ABICXXFixture::Counter")
         #expect(ABICXXFixtureData == 3)
-        let data = try await ABIRuntime.shared.resolve(
+        let data = try ABIRuntime.shared.resolve(
             .init(name: "ABICXXFixtureData", language: .c, kind: .data)
         )
-        await #expect(throws: ABIResolutionError.self) {
-            _ = try await object.method(named: "current() const", as: (() -> Int32).self, using: data)
+        #expect(throws: ABIResolutionError.self) {
+            _ = try object.method(named: "current() const", as: (() -> Int32).self, using: data)
         }
     }
 
@@ -184,7 +187,7 @@ struct CXXObjectInvocationTests {
             release: { ABICXXDeleteDerived($0) }
         )
         let primary = ABIRuntime.shared.cxxObject(storage, typeNamed: "ABICXXFixture::Base")
-        let direct = try await primary.method(named: "value() const", as: (() -> Int32).self)
+        let direct = try primary.method(named: "value() const", as: (() -> Int32).self)
         #expect(try unsafe direct.unsafeInvoke() == 10)
         let table = try unsafe NativeVTable(
             readingFrom: storage, entryCount: 1,
@@ -201,7 +204,7 @@ struct CXXObjectInvocationTests {
             at: offset, as: .opaque(named: "Secondary", size: ABICXXSecondarySize(), alignment: ABICXXSecondaryAlignment())
         )
         let secondary = ABIRuntime.shared.cxxObject(view, typeNamed: "ABICXXFixture::Secondary")
-        let other = try await secondary.method(named: "other() const", as: (() -> Int32).self)
+        let other = try secondary.method(named: "other() const", as: (() -> Int32).self)
         #expect(try unsafe other.unsafeInvoke() == 20)
         let secondaryTable = try unsafe NativeVTable(
             readingFrom: view, entryCount: 1,

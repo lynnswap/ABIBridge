@@ -51,7 +51,7 @@ private struct CallerNestedRecord: BitwiseCopyable, ABIBridgeValue {
 
 struct CallerDescribedValueTests {
     @Test func layoutOnlyConformanceWorksForCArgumentsAndResults() async throws {
-        let function = try await ABIRuntime.shared.cFunction(
+        let function = try ABIRuntime.shared.cFunction(
             named: "ABICTransformRecord", as: ((CallerRecord) -> CallerRecord).self)
         let input = CallerRecord(value: 2, tag: 3)
         let actual = try unsafe function.unsafeInvoke(input)
@@ -64,7 +64,7 @@ struct CallerDescribedValueTests {
         struct UnregisteredRecord: BitwiseCopyable { var value: Double; var tag: Int8 }
         let layout = try NativeType.structure(named: "caller-supplied", fields: [.double, .int8])
         let input = try NativeValue(copying: UnregisteredRecord(value: 2, tag: 3), as: layout)
-        let call = try await ABIRuntime.shared.cFunction(
+        let call = try ABIRuntime.shared.cFunction(
             named: "ABICTransformRecord", signature: .init(parameters: [layout], returns: layout))
         let output = try unsafe call.unsafeInvoke(with: [input])
         let actual = try unsafe output.read(as: UnregisteredRecord.self)
@@ -75,7 +75,7 @@ struct CallerDescribedValueTests {
     }
 
     @Test func nestedCallerLayoutsUseTheExistingCCodec() async throws {
-        let function = try await ABIRuntime.shared.cFunction(
+        let function = try ABIRuntime.shared.cFunction(
             named: "ABICTransformNestedRecord", as: ((CallerNestedRecord) -> CallerNestedRecord).self)
         let actual = try unsafe function.unsafeInvoke(CallerNestedRecord(first: CallerRecord(value: 2, tag: 3), second: 4))
         #expect(actual.first.value == 3.5 && actual.first.tag == 5 && actual.second == 7)
@@ -83,7 +83,7 @@ struct CallerDescribedValueTests {
 
     @Test func cxxFreeAndReceiverCallsShareTheSameLayoutContract() async throws {
         let runtime = ABIRuntime.shared
-        let free = try await runtime.cxxFunction(
+        let free = try runtime.cxxFunction(
             named: "ABICXXFixture::transformRecord(ABICXXRecord)", as: ((CallerRecord) -> CallerRecord).self)
         let actual = try unsafe free.unsafeInvoke(CallerRecord(value: 2, tag: 3))
         #expect(actual.value == 3.5 && actual.tag == 5)
@@ -91,7 +91,8 @@ struct CallerDescribedValueTests {
         let storage = unsafe NativeValue(borrowing: UnsafeMutableRawPointer(mutating: pointer),
                                           as: try .opaque(named: "RecordReceiver"))
         let receiver = runtime.cxxObject(storage, typeNamed: "ABICXXFixture::RecordReceiver")
-        let method = try await receiver.method(named: "shifted(ABICXXRecord) const",
+        let method = try receiver.method(
+            named: "shifted(ABICXXRecord) const",
                                                 as: ((CallerRecord) -> CallerRecord).self)
         let result = try unsafe method.unsafeInvoke(CallerRecord(value: 2, tag: 3))
         #expect(result.value == 12 && result.tag == 4)
@@ -99,22 +100,23 @@ struct CallerDescribedValueTests {
 
     @Test func swiftStructEnumArrayAndCallbackUseCallerDescriptions() async throws {
         let runtime = ABIRuntime.shared
-        let function = try await runtime.swiftFunction(
+        let function = try runtime.swiftFunction(
             named: "ABIBridgeTests.callerRecord(_:)", as: ((CallerRecord) -> CallerRecord).self)
         let input = CallerRecord(value: 2, tag: 3)
         let result = try unsafe function.unsafeInvoke(input)
         #expect(result.value == 3.5 && result.tag == 5)
-        let apply = try await runtime.swiftFunction(named: "ABIBridgeTests.callerApply(_:_:)",
+        let apply = try runtime.swiftFunction(
+            named: "ABIBridgeTests.callerApply(_:_:)",
             as: ((NativeSwiftClosure<(CallerRecord) -> CallerRecord>, CallerRecord) -> CallerRecord).self)
         let body = try NativeSwiftClosure { (value: CallerRecord) in callerRecord(value) }
         let callbackResult = try unsafe apply.unsafeInvoke(body, input)
         #expect(callbackResult.value == result.value && callbackResult.tag == result.tag)
-        let choice = try await runtime.swiftFunction(
+        let choice = try runtime.swiftFunction(
             named: "ABIBridgeTests.callerChoice(_:)", as: ((CallerChoice) -> CallerChoice).self)
         if case .number(let value) = try unsafe choice.unsafeInvoke(.number(42)) { #expect(value == 42) }
         else { Issue.record("Expected number payload") }
         if case .empty = try unsafe choice.unsafeInvoke(.empty) {} else { Issue.record("Expected empty case") }
-        let array = try await runtime.swiftFunction(
+        let array = try runtime.swiftFunction(
             named: "ABIBridgeTests.callerRecords(_:)", as: (([CallerRecord]) -> [CallerRecord]).self)
         let records = try unsafe array.unsafeInvoke([input, CallerRecord(value: 4, tag: 5)])
         #expect(records.count == 2 && records[0].value == 4 && records[1].tag == 3)
@@ -122,10 +124,15 @@ struct CallerDescribedValueTests {
 
     @Test func rawValuesAndSwiftEnumTagsUseTheirDeclaredLanguageConventions() async throws {
         let runtime = ABIRuntime.shared
-        let c = try await runtime.cFunction(named: "ABICNextRecordMode", as: ((CallerMode) -> CallerMode).self)
-        let cxx = try await runtime.cxxFunction(named: "ABICXXFixture::nextMode(ABICXXFixture::RecordMode)",
+        let c = try runtime.cFunction(
+            named: "ABICNextRecordMode",
+            as: ((CallerMode) -> CallerMode).self
+        )
+        let cxx = try runtime.cxxFunction(
+            named: "ABICXXFixture::nextMode(ABICXXFixture::RecordMode)",
                                                 as: ((CallerMode) -> CallerMode).self)
-        let swift = try await runtime.swiftFunction(named: "ABIBridgeTests.callerMode(_:)",
+        let swift = try runtime.swiftFunction(
+            named: "ABIBridgeTests.callerMode(_:)",
                                                     as: ((CallerMode) -> CallerMode).self)
         #expect(try unsafe c.unsafeInvoke(.slow) == .fast)
         #expect(try unsafe cxx.unsafeInvoke(.slow) == .fast)

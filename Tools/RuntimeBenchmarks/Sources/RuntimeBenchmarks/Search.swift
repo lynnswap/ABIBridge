@@ -29,7 +29,7 @@ struct SearchBenchmark {
                 for _ in 0..<5 {
                     let runtime = ABIRuntime()
                     let start = ContinuousClock.now
-                    let symbol = try await runtime.resolve(declaration, in: .path(path))
+                    let symbol = try runtime.resolve(declaration, in: .path(path))
                     first.append(seconds(start.duration(to: .now)) * 1000)
                     guard let handle = dlopen(path.path, RTLD_NOW | RTLD_LOCAL) else {
                         fatalError("Provider failed to load")
@@ -43,12 +43,12 @@ struct SearchBenchmark {
                     }
                 }
                 let runtime = ABIRuntime()
-                let initial = try await runtime.resolve(declaration, in: .path(path))
+                let initial = try runtime.resolve(declaration, in: .path(path))
                 var repeated: [Double] = []
                 for _ in 0..<5 {
                     let start = ContinuousClock.now
                     for _ in 0..<1000 {
-                        let symbol = try await runtime.resolve(declaration, in: .path(path))
+                        let symbol = try runtime.resolve(declaration, in: .path(path))
                         unsafe symbol.withUnsafeAddress { address in
                             unsafe initial.withUnsafeAddress { precondition(address == $0) }
                         }
@@ -59,7 +59,7 @@ struct SearchBenchmark {
                 for _ in 0..<5 {
                     let start = ContinuousClock.now
                     for _ in 0..<1000 {
-                        let symbol = try await runtime.resolve(
+                        let symbol = try runtime.resolve(
                             declaration, in: initial.image, loading: .loadedOnly)
                         unsafe symbol.withUnsafeAddress { address in
                             unsafe initial.withUnsafeAddress { precondition(address == $0) }

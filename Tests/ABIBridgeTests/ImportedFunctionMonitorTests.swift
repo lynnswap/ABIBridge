@@ -98,7 +98,7 @@ struct ImportedFunctionMonitorTests {
         try await waitForMonitoring { installed.withLock { $0 } || failed.withLock { $0 } }
         #expect(!failed.withLock { $0 })
         #expect(installed.withLock { $0 })
-        let call = try await ABIRuntime().cFunction(
+        let call = try ABIRuntime().cFunction(
             named: "ABIMonitoredCall",
             as: ((Int32) -> Int32).self,
             in: .path(url)
@@ -136,7 +136,7 @@ struct ImportedFunctionMonitorTests {
         try await waitForMonitoring { applied.withLock { $0.count == 2 } }
         #expect(monitor.images.count == 2)
         for url in [current, future] {
-            let call = try await runtime.cFunction(
+            let call = try runtime.cFunction(
                 named: "ABIMonitoredCall",
                 as: ((Int32) -> Int32).self,
                 in: .path(url)
@@ -144,7 +144,7 @@ struct ImportedFunctionMonitorTests {
             #expect(try unsafe call.unsafeInvoke(41) == 42)
         }
         monitor.invalidate()
-        let call = try await runtime.cFunction(
+        let call = try runtime.cFunction(
             named: "ABIMonitoredCall",
             as: ((Int32) -> Int32).self,
             in: .path(future)
@@ -208,7 +208,7 @@ struct ImportedFunctionMonitorTests {
         try fixture.load(later)
         let runtime = ABIRuntime()
         for url in [first, later] {
-            let call = try await runtime.cFunction(
+            let call = try runtime.cFunction(
                 named: "ABIMonitoredCall",
                 as: ((Int32) -> Int32).self,
                 in: .path(url)
@@ -251,7 +251,7 @@ struct ImportedFunctionMonitorTests {
         }
         defer { finish.signal(); monitor.invalidate() }
         try await waitForMonitoring { applied.withLock { $0 } }
-        let call = try await ABIRuntime().cFunction(
+        let call = try ABIRuntime().cFunction(
             named: "ABIMonitoredCall",
             as: ((Int32) -> Int32).self,
             in: .path(url)

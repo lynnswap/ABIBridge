@@ -35,7 +35,7 @@ private final class ImportHookFixture {
     func cleanup() { consumer.cleanup(); provider.cleanup() }
     var scope: ImageSelector { .path(consumer.libraryURL) }
     func call(_ runtime: ABIRuntime) async throws -> NativeFunction<Int32, Int32, Int32> {
-        try await runtime.cFunction(
+        try runtime.cFunction(
             named: "ABIHookCall",
             as: ((Int32, Int32) -> Int32).self,
             in: scope
@@ -98,7 +98,7 @@ struct ImportedFunctionHookTests {
         }
         #expect(try unsafe call.unsafeInvoke(20, 22) == 42)
         #expect(try unsafe call.unsafeInvoke(-1, 43) == 42)
-        let count = try await runtime.cFunction(
+        let count = try runtime.cFunction(
             named: "ABIHookCalls",
             as: (() -> Int32).self,
             in: .path(fixture.provider.libraryURL)
@@ -125,7 +125,7 @@ struct ImportedFunctionHookTests {
                 return try call.proceed(a, b) + 1
             }
         }
-        let slot = try await runtime.resolve(
+        let slot = try runtime.resolve(
             .init(name: "ABIHookSlot", language: .c, kind: .data),
             in: fixture.scope
         )
@@ -180,7 +180,7 @@ struct ImportedFunctionHookTests {
     @Test func reportsExternalDisplacementAndDoesNotOverwriteIt() async throws {
         let fixture = try ImportHookFixture(); defer { fixture.cleanup() }
         let runtime = ABIRuntime(), call = try await fixture.call(ABIRuntime())
-        let slot = try await runtime.resolve(
+        let slot = try runtime.resolve(
             .init(name: "ABIHookSlot", language: .c, kind: .data),
             in: fixture.scope
         )
@@ -335,7 +335,7 @@ struct ImportedFunctionHookTests {
                 ) { next, a, b in try next.proceed(a, b) + 2 }
                 Issue.record("The same protected slot should still reject publication")
             } catch is NativeImportedHookInstallationError {}
-            let call = try await runtime.cFunction(
+            let call = try runtime.cFunction(
                 named: "ABIHookCall",
                 as: ((Int32, Int32) -> Int32).self,
                 in: .path(paths[0])
@@ -384,12 +384,12 @@ struct ImportedFunctionHookTests {
             let next = try call.proceed(value);
             return CGSize(width: next.width + 1, height: next.height + 1)
         }
-        let narrowCall = try await runtime.cFunction(
+        let narrowCall = try runtime.cFunction(
             named: "ABIImportedNarrowCall",
             as: ((Int8) -> Int8).self,
             in: scope
         )
-        let sizeCall = try await runtime.cFunction(
+        let sizeCall = try runtime.cFunction(
             named: "ABIImportedSizeCall",
             as: ((CGSize) -> CGSize).self,
             in: scope
@@ -435,13 +435,13 @@ struct ImportedFunctionHookTests {
         } catch ABIResolutionError.unsupportedDeclaration(let reason) {
             #expect(reason.contains("lazy-bound"))
         }
-        let count = try await runtime.cFunction(
+        let count = try runtime.cFunction(
             named: "ABILazyHookCount",
             as: (() -> Int32).self,
             in: .path(provider.libraryURL)
         )
         #expect(try unsafe count.unsafeInvoke() == 0)
-        let call = try await runtime.cFunction(
+        let call = try runtime.cFunction(
             named: "ABILazyHookCall",
             as: ((Int32) -> Int32).self,
             in: scope

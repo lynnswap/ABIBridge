@@ -72,18 +72,20 @@ public final class NativeCXXObject {
     ///     generic C function pointer, the receiver pointer, then explicit arguments.
     /// - Returns: A method retaining its receiver and implementation images.
     /// - Throws: A resolution, adapter, or call-signature error.
-    public nonisolated(nonsending) func method<Result, each Argument>(
+    public nonisolated func method<Result, each Argument>(
         named name: String,
         as signature: ((repeat each Argument) -> Result).Type,
         using adapter: ResolvedSymbol? = nil
-    ) async throws -> NativeBoundCXXMethod<Result, repeat each Argument> {
+    ) throws -> NativeBoundCXXMethod<Result, repeat each Argument> {
         let declaration = NativeDeclaration(name: typeName + "::" + name, language: .cxx)
         let symbol: ResolvedSymbol
         switch scope {
-        case .selector(let selector): symbol = try await runtime.resolve(declaration, in: selector, loading: loading)
-        case .image(let image): symbol = try await runtime.resolve(declaration, in: image, loading: loading)
+        case .selector(let selector):
+            symbol = try runtime.resolve(declaration, in: selector, loading: loading)
+        case .image(let image):
+            symbol = try runtime.resolve(declaration, in: image, loading: loading)
         }
-        let method = try await prepareCXXMethod(symbol: symbol, adapter: adapter, as: signature)
+        let method = try prepareCXXMethod(symbol: symbol, adapter: adapter, as: signature)
         return method.bind(to: storage)
     }
 
@@ -127,12 +129,11 @@ public final class NativeCXXObject {
     }
 }
 
-@concurrent
 private func prepareCXXMethod<Result, each Argument>(
     symbol: ResolvedSymbol,
     adapter: ResolvedSymbol?,
     as signature: ((repeat each Argument) -> Result).Type
-) async throws -> sending NativeCXXMethod<Result, repeat each Argument> {
+) throws -> NativeCXXMethod<Result, repeat each Argument> {
     try NativeCXXMethod(target: .symbol(symbol), adapter: adapter)
 }
 

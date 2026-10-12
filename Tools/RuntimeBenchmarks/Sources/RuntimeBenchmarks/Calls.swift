@@ -30,7 +30,7 @@ struct Benchmark {
         let object = ABIRuntime().object(PreparationBox("value"))
         let name = "add(Swift.Int64) -> Swift.Int64"
         let firstStart = ContinuousClock.now
-        let first = try await object.method(named: name, as: ((Int64) -> Int64).self)
+        let first = try object.method(named: name, as: ((Int64) -> Int64).self)
         let firstValue = try unsafe first.unsafeInvoke(35)
         precondition(firstValue == 42)
         print("Swift generic member first preparation: \(seconds(firstStart.duration(to: .now))*1000) ms")
@@ -40,7 +40,7 @@ struct Benchmark {
             var checksum: Int64 = 0
             let start = ContinuousClock.now
             for value in 0..<count {
-                let method = try await object.method(named: name, as: ((Int64) -> Int64).self)
+                let method = try object.method(named: name, as: ((Int64) -> Int64).self)
                 checksum += try unsafe method.unsafeInvoke(Int64(value))
             }
             samples.append(seconds(start.duration(to: .now)) * 1e6 / Double(count))
@@ -55,17 +55,17 @@ struct Benchmark {
         let runtime = ABIRuntime()
         let source = ImageSelector.automatic
         let start = ContinuousClock.now
-        let regular = try await runtime.swiftFunction(
+        let regular = try runtime.swiftFunction(
             named: "BenchmarkSwiftProvider.add(_:_:)", as: ((Int64, Int64) -> Int64).self,
             in: source)
         print("Swift regular first preparation: \(seconds(start.duration(to:.now))*1000) ms")
         let genericStart = ContinuousClock.now
-        let generic = try await runtime.swiftFunction(
+        let generic = try runtime.swiftFunction(
             named: "BenchmarkSwiftProvider.identity(_:)", as: ((Int64) -> Int64).self,
             genericArguments: [.type(Int64.self)], in: source)
         print("Swift generic first preparation: \(seconds(genericStart.duration(to:.now))*1000) ms")
         let constrainedStart = ContinuousClock.now
-        let constrained = try await runtime.swiftFunction(
+        let constrained = try runtime.swiftFunction(
             named: "BenchmarkSwiftProvider.hashEcho(_:)", as: ((Int64) -> Int64).self,
             genericArguments: [.type(Int64.self)], in: source)
         print(
@@ -90,15 +90,15 @@ struct Benchmark {
         try measure("Swift prepared Hashable generic", n: iterations, delta: 0) {
             try unsafe constrained.unsafeInvoke($0)
         }
-        let c = try await runtime.cFunction(
+        let c = try runtime.cFunction(
             named: "ABIPerfCAdd", as: ((Int32, Int32) -> Int32).self)
-        let cpp = try await runtime.cxxFunction(
+        let cpp = try runtime.cxxFunction(
             named: "ABIPerf::add(int, int)", as: ((Int32, Int32) -> Int32).self)
-        let pointer = try await runtime.cFunction(
+        let pointer = try runtime.cFunction(
             named: "ABIPerfRead",
             as: ((UnsafePointer<Int64>) -> Int64).self
         )
-        let dynamic = try await runtime.cFunction(
+        let dynamic = try runtime.cFunction(
             named: "ABIPerfCAdd",
             signature: .init(parameters: [.int32, .int32], returns: .int32)
         )
@@ -158,7 +158,7 @@ struct Benchmark {
             precondition(result === object)
             return value
         }
-        let decorate = try await runtime.swiftFunction(
+        let decorate = try runtime.swiftFunction(
             named: "BenchmarkSwiftProvider.decorate(_:)",
             as: ((String) -> String).self
         )
@@ -169,7 +169,7 @@ struct Benchmark {
         try measure("Swift prepared String", n: iterations, delta: 65) {
             $0 + Int64(try unsafe decorate.unsafeInvoke(input).utf8.count)
         }
-        let apply = try await runtime.swiftFunction(
+        let apply = try runtime.swiftFunction(
             named: "BenchmarkSwiftProvider.apply(_:_:)",
             as: ((NativeSwiftClosure<(Int64) -> Int64>, Int64) -> Int64).self, in: source)
         let callback = try NativeSwiftClosure<(Int64) -> Int64> { $0 + 1 }

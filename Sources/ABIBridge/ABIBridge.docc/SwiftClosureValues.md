@@ -8,7 +8,7 @@ For a loaded module declaring `func apply(_ callback: (Int64) -> Int64, value: I
 
 ```swift
 let callback = try NativeSwiftClosure { (value: Int64) in value + 7 }
-let apply = try await ABIRuntime.shared.swiftFunction(
+let apply = try ABIRuntime.shared.swiftFunction(
     named: "Example.apply(_:value:)",
     as: ((NativeSwiftClosure<(Int64) -> Int64>, Int64) -> Int64).self
 )
@@ -28,7 +28,7 @@ Simple existential arguments and results, including Any, protocol compositions, 
 For a loaded module declaring `func makeAdder(_ bias: Int64) -> (Int64) -> Int64`:
 
 ```swift
-let factory = try await ABIRuntime.shared.swiftFunction(
+let factory = try ABIRuntime.shared.swiftFunction(
     named: "Example.makeAdder(_:)",
     as: ((Int64) -> NativeSwiftClosure<(Int64) -> Int64>).self
 )
@@ -48,7 +48,7 @@ Use `NativeSwiftClosure` inside the callback's signature for a native closure pa
 let callback = try NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>) throws -> Int64> { value in
     try unsafe value.unsafeInvoke(42)
 }
-let visit = try await ABIRuntime.shared.swiftFunction(
+let visit = try ABIRuntime.shared.swiftFunction(
     named: "Example.visit(_:)",
     as: ((NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>) throws -> Int64>) throws -> Int64).self
 )
@@ -74,7 +74,7 @@ A returned closure can accept and return `NativeSwiftValue` through the same arg
 For `func makeProducer<Value>(_ value: Value) -> () -> Value`:
 
 ```swift
-let factory = try await ABIRuntime.shared.swiftFunction(
+let factory = try ABIRuntime.shared.swiftFunction(
     named: "Example.makeProducer<A>(A) -> () -> A",
     as: ((String) -> NativeSwiftClosure<() -> NativeSwiftValue>).self,
     genericArguments: [.type(String.self)]
@@ -107,7 +107,7 @@ A host callback can return `NativeSwiftValue` to a native caller whose callback 
 For `func produce<Value: ~Copyable>(_ body: () throws -> Value) rethrows -> Value`, a runtime-only value uses the ordinary closure type:
 
 ```swift
-let produce = try await ABIRuntime.shared.swiftFunction(
+let produce = try ABIRuntime.shared.swiftFunction(
     named: "Example.produce<A where A: ~Swift.Copyable>(() throws -> A) throws -> A",
     as: ((NativeSwiftClosure<() throws -> NativeSwiftValue>) throws -> NativeSwiftValue).self,
     genericArguments: [.type(value.type)]
@@ -126,11 +126,11 @@ For a provider with a resilient `Record` and `func makeSnapshot() -> (record: Re
 
 ```swift
 let runtime = ABIRuntime.shared
-let recordType = try await runtime.swiftType(named: "Example.Record")
+let recordType = try runtime.swiftType(named: "Example.Record")
 typealias Callback = NativeSwiftClosure<(Int64) -> Int64>
 typealias Snapshot = (record: NativeSwiftValue, callback: Callback)
 
-let makeSnapshot = try await runtime.swiftFunction(
+let makeSnapshot = try runtime.swiftFunction(
     named: "Example.makeSnapshot() -> (record: Example.Record, callback: (Swift.Int64) -> Swift.Int64)",
     as: (() -> Snapshot).self,
     valueABIs: [recordType: .opaque(named: recordType.name)]
@@ -154,7 +154,7 @@ let callback = try NativeSwiftClosure<(Bool) throws -> String> { fail in
     if fail { throw ExampleError.unavailable }
     return "ready"
 }
-let apply = try await ABIRuntime.shared.swiftFunction(
+let apply = try ABIRuntime.shared.swiftFunction(
     named: "Example.apply(_:_:)",
     as: ((NativeSwiftClosure<(Bool) throws -> String>, Bool) throws -> String).self
 )
@@ -185,7 +185,7 @@ A caller-isolated signature carries the native caller's hidden isolation argumen
 Pass the appropriate wrapper in an async function's metatype just as with synchronous closures:
 
 ```swift
-let apply = try await ABIRuntime.shared.swiftFunction(
+let apply = try ABIRuntime.shared.swiftFunction(
     named: "Example.apply(_:_:)",
     as: (@concurrent (NativeSwiftClosure<@Sendable @concurrent (Int64) async -> Int64>, Int64) async -> Int64).self
 )

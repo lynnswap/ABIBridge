@@ -75,7 +75,7 @@ private func withSwiftVirtualCallback(
     expectedErrors: Int = 0,
     body: (OpaquePointer) throws -> Void
 ) async throws {
-    let type = try await fixture.runtime.swiftType(
+    let type = try fixture.runtime.swiftType(
         named: fixture.module + "." + typeName,
         in: fixture.providerScope
     )
@@ -265,13 +265,13 @@ struct SwiftCallbackTests {
         let fixture = try CompiledSwiftReplacementFixture(writable: false);
         defer { fixture.cleanup() }
         let name = fixture.module + ".ReplacementRenderer"
-        let make = try await fixture.runtime.swiftFunction(
+        let make = try fixture.runtime.swiftFunction(
             named: fixture.module + ".makeRenderer() -> " + name,
             as: (() -> AnyObject).self,
             in: fixture.providerScope
         )
         let object = try unsafe make.unsafeInvoke()
-        let oracle = try await fixture.runtime.swiftFunction(
+        let oracle = try fixture.runtime.swiftFunction(
             named: fixture.callerModule + ".classScalar(\(name), Swift.Int64) -> Swift.Int64",
             as: ((AnyObject, Int64) -> Int64).self,
             in: fixture.callerScope
@@ -305,13 +305,13 @@ struct SwiftCallbackTests {
         let fixture = try CompiledSwiftReplacementFixture(writable: false);
         defer { fixture.cleanup() }
         let name = fixture.module + ".ReplacementRenderer"
-        let make = try await fixture.runtime.swiftFunction(
+        let make = try fixture.runtime.swiftFunction(
             named: fixture.module + ".makeRenderer() -> " + name,
             as: (() -> AnyObject).self,
             in: fixture.providerScope
         )
         let object = try unsafe make.unsafeInvoke()
-        let oracle = try await fixture.runtime.swiftFunction(
+        let oracle = try fixture.runtime.swiftFunction(
             named: fixture.callerModule + ".classText(\(name), Swift.String) -> Swift.String",
             as: ((AnyObject, String) -> String).self,
             in: fixture.callerScope
@@ -352,13 +352,13 @@ struct SwiftCallbackTests {
         let fixture = try CompiledSwiftReplacementFixture(writable: false);
         defer { fixture.cleanup() }
         let name = fixture.module + ".ReplacementRenderer"
-        let make = try await fixture.runtime.swiftFunction(
+        let make = try fixture.runtime.swiftFunction(
             named: fixture.module + ".makeRenderer() -> " + name,
             as: (() -> AnyObject).self,
             in: fixture.providerScope
         )
         let object = try unsafe make.unsafeInvoke()
-        let oracle = try await fixture.runtime.swiftFunction(
+        let oracle = try fixture.runtime.swiftFunction(
             named: fixture.callerModule + ".classScalar(\(name), Swift.Int64) -> Swift.Int64",
             as: ((AnyObject, Int64) -> Int64).self,
             in: fixture.callerScope
@@ -384,13 +384,13 @@ struct SwiftCallbackTests {
         let fixture = try CompiledSwiftReplacementFixture(writable: false);
         defer { fixture.cleanup() }
         let name = fixture.module + ".ReplacementRenderer"
-        let make = try await fixture.runtime.swiftFunction(
+        let make = try fixture.runtime.swiftFunction(
             named: fixture.module + ".makeRenderer() -> " + name,
             as: (() -> AnyObject).self,
             in: fixture.providerScope
         )
         let object = try unsafe make.unsafeInvoke()
-        let oracle = try await fixture.runtime.swiftFunction(
+        let oracle = try fixture.runtime.swiftFunction(
             named: fixture.callerModule + ".classPayload(\(name), Swift.Int64) -> Swift.Int64",
             as: ((AnyObject, Int64) -> Int64).self,
             in: fixture.callerScope
@@ -485,18 +485,18 @@ struct SwiftCallbackTests {
         let fixture = try CompiledSwiftReplacementFixture(writable: false);
         defer { fixture.cleanup() }
         let name = fixture.module + ".CallbackRenderer"
-        let make = try await fixture.runtime.swiftFunction(
+        let make = try fixture.runtime.swiftFunction(
             named: fixture.module + ".makeCallbackRenderer(Swift.Int64) -> " + name,
             as: ((Int64) -> AnyObject).self,
             in: fixture.providerScope
         )
         let object = try unsafe make.unsafeInvoke(10)
-        let mixedCall = try await fixture.runtime.swiftFunction(
+        let mixedCall = try fixture.runtime.swiftFunction(
             named: fixture.callerModule + ".callbackMixed(\(name)) -> Swift.Double",
             as: ((AnyObject) -> Double).self,
             in: fixture.callerScope
         )
-        let quartetCall = try await fixture.runtime.swiftFunction(
+        let quartetCall = try fixture.runtime.swiftFunction(
             named: fixture.callerModule + ".callbackQuartet(\(name), Swift.Int64) -> Swift.Int64",
             as: ((AnyObject, Int64) -> Int64).self,
             in: fixture.callerScope
@@ -576,14 +576,14 @@ struct SwiftCallbackTests {
         let fixture = try CompiledSwiftReplacementFixture(writable: false);
         defer { fixture.cleanup() }
         let name = fixture.module + ".CallbackRenderer"
-        let make = try await fixture.runtime.swiftFunction(
+        let make = try fixture.runtime.swiftFunction(
             named: fixture.module + ".makeCallbackRenderer(Swift.Int64) -> " + name,
             as: ((Int64) -> AnyObject).self,
             in: fixture.providerScope
         )
         var object: AnyObject? = try unsafe make.unsafeInvoke(10)
         weak var weakObject = object
-        let oracle = try await fixture.runtime.swiftFunction(
+        let oracle = try fixture.runtime.swiftFunction(
             named: fixture.callerModule
                 + ".callbackConsumeSelf(\(name), Swift.Int64) -> Swift.Int64",
             as: ((AnyObject, Int64) -> Int64).self,
@@ -621,12 +621,12 @@ struct SwiftCallbackTests {
 
     @Test func separatelyCompiledSwiftImportsCanEnterCapturingCallbacks() async throws {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
-        let oracle = try await fixture.runtime.swiftFunction(
+        let oracle = try fixture.runtime.swiftFunction(
             named: fixture.callerModule + ".importedScalar(_:)",
             as: ((Int64) -> Int64).self,
             in: fixture.callerScope
         )
-        let direct = try await fixture.runtime.swiftFunction(
+        let direct = try fixture.runtime.swiftFunction(
             named: fixture.module + ".scalar(_:)",
             as: ((Int64) -> Int64).self,
             in: fixture.providerScope
@@ -662,13 +662,13 @@ struct SwiftCallbackTests {
         let fixture = try CompiledSwiftReplacementFixture(writable: false);
         defer { fixture.cleanup() }
         let name = fixture.module + ".ReplacementRenderer"
-        let make = try await fixture.runtime.swiftFunction(
+        let make = try fixture.runtime.swiftFunction(
             named: fixture.module + ".makeRenderer() -> " + name,
             as: (() -> AnyObject).self,
             in: fixture.providerScope
         )
         let object = try unsafe make.unsafeInvoke()
-        let oracle = try await fixture.runtime.swiftFunction(
+        let oracle = try fixture.runtime.swiftFunction(
             named: fixture.callerModule + ".classScalar(\(name), Swift.Int64) -> Swift.Int64",
             as: ((AnyObject, Int64) -> Int64).self,
             in: fixture.callerScope
@@ -720,13 +720,13 @@ struct SwiftCallbackTests {
         let fixture = try CompiledSwiftReplacementFixture(writable: false);
         defer { fixture.cleanup() }
         let name = fixture.module + ".ReplacementRenderer"
-        let make = try await fixture.runtime.swiftFunction(
+        let make = try fixture.runtime.swiftFunction(
             named: fixture.module + ".makeRenderer() -> " + name,
             as: (() -> AnyObject).self,
             in: fixture.providerScope
         )
         let object = try unsafe make.unsafeInvoke()
-        let oracle = try await fixture.runtime.swiftFunction(
+        let oracle = try fixture.runtime.swiftFunction(
             named: fixture.callerModule + ".classText(\(name), Swift.String) -> Swift.String",
             as: ((AnyObject, String) -> String).self,
             in: fixture.callerScope

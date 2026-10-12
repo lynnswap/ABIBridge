@@ -13,7 +13,7 @@ extension Sample.Record: ABIBridgeSwiftValue {
     }
 }
 
-let transform = try await ABIRuntime.shared.swiftFunction(
+let transform = try ABIRuntime.shared.swiftFunction(
     named: "Sample.transform(_:)",
     as: ((Sample.Record) -> Sample.Record).self
 )

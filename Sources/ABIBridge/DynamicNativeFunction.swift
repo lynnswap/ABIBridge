@@ -85,11 +85,10 @@ extension ABIRuntime {
     ///   - loading: Whether an explicit image may be acquired and initialized.
     /// - Returns: A reusable function retaining the image and call interface.
     /// - Throws: A resolution error or unsupported call layout.
-    @concurrent
     public nonisolated func cFunction(
         named name: String, signature: NativeSignature, in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
-    ) async throws -> DynamicNativeFunction {
+    ) throws -> DynamicNativeFunction {
         try .init(
             symbol: resolver.resolve(.init(name: name, language: .c), in: scope, loading: loading),
             signature: signature
@@ -105,11 +104,10 @@ extension ABIRuntime {
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable function retaining the image and call interface.
     /// - Throws: A resolution error or unsupported call layout.
-    @concurrent
     public nonisolated func cFunction(
         named name: String, signature: NativeSignature, in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
-    ) async throws -> DynamicNativeFunction {
+    ) throws -> DynamicNativeFunction {
         try .init(
             symbol: resolver.resolve(.init(name: name, language: .c), in: image, loading: loading),
             signature: signature
@@ -125,11 +123,10 @@ extension ABIRuntime {
     ///   - loading: Whether an explicit image may be acquired and initialized.
     /// - Returns: A reusable function retaining the image and call interface.
     /// - Throws: A resolution error or unsupported call layout.
-    @concurrent
     public nonisolated func cxxFunction(
         named name: String, signature: NativeSignature, in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
-    ) async throws -> DynamicNativeFunction {
+    ) throws -> DynamicNativeFunction {
         try .init(
             symbol: resolver.resolve(.init(name: name, language: .cxx), in: scope, loading: loading),
             signature: signature
@@ -145,11 +142,10 @@ extension ABIRuntime {
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable function retaining the image and call interface.
     /// - Throws: A resolution error or unsupported call layout.
-    @concurrent
     public nonisolated func cxxFunction(
         named name: String, signature: NativeSignature, in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
-    ) async throws -> DynamicNativeFunction {
+    ) throws -> DynamicNativeFunction {
         try .init(
             symbol: resolver.resolve(.init(name: name, language: .cxx), in: image, loading: loading),
             signature: signature

@@ -95,7 +95,7 @@ let storage = unsafe NativeValue(
     retaining: candidate
 )
 let object = runtime.cxxObject(storage, typeNamed: "Example::Renderer")
-let refresh = try await object.method(named: "refresh()", as: (() -> Void).self)
+let refresh = try object.method(named: "refresh()", as: (() -> Void).self)
 try unsafe refresh.unsafeInvoke()
 ```
 

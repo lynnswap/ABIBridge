@@ -29,11 +29,15 @@ extension NativeVTable {
     /// neither class layouts nor method signatures are inferred from the name.
     /// Known null slots in the original image do not prevent named selection.
     /// A live zero does not establish a missing original entry's identity.
-    public nonisolated(nonsending) func entry(
+    public nonisolated func entry(
         named name: String, using runtime: ABIRuntime = .shared
-    ) async throws -> Entry {
+    ) throws -> Entry {
         let address = unsafe storage.withUnsafeBytes { UInt(bitPattern: $0.baseAddress!) }
-        let result = try await runtime.virtualEntry(named: name, addressPoint: address, entryCount: entryCount)
+        let result = try runtime.virtualEntry(
+            named: name,
+            addressPoint: address,
+            entryCount: entryCount
+        )
         return Entry(index: result.index, authentication: result.authentication, symbolName: result.symbol, declaration: .init(name: name, language: .cxx), table: self, image: result.image)
     }
 
@@ -49,10 +53,9 @@ extension NativeVTable {
 }
 
 extension ABIRuntime {
-    @concurrent
     nonisolated func virtualEntry(
         named name: String, addressPoint: UInt, entryCount: Int
-    ) async throws -> VirtualEntryResolution {
+    ) throws -> VirtualEntryResolution {
         try resolver.virtualEntry(named: name, addressPoint: addressPoint, entryCount: entryCount)
     }
 }

@@ -7,7 +7,7 @@ Resolve declarations in an explicitly selected library without a separate loadin
 On a platform that provides JavaScriptCore, the framework does not need to be imported into the source file:
 
 ```swift
-let create = try await runtime.cFunction(
+let create = try runtime.cFunction(
     named: "JSContextGroupCreate",
     as: (() -> UnsafeMutableRawPointer?).self,
     in: .framework(named: "JavaScriptCore")
@@ -16,12 +16,12 @@ let create = try await runtime.cFunction(
 
 Explicit framework and file-URL scopes default to ``ImageLoadingPolicy/ifNeeded``. The native loader acquires the selected image and performs its normal initialization before resolution proceeds. A catalog entry or process-lifetime mapping alone is not used as an initialization guarantee. Ordinary dyld reentrancy rules still apply when resolution is called from an initializer.
 
-Loading occurs during resolution, on that operation's executor or thread. `ABIRuntime` is an actor and does not promise to execute native initializers on the caller's actor. If a library requires a particular initialization context, acquire it there before using `loading: .loadedOnly`.
+Loading occurs synchronously on the thread performing resolution. Ordinary lookup uses the caller's thread; asynchronous `prepare(_:)` uses a worker queue. `ABIRuntime` remains an actor, but its synchronous lookup methods are `nonisolated`. If a library requires a particular initialization context, acquire it there before using `loading: .loadedOnly`.
 
 Framework names first select matching loaded images. Otherwise, discovery checks the application's framework directories and the system's public/private framework locations, including shared-cache-only images. Multiple candidates report `ABIResolutionError.ambiguousImage`; use a concrete executable URL to distinguish them. Presence in a directory or cache does not establish loadability.
 
 ```swift
-let function = try await runtime.cxxFunction(
+let function = try runtime.cxxFunction(
     named: "Example::Renderer::version()",
     as: (() -> Int32).self,
     in: .path(binaryURL)
@@ -35,13 +35,13 @@ The URL identifies the Mach-O executable, not its enclosing framework directory.
 Use ``ImageSelector/installName(_:)`` for loader syntax rather than constructing a file URL from it:
 
 ```swift
-let symbol = try await runtime.resolve(
+let symbol = try runtime.resolve(
     declaration,
     in: .installName("@rpath/Example.framework/Example")
 )
 ```
 
-`@rpath`, `@loader_path`, `@executable_path`, bare names, and relative paths follow dyld's rules. The loader call resides in ABIBridge's native code. If that code is linked into a framework, `@loader_path` refers to that framework's image, not the Swift source file that called an async method. Use an absolute URL when that distinction matters. ABIBridge does not recreate dyld's path expansion or decode opaque loader handles.
+`@rpath`, `@loader_path`, `@executable_path`, bare names, and relative paths follow dyld's rules. The loader call resides in ABIBridge's native code. If that code is linked into a framework, `@loader_path` refers to that framework's image. Use an absolute URL when that distinction matters. ABIBridge does not recreate dyld's path expansion or decode opaque loader handles.
 
 ## Keep inspection loaded-only
 
@@ -50,7 +50,7 @@ Automatic scope never searches for an unloaded library by guessing from a declar
 To resolve within an explicit scope without requesting loading or initialization:
 
 ```swift
-let symbol = try await runtime.resolve(
+let symbol = try runtime.resolve(
     declaration, in: .path(binaryURL), loading: .loadedOnly
 )
 ```

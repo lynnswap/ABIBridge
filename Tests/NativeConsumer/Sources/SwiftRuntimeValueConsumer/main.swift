@@ -25,7 +25,7 @@ private struct Prepared {
     defer { dlclose(loader) }
     let runtime = ABIRuntime()
     let scope = ImageSelector.path(URL(fileURLWithPath: path))
-    let type = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeRecord", in: scope)
+    let type = try runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeRecord", in: scope)
     return try await Prepared(type: type,
         text: type.getter(named: "text", as: (() -> String).self, receiverABI: .opaque(named: type.name)),
         cancel: type.method(named: "cancel()", as: (() -> Void).self, receiverABI: .opaque(named: type.name)),
@@ -41,12 +41,12 @@ private let prepared = try await prepare(CommandLine.arguments[1])
 // The provider's concrete type is not imported. Preparation's runtime and
 // original loader reference have ended; the public handles retain their images.
 private let state = State()
-let superclassPackFactory = try await ABIRuntime.shared.swiftFunction(
+let superclassPackFactory = try ABIRuntime.shared.swiftFunction(
     named: "ManagedSwiftFixtures.makeSuperclassPackExistential(_:)",
     as: ((Int64) -> NativeSwiftValue).self,
     genericArguments: [.pack([.type(Int.self), .type(String.self)])]
 )
-let superclassPackEcho = try await ABIRuntime.shared.swiftFunction(
+let superclassPackEcho = try ABIRuntime.shared.swiftFunction(
     named: "ManagedSwiftFixtures.echoSuperclassPackExistential(_:)",
     as: ((NativeSwiftValue) -> NativeSwiftValue).self,
     genericArguments: [.pack([.type(Int.self), .type(String.self)])]
@@ -54,7 +54,10 @@ let superclassPackEcho = try await ABIRuntime.shared.swiftFunction(
 let superclassPackValue = try unsafe superclassPackFactory.unsafeInvoke(42)
 let superclassPackResult = try unsafe superclassPackEcho.unsafeInvoke(superclassPackValue)
 let superclassPackObject = try superclassPackResult.withCopy { $0 as AnyObject }
-let superclassPackRead = try await ABIRuntime.shared.object(superclassPackObject).getter(named: "number", as: (() -> Int64).self)
+let superclassPackRead = try ABIRuntime.shared.object(superclassPackObject).getter(
+    named: "number",
+    as: (() -> Int64).self
+)
 guard try unsafe superclassPackRead.unsafeInvoke() == 42 else { throw ConsumerError.wrongResult }
 let callback = try NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Void> { value in
     do {
@@ -87,26 +90,30 @@ print("Direct generic invocation and ordinary members on owned and borrowed runt
 
 let runtime = ABIRuntime()
 let source = ImageSelector.path(URL(fileURLWithPath: CommandLine.arguments[1]))
-let makeTicket = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeTicket(_:)",
+let makeTicket = try runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.makeRuntimeTicket(_:)",
     as: ((AnyObject) -> NativeSwiftValue).self, in: source)
 let ticket = try unsafe makeTicket.unsafeInvoke(NSObject())
-let moveTicket = try await runtime.swiftFunction(
+let moveTicket = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.moveRuntimeValue<A where A: ~Swift.Copyable>(__owned A) -> A",
     as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self,
     genericArguments: [.type(ticket.type)], in: source)
 let moved = try unsafe moveTicket.unsafeInvoke(NativeSwiftConsuming(ticket))
 guard ticket.isConsumed && !moved.isCopyable else { throw ConsumerError.wrongResult }
-let readTicket = try await moved.type.method(named: "read()", as: (() -> Int64).self,
+let readTicket = try moved.type.method(
+    named: "read()",
+    as: (() -> Int64).self,
     receiverABI: .opaque(named: moved.type.name))
 guard try unsafe readTicket.unsafeInvoke(on: moved) == 42 else { throw ConsumerError.wrongResult }
-let copyRecord = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+let copyRecord = try runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
     as: ((NativeSwiftValue) -> NativeSwiftValue).self, genericArguments: [.type(owned.type)], in: source)
 let copiedRecord = try unsafe copyRecord.unsafeInvoke(owned)
 guard !owned.isConsumed && copiedRecord.isCopyable,
       try unsafe prepared.text.unsafeInvoke(on: copiedRecord) == input else { throw ConsumerError.wrongResult }
 print("Runtime-only generic arguments preserve native copying and noncopyable transfer")
 
-let visitTicket = try await runtime.swiftFunction(
+let visitTicket = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.visitRuntimeValue<A where A: ~Swift.Copyable>(A, (A) throws -> Swift.Int64) throws -> Swift.Int64",
     as: ((NativeSwiftValue, NativeSwiftClosure<(NativeSwiftBorrowedValue) throws -> Int64>) throws -> Int64).self,
     genericArguments: [.type(moved.type)], in: source)
@@ -121,10 +128,12 @@ do {
     throw ConsumerError.wrongResult
 } catch NativeSwiftBorrowError.expiredBorrow { }
 
-let readTicketAsync = try await moved.type.method(named: "readAsync()", as: (nonisolated(nonsending) () async -> Int64).self,
+let readTicketAsync = try moved.type.method(
+    named: "readAsync()",
+    as: (nonisolated(nonsending) () async -> Int64).self,
     receiverABI: .opaque(named: moved.type.name))
 typealias AsyncTicketBody = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftBorrowedValue) async throws -> Int64>
-let visitTicketAsync = try await runtime.swiftFunction(
+let visitTicketAsync = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.visitRuntimeValueAsync<A where A: ~Swift.Copyable>(A, nonisolated(nonsending) (A) async throws -> Swift.Int64) async throws -> Swift.Int64",
     as: (nonisolated(nonsending) (NativeSwiftValue, AsyncTicketBody) async throws -> Int64).self,
     genericArguments: [.type(moved.type)], in: source)
@@ -136,13 +145,14 @@ guard try unsafe await visitTicketAsync.unsafeInvoke(moved, AsyncTicketBody(read
       !moved.isConsumed else { throw ConsumerError.wrongResult }
 print("Common Swift callbacks preserve runtime borrows through synchronous and async calls")
 
-let makeProducer = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeProducer<A>(A) -> () -> A",
+let makeProducer = try runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.makeRuntimeProducer<A>(A) -> () -> A",
     as: ((String) -> NativeSwiftClosure<() -> NativeSwiftValue>).self,
     genericArguments: [.type(String.self)], in: source)
 let produce = try unsafe makeProducer.unsafeInvoke("returned closure")
 let produced = try unsafe produce.unsafeInvoke()
 typealias RuntimeCopy = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftValue) async -> NativeSwiftValue>
-let makeCopy = try await runtime.swiftFunction(
+let makeCopy = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.makeRuntimeAsyncCopy<A>(A.Type) -> nonisolated(nonsending) (A) async -> A",
     as: ((String.Type) -> RuntimeCopy).self, genericArguments: [.type(String.self)], in: source)
 let copy = try unsafe makeCopy.unsafeInvoke(String.self)
@@ -153,7 +163,7 @@ guard try copied.take(as: String.self) == "returned closure", !produced.isConsum
 print("Returned Swift closures share runtime value conversion across sync and async invocation")
 
 typealias RuntimeProducer = NativeSwiftClosure<() throws -> NativeSwiftValue>
-let produceTicket = try await runtime.swiftFunction(
+let produceTicket = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.callRuntimeProducer<A where A: ~Swift.Copyable>(() throws -> A) throws -> A",
     as: ((RuntimeProducer) throws -> NativeSwiftValue).self, genericArguments: [.type(moved.type)], in: source)
 state.owned = moved
@@ -169,7 +179,7 @@ do {
 }
 print("Host callbacks transfer runtime-only noncopyable results and preserve native conversion errors")
 
-let makeConcrete = try await runtime.swiftFunction(
+let makeConcrete = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.makeConcreteRuntimeCopy() -> (Swift.String) -> Swift.String",
     as: (() -> NativeSwiftClosure<(NativeSwiftValue) -> NativeSwiftValue>).self, in: source)
 let concrete = try unsafe makeConcrete.unsafeInvoke()
@@ -178,7 +188,7 @@ guard try unsafe concrete.unsafeInvoke(produced).take(as: String.self) == "retur
 }
 print("Nongeneric returned closures use their native value declaration without generic arguments")
 
-let makeStoredFunction = try await runtime.swiftFunction(
+let makeStoredFunction = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.makeConcreteRuntimeCopy() -> (Swift.String) -> Swift.String",
     as: (() -> NativeSwiftValue).self, in: source)
 let storedFunction = try unsafe makeStoredFunction.unsafeInvoke()
@@ -189,7 +199,7 @@ try storedFunction.withCopy { value in
 }
 let takenFunction = try storedFunction.take(as: ((String) -> String).self)
 guard takenFunction("taken") == "taken!" else { throw ConsumerError.wrongResult }
-let makeStoredProducer = try await runtime.swiftFunction(
+let makeStoredProducer = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.makeConcreteNestedProducer() -> () -> (Swift.Int64) -> Swift.Int64",
     as: (() -> NativeSwiftValue).self, in: source)
 let storedProducer = try unsafe makeStoredProducer.unsafeInvoke()
@@ -197,7 +207,8 @@ let takenProducer = try storedProducer.take(as: (() -> (Int64) -> Int64).self)
 guard takenProducer()(35) == 42 else { throw ConsumerError.wrongResult }
 print("Runtime function values support standard Swift copies, typed moves, and nested returned functions")
 
-let nestedVisit = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.visitNestedClosure(_:)",
+let nestedVisit = try runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.visitNestedClosure(_:)",
     as: ((NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>) throws -> Int64>) throws -> Int64).self, in: source)
 let nestedBody = try NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>) throws -> Int64> { value in
     state.closure = value
@@ -206,7 +217,8 @@ let nestedBody = try NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>) t
 guard try unsafe nestedVisit.unsafeInvoke(nestedBody) == 42 else { throw ConsumerError.wrongResult }
 do { _ = try unsafe state.closure!.unsafeInvoke(1); throw ConsumerError.wrongResult }
 catch NativeSwiftBorrowError.expiredBorrow { }
-let nestedProducer = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.callClosureProducer(_:)",
+let nestedProducer = try runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.callClosureProducer(_:)",
     as: ((NativeSwiftClosure<() throws -> NativeSwiftClosure<(Int64) -> Int64>>) throws -> Int64).self, in: source)
 let closureProducer = try NativeSwiftClosure<() throws -> NativeSwiftClosure<(Int64) -> Int64>> {
     try NativeSwiftClosure { (value: Int64) in value + 7 }
@@ -216,7 +228,7 @@ print("Nested closure inputs expire with native scopes and owned results reach n
 
 typealias NestedRuntimeCopy = NativeSwiftClosure<(NativeSwiftValue) -> NativeSwiftValue>
 typealias NestedRuntimeBody = NativeSwiftClosure<(NestedRuntimeCopy, NativeSwiftValue) throws -> NativeSwiftValue>
-let nestedRuntime = try await runtime.swiftFunction(
+let nestedRuntime = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.visitNestedRuntime<A>(A, ((A) -> A, A) throws -> A) throws -> A",
     as: ((NativeSwiftValue, NestedRuntimeBody) throws -> NativeSwiftValue).self, genericArguments: [.type(String.self)], in: source)
 let nestedRuntimeBody = try NestedRuntimeBody { copy, value in try unsafe copy.unsafeInvoke(value) }
@@ -224,7 +236,7 @@ guard try unsafe nestedRuntime.unsafeInvoke(produced, nestedRuntimeBody).take(as
     throw ConsumerError.wrongResult
 }
 typealias GenericProducer = NativeSwiftClosure<() throws -> NativeSwiftClosure<(String) -> String>>
-let genericClosureProducer = try await runtime.swiftFunction(
+let genericClosureProducer = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.callNestedRuntimeProducer<A>(() throws -> (A) -> A, A) throws -> A",
     as: ((GenericProducer, String) throws -> String).self, genericArguments: [.type(String.self)], in: source)
 let genericProducer = try GenericProducer { try NativeSwiftClosure { (value: String) in value + "!" } }
@@ -234,16 +246,18 @@ print("Generic nested callbacks decode runtime values and publish native closure
 
 typealias SavedInner = NativeSwiftClosure<(Int64) -> Int64>
 typealias SaveInput = NativeSwiftClosure<(SavedInner) throws -> Void>
-let copyVisit = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.visitEscapingNestedClosure(_:)",
+let copyVisit = try runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.visitEscapingNestedClosure(_:)",
     as: ((SaveInput) throws -> Void).self, in: source)
 try unsafe copyVisit.unsafeInvoke(SaveInput { state.closure = try $0.copy() })
 guard try unsafe state.closure!.unsafeInvoke(35) == 42 else { throw ConsumerError.wrongResult }
 print("An explicit copy retains an escaping native closure beyond its callback scope")
 
 typealias NativeNestedCaller = NativeSwiftClosure<(SavedInner, Int64) -> Int64>
-let nativeNestedFactory = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeConcreteNestedCaller()",
+let nativeNestedFactory = try runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.makeConcreteNestedCaller()",
     as: (() -> NativeNestedCaller).self, in: source)
-let nativeNestedCall = try await runtime.swiftFunction(
+let nativeNestedCall = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.callNestedRuntimeCaller(_:_:)",
     as: ((NativeNestedCaller, Int64) -> Int64).self, genericArguments: [.type(Int64.self)], in: source)
 let nativeNestedCaller = try unsafe nativeNestedFactory.unsafeInvoke()
@@ -252,9 +266,10 @@ print("Native nested callers reabstract concrete and generic inner callback ABIs
 
 typealias NativeAsyncInner = NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>
 typealias NativeAsyncProducer = NativeSwiftClosure<nonisolated(nonsending) () async -> NativeAsyncInner>
-let nativeAsyncFactory = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeConcreteNestedAsyncProducer()",
+let nativeAsyncFactory = try runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.makeConcreteNestedAsyncProducer()",
     as: (() -> NativeAsyncProducer).self, in: source)
-let nativeAsyncCall = try await runtime.swiftFunction(
+let nativeAsyncCall = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.callNestedRuntimeAsyncProducer<A>(nonisolated(nonsending) () async -> nonisolated(nonsending) (A) async -> A, A) async -> A",
     as: (nonisolated(nonsending) (NativeAsyncProducer, Int64) async -> Int64).self, genericArguments: [.type(Int64.self)], in: source)
 let nativeAsyncProducer = try unsafe nativeAsyncFactory.unsafeInvoke()
@@ -263,7 +278,7 @@ print("Native async nested results retain their context through generic handback
 
 
 typealias ConsumingInput = NativeSwiftClosure<(NativeSwiftConsuming<NativeSwiftValue>) -> Int64>
-let consumeInput = try await runtime.swiftFunction(
+let consumeInput = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.visitNonthrowingConsumingRuntimeValue<A where A: ~Swift.Copyable>(__owned A, (__owned A) -> Swift.Int64) -> Swift.Int64",
     as: ((NativeSwiftConsuming<NativeSwiftValue>, ConsumingInput) -> Int64).self,
     genericArguments: [.type(moved.type)], in: source)
@@ -276,11 +291,13 @@ print("Consuming callback inputs transfer noncopyable native ownership into reta
 
 
 typealias InoutInput = NativeSwiftClosure<(NativeSwiftBorrowedValue) throws -> Void>
-let mutateInput = try await runtime.swiftFunction(
+let mutateInput = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.visitRuntimeInout<A where A: ~Swift.Copyable>(inout A, (inout A) throws -> ()) throws -> ()",
     as: ((NativeSwiftInout<NativeSwiftValue>, InoutInput) throws -> Void).self,
     genericArguments: [.type(received.type)], in: source)
-let addTicket = try await received.type.method(named: "add(_:)", as: ((Int64) -> Void).self,
+let addTicket = try received.type.method(
+    named: "add(_:)",
+    as: ((Int64) -> Void).self,
     receiverABI: .opaque(named: received.type.name), mutating: true)
 let mutateBody = try InoutInput { view in
     state.borrow = view
@@ -294,7 +311,7 @@ print("Runtime inout callback views mutate noncopyable values and expire after n
 
 
 typealias OwnedNested = NativeSwiftClosure<(NativeSwiftConsuming<NativeSwiftClosure<(Int64) -> Int64>>) -> Void>
-let deliverOwned = try await runtime.swiftFunction(
+let deliverOwned = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.visitOwnedNested<A>(A, () -> (), (__owned (A) -> A) -> ()) -> ()",
     as: ((Int64, NativeSwiftClosure<() -> Void>, OwnedNested) -> Void).self,
     genericArguments: [.type(Int64.self)], in: source)
@@ -307,16 +324,16 @@ guard state.text == "destroyed" else { throw ConsumerError.wrongResult }
 print("Consuming nested closure inputs remain callable after delivery and release captures exactly once")
 
 
-let pairType = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair", in: source)
+let pairType = try runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair", in: source)
 let pairABI = try NativeType.structure(named: pairType.name, fields: [.int64, .int64])
 let pairABIs = [pairType: pairABI]
-let makePair = try await runtime.swiftFunction(
+let makePair = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.makeRuntimeFixedPair(_:_:)",
     as: ((Int64, Int64) -> NativeSwiftValue).self, valueABIs: pairABIs, in: source)
 let pair = try unsafe makePair.unsafeInvoke(35, 7)
-let sumPair = try await pairType.method(named: "sum()", as: (() -> Int64).self, receiverABI: pairABI)
+let sumPair = try pairType.method(named: "sum()", as: (() -> Int64).self, receiverABI: pairABI)
 typealias PairBody = NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Int64>
-let inspectPair = try await runtime.swiftFunction(
+let inspectPair = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.inspectRuntimeFixedPair(ManagedSwiftFixtures.RuntimeFixedPair, (ManagedSwiftFixtures.RuntimeFixedPair) -> Swift.Int64) -> Swift.Int64",
     as: ((NativeSwiftValue, PairBody) -> Int64).self, valueABIs: pairABIs, in: source)
 state.error = nil
@@ -328,7 +345,8 @@ guard try unsafe inspectPair.unsafeInvoke(pair, pairBody) == 42, pairABIs[pair.t
 if let error = state.error { throw error }
 print("Explicit fixed Swift components compose runtime-only values and callbacks without importing their type")
 
-let arrow = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.-->(_:_:)",
+let arrow = try runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.-->(_:_:)",
     as: ((Int64, Int64) -> Int64).self, in: source)
 guard try unsafe arrow.unsafeInvoke(35, 7) == 42 else { throw ConsumerError.wrongResult }
 print("Label-only lookup preserves arrow-containing operator names")
@@ -336,7 +354,7 @@ print("Label-only lookup preserves arrow-containing operator names")
 
 typealias ClosureData = NativeSwiftClosure<() -> Int64>
 let closureData = try ClosureData { Int64(42) }
-let copyClosureData = try await runtime.swiftFunction(
+let copyClosureData = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.callRuntimeCopy<A>((A) -> A, A) -> A",
     as: ((NativeSwiftClosure<(ClosureData) -> ClosureData>, ClosureData) -> ClosureData).self,
     genericArguments: [.type(ClosureData.self)], in: source)
@@ -344,7 +362,7 @@ let closureIdentity = try NativeSwiftClosure<(ClosureData) -> ClosureData> { $0 
 let copiedClosureData = try unsafe copyClosureData.unsafeInvoke(closureIdentity, closureData)
 guard try unsafe copiedClosureData.unsafeInvoke() == 42 else { throw ConsumerError.wrongResult }
 typealias ConsumingClosureDataReader = NativeSwiftClosure<(NativeSwiftConsuming<ClosureData>) -> Int64>
-let consumeClosureData = try await runtime.swiftFunction(
+let consumeClosureData = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.visitNonthrowingConsumingRuntimeValue<A where A: ~Swift.Copyable>(__owned A, (__owned A) -> Swift.Int64) -> Swift.Int64",
     as: ((NativeSwiftConsuming<ClosureData>, ConsumingClosureDataReader) -> Int64).self,
     genericArguments: [.type(ClosureData.self)], in: source)
@@ -354,14 +372,14 @@ let consumeClosureBody = try ConsumingClosureDataReader { value in
 }
 guard try unsafe consumeClosureData.unsafeInvoke(NativeSwiftConsuming(closureData), consumeClosureBody) == 42 else { throw ConsumerError.wrongResult }
 typealias BorrowingClosureDataReader = NativeSwiftClosure<(NativeSwiftBorrowing<ClosureData>) throws -> Int64>
-let borrowClosureData = try await runtime.swiftFunction(
+let borrowClosureData = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.visitRuntimeValue<A where A: ~Swift.Copyable>(A, (A) throws -> Swift.Int64) throws -> Swift.Int64",
     as: ((ClosureData, BorrowingClosureDataReader) throws -> Int64).self,
     genericArguments: [.type(ClosureData.self)], in: source)
 let borrowClosureBody = try BorrowingClosureDataReader { try unsafe $0.value.copy().unsafeInvoke() }
 guard try unsafe borrowClosureData.unsafeInvoke(closureData, borrowClosureBody) == 42 else { throw ConsumerError.wrongResult }
 typealias AsyncClosureDataReader = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftBorrowing<ClosureData>) async throws -> Int64>
-let readClosureData = try await runtime.swiftFunction(
+let readClosureData = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.visitRuntimeValueAsync<A where A: ~Swift.Copyable>(A, nonisolated(nonsending) (A) async throws -> Swift.Int64) async throws -> Swift.Int64",
     as: (nonisolated(nonsending) (ClosureData, AsyncClosureDataReader) async throws -> Int64).self,
     genericArguments: [.type(ClosureData.self)], in: source)
@@ -376,34 +394,34 @@ print("Callbacks copy and return closure wrappers bound as native generic data, 
 do {
         typealias Reader = NativeSwiftClosure<(NativeSwiftValue, NativeSwiftValue) -> Int64>
         typealias AsyncReader = NativeSwiftClosure<nonisolated(nonsending) (NativeSwiftValue, NativeSwiftValue) async -> Int64>
-        let factory = try await runtime.swiftFunction(
+    let factory = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeMixedRuntimeReader<A, B>(A.Type, B.Type) -> (A, B) -> Swift.Int64",
             as: ((Int64.Type, NativeSwiftValue.Type) -> Reader).self,
             genericArguments: [.type(Int64.self), .type(NativeSwiftValue.self)])
         let reader = try unsafe factory.unsafeInvoke(Int64.self, NativeSwiftValue.self)
-        let correct = try await runtime.swiftFunction(
+    let correct = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.callMixedRuntimeReader<A, B>((A, B) -> Swift.Int64, A, B) -> Swift.Int64",
             as: ((Reader, Int64, NativeSwiftValue) -> Int64).self,
             genericArguments: [.type(Int64.self), .type(NativeSwiftValue.self)])
         guard try unsafe correct.unsafeInvoke(reader, 35, pair) == 42 else { throw ConsumerError.wrongResult }
-        let swapped = try await runtime.swiftFunction(
+    let swapped = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.callMixedRuntimeReader<A, B>((A, B) -> Swift.Int64, A, B) -> Swift.Int64",
             as: ((Reader, NativeSwiftValue, Int64) -> Int64).self,
             genericArguments: [.type(NativeSwiftValue.self), .type(Int64.self)])
         do { _ = try unsafe swapped.unsafeInvoke(reader, pair, 35) as Int64; throw ConsumerError.wrongResult }
         catch ABIResolutionError.signatureMismatch { }
 
-        let asyncFactory = try await runtime.swiftFunction(
+    let asyncFactory = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.makeMixedRuntimeAsyncReader<A, B>(A.Type, B.Type) -> nonisolated(nonsending) (A, B) async -> Swift.Int64",
             as: ((Int64.Type, NativeSwiftValue.Type) -> AsyncReader).self,
             genericArguments: [.type(Int64.self), .type(NativeSwiftValue.self)])
         let asyncReader = try unsafe asyncFactory.unsafeInvoke(Int64.self, NativeSwiftValue.self)
-        let asyncCorrect = try await runtime.swiftFunction(
+    let asyncCorrect = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.callMixedRuntimeAsyncReader<A, B>(nonisolated(nonsending) (A, B) async -> Swift.Int64, A, B) async -> Swift.Int64",
             as: (nonisolated(nonsending) (AsyncReader, Int64, NativeSwiftValue) async -> Int64).self,
             genericArguments: [.type(Int64.self), .type(NativeSwiftValue.self)])
         guard try unsafe await asyncCorrect.unsafeInvoke(asyncReader, 35, pair) == 42 else { throw ConsumerError.wrongResult }
-        let asyncSwapped = try await runtime.swiftFunction(
+    let asyncSwapped = try runtime.swiftFunction(
             named: "ManagedSwiftFixtures.callMixedRuntimeAsyncReader<A, B>(nonisolated(nonsending) (A, B) async -> Swift.Int64, A, B) async -> Swift.Int64",
             as: (nonisolated(nonsending) (AsyncReader, NativeSwiftValue, Int64) async -> Int64).self,
             genericArguments: [.type(NativeSwiftValue.self), .type(Int64.self)])
@@ -418,16 +436,16 @@ do {
     typealias BorrowedSnapshot = (lead: Int8, record: NativeSwiftBorrowedValue, nested: (callback: Callback, text: String, tail: Int8))
     typealias Inspect = NativeSwiftClosure<(BorrowedSnapshot) throws -> Int64>
     let nativeSnapshot = "(lead: Swift.Int8, record: ManagedSwiftFixtures.RuntimeFixedPair, nested: (callback: (Swift.Int64) -> Swift.Int64, text: Swift.String, tail: Swift.Int8))"
-    let make = try await runtime.swiftFunction(
+    let make = try runtime.swiftFunction(
         named: "ManagedSwiftFixtures.makeCompositionSnapshot(Swift.AnyObject, Swift.Int64, Swift.Int64, Swift.String) -> " + nativeSnapshot,
         as: ((AnyObject, Int64, Int64, String) -> Snapshot).self, valueABIs: pairABIs, in: source)
-    let echo = try await runtime.swiftFunction(
+    let echo = try runtime.swiftFunction(
         named: "ManagedSwiftFixtures.echoCompositionSnapshot(" + nativeSnapshot + ") -> " + nativeSnapshot,
         as: ((Snapshot) -> Snapshot).self, valueABIs: pairABIs, in: source)
-    let inspect = try await runtime.swiftFunction(
+    let inspect = try runtime.swiftFunction(
         named: "ManagedSwiftFixtures.inspectCompositionSnapshot(" + nativeSnapshot + ", (" + nativeSnapshot + ") throws -> Swift.Int64) throws -> Swift.Int64",
         as: ((Snapshot, Inspect) throws -> Int64).self, valueABIs: pairABIs, in: source)
-    let consume = try await runtime.swiftFunction(
+    let consume = try runtime.swiftFunction(
         named: "ManagedSwiftFixtures.consumeCompositionSnapshot(__owned " + nativeSnapshot + ") -> " + nativeSnapshot,
         as: ((NativeSwiftConsuming<Snapshot>) -> Snapshot).self, valueABIs: pairABIs, in: source)
     let text = String(repeating: "tuple", count: 100)
@@ -450,7 +468,7 @@ do {
     typealias OwnedTuple = (Int8, NativeSwiftValue, Int64)
     typealias BorrowedTuple = (Int8, NativeSwiftBorrowedValue, Int64)
     typealias AsyncBody = NativeSwiftClosure<nonisolated(nonsending) (BorrowedTuple) async throws -> OwnedTuple>
-    let transform = try await runtime.swiftFunction(
+    let transform = try runtime.swiftFunction(
         named: "ManagedSwiftFixtures.transformRuntimeTupleAsync<A>((Swift.Int8, A, Swift.Int64), nonisolated(nonsending) ((Swift.Int8, A, Swift.Int64)) async throws -> (Swift.Int8, A, Swift.Int64)) async throws -> (Swift.Int8, A, Swift.Int64)",
         as: (nonisolated(nonsending) (OwnedTuple, AsyncBody) async throws -> OwnedTuple).self,
         genericArguments: [.type(pairType)], in: source)
@@ -466,11 +484,11 @@ do {
 
     typealias Edit = NativeSwiftClosure<(NativeSwiftInout<Callback>) throws -> Void>
     typealias EditPair = NativeSwiftClosure<(NativeSwiftInout<Callback>, NativeSwiftInout<Callback>) throws -> Int64>
-    let swap = try await runtime.swiftFunction(
+    let swap = try runtime.swiftFunction(
         named: "ManagedSwiftFixtures.swapRuntimeClosures<A>(inout (A) -> A, inout (A) -> A) -> ()",
         as: ((NativeSwiftInout<Callback>, NativeSwiftInout<Callback>) -> Void).self,
         genericArguments: [.type(Int64.self)], in: source)
-    let visit = try await runtime.swiftFunction(
+    let visit = try runtime.swiftFunction(
         named: "ManagedSwiftFixtures.visitRuntimeClosure<A>(inout (A) -> A, (inout (A) -> A) throws -> ()) throws -> ()",
         as: ((NativeSwiftInout<Callback>, Edit) throws -> Void).self, genericArguments: [.type(Int64.self)], in: source)
     let first = NativeSwiftInout(try Callback { $0 + 7 })
@@ -498,7 +516,7 @@ do {
     guard let expired = state.closure else { throw ConsumerError.wrongResult }
     do { _ = try expired.copy(); throw ConsumerError.wrongResult }
     catch NativeSwiftBorrowError.expiredBorrow { }
-    let visitPair = try await runtime.swiftFunction(
+    let visitPair = try runtime.swiftFunction(
         named: "ManagedSwiftFixtures.visitRuntimeClosurePair<A>(inout (A) -> A, inout (A) -> A, (inout (A) -> A, inout (A) -> A) throws -> Swift.Int64) throws -> Swift.Int64",
         as: ((NativeSwiftInout<Callback>, NativeSwiftInout<Callback>, EditPair) throws -> Int64).self,
         genericArguments: [.type(Int64.self)], in: source)
@@ -529,45 +547,48 @@ do {
     print("Failed closure writeback preserves both native slots and reports the callback and conversion failures")
 }
 
-let genericOpaque = try await runtime.swiftFunction(
+let genericOpaque = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.makeRuntimeOpaque<A>(A) -> some",
     as: ((String) -> NativeSwiftValue).self, genericArguments: [.type(String.self)], in: source)
 let opaqueValue = try unsafe genericOpaque.unsafeInvoke("opaque")
 guard try opaqueValue.withCopy({ $0 as? String }) == "opaque" else { throw ConsumerError.wrongResult }
-let opaquePair = try await runtime.swiftFunction(
+let opaquePair = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.makeRuntimeOpaquePair<A, B>(A, B) -> (some, some)",
     as: ((String, Int) -> (NativeSwiftValue, NativeSwiftValue)).self,
     genericArguments: [.type(String.self), .type(Int.self)], in: source)
 let pairResult = try unsafe opaquePair.unsafeInvoke("pair", 42)
 guard try pairResult.0.withCopy({ $0 as? String }) == "pair",
       try pairResult.1.withCopy({ $0 as? Int }) == 42 else { throw ConsumerError.wrongResult }
-let opaqueClosure = try await runtime.swiftFunction(
+let opaqueClosure = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.makeRuntimeOpaqueClosure<A>(A) -> () -> some",
     as: ((String) -> NativeSwiftClosure<() -> NativeSwiftValue>).self,
     genericArguments: [.type(String.self)], in: source)
 let closureResult = try unsafe opaqueClosure.unsafeInvoke("closure")
 guard try unsafe closureResult.unsafeInvoke().withCopy({ $0 as? String }) == "closure" else { throw ConsumerError.wrongResult }
-let opaqueOwner = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeOpaqueOwner",
+let opaqueOwner = try runtime.swiftType(
+    named: "ManagedSwiftFixtures.RuntimeOpaqueOwner",
     in: source, genericArguments: [.type(String.self)])
-let ownerInit = try await opaqueOwner.initializer(named: "init(_:)", as: ((String) -> AnyObject).self)
+let ownerInit = try opaqueOwner.initializer(named: "init(_:)", as: ((String) -> AnyObject).self)
 let instance = try unsafe ownerInit.unsafeInvoke("owner")
-let ownerGetter = try await opaqueOwner.getter(named: "opaque", as: (() -> NativeSwiftValue).self)
+let ownerGetter = try opaqueOwner.getter(named: "opaque", as: (() -> NativeSwiftValue).self)
 guard try unsafe ownerGetter.unsafeInvoke(on: instance).withCopy({ $0 as? String }) == "owner" else { throw ConsumerError.wrongResult }
-let ownerMethod = try await opaqueOwner.method(named: "make(_:)", as: ((Int) -> NativeSwiftValue).self,
+let ownerMethod = try opaqueOwner.method(
+    named: "make(_:)",
+    as: ((Int) -> NativeSwiftValue).self,
     genericArguments: [.type(Int.self)])
 let memberResult = try unsafe ownerMethod.unsafeInvoke(on: instance, 42)
 guard try memberResult.withCopy({ ($0 as? (String, Int))?.1 }) == 42 else { throw ConsumerError.wrongResult }
 print("Generic opaque factories, nested results, and enclosing member bindings work without importing provider types")
 for name in ["makeRuntimeExtended", "makeRuntimeExtendedObject"] {
     let protocolName = name == "makeRuntimeExtended" ? "RuntimeExtendedSource" : "RuntimeExtendedObject"
-    let call = try await runtime.swiftFunction(
+    let call = try runtime.swiftFunction(
         named: "ManagedSwiftFixtures.\(name)<A>(A) -> any ManagedSwiftFixtures.\(protocolName)<Self.Element == A>",
         as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)], in: source)
     let value = try unsafe call.unsafeInvoke(42)
     guard try value.withCopy({ ($0 as? any CustomStringConvertible)?.description }) == "42" else { throw ConsumerError.wrongResult }
 }
 typealias ExtendedCallback = NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Int>
-let applyExtended = try await runtime.swiftFunction(
+let applyExtended = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.applyRuntimeExtendedObject<A>((any ManagedSwiftFixtures.RuntimeExtendedObject<Self.Element == A>) -> Swift.Int, A) -> Swift.Int",
     as: ((ExtendedCallback, Int) -> Int).self, genericArguments: [.type(Int.self)], in: source)
 let extendedCallback = try ExtendedCallback { value in
@@ -578,29 +599,39 @@ guard try unsafe applyExtended.unsafeInvoke(extendedCallback, 42) == 42 else { t
 print("Runtime-only parameterized protocols preserve opaque and class payloads without compiler-emitted shapes")
 
 let superclassName = "any ManagedSwiftFixtures.RuntimeExtendedSuperclass<A> & ManagedSwiftFixtures.RuntimeExtendedObject<Self.Element == A>"
-let makeSuperclass = try await runtime.swiftFunction(
+let makeSuperclass = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.makeRuntimeExtendedSuperclass<A>(A) -> " + superclassName,
     as: ((Int) -> NativeSwiftValue).self, genericArguments: [.type(Int.self)], in: source)
 let superclassValue = try unsafe makeSuperclass.unsafeInvoke(42)
 guard try superclassValue.withCopy({ ($0 as? any CustomStringConvertible)?.description }) == "42" else { throw ConsumerError.wrongResult }
-let applySuperclass = try await runtime.swiftFunction(
+let applySuperclass = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.applyRuntimeExtendedSuperclass<A>((" + superclassName + ") -> Swift.Int, A) -> Swift.Int",
     as: ((ExtendedCallback, Int) -> Int).self, genericArguments: [.type(Int.self)], in: source)
 guard try unsafe applySuperclass.unsafeInvoke(extendedCallback, 42) == 42 else { throw ConsumerError.wrongResult }
-let superclassClosure = try await runtime.swiftFunction(
+let superclassClosure = try runtime.swiftFunction(
     named: "ManagedSwiftFixtures.makeRuntimeExtendedSuperclassClosure<A>(A) -> () -> " + superclassName,
     as: ((Int) -> NativeSwiftClosure<() -> NativeSwiftValue>).self, genericArguments: [.type(Int.self)], in: source)
 guard try unsafe superclassClosure.unsafeInvoke(43).unsafeInvoke().withCopy({ ($0 as? any CustomStringConvertible)?.description }) == "43" else { throw ConsumerError.wrongResult }
 print("Generic superclass existentials retain constraints and witnesses across calls and closures without importing provider types")
 
-let scopedOwnerFactory = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeScopedOwner(_:)",
+let scopedOwnerFactory = try runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.makeRuntimeScopedOwner(_:)",
     as: ((Int64) -> NativeSwiftValue).self, in: source)
 let scopedOwner = try unsafe scopedOwnerFactory.unsafeInvoke(42)
-let scopedCounts = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.runtimeScopedDestructions(_:)",
+let scopedCounts = try runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.runtimeScopedDestructions(_:)",
     as: ((NativeSwiftValue) -> Int).self, in: source)
-let scopedType = try await runtime.swiftType(named: "ManagedSwiftFixtures.RuntimeScopedResult", in: source)
-let scopedRead = try await scopedType.method(named: "read()", as: (() -> Int64).self, receiverABI: .opaque(named: scopedType.name))
-let scopedMake = try await runtime.swiftFunction(named: "ManagedSwiftFixtures.makeRuntimeScoped(_:_:)",
+let scopedType = try runtime.swiftType(
+    named: "ManagedSwiftFixtures.RuntimeScopedResult",
+    in: source
+)
+let scopedRead = try scopedType.method(
+    named: "read()",
+    as: (() -> Int64).self,
+    receiverABI: .opaque(named: scopedType.name)
+)
+let scopedMake = try runtime.swiftFunction(
+    named: "ManagedSwiftFixtures.makeRuntimeScoped(_:_:)",
     as: ((NativeSwiftValue, Bool) throws -> NativeSwiftBorrowedValue).self, in: source)
 var escapedScoped: NativeSwiftBorrowedValue?
 let scopedNumber = try unsafe scopedMake.unsafeInvoke(scopedOwner, false, withResult: { value in
@@ -612,7 +643,10 @@ do {
     _ = try unsafe scopedRead.unsafeInvoke(on: escapedScoped!)
     throw ConsumerError.wrongResult
 } catch NativeSwiftBorrowError.expiredBorrow { }
-let scopedMethod = try await scopedOwner.type.method(named: "scopedAsync()", as: (() async -> NativeSwiftBorrowedValue).self)
+let scopedMethod = try scopedOwner.type.method(
+    named: "scopedAsync()",
+    as: (() async -> NativeSwiftBorrowedValue).self
+)
 let asyncScopedNumber = try unsafe await scopedMethod.unsafeInvoke(on: scopedOwner, withResult: { value in
     await Task.yield()
     return try unsafe scopedRead.unsafeInvoke(on: value)
@@ -629,13 +663,16 @@ guard let callerLoader = dlopen(callerPath.path, RTLD_NOW | RTLD_LOCAL) else { t
 defer { dlclose(callerLoader) }
 let providerScope = ImageSelector.path(providerPath)
 let callerScope = ImageSelector.path(callerPath)
-let ticketType = try await runtime.swiftType(named: "SwiftImportProvider.HookTicket", in: providerScope)
-let ticketMove = try await runtime.swiftFunction(named: "SwiftImportProvider.moveHookTicket(_:)",
+let ticketType = try runtime.swiftType(named: "SwiftImportProvider.HookTicket", in: providerScope)
+let ticketMove = try runtime.swiftFunction(
+    named: "SwiftImportProvider.moveHookTicket(_:)",
     as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self,
     genericArguments: [.type(ticketType)], in: providerScope)
-let ticketCaller = try await runtime.swiftFunction(named: "SwiftImportCallerControl.callMoveTicket(_:)",
+let ticketCaller = try runtime.swiftFunction(
+    named: "SwiftImportCallerControl.callMoveTicket(_:)",
     as: ((Int64) -> Int64).self, in: callerScope)
-let ticketCounts = try await runtime.swiftFunction(named: "SwiftImportProvider.hookTicketCounts()",
+let ticketCounts = try runtime.swiftFunction(
+    named: "SwiftImportProvider.hookTicketCounts()",
     as: (() -> (Int64, Int64)).self, in: providerScope)
 private let hookState = State()
 let runtimeHook = try unsafe await ticketMove.hookImportedCalls(in: callerScope, using: runtime,

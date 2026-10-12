@@ -254,6 +254,6 @@ Core Foundation values use their pointer representation through `Unmanaged<T>`, 
 
 ## Preserve the receiver's execution requirements
 
-Selector lookup and invocation are synchronous and stay in the caller's isolation domain. Call `method(selector:as:variadicFrom:options:)` without `await`; the Swift ABI `method(named:as:consuming:)` overload remains asynchronous. Handles retain their receiver but do not make it thread-safe or actor-independent. For a main-actor UI object, perform lookup and invocation on the main actor.
+Selector lookup and invocation are synchronous and stay in the caller's isolation domain. Both `method(selector:as:variadicFrom:options:)` and the Swift ABI `method(named:as:consuming:)` overload are called without `await`. Handles retain their receiver but do not make it thread-safe or actor-independent. For a main-actor UI object, perform lookup and invocation on the main actor.
 
 The unsafe call contract includes argument nullability, class constraints, pointer validity, ownership annotations, and any requirements that runtime encodings cannot express. Foundation signature-construction failures are reported as lookup errors. Exceptions from the invoked Objective-C or C++ implementation are not converted to Swift errors. Keep dynamically loaded receiver classes and method implementations available for as long as the object and its handles are used.

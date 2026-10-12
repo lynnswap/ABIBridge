@@ -2,6 +2,24 @@
 
 Update clients of the earlier result-and-argument handle types to complete function signatures, declaration-ordered generic arguments, and the shared runtime value interface.
 
+## Resolve and prepare handles synchronously
+
+Remove `await` from `ABIRuntime` symbol lookup, image enumeration, and callable or Swift type factories. Swift type member factories and bound Swift/C++ method lookup are also synchronous:
+
+```swift
+// Before
+let type = try await runtime.swiftType(named: "Example.Counter")
+let read = try await type.method(named: "read()", as: (() -> Int64).self)
+
+// After
+let type = try runtime.swiftType(named: "Example.Counter")
+let read = try type.method(named: "read()", as: (() -> Int64).self)
+```
+
+`ABIRuntime` and `NativeSwiftType` remain actors. These methods are `nonisolated`, so synchronous callers can use them without earlier preparation. Cold lookup runs on the caller's thread; if a required preparation stage is running, the caller waits for it. `removeCachedResults()` is also synchronous.
+
+Optional `prepare(_:)` remains asynchronous. Its closure overload runs synchronous factories on a worker queue and shares their preparation with later lookup. See <doc:SymbolLookup>. Keep `await` for invoking native async signatures and for hook installation APIs that remain asynchronous.
+
 ## Use a complete callable signature
 
 The function type now carries arguments, results, native errors, and async isolation. Replace explicit annotations using the earlier result and argument parameters:
@@ -25,7 +43,7 @@ Swift getters now take a zero-argument function type so their error and isolatio
 let getter = try await type.getter(named: "text", as: String.self)
 
 // After
-let getter = try await type.getter(named: "text", as: (() -> String).self)
+let getter = try type.getter(named: "text", as: (() -> String).self)
 ```
 
 Keep Objective-C selector lookup on its existing function-type interface. This getter change applies to Swift source declarations.
@@ -43,7 +61,7 @@ let run = try await runtime.swiftFunction(
 )
 
 // After
-let run = try await runtime.swiftFunction(
+let run = try runtime.swiftFunction(
     named: "Example.run(_:)",
     as: ((NativeSwiftClosure<() -> String>) -> String).self,
     genericArguments: [.type(String.self)]
@@ -70,7 +88,7 @@ let value = try unsafe make.unsafeInvoke("title")
 value.withValue { print($0) }
 
 // After
-let make = try await runtime.swiftFunction(
+let make = try runtime.swiftFunction(
     named: "Example.makeSummary(_:)",
     as: ((String) -> NativeSwiftValue).self
 )
@@ -95,7 +113,7 @@ let callback = try NativeSwiftBorrowingClosure<Int64>(borrowing: type) { view in
 }
 
 // After
-let read = try await type.method(
+let read = try type.method(
     named: "read()", as: (() -> Int64).self,
     receiverABI: .opaque(named: type.name)
 )
@@ -116,7 +134,7 @@ Nested native closures now appear as `NativeSwiftClosure<Signature>` arguments o
 Replace the earlier `inheritsCallerIsolation: false` setting with an `@concurrent` signature for a concurrent native async declaration. Use `nonisolated(nonsending)` for a caller-isolated declaration, including when the consumer's default differs from the provider's:
 
 ```swift
-let run = try await runtime.swiftFunction(
+let run = try runtime.swiftFunction(
     named: "Example.runAsync(_:)",
     as: (nonisolated(nonsending) (String) async throws -> String).self
 )
@@ -130,7 +148,7 @@ Typed errors remain part of the signature, such as `(String) throws(MyError) -> 
 An owned result cannot represent a native `~Escapable` payload. Select ``NativeSwiftBorrowedValue`` as the result marker and process it in `withResult:`:
 
 ```swift
-let make = try await runtime.swiftFunction(
+let make = try runtime.swiftFunction(
     named: "Example.makeView(_:)",
     as: ((AnyObject) -> NativeSwiftBorrowedValue).self
 )

@@ -44,8 +44,10 @@ private final class ExtractedCounterOwner {
     do {
         let receiver = MethodExtractionReceiver(1)
         originalSwift = receiver
-        sync = try await runtime.object(receiver).method(named: "adding(_:)", as: ((Int64) -> Int64).self).method
-        async = try await runtime.object(receiver).method(named: "addingLater(_:)",
+        sync = try runtime.object(receiver).method(named: "adding(_:)", as: ((Int64) -> Int64).self)
+            .method
+        async = try runtime.object(receiver).method(
+            named: "addingLater(_:)",
             as: (nonisolated(nonsending) (Int64) async throws -> Int64).self).method
     }
     try check(originalSwift == nil, "Extracted synchronous and async Swift methods release their original receiver")
@@ -93,10 +95,13 @@ private final class ExtractedCounterOwner {
         originalCounter = owner
         let storage = try owner.storage()
         let counter = runtime.cxxObject(storage, typeNamed: "ABIArchitecture::Counter")
-        direct = try await counter.method(named: "add(int)", as: ((Int32) -> Int32).self).method
+        direct = try counter.method(named: "add(int)", as: ((Int32) -> Int32).self).method
         let table = try unsafe NativeVTable(readingFrom: storage, entryCount: 1,
             authentication: .cxxVTablePointer(discriminator: ABIValidationTableDiscriminator()))
-        let entry = try await table.entry(named: "ABIArchitecture::Counter::current() const", using: runtime)
+        let entry = try table.entry(
+            named: "ABIArchitecture::Counter::current() const",
+            using: runtime
+        )
         virtual = try unsafe counter.virtualMethod(entry, as: (() -> Int32).self).method
     }
     try check(originalCounter == nil, "Extracted C++ direct and vtable methods release the source receiver")

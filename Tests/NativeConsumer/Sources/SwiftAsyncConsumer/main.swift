@@ -25,13 +25,13 @@ public final class AsyncReceiver {
 }
 
 @MainActor
-func extractedAsyncMethod() async throws -> NativeSwiftMethod<nonisolated(nonsending) (Int64) async throws(Failure) -> Int64> {
+func extractedAsyncMethod() throws -> NativeSwiftMethod<nonisolated(nonsending) (Int64) async throws(Failure) -> Int64> {
     weak var observed: AsyncReceiver?
     let method: NativeSwiftMethod<nonisolated(nonsending) (Int64) async throws(Failure) -> Int64>
     do {
         let original = AsyncReceiver(1)
         observed = original
-        method = try await ABIRuntime.shared.object(original).method(
+        method = try ABIRuntime.shared.object(original).method(
             named: "score(_:)", as: (nonisolated(nonsending) (Int64) async throws(Failure) -> Int64).self
         ).method
     }
@@ -40,7 +40,7 @@ func extractedAsyncMethod() async throws -> NativeSwiftMethod<nonisolated(nonsen
 }
 
 let runtime = ABIRuntime()
-let reusable = try await extractedAsyncMethod()
+let reusable = try extractedAsyncMethod()
 let asyncReceiver = AsyncReceiver(35)
 let rebound = try reusable.bind(to: asyncReceiver)
 let reboundValue = try await Context.$value.withValue(5) { try unsafe await rebound.unsafeInvoke(2) }
@@ -51,16 +51,19 @@ do {
 } catch let error as NativeSwiftError {
     error.withUnderlyingError { precondition(($0 as? Failure)?.code == 45) }
 }
-let decorate = try await runtime.swiftFunction(named: "SwiftAsyncConsumer.decorate(_:)",
+let decorate = try runtime.swiftFunction(
+    named: "SwiftAsyncConsumer.decorate(_:)",
     as: ((String) async -> String).self)
 let result = try unsafe await decorate.unsafeInvoke("public")
 precondition(result == "public!")
 MainActor.preconditionIsolated()
-let inherited = try await runtime.swiftFunction(named: "SwiftAsyncConsumer.inherited(_:)",
+let inherited = try runtime.swiftFunction(
+    named: "SwiftAsyncConsumer.inherited(_:)",
     as: (nonisolated(nonsending) (Int64) async -> Int64).self)
 let sum = try await Context.$value.withValue(35) { try unsafe await inherited.unsafeInvoke(7) }
 precondition(sum == 42)
-let checked = try await runtime.swiftFunction(named: "SwiftAsyncConsumer.checked(_:)",
+let checked = try runtime.swiftFunction(
+    named: "SwiftAsyncConsumer.checked(_:)",
     as: (@concurrent (Bool) async throws(Failure) -> Int64).self)
 let success = try unsafe await checked.unsafeInvoke(false)
 precondition(success == 7)
@@ -91,7 +94,8 @@ do {
     if prefix.isEmpty { throw Failure(code: 44) }
     return prefix + text
 }
-let update = try await runtime.swiftFunction(named: "SwiftAsyncConsumer.update(_:_:_:)",
+let update = try runtime.swiftFunction(
+    named: "SwiftAsyncConsumer.update(_:_:_:)",
     as: (@concurrent (NativeSwiftInout<String>, NativeSwiftConsuming<String>, NativeSwiftBorrowing<String>) async throws(Failure) -> String).self)
 let buffer = NativeSwiftInout("value")
 let updated = try unsafe await update.unsafeInvoke(buffer, .init("!"), .init("public:"))
@@ -106,13 +110,15 @@ precondition(buffer.value == "value!?")
 public protocol Summary: Sendable { var number: Int64 { get } }
 public struct SummaryValue: Summary { public let number: Int64 }
 public func echoSummary(_ value: any Summary) -> any Summary { value }
-let echoSummary = try await runtime.swiftFunction(named: "SwiftAsyncConsumer.echoSummary(_:)",
+let echoSummary = try runtime.swiftFunction(
+    named: "SwiftAsyncConsumer.echoSummary(_:)",
     as: ((any Summary) -> any Summary).self)
 let summary = try unsafe echoSummary.unsafeInvoke(SummaryValue(number: 42))
 precondition(summary.number == 42 && summary is SummaryValue)
 private struct HiddenSummary: Summary { let number: Int64 }
 public func makeSummary() -> some Summary { HiddenSummary(number: 43) }
-let makeSummaryFunction = try await runtime.swiftFunction(named: "SwiftAsyncConsumer.makeSummary()",
+let makeSummaryFunction = try runtime.swiftFunction(
+    named: "SwiftAsyncConsumer.makeSummary()",
     as: (() -> NativeSwiftValue).self)
 let opaque = try unsafe makeSummaryFunction.unsafeInvoke()
 try opaque.withCopy { precondition(($0 as? any Summary)?.number == 43) }
