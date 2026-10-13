@@ -172,23 +172,39 @@ final class SwiftClosureHost {
     let codeLifetime: SwiftValueCodeLifetime
     private let lock = NSLock()
     private let prepare: () throws -> SwiftClosureCall
+    private let prepareAsynchronous: (nonisolated(nonsending) () async throws -> SwiftClosureCall)?
     private var native: SwiftClosureCall?
 
     init(
         factory: SwiftClosureBodyFactory,
         codeLifetime: SwiftValueCodeLifetime,
+        prepareAsynchronous:
+            (nonisolated(nonsending) () async throws -> SwiftClosureCall)? = nil,
         prepare: @escaping () throws -> SwiftClosureCall
     ) {
         self.factory = factory; self.codeLifetime = codeLifetime; self.prepare = prepare
+        self.prepareAsynchronous = prepareAsynchronous
     }
 
     func resolved() throws -> SwiftClosureCall {
-        lock.lock()
-        let cached = native
-        lock.unlock()
         if let cached { return cached }
         // Custom value layouts can run client code and reenter preparation.
-        let prepared = try prepare()
+        return publish(try prepare())
+    }
+
+    nonisolated(nonsending) func resolvedAsync() async throws -> SwiftClosureCall {
+        if let cached { return cached }
+        guard let prepareAsynchronous else { return try resolved() }
+        return publish(try await prepareAsynchronous())
+    }
+
+    private var cached: SwiftClosureCall? {
+        lock.lock()
+        defer { lock.unlock() }
+        return native
+    }
+
+    private func publish(_ prepared: SwiftClosureCall) -> SwiftClosureCall {
         lock.lock()
         if native == nil { native = prepared }
         let value = native!

@@ -34,10 +34,14 @@ public struct DynamicNativeFunction: Sendable {
     /// - Throws: A count/layout mismatch or native call-interface error.
     @unsafe public func unsafeInvoke(with values: [NativeValue]) throws -> NativeValue {
         guard values.count == signature.parameters.count else {
-            throw ABIResolutionError.signatureMismatch(.init(
-                declaration: symbol.declaration, position: .argumentCount,
-                expected: "\(signature.parameters.count) arguments", found: ["\(values.count) arguments"]
-            ))
+            throw ABIResolutionError.signatureMismatch(
+                .init(
+                    declaration: symbol.declaration,
+                    position: .argumentCount,
+                    expected: "\(signature.parameters.count) arguments",
+                    found: ["\(values.count) arguments"]
+                )
+            )
         }
         for (value, expected) in zip(values, signature.parameters) {
             try value.requireLayout(expected)
@@ -55,7 +59,8 @@ public struct DynamicNativeFunction: Sendable {
                     var failure: OpaquePointer?
                     let success = unsafe symbol.withUnsafeAddress { address in
                         ABIUnsafeInvokeCCallInterface(
-                            interface.handle, ABIUnsafeFunctionAtAddress(address),
+                            interface.handle,
+                            ABIUnsafeFunctionAtAddress(address),
                             output.baseAddress,
                             addresses.baseAddress,
                             &failure
@@ -71,6 +76,8 @@ public struct DynamicNativeFunction: Sendable {
 extension ABIRuntime {
     /// Resolves a C function using runtime-known native layouts.
     ///
+    /// Search and call preparation run synchronously on the caller's thread. An explicit prepare is optional; lookup joins any required work already in progress.
+    ///
     /// - Parameters:
     ///   - name: A C linker name without the Mach-O underscore.
     ///   - signature: The explicit C-compatible parameter and result layouts.
@@ -78,8 +85,10 @@ extension ABIRuntime {
     ///   - loading: Whether an explicit image may be acquired and initialized.
     /// - Returns: A reusable function retaining the image and call interface.
     /// - Throws: A resolution error or unsupported call layout.
-    public nonisolated func cFunction(
-        named name: String, signature: NativeSignature, in scope: ImageSelector = .automatic,
+    public nonisolated func resolveCFunctionAndWait(
+        named name: String,
+        signature: NativeSignature,
+        in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> DynamicNativeFunction {
         try .init(
@@ -88,7 +97,30 @@ extension ABIRuntime {
         )
     }
 
+    /// Resolves and prepares a C function without blocking the caller's executor.
+    ///
+    /// Image acquisition, search, and call preparation run on a worker. An explicit prepare is optional; lookup joins any required work already in progress. Native invocation is a separate operation.
+    /// - Returns: A reusable function retaining its image and prepared call interface.
+    /// - Throws: The same resolution, representation, and preparation errors as synchronous lookup.
+    public nonisolated func resolveCFunction(
+        named name: String,
+        signature: NativeSignature,
+        in scope: ImageSelector = .automatic,
+        loading: ImageLoadingPolicy = .ifNeeded
+    ) async throws -> DynamicNativeFunction {
+        try await NativePreparation.run {
+            try self.resolveCFunctionAndWait(
+                named: name,
+                signature: signature,
+                in: scope,
+                loading: loading
+            )
+        }
+    }
+
     /// Resolves a C function in a retained image using runtime-known layouts.
+    ///
+    /// Search and call preparation run synchronously on the caller's thread. An explicit prepare is optional; lookup joins any required work already in progress.
     ///
     /// - Parameters:
     ///   - name: A C linker name without the Mach-O underscore.
@@ -97,8 +129,10 @@ extension ABIRuntime {
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable function retaining the image and call interface.
     /// - Throws: A resolution error or unsupported call layout.
-    public nonisolated func cFunction(
-        named name: String, signature: NativeSignature, in image: NativeImage,
+    public nonisolated func resolveCFunctionAndWait(
+        named name: String,
+        signature: NativeSignature,
+        in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> DynamicNativeFunction {
         try .init(
@@ -107,7 +141,30 @@ extension ABIRuntime {
         )
     }
 
+    /// Resolves and prepares a C function without blocking the caller's executor.
+    ///
+    /// Image acquisition, search, and call preparation run on a worker. An explicit prepare is optional; lookup joins any required work already in progress. Native invocation is a separate operation.
+    /// - Returns: A reusable function retaining its image and prepared call interface.
+    /// - Throws: The same resolution, representation, and preparation errors as synchronous lookup.
+    public nonisolated func resolveCFunction(
+        named name: String,
+        signature: NativeSignature,
+        in image: NativeImage,
+        loading: ImageLoadingPolicy = .ifNeeded
+    ) async throws -> DynamicNativeFunction {
+        try await NativePreparation.run {
+            try self.resolveCFunctionAndWait(
+                named: name,
+                signature: signature,
+                in: image,
+                loading: loading
+            )
+        }
+    }
+
     /// Resolves a C-compatible C++ function using runtime-known native layouts.
+    ///
+    /// Search and call preparation run synchronously on the caller's thread. An explicit prepare is optional; lookup joins any required work already in progress.
     ///
     /// - Parameters:
     ///   - name: A complete demangled C++ declaration.
@@ -116,17 +173,46 @@ extension ABIRuntime {
     ///   - loading: Whether an explicit image may be acquired and initialized.
     /// - Returns: A reusable function retaining the image and call interface.
     /// - Throws: A resolution error or unsupported call layout.
-    public nonisolated func cxxFunction(
-        named name: String, signature: NativeSignature, in scope: ImageSelector = .automatic,
+    public nonisolated func resolveCXXFunctionAndWait(
+        named name: String,
+        signature: NativeSignature,
+        in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> DynamicNativeFunction {
         try .init(
-            symbol: resolver.resolve(.init(name: name, language: .cxx), in: scope, loading: loading),
+            symbol: resolver.resolve(
+                .init(name: name, language: .cxx),
+                in: scope,
+                loading: loading
+            ),
             signature: signature
         )
     }
 
+    /// Resolves and prepares a C-compatible C++ function without blocking the caller's executor.
+    ///
+    /// Image acquisition, search, and call preparation run on a worker. An explicit prepare is optional; lookup joins any required work already in progress. Native invocation is a separate operation.
+    /// - Returns: A reusable function retaining its image and prepared call interface.
+    /// - Throws: The same resolution, representation, and preparation errors as synchronous lookup.
+    public nonisolated func resolveCXXFunction(
+        named name: String,
+        signature: NativeSignature,
+        in scope: ImageSelector = .automatic,
+        loading: ImageLoadingPolicy = .ifNeeded
+    ) async throws -> DynamicNativeFunction {
+        try await NativePreparation.run {
+            try self.resolveCXXFunctionAndWait(
+                named: name,
+                signature: signature,
+                in: scope,
+                loading: loading
+            )
+        }
+    }
+
     /// Resolves a C-compatible C++ function in a retained image using runtime layouts.
+    ///
+    /// Search and call preparation run synchronously on the caller's thread. An explicit prepare is optional; lookup joins any required work already in progress.
     ///
     /// - Parameters:
     ///   - name: A complete demangled C++ declaration.
@@ -135,13 +221,40 @@ extension ABIRuntime {
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable function retaining the image and call interface.
     /// - Throws: A resolution error or unsupported call layout.
-    public nonisolated func cxxFunction(
-        named name: String, signature: NativeSignature, in image: NativeImage,
+    public nonisolated func resolveCXXFunctionAndWait(
+        named name: String,
+        signature: NativeSignature,
+        in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> DynamicNativeFunction {
         try .init(
-            symbol: resolver.resolve(.init(name: name, language: .cxx), in: image, loading: loading),
+            symbol: resolver.resolve(
+                .init(name: name, language: .cxx),
+                in: image,
+                loading: loading
+            ),
             signature: signature
         )
+    }
+
+    /// Resolves and prepares a C-compatible C++ function without blocking the caller's executor.
+    ///
+    /// Image acquisition, search, and call preparation run on a worker. An explicit prepare is optional; lookup joins any required work already in progress. Native invocation is a separate operation.
+    /// - Returns: A reusable function retaining its image and prepared call interface.
+    /// - Throws: The same resolution, representation, and preparation errors as synchronous lookup.
+    public nonisolated func resolveCXXFunction(
+        named name: String,
+        signature: NativeSignature,
+        in image: NativeImage,
+        loading: ImageLoadingPolicy = .ifNeeded
+    ) async throws -> DynamicNativeFunction {
+        try await NativePreparation.run {
+            try self.resolveCXXFunctionAndWait(
+                named: name,
+                signature: signature,
+                in: image,
+                loading: loading
+            )
+        }
     }
 }

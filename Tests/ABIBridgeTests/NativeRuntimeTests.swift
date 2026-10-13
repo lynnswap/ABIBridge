@@ -27,7 +27,7 @@ struct NativeRuntimeTests {
         var info = ABIImageInfo()
         ABIResolvedSymbolImage(symbol, &info)
 
-        let swift = try ABIRuntime.shared.resolve(.init(name: "getpid", language: .c))
+        let swift = try ABIRuntime.shared.resolveAndWait(.init(name: "getpid", language: .c))
         #expect(info.generation == swift.image.identity.loadGeneration)
         #expect(info.header == UInt(swift.image.identity.headerAddress))
         let swiftAddress = unsafe swift.withUnsafeAddress { UInt(bitPattern: $0) }
@@ -37,7 +37,7 @@ struct NativeRuntimeTests {
     }
 
     @Test func swiftAndNativeHandoffsPreserveSymbolMetadata() async throws {
-        let original = try ABIRuntime().resolve(.init(name: "getpid", language: .c))
+        let original = try ABIRuntime().resolveAndWait(.init(name: "getpid", language: .c))
         let exported = unsafe original.copyNativeHandle()
         #expect(ABIResolvedSymbolKind(exported) == Int32(ABISymbolFunction))
         #expect(ABIResolvedSymbolLanguage(exported) == Int32(ABILanguageC))
@@ -62,7 +62,7 @@ struct NativeRuntimeTests {
         defer { ABIReleaseValueType(resultType) }
         let interface = try #require(ABICreateCCallInterface(resultType, nil, 0, &failure))
         defer { ABIReleaseCallInterface(interface) }
-        let symbol = try ABIRuntime.shared.resolve(.init(name: "getpid", language: .c))
+        let symbol = try ABIRuntime.shared.resolveAndWait(.init(name: "getpid", language: .c))
         var result: Int32 = 0
         let success = unsafe symbol.withUnsafeAddress {
             ABIUnsafeInvokeCCallInterface(
@@ -82,7 +82,7 @@ struct NativeRuntimeTests {
         let process = try #require(dlopen(nil, RTLD_NOW))
         defer { dlclose(process) }
         let expected = try #require(dlsym(process, "OBJC_CLASS_$_NSObject"))
-        let symbol = try ABIRuntime.shared.resolve(
+        let symbol = try ABIRuntime.shared.resolveAndWait(
             .init(machOName: "_OBJC_CLASS_$_NSObject", language: .objectiveC, kind: .data)
         )
         #expect(symbol.declaration.language == .objectiveC)

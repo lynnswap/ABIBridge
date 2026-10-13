@@ -1161,9 +1161,14 @@ struct SwiftGenericBindingTests {
         var result: NativeSwiftType?
         weak var argumentOwner: NativeSwiftType?
         do {
-            let argument = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.ManagedRecord")
+            let argument = try await runtime.resolveSwiftType(
+                named: "ManagedSwiftFixtures.ManagedRecord"
+            )
             argumentOwner = argument
-            result = try await runtime.resolveSwiftType(named: name, genericArguments: [.type(argument)])
+            result = try await runtime.resolveSwiftType(
+                named: name,
+                genericArguments: [.type(argument)]
+            )
             let metadata = await result!.metadata
             let bareMetadata = await bare.metadata
             #expect(ObjectIdentifier(metadata) == ObjectIdentifier(bareMetadata))
@@ -1318,7 +1323,7 @@ struct SwiftGenericBindingTests {
 
     @Test func runtimeMetadataAndWitnessOperationsMatchCompilerTypes() async throws {
         let runtime = ABIRuntime.shared
-        let array = try runtime.resolve(
+        let array = try runtime.resolveAndWait(
             .init(
                 name: "nominal type descriptor for Swift.Array",
                 language: .swift,
@@ -1333,7 +1338,7 @@ struct SwiftGenericBindingTests {
         }
         #expect(try #require(actual) == unsafeBitCast([String].self, to: UnsafeRawPointer.self))
 
-        let equatable = try runtime.resolve(
+        let equatable = try runtime.resolveAndWait(
             .init(
                 name: "protocol descriptor for Swift.Equatable",
                 language: .swift,
@@ -1346,7 +1351,7 @@ struct SwiftGenericBindingTests {
         #expect(witness != nil)
         #expect(ABISwiftConformanceDescriptor(try #require(witness)) != nil)
 
-        let collection = try runtime.resolve(
+        let collection = try runtime.resolveAndWait(
             .init(
                 name: "protocol descriptor for Swift.Collection",
                 language: .swift,

@@ -7,7 +7,7 @@ Select an absolute virtual-table entry by its implementation declaration, then i
 Start with a ``NativeVTable`` whose address point, accessible entry count, and base subobject are known. Acquire these through a native adapter using the target compiler; see <doc:CXXObjectInvocation>.
 
 ```swift
-let entry = try table.entry(
+let entry = try table.resolveEntryAndWait(
     named: "Example::Derived::value(int) const"
 )
 let hook = try unsafe entry.hookSharedCalls(

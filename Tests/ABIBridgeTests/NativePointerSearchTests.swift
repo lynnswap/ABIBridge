@@ -10,7 +10,11 @@ private final class DiscoveryOwner {
     init() throws {
         object = unsafe NativeValue(
             adopting: try #require(ABICXXCreateDerived()),
-            as: try .opaque(named: "Derived", size: ABICXXDerivedSize(), alignment: ABICXXDerivedAlignment()),
+            as: try .opaque(
+                named: "Derived",
+                size: ABICXXDerivedSize(),
+                alignment: ABICXXDerivedAlignment()
+            ),
             release: ABICXXDeleteDerived
         )
         slots = .allocate(capacity: slotCount)
@@ -20,7 +24,11 @@ private final class DiscoveryOwner {
     var objectAddress: UInt { unsafe object.withUnsafeBytes { UInt(bitPattern: $0.baseAddress!) } }
     var addressPoint: UInt { get throws { try unsafe object.read(as: UInt.self) } }
     func region() throws -> NativeMemoryRegion {
-        try .init(address: UInt(bitPattern: slots), byteCount: slotCount * MemoryLayout<UInt>.size, retaining: self)
+        try .init(
+            address: UInt(bitPattern: slots),
+            byteCount: slotCount * MemoryLayout<UInt>.size,
+            retaining: self
+        )
     }
 }
 
@@ -28,7 +36,9 @@ struct NativePointerSearchTests {
     @Test func multiPagePackedScansPreserveIndividualReadEvidence() throws {
         let page = Int(getpagesize())
         let count = page * 3
-        let bytes = try #require(mmap(nil, count, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0))
+        let bytes = try #require(
+            mmap(nil, count, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0)
+        )
         try #require(bytes != MAP_FAILED)
         defer { munmap(bytes, count) }
         bytes.initializeMemory(as: UInt8.self, repeating: 0, count: count)
@@ -36,16 +46,30 @@ struct NativePointerSearchTests {
         for offset in [1, page / 2 + 1, page * 2 + 1] {
             var address = owner.objectAddress
             withUnsafeBytes(of: &address) { source in
-                bytes.advanced(by: offset).copyMemory(from: source.baseAddress!, byteCount: source.count)
+                bytes.advanced(by: offset).copyMemory(
+                    from: source.baseAddress!,
+                    byteCount: source.count
+                )
             }
         }
         try #require(mprotect(bytes.advanced(by: page), page, PROT_NONE) == 0)
-        let region = try NativeMemoryRegion(address: UInt(bitPattern: bytes), byteCount: count, retaining: owner)
+        let region = try NativeMemoryRegion(
+            address: UInt(bitPattern: bytes),
+            byteCount: count,
+            retaining: owner
+        )
         let table = try owner.addressPoint
-        let result = try region.pointers(toVTable: table, options: .init(firstOffset: 1, alignment: 1))
+        let result = try region.pointers(
+            toVTable: table,
+            options: .init(firstOffset: 1, alignment: 1)
+        )
         var matches: [Int] = []
         var failures: [NativePointerSearchFailure] = []
-        for offset in stride(from: 1, through: count - MemoryLayout<UInt>.size, by: MemoryLayout<UInt>.size) {
+        for offset in stride(
+            from: 1,
+            through: count - MemoryLayout<UInt>.size,
+            by: MemoryLayout<UInt>.size
+        ) {
             do {
                 if try region.pointer(at: offset, toVTable: table) != nil { matches.append(offset) }
             } catch let failure as NativePointerSearchFailure { failures.append(failure) }
@@ -64,7 +88,6 @@ struct NativePointerSearchTests {
         #expect(failures.contains { $0.status == .partial && $0.copiedByteCount > 0 })
     }
 
-
     @Test func sparseScansPreserveTailAndHintVisitCounts() throws {
         let owner = try DiscoveryOwner()
         let word = MemoryLayout<UInt>.size
@@ -72,18 +95,30 @@ struct NativePointerSearchTests {
             let slots = UnsafeMutablePointer<UInt>.allocate(capacity: count)
             slots.initialize(repeating: 0, count: count)
             defer { slots.deinitialize(count: count); slots.deallocate() }
-            let region = try NativeMemoryRegion(address: UInt(bitPattern: slots), byteCount: count * word)
+            let region = try NativeMemoryRegion(
+                address: UInt(bitPattern: slots),
+                byteCount: count * word
+            )
             let table = try owner.addressPoint
             #expect(try region.pointers(toVTable: table).visitedCount == count)
             for match in Set([0, count / 2, count - 1]) {
                 slots[match] = owner.objectAddress
                 for hint in [nil, 0, (count - 1) * word] as [Int?] {
                     let all = try region.pointers(toVTable: table, options: .init(hintOffset: hint))
-                    #expect(all.isComplete && all.visitedCount == count && all.candidates.count == 1)
+                    #expect(
+                        all.isComplete && all.visitedCount == count && all.candidates.count == 1
+                    )
                     #expect(all.uniqueCandidate?.offset == match * word)
-                    let first = try region.pointers(toVTable: table, options: .init(policy: .first, hintOffset: hint))
-                    let expected = hint == match * word ? 1 : match + 1 + ((hint ?? -1) > match * word ? 1 : 0)
-                    #expect(first.visitedCount == expected && first.candidates.first?.offset == match * word)
+                    let first = try region.pointers(
+                        toVTable: table,
+                        options: .init(policy: .first, hintOffset: hint)
+                    )
+                    let expected =
+                        hint == match * word ? 1 : match + 1 + ((hint ?? -1) > match * word ? 1 : 0)
+                    #expect(
+                        first.visitedCount == expected
+                            && first.candidates.first?.offset == match * word
+                    )
                 }
                 slots[match] = 0
             }
@@ -97,8 +132,14 @@ struct NativePointerSearchTests {
         let table = try owner.addressPoint
         let offset = MemoryLayout<UInt>.size
         let automatic = try #require(try region.pointers(toVTable: table).uniqueCandidate)
-        let explicit = try #require(try region.pointers(toVTable: table, options: .init(normalization: .automatic)).uniqueCandidate)
-        let raw = try #require(try region.pointers(toVTable: table, options: .init(normalization: .none)).uniqueCandidate)
+        let explicit = try #require(
+            try region.pointers(toVTable: table, options: .init(normalization: .automatic))
+                .uniqueCandidate
+        )
+        let raw = try #require(
+            try region.pointers(toVTable: table, options: .init(normalization: .none))
+                .uniqueCandidate
+        )
         for candidate in [automatic, explicit, raw] {
             #expect(candidate.offset == offset)
             #expect(candidate.pointerBits == owner.slots[1])
@@ -106,7 +147,9 @@ struct NativePointerSearchTests {
         }
         let single = try #require(try region.pointer(at: offset, toVTable: table))
         #expect(single.addressForInspection == automatic.addressForInspection)
-        #expect(single.pointerBits == automatic.pointerBits && single.vptrBits == automatic.vptrBits)
+        #expect(
+            single.pointerBits == automatic.pointerBits && single.vptrBits == automatic.vptrBits
+        )
     }
 
     @Test func singleOffsetRevalidationDoesNotSearchOtherSlots() throws {
@@ -115,7 +158,7 @@ struct NativePointerSearchTests {
         let table = try owner.addressPoint
         let word = MemoryLayout<UInt>.size
         owner.slots[1] = owner.objectAddress
-        owner.slots[3] = 1 // Unreadable pointee outside the requested slot.
+        owner.slots[3] = 1  // Unreadable pointee outside the requested slot.
         #expect(try region.pointer(at: 0, toVTable: table) == nil)
         let candidate = try #require(try region.pointer(at: word, toVTable: table))
         #expect(candidate.offset == word && candidate.pointerBits == owner.objectAddress)
@@ -153,10 +196,14 @@ struct NativePointerSearchTests {
             #expect(failure.stage == .vptr && failure.status == .invalidRange)
         }
         for offset in [-1, region.byteCount - 1, region.byteCount, Int.max] {
-            #expect(throws: NativePointerSearchError.self) { try region.pointer(at: offset, toVTable: table) }
+            #expect(throws: NativePointerSearchError.self) {
+                try region.pointer(at: offset, toVTable: table)
+            }
         }
         #expect(throws: NativePointerSearchError.self) { try region.pointer(at: 0, toVTable: 0) }
-        #expect(throws: NativePointerSearchError.self) { try region.pointer(at: 0, toVTable: table, vptrOffset: -1) }
+        #expect(throws: NativePointerSearchError.self) {
+            try region.pointer(at: 0, toVTable: table, vptrOffset: -1)
+        }
     }
 
     @Test func singleOffsetCandidateRetainsAndReleasesItsOwner() throws {
@@ -188,7 +235,9 @@ struct NativePointerSearchTests {
         #expect(result.distinctCount == 1 && result.uniqueCandidate != nil)
         let another = try DiscoveryOwner()
         owner.slots[3] = another.objectAddress
-        result = try withExtendedLifetime(another) { try region.pointers(toVTable: table, options: .init(hintOffset: word)) }
+        result = try withExtendedLifetime(another) {
+            try region.pointers(toVTable: table, options: .init(hintOffset: word))
+        }
         #expect(result.isComplete && result.distinctCount == 2 && result.uniqueCandidate == nil)
         #expect(result.candidates.count == 3)
     }
@@ -207,8 +256,14 @@ struct NativePointerSearchTests {
         let fallback = try region.pointers(toVTable: owner.addressPoint, options: options)
         #expect(fallback.candidates.first?.offset == 2 * word && fallback.visitedCount == 4)
         for hint in [-1, 1, Int.max] {
-            let result = try region.pointers(toVTable: owner.addressPoint, options: .init(hintOffset: hint))
-            #expect(result.isComplete && result.uniqueCandidate?.offset == 2 * word && result.visitedCount == 6)
+            let result = try region.pointers(
+                toVTable: owner.addressPoint,
+                options: .init(hintOffset: hint)
+            )
+            #expect(
+                result.isComplete && result.uniqueCandidate?.offset == 2 * word
+                    && result.visitedCount == 6
+            )
         }
         owner.slots[2] = 0
         let missing = try region.pointers(toVTable: owner.addressPoint, options: options)
@@ -225,28 +280,43 @@ struct NativePointerSearchTests {
         #expect(result.failures.first?.stage == .vptr)
         #expect(result.failures.first?.systemErrorCode == KERN_INVALID_ADDRESS)
         owner.slots[1] = UInt.max
-        let overflow = try owner.region().pointers(toVTable: owner.addressPoint, options: .init(vptrOffset: 1, normalization: .none))
+        let overflow = try owner.region().pointers(
+            toVTable: owner.addressPoint,
+            options: .init(vptrOffset: 1, normalization: .none)
+        )
         #expect(overflow.failures.first?.status == .invalidRange)
     }
 
     @Test func explicitVPtrOffsetAndUnalignedSlots() throws {
         let owner = try DiscoveryOwner()
-        let secondaryOffset = unsafe owner.object.withUnsafeBytes { ABICXXSecondaryOffset($0.baseAddress) }
+        let secondaryOffset = unsafe owner.object.withUnsafeBytes {
+            ABICXXSecondaryOffset($0.baseAddress)
+        }
         let secondaryTable = try unsafe owner.object.read(as: UInt.self, at: secondaryOffset)
         let word = MemoryLayout<UInt>.size
         var bytes = [UInt8](repeating: 0, count: word + 2)
         var address = owner.objectAddress
-        withUnsafeBytes(of: &address) { source in bytes.replaceSubrange(1..<(1 + word), with: source) }
+        withUnsafeBytes(of: &address) { source in
+            bytes.replaceSubrange(1..<(1 + word), with: source)
+        }
         try bytes.withUnsafeBytes { storage in
-            let region = try NativeMemoryRegion(address: UInt(bitPattern: storage.baseAddress!), byteCount: storage.count, retaining: owner)
+            let region = try NativeMemoryRegion(
+                address: UInt(bitPattern: storage.baseAddress!),
+                byteCount: storage.count,
+                retaining: owner
+            )
             let result = try region.pointers(
                 toVTable: secondaryTable,
                 options: .init(firstOffset: 1, alignment: 1, vptrOffset: secondaryOffset)
             )
-            #expect(result.uniqueCandidate?.vptrAddress == owner.objectAddress + UInt(secondaryOffset))
+            #expect(
+                result.uniqueCandidate?.vptrAddress == owner.objectAddress + UInt(secondaryOffset)
+            )
             #expect(result.uniqueCandidate?.pointerBits == owner.objectAddress)
             #expect(result.visitedCount == 1)
-            let inspected = try #require(try region.pointer(at: 1, toVTable: secondaryTable, vptrOffset: secondaryOffset))
+            let inspected = try #require(
+                try region.pointer(at: 1, toVTable: secondaryTable, vptrOffset: secondaryOffset)
+            )
             #expect(inspected.vptrAddress == result.uniqueCandidate?.vptrAddress)
             #expect(inspected.slotAddress == UInt(bitPattern: storage.baseAddress!) + 1)
         }
@@ -256,9 +326,11 @@ struct NativePointerSearchTests {
         let region = try NativeMemoryRegion(address: 0, byteCount: 0)
         for options in [
             NativePointerSearchOptions(stride: 0), .init(alignment: 3),
-            .init(firstOffset: -1), .init(vptrOffset: -1), .init(firstOffset: 1)
+            .init(firstOffset: -1), .init(vptrOffset: -1), .init(firstOffset: 1),
         ] {
-            #expect(throws: NativePointerSearchError.self) { try region.pointers(toVTable: 1, options: options) }
+            #expect(throws: NativePointerSearchError.self) {
+                try region.pointers(toVTable: 1, options: options)
+            }
         }
         #expect(throws: NativePointerSearchError.self) { try region.pointers(toVTable: 0) }
         #expect(try region.pointers(toVTable: 1).isComplete)
@@ -276,13 +348,20 @@ struct NativePointerSearchTests {
         owner = nil
         #expect(weakOwner != nil)
         let evidence = candidate!
-        let type = try NativeType.opaque(named: "Derived", size: ABICXXDerivedSize(), alignment: ABICXXDerivedAlignment())
+        let type = try NativeType.opaque(
+            named: "Derived",
+            size: ABICXXDerivedSize(),
+            alignment: ABICXXDerivedAlignment()
+        )
         let storage = unsafe NativeValue(
-            borrowing: try #require(UnsafeMutableRawPointer(bitPattern: evidence.addressForInspection)),
-            as: type, retaining: evidence
+            borrowing: try #require(
+                UnsafeMutableRawPointer(bitPattern: evidence.addressForInspection)
+            ),
+            as: type,
+            retaining: evidence
         )
         let method = try ABIRuntime.shared.cxxObject(storage, typeNamed: "ABICXXFixture::Derived")
-            .method(named: "value() const", as: (() -> Int32).self)
+            .resolveMethodAndWait(named: "value() const", as: (() -> Int32).self)
         candidate = nil
         #expect(try unsafe method.unsafeInvoke() == 110)
         #expect(weakOwner != nil)

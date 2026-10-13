@@ -9,7 +9,9 @@ private struct GenericConsumerBool: ABIBridgeValue {
     init(_ value: Bool) { self.value = value }
     static let abiType: NativeType = .bool
     init(nativeValue: NativeValue) throws { value = try unsafe nativeValue.read(as: Bool.self) }
-    static func nativeValue(from value: Self) throws -> NativeValue { try NativeValue(copying: value.value, as: .bool) }
+    static func nativeValue(from value: Self) throws -> NativeValue {
+        try NativeValue(copying: value.value, as: .bool)
+    }
 }
 
 @MainActor
@@ -24,17 +26,22 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
     let closurePack = try await runtime.resolveSwiftFunction(
         named: "ManagedSwiftFixtures.closurePackGeneric<each A>(repeat () -> A) -> (repeat A)",
         as: ((TextBody, NumberBody) -> (String, Int64)).self,
-        genericArguments: [.pack([.type(String.self), .type(Int64.self)])])
+        genericArguments: [.pack([.type(String.self), .type(Int64.self)])]
+    )
     let packValues = try unsafe closurePack.unsafeInvoke(TextBody { "pack" }, NumberBody { 42 })
     precondition(packValues == ("pack", 42))
     let packOwnerType = try await runtime.resolveSwiftType(
         named: "ManagedSwiftFixtures.GenericClosurePackOwner",
-        genericArguments: [.pack([.type(String.self), .type(Int64.self)])])
+        genericArguments: [.pack([.type(String.self), .type(Int64.self)])]
+    )
     let makePackOwner = try await packOwnerType.resolveInitializer(
         named: "init(_:)",
         as: ((TextBody, NumberBody) -> AnyObject).self
     )
-    let packOwner = try unsafe makePackOwner.unsafeInvoke(TextBody { "owned pack" }, NumberBody { 43 })
+    let packOwner = try unsafe makePackOwner.unsafeInvoke(
+        TextBody { "owned pack" },
+        NumberBody { 43 }
+    )
     let callPackOwner = try await runtime.object(packOwner).resolveMethod(
         named: "call()",
         as: (() -> (String, Int64)).self
@@ -43,7 +50,8 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
     precondition(ownedPackValues == ("owned pack", 43))
     let callbackType = try await runtime.resolveSwiftType(
         named: "ManagedSwiftFixtures.GenericCallbackConventions",
-        genericArguments: [.type(Int64.self)])
+        genericArguments: [.type(Int64.self)]
+    )
     let makeCallbackOwner = try await callbackType.resolveInitializer(
         named: "init()",
         as: (() -> AnyObject).self
@@ -53,7 +61,9 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
         named: "callback(_:)",
         as: ((NativeSwiftClosure<(Int64) -> Int64>) -> Int64).self
     )
-    let callbackValue = try unsafe selectedCallback.unsafeInvoke(NativeSwiftClosure<(Int64) -> Int64> { $0 + 2 })
+    let callbackValue = try unsafe selectedCallback.unsafeInvoke(
+        NativeSwiftClosure<(Int64) -> Int64> { $0 + 2 }
+    )
     precondition(callbackValue == 42)
     let returnedCallback = try await callbacks.resolveMethod(
         named: "returnedCallback()",
@@ -64,17 +74,21 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
     precondition(returnedValue == 42)
     let objectIdentity = try await runtime.resolveSwiftFunction(
         named: "ManagedSwiftFixtures.objectConstraintGeneric<A where A: AnyObject>(A) -> A",
-        as: ((AnyObject) -> AnyObject).self, genericArguments: [.type(AnyObject.self)])
+        as: ((AnyObject) -> AnyObject).self,
+        genericArguments: [.type(AnyObject.self)]
+    )
     let originalObject = NSObject()
     let returnedObject = try unsafe objectIdentity.unsafeInvoke(originalObject)
     precondition(returnedObject === originalObject)
     let type = try await runtime.resolveSwiftType(
         named: "ManagedSwiftFixtures.GenericTypeClass",
-                                         genericArguments: [.type(String.self)])
+        genericArguments: [.type(String.self)]
+    )
     let initialize = try await type.resolveInitializer(
         named: "init(_:)",
         as: ((String) -> AnyObject).self,
-        declaredAs: "<A where A: Swift.Equatable> (A) -> ManagedSwiftFixtures.GenericTypeClass<A>")
+        declaredAs: "<A where A: Swift.Equatable> (A) -> ManagedSwiftFixtures.GenericTypeClass<A>"
+    )
     let object = try unsafe initialize.unsafeInvoke("first")
     let set = try await runtime.object(object).resolveSetter(
         named: "value",
@@ -87,8 +101,11 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
     precondition(updated == "updated")
     let compare = try await runtime.object(object).resolveMethod(
         named: "compare(_:)",
-        as: ((Int64) -> (String, Int64, Bool)).self, genericArguments: [.type(Int64.self)],
-        declaredAs: "<A, A1 where A: Swift.Equatable, A1: Swift.Equatable> (A1) -> (A, A1, Swift.Bool)")
+        as: ((Int64) -> (String, Int64, Bool)).self,
+        genericArguments: [.type(Int64.self)],
+        declaredAs:
+            "<A, A1 where A: Swift.Equatable, A1: Swift.Equatable> (A1) -> (A, A1, Swift.Bool)"
+    )
     let comparison = try unsafe compare.unsafeInvoke(42)
     precondition(comparison == ("updated", 42, true))
 
@@ -100,7 +117,9 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
         named: "init(_:)",
         as: ((NativeSwiftClosure<() -> String>) -> AnyObject).self
     )
-    let closureOwner = try unsafe makeClosureOwner.unsafeInvoke(NativeSwiftClosure<() -> String> { "initialized" })
+    let closureOwner = try unsafe makeClosureOwner.unsafeInvoke(
+        NativeSwiftClosure<() -> String> { "initialized" }
+    )
     let invokeStored = try await runtime.object(closureOwner).resolveMethod(
         named: "run()",
         as: (() -> String).self
@@ -115,51 +134,72 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
     let replaced = try unsafe invokeStored.unsafeInvoke()
     precondition(replaced == "replaced")
 
-    let argument = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.GenericSourceValue")
+    let argument = try await runtime.resolveSwiftType(
+        named: "ManagedSwiftFixtures.GenericSourceValue"
+    )
     _ = try await runtime.resolveSwiftType(
         named: "ManagedSwiftFixtures.GenericSourceBox",
         genericArguments: [.type(argument)]
     )
     let pack = try await runtime.resolveSwiftFunction(
-        named: "ManagedSwiftFixtures.constrainedPackGeneric<each A where A: Swift.Equatable>(repeat A) -> (repeat A)",
+        named:
+            "ManagedSwiftFixtures.constrainedPackGeneric<each A where A: Swift.Equatable>(repeat A) -> (repeat A)",
         as: ((Int64, String) -> (Int64, String)).self,
         genericArguments: [.pack([.type(Int64.self), .type(String.self)])],
-        declaredAs: "<each A where A: Swift.Equatable> (repeat A) -> (repeat A)")
+        declaredAs: "<each A where A: Swift.Equatable> (repeat A) -> (repeat A)"
+    )
     let packed = try unsafe pack.unsafeInvoke(43, "pack")
     precondition(packed == (43, "pack"))
     let transform = try await runtime.resolveSwiftFunction(
         named: "ManagedSwiftFixtures.transformGeneric<A, B>([A], (A) throws -> B) throws -> [B]",
-        as: (([Int64], NativeSwiftBorrowing<NativeSwiftClosure<(Int64) throws -> String>>) throws -> [String]).self,
-        genericArguments: [.type(Int64.self), .type(String.self)])
+        as: (([Int64], NativeSwiftBorrowing<NativeSwiftClosure<(Int64) throws -> String>>) throws
+            -> [String]).self,
+        genericArguments: [.type(Int64.self), .type(String.self)]
+    )
     let callback = try NativeSwiftClosure<(Int64) throws -> String> { "value: \($0)" }
     let transformed = try unsafe transform.unsafeInvoke([1, 2], .init(callback))
     precondition(transformed == ["value: 1", "value: 2"])
     let select = try await runtime.resolveSwiftFunction(
-        named: "ManagedSwiftFixtures.selectGeneric<A, B where A == B.Element, B: Swift.Collection>(A, B) -> A",
-        as: ((String, [String]) -> String).self, genericArguments: [.type(String.self), .type([String].self)])
+        named:
+            "ManagedSwiftFixtures.selectGeneric<A, B where A == B.Element, B: Swift.Collection>(A, B) -> A",
+        as: ((String, [String]) -> String).self,
+        genericArguments: [.type(String.self), .type([String].self)]
+    )
     let selected = try unsafe select.unsafeInvoke("fallback", ["element"])
     precondition(selected == "element")
     let suspended = try await runtime.resolveSwiftFunction(
         named: "ManagedSwiftFixtures.suspendedGeneric<A>(A) async -> A",
-        as: (nonisolated(nonsending) (String) async -> String).self, genericArguments: [.type(String.self)])
+        as: (nonisolated(nonsending) (String) async -> String).self,
+        genericArguments: [.type(String.self)]
+    )
     let resumed = try unsafe await suspended.unsafeInvoke("resumed")
     precondition(resumed == "resumed")
 
     let getterType = try await runtime.resolveSwiftType(
         named: "ManagedSwiftFixtures.GenericEffectfulGetter",
-        genericArguments: [.type(String.self), .type(GenericConsumerFailure.self)])
+        genericArguments: [.type(String.self), .type(GenericConsumerFailure.self)]
+    )
     let makeGetter = try await getterType.resolveInitializer(
         named: "init(A, B, Swift.Bool) -> ManagedSwiftFixtures.GenericEffectfulGetter<A, B>",
-        as: ((String, GenericConsumerFailure, GenericConsumerBool) -> AnyObject).self)
-    let getterObject = try unsafe makeGetter.unsafeInvoke("checked", .initialize(44), GenericConsumerBool(false))
+        as: ((String, GenericConsumerFailure, GenericConsumerBool) -> AnyObject).self
+    )
+    let getterObject = try unsafe makeGetter.unsafeInvoke(
+        "checked",
+        .initialize(44),
+        GenericConsumerBool(false)
+    )
     let checked = try await getterType.resolveGetter(
         named: "checked",
-        as: (() throws(GenericConsumerFailure) -> String).self, declaredAs: "() throws(B) -> A")
+        as: (() throws(GenericConsumerFailure) -> String).self,
+        declaredAs: "() throws(B) -> A"
+    )
     let checkedValue = try unsafe checked.unsafeInvoke(on: getterObject)
     precondition(checkedValue == "checked")
     let delayed = try await runtime.object(getterObject).resolveGetter(
         named: "delayedChecked",
-        as: (nonisolated(nonsending) () async throws(GenericConsumerFailure) -> String).self, declaredAs: "() async throws(B) -> A")
+        as: (nonisolated(nonsending) () async throws(GenericConsumerFailure) -> String).self,
+        declaredAs: "() async throws(B) -> A"
+    )
     let delayedValue = try unsafe await delayed.unsafeInvoke()
     precondition(delayedValue == "checked")
     let flag = try await runtime.object(getterObject).resolveGetter(
@@ -188,8 +228,13 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
 }
 
 @MainActor
-func prepare(_ path: String, destroyed: UnsafeMutablePointer<Int32>) async throws -> (
-    NativeValue, NativeFunction<Int32, UnsafeRawPointer?, UnsafeRawPointer, UnsafeMutablePointer<Int64>>, UnsafeRawPointer
+func prepare(
+    _ path: String,
+    destroyed: UnsafeMutablePointer<Int32>
+) async throws -> (
+    NativeValue,
+    NativeFunction<Int32, UnsafeRawPointer?, UnsafeRawPointer, UnsafeMutablePointer<Int64>>,
+    UnsafeRawPointer
 ) {
     guard let original = dlopen(path, RTLD_NOW | RTLD_LOCAL) else {
         throw GenericConsumerFailure.load(String(cString: dlerror()))
@@ -197,58 +242,82 @@ func prepare(_ path: String, destroyed: UnsafeMutablePointer<Int32>) async throw
     defer { dlclose(original) }
     let runtime = ABIRuntime()
     let scope = ImageSelector.path(URL(fileURLWithPath: path))
-    let argumentType = try runtime.cFunction(
+    let argumentType = try runtime.resolveCFunctionAndWait(
         named: "ABIGenericResilientArgument",
         as: (() -> UnsafeRawPointer).self
     )
     let argument = try unsafe argumentType.unsafeInvoke()
-    let metadata = try runtime.cFunction(
-        named: "ABIGenericRecordMetadata", as: ((UnsafeRawPointer?, UnsafeMutablePointer<UnsafeRawPointer?>) -> Int32).self, in: scope
+    let metadata = try runtime.resolveCFunctionAndWait(
+        named: "ABIGenericRecordMetadata",
+        as: ((UnsafeRawPointer?, UnsafeMutablePointer<UnsafeRawPointer?>) -> Int32).self,
+        in: scope
     )
     var first: UnsafeRawPointer?, repeated: UnsafeRawPointer?
-    let firstStatus = try withUnsafeMutablePointer(to: &first) { try unsafe metadata.unsafeInvoke(argument, $0) }
-    let repeatedStatus = try withUnsafeMutablePointer(to: &repeated) { try unsafe metadata.unsafeInvoke(argument, $0) }
+    let firstStatus = try withUnsafeMutablePointer(to: &first) {
+        try unsafe metadata.unsafeInvoke(argument, $0)
+    }
+    let repeatedStatus = try withUnsafeMutablePointer(to: &repeated) {
+        try unsafe metadata.unsafeInvoke(argument, $0)
+    }
     precondition(firstStatus == 0 && repeatedStatus == 0 && first != nil && first == repeated)
-    let layout = try runtime.cFunction(
+    let layout = try runtime.resolveCFunctionAndWait(
         named: "ABIGenericRecordLayout",
-        as: ((UnsafeRawPointer?, UnsafeMutablePointer<Int>, UnsafeMutablePointer<Int>) -> Int32).self, in: scope
+        as: ((UnsafeRawPointer?, UnsafeMutablePointer<Int>, UnsafeMutablePointer<Int>) -> Int32)
+            .self,
+        in: scope
     )
     var stride = 0, alignment = 0
     let layoutStatus = try withUnsafeMutablePointer(to: &stride) { stride in
-        try withUnsafeMutablePointer(to: &alignment) { try unsafe layout.unsafeInvoke(argument, stride, $0) }
+        try withUnsafeMutablePointer(to: &alignment) {
+            try unsafe layout.unsafeInvoke(argument, stride, $0)
+        }
     }
     precondition(layoutStatus == 0)
-    let create = try runtime.cFunction(
-        named: "ABIResilientRecordCreate", as: ((Int64, UnsafeMutablePointer<Int32>) -> UnsafeMutableRawPointer).self, in: scope
+    let create = try runtime.resolveCFunctionAndWait(
+        named: "ABIResilientRecordCreate",
+        as: ((Int64, UnsafeMutablePointer<Int32>) -> UnsafeMutableRawPointer).self,
+        in: scope
     )
-    let destroyInput = try runtime.cFunction(
+    let destroyInput = try runtime.resolveCFunctionAndWait(
         named: "ABIResilientRecordDestroy",
         as: ((UnsafeMutableRawPointer) -> Void).self,
         in: scope
     )
-    let initialize = try runtime.cFunction(
+    let initialize = try runtime.resolveCFunctionAndWait(
         named: "ABIGenericRecordInitialize",
-        as: ((UnsafeRawPointer?, UnsafeRawPointer, UnsafeMutableRawPointer) -> Int32).self, in: scope
+        as: ((UnsafeRawPointer?, UnsafeRawPointer, UnsafeMutableRawPointer) -> Int32).self,
+        in: scope
     )
-    let destroy = try runtime.cFunction(
-        named: "ABIGenericRecordDestroy", as: ((UnsafeRawPointer?, UnsafeMutableRawPointer) -> Int32).self, in: scope
+    let destroy = try runtime.resolveCFunctionAndWait(
+        named: "ABIGenericRecordDestroy",
+        as: ((UnsafeRawPointer?, UnsafeMutableRawPointer) -> Int32).self,
+        in: scope
     )
-    let measure = try runtime.cFunction(
+    let measure = try runtime.resolveCFunctionAndWait(
         named: "ABIGenericRecordMeasure",
-        as: ((UnsafeRawPointer?, UnsafeRawPointer, UnsafeMutablePointer<Int64>) -> Int32).self, in: scope
+        as: ((UnsafeRawPointer?, UnsafeRawPointer, UnsafeMutablePointer<Int64>) -> Int32).self,
+        in: scope
     )
-    let input = unsafe NativeValue(adopting: try create.unsafeInvoke(42, destroyed),
-                                  as: try .opaque(named: "ResilientRecord"), retaining: destroyInput, release: { address in
-        do { try unsafe destroyInput.unsafeInvoke(address) }
-        catch { fatalError("Input destruction failed: \(error)") }
-    })
-    let value = try NativeValue(type: .opaque(named: "GenericRecord", size: stride, alignment: alignment),
-                               retaining: (initialize, destroy, argumentType), destroy: { address in
-        do {
-            let status = try unsafe destroy.unsafeInvoke(argument, address)
-            precondition(status == 0)
-        } catch { fatalError("Generic destruction failed: \(error)") }
-    }) { output in
+    let input = unsafe NativeValue(
+        adopting: try create.unsafeInvoke(42, destroyed),
+        as: try .opaque(named: "ResilientRecord"),
+        retaining: destroyInput,
+        release: { address in
+            do { try unsafe destroyInput.unsafeInvoke(address) } catch {
+                fatalError("Input destruction failed: \(error)")
+            }
+        }
+    )
+    let value = try NativeValue(
+        type: .opaque(named: "GenericRecord", size: stride, alignment: alignment),
+        retaining: (initialize, destroy, argumentType),
+        destroy: { address in
+            do {
+                let status = try unsafe destroy.unsafeInvoke(argument, address)
+                precondition(status == 0)
+            } catch { fatalError("Generic destruction failed: \(error)") }
+        }
+    ) { output in
         let status = try unsafe input.withUnsafeBytes {
             try unsafe initialize.unsafeInvoke(argument, $0.baseAddress!, output.baseAddress!)
         }

@@ -106,10 +106,42 @@ protocol SwiftClosureValue: SendableMetatype {
     ) throws -> NativeValueStorage
     func encodeClosure(consuming: Bool) throws -> NativeValueStorage
     func encodeClosureResult() throws -> NativeValueStorage
+    func retainingAsynchronousArgument(consuming: Bool) throws -> Any
 }
 
 extension SwiftClosureValue {
     func encodeClosureResult() throws -> NativeValueStorage { try encodeClosure(consuming: false) }
+}
+
+// Cold host calls suspend while their ABI is prepared. Acquire callback borrows
+// before that suspension, and pass the same access to the later argument encoder.
+// Tuple copies and closure/context ownership stay in the caller's isolation domain.
+func swiftRetainingAsynchronousClosureArgument<Value>(
+    _ value: Value,
+    consuming: Bool = false
+) throws -> Value {
+    if let closure = value as? any SwiftClosureValue {
+        return try closure.retainingAsynchronousArgument(consuming: consuming) as! Value
+    }
+    if let convention = value as? any SwiftConventionArgument {
+        return try convention.retainingAsynchronousClosureArgument() as! Value
+    }
+    guard let tuple = SwiftTupleMetadata(Value.self) else { return value }
+    var retained = value
+    try withUnsafeMutablePointer(to: &retained) { pointer in
+        let address = UnsafeMutableRawPointer(pointer)
+        for element in tuple.elements {
+            func retain<Element>(_ type: Element.Type) throws {
+                let field = address.advanced(by: element.offset).assumingMemoryBound(to: type)
+                field.pointee = try swiftRetainingAsynchronousClosureArgument(
+                    field.pointee,
+                    consuming: consuming
+                )
+            }
+            try _openExistential(element.type, do: retain)
+        }
+    }
+    return retained
 }
 
 struct SwiftClosureCodec: Sendable {

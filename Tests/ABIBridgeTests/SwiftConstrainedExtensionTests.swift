@@ -105,7 +105,10 @@ struct SwiftConstrainedExtensionTests {
         #expect(try unsafe concrete.unsafeInvoke() == "class")
         let existential = runtime.object(ConstrainedBox<any NSObjectProtocol>(NSObject()))
         do {
-            _ = try await existential.resolveMethod(named: "classIdentity()", as: (() -> String).self)
+            _ = try await existential.resolveMethod(
+                named: "classIdentity()",
+                as: (() -> String).self
+            )
             Issue.record("An Objective-C protocol existential is not its same-named class")
         } catch ABIResolutionError.declarationNotFound {}
     }
@@ -122,10 +125,11 @@ struct SwiftConstrainedExtensionTests {
             as: (() -> String).self
         )
         #expect(try unsafe inherited.unsafeInvoke() == "requires witness")
-        let noWitness = try await runtime.object(ConstraintChild<ConstraintPlainValue>()).resolveMethod(
-            named: "inheritedChoice()",
-            as: (() -> String).self
-        )
+        let noWitness = try await runtime.object(ConstraintChild<ConstraintPlainValue>())
+            .resolveMethod(
+                named: "inheritedChoice()",
+                as: (() -> String).self
+            )
         #expect(try unsafe noWitness.unsafeInvoke() == "parent")
         do {
             _ = try await runtime.resolveSwiftFunction(
@@ -318,7 +322,7 @@ struct SwiftConstrainedExtensionTests {
         )
         defer { extensionImage.cleanup() }
         let runtime = ABIRuntime()
-        let make = try runtime.cFunction(
+        let make = try runtime.resolveCFunctionAndWait(
             named: "ABIQualifiedCollectionBox",
             as: (() -> UnsafeMutableRawPointer).self,
             in: .path(provider.libraryURL),
@@ -363,7 +367,10 @@ struct SwiftConstrainedExtensionTests {
         )
         #expect(try unsafe numberMethod.unsafeInvoke("number:") == number.title("number:"))
         #expect(try unsafe textMethod.unsafeInvoke("text:") == text.title("text:"))
-        let getter = try await runtime.object(number).resolveGetter(named: "number", as: (() -> Int).self)
+        let getter = try await runtime.object(number).resolveGetter(
+            named: "number",
+            as: (() -> Int).self
+        )
         let setter = try await runtime.object(number).resolveSetter(named: "number", as: Int.self)
         number.number = 43
         #expect(number.number == 43)
@@ -481,7 +488,8 @@ struct SwiftConstrainedExtensionTests {
         let receiver = AsyncConstrainedBox(42)
         #expect(await receiver.result() == 42)
         let method = try await ABIRuntime().object(receiver).resolveMethod(
-            named: declaration, as: (() async -> Int).self
+            named: declaration,
+            as: (() async -> Int).self
         )
         #expect(try await unsafe method.unsafeInvoke() == 42)
     }
@@ -513,7 +521,7 @@ struct SwiftConstrainedExtensionTests {
         )
         defer { provider.cleanup() }
         let runtime = ABIRuntime()
-        let make = try runtime.cFunction(
+        let make = try runtime.resolveCFunctionAndWait(
             named: "ABIConstraintInstance",
             as: (() -> UnsafeMutableRawPointer).self,
             in: .path(provider.libraryURL),
@@ -599,7 +607,7 @@ struct SwiftConstrainedExtensionTests {
         )
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
-        let make = try runtime.cFunction(
+        let make = try runtime.resolveCFunctionAndWait(
             named: "ABIMetatypeConstraintInstance",
             as: ((Int32) -> UnsafeMutableRawPointer).self,
             in: .path(fixture.libraryURL),
@@ -723,7 +731,7 @@ struct SwiftConstrainedExtensionTests {
         )
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
-        let make = try runtime.cFunction(
+        let make = try runtime.resolveCFunctionAndWait(
             named: "ABIAmbiguousConstraintInstance",
             as: ((Int32) -> UnsafeMutableRawPointer).self,
             in: .path(fixture.libraryURL),

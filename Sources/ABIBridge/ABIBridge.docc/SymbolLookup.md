@@ -8,7 +8,7 @@ The default automatic scope of ``ABIRuntime`` searches images already loaded in 
 
 ```swift
 let runtime = ABIRuntime()
-let images = try runtime.images(
+let images = try runtime.resolveImagesAndWait(
     matching: .framework(named: "Foundation")
 )
 ```
@@ -17,9 +17,9 @@ Enumeration includes only loaded images that can currently be retained. dyld can
 
 A `NativeImage` retains its loaded image. Reuse that handle to resolve several declarations in the same scope. The runtime caches raw symbol data and decoded declaration indexes; C++ members with a plain qualified owner reuse that owner's index.
 
-Lookup automatically prepares its indexes, and callable factories return handles ready for invocation. Synchronous methods are `nonisolated` on `ABIRuntime` and `NativeSwiftType`: they perform missing work or block while required preparation finishes, including on `MainActor`.
+Lookup automatically prepares its indexes, and callable factories return handles ready for invocation. Synchronous `AndWait` factories are `nonisolated` on `ABIRuntime` and `NativeSwiftType`: they perform missing work or block while required preparation finishes, including on `MainActor`.
 
-Swift factories named `resolve` perform function, type, and member lookup on a worker queue while the caller suspends. Their `AndWait` counterparts select synchronous lookup in either a synchronous or async context. Bound factories keep receivers in the caller's isolation domain. See <doc:SwiftFunctionInvocation> and <doc:SwiftMemberInvocation> for `MainActor` examples.
+Factories named `resolve…` perform symbol, image, function, type, and member lookup on a worker queue while the caller suspends. Their `AndWait` counterparts select synchronous lookup in either a synchronous or async context. Bound factories keep receivers in the caller's isolation domain. Receiver-specific Objective-C dynamic resolution and forwarding-signature callbacks stay on the caller's executor while image and call preparation run on the worker. See <doc:CFunctionInvocation>, <doc:ObjectiveCInvocation>, and <doc:SwiftMemberInvocation> for examples.
 
 Native invocation follows the target's actor-isolation and thread-affinity requirements. A synchronous native function stays synchronous; an async native signature requires `await` when invoking the returned handle.
 
@@ -44,12 +44,26 @@ An automatic search checks every available image for absence or ambiguity, so it
 
 ## Prepare known requirements ahead of time
 
+Await a resolution factory directly to search and prepare without blocking `MainActor`:
+
+```swift
+@MainActor
+func calculate() async throws -> Int32 {
+    let add = try await ABIRuntime.shared.resolveCXXFunction(
+        named: "Example::Math::add(int, int)",
+        as: ((Int32, Int32) -> Int32).self,
+        in: .framework(named: "Example")
+    )
+    return try unsafe add.unsafeInvoke(20, 22)
+}
+```
+
 Synchronous lookup works without a preceding preparation call:
 
 ```swift
 @MainActor
 func calculate(using runtime: ABIRuntime) throws -> Int32 {
-    let add = try runtime.cxxFunction(
+    let add = try runtime.resolveCXXFunctionAndWait(
         named: "Example::Math::add(int, int)",
         as: ((Int32, Int32) -> Int32).self,
         in: .framework(named: "Example")
@@ -65,7 +79,7 @@ Use the asynchronous closure overload of `prepare(_:)` to obtain the same handle
 func calculateWithPreparation() async throws -> Int32 {
     let runtime = ABIRuntime.shared
     async let prepared = runtime.prepare { runtime in
-        try runtime.cxxFunction(
+        try runtime.resolveCXXFunctionAndWait(
             named: "Example::Math::add(int, int)",
             as: ((Int32, Int32) -> Int32).self,
             in: .framework(named: "Example")
@@ -109,7 +123,7 @@ let linker = NativeDeclaration(
 let literal = NativeDeclaration(
     machOName: "__ZN7Example4Math3addEii", language: .cxx
 )
-let symbol = try runtime.resolve(linker)
+let symbol = try runtime.resolveAndWait(linker)
 ```
 
 Both declarations identify the same symbol spelling in this example. Linker form adds exactly one Mach-O underscore. Literal Mach-O form uses the supplied name unchanged. The resolver never guesses the form from a prefix, strips an existing underscore, or normalizes punctuation or whitespace in an exact name.
@@ -130,7 +144,7 @@ Shared-cache files are optional lookup sources, selected using cache and image i
 
 ## Resolve a group of requirements
 
-Use ``NativeSymbolRequest`` to describe a declaration, optional alternative spellings, and ordered image scopes. Pass several requests to `runtime.resolve(_:)` to receive one `Result` per input:
+Use ``NativeSymbolRequest`` to describe a declaration, optional alternative spellings, and ordered image scopes. Pass several requests to `await runtime.resolve(_:)`, or `runtime.resolveAndWait(_:)`, to receive one `Result` per input:
 
 ```swift
 let requests: [NativeSymbolRequest] = [
@@ -141,7 +155,7 @@ let requests: [NativeSymbolRequest] = [
     .init(.init(name: "Example::counter", language: .cxx, kind: .data),
           in: [.framework(named: "Example")])
 ]
-let results = runtime.resolve(requests)
+let results = runtime.resolveAndWait(requests)
 for result in results {
     switch result {
     case .success(let symbol): print(symbol.image.path)
@@ -150,7 +164,7 @@ for result in results {
 }
 ```
 
-A single request can also be resolved with `try runtime.resolve(request)`. The first scope containing a matching declaration wins. Later scopes are tried only when an image or declaration is absent. An empty scope array searches no images and reports `imageNotLoaded`.
+A single request can also be resolved with `try await runtime.resolve(request)` or `try runtime.resolveAndWait(request)`. The first scope containing a matching declaration wins. Later scopes are tried only when an image or declaration is absent. An empty scope array searches no images and reports `imageNotLoaded`.
 
 Use `alternatives:` for declarations expected to identify the same symbol. Missing spellings are ignored, including a missing primary declaration. Every found spelling in the selected scope must agree on both address and image generation. Distinct matches are ambiguous, and invalid storage stops lookup even if another spelling matched. The returned symbol records the first declaration that matched.
 
@@ -168,7 +182,7 @@ let request = NativeSymbolRequest(
     ],
     in: [.framework(named: "Example"), .framework(named: "ExampleSupport")]
 )
-let symbol = try runtime.resolve(request)
+let symbol = try runtime.resolveAndWait(request)
 ```
 
 Search proceeds by candidate, then scope: the primary and its aliases search all scopes, followed by each fallback in order. The first success stops lookup. Ambiguity, invalid storage, unsupported declarations, and loader failures stop immediately. If all candidates are absent, the error identifies the primary; empty or entirely unloaded scopes report `imageNotLoaded`.

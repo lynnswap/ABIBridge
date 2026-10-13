@@ -13,23 +13,44 @@ private final class SelectorReceiver: NSObject {
 struct ObjectiveCSelectorTests {
     @MainActor @Test func lookupAcceptsCompilerCheckedSelectors() throws {
         let runtime = ABIRuntime()
-        let append = try runtime.objcMethod(on: NSMutableString.self,
-            selector: #selector(NSMutableString.append(_:)), as: ((String) -> Void).self)
+        let append = try runtime.resolveObjCMethodAndWait(
+            on: NSMutableString.self,
+            selector: #selector(NSMutableString.append(_:)),
+            as: ((String) -> Void).self
+        )
         let text = NSMutableString(string: "a")
         try unsafe append.unsafeInvoke(on: text, "b")
         #expect(text as String == "ab")
         let receiver = SelectorReceiver(value: 7)
         let selector = #selector(SelectorReceiver.increment(_:))
-        let bound = try runtime.object(receiver).method(selector: selector, as: ((Int) -> Int).self)
-        let message = try runtime.objcMethod(on: SelectorReceiver.self, selector: selector, as: ((Int) -> Int).self)
-        let captured = try runtime.objcImplementation(on: SelectorReceiver.self, selector: selector, as: ((Int) -> Int).self)
+        let bound = try runtime.object(receiver).resolveMethodAndWait(
+            selector: selector,
+            as: ((Int) -> Int).self
+        )
+        let message = try runtime.resolveObjCMethodAndWait(
+            on: SelectorReceiver.self,
+            selector: selector,
+            as: ((Int) -> Int).self
+        )
+        let captured = try runtime.resolveObjCImplementationAndWait(
+            on: SelectorReceiver.self,
+            selector: selector,
+            as: ((Int) -> Int).self
+        )
         #expect(try unsafe bound.unsafeInvoke(41) == 42)
         #expect(try unsafe message.unsafeInvoke(on: receiver, 41) == 42)
         #expect(try unsafe captured.unsafeInvoke(on: receiver, 41) == 42)
-        let getter = try runtime.object(receiver).method(selector: #selector(getter: SelectorReceiver.numberValue), as: (() -> Int).self)
+        let getter = try runtime.object(receiver).resolveMethodAndWait(
+            selector: #selector(getter: SelectorReceiver.numberValue),
+            as: (() -> Int).self
+        )
         #expect(try unsafe getter.unsafeInvoke() == 7)
-        let classMethod = try runtime.objcMethod(on: SelectorReceiver.self,
-            selector: #selector(SelectorReceiver.classValue), as: (() -> Int).self, classMethod: true)
+        let classMethod = try runtime.resolveObjCMethodAndWait(
+            on: SelectorReceiver.self,
+            selector: #selector(SelectorReceiver.classValue),
+            as: (() -> Int).self,
+            classMethod: true
+        )
         #expect(try unsafe classMethod.unsafeInvoke(on: SelectorReceiver.self as AnyObject) == 42)
     }
 
@@ -41,40 +62,77 @@ struct ObjectiveCSelectorTests {
         let body: @Sendable (NativeObjCMethodInvocation<Int, Int>, Int) throws -> Int = {
             try $0.proceed($1) + 10
         }
-        let actorBody: @MainActor @Sendable (NativeObjCMethodInvocation<Int, Int>, Int) throws -> Int = {
-            MainActor.preconditionIsolated()
-            return try $0.proceed($1) + 10
-        }
+        let actorBody:
+            @MainActor @Sendable (NativeObjCMethodInvocation<Int, Int>, Int) throws -> Int = {
+                MainActor.preconditionIsolated()
+                return try $0.proceed($1) + 10
+            }
         let token: NativeObjCMethodHook
         switch path {
         case 0:
-            token = try unsafe runtime.hookMethod(on: SelectorReceiver.self, selector: selector,
-                as: ((Int) -> Int).self, onFailure: { Issue.record($0) }, body: body)
+            token = try unsafe runtime.hookMethod(
+                on: SelectorReceiver.self,
+                selector: selector,
+                as: ((Int) -> Int).self,
+                onFailure: { Issue.record($0) },
+                body: body
+            )
         case 1:
-            token = try unsafe runtime.hookMainActorMethod(on: SelectorReceiver.self, selector: selector,
-                as: ((Int) -> Int).self, onFailure: { Issue.record($0) }, body: actorBody)
+            token = try unsafe runtime.hookMainActorMethod(
+                on: SelectorReceiver.self,
+                selector: selector,
+                as: ((Int) -> Int).self,
+                onFailure: { Issue.record($0) },
+                body: actorBody
+            )
         case 2:
-            token = try unsafe runtime.object(receiver).hookMethod(selector: selector,
-                as: ((Int) -> Int).self, onFailure: { Issue.record($0) }, body: body)
+            token = try unsafe runtime.object(receiver).hookMethod(
+                selector: selector,
+                as: ((Int) -> Int).self,
+                onFailure: { Issue.record($0) },
+                body: body
+            )
         case 3:
-            token = try unsafe runtime.object(receiver).hookMainActorMethod(selector: selector,
-                as: ((Int) -> Int).self, onFailure: { Issue.record($0) }, body: actorBody)
+            token = try unsafe runtime.object(receiver).hookMainActorMethod(
+                selector: selector,
+                as: ((Int) -> Int).self,
+                onFailure: { Issue.record($0) },
+                body: actorBody
+            )
         default:
             let request: NativeObjCHookRequest
             if path == 4 {
-                request = unsafe .method(on: SelectorReceiver.self, selector: selector,
-                    as: ((Int) -> Int).self, onFailure: { Issue.record($0) }, body: body)
+                request = unsafe .method(
+                    on: SelectorReceiver.self,
+                    selector: selector,
+                    as: ((Int) -> Int).self,
+                    onFailure: { Issue.record($0) },
+                    body: body
+                )
             } else if path == 5 {
-                request = unsafe .mainActorMethod(on: SelectorReceiver.self, selector: selector,
-                    as: ((Int) -> Int).self, onFailure: { Issue.record($0) }, body: actorBody)
+                request = unsafe .mainActorMethod(
+                    on: SelectorReceiver.self,
+                    selector: selector,
+                    as: ((Int) -> Int).self,
+                    onFailure: { Issue.record($0) },
+                    body: actorBody
+                )
             } else {
-                request = unsafe .objectMethod(on: receiver, selector: selector,
-                    as: ((Int) -> Int).self, onFailure: { Issue.record($0) }, body: body)
+                request = unsafe .objectMethod(
+                    on: receiver,
+                    selector: selector,
+                    as: ((Int) -> Int).self,
+                    onFailure: { Issue.record($0) },
+                    body: body
+                )
             }
             token = try #require(unsafe runtime.installHooks([request]).first)
         }
         defer { token.invalidate() }
-        let message = try runtime.object(receiver).method(selector: selector, as: ((Int) -> Int).self)
+        let message = try runtime.object(receiver).resolveMethodAndWait(
+            selector: selector,
+            as: ((Int) -> Int).self
+        )
         #expect(try unsafe message.unsafeInvoke(31) == 42)
     }
 
@@ -90,27 +148,54 @@ struct ObjectiveCSelectorTests {
         }
         switch path {
         case 0:
-            token = try unsafe runtime.hookInitializer(on: SelectorReceiver.self, selector: selector,
-                as: ((Int) -> SelectorReceiver).self, onFailure: { Issue.record($0) }, after: after)
+            token = try unsafe runtime.hookInitializer(
+                on: SelectorReceiver.self,
+                selector: selector,
+                as: ((Int) -> SelectorReceiver).self,
+                onFailure: { Issue.record($0) },
+                after: after
+            )
         case 1:
-            token = try unsafe runtime.hookMainActorInitializer(on: SelectorReceiver.self, selector: selector,
-                as: ((Int) -> SelectorReceiver).self, onFailure: { Issue.record($0) }, after: actorAfter)
+            token = try unsafe runtime.hookMainActorInitializer(
+                on: SelectorReceiver.self,
+                selector: selector,
+                as: ((Int) -> SelectorReceiver).self,
+                onFailure: { Issue.record($0) },
+                after: actorAfter
+            )
         default:
             let request: NativeObjCHookRequest
             if path == 2 {
-                request = unsafe .initializer(on: SelectorReceiver.self, selector: selector,
-                    as: ((Int) -> SelectorReceiver).self, onFailure: { Issue.record($0) }, after: after)
+                request = unsafe .initializer(
+                    on: SelectorReceiver.self,
+                    selector: selector,
+                    as: ((Int) -> SelectorReceiver).self,
+                    onFailure: { Issue.record($0) },
+                    after: after
+                )
             } else {
-                request = unsafe .mainActorInitializer(on: SelectorReceiver.self, selector: selector,
-                    as: ((Int) -> SelectorReceiver).self, onFailure: { Issue.record($0) }, after: actorAfter)
+                request = unsafe .mainActorInitializer(
+                    on: SelectorReceiver.self,
+                    selector: selector,
+                    as: ((Int) -> SelectorReceiver).self,
+                    onFailure: { Issue.record($0) },
+                    after: actorAfter
+                )
             }
             token = try #require(unsafe runtime.installHooks([request]).first)
         }
         defer { token.invalidate() }
-        let allocate = try runtime.objcMethod(on: SelectorReceiver.self, selector: "alloc",
-            as: (() -> SelectorReceiver).self, classMethod: true)
+        let allocate = try runtime.resolveObjCMethodAndWait(
+            on: SelectorReceiver.self,
+            selector: "alloc",
+            as: (() -> SelectorReceiver).self,
+            classMethod: true
+        )
         let allocated = try unsafe allocate.unsafeInvoke(on: SelectorReceiver.self as AnyObject)
-        let initialize = try runtime.object(allocated).method(selector: selector, as: ((Int) -> SelectorReceiver).self)
+        let initialize = try runtime.object(allocated).resolveMethodAndWait(
+            selector: selector,
+            as: ((Int) -> SelectorReceiver).self
+        )
         let value = try unsafe initialize.unsafeInvoke(32)
         #expect(value.numberValue == 42)
     }

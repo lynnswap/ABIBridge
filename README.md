@@ -27,26 +27,39 @@ ABIBridge finds the mangled symbol from its declaration name:
 import ABIBridge
 
 let runtime = ABIRuntime.shared
-let symbol = try runtime.resolve(
+let symbol = try runtime.resolveAndWait(
     NativeDeclaration(name: "Example::Math::add(int, int)", language: .cxx)
 )
 ```
 
-Lookup prepares the required indexes automatically. This synchronous call can block its caller, including `MainActor`. See [symbol lookup](https://lynnswap.github.io/ABIBridge/documentation/abibridge/symbollookup) for scopes and optional preparation.
+Lookup prepares the required indexes automatically. `resolveAndWait` can block its caller, including `MainActor`; use `try await runtime.resolve(...)` to perform lookup on a worker queue. Both forms work without `prepare`. See [symbol lookup](https://lynnswap.github.io/ABIBridge/documentation/abibridge/symbollookup) for scopes and optional preparation.
 
 ### Call C++ by its declaration
 
 To call that function, provide its signature as a Swift function type. Specifying a framework acquires it when needed:
 
 ```swift
-let add = try runtime.cxxFunction(
+let add = try runtime.resolveCXXFunctionAndWait(
     named: "Example::Math::add(int, int)", as: ((Int32, Int32) -> Int32).self,
     in: .framework(named: "Example")
 )
 let sum = try unsafe add.unsafeInvoke(20, 22)
 ```
 
-Retain the handle for repeated calls, and invoke it on the thread required by the native function.
+Retain the handle for repeated calls, and invoke it on the thread required by the native function. For lookup from `MainActor`, await `resolveCXXFunction`:
+
+```swift
+@MainActor
+func calculate() async throws -> Int32 {
+    let add = try await ABIRuntime.shared.resolveCXXFunction(
+        named: "Example::Math::add(int, int)", as: ((Int32, Int32) -> Int32).self,
+        in: .framework(named: "Example")
+    )
+    return try unsafe add.unsafeInvoke(20, 22)
+}
+```
+
+Search, image acquisition, and call preparation run on a worker while the caller suspends. `resolveCFunction` provides the same async lookup for C declarations. Optional earlier `prepare` shares its work with either lookup form; callers join only the preparation they need.
 
 ### Call Swift by its source-level name
 
@@ -107,13 +120,15 @@ For a `renderer` exposing `setImage:animated:`, pass ordinary Swift values:
 ```swift
 import UIKit
 
-let setImage = try runtime.object(renderer).method(
+let setImage = try runtime.object(renderer).resolveMethodAndWait(
     selector: "setImage:animated:",
     as: ((UIImage?, Bool) -> Void).self
 )
 try unsafe setImage.unsafeInvoke(image, true)
 try unsafe setImage.unsafeInvoke(nil, false)
 ```
+
+Await `resolveMethod(selector:as:)` to prepare the image and call signature on a worker. Receiver-specific dynamic resolution and forwarding-signature callbacks remain in the caller's isolation domain. Invoke the returned handle on the thread required by the receiver.
 
 ### Display a native SwiftUI view
 

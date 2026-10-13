@@ -66,6 +66,10 @@ typedef union ABIUnionFixture { NSInteger integer; double real; } ABIUnionFixtur
 @interface ABIForwardingFixture : NSObject
 @property(nonatomic, copy, nullable) NSString *answerEncoding;
 @property(nonatomic, readonly) NSInteger forwardedCalls;
+@property(nonatomic, readonly) BOOL signatureRequestedOnMainThread;
+@end
+@interface ABIWorkerLookupFixture : NSObject
+@property(class, nonatomic, readonly) BOOL resolutionRequestedOnMainThread;
 @end
 /// Keeps forwarded invocations to inspect their arguments after later calls.
 @interface ABIEscapingForwardingFixture : NSObject

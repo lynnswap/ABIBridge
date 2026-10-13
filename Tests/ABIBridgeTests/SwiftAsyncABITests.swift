@@ -76,7 +76,9 @@ struct SwiftAsyncABITests {
                 if case .failure(let error) = result {
                     let actual = try #require(error as? ManagedFailure)
                     #expect(actual.token === token && actual.code == 42)
-                } else { Issue.record("Expected native error") }
+                } else {
+                    Issue.record("Expected native error")
+                }
             }
             withExtendedLifetime(result) { #expect(observed != nil && destroyed.value == 0) }
             result = nil
@@ -115,13 +117,16 @@ struct SwiftAsyncABITests {
             do {
                 let result = try await task.value
                 #expect(!fail && result.token === token && result.a == 10 && result.d == 40)
-            } catch let error as LargeFailure { #expect(fail && error.token === token && error.d == 4) }
+            } catch let error as LargeFailure {
+                #expect(fail && error.token === token && error.d == 4)
+            }
             let floatingGate = AsyncGate()
             let floating = Task { try await compiledAsyncFloatingError(floatingGate, fail) }
             await floatingGate.waitUntilSuspended()
             await floatingGate.open()
-            do { #expect(try await floating.value == 2.5 && !fail) }
-            catch let error as FloatingFailure { #expect(fail && error.value == 1.5) }
+            do { #expect(try await floating.value == 2.5 && !fail) } catch let error
+                as FloatingFailure
+            { #expect(fail && error.value == 1.5) }
         }
     }
 
@@ -141,16 +146,22 @@ struct SwiftAsyncABITests {
         let runtime = ABIRuntime.shared
         for (name, signature) in [
             ("asyncImmediate", "(Swift.Int64) async -> Swift.Int64"),
-            ("asyncCaller", "(ManagedSwiftFixtures.AsyncGate, Swift.Int64) async -> Swift.Int64")
+            ("asyncCaller", "(ManagedSwiftFixtures.AsyncGate, Swift.Int64) async -> Swift.Int64"),
         ] {
             let declaration = "ManagedSwiftFixtures." + name + signature
-            let descriptor = try runtime.resolve(
+            let descriptor = try runtime.resolveAndWait(
                 .init(
-                name: "async function pointer to " + declaration, language: .swift, kind: .data))
-            let function = try runtime.resolve(.init(name: declaration, language: .swift))
+                    name: "async function pointer to " + declaration,
+                    language: .swift,
+                    kind: .data
+                )
+            )
+            let function = try runtime.resolveAndWait(.init(name: declaration, language: .swift))
             let fields = unsafe descriptor.withUnsafeAddress { address in
-                (UInt(bitPattern: address), address.load(as: Int32.self),
-                 address.load(fromByteOffset: 4, as: UInt32.self))
+                (
+                    UInt(bitPattern: address), address.load(as: Int32.self),
+                    address.load(fromByteOffset: 4, as: UInt32.self)
+                )
             }
             #expect(fields.2 >= 2 * MemoryLayout<UnsafeRawPointer>.size)
             let entry = Int64(fields.0) + Int64(fields.1)

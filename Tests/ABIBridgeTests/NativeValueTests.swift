@@ -15,8 +15,16 @@ private final class PairValue: ABIBridgeValue {
     }
     static func nativeValue(from value: PairValue) -> NativeValue {
         NativeValue(type: abiType) { bytes in
-            bytes.baseAddress!.storeBytes(of: value.left, toByteOffset: abiType.fields[0].offset, as: Double.self)
-            bytes.baseAddress!.storeBytes(of: value.right, toByteOffset: abiType.fields[1].offset, as: Double.self)
+            bytes.baseAddress!.storeBytes(
+                of: value.left,
+                toByteOffset: abiType.fields[0].offset,
+                as: Double.self
+            )
+            bytes.baseAddress!.storeBytes(
+                of: value.right,
+                toByteOffset: abiType.fields[1].offset,
+                as: Double.self
+            )
         }
     }
 }
@@ -68,7 +76,8 @@ private final class ResourceValue: ABIBridgeValue {
             throw ConversionFailure.nullResource
         }
         storage = unsafe NativeValue(
-            adopting: pointer, as: try .opaque(named: "Resource"),
+            adopting: pointer,
+            as: try .opaque(named: "Resource"),
             release: { ABICDestroyResource($0) }
         )
     }
@@ -91,7 +100,9 @@ private struct RejectingResource: ABIBridgeValue {
         let owner = try ResourceValue(nativeValue: nativeValue)
         try withExtendedLifetime(owner) { throw ConversionFailure.rejected }
     }
-    static func nativeValue(from value: Self) throws -> NativeValue { throw ConversionFailure.rejected }
+    static func nativeValue(from value: Self) throws -> NativeValue {
+        throw ConversionFailure.rejected
+    }
 }
 
 private struct WrongPair: ABIBridgeValue {
@@ -108,7 +119,7 @@ private struct WrongPair: ABIBridgeValue {
 
 struct NativeValueTests {
     @Test func laterArgumentFailureKeepsEarlierOwnersAliveUntilCleanup() async throws {
-        let function = try ABIRuntime.shared.cFunction(
+        let function = try ABIRuntime.shared.resolveCFunctionAndWait(
             named: "ABICTransformPair",
             as: ((ScopedPair, RejectedCounter) -> PairValue).self
         )
@@ -120,8 +131,9 @@ struct NativeValueTests {
     }
 
     @Test func customWrappersUseTheirNativeLayout() async throws {
-        let function = try ABIRuntime.shared.cFunction(
-            named: "ABICTransformPair", as: ((PairValue, UnsafeMutablePointer<Int32>) -> PairValue).self
+        let function = try ABIRuntime.shared.resolveCFunctionAndWait(
+            named: "ABICTransformPair",
+            as: ((PairValue, UnsafeMutablePointer<Int32>) -> PairValue).self
         )
         var calls: Int32 = 0
         let result = try withUnsafeMutablePointer(to: &calls) {
@@ -136,14 +148,16 @@ struct NativeValueTests {
     }
 
     @Test func runtimeSignaturesReturnCastableValues() async throws {
-        let function = try ABIRuntime.shared.cFunction(
+        let function = try ABIRuntime.shared.resolveCFunctionAndWait(
             named: "ABICTransformPair",
             signature: .init(parameters: [PairValue.abiType, .pointer], returns: PairValue.abiType)
         )
         var calls: Int32 = 0
         let result = try withUnsafeMutablePointer(to: &calls) { pointer in
             let counter = try NativeValue(copying: pointer, as: .pointer)
-            return try unsafe function.unsafeInvoke(with: [PairValue.nativeValue(from: .init(4, 5)), counter])
+            return try unsafe function.unsafeInvoke(with: [
+                PairValue.nativeValue(from: .init(4, 5)), counter,
+            ])
         }
         let pair = try result.cast(to: PairValue.self)
         #expect(pair.left == 5 && pair.right == 7)
@@ -151,7 +165,7 @@ struct NativeValueTests {
     }
 
     @Test func runtimeSignaturesValidateArgumentsBeforeDispatch() async throws {
-        let function = try ABIRuntime.shared.cFunction(
+        let function = try ABIRuntime.shared.resolveCFunctionAndWait(
             named: "ABICTransformPair",
             signature: .init(parameters: [PairValue.abiType, .pointer], returns: PairValue.abiType)
         )
@@ -173,14 +187,19 @@ struct NativeValueTests {
         var owner: Owner? = Owner(tracked: TrackedOwner(events))
         weak var weakOwner = owner?.tracked
         var value: NativeValue? = NativeValue(
-            type: PairValue.abiType, retaining: owner,
+            type: PairValue.abiType,
+            retaining: owner,
             destroy: { _ in
                 #expect(weakOwner != nil)
                 events.values.append("destroy")
             }
         ) {
             $0.baseAddress!.storeBytes(of: Double(1), as: Double.self)
-            $0.baseAddress!.storeBytes(of: Double(2), toByteOffset: PairValue.abiType.fields[1].offset, as: Double.self)
+            $0.baseAddress!.storeBytes(
+                of: Double(2),
+                toByteOffset: PairValue.abiType.fields[1].offset,
+                as: Double.self
+            )
         }
         var field: NativeValue? = try value!.field(at: 1)
         var reference: NativeValue? = .reference(to: value!)
@@ -196,14 +215,17 @@ struct NativeValueTests {
     }
 
     @Test func adoptedResourcesAndOptionalPointerWrappers() async throws {
-        let make = try ABIRuntime.shared.cFunction(
-            named: "ABICCreateResource", as: ((UnsafeMutablePointer<Int32>) -> ResourceValue).self
+        let make = try ABIRuntime.shared.resolveCFunctionAndWait(
+            named: "ABICCreateResource",
+            as: ((UnsafeMutablePointer<Int32>) -> ResourceValue).self
         )
-        let read = try ABIRuntime.shared.cFunction(
-            named: "ABICReadResource", as: ((ResourceValue) -> Int32).self
+        let read = try ABIRuntime.shared.resolveCFunctionAndWait(
+            named: "ABICReadResource",
+            as: ((ResourceValue) -> Int32).self
         )
-        let echo = try ABIRuntime.shared.cFunction(
-            named: "ABICPointer", as: ((BorrowedResource?) -> BorrowedResource?).self
+        let echo = try ABIRuntime.shared.resolveCFunctionAndWait(
+            named: "ABICPointer",
+            as: ((BorrowedResource?) -> BorrowedResource?).self
         )
         var live: Int32 = 0
         try withUnsafeMutablePointer(to: &live) { pointer in
@@ -219,8 +241,9 @@ struct NativeValueTests {
     }
 
     @Test func failedConversionsReleaseAdoptedResources() async throws {
-        let make = try ABIRuntime.shared.cFunction(
-            named: "ABICCreateResource", as: ((UnsafeMutablePointer<Int32>) -> RejectingResource).self
+        let make = try ABIRuntime.shared.resolveCFunctionAndWait(
+            named: "ABICCreateResource",
+            as: ((UnsafeMutablePointer<Int32>) -> RejectingResource).self
         )
         var live: Int32 = 0
         withUnsafeMutablePointer(to: &live) { pointer in
@@ -230,8 +253,9 @@ struct NativeValueTests {
     }
 
     @Test func invalidArgumentLayoutStopsBeforeDispatchAndCleansUp() async throws {
-        let function = try ABIRuntime.shared.cFunction(
-            named: "ABICTransformPair", as: ((WrongPair, UnsafeMutablePointer<Int32>) -> PairValue).self
+        let function = try ABIRuntime.shared.resolveCFunctionAndWait(
+            named: "ABICTransformPair",
+            as: ((WrongPair, UnsafeMutablePointer<Int32>) -> PairValue).self
         )
         let events = Events()
         var calls: Int32 = 0
@@ -247,14 +271,24 @@ struct NativeValueTests {
     @Test func borrowedStorageKeepsItsOwnerAndSupportsUnalignedReads() throws {
         let events = Events()
         let type = try NativeType.opaque(named: "bytes", size: 9)
-        var owner: NativeValue? = NativeValue(type: type, destroy: { _ in events.values.append("destroy") }) { bytes in
+        var owner: NativeValue? = NativeValue(
+            type: type,
+            destroy: { _ in events.values.append("destroy") }
+        ) { bytes in
             let number: UInt64 = 0x1234567890
             Swift.withUnsafeBytes(of: number) { source in
-                bytes.baseAddress!.advanced(by: 1).copyMemory(from: source.baseAddress!, byteCount: source.count)
+                bytes.baseAddress!.advanced(by: 1).copyMemory(
+                    from: source.baseAddress!,
+                    byteCount: source.count
+                )
             }
         }
         let address = unsafe owner!.withUnsafeMutableBytes { $0.baseAddress!.advanced(by: 1) }
-        var borrowed: NativeValue? = unsafe NativeValue(borrowing: address, as: .uint64, retaining: owner)
+        var borrowed: NativeValue? = unsafe NativeValue(
+            borrowing: address,
+            as: .uint64,
+            retaining: owner
+        )
         owner = nil
         #expect(try unsafe borrowed!.read(as: UInt64.self) == 0x1234567890)
         #expect(events.values.isEmpty)
@@ -266,15 +300,20 @@ struct NativeValueTests {
         let alias = try NativeType.structure(named: "PairAlias", fields: [.double, .double])
         let value = NativeValue(type: alias) { bytes in
             bytes.baseAddress!.storeBytes(of: Double(4), as: Double.self)
-            bytes.baseAddress!.storeBytes(of: Double(6), toByteOffset: alias.fields[1].offset, as: Double.self)
+            bytes.baseAddress!.storeBytes(
+                of: Double(6),
+                toByteOffset: alias.fields[1].offset,
+                as: Double.self
+            )
         }
         let pair = try value.cast(to: PairValue.self)
         #expect(pair.left == 4 && pair.right == 6)
         var growing = NativeType.uint64
         var rejected = false
         for _ in 0..<Int.bitWidth {
-            do { growing = try .structure(named: "Growing", fields: [growing, growing]) }
-            catch { rejected = true; break }
+            do { growing = try .structure(named: "Growing", fields: [growing, growing]) } catch {
+                rejected = true; break
+            }
         }
         #expect(rejected)
     }
@@ -282,7 +321,8 @@ struct NativeValueTests {
     @Test func failedInitializationDoesNotDestroyUninitializedStorage() {
         let events = Events()
         #expect(throws: ConversionFailure.self) {
-            _ = try NativeValue(type: .int32, destroy: { _ in events.values.append("destroy") }) { _ in
+            _ = try NativeValue(type: .int32, destroy: { _ in events.values.append("destroy") }) {
+                _ in
                 throw ConversionFailure.rejected
             }
         }
@@ -293,20 +333,26 @@ struct NativeValueTests {
         let value = try NativeValue(copying: Int32(3), as: .int32)
         #expect(throws: NativeValueError.self) { try unsafe value.read(as: Int64.self) }
         #expect(throws: NativeValueError.self) { try unsafe value.read(as: Int32.self, at: -1) }
-        #expect(throws: NativeValueError.self) { try unsafe value.read(as: Int32.self, at: Int.max) }
+        #expect(throws: NativeValueError.self) {
+            try unsafe value.read(as: Int32.self, at: Int.max)
+        }
         #expect(throws: NativeValueError.self) { try value.field(at: 0) }
         #expect(throws: NativeValueError.self) { try value.cast(to: PairValue.self) }
         #expect(throws: NativeValueError.self) { try NativeType.opaque(named: "invalid", size: -1) }
-        #expect(throws: NativeValueError.self) { try NativeType.opaque(named: "invalid", alignment: 3) }
+        #expect(throws: NativeValueError.self) {
+            try NativeType.opaque(named: "invalid", alignment: 3)
+        }
         let opaque = try NativeType.opaque(named: "Opaque", size: 16, alignment: 8)
         #expect(throws: ABIResolutionError.self) {
-            _ = try ABIRuntime.shared.cFunction(
-                named: "ABICAnswer", signature: .init(parameters: [], returns: opaque)
+            _ = try ABIRuntime.shared.resolveCFunctionAndWait(
+                named: "ABICAnswer",
+                signature: .init(parameters: [], returns: opaque)
             )
         }
         #expect(throws: ABIResolutionError.self) {
-            _ = try ABIRuntime.shared.cFunction(
-                named: "ABICAnswer", as: (() -> PairValue?).self
+            _ = try ABIRuntime.shared.resolveCFunctionAndWait(
+                named: "ABICAnswer",
+                as: (() -> PairValue?).self
             )
         }
     }

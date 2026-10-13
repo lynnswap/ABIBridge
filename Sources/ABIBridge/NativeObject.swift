@@ -21,14 +21,19 @@ public struct NativeMethodOptions: Sendable {
     public var consumedArguments: Set<Int>
 
     /// Creates ownership overrides; nil values use method-family conventions.
-    public init(returnsRetainedObject: Bool? = nil, consumesReceiver: Bool? = nil,
-                consumedArguments: Set<Int> = []) {
+    public init(
+        returnsRetainedObject: Bool? = nil,
+        consumesReceiver: Bool? = nil,
+        consumedArguments: Set<Int> = []
+    ) {
         self.returnsRetainedObject = returnsRetainedObject
         self.consumesReceiver = consumesReceiver
         self.consumedArguments = consumedArguments
     }
 
-    func withConsumedArguments<Result>(_ body: (UnsafeBufferPointer<Int>) throws -> Result) rethrows -> Result {
+    func withConsumedArguments<Result>(
+        _ body: (UnsafeBufferPointer<Int>) throws -> Result
+    ) rethrows -> Result {
         try consumedArguments.sorted().withUnsafeBufferPointer(body)
     }
 }
@@ -95,25 +100,33 @@ public final class NativeObject {
         let object = receiver!
         let type: AnyClass = object_getClass(object)!
         guard !name.utf8.contains(0) else {
-            throw ABIResolutionError.unsupportedDeclaration("An ivar name cannot contain a NUL byte.")
+            throw ABIResolutionError.unsupportedDeclaration(
+                "An ivar name cannot contain a NUL byte."
+            )
         }
         guard let ivar = class_getInstanceVariable(type, name) else {
             throw ABIResolutionError.ivarNotFound(name: name, className: NSStringFromClass(type))
         }
         guard let encoding = ivar_getTypeEncoding(ivar) else {
-            throw ABIResolutionError.metadataUnavailable("The ivar has no Objective-C type encoding.")
+            throw ABIResolutionError.metadataUnavailable(
+                "The ivar has no Objective-C type encoding."
+            )
         }
         let codec = try ObjCValueCodec<Value>(
-            encoding: String(cString: encoding), size: MemoryLayout<UnsafeRawPointer>.size
+            encoding: String(cString: encoding),
+            size: MemoryLayout<UnsafeRawPointer>.size
         )
         switch codec.kind {
         case .object, .classObject, .block: break
         default:
-            throw ABIResolutionError.unsupportedDeclaration("Only Objective-C object and class ivars can be read.")
+            throw ABIResolutionError.unsupportedDeclaration(
+                "Only Objective-C object and class ivars can be read."
+            )
         }
         // The first word is isa, which may contain packed or authenticated bits.
         // Decode it through the runtime instead of retaining the stored word.
-        let value: AnyObject? = ivar_getOffset(ivar) == 0
+        let value: AnyObject? =
+            ivar_getOffset(ivar) == 0
             ? type as AnyObject : object_getIvar(object, ivar) as AnyObject?
         let storage = NativeValueStorage(size: codec.size, alignment: codec.alignment)
         // The shared decoder consumes one owned reference, including on conversion failure.
@@ -241,27 +254,81 @@ public final class NativeObject {
     ///   - options: Ownership overrides absent from runtime metadata.
     /// - Returns: A method retaining this receiver.
     /// - Throws: A resolution error for a missing selector or incompatible signature.
-    public func method<Result, each Argument>(
+    public func resolveMethodAndWait<Result, each Argument>(
         selector: String,
         as signature: ((repeat each Argument) -> Result).Type,
         variadicFrom: Int? = nil,
         options: NativeMethodOptions = .init()
     ) throws -> NativeBoundObjCMethod<Result, repeat each Argument> {
+        let binding = try objcInvocationBinding(
+            selector: selector,
+            options: options,
+            prepareImages: true
+        )
+        return try NativeBoundObjCMethod(binding: binding, variadicFrom: variadicFrom)
+    }
+
+    /// Resolves a selector while preparing its image and call ABI away from the caller's executor.
+    ///
+    /// Receiver-specific dynamic resolution and forwarding-signature callbacks stay on the caller's executor to honor its isolation. The receiver and returned bound handle never move to the worker. Image acquisition and signature decoding run on the worker; shared call interfaces join any preparation already in progress. Invocation remains an explicit operation on the caller's executor.
+    public nonisolated(nonsending) func resolveMethod<Result, each Argument>(
+        selector: String,
+        as signature: ((repeat each Argument) -> Result).Type,
+        variadicFrom: Int? = nil,
+        options: NativeMethodOptions = .init()
+    ) async throws -> NativeBoundObjCMethod<Result, repeat each Argument> {
+        let binding = try objcInvocationBinding(
+            selector: selector,
+            options: options,
+            prepareImages: false
+        )
+        let plan = ObjCInvocationPlan(
+            ABICopyObjCInvocationPlan(binding.handle),
+            declaration: binding.declaration
+        )
+        let prepared: ObjCMethodSignature<Result, repeat each Argument> =
+            try await NativePreparation.run {
+                var error: NSError?
+                guard ABIObjCPrepareInvocationPlan(plan.handle, &error) else {
+                    throw objcResolutionError(error, declaration: plan.declaration)
+                }
+                return try ObjCMethodSignature(
+                    handle: plan.handle,
+                    declaration: plan.declaration,
+                    variadicFrom: variadicFrom
+                )
+            }
+        return NativeBoundObjCMethod(binding: binding, signature: prepared)
+    }
+
+    private func objcInvocationBinding(
+        selector: String,
+        options: NativeMethodOptions,
+        prepareImages: Bool
+    ) throws -> ObjCInvocationBinding {
         let receiverType = object_getClass(receiver!)!
-        let declaration = objcMethodDeclaration(on: receiverType, selector: selector,
-            classMethod: class_isMetaClass(receiverType))
+        let declaration = objcMethodDeclaration(
+            on: receiverType,
+            selector: selector,
+            classMethod: class_isMetaClass(receiverType)
+        )
         var error: NSError?
         let handle = options.withConsumedArguments { consumed in
-            ABICopyObjCInvocation(
-                receiver!, NSSelectorFromString(selector),
+            let copy = prepareImages ? ABICopyObjCInvocation : ABICopyObjCInvocationMetadata
+            return copy(
+                receiver!,
+                NSSelectorFromString(selector),
                 options.returnsRetainedObject.map { $0 ? 1 : 0 } ?? -1,
-                options.consumesReceiver.map { $0 ? 1 : 0 } ?? -1, consumed.baseAddress, consumed.count, &error
+                options.consumesReceiver.map { $0 ? 1 : 0 } ?? -1,
+                consumed.baseAddress,
+                consumed.count,
+                &error
             )
         }
         guard let handle else {
             throw objcResolutionError(error, declaration: declaration)
         }
-        return try NativeBoundObjCMethod(binding: ObjCInvocationBinding(handle, declaration: declaration), variadicFrom: variadicFrom)
+        return ObjCInvocationBinding(handle, declaration: declaration)
     }
 }
 
@@ -284,7 +351,27 @@ final class ObjCInvocationBinding {
         self.declaration = declaration
         self.owner = owner
     }
+    convenience init(plan: ObjCInvocationPlan, retaining owner: Any? = nil) {
+        ABIRetainObjCInvocation(plan.handle)
+        self.init(plan.handle, declaration: plan.declaration, retaining: owner)
+    }
     deinit { withExtendedLifetime(owner) { ABIReleaseObjCInvocation(handle) } }
+}
+
+// The native parent contains immutable signature metadata and image leases, never
+// a receiver or caller-owned code owner. Its reference count is atomic. A worker
+// finishes image preparation before this wrapper is returned to the caller.
+final class ObjCInvocationPlan: Sendable {
+    private let address: UInt
+    var handle: OpaquePointer { OpaquePointer(bitPattern: address)! }
+    let declaration: NativeDeclaration
+
+    init(_ handle: OpaquePointer, declaration: NativeDeclaration) {
+        address = UInt(bitPattern: handle)
+        self.declaration = declaration
+    }
+
+    deinit { ABIReleaseObjCInvocation(handle) }
 }
 
 /// A typed Objective-C method bound to a retained receiver.
@@ -301,7 +388,8 @@ public struct NativeBoundObjCMethod<Result, each Argument> {
         NativeObjCMethod(
             binding: ObjCInvocationBinding(
                 ABICopyObjCInvocationPlan(binding.handle),
-                declaration: binding.declaration, retaining: binding.owner
+                declaration: binding.declaration,
+                retaining: binding.owner
             ),
             signature: signature
         )
@@ -309,10 +397,17 @@ public struct NativeBoundObjCMethod<Result, each Argument> {
 
     init(binding: ObjCInvocationBinding, variadicFrom: Int? = nil) throws {
         self.binding = binding
-        signature = try ObjCMethodSignature(handle: binding.handle, declaration: binding.declaration, variadicFrom: variadicFrom)
+        signature = try ObjCMethodSignature(
+            handle: binding.handle,
+            declaration: binding.declaration,
+            variadicFrom: variadicFrom
+        )
     }
 
-    init(binding: ObjCInvocationBinding, signature: ObjCMethodSignature<Result, repeat each Argument>) {
+    init(
+        binding: ObjCInvocationBinding,
+        signature: ObjCMethodSignature<Result, repeat each Argument>
+    ) {
         self.binding = binding
         self.signature = signature
     }
@@ -325,22 +420,36 @@ public struct NativeBoundObjCMethod<Result, each Argument> {
     /// - Returns: The result converted to the requested Swift type.
     /// - Throws: A conversion or invocation error, including unexpected nil.
     @unsafe public func unsafeInvoke(_ values: repeat each Argument) throws -> Result {
-        try signature.invoke(repeat each values, using: { addresses, output in
-            var error: NSError?
-            let success: Bool
-            if let interface = signature.variadicInterface {
-                success = ABIInvokeVariadicObjCInvocation(binding.handle, interface.handle, output, addresses.baseAddress, &error)
-            } else {
-                success = ABIInvokeObjCInvocation(binding.handle, output, addresses.baseAddress, &error)
+        try signature.invoke(
+            repeat each values,
+            using: { addresses, output in
+                var error: NSError?
+                let success: Bool
+                if let interface = signature.variadicInterface {
+                    success = ABIInvokeVariadicObjCInvocation(
+                        binding.handle,
+                        interface.handle,
+                        output,
+                        addresses.baseAddress,
+                        &error
+                    )
+                } else {
+                    success = ABIInvokeObjCInvocation(
+                        binding.handle,
+                        output,
+                        addresses.baseAddress,
+                        &error
+                    )
+                }
+                guard success else {
+                    throw objcResolutionError(error, declaration: binding.declaration)
+                }
             }
-            guard success else {
-                throw objcResolutionError(error, declaration: binding.declaration)
-            }
-        })
+        )
     }
 }
 
-struct ObjCMethodSignature<Result, each Argument> {
+struct ObjCMethodSignature<Result, each Argument>: Sendable {
     let arguments: (repeat ObjCValueCodec<each Argument>)
     let result: ObjCValueCodec<Result>
     private let storageLayout: NativeCallStorageLayout
@@ -351,23 +460,30 @@ struct ObjCMethodSignature<Result, each Argument> {
         for _ in repeat (each Argument).self { count += 1 }
         let fixedCount = ABIObjCInvocationParameterCount(handle)
         guard variadicFrom.map({ $0 == fixedCount && count >= $0 }) ?? (count == fixedCount) else {
-            throw ABIResolutionError.signatureMismatch(.init(
-                declaration: declaration, position: .argumentCount,
-                expected: "\(count) arguments",
-                found: ["\(ABIObjCInvocationParameterCount(handle)) arguments"]
-            ))
+            throw ABIResolutionError.signatureMismatch(
+                .init(
+                    declaration: declaration,
+                    position: .argumentCount,
+                    expected: "\(count) arguments",
+                    found: ["\(ABIObjCInvocationParameterCount(handle)) arguments"]
+                )
+            )
         }
         var index = 0
         func makeCodec<Value>(_ type: Value.Type) throws -> ObjCValueCodec<Value> {
             defer { index += 1 }
             do {
-                if let variadicFrom, index >= variadicFrom { return try .init(anonymousParameter: type) }
+                if let variadicFrom, index >= variadicFrom {
+                    return try .init(anonymousParameter: type)
+                }
                 return try .init(
                     encoding: String(cString: ABIObjCInvocationParameterType(handle, index)),
                     size: ABIObjCInvocationParameterSize(handle, index)
                 )
             } catch let ABIResolutionError.signatureMismatch(mismatch) {
-                throw ABIResolutionError.signatureMismatch(mismatch.inContext(declaration, at: .argument(index)))
+                throw ABIResolutionError.signatureMismatch(
+                    mismatch.inContext(declaration, at: .argument(index))
+                )
             }
         }
         // Swift 6.3 IRGen cannot clean up an incompletely initialized stored
@@ -384,15 +500,23 @@ struct ObjCMethodSignature<Result, each Argument> {
         }
         let variadicInterface: CCallInterface?
         if let variadicFrom {
-            var parameters = [try CValueType(scalar: ABIValuePointer), try CValueType(scalar: ABIValuePointer)]
+            var parameters = [
+                try CValueType(scalar: ABIValuePointer), try CValueType(scalar: ABIValuePointer),
+            ]
             for codec in repeat each arguments { parameters.append(try codec.cType()) }
-            variadicInterface = try CCallInterface(result: result.cType(), parameters: parameters,
-                fixedParameterCount: variadicFrom + 2)
-        } else { variadicInterface = nil }
+            variadicInterface = try CCallInterface(
+                result: result.cType(),
+                parameters: parameters,
+                fixedParameterCount: variadicFrom + 2
+            )
+        } else {
+            variadicInterface = nil
+        }
         var layouts: [(size: Int, alignment: Int)] = []
         for codec in repeat each arguments { layouts.append((codec.size, codec.alignment)) }
         storageLayout = try NativeCallStorageLayout(
-            result: (result.size, result.alignment), parameters: layouts
+            result: (result.size, result.alignment),
+            parameters: layouts
         )
         self.arguments = arguments
         self.result = result
@@ -401,7 +525,9 @@ struct ObjCMethodSignature<Result, each Argument> {
 
     func callInterface() throws -> CCallInterface {
         if let variadicInterface { return variadicInterface }
-        var parameters = [try CValueType(scalar: ABIValuePointer), try CValueType(scalar: ABIValuePointer)]
+        var parameters = [
+            try CValueType(scalar: ABIValuePointer), try CValueType(scalar: ABIValuePointer),
+        ]
         for codec in repeat each arguments { parameters.append(try codec.cType()) }
         return try CCallInterface(result: result.cType(), parameters: parameters)
     }
@@ -414,7 +540,9 @@ struct ObjCMethodSignature<Result, each Argument> {
             var owners: [AnyObject] = []
             var index = 0
             for (codec, value) in repeat (each arguments, each values) {
-                if let owner = try codec.encode(value, into: addresses[index]!) { owners.append(owner) }
+                if let owner = try codec.encode(value, into: addresses[index]!) {
+                    owners.append(owner)
+                }
                 index += 1
             }
             return try withExtendedLifetime(owners) {

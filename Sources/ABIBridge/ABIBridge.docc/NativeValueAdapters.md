@@ -29,7 +29,7 @@ struct Pair: BitwiseCopyable, ABIBridgeValue {
     var right: Double
 }
 
-let translate = try ABIRuntime.shared.cxxFunction(
+let translate = try ABIRuntime.shared.resolveCXXFunctionAndWait(
     named: "Example::translate(Example::Pair)",
     as: ((Pair) -> Pair).self
 )
@@ -47,7 +47,7 @@ A Swift enum's raw-value type can differ from its stored tag. For example, two c
 A ``NativeSignature`` accepts native parameter and result descriptions. The resulting ``DynamicNativeFunction`` accepts native values and returns storage that you can cast:
 
 ```swift
-let translate = try ABIRuntime.shared.cxxFunction(
+let translate = try ABIRuntime.shared.resolveCXXFunctionAndWait(
     named: "Example::translate(Example::Pair)",
     signature: .init(parameters: [Pair.abiType], returns: Pair.abiType)
 )

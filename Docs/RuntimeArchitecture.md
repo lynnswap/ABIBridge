@@ -34,7 +34,9 @@ The public layer converts declaration requests to runtime records. The runtime r
 
 A `RuntimeSymbolResolver` owns each resolver's indexes and image leases. `ABIRuntime` delegates lookup to it and caches typed Swift handles. Physical call interfaces and closure authentication values use bounded shared runtime caches. Public call wrappers retain the physical owners.
 
-Async Swift lookup, such as `resolveSwiftType` and `resolveMethod`, schedules preparation on a worker while the caller suspends. Synchronous `AndWait` variants use the same indexes and call-interface caches. Both join only the preparation they need. Bound receivers and invocation stay in the caller's required isolation domain.
+Async resolution, including symbols, image enumeration, C/C++ functions, Swift types and members, Objective-C messages, and named virtual entries, schedules search and call preparation on a worker while the caller suspends. Synchronous `AndWait` variants use the same indexes and call-interface caches. Neither requires `prepare`; both join only the work they need when earlier preparation is still running. Bound receivers, explicit code owners, and invocation stay in the caller's required isolation domain. Receiver-specific Objective-C dynamic resolution and forwarding-signature callbacks also stay with the caller; image acquisition and call-interface preparation run on the worker.
+
+Compiled virtual and imported replacements offer async `prepare…` and synchronous `prepare…AndWait` planning. Both use shared lookup and capture owners without changing native pointers; publication and restoration remain explicit synchronous operations.
 
 The public layer owns typed callback bodies; native entries retain their implementation and storage. Published code retains its native owner after cache eviction or release of a temporary public wrapper. Native registrations handle hook publication and retirement.
 

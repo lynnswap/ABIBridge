@@ -353,7 +353,7 @@ extension NativeSwiftClosure {
         ).encoded()
     }
 
-    /// Creates an async callback that preserves the native caller's task and isolation. The Sendable body may escape and be called concurrently. Native code receives its declared errors. Native entry preparation occurs on the first invocation or publication.
+    /// Creates an async callback that preserves the native caller's task and isolation. The Sendable body may escape and be called concurrently. Native code receives its declared errors. Native entry preparation occurs on the first invocation or publication. An awaited first invocation prepares its ABI and entry on a worker, then binds its context on the caller's executor.
     public init<Result, Failure: Error, each Argument>(
         _ body: @escaping @Sendable (repeat each Argument) async throws(Failure) -> Result
     ) throws where Signature == (repeat each Argument) async throws(Failure) -> Result {
@@ -418,20 +418,34 @@ extension NativeSwiftClosure {
     ) throws {
         let signature = try SwiftFunctionSignature(Signature.self)
         let codeLifetime = SwiftValueCodeLifetime([])
-        let factory = SwiftClosureBodyFactory(
-            signature: Signature.self,
-            asynchronous: { plan, factory, owner in
-                let parameters =
-                    try plan?.parameters
-                    ?? SwiftGenericParameters(
-                        actual: signature.parameters,
-                        arguments: SwiftGenericParameters.concreteArguments(signature: signature)
-                    )
-                let inputs = try SwiftCallbackValues(signature, arguments: parameters.arguments)
-                let output = try SwiftCallbackResult<Result>(
+        typealias CallbackPreparation = (
+            parameters: SwiftGenericParameters,
+            inputs: SwiftCallbackValues,
+            output: SwiftCallbackResult<Result>
+        )
+        let prepareCallback: @Sendable (SwiftGenericClosurePlan?) throws -> CallbackPreparation = {
+            plan in
+            let parameters =
+                try plan?.parameters
+                ?? SwiftGenericParameters(
+                    actual: signature.parameters,
+                    arguments: SwiftGenericParameters.concreteArguments(signature: signature)
+                )
+            return (
+                parameters,
+                try SwiftCallbackValues(signature, arguments: parameters.arguments),
+                try SwiftCallbackResult<Result>(
                     failure: Failure.self,
                     generic: plan?.result ?? .concrete
                 )
+            )
+        }
+        let makeBody:
+            (CallbackPreparation, SwiftClosureBodyFactory, Any?) -> SwiftAsyncClosureBody = {
+                callback,
+                factory,
+                owner in
+                let (parameters, inputs, output) = callback
                 return SwiftAsyncClosureBody(
                     inheritsCallerIsolation: signature.inheritsCallerIsolation,
                     retainingCode: owner,
@@ -484,22 +498,49 @@ extension NativeSwiftClosure {
                     }
                 }
             }
-        )
-        call = .host(
-            SwiftClosureHost(factory: factory, codeLifetime: codeLifetime) {
-                let discriminator = try signature.closureDiscriminator()
-                let prepared = try SwiftAsyncCall(
-                    signature: Signature.self,
-                    errorPlan: signature.makeErrorPlan(),
-                    inheritsCallerIsolation: signature.inheritsCallerIsolation
-                )
-                let canonicalBody = try factory.asynchronous(plan: nil, retainingCode: nil)
-                let context = try SwiftAsyncClosureContext(
-                    interface: prepared.interface,
-                    body: canonicalBody
-                )
-                return .asynchronous(try context.storage(discriminator: discriminator), prepared)
+        let factory = SwiftClosureBodyFactory(
+            signature: Signature.self,
+            asynchronous: { plan, factory, owner in
+                makeBody(try prepareCallback(plan), factory, owner)
             }
+        )
+        typealias NativePreparationResult = (
+            discriminator: UInt16,
+            call: SwiftAsyncCall,
+            entry: SwiftAsyncClosureCallbackOwner,
+            callback: CallbackPreparation
+        )
+        let prepareNative: @Sendable () throws -> NativePreparationResult = {
+            let discriminator = try signature.closureDiscriminator()
+            let call = try SwiftAsyncCall(
+                signature: Signature.self,
+                errorPlan: signature.makeErrorPlan(),
+                inheritsCallerIsolation: signature.inheritsCallerIsolation
+            )
+            return (
+                discriminator, call, try call.interface.closureEntry(), try prepareCallback(nil)
+            )
+        }
+        let bindNative: (NativePreparationResult) throws -> SwiftClosureCall = { prepared in
+            let context = SwiftAsyncClosureContext(
+                entry: prepared.entry,
+                body: makeBody(prepared.callback, factory, nil)
+            )
+            return .asynchronous(
+                try context.storage(discriminator: prepared.discriminator),
+                prepared.call
+            )
+        }
+        call = .host(
+            SwiftClosureHost(
+                factory: factory,
+                codeLifetime: codeLifetime,
+                prepareAsynchronous: {
+                    let prepared = try await NativePreparation.run(prepareNative)
+                    return try bindNative(prepared)
+                },
+                prepare: { try bindNative(prepareNative()) }
+            )
         )
     }
 
@@ -617,13 +658,28 @@ extension NativeSwiftClosure {
                 try (value as! Self).encodeClosureResult(generic: generic, retainingCode: owner)
             },
             borrowing: { borrow, lifetime in
-                Self(
-                    call: .borrowed(
-                        resolve: { asynchronous in
-                            let access = try borrow.access(
-                                asynchronous: asynchronous,
-                                codeLifetime: lifetime
+                func makeCall(
+                    _ acquire: @escaping (Bool) throws -> NativeValueStorage
+                ) -> SwiftClosureCall {
+                    let copy: () throws -> SwiftClosureCall = {
+                        let access = try acquire(false)
+                        guard generic?.isEscaping == true else {
+                            throw ABIResolutionError.unsupportedDeclaration(
+                                "Copying a borrowed closure requires a native @escaping parameter."
                             )
+                        }
+                        return try withExtendedLifetime(access) {
+                            (try makeValue(
+                                access.address.load(as: ABISwiftClosureValue.self),
+                                nil,
+                                false,
+                                lifetime
+                            ) as! Self).call
+                        }
+                    }
+                    return .borrowed(
+                        resolve: { asynchronous in
+                            let access = try acquire(asynchronous)
                             let value = access.address.load(as: ABISwiftClosureValue.self)
                             let storage = try SwiftAsyncClosureStorage(
                                 adopting: value,
@@ -634,26 +690,52 @@ extension NativeSwiftClosure {
                             )
                             return .asynchronous(storage, prepared)
                         },
-                        copy: {
-                            let access = try borrow.access(
-                                asynchronous: false,
-                                codeLifetime: lifetime
-                            )
-                            guard generic?.isEscaping == true else {
-                                throw ABIResolutionError.unsupportedDeclaration(
-                                    "Copying a borrowed closure requires a native @escaping parameter."
+                        copy: copy,
+                        resolveAsynchronous: {
+                            let access = try acquire(true)
+                            let value = access.address.load(as: ABISwiftClosureValue.self)
+                            let function = UInt(bitPattern: value.function)
+                            let native = try await NativePreparation.run {
+                                guard
+                                    let descriptor = ABIAuthenticateSwiftAsyncClosureDescriptor(
+                                        UnsafeRawPointer(bitPattern: function),
+                                        discriminator
+                                    )
+                                else {
+                                    throw ABIInvocationError.unexpectedNilResult(
+                                        expected: "an async Swift closure"
+                                    )
+                                }
+                                return (
+                                    try SwiftAsyncEntry(descriptor: descriptor),
+                                    try swiftImplementationImage(containing: descriptor)
                                 )
                             }
-                            return try withExtendedLifetime(access) {
-                                (try makeValue(
-                                    access.address.load(as: ABISwiftClosureValue.self),
-                                    nil,
-                                    false,
-                                    lifetime
-                                ) as! Self).call
-                            }
+                            let preparedLifetime = SwiftValueCodeLifetime.connect(
+                                [lifetime].compactMap { $0 },
+                                retaining: [native.1].compactMap { $0 }
+                            )
+                            let storage = try SwiftAsyncClosureStorage(
+                                adopting: value,
+                                discriminator: discriminator,
+                                retaining: (access, native.1),
+                                codeLifetime: preparedLifetime,
+                                ownsContext: false,
+                                entry: native.0
+                            )
+                            return .asynchronous(storage, prepared)
+                        },
+                        acquireAsynchronousArgument: { consuming in
+                            if consuming { return try copy() }
+                            let access = try acquire(true)
+                            return makeCall { _ in access }
                         }
                     )
+                }
+                return Self(
+                    call: makeCall { asynchronous in
+                        try borrow.access(asynchronous: asynchronous, codeLifetime: lifetime)
+                    }
                 )
             },
             taking: { value, lifetime in
@@ -669,7 +751,7 @@ extension NativeSwiftClosure {
     // decomposes Signature into a parameter pack. Transparent entry thunks keep
     // that requirement out of the implementation frame, including in Debug builds.
 
-    /// Awaits the native closure on the original task. Native failures use NativeSwiftError. The caller satisfies the native signature's ABI, ownership, and actor/thread requirements.
+    /// Awaits the native closure on the original task. Missing ABI and entry preparation run on a worker; captured contexts and native invocation remain in the caller's isolation domain. Native failures use NativeSwiftError. The caller satisfies the native signature's ABI, ownership, and actor/thread requirements.
     @_transparent
     @unsafe public nonisolated(nonsending) func unsafeInvoke<Result, Failure: Error, each Argument>(
         _ values: repeat each Argument
@@ -717,7 +799,18 @@ extension NativeSwiftClosure {
     @unsafe @usableFromInline nonisolated(nonsending) func invokeAsync<Result, each Argument>(
         _ values: repeat each Argument
     ) async throws -> Result {
-        guard case .asynchronous(let storage, let prepared) = try call.resolved(asynchronous: true)
+        let invocation = try call.retainingAsynchronousArgument(consuming: false)
+        return try unsafe await invokePreparedAsync(
+            call: invocation,
+            repeat try swiftRetainingAsynchronousClosureArgument(each values)
+        )
+    }
+
+    @unsafe private nonisolated(nonsending) func invokePreparedAsync<Result, each Argument>(
+        call: SwiftClosureCall,
+        _ values: repeat each Argument
+    ) async throws -> Result {
+        guard case .asynchronous(let storage, let prepared) = try await call.resolvedAsync()
         else { preconditionFailure("An async closure has an async call plan.") }
         return try unsafe await prepared.unsafeInvoke(
             entry: storage.entry,

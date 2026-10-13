@@ -32,13 +32,30 @@ enum SwiftClosureCall {
 
     indirect case borrowed(
         resolve: (Bool) throws -> SwiftClosureCall,
-        copy: () throws -> SwiftClosureCall
+        copy: () throws -> SwiftClosureCall,
+        resolveAsynchronous:
+            (nonisolated(nonsending) () async throws -> SwiftClosureCall)? = nil,
+        acquireAsynchronousArgument: ((Bool) throws -> SwiftClosureCall)? = nil
     )
     case failure(any Error)
 
     func resolved(asynchronous: Bool = false) throws -> SwiftClosureCall {
         if case .host(let host) = self { return try host.resolved() }
-        if case .borrowed(let resolve, _) = self { return try resolve(asynchronous) }
+        if case .borrowed(let resolve, _, _, _) = self { return try resolve(asynchronous) }
+        if case .failure(let error) = self { throw error }
+        return self
+    }
+
+    nonisolated(nonsending) func resolvedAsync() async throws -> SwiftClosureCall {
+        if case .host(let host) = self { return try await host.resolvedAsync() }
+        if case .borrowed(_, _, let resolveAsynchronous?, _) = self {
+            return try await resolveAsynchronous()
+        }
+        return try resolved(asynchronous: true)
+    }
+
+    func retainingAsynchronousArgument(consuming: Bool) throws -> SwiftClosureCall {
+        if case .borrowed(_, _, _, let acquire?) = self { return try acquire(consuming) }
         if case .failure(let error) = self { throw error }
         return self
     }
@@ -66,7 +83,7 @@ public struct NativeSwiftClosure<Signature> {
 
     /// Retains an owned reference to this closure's captured state and code. A borrowed callback input must still be active and have a native @escaping declaration. Copying a nonescaping input throws; ordinary assignment keeps the original borrow scope. Preparing native code ownership can also throw.
     public func copy() throws -> Self {
-        if case .borrowed(_, let copy) = call { return Self(call: try copy()) }
+        if case .borrowed(_, let copy, _, _) = call { return Self(call: try copy()) }
         if case .failure(let error) = call { throw error }
         return self
     }
@@ -242,6 +259,10 @@ public struct NativeSwiftClosure<Signature> {
 }
 
 extension NativeSwiftClosure: SwiftClosureValue {
+    func retainingAsynchronousArgument(consuming: Bool) throws -> Any {
+        Self(call: try call.retainingAsynchronousArgument(consuming: consuming))
+    }
+
     func encodeClosure(consuming: Bool = false) throws -> NativeValueStorage {
         if consuming, case .borrowed = call { return try copy().encodeClosure(consuming: true) }
         let native: SwiftGenericClosurePlan?
@@ -398,13 +419,28 @@ extension NativeSwiftClosure: SwiftClosureValue {
                 try (value as! Self).encodeClosureResult(generic: generic, retainingCode: owner)
             },
             borrowing: { borrow, lifetime in
-                Self(
-                    call: .borrowed(
-                        resolve: { asynchronous in
-                            let access = try borrow.access(
-                                asynchronous: asynchronous,
-                                codeLifetime: lifetime
+                func makeCall(
+                    _ acquire: @escaping (Bool) throws -> NativeValueStorage
+                ) -> SwiftClosureCall {
+                    let copy: () throws -> SwiftClosureCall = {
+                        let access = try acquire(false)
+                        guard generic?.isEscaping == true else {
+                            throw ABIResolutionError.unsupportedDeclaration(
+                                "Copying a borrowed closure requires a native @escaping parameter."
                             )
+                        }
+                        return try withExtendedLifetime(access) {
+                            (try makeValue(
+                                access.address.load(as: ABISwiftClosureValue.self),
+                                nil,
+                                false,
+                                lifetime
+                            ) as! Self).call
+                        }
+                    }
+                    return .borrowed(
+                        resolve: { asynchronous in
+                            let access = try acquire(asynchronous)
                             let value = access.address.load(as: ABISwiftClosureValue.self)
                             let storage = try SwiftClosureStorage(
                                 adopting: value,
@@ -415,26 +451,18 @@ extension NativeSwiftClosure: SwiftClosureValue {
                             )
                             return .synchronous(storage, prepared)
                         },
-                        copy: {
-                            let access = try borrow.access(
-                                asynchronous: false,
-                                codeLifetime: lifetime
-                            )
-                            guard generic?.isEscaping == true else {
-                                throw ABIResolutionError.unsupportedDeclaration(
-                                    "Copying a borrowed closure requires a native @escaping parameter."
-                                )
-                            }
-                            return try withExtendedLifetime(access) {
-                                (try makeValue(
-                                    access.address.load(as: ABISwiftClosureValue.self),
-                                    nil,
-                                    false,
-                                    lifetime
-                                ) as! Self).call
-                            }
+                        copy: copy,
+                        acquireAsynchronousArgument: { consuming in
+                            if consuming { return try copy() }
+                            let access = try acquire(true)
+                            return makeCall { _ in access }
                         }
                     )
+                }
+                return Self(
+                    call: makeCall { asynchronous in
+                        try borrow.access(asynchronous: asynchronous, codeLifetime: lifetime)
+                    }
                 )
             },
             taking: { value, lifetime in

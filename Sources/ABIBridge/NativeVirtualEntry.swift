@@ -21,9 +21,10 @@ extension NativeVTable {
     ///
     /// Use ``entry(at:authentication:)`` adapter metadata for stripped identities, missing files, ambiguous aliases, or unsupported layouts. Construction of this view establishes table bounds and the subobject; the name does not establish class layout or a method signature.
     ///
-    /// Known null slots in the original image can still be selected by name. A live zero alone cannot identify a missing original entry.
-    public nonisolated func entry(
-        named name: String, using runtime: ABIRuntime = .shared
+    /// Search runs synchronously on the caller's thread and joins shared index preparation already in progress. Known null slots in the original image can still be selected by name. A live zero alone cannot identify a missing original entry.
+    public nonisolated func resolveEntryAndWait(
+        named name: String,
+        using runtime: ABIRuntime = .shared
     ) throws -> Entry {
         let address = unsafe storage.withUnsafeBytes { UInt(bitPattern: $0.baseAddress!) }
         let result = try runtime.virtualEntry(
@@ -31,21 +32,62 @@ extension NativeVTable {
             addressPoint: address,
             entryCount: entryCount
         )
-        return Entry(index: result.index, authentication: result.authentication, symbolName: result.symbol, declaration: .init(name: name, language: .cxx), table: self, image: result.image)
+        return Entry(
+            index: result.index,
+            authentication: result.authentication,
+            symbolName: result.symbol,
+            declaration: .init(name: name, language: .cxx),
+            table: self,
+            image: result.image
+        )
+    }
+
+    /// Selects a named entry without blocking the caller's executor.
+    ///
+    /// Original fixup and symbol lookup run on a worker and join shared index preparation already in progress. The table and its storage owner remain in the caller's isolation domain.
+    public nonisolated(nonsending) func resolveEntry(
+        named name: String,
+        using runtime: ABIRuntime = .shared
+    ) async throws -> Entry {
+        let address = unsafe storage.withUnsafeBytes { UInt(bitPattern: $0.baseAddress!) }
+        let count = entryCount
+        let result = try await NativePreparation.run {
+            try runtime.virtualEntry(named: name, addressPoint: address, entryCount: count)
+        }
+        return Entry(
+            index: result.index,
+            authentication: result.authentication,
+            symbolName: result.symbol,
+            declaration: .init(name: name, language: .cxx),
+            table: self,
+            image: result.image
+        )
     }
 
     /// Selects a bounded slot using a target-specific native adapter's schema. The caller establishes the absolute-table format and actual authentication identity. This does not inspect the current target or infer a signature.
-    @unsafe public func entry(at index: Int, authentication: NativePointerAuthentication) throws -> Entry {
+    @unsafe public func entry(
+        at index: Int,
+        authentication: NativePointerAuthentication
+    ) throws -> Entry {
         guard index >= 0, index < entryCount else {
             throw NativeDispatchError.entryOutOfBounds(index: index, count: entryCount)
         }
-        return Entry(index: index, authentication: authentication, symbolName: nil, declaration: nil, table: self, image: nil)
+        return Entry(
+            index: index,
+            authentication: authentication,
+            symbolName: nil,
+            declaration: nil,
+            table: self,
+            image: nil
+        )
     }
 }
 
 extension ABIRuntime {
     nonisolated func virtualEntry(
-        named name: String, addressPoint: UInt, entryCount: Int
+        named name: String,
+        addressPoint: UInt,
+        entryCount: Int
     ) throws -> VirtualEntryResolution {
         try resolver.virtualEntry(named: name, addressPoint: addressPoint, entryCount: entryCount)
     }

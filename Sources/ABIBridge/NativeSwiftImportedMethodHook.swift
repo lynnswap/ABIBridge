@@ -164,7 +164,9 @@ extension NativeSwiftMethod {
             importer: importer,
             provider: provider
         )
-        try validateImportedSwiftMember(selection, consumesArguments: consumesArguments)
+        try await NativePreparation.run { [self] in
+            try validateImportedSwiftMember(selection, consumesArguments: consumesArguments)
+        }
         return try await SwiftHookRegistry.shared.register(
             selection: selection,
             signature: prepared.signature,
@@ -183,7 +185,11 @@ extension NativeSwiftMethod {
             @escaping @Sendable (NativeSwiftMethodInvocation<Signature>, repeat each Argument)
             throws -> Result
     ) async throws -> NativeSwiftImportedFunctionHook {
-        let prepared = try prepareHook(requiresMainActor: false, onFailure: onFailure, body: body)
+        let prepared = try await prepareHook(
+            requiresMainActor: false,
+            onFailure: onFailure,
+            body: body
+        )
         return try await installImportedMethodHook(
             in: importer,
             from: provider,
@@ -204,7 +210,7 @@ extension NativeSwiftMethod {
                 NativeSwiftMethodInvocation<Signature>, repeat each Argument
             ) throws -> Result
     ) async throws -> NativeSwiftImportedFunctionHook {
-        let prepared = try prepareHook(requiresMainActor: true, onFailure: onFailure) {
+        let prepared = try await prepareHook(requiresMainActor: true, onFailure: onFailure) {
             (call: NativeSwiftMethodInvocation<Signature>, values: repeat each Argument) in
             let input = ObjCReplacementIsolatedValue(value: (call, (repeat each values)))
             return try MainActor.assumeIsolated {
@@ -329,7 +335,7 @@ extension NativeSwiftMethod {
             @escaping @Sendable (NativeSwiftMethodInvocation<Signature>, repeat each Argument)
             async throws -> Result
     ) async throws -> NativeSwiftImportedFunctionHook {
-        let prepared = try prepareAsyncHook(requiresMainActor: false, onFailure: onFailure) {
+        let prepared = try await prepareAsyncHook(requiresMainActor: false, onFailure: onFailure) {
             (call: NativeSwiftMethodInvocation<Signature>, values: repeat each Argument) in
             try await body(call, repeat each values)
         }
@@ -450,7 +456,7 @@ extension NativeSwiftMethod {
                 NativeSwiftMethodInvocation<Signature>, repeat each Argument
             ) async throws -> Result
     ) async throws -> NativeSwiftImportedFunctionHook {
-        let prepared = try prepareAsyncHook(requiresMainActor: true, onFailure: onFailure) {
+        let prepared = try await prepareAsyncHook(requiresMainActor: true, onFailure: onFailure) {
             (call: NativeSwiftMethodInvocation<Signature>, values: repeat each Argument) in
             let input = ObjCReplacementIsolatedValue(value: (call, (repeat each values)))
             let invoke:

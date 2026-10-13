@@ -26,6 +26,8 @@ try unsafe plan.install()
 try plan.restore()
 ```
 
+`prepareImportedReplacement` performs import lookup and predecessor capture on a worker while the caller suspends. Use `prepareImportedReplacementAndWait` for synchronous preparation with the same arguments. Both reuse runtime indexes and join required preparation already in progress; an earlier `ABIRuntime.prepare` call is optional. `install()` and `restore()` remain explicit synchronous operations.
+
 Preparation retains the selected loaded importers and captures their pointers without changing dispatch. Each slot's `original` calls its captured entry with the supplied ABI. An earlier interposer can make that entry differ from the directly resolved function; a null weak reference yields nil.
 
 Calls may enter the new implementation as soon as the first pointer is written. Prepare and synchronize replacement-owned state before installation. ABIBridge synchronizes its own operations, not globals accessed by the compiled replacement. Multiple pointers cannot be published atomically as a group.
@@ -34,7 +36,7 @@ Calls may enter the new implementation as soon as the first pointer is written. 
 
 The replacement must be a compiler-generated entry with the same physical calling convention, context, ownership, argument and result lowering, and isolation requirements. Equal Swift function-type metatypes do not prove the full native contract. Capturing closures use a separate representation and cannot be passed as compiled entries.
 
-`NativeSwiftMethod.prepareImportedReplacement` provides the corresponding operation for references to a concrete member. Its captured originals support `unsafeInvoke(on:_:)` with the original receiver plan, including selected mutation and ownership. This operation changes importing references; it does not modify a class's metadata table.
+`NativeSwiftMethod.prepareImportedReplacement` and `prepareImportedReplacementAndWait` provide the corresponding async and synchronous operations for references to a concrete member. Captured originals support `unsafeInvoke(on:_:)` with the original receiver plan, including selected mutation and ownership. This operation changes importing references; it does not modify a class's metadata table.
 
 Direct, inlined and specialized calls that bypass the selected pointers are unaffected. Same-image calls need suitable interposable linking to have replaceable references. The optional provider filter matches the dependency recorded in the binding, including reexport facades. It does not match the address of the currently installed implementation. No importing images are loaded automatically.
 
