@@ -86,7 +86,7 @@ try unsafe stop.unsafeInvoke(on: renderer)
 
 Type lookup obtains the nominal descriptor and requests complete metadata. For a generic type, supply `genericArguments: [.type(String.self)]`, or the corresponding arguments and packs in outer-to-inner declaration order. Type handles share the runtime's symbol indexes, retain their defining image and argument owners, and remain valid after removeCachedResults().
 
-Methods capture the selected implementation. Lookup prefers declarations in the type's defining image, then searches extension-qualified implementations in loaded images, and then walks superclass declarations in each superclass's defining image. Calls do not perform virtual redispatch. Existing receiver metadata also supplies the context for concrete members declared by a generic superclass.
+Concrete members capture the selected implementation. Lookup prefers declarations in the type's defining image, then searches extension-qualified implementations in loaded images, and then walks superclass declarations in each superclass's defining image. These calls do not perform virtual redispatch. Existing receiver metadata also supplies the context for concrete members declared by a generic superclass.
 
 ## Call a protocol extension
 
@@ -103,6 +103,24 @@ let text = try unsafe summary.unsafeInvoke(on: renderer)
 Lookup binds `Self` to the whole concrete type represented by `type`, including a specialization such as `Renderer<String>`, and checks its protocol conformance and extension constraints. Supply `genericArguments:` only for type parameters introduced by the method.
 
 Getters, setters, and static members use the same rule with their corresponding lookup factories and complete extension-qualified declarations.
+
+## Call a protocol requirement getter
+
+For an owned `NativeSwiftValue` named `receiver` whose concrete type conforms to `Example.Provider`, use the complete protocol getter declaration:
+
+```swift
+let payloadType = try runtime.resolveSwiftTypeAndWait(named: "Example.Payload")
+let getter = try receiver.type.resolveGetterAndWait(
+    named: "Example.Provider.payload.getter : Example.Payload",
+    as: (() -> NativeSwiftValue).self,
+    valueABIs: [payloadType: try .opaque(named: payloadType.name)]
+)
+let payload = try unsafe getter.unsafeInvoke(on: receiver)
+```
+
+This example assumes the native synchronous getter returns a resilient `Payload` through indirect result storage. The returned value owns its contents; see <doc:SwiftOpaqueResults> for runtime values and formal value ABIs.
+
+Lookup resolves the protocol's dispatch thunk in loaded images and binds `Self` to the receiver's concrete type. It checks the native conformance before invocation and retains the protocol and conformance implementation images. The native thunk selects the getter implementation from that conformance. A non-class-bound protocol keeps its formally indirect `Self` convention even when the concrete receiver is a class.
 
 ## Await type and member preparation
 

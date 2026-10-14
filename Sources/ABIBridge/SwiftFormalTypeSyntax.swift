@@ -4,15 +4,25 @@ import Foundation
 extension SwiftGenericDeclaration {
     static func callable(
         in syntax: SwiftSyntax
-    ) throws -> (declaration: SwiftSyntax.Node, accessor: String?) {
+    ) throws -> (
+        declaration: SwiftSyntax.Node, accessor: String?, protocolRequirement: SwiftSyntax.Node?
+    ) {
         var entry = syntax.root
         while ["Global", "Static"].contains(entry.kind) {
             entry = try entry.requiredChild()
         }
-        if ["Getter", "Setter"].contains(entry.kind) {
-            return (try entry.requiredChild(), entry.kind)
+        var protocolRequirement: SwiftSyntax.Node?
+        if entry.kind == "DispatchThunk",
+            let getter = entry.child(kind: "Getter"),
+            let owner = getter.child(kind: "Variable")?.child(kind: "Protocol")
+        {
+            protocolRequirement = owner
+            entry = getter
         }
-        return (entry, nil)
+        if ["Getter", "Setter"].contains(entry.kind) {
+            return (try entry.requiredChild(), entry.kind, protocolRequirement)
+        }
+        return (entry, nil, nil)
     }
 
     init(
@@ -21,10 +31,14 @@ extension SwiftGenericDeclaration {
         declaredSignature: SwiftDeclaredSignature? = nil,
         caller: SwiftFunctionSignature? = nil
     ) throws {
-        let (declaration, accessor) = try Self.callable(in: SwiftSyntax(symbol: linkageName))
-        // Protocol extensions omit Self from the function's generic signature.
+        let (declaration, accessor, protocolRequirement) = try Self.callable(
+            in: SwiftSyntax(symbol: linkageName)
+        )
+        // Protocol members omit Self from the function's generic signature.
         // Member parameters start at the depth after that implicit parameter.
-        let protocolName = try declaration.child(kind: "Extension")?.child(kind: "Protocol")?.name()
+        let protocolName = try
+            (protocolRequirement
+            ?? declaration.child(kind: "Extension")?.child(kind: "Protocol"))?.name()
         let context = protocolName == nil ? context : nil
         protocolSelf = protocolName.map { _ in .named("A", []) }
         // A nominal ~Copyable parameter may have a Copyable-only member.

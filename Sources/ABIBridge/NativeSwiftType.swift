@@ -332,24 +332,41 @@ public actor NativeSwiftType: Hashable {
             let request = try declaration(ownerName, usesBinding)
             if originalRequest == nil { originalRequest = request }
             let belongs = !exact || SwiftMemberLookup.belongs(request.name, to: ownerName)
-            if exact, !belongs, let signature,
-                SymbolIndex.extensionMemberName(request.name) != nil
-            {
-                let symbol = try resolveDeclaredMember(request, in: ownerImage, exact: true)
-                let (callable, _) = try SwiftGenericDeclaration.callable(
-                    in: SwiftSyntax(symbol: symbol.linkageName)
-                )
-                if callable.child(kind: "Extension")?.child(kind: "Protocol") != nil {
-                    let generic = try SwiftGenericCallPlan(
-                        symbol: symbol,
-                        genericArguments: genericArguments,
-                        signature: SwiftFunctionSignature(signature),
-                        resolver: resolver,
-                        implicitSelf: self,
-                        declaredSignature: declaredSignature,
-                        valueABIs: valueABIs
+            if exact, !belongs, let signature {
+                let symbol: ResolvedSymbol?
+                if SymbolIndex.extensionMemberName(request.name) != nil {
+                    symbol = try resolveDeclaredMember(request, in: ownerImage, exact: true)
+                } else if request.name.contains(".getter : ") {
+                    do {
+                        symbol = try resolver.resolve(
+                            .init(name: "dispatch thunk of " + request.name, language: .swift),
+                            in: .automatic,
+                            loading: .loadedOnly
+                        )
+                    } catch ABIResolutionError.declarationNotFound {
+                        symbol = nil
+                    }
+                } else {
+                    symbol = nil
+                }
+                if let symbol {
+                    let (callable, _, requirement) = try SwiftGenericDeclaration.callable(
+                        in: SwiftSyntax(symbol: symbol.linkageName)
                     )
-                    return (symbol, metadata, generic)
+                    if requirement != nil
+                        || callable.child(kind: "Extension")?.child(kind: "Protocol") != nil
+                    {
+                        let generic = try SwiftGenericCallPlan(
+                            symbol: symbol,
+                            genericArguments: genericArguments,
+                            signature: SwiftFunctionSignature(signature),
+                            resolver: resolver,
+                            implicitSelf: self,
+                            declaredSignature: declaredSignature,
+                            valueABIs: valueABIs
+                        )
+                        return (symbol, metadata, generic)
+                    }
                 }
             }
             if belongs && (!usesBinding || exact || explicitSignature) {
@@ -1251,6 +1268,8 @@ extension NativeSwiftType {
     /// Use (() -> Value).self for a synchronous nonthrowing getter. Include its native throws type, async effect, and isolation convention when present.
     ///
     /// For a throwing generic getter, declaredAs supplies the source function type, such as "() throws(B) -> A". Getter symbols omit the formal error type; A and B refer to the enclosing declaration's generic parameters. valueABIs supplies formal ABIs for runtime-only closed nominal values. Receiver ownership and writeback follow the ordinary member contract. receiverABI can describe runtime-only fixed components or formally indirect self, as for method lookup.
+    ///
+    /// A complete protocol requirement getter declaration binds Self to this concrete type and resolves its dispatch thunk in loaded images. Lookup requires the type's native conformance; invocation uses that conformance's implementation and formal Self convention.
     public nonisolated func resolveGetterAndWait<Signature>(
         named name: String,
         as signature: Signature.Type,
