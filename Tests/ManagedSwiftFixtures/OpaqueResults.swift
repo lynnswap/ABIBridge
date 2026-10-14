@@ -176,6 +176,12 @@ extension ExistentialValue {
 extension ExistentialValue where Self == InlineExistentialValue {
     @inline(never) public func protocolExtensionConcreteNumber() -> Int64 { number }
 }
+extension ExistentialValue where Self == ProtocolExtensionObject {
+    public var protocolExtensionEqualClassValue: Self {
+        get { self }
+        set { self = newValue }
+    }
+}
 extension ExistentialObjectValue {
     @inline(never) public func protocolExtensionNumber() -> Int64 { number }
 }

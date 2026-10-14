@@ -399,6 +399,14 @@ struct SwiftOpaqueResultTests {
         try #require(throws: ABIResolutionError.self) { _ = try classSetter.bind(to: reset) }
         try unsafe classSetter.unsafeInvoke(on: owner, reset)
         try owner.withCopy { #expect(($0 as? ProtocolExtensionObject) === reset) }
+        let equalSetter = try await type.resolveSetter(
+            named:
+                "(extension in ManagedSwiftFixtures):ManagedSwiftFixtures.ExistentialValue< where A == ManagedSwiftFixtures.ProtocolExtensionObject>.protocolExtensionEqualClassValue.setter : ManagedSwiftFixtures.ProtocolExtensionObject",
+            as: ProtocolExtensionObject.self
+        )
+        try #require(throws: ABIResolutionError.self) { _ = try equalSetter.bind(to: replacement) }
+        try unsafe equalSetter.unsafeInvoke(on: owner, replacement)
+        try owner.withCopy { #expect(($0 as? ProtocolExtensionObject) === replacement) }
     }
 
     @Test func protocolExtensionSuperclassConstraintsPreserveRequiredWitnesses() async throws {
@@ -418,7 +426,10 @@ struct SwiftOpaqueResultTests {
                 named:
                     "(extension in ManagedSwiftFixtures):ManagedSwiftFixtures.GenericWitnessA< where A: ManagedSwiftFixtures.\(superclass)>.\(member)<A where A1: ManagedSwiftFixtures.GenericWitnessZ>(A1) -> Swift.Int64",
                 as: ((GenericWitnessValue) -> Int64).self,
-                genericArguments: [.type(GenericWitnessValue.self)]
+                genericArguments: [.type(GenericWitnessValue.self)],
+                declaredAs: superclass == "ProtocolExtensionObject"
+                    ? "<A, A1 where A: ManagedSwiftFixtures.ProtocolExtensionObject, A1: ManagedSwiftFixtures.GenericWitnessZ> (A1) -> Swift.Int64"
+                    : nil
             )
             let value = try unsafe method.unsafeInvoke(GenericWitnessValue())
             #expect(value == 42)
@@ -443,6 +454,8 @@ struct SwiftOpaqueResultTests {
                     "(extension in ManagedSwiftFixtures):ManagedSwiftFixtures.GenericWitnessA.\(name)<A where A: ManagedSwiftFixtures.GenericSourceNested<A1>, A1: ManagedSwiftFixtures.GenericWitnessZ>() -> Swift.Int64",
                 as: (() -> Int64).self,
                 genericArguments: [.type(GenericWitnessValue.self)],
+                declaredAs:
+                    "<A, A1 where A: ManagedSwiftFixtures.GenericSourceNested<A1>, A1: ManagedSwiftFixtures.GenericWitnessZ> () -> Swift.Int64",
                 mutating: mutating
             )
             #expect(try unsafe method.unsafeInvoke(on: owner) == 2)

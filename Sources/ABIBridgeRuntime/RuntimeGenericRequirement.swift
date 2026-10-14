@@ -54,12 +54,3 @@ package struct RuntimeProtocolLayout {
         return (0..<count).map { RuntimeGenericRequirement(address.advanced(by: 24 + $0 * 12)) }
     }
 }
-
-// Swift 6.3 ABI/Metadata.h and MetadataValues.h: ProtocolConformanceDescriptor and ConformanceFlags.
-package struct RuntimeProtocolConformanceLayout {
-    private let address: UnsafeRawPointer
-    package init(_ address: UnsafeRawPointer) { self.address = address }
-    private var flags: UInt32 { address.loadUnaligned(fromByteOffset: 12, as: UInt32.self) }
-    package var isRetroactive: Bool { flags & (1 << 6) != 0 }
-    package var hasConditionalRequirements: Bool { flags & 0xff00_ff00 != 0 }
-}

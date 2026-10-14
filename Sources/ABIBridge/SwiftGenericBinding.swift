@@ -475,9 +475,9 @@ struct SwiftGenericBinding: Sendable {
         additionallyFulfilledBy fulfilled: Fulfillments? = nil
     ) throws {
         guard declaration.abiRequirements == nil else { return }
-        // Runtime availability cannot recover the provider's imports or proofs
-        // of conditional conformance, so it cannot establish whether a remaining
-        // implicit superclass witness was omitted.
+        // Runtime availability cannot recover the provider's imports, dependency
+        // versions, or proofs of conditional conformance, so it cannot establish
+        // whether a remaining implicit superclass witness was omitted.
         for requirement in declaration.requirements {
             guard case .superclass(let subject, let superclass) = requirement else { continue }
             for (source, _) in try unfulfilledMetadata(
@@ -554,7 +554,6 @@ struct SwiftGenericBinding: Sendable {
             guard let descriptor = conformance.descriptor else { continue }
             let subject = try canonicalType(of: conformance.subject)
             guard isArchetype(subject) else { continue }
-            if try superclassProvides(conformance) { continue }
             let name = try descriptor.name()
             let representative = try equivalentTypes(of: subject).min(by: subjectLess) ?? subject
             sources.append(
@@ -598,35 +597,6 @@ struct SwiftGenericBinding: Sendable {
             }
         }
         return required.map(\.index)
-    }
-
-    private func superclassProvides(_ conformance: Conformance) throws -> Bool {
-        guard let protocolSelf = declaration.protocolSelf,
-            try sameFormalType(conformance.subject, protocolSelf),
-            declaration.implicitRequirements.contains(
-                .conformance(conformance.subject, conformance.name)
-            ),
-            let descriptor = conformance.descriptor
-        else { return false }
-        for requirement in declaration.requirements {
-            guard case .superclass(let subject, let superclass) = requirement,
-                try equivalentTypes(of: protocolSelf).contains(where: {
-                    try sameFormalType($0, subject)
-                })
-            else { continue }
-            for type in try types(superclass) {
-                guard
-                    let witness = unsafe descriptor.withUnsafeAddress({
-                        ABISwiftConformance(unsafeBitCast(type, to: UnsafeRawPointer.self), $0)
-                    }), let address = ABISwiftConformanceDescriptor(witness)
-                else { continue }
-                let layout = RuntimeProtocolConformanceLayout(address)
-                // These conformances are known from the imported type and
-                // protocol declarations without additional requirements.
-                if !layout.isRetroactive && !layout.hasConditionalRequirements { return true }
-            }
-        }
-        return false
     }
 
     private static func key(_ name: String) throws -> [UInt8] {

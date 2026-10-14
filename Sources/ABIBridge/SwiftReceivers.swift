@@ -8,9 +8,9 @@ struct SwiftReceiverCodec: Sendable {
     let clone: @Sendable (NativeValueStorage) throws -> NativeValueStorage
     let destroy: @Sendable (UnsafeMutableRawPointer) -> Void
 
-    init<Value>(_ valueType: Value.Type) throws {
+    init<Value>(_ valueType: Value.Type, formalType: CValueType? = nil) throws {
         let codec = try SwiftValueCodec<Value>()
-        type = codec.type
+        type = formalType ?? codec.type
         representation = ObjectIdentifier(Value.self)
         encode = { value in
             guard let value = value as? Value else {
@@ -64,8 +64,10 @@ struct SwiftReceiverCodec: Sendable {
         destroy = { ABISwiftDestroyValue(unsafeBitCast(metadata, to: UnsafeRawPointer.self), $0) }
     }
 
-    static func make(for type: Any.Type) throws -> Self {
-        func open<Value>(_ type: Value.Type) throws -> Self { try Self(type) }
+    static func make(for type: Any.Type, formalType: CValueType? = nil) throws -> Self {
+        func open<Value>(_ type: Value.Type) throws -> Self {
+            try Self(type, formalType: formalType)
+        }
         return try _openExistential(type, do: open)
     }
 }
@@ -85,11 +87,15 @@ struct SwiftReceiverPlan: Sendable {
         metadata: Any.Type,
         isMutating: Bool?,
         isConsuming: Bool,
-        isProtocolSelf: Bool,
+        protocolSelf: SwiftFormalType?,
         validateClass: Bool
     ) throws {
         let indirect = ABISwiftValueIsIndirect(codec.type.handle)
-        let isMutating = isMutating ?? (!isConsuming && (indirect || !(metadata is AnyClass)))
+        // A concrete same-type Self keeps a protocol setter's inout default.
+        let isMutating =
+            isMutating
+            ?? (!isConsuming
+                && (protocolSelf?.nominalDeclaration != nil || indirect || !(metadata is AnyClass)))
         guard !(isMutating && isConsuming) else {
             throw ABIResolutionError.unsupportedDeclaration(
                 "Swift self cannot be both mutating and consuming."
@@ -100,7 +106,7 @@ struct SwiftReceiverPlan: Sendable {
         self.isMutating = isMutating
         self.isConsuming = isConsuming
         // Mutating protocol Self addresses the receiver slot, even when class-bound.
-        if (isProtocolSelf && isMutating) || indirect {
+        if (protocolSelf != nil && isMutating) || indirect {
             mode = .address
             expectedClass = nil
         } else if let objectType = metadata as? AnyClass {
