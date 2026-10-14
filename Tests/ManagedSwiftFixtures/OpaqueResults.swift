@@ -84,6 +84,137 @@ private struct HiddenConstrainedOpaque<Value: ExistentialValue>: ExistentialValu
     let value: Value
     var number: Int64 { value.number }
 }
+public struct ProtocolExtensionValue<Value: Sendable>: ExistentialValue {
+    public let value: Value
+    public let number: Int64
+    public init(_ value: Value, _ number: Int64) { self.value = value; self.number = number }
+}
+public class ProtocolExtensionObject: ExistentialValue, ExistentialObjectValue, @unchecked Sendable
+{
+    public let token: ErrorLifetimeToken
+    public let number: Int64
+    public init(_ token: ErrorLifetimeToken, _ number: Int64) {
+        self.token = token; self.number = number
+    }
+}
+public final class ProtocolExtensionDerivedObject: ProtocolExtensionObject, @unchecked Sendable {}
+extension ProtocolExtensionObject: GenericWitnessA {
+    public static func first() -> Int64 { 4 }
+}
+public final class ProtocolExtensionWitnessSubclass: OpaqueBase, GenericWitnessA,
+    @unchecked Sendable
+{
+    public static func first() -> Int64 { 4 }
+}
+extension GenericWitnessA where Self: ProtocolExtensionObject {
+    @inline(never) public func protocolExtensionSuperclassWitness<Other: GenericWitnessZ>(
+        _ value: Other
+    ) -> Int64 {
+        Self.first() * 10 + Other.last()
+    }
+}
+extension GenericWitnessA where Self: OpaqueBase {
+    @inline(never) public func protocolExtensionSubclassWitness<Other: GenericWitnessZ>(
+        _ value: Other
+    ) -> Int64 {
+        Self.first() * 10 + Other.last()
+    }
+}
+extension GenericSourceNested: GenericWitnessA {
+    public static func first() -> Int64 { 4 }
+}
+extension GenericValueBox: GenericWitnessA {
+    public static func first() -> Int64 { 4 }
+}
+extension GenericPhantom: GenericWitnessA {
+    public static func first() -> Int64 { 4 }
+}
+extension GenericWitnessValue: GenericSourceChild {
+    public var sourceNumber: Int64 { 2 }
+}
+extension GenericWitnessA {
+    @inline(never) public func protocolExtensionSuperclassSource<Value: GenericWitnessZ>() -> Int64
+    where Self: GenericSourceNested<Value> { Value.last() }
+    @inline(never)
+    public mutating func protocolExtensionMutatingSuperclassSource<Value: GenericWitnessZ>()
+        -> Int64
+    where Self: GenericSourceNested<Value> { Value.last() }
+    @inline(never)
+    public mutating func protocolExtensionEqualClassSource<Value: GenericSourceChild>(
+        _ source: GenericSourceBox<Value>
+    ) -> Int64
+    where Self == GenericSourceNested<Value> {
+        self = GenericSourceNested(source.value)
+        return self.value.sourceNumber
+    }
+    @inline(never) public func protocolExtensionIndirectSource<Value: GenericWitnessZ>() -> Int64
+    where Self == GenericValueBox<Value> { Value.last() }
+    @inline(never) public func protocolExtensionDirectSource<Value: GenericWitnessZ>() -> Int64
+    where Self == GenericPhantom<Value> { self.number + Value.last() }
+    @inline(never) public static func protocolExtensionThinStaticSource<Value: GenericWitnessZ>()
+        -> Int64
+    where Self == GenericPhantom<Value> { Value.last() }
+}
+extension ExistentialValue {
+    public var protocolExtensionValue: Self {
+        get { self }
+        set { self = newValue }
+    }
+    @inline(never) public static func protocolExtensionStatic(_ value: Self) -> Int64 {
+        value.number
+    }
+    @inline(never) public func protocolExtensionOpaque() -> some ExistentialValue {
+        HiddenConstrainedOpaque(value: self)
+    }
+    @inline(never) public func protocolExtensionPair<Other>(_ other: Other) -> (Self, Other) {
+        (self, other)
+    }
+    @inline(never) public mutating func protocolExtensionReplace(_ replacement: Self) {
+        self = replacement
+    }
+}
+extension ExistentialValue where Self == InlineExistentialValue {
+    @inline(never) public func protocolExtensionConcreteNumber() -> Int64 { number }
+}
+extension ExistentialValue where Self == ProtocolExtensionObject {
+    public var protocolExtensionEqualClassValue: Self {
+        get { self }
+        set { self = newValue }
+    }
+}
+extension ExistentialObjectValue {
+    @inline(never) public func protocolExtensionNumber() -> Int64 { number }
+}
+public protocol ProtocolExtensionTextObject: AnyObject { var text: String { get set } }
+public protocol ProtocolExtensionTextValue {
+    var text: String { get }
+    func updateText(_ text: String)
+}
+extension RuntimeKeyPathReferenceRoot: ProtocolExtensionTextObject, ProtocolExtensionTextValue {
+    public func updateText(_ text: String) { self.text = text }
+}
+extension ProtocolExtensionTextObject {
+    public var protocolExtensionText: String {
+        get { text }
+        set { text = newValue }
+    }
+}
+extension ProtocolExtensionTextValue where Self: AnyObject {
+    public var protocolExtensionConstrainedText: String {
+        get { text }
+        set { updateText(newValue) }
+    }
+}
+extension ExistentialValue where Self: AnyObject {
+    public var protocolExtensionClassValue: Self {
+        get { self }
+        mutating set { self = newValue }
+    }
+    @inline(never) public func protocolExtensionClassNumber() -> Int64 { number }
+    @inline(never) public mutating func protocolExtensionClassReplace(_ replacement: Self) {
+        self = replacement
+    }
+}
 @inline(never) public func makeConstrainedOpaque<Value: ExistentialValue>(_ value: Value) -> some ExistentialValue {
     HiddenConstrainedOpaque(value: value)
 }

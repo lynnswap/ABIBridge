@@ -88,6 +88,22 @@ Type lookup obtains the nominal descriptor and requests complete metadata. For a
 
 Methods capture the selected implementation. Lookup prefers declarations in the type's defining image, then searches extension-qualified implementations in loaded images, and then walks superclass declarations in each superclass's defining image. Calls do not perform virtual redispatch. Existing receiver metadata also supplies the context for concrete members declared by a generic superclass.
 
+## Call a protocol extension
+
+For a renderer conforming to `Example.Renderable`, resolve the protocol extension's `summary()` using its complete source declaration:
+
+```swift
+let summary = try type.resolveMethodAndWait(
+    named: "(extension in Example):Example.Renderable.summary() -> Swift.String",
+    as: (() -> String).self
+)
+let text = try unsafe summary.unsafeInvoke(on: renderer)
+```
+
+Lookup binds `Self` to the whole concrete type represented by `type`, including a specialization such as `Renderer<String>`, and checks its protocol conformance and extension constraints. Supply `genericArguments:` only for type parameters introduced by the method.
+
+Getters, setters, and static members use the same rule with their corresponding lookup factories and complete extension-qualified declarations.
+
 ## Await type and member preparation
 
 All type and member factories offer async `resolve…` and synchronous `resolve…AndWait` forms with the same arguments. Async lookup moves search, metadata, and call preparation to a worker queue while the caller suspends. `AndWait` runs on the caller's thread or blocks while joining required work already running. Both reuse indexes and call layouts. `ABIRuntime` and `NativeSwiftType` are actors.

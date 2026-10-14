@@ -200,6 +200,9 @@ struct SwiftConstrainedExtensionTests {
                         }
                     }
                     public struct Box<Value: Score> {}
+                    extension Score where Self: Base {
+                        public static func protocolScore() -> Int { Self.score() }
+                    }
                     extension Box where Value: Base {
                         public static func entry<Failure: Error>(_ error: Failure, _ shouldThrow: Bool) throws(Failure) -> Int {
                             if shouldThrow { throw error }
@@ -285,7 +288,92 @@ struct SwiftConstrainedExtensionTests {
                 declaredAs: "<A where A: " + baseModule + ".Base" + witness + "> () -> Swift.Int"
             )
             #expect(try unsafe getter.unsafeInvoke() == 42)
+            let protocolDeclaration =
+                "static (extension in \(module)):\(baseModule).Score< where A: \(baseModule).Base>.protocolScore() -> Swift.Int"
+            do {
+                _ = try await baseType.resolveStaticMethod(
+                    named: protocolDeclaration,
+                    as: (() -> Int).self
+                )
+                Issue.record(
+                    "A retroactive superclass conformance requires the provider's canonical signature"
+                )
+            } catch ABIResolutionError.unsupportedDeclaration(let reason) {
+                #expect(reason.contains("declaredAs:"))
+            }
+            let protocolScore = try await baseType.resolveStaticMethod(
+                named: protocolDeclaration,
+                as: (() -> Int).self,
+                declaredAs: "<A where A: " + baseModule + ".Base" + witness + "> () -> Swift.Int"
+            )
+            #expect(try unsafe protocolScore.unsafeInvoke() == 42)
         }
+    }
+
+    @Test func canonicalDeclarationsPreserveProviderDependencyVersions() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString
+        )
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let baseModule = "VersionedBaseProvider"
+        let providerModule = "VersionedExtensionProvider"
+        let source = """
+            public protocol Score { static func score() -> Int }
+            open class Base {
+                public init() {}
+                public static func score() -> Int { 42 }
+            }
+            """
+        let base = try FixtureLibrary(
+            load: false,
+            swiftModule: baseModule,
+            swiftSource: source,
+            linkArguments: [
+                "-emit-module", "-emit-module-path",
+                directory.appendingPathComponent(baseModule + ".swiftmodule").path,
+            ]
+        )
+        defer { base.cleanup() }
+        let provider = try FixtureLibrary(
+            load: false,
+            swiftModule: providerModule,
+            swiftSource: """
+                import \(baseModule)
+                extension Score where Self: Base {
+                    public static func protocolScore() -> Int { Self.score() }
+                }
+                """,
+            linkArguments: ["-I", directory.path, base.libraryURL.path]
+        )
+        defer { provider.cleanup() }
+        try source.replacingOccurrences(of: "class Base {", with: "class Base: Score {")
+            .write(
+                to: base.directory.appendingPathComponent("fixture.swift"),
+                atomically: true,
+                encoding: .utf8
+            )
+        try base.rebuild(linkingWith: [])
+        try base.load()
+        try provider.load()
+        let type = try await ABIRuntime().resolveSwiftType(
+            named: baseModule + ".Base", in: .path(base.libraryURL)
+        )
+        let declaration =
+            "static (extension in \(providerModule)):\(baseModule).Score< where A: \(baseModule).Base>.protocolScore() -> Swift.Int"
+        do {
+            _ = try await type.resolveStaticMethod(named: declaration, as: (() -> Int).self)
+            Issue.record("A newer superclass conformance does not establish the provider's ABI")
+        } catch ABIResolutionError.unsupportedDeclaration(let reason) {
+            #expect(reason.contains("declaredAs:"))
+        }
+        let method = try await type.resolveStaticMethod(
+            named: declaration,
+            as: (() -> Int).self,
+            declaredAs:
+                "<A where A: \(baseModule).Base, A: \(baseModule).Score> () -> Swift.Int"
+        )
+        #expect(try unsafe method.unsafeInvoke() == 42)
     }
 
     @Test func qualifiedExternalExtensionsNormalizeCollectionSpellings() async throws {
@@ -367,6 +455,11 @@ struct SwiftConstrainedExtensionTests {
         )
         #expect(try unsafe numberMethod.unsafeInvoke("number:") == number.title("number:"))
         #expect(try unsafe textMethod.unsafeInvoke("text:") == text.title("text:"))
+        let qualified = try await runtime.object(number).resolveMethod(
+            named: numberMethod.method.symbol.declaration.name,
+            as: ((String) -> String).self
+        )
+        #expect(try unsafe qualified.unsafeInvoke("qualified:") == number.title("qualified:"))
         let getter = try await runtime.object(number).resolveGetter(
             named: "number",
             as: (() -> Int).self

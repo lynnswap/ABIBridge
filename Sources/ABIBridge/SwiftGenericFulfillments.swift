@@ -6,9 +6,13 @@ extension SwiftGenericBinding {
         var types: [SwiftFormalType] = []
         var conformances: [(SwiftFormalType, Set<String>)] = []
         var shapes: Set<String> = []
+        var isEmpty: Bool { types.isEmpty && conformances.isEmpty && shapes.isEmpty }
     }
 
-    func argumentFulfillments() throws -> Fulfillments {
+    func argumentFulfillments(
+        _ arguments: [SwiftFormalType],
+        typeMetadata: SwiftFormalType? = nil
+    ) throws -> Fulfillments {
         var result = Fulfillments()
         func archetype(_ type: SwiftFormalType) -> Bool {
             isArchetype(type)
@@ -83,7 +87,8 @@ extension SwiftGenericBinding {
             default: return
             }
         }
-        try declaration.arguments.forEach(consider)
+        if let typeMetadata { try searchNominal(typeMetadata) }
+        try arguments.forEach(consider)
         return result
     }
 }

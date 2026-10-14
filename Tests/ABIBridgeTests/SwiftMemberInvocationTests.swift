@@ -129,6 +129,17 @@ private struct RejectingSwiftPoint: ABIBridgeValue {
     @inline(never) public mutating func advance() { pointer += 1 }
 }
 
+public protocol SwiftMemberPointerProtocol {
+    var pointer: UnsafeMutablePointer<Int64> { get set }
+}
+
+extension SwiftMemberPointer: SwiftMemberPointerProtocol {}
+
+extension SwiftMemberPointerProtocol {
+    @inline(never) public func pointedValue() -> Int64 { pointer.pointee }
+    @inline(never) public mutating func advancePointer() { pointer += 1 }
+}
+
 private final class SwiftPointerAllocation {
     let pointer: UnsafeMutablePointer<Int64>
     private let count: Int
@@ -538,6 +549,44 @@ struct SwiftMemberInvocationTests {
             try #require(observed != nil)
             let pointer = try unsafe value.storage.read(as: UnsafeMutablePointer<Int64>.self)
             #expect(pointer.pointee == 1010)
+        }
+        #expect(observed == nil)
+    }
+
+    @Test func protocolExtensionReceiversPreserveExplicitAdapters() async throws {
+        let type = try await ABIRuntime.shared.resolveSwiftType(
+            named: "ABIBridgeTests.SwiftMemberPointer",
+            as: SwiftPointerView.self
+        )
+        let read = try await type.resolveMethod(
+            named:
+                "(extension in ABIBridgeTests):ABIBridgeTests.SwiftMemberPointerProtocol.pointedValue() -> Swift.Int64",
+            as: (() -> Int64).self
+        )
+        let advance = try await type.resolveMethod(
+            named:
+                "(extension in ABIBridgeTests):ABIBridgeTests.SwiftMemberPointerProtocol.advancePointer() -> ()",
+            as: (() -> Void).self,
+            mutating: true
+        )
+        weak var observed: SwiftPointerAllocation?
+        do {
+            var value: SwiftPointerView = {
+                let allocation = SwiftPointerAllocation()
+                observed = allocation
+                return SwiftPointerView(
+                    nativeValue: NativeValue(type: .pointer, retaining: allocation) {
+                        $0.baseAddress!.storeBytes(
+                            of: allocation.pointer,
+                            as: UnsafeMutablePointer<Int64>.self
+                        )
+                    }
+                )
+            }()
+            #expect(try unsafe read.unsafeInvoke(on: value) == 10)
+            try unsafe advance.unsafeInvoke(on: &value)
+            #expect(try unsafe read.unsafeInvoke(on: value) == 20)
+            #expect(observed != nil)
         }
         #expect(observed == nil)
     }

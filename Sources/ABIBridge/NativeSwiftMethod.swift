@@ -42,7 +42,10 @@ public struct NativeSwiftMethod<Signature>: Sendable {
     ///
     /// Binding reuses the prepared call without calling the member. Invocation validates the object representation and receiver type using the original plan, and honors its ownership and isolation contract. Value receivers use explicit invocation.
     public func bind(to receiver: AnyObject) throws -> NativeBoundSwiftMethod<Signature> {
-        guard self.receiver.mode == .object else {
+        guard
+            self.receiver.mode == .object
+                || (self.receiver.metadata is AnyClass && !self.receiver.isMutating)
+        else {
             throw ABIResolutionError.unsupportedDeclaration("Only Swift class members can bind a retained object.")
         }
         return NativeBoundSwiftMethod(method: self, receiver: receiver)

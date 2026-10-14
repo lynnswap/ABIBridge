@@ -638,11 +638,12 @@ struct SwiftGenericCallPlan: Sendable {
         signature: SwiftFunctionSignature,
         resolver: SymbolResolver,
         enclosing: SwiftGenericTypeMetadata? = nil,
+        implicitSelf: NativeSwiftType? = nil,
         receiver: SwiftReceiverMode? = nil,
         declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) throws {
-        let context = try enclosing.flatMap {
+        let context = try (implicitSelf == nil ? enclosing : nil).flatMap {
             $0.arguments.isEmpty ? nil : try SwiftGenericTypeContext(metadata: $0.value)
         }
         let declared = try declaredSignature.map(SwiftDeclaredSignature.init)
@@ -654,7 +655,8 @@ struct SwiftGenericCallPlan: Sendable {
         )
         var binding = try SwiftGenericBinding(
             declaration: declaration,
-            arguments: (enclosing?.arguments ?? []) + genericArguments,
+            arguments: (implicitSelf.map { [.type($0)] } ?? enclosing?.arguments ?? [])
+                + genericArguments,
             signature: signature,
             resolver: resolver,
             enclosing: context,
@@ -718,15 +720,7 @@ struct SwiftGenericCallPlan: Sendable {
         self.context = context
         self.receiver = receiver
         enclosingMetadata = enclosing?.value
-        if let context, let receiver, receiver != .value {
-            let prefix: [UInt] =
-                receiver == .address ? [unsafeBitCast(enclosing!.value, to: UInt.self)] : []
-            metadata = try SwiftGenericArgumentBuffer(
-                prefix + binding.metadataArguments(fulfilledBy: context)
-            )
-        } else {
-            metadata = SwiftGenericArgumentBuffer(binding.metadataArguments)
-        }
+        metadata = SwiftGenericArgumentBuffer(binding.metadataArguments)
         parameters = try SwiftGenericParameters(
             formal: declaration.arguments,
             actual: signature.parameters,
@@ -747,37 +741,80 @@ struct SwiftGenericCallPlan: Sendable {
         } else {
             errorType = nil
         }
+        if let receiver { metadata = try includingReceiver(receiver).metadata }
     }
 
     func includingReceiver(_ receiver: SwiftReceiverMode) throws -> Self {
         var result = self
         result.receiver = receiver
-        if let context, let enclosingMetadata, receiver != .value {
-            let prefix: [UInt] =
-                receiver == .address ? [unsafeBitCast(enclosingMetadata, to: UInt.self)] : []
-            result.metadata = try SwiftGenericArgumentBuffer(
-                prefix + binding.metadataArguments(fulfilledBy: context)
+        let source = try result.receiverMetadata()
+        result.metadata = try SwiftGenericArgumentBuffer(
+            source.prefix
+                + binding.metadataArguments(
+                    fulfilledBy: result.receiverContext,
+                    additionallyFulfilledBy: source.fulfilled
             )
-        }
+        )
         return result
     }
 
+    private var receiverContext: SwiftGenericTypeContext? {
+        receiver == .object || receiver == .address ? context : nil
+    }
+
+    private func receiverMetadata() throws -> (
+        prefix: [UInt], fulfilled: SwiftGenericBinding.Fulfillments
+    ) {
+        if let formalSelf = binding.declaration.protocolSelf {
+            if receiver == .object {
+                return ([], try binding.argumentFulfillments([formalSelf]))
+            }
+            if receiver == .address {
+                let canonical = try binding.canonicalType(of: formalSelf)
+                if canonical.nominalDeclaration != nil {
+                    let fulfilled = try binding.argumentFulfillments([], typeMetadata: canonical)
+                    // An indirect nominal self supplies its metadata before explicit
+                    // arguments are considered, even when they fulfill the same types.
+                    if !fulfilled.isEmpty {
+                        let metadata = try binding.types(canonical)[0]
+                        return ([unsafeBitCast(metadata, to: UInt.self)], fulfilled)
+                    }
+                }
+            }
+        } else if context != nil, receiver == .address, let enclosingMetadata {
+            return ([unsafeBitCast(enclosingMetadata, to: UInt.self)], .init())
+        }
+        return ([], .init())
+    }
+
     func validateMetadataArguments() throws {
+        let source = try receiverMetadata()
         try binding.validateMetadataArguments(
-            fulfilledBy: receiver == .object || receiver == .address ? context : nil
+            fulfilledBy: receiverContext,
+            additionallyFulfilledBy: source.fulfilled
         )
     }
 
     var hookEnclosingClass: AnyClass? {
-        context != nil && receiver == .object ? enclosingMetadata as? AnyClass : nil
+        get throws {
+            guard receiver == .object else { return nil }
+            if context != nil { return enclosingMetadata as? AnyClass }
+            if let formalSelf = binding.declaration.protocolSelf,
+                !binding.isArchetype(try binding.canonicalType(of: formalSelf))
+            {
+                return try binding.types(formalSelf)[0] as? AnyClass
+            }
+            return nil
+        }
     }
 
     func hookMetadataArguments() throws -> [SwiftGenericBinding.HookMetadataArgument] {
-        let fulfilled = receiver == .object || receiver == .address ? context : nil
-        let prefix: [SwiftGenericBinding.HookMetadataArgument] =
-            context != nil && receiver == .address
-            ? [.value(unsafeBitCast(enclosingMetadata!, to: UInt.self))] : []
-        return try prefix + binding.hookMetadataArguments(fulfilledBy: fulfilled)
+        let source = try receiverMetadata()
+        return try source.prefix.map { .value($0) }
+            + binding.hookMetadataArguments(
+                fulfilledBy: receiverContext,
+                additionallyFulfilledBy: source.fulfilled
+            )
     }
 
     struct HookClassArgument: Sendable {
@@ -844,6 +881,13 @@ struct SwiftGenericCallPlan: Sendable {
     }
 
     func receiverType() throws -> CValueType? {
+        if let formalSelf = binding.declaration.protocolSelf {
+            return try Self.layout(
+                formalSelf,
+                actual: binding.types(formalSelf)[0],
+                binding: binding
+            )
+        }
         guard let context, let enclosingMetadata, !(enclosingMetadata is AnyClass) else {
             return nil
         }

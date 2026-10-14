@@ -8,9 +8,9 @@ struct SwiftReceiverCodec: Sendable {
     let clone: @Sendable (NativeValueStorage) throws -> NativeValueStorage
     let destroy: @Sendable (UnsafeMutableRawPointer) -> Void
 
-    init<Value>(_ valueType: Value.Type) throws {
+    init<Value>(_ valueType: Value.Type, formalType: CValueType? = nil) throws {
         let codec = try SwiftValueCodec<Value>()
-        type = codec.type
+        type = formalType ?? codec.type
         representation = ObjectIdentifier(Value.self)
         encode = { value in
             guard let value = value as? Value else {
@@ -64,8 +64,10 @@ struct SwiftReceiverCodec: Sendable {
         destroy = { ABISwiftDestroyValue(unsafeBitCast(metadata, to: UnsafeRawPointer.self), $0) }
     }
 
-    static func make(for type: Any.Type) throws -> Self {
-        func open<Value>(_ type: Value.Type) throws -> Self { try Self(type) }
+    static func make(for type: Any.Type, formalType: CValueType? = nil) throws -> Self {
+        func open<Value>(_ type: Value.Type) throws -> Self {
+            try Self(type, formalType: formalType)
+        }
         return try _openExistential(type, do: open)
     }
 }
@@ -80,24 +82,40 @@ struct SwiftReceiverPlan: Sendable {
     let expectedClass: AnyClass?
     let metadata: Any.Type
 
-    init(codec: SwiftReceiverCodec, metadata: Any.Type, isMutating: Bool,
-         isConsuming: Bool, validateClass: Bool) throws {
+    init(
+        codec: SwiftReceiverCodec,
+        metadata: Any.Type,
+        isMutating: Bool?,
+        isConsuming: Bool,
+        protocolSelf: SwiftFormalType?,
+        validateClass: Bool
+    ) throws {
+        let indirect = ABISwiftValueIsIndirect(codec.type.handle)
+        // A concrete same-type Self keeps a protocol setter's inout default.
+        let isMutating =
+            isMutating
+            ?? (!isConsuming
+                && (protocolSelf?.nominalDeclaration != nil || indirect || !(metadata is AnyClass)))
         guard !(isMutating && isConsuming) else {
-            throw ABIResolutionError.unsupportedDeclaration("Swift self cannot be both mutating and consuming.")
+            throw ABIResolutionError.unsupportedDeclaration(
+                "Swift self cannot be both mutating and consuming."
+            )
         }
         self.codec = codec
         self.metadata = metadata
         self.isMutating = isMutating
         self.isConsuming = isConsuming
-        if let objectType = metadata as? AnyClass {
+        expectedClass = validateClass ? metadata as? AnyClass : nil
+        // Mutating protocol Self addresses the receiver slot, even when class-bound.
+        if (protocolSelf != nil && isMutating) || indirect {
+            mode = .address
+        } else if metadata is AnyClass {
             guard ABIValueTypeIsPointer(codec.type.handle) else {
                 throw ABIResolutionError.unsupportedDeclaration("A Swift class receiver requires a reference or pointer adapter.")
             }
             mode = .object
-            expectedClass = validateClass ? objectType : nil
         } else {
-            mode = isMutating || ABISwiftValueIsIndirect(codec.type.handle) ? .address : .value
-            expectedClass = nil
+            mode = isMutating ? .address : .value
         }
     }
 
@@ -112,7 +130,9 @@ struct SwiftReceiverPlan: Sendable {
         } else {
             return try codec.encode(receiver)
         }
-        if let expected = metadata as? AnyClass, let objectType = actual.metadata as? AnyClass {
+        if !(isMutating && mode == .address),
+            let expected = metadata as? AnyClass, let objectType = actual.metadata as? AnyClass
+        {
             guard SwiftObjectType(objectType)?.isSubclass(of: expected) == true else {
                 throw ABIInvocationError.incompatibleValue(expected: String(reflecting: metadata), actual: actual.name)
             }
@@ -144,23 +164,25 @@ struct SwiftReceiverPlan: Sendable {
     }
 
     @unsafe func context(for storage: NativeValueStorage) throws -> UnsafeRawPointer? {
-        switch mode {
-        case .value: return nil
-        case .address: return UnsafeRawPointer(storage.address)
-        case .object:
-            guard let pointer = storage.address.load(as: UnsafeRawPointer?.self) else {
-                throw ABIInvocationError.incompatibleValue(expected: "a live Swift receiver", actual: "nil")
-            }
-            // Default typed codecs already downcast to the declaring class.
-            // Explicit pointer/AnyObject adapters need this runtime class check.
-            if let expectedClass {
-                let object = Unmanaged<AnyObject>.fromOpaque(pointer).takeUnretainedValue()
-                if SwiftObjectType(Swift.type(of: object))?.isSubclass(of: expectedClass) == true { return pointer }
+        if mode == .value { return nil }
+        if mode == .address && expectedClass == nil { return UnsafeRawPointer(storage.address) }
+        guard let pointer = storage.address.load(as: UnsafeRawPointer?.self) else {
+            throw ABIInvocationError.incompatibleValue(
+                expected: "a live Swift receiver",
+                actual: "nil"
+            )
+        }
+        // Default typed codecs already downcast to the declaring class.
+        // Explicit pointer/AnyObject adapters need this runtime class check.
+        if let expectedClass {
+            let object = Unmanaged<AnyObject>.fromOpaque(pointer).takeUnretainedValue()
+            guard SwiftObjectType(Swift.type(of: object))?.isSubclass(of: expectedClass) == true
+            else {
                 throw ABIInvocationError.incompatibleValue(
                     expected: String(reflecting: expectedClass), actual: String(reflecting: Swift.type(of: object))
                 )
             }
-            return pointer
         }
+        return mode == .address ? UnsafeRawPointer(storage.address) : pointer
     }
 }

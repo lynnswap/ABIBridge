@@ -91,6 +91,8 @@ struct SwiftMetadataResponse: BitwiseCopyable, ABIBridgeValue {
 /// A concrete Swift type and its retained implementation images.
 ///
 /// Type lookup requests complete metadata without constructing an instance. Generic arguments are validated by the Swift runtime. Member lookups reuse the image's existing symbol index. See <doc:SwiftMemberInvocation> for lookup and invocation conventions.
+///
+/// Complete protocol-extension declarations, such as `(extension in Module):Module.Protocol.member...`, bind Self to this concrete type for methods, accessors, and static members. genericArguments supplies only the type parameters introduced by the member.
 public actor NativeSwiftType: Hashable {
     /// Type handles compare by their concrete Swift metadata identity.
     public nonisolated static func == (lhs: NativeSwiftType, rhs: NativeSwiftType) -> Bool {
@@ -167,7 +169,7 @@ public actor NativeSwiftType: Hashable {
     }
 
     nonisolated func receiverPlan(
-        mutating isMutating: Bool,
+        mutating isMutating: Bool?,
         consuming isConsuming: Bool = false,
         generic: SwiftGenericCallPlan? = nil,
         receiverABI: NativeType? = nil
@@ -188,22 +190,29 @@ public actor NativeSwiftType: Hashable {
     }
 
     private nonisolated func prepareReceiverPlan(
-        mutating isMutating: Bool,
+        mutating isMutating: Bool?,
         consuming isConsuming: Bool,
         generic: SwiftGenericCallPlan?,
         receiverABI: NativeType?,
         cachedReceiver: SwiftReceiverCodec?
     ) throws -> (SwiftReceiverPlan, SwiftReceiverCodec?) {
+        let protocolSelf = try generic.flatMap { plan in
+            try plan.binding.declaration.protocolSelf.map { try plan.binding.canonicalType(of: $0) }
+        }
         let codec: SwiftReceiverCodec
         let cachedCodec: SwiftReceiverCodec?
         if let receiverABI {
             let formalType = try explicitSwiftValueType(metadata, abi: receiverABI)
             codec = SwiftReceiverCodec(runtimeType: metadata, formalType: formalType)
             cachedCodec = nil
-        } else if (representation == nil || representation == metadata),
+        } else if (representation == nil || representation == metadata || protocolSelf != nil),
             let formalType = try generic?.receiverType()
         {
-            codec = SwiftReceiverCodec(runtimeType: metadata, formalType: formalType)
+            if let representation, representation != metadata {
+                codec = try SwiftReceiverCodec.make(for: representation, formalType: formalType)
+            } else {
+                codec = SwiftReceiverCodec(runtimeType: metadata, formalType: formalType)
+            }
             cachedCodec = nil
         } else {
             codec = try cachedReceiver ?? SwiftReceiverCodec.make(for: representation ?? metadata)
@@ -215,6 +224,7 @@ public actor NativeSwiftType: Hashable {
                 metadata: metadata,
                 isMutating: isMutating,
                 isConsuming: isConsuming,
+                protocolSelf: protocolSelf,
                 validateClass: representation != nil && representation != metadata
             ),
             cachedCodec
@@ -290,6 +300,26 @@ public actor NativeSwiftType: Hashable {
             let request = try declaration(ownerName, usesBinding)
             if originalRequest == nil { originalRequest = request }
             let belongs = !exact || SwiftMemberLookup.belongs(request.name, to: ownerName)
+            if exact, !belongs, let signature,
+                SymbolIndex.extensionMemberName(request.name) != nil
+            {
+                let symbol = try resolveDeclaredMember(request, in: ownerImage, exact: true)
+                let (callable, _) = try SwiftGenericDeclaration.callable(
+                    in: SwiftSyntax(symbol: symbol.linkageName)
+                )
+                if callable.child(kind: "Extension")?.child(kind: "Protocol") != nil {
+                    let generic = try SwiftGenericCallPlan(
+                        symbol: symbol,
+                        genericArguments: genericArguments,
+                        signature: SwiftFunctionSignature(signature),
+                        resolver: resolver,
+                        implicitSelf: self,
+                        declaredSignature: declaredSignature,
+                        valueABIs: valueABIs
+                    )
+                    return (symbol, metadata, generic)
+                }
+            }
             if belongs && (!usesBinding || exact || explicitSignature) {
                 do {
                     let symbol: ResolvedSymbol
@@ -701,14 +731,14 @@ public actor NativeSwiftType: Hashable {
     ///
     /// Search and preparation run synchronously on the caller's thread.
     ///
-    /// Class receivers are references. Ordinary value setters receive self inout; consuming setters transfer a typed copy or NativeSwiftValue's owned value. An explicitly nonmutating setter can use mutating: false.
+    /// Setters with a class-bound formal self receive self as a reference. Ordinary value setters receive self inout, including protocol Self without a class constraint. A protocol setter with a concrete same-type Self receives self inout, even when that type is a class. Consuming setters transfer a typed copy or NativeSwiftValue's owned value. For an explicitly mutating or nonmutating setter, pass mutating: true or false.
     /// - Parameters:
     ///   - name: A property name or complete relative setter declaration.
     ///   - valueType: The incoming value representation.
     ///   - valueABIs: Formal ABIs for runtime-only closed nominal values in this lookup.
     ///   - declaredSignature: The formal setter type and optional canonical generic signature.
     ///   - receiverABI: Explicit self ABI; nil uses the type representation or generic declaration.
-    ///   - isMutating: An inout override. Nil selects inout unless consuming is true.
+    ///   - isMutating: An inout override. Nil follows the declaration's default self convention unless consuming is true.
     ///   - isConsuming: Whether the setter consumes its receiver.
     /// - Returns: A reusable method with one explicit value argument.
     /// - Throws: A lookup or unsupported-representation error.
@@ -738,7 +768,7 @@ public actor NativeSwiftType: Hashable {
         }
         let generic = symbol.generic
         let receiver = try receiverPlan(
-            mutating: isMutating ?? !isConsuming,
+            mutating: isMutating,
             consuming: isConsuming,
             generic: generic,
             receiverABI: receiverABI

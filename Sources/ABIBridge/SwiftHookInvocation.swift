@@ -801,10 +801,14 @@ final class SwiftHookSignature: @unchecked Sendable {
             }
             return false
         }
-        if let expected = generic?.hookEnclosingClass {
+        if let expected = try generic?.hookEnclosingClass {
             guard let context = ABISwiftIncomingContext(call),
                 matchesClass(
-                    object_getClass(Unmanaged<AnyObject>.fromOpaque(context).takeUnretainedValue()),
+                    receiver == nil
+                        ? unsafeBitCast(context, to: AnyClass.self)
+                        : object_getClass(
+                            Unmanaged<AnyObject>.fromOpaque(context).takeUnretainedValue()
+                        ),
                     expected
                 )
             else { return false }
