@@ -136,11 +136,11 @@ Older `actionlint` versions do not recognize GitHub's [official `xcode-27` runne
 
 | Job | Xcode | Runner | Checks |
 | --- | --- | --- | --- |
-| Runtime | 26.6 | `macos-26` | macOS Core and Runtime, focused external consumers, then iOS Simulator Core and Runtime |
-| Runtime | 27.0 | `xcode-27` | macOS Core and Runtime, then iOS Simulator Core and Runtime |
+| Runtime and consumers | 26.6 | `macos-26` | macOS Core and Runtime, then focused external consumers and iOS Simulator Core and Runtime in parallel |
+| Runtime and consumers | 27.0 | `xcode-27` | macOS Core and Runtime, then focused external and SwiftUI consumers |
 | Public API | 27.0 | `xcode-27` | Manifest and whitespace checks, then the complete public API suite in two processes |
 | iOS and tvOS SDKs | 27.0 | `xcode-27` | Both products for iOS and tvOS; Release build of the arm64 validation app for iOS |
-| Other SDKs and consumers | 27.0 | `xcode-27` | Both products for visionOS and watchOS, then focused external and SwiftUI consumers |
+| Other SDKs and iOS Simulator | 27.0 | `xcode-27` | Both products for visionOS and watchOS, then iOS Simulator Core and Runtime |
 
 The jobs run independently. Package and SDK builds reuse one build directory within each job; focused and SwiftUI consumers share a separate consumer build directory. Release and CI automation tests run in a separate Linux job.
 
