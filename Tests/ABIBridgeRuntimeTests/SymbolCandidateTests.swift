@@ -5,6 +5,32 @@ import Foundation
 import Testing
 
 struct SymbolCandidateTests {
+    @Test func decoratedSwiftDeclarationsKeepOwnerModuleCoverage() {
+        for declaration in [
+            "async function pointer to static (extension in Second):First.Value.member() async -> ()",
+            "method descriptor for First.Value.member() -> ()",
+            "(extension in Second):First.Value.member() -> ()",
+        ] {
+            let query = SymbolQuery(.init(name: declaration, language: .swift, kind: .data))
+            func accepts(_ name: String) -> Bool { name.withCString(query.acceptsCandidate) }
+            #expect(query.candidateScope == .swiftModule("First"), "\(declaration)")
+            #expect(accepts("_$s5First5ValueV6SecondE6memberyyF"))
+            #expect(!accepts("_$s6Second5ValueV6memberyyF"))
+            #expect(accepts("_$s03FooA05ValueV6memberyyF"))
+        }
+        let property = SymbolQuery(
+            .init(
+                name:
+                    "property descriptor for (extension in Second):Swift.String.member : Swift.Int",
+                language: .swift,
+                kind: .data
+            )
+        )
+        #expect(property.candidateScope == .swiftModule("Swift"))
+        #expect("_$sSS6SecondE6memberSivpMV".withCString(property.acceptsCandidate))
+        #expect(!"_$s6Second5ValueV6memberSivpMV".withCString(property.acceptsCandidate))
+    }
+
     @Test func protocolDescriptorCandidatesKeepModuleAndFallbackCoverage() {
         let query = SymbolQuery(
             .init(name: "protocol descriptor for First.Readable", language: .swift, kind: .data)
