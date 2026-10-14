@@ -132,6 +132,8 @@ jobs:
       - name: Test public API behavior
         if: ${{ !cancelled() && hashFiles('Sources/ABIBridgeRuntime/*.swift') != '' }}
         timeout-minutes: 25
+        env:
+          ABI_TEST_PARALLEL_API: '1'
         run: bash scripts/test-package.sh api
       - name: Preserve failed test diagnostics
         if: always() && (failure() || cancelled())
