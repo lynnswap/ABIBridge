@@ -124,16 +124,19 @@ Older `actionlint` versions do not recognize GitHub's [official `xcode-27` runne
 
 ## What CI runs
 
-[CI](.github/workflows/ci.yml) runs Core and Runtime together in four environment entries:
+[CI](.github/workflows/ci.yml) uses five macOS jobs, each running its checks sequentially:
 
-| Xcode | Runner | Runtime environments | Additional checks |
+| Job | Xcode | Runner | Checks |
 | --- | --- | --- | --- |
-| 26.6 | `macos-26` | macOS and iOS Simulator | Focused external consumers on macOS |
-| 27.0 | `xcode-27` | macOS and iOS Simulator | Public API suite on macOS |
+| Runtime | 26.6 | `macos-26` | macOS Core and Runtime, focused external consumers, then iOS Simulator Core and Runtime |
+| Runtime | 27.0 | `xcode-27` | macOS Core and Runtime, then iOS Simulator Core and Runtime |
+| Public API | 27.0 | `xcode-27` | Manifest and whitespace checks, then the complete public API suite |
+| iOS SDK | 27.0 | `xcode-27` | Both products; Release build of the arm64 validation app |
+| Other SDKs and consumers | 27.0 | `xcode-27` | Both products for visionOS, watchOS, and tvOS, then focused external and SwiftUI consumers |
 
-The macOS/Xcode 27 runtime job runs the public API suite in the runtime build directory. A separate Xcode 27 job runs the focused external and SwiftUI consumers in parallel with the runtime jobs. Those consumer checks share one build directory.
+The jobs run independently. Package and SDK builds reuse one build directory within each job; focused and SwiftUI consumers share a separate consumer build directory. Release and CI automation tests run in a separate Linux job.
 
-Device SDK builds run in two Xcode 27 jobs: one for iOS, and one for visionOS, watchOS, and tvOS. Each builds both products and reuses its build directory across sequential builds. The iOS job also builds the arm64 validation app in Release. Timing loops, stress tests, full external consumer combinations, and architecture probes run locally.
+Timing loops, stress tests, full external consumer combinations, and architecture probes run locally.
 
 The matrix checks metadata, calling conventions, image loading, and compiler workarounds in generic public entry points. The `xcode-27` runner uses macOS 27 and is in public preview. Device pointer authentication requires execution on matching hardware.
 
