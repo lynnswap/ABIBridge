@@ -425,6 +425,81 @@ struct SwiftOpaqueResultTests {
         }
     }
 
+    @Test func protocolExtensionReceiversFulfillGenericRequirements() async throws {
+        let runtime = ABIRuntime.shared
+        let original = GenericSourceNested(GenericWitnessValue())
+        let copy = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+            as: ((GenericSourceNested<GenericWitnessValue>) -> NativeSwiftValue).self,
+            genericArguments: [.type(GenericSourceNested<GenericWitnessValue>.self)]
+        )
+        let owner = try unsafe copy.unsafeInvoke(original)
+        for (name, mutating) in [
+            ("protocolExtensionSuperclassSource", false),
+            ("protocolExtensionMutatingSuperclassSource", true),
+        ] {
+            let method = try await owner.type.resolveMethod(
+                named:
+                    "(extension in ManagedSwiftFixtures):ManagedSwiftFixtures.GenericWitnessA.\(name)<A where A: ManagedSwiftFixtures.GenericSourceNested<A1>, A1: ManagedSwiftFixtures.GenericWitnessZ>() -> Swift.Int64",
+                as: (() -> Int64).self,
+                genericArguments: [.type(GenericWitnessValue.self)],
+                mutating: mutating
+            )
+            #expect(try unsafe method.unsafeInvoke(on: owner) == 2)
+        }
+        let replace = try await owner.type.resolveMethod(
+            named:
+                "(extension in ManagedSwiftFixtures):ManagedSwiftFixtures.GenericWitnessA.protocolExtensionEqualClassSource<A where A == ManagedSwiftFixtures.GenericSourceNested<A1>, A1: ManagedSwiftFixtures.GenericSourceChild>(ManagedSwiftFixtures.GenericSourceBox<A1>) -> Swift.Int64",
+            as: ((GenericSourceBox<GenericWitnessValue>) -> Int64).self,
+            genericArguments: [.type(GenericWitnessValue.self)],
+            mutating: true
+        )
+        #expect(
+            try unsafe replace.unsafeInvoke(on: owner, GenericSourceBox(GenericWitnessValue())) == 2
+        )
+        try owner.withCopy {
+            let replacement = try #require($0 as? GenericSourceNested<GenericWitnessValue>)
+            #expect(replacement !== original)
+        }
+        #expect(!owner.isConsumed)
+    }
+
+    @Test func protocolExtensionValueReceiversPreserveNominalMetadata() async throws {
+        let runtime = ABIRuntime.shared
+        func own<Value>(_ value: Value) async throws -> NativeSwiftValue {
+            let copy = try await runtime.resolveSwiftFunction(
+                named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+                as: ((Value) -> NativeSwiftValue).self,
+                genericArguments: [.type(Value.self)]
+            )
+            return try unsafe copy.unsafeInvoke(value)
+        }
+        let indirect = try await own(GenericValueBox(GenericWitnessValue()))
+        let indirectMethod = try await indirect.type.resolveMethod(
+            named:
+                "(extension in ManagedSwiftFixtures):ManagedSwiftFixtures.GenericWitnessA.protocolExtensionIndirectSource<A where A == ManagedSwiftFixtures.GenericValueBox<A1>, A1: ManagedSwiftFixtures.GenericWitnessZ>() -> Swift.Int64",
+            as: (() -> Int64).self,
+            genericArguments: [.type(GenericWitnessValue.self)]
+        )
+        #expect(try unsafe indirectMethod.unsafeInvoke(on: indirect) == 2)
+        let direct = try await own(GenericPhantom<GenericWitnessValue>(40))
+        let directMethod = try await direct.type.resolveMethod(
+            named:
+                "(extension in ManagedSwiftFixtures):ManagedSwiftFixtures.GenericWitnessA.protocolExtensionDirectSource<A where A == ManagedSwiftFixtures.GenericPhantom<A1>, A1: ManagedSwiftFixtures.GenericWitnessZ>() -> Swift.Int64",
+            as: (() -> Int64).self,
+            genericArguments: [.type(GenericWitnessValue.self)],
+            receiverABI: .int64
+        )
+        #expect(try unsafe directMethod.unsafeInvoke(on: direct) == 42)
+        let staticMethod = try await direct.type.resolveStaticMethod(
+            named:
+                "static (extension in ManagedSwiftFixtures):ManagedSwiftFixtures.GenericWitnessA.protocolExtensionThinStaticSource<A where A == ManagedSwiftFixtures.GenericPhantom<A1>, A1: ManagedSwiftFixtures.GenericWitnessZ>() -> Swift.Int64",
+            as: (() -> Int64).self,
+            genericArguments: [.type(GenericWitnessValue.self)]
+        )
+        #expect(try unsafe staticMethod.unsafeInvoke() == 2)
+    }
+
     @Test func genericOpaqueMembersCombineEnclosingAndMethodBindings() async throws {
         let runtime = ABIRuntime.shared
         let type = try await runtime.resolveSwiftType(

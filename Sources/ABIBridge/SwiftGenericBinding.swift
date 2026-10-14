@@ -385,28 +385,15 @@ struct SwiftGenericBinding: Sendable {
                 metadataWords.append(contentsOf: witnesses.map { (.conformance(index), $0) })
             }
         }
-        let fulfilled = try argumentFulfillments()
-        func isFulfilled(_ source: MetadataSource) throws -> Bool {
-            switch source {
-            case .parameter(let name):
-                return try equivalentTypes(of: .named(name, [])).contains {
-                    fulfilled.types.contains($0)
-                }
-            case .shape(let names): return !names.isDisjoint(with: fulfilled.shapes)
-            case .conformance(let index):
-                let conformance = conformances[index]
-                return try equivalentTypes(of: conformance.subject).contains { subject in
-                    fulfilled.conformances.contains {
-                        $0.0 == subject && $0.1.contains(conformance.name)
-                    }
-                }
-            }
-        }
-        metadataWords = try metadataWords.filter { try !isFulfilled($0.source) }
+        let fulfilled = try argumentFulfillments(declaration.arguments)
+        metadataWords = try metadataWords.filter { try !isFulfilled($0.source, by: fulfilled) }
     }
 
-    func metadataArguments(fulfilledBy context: SwiftGenericTypeContext) throws -> [UInt] {
-        try unfulfilledMetadata(in: context).map(\.value)
+    func metadataArguments(
+        fulfilledBy context: SwiftGenericTypeContext?,
+        additionallyFulfilledBy fulfilled: Fulfillments? = nil
+    ) throws -> [UInt] {
+        try unfulfilledMetadata(in: context, additionallyFulfilledBy: fulfilled).map(\.value)
     }
 
     enum HookMetadataArgument: Sendable {
@@ -416,9 +403,12 @@ struct SwiftGenericBinding: Sendable {
     }
 
     func hookMetadataArguments(
-        fulfilledBy context: SwiftGenericTypeContext?
+        fulfilledBy context: SwiftGenericTypeContext?,
+        additionallyFulfilledBy fulfilled: Fulfillments? = nil
     ) throws -> [HookMetadataArgument] {
-        try unfulfilledMetadata(in: context).map { source, value in
+        try unfulfilledMetadata(in: context, additionallyFulfilledBy: fulfilled).map {
+            source,
+            value in
             switch source {
             case .shape: return .value(value)
             case .parameter(let name):
@@ -436,11 +426,13 @@ struct SwiftGenericBinding: Sendable {
     }
 
     private func unfulfilledMetadata(
-        in context: SwiftGenericTypeContext?
+        in context: SwiftGenericTypeContext?,
+        additionallyFulfilledBy fulfilled: Fulfillments? = nil
     ) throws -> [(source: MetadataSource, value: UInt)] {
-        guard let context else { return metadataWords }
-        let parameters = Set(context.parameters.map(\.name))
+        let parameters = Set(context?.parameters.map(\.name) ?? [])
         return try metadataWords.filter { source, _ in
+            if let fulfilled, try isFulfilled(source, by: fulfilled) { return false }
+            guard let context else { return true }
             switch source {
             case .shape(let names): return !names.isSubset(of: parameters)
             case .parameter(let name): return !parameters.contains(name)
@@ -461,14 +453,37 @@ struct SwiftGenericBinding: Sendable {
         }
     }
 
-    func validateMetadataArguments(fulfilledBy context: SwiftGenericTypeContext?) throws {
+    private func isFulfilled(_ source: MetadataSource, by fulfilled: Fulfillments) throws -> Bool {
+        switch source {
+        case .parameter(let name):
+            return try equivalentTypes(of: .named(name, [])).contains {
+                fulfilled.types.contains($0)
+            }
+        case .shape(let names): return !names.isDisjoint(with: fulfilled.shapes)
+        case .conformance(let index):
+            let conformance = conformances[index]
+            return try equivalentTypes(of: conformance.subject).contains { subject in
+                fulfilled.conformances.contains {
+                    $0.0 == subject && $0.1.contains(conformance.name)
+                }
+            }
+        }
+    }
+
+    func validateMetadataArguments(
+        fulfilledBy context: SwiftGenericTypeContext?,
+        additionallyFulfilledBy fulfilled: Fulfillments? = nil
+    ) throws {
         guard declaration.abiRequirements == nil else { return }
         // Runtime availability cannot recover the provider's imports or proofs
         // of conditional conformance, so it cannot establish whether a remaining
         // implicit superclass witness was omitted.
         for requirement in declaration.requirements {
             guard case .superclass(let subject, let superclass) = requirement else { continue }
-            for (source, _) in try unfulfilledMetadata(in: context) {
+            for (source, _) in try unfulfilledMetadata(
+                in: context,
+                additionallyFulfilledBy: fulfilled
+            ) {
                 guard case .conformance(let index) = source else { continue }
                 let conformance = conformances[index]
                 guard let descriptor = conformance.descriptor,

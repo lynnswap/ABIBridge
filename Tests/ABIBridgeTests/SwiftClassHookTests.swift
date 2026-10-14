@@ -217,6 +217,100 @@ struct SwiftClassHookTests {
         }
     }
 
+    @Test func protocolExtensionHooksKeepSameTypeSpecializationsSeparate() async throws {
+        let fixture = try CompiledSwiftReplacementFixture(
+            providerExtra: """
+                public protocol HookProtocolSelf {}
+                public protocol HookNumber { static func number() -> Int64 }
+                public enum HookFirst: HookNumber {
+                    public static func number() -> Int64 { 41 }
+                }
+                public enum HookSecond: HookNumber {
+                    public static func number() -> Int64 { 42 }
+                }
+                public class HookGenericBase<Value: HookNumber>: HookProtocolSelf {
+                    public init() {}
+                }
+                extension HookProtocolSelf {
+                    @inline(never) public func sameTypeInstance<Value: HookNumber>() -> Int64
+                    where Self == HookGenericBase<Value> { Value.number() }
+                    @inline(never) public static func sameTypeStatic<Value: HookNumber>() -> Int64
+                    where Self == HookGenericBase<Value> { Value.number() }
+                }
+                """,
+            callerExtra: """
+                @inline(never) public func sameTypeInstanceCall(_ first: Bool) -> Int64 {
+                    first ? HookGenericBase<HookFirst>().sameTypeInstance()
+                        : HookGenericBase<HookSecond>().sameTypeInstance()
+                }
+                @inline(never) public func sameTypeStaticCall(_ first: Bool) -> Int64 {
+                    first ? HookGenericBase<HookFirst>.sameTypeStatic()
+                        : HookGenericBase<HookSecond>.sameTypeStatic()
+                }
+                """
+        )
+        defer { fixture.cleanup() }
+        let firstType = try await fixture.runtime.resolveSwiftType(
+            named: fixture.module + ".HookFirst",
+            in: fixture.providerScope
+        )
+        let type = try await fixture.runtime.resolveSwiftType(
+            named: fixture.module + ".HookGenericBase",
+            in: fixture.providerScope,
+            genericArguments: [.type(firstType)]
+        )
+        let member = "(extension in \(fixture.module)):\(fixture.module).HookProtocolSelf."
+        let signature =
+            "<A where A == \(fixture.module).HookGenericBase<A1>, "
+            + "A1: \(fixture.module).HookNumber>() -> Swift.Int64"
+        let instance = try await type.resolveMethod(
+            named: member + "sameTypeInstance" + signature,
+            as: (() -> Int64).self,
+            genericArguments: [.type(firstType)]
+        )
+        let metatype = try await type.resolveStaticMethod(
+            named: "static " + member + "sameTypeStatic" + signature,
+            as: (() -> Int64).self,
+            genericArguments: [.type(firstType)]
+        )
+        let instanceCall = try await fixture.runtime.resolveSwiftFunction(
+            named: fixture.callerModule + ".sameTypeInstanceCall(Swift.Bool) -> Swift.Int64",
+            as: ((Bool) -> Int64).self,
+            in: fixture.callerScope
+        )
+        let staticCall = try await fixture.runtime.resolveSwiftFunction(
+            named: fixture.callerModule + ".sameTypeStaticCall(Swift.Bool) -> Swift.Int64",
+            as: ((Bool) -> Int64).self,
+            in: fixture.callerScope
+        )
+        for first in [true, false] {
+            #expect(try unsafe instanceCall.unsafeInvoke(first) == (first ? 41 : 42))
+            #expect(try unsafe staticCall.unsafeInvoke(first) == (first ? 41 : 42))
+        }
+        let instanceHook = try await unsafe instance.hookImportedCalls(
+            in: fixture.callerScope,
+            using: fixture.runtime,
+            onFailure: { Issue.record("Unexpected: \($0)") }
+        ) { call in try call.proceed() + 100 }
+        defer { instanceHook.invalidate() }
+        let staticHook = try await unsafe metatype.hookImportedCalls(
+            in: fixture.callerScope,
+            using: fixture.runtime,
+            onFailure: { Issue.record("Unexpected: \($0)") }
+        ) { call in try call.proceed() + 200 }
+        defer { staticHook.invalidate() }
+        for first in [true, false] {
+            #expect(try unsafe instanceCall.unsafeInvoke(first) == (first ? 141 : 42))
+            #expect(try unsafe staticCall.unsafeInvoke(first) == (first ? 241 : 42))
+        }
+        instanceHook.invalidate()
+        staticHook.invalidate()
+        for first in [true, false] {
+            #expect(try unsafe instanceCall.unsafeInvoke(first) == (first ? 41 : 42))
+            #expect(try unsafe staticCall.unsafeInvoke(first) == (first ? 41 : 42))
+        }
+    }
+
     @Test func virtualChainsPreserveTheSelectedClassAndReceiverIdentity() async throws {
         let fixture = try CompiledSwiftReplacementFixture(writable: false);
         defer { fixture.cleanup() }
