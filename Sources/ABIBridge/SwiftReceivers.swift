@@ -105,19 +105,17 @@ struct SwiftReceiverPlan: Sendable {
         self.metadata = metadata
         self.isMutating = isMutating
         self.isConsuming = isConsuming
+        expectedClass = validateClass ? metadata as? AnyClass : nil
         // Mutating protocol Self addresses the receiver slot, even when class-bound.
         if (protocolSelf != nil && isMutating) || indirect {
             mode = .address
-            expectedClass = nil
-        } else if let objectType = metadata as? AnyClass {
+        } else if metadata is AnyClass {
             guard ABIValueTypeIsPointer(codec.type.handle) else {
                 throw ABIResolutionError.unsupportedDeclaration("A Swift class receiver requires a reference or pointer adapter.")
             }
             mode = .object
-            expectedClass = validateClass ? objectType : nil
         } else {
             mode = isMutating ? .address : .value
-            expectedClass = nil
         }
     }
 
@@ -166,23 +164,25 @@ struct SwiftReceiverPlan: Sendable {
     }
 
     @unsafe func context(for storage: NativeValueStorage) throws -> UnsafeRawPointer? {
-        switch mode {
-        case .value: return nil
-        case .address: return UnsafeRawPointer(storage.address)
-        case .object:
-            guard let pointer = storage.address.load(as: UnsafeRawPointer?.self) else {
-                throw ABIInvocationError.incompatibleValue(expected: "a live Swift receiver", actual: "nil")
-            }
-            // Default typed codecs already downcast to the declaring class.
-            // Explicit pointer/AnyObject adapters need this runtime class check.
-            if let expectedClass {
-                let object = Unmanaged<AnyObject>.fromOpaque(pointer).takeUnretainedValue()
-                if SwiftObjectType(Swift.type(of: object))?.isSubclass(of: expectedClass) == true { return pointer }
+        if mode == .value { return nil }
+        if mode == .address && expectedClass == nil { return UnsafeRawPointer(storage.address) }
+        guard let pointer = storage.address.load(as: UnsafeRawPointer?.self) else {
+            throw ABIInvocationError.incompatibleValue(
+                expected: "a live Swift receiver",
+                actual: "nil"
+            )
+        }
+        // Default typed codecs already downcast to the declaring class.
+        // Explicit pointer/AnyObject adapters need this runtime class check.
+        if let expectedClass {
+            let object = Unmanaged<AnyObject>.fromOpaque(pointer).takeUnretainedValue()
+            guard SwiftObjectType(Swift.type(of: object))?.isSubclass(of: expectedClass) == true
+            else {
                 throw ABIInvocationError.incompatibleValue(
                     expected: String(reflecting: expectedClass), actual: String(reflecting: Swift.type(of: object))
                 )
             }
-            return pointer
         }
+        return mode == .address ? UnsafeRawPointer(storage.address) : pointer
     }
 }

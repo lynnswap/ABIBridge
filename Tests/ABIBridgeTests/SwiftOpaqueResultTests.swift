@@ -305,6 +305,8 @@ struct SwiftOpaqueResultTests {
             try unsafe bound.unsafeInvoke().withCopy {
                 #expect(($0 as? any ExistentialValue)?.number == 45)
             }
+            let incompatible = try method.bind(to: NSObject())
+            #expect(throws: ABIInvocationError.self) { _ = try unsafe incompatible.unsafeInvoke() }
         }
         #expect(observed != nil && counts.destructions == 0)
         try result?.withCopy { #expect(($0 as? any ExistentialValue)?.number == 43) }
