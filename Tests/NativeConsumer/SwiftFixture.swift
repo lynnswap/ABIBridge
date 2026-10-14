@@ -12,7 +12,9 @@ private final class PrivateRenderer {
 private final class GenericRenderer<Value> {
     let value: Value
     let measure: (Value) -> Int
-    init(_ value: Value, measure: @escaping (Value) -> Int) { self.value = value; self.measure = measure }
+    init(_ value: Value, measure: @escaping (Value) -> Int) {
+        self.value = value; self.measure = measure
+    }
     @inline(never) func score(_ extra: Int) -> Int { measure(value) + extra }
     var currentScore: Int { @inline(never) get { measure(value) } }
 }
@@ -64,7 +66,10 @@ public struct RuntimeLookup<Element: Identifiable> {
     callback(value)
 }
 
-@inline(never) public func applyArray(_ callback: ([String]) -> [String], _ value: [String]) -> [String] {
+@inline(never) public func applyArray(
+    _ callback: ([String]) -> [String],
+    _ value: [String]
+) -> [String] {
     callback(value)
 }
 @inline(never) public func makeOptionalString(_ suffix: String) -> (String?) -> String? {
@@ -98,11 +103,15 @@ import Foundation
     return value + 1
 }
 
-@inline(never) public nonisolated(nonsending) func hookAsyncEcho<Value>(_ value: Value) async -> Value {
+@inline(never) public nonisolated(nonsending) func hookAsyncEcho<Value>(
+    _ value: Value
+) async -> Value {
     await Task.yield()
     return value
 }
-@inline(never) public nonisolated(nonsending) func hookAsyncThrowing(_ value: Int64) async throws(NSError) -> String {
+@inline(never) public nonisolated(nonsending) func hookAsyncThrowing(
+    _ value: Int64
+) async throws(NSError) -> String {
     await Task.yield()
     if value < 0 { throw NSError(domain: "native-async-hook-consumer", code: Int(value)) }
     return String(repeating: "value:\(value)", count: 100)
@@ -131,6 +140,13 @@ public enum RuntimeProjection {
 @inline(never) public func isEmptyRuntimeProjection(_ value: RuntimeProjection) -> Bool {
     if case .empty = value { return true }
     return false
+}
+@MainActor @inline(never)
+public func readRuntimeProjection(_ value: RuntimeProjection) -> Int64 {
+    switch value {
+    case .empty: 0
+    case .preview(let source, let makeBody): source.number + makeBody().number
+    }
 }
 @inline(never) public func makeRuntimeProjection(_ number: Int64) -> some Any {
     let makeBody: @MainActor () -> RuntimeProjectionBody = {

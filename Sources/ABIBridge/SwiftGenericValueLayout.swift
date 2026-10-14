@@ -54,8 +54,16 @@ enum SwiftGenericValueLayout {
 }
 
 extension SwiftFormalType {
-    func qualifyingAssociatedTypes(using conformances: [SwiftGenericBinding.Conformance]) throws -> Self {
-        func qualify(_ type: Self) throws -> Self { try type.qualifyingAssociatedTypes(using: conformances) }
+    func qualifyingAssociatedTypes(
+        using conformances: [SwiftGenericBinding.Conformance],
+        requiringKnownProtocols: Bool = true
+    ) throws -> Self {
+        func qualify(_ type: Self) throws -> Self {
+            try type.qualifyingAssociatedTypes(
+                using: conformances,
+                requiringKnownProtocols: requiringKnownProtocols
+            )
+        }
         switch self {
         case .objectiveCClass, .opaqueResult: return self
         case .constrainedExistential(let base, let superclass, let constraints, let shape):
@@ -72,10 +80,14 @@ extension SwiftFormalType {
                     }
                 }
             }
-            guard names.count == 1 else {
+            guard names.count == 1 || !requiringKnownProtocols else {
                 throw ABIResolutionError.metadataUnavailable("Cannot identify the declaring protocol for " + spelling + ".")
             }
-            return .associated(try qualify(base), member, protocolName: names.first!)
+            return .associated(
+                try qualify(base),
+                member,
+                protocolName: names.count == 1 ? names.first : nil
+            )
         case .named(let name, let values): return .named(name, try values.map(qualify))
         case .nominal(let name, let values): return .nominal(name, try values.map(qualify))
         case .reference(let descriptor, let values): return .reference(descriptor, try values.map(qualify))

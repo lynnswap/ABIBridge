@@ -118,7 +118,8 @@ struct SwiftRuntimeValueProjectionTests {
             return
         }
         let optional = try await ABIRuntime.shared.resolveSwiftType(
-            named: "Swift.Optional", genericArguments: [.type(ErrorLifetimeToken.self)]
+            named: "Swift.Optional",
+            genericArguments: [.type(ErrorLifetimeToken.self)]
         )
         let none = try optional.makeEnumCase(named: "none")
         #expect(try none.copy().take(as: ErrorLifetimeToken?.self) == nil)
@@ -183,12 +184,127 @@ struct SwiftRuntimeValueProjectionTests {
         #expect(!overloaded.isConsumed)
     }
 
+    @MainActor @Test
+    func payloadConstructionPreservesTheInputAndPassesNativeCalls() async throws {
+        let original = try await runtimeProjectionChoice(1)
+        let payload = try #require(try await original.resolveEnumPayload(forCase: "text"))
+        let value = try await original.type.makeEnumCase(named: "text", payload: payload)
+        let copy = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+            as: ((NativeSwiftValue) -> NativeSwiftValue).self,
+            genericArguments: [.type(original.type)]
+        )
+        let result = try unsafe copy.unsafeInvoke(value)
+        guard case .text(let text) = try result.take(as: RuntimeProjectionChoice.self) else {
+            Issue.record("Native code did not receive the constructed payload case")
+            return
+        }
+        #expect(text == "payload")
+        #expect(!payload.isConsumed && !value.isConsumed)
+        #expect(throws: NativeSwiftValueError.enumCaseNotFound(name: "missing")) {
+            try original.type.makeEnumCaseAndWait(named: "missing", payload: payload)
+        }
+        #expect(throws: NativeSwiftValueError.ambiguousEnumCase(name: "repeated")) {
+            try original.type.makeEnumCaseAndWait(named: "repeated", payload: payload)
+        }
+        #expect(throws: ABIResolutionError.self) {
+            try original.type.makeEnumCaseAndWait(named: "empty", payload: payload)
+        }
+        #expect(throws: ABIInvocationError.self) {
+            try original.type.makeEnumCaseAndWait(named: "large", payload: payload)
+        }
+        #expect(try payload.take(as: String.self) == "payload")
+        #expect(throws: NativeSwiftValueError.consumedValue) {
+            try original.type.makeEnumCaseAndWait(named: "text", payload: payload)
+        }
+        MainActor.assertIsolated()
+    }
+
+    @Test(arguments: [false, true])
+    func constructedPayloadsOutliveTheirInputs(indirect: Bool) async throws {
+        let counts = ArgumentCounts()
+        var constructed: NativeSwiftValue?
+        do {
+            let source = try await runtimeProjectionChoice(
+                5,
+                token: ErrorLifetimeToken { counts.destroyed() }
+            )
+            let payload =
+                indirect
+                ? source
+                : try #require(
+                    try await source.resolveEnumPayload(forCase: "large")
+                )
+            constructed = try source.type.makeEnumCaseAndWait(
+                named: indirect ? "indirect" : "large",
+                payload: payload
+            )
+            #expect(!source.isConsumed && !payload.isConsumed)
+        }
+        #expect(counts.destructions == 0)
+        do {
+            let result = try #require(constructed).take(as: RuntimeProjectionChoice.self)
+            let payload: RuntimeProjectionChoice
+            if indirect, case .indirect(let nested) = result {
+                payload = nested
+            } else {
+                payload = result
+            }
+            guard case .large(let large) = payload else {
+                Issue.record("The constructed enum did not preserve its owned payload")
+                return
+            }
+            #expect(large.first + large.second + large.third + large.fourth == 100)
+            #expect(large.text == String(repeating: "owned payload ", count: 80))
+        }
+        constructed = nil
+        #expect(counts.destructions == 1)
+    }
+
+    @Test func copyablePayloadsCanInitializeNoncopyableEnums() async throws {
+        let type = try await ABIRuntime.shared.resolveSwiftType(
+            named: "ManagedSwiftFixtures.RuntimeProjectionMoveOnly"
+        )
+        let make = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
+            as: ((Int64) -> NativeSwiftValue).self
+        )
+        let payload = try unsafe make.unsafeInvoke(42)
+        let constructed = try await type.makeEnumCase(named: "number", payload: payload)
+        #expect(!constructed.isCopyable && !payload.isConsumed)
+        let moved = try constructed.take(as: RuntimeProjectionMoveOnly.self)
+        guard case .number(let number) = consume moved else {
+            Issue.record("The noncopyable enum did not contain its copyable payload")
+            return
+        }
+        #expect(number == 42)
+        #expect(try payload.take(as: Int64.self) == 42)
+        let ticket = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
+            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
+        )
+        let noncopyable = try unsafe ticket.unsafeInvoke(ErrorLifetimeToken())
+        #expect(throws: NativeSwiftValueError.noncopyableType) {
+            try type.makeEnumCaseAndWait(named: "ticket", payload: noncopyable)
+        }
+        #expect(!noncopyable.isConsumed)
+    }
+
     @Test(arguments: [Int64(2), 3])
     func tuplePayloadsKeepTheRuntimeShape(_ kind: Int64) async throws {
         let value = try await runtimeProjectionChoice(kind)
         let payload = try #require(
             try await value.resolveEnumPayload(forCase: kind == 2 ? "tuple" : "values")
         )
+        let constructed = try await value.type.makeEnumCase(
+            named: kind == 2 ? "tuple" : "values",
+            payload: payload
+        )
+        switch try constructed.take(as: RuntimeProjectionChoice.self) {
+        case .tuple(let tuple): #expect(kind == 2 && tuple.0 + tuple.1 == 42)
+        case .values(let first, let second): #expect(kind == 3 && first + second == 42)
+        default: Issue.record("The constructed case did not preserve its tuple payload")
+        }
         let first = try payload.copyTupleElement(at: 0)
         let second = try payload.copyTupleElement(at: 1)
         #expect(try first.take(as: Int64.self) == 40)
@@ -199,6 +315,55 @@ struct SwiftRuntimeValueProjectionTests {
         #expect(!value.isConsumed && !payload.isConsumed)
         let tuple = try payload.take(as: (Int64, Int64).self)
         #expect(tuple.0 + tuple.1 == 42)
+    }
+
+    @Test func voidPayloadsAreDistinctFromHiddenNoncopyableMetadata() async throws {
+        let make = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeProjectionUnit()",
+            as: (() -> NativeSwiftValue).self
+        )
+        let payload = try unsafe make.unsafeInvoke()
+        let direct = try await ABIRuntime.shared.resolveSwiftType(
+            named: "ManagedSwiftFixtures.RuntimeProjectionMoveOnly"
+        )
+        let value = try await direct.makeEnumCase(named: "nothing", payload: payload)
+        let moved = try value.take(as: RuntimeProjectionMoveOnly.self)
+        guard case .nothing = consume moved else {
+            Issue.record("A genuine Void payload was not constructed")
+            return
+        }
+        #expect {
+            _ = try direct.makeEnumCaseAndWait(named: "ticket", payload: payload)
+        } throws: { error in
+            if case ABIResolutionError.metadataUnavailable = error { return true }
+            if case ABIInvocationError.incompatibleValue(let expected, let actual) = error {
+                return expected == String(reflecting: RuntimeTicket.self)
+                    && actual == String(reflecting: Void.self)
+            }
+            return false
+        }
+        #expect(!payload.isConsumed)
+        let generic = try await ABIRuntime.shared.resolveSwiftType(
+            named: "ManagedSwiftFixtures.RuntimeProjectionGeneric",
+            genericArguments: [.type(Void.self)]
+        )
+        let genericValue = try await generic.makeEnumCase(named: "value", payload: payload)
+        guard case .value = try genericValue.take(as: RuntimeProjectionGeneric<Void>.self) else {
+            return
+        }
+        let associated = try await ABIRuntime.shared.resolveSwiftType(
+            named: "ManagedSwiftFixtures.RuntimeProjectionAssociated",
+            genericArguments: [.type(RuntimeProjectionUnit.self)]
+        )
+        let associatedValue = try await associated.makeEnumCase(named: "value", payload: payload)
+        let associatedMoved = try associatedValue.take(
+            as: RuntimeProjectionAssociated<RuntimeProjectionUnit>.self
+        )
+        guard case .value = consume associatedMoved else {
+            Issue.record("An associated type's genuine Void payload was not constructed")
+            return
+        }
+        #expect(!payload.isConsumed)
     }
 
     @Test func labeledSingleValuesKeepTheirOuterTuple() async throws {
@@ -494,6 +659,7 @@ struct SwiftRuntimeValueProjectionTests {
         )
         let counts = ArgumentCounts()
         var closure: NativeSwiftClosure<Signature>?
+        var constructed: NativeSwiftValue?
         do {
             let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
             let payload = try #require(try await value.resolveEnumPayload(forCase: "preview"))
@@ -519,6 +685,11 @@ struct SwiftRuntimeValueProjectionTests {
                     valueABIs: [bodyType: .opaque(named: bodyType.name)]
                 )
             )
+            constructed = try await preview.type.makeEnumCase(
+                named: "singlePreview",
+                payload: associated,
+                valueABIs: [bodyType: .opaque(named: bodyType.name)]
+            )
             let function = try associated.copyTupleElement(at: 0)
             closure = try await function.resolveClosure(as: Signature.self)
             #expect(!function.isConsumed && !value.isConsumed && !source.isConsumed)
@@ -535,6 +706,12 @@ struct SwiftRuntimeValueProjectionTests {
             MainActor.assertIsolated()
         }
         closure = nil
+        do {
+            let value = try #require(constructed).take(as: RuntimeProjectionPreview.self)
+            guard case .singlePreview(let makeBody) = value else { return }
+            #expect(makeBody().number == 42)
+        }
+        constructed = nil
         #expect(counts.destructions == 1)
     }
 
@@ -546,6 +723,15 @@ struct SwiftRuntimeValueProjectionTests {
         )
         let container = try unsafe make.unsafeInvoke(ErrorLifetimeToken())
         let payload = try #require(try await container.resolveEnumPayload(forCase: "singlePreview"))
+        let constructed = try container.type.makeEnumCaseAndWait(
+            named: "singlePreview",
+            payload: payload
+        )
+        let native = try constructed.take(
+            as: RuntimeProjectionGenericPreview<RuntimeProjectionBody>.self
+        )
+        guard case .singlePreview(let makeBody) = native else { return }
+        #expect(makeBody().number == 42)
         let function = try payload.copyTupleElement(at: 0)
         let closure = try await function.resolveClosure(
             as: (@MainActor () -> NativeSwiftValue).self
@@ -799,19 +985,24 @@ struct SwiftRuntimeValueProjectionTests {
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
         let type = try await runtime.resolveSwiftType(
-            named: module + ".Selection", in: .path(fixture.libraryURL)
+            named: module + ".Selection",
+            in: .path(fixture.libraryURL)
         )
         let count = try await runtime.resolveSwiftFunction(
-            named: module + ".destructionCount()", as: (() -> Int64).self,
+            named: module + ".destructionCount()",
+            as: (() -> Int64).self,
             in: .path(fixture.libraryURL)
         )
         let read = try await type.resolveMethod(
-            named: "isEmpty()", as: (() -> Bool).self,
+            named: "isEmpty()",
+            as: (() -> Bool).self,
             receiverABI: .opaque(named: type.name)
         )
         let fill = try await type.resolveMethod(
-            named: "fill()", as: (() -> Void).self,
-            receiverABI: .opaque(named: type.name), mutating: true
+            named: "fill()",
+            as: (() -> Void).self,
+            receiverABI: .opaque(named: type.name),
+            mutating: true
         )
         var value: NativeSwiftValue? = try type.makeEnumCase(named: "empty")
         #expect(try unsafe count.unsafeInvoke() == 0)

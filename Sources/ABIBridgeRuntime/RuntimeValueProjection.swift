@@ -63,7 +63,41 @@ package struct RuntimeEnumMetadata {
                 "The enum case's payload type metadata is unavailable."
             )
         }
-        return unsafeBitCast(payload, to: Any.Type.self)
+        let type = unsafeBitCast(payload, to: Any.Type.self)
+        if type == Void.self {
+            // Field metadata callbacks can hide a noncopyable type as Void.
+            // A resolvable field declaration distinguishes genuine empty tuples.
+            // https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/IRGen/GenReflection.cpp
+            guard let syntax = ABICopySwiftEnumCasePayloadSyntax(metadata, index) else {
+                throw RuntimeResolutionError.metadataUnavailable(
+                    "The enum case's payload type cannot be verified from runtime field metadata."
+                )
+            }
+            ABIReleaseSwiftSyntax(syntax)
+        }
+        return type
+    }
+
+    package func initializeCase(
+        at index: Int,
+        in storage: UnsafeMutableRawPointer,
+        taking payload: UnsafeMutableRawPointer,
+        payloadType: Any.Type
+    ) throws {
+        guard
+            ABISwiftInitializeEnumCase(
+                metadata,
+                storage,
+                UInt32(index),
+                unsafeBitCast(payloadType, to: UnsafeRawPointer.self),
+                cases[index].isIndirect,
+                payload
+            )
+        else {
+            throw RuntimeResolutionError.metadataUnavailable(
+                "The enum's value witnesses are unavailable."
+            )
+        }
     }
 
     package func copyPayloadSyntax(at index: Int) throws -> OpaquePointer {
