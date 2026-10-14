@@ -25,6 +25,52 @@ struct SwiftParameterizedRuntimeGetterTests {
         #expect(try value.take(as: Storage.self).element == 42)
     }
 
+    @Test func conditionalWitnessUsesTheGetterGenericContext() async throws {
+        let runtime = ABIRuntime.shared
+        let receiver = try await runtime.resolveSwiftType(
+            named: "ManagedSwiftFixtures.RuntimeConditionalGetter",
+            genericArguments: [.type([Int64].self)]
+        )
+        typealias Storage = RuntimeAssociatedElement<RuntimeConditionalSource<[Int64]>>
+        let storage = try await runtime.resolveSwiftType(
+            named: "ManagedSwiftFixtures.RuntimeAssociatedElement",
+            genericArguments: [.type(RuntimeConditionalSource<[Int64]>.self)]
+        )
+        let getter = try await receiver.resolveGetter(
+            named: "storage",
+            as: (() -> NativeSwiftValue).self,
+            valueABIs: [storage: .opaque(named: storage.name)],
+            receiverABI: .opaque(named: receiver.name)
+        )
+        let value = try unsafe getter.unsafeInvoke(on: RuntimeConditionalGetter<[Int64]>(42))
+        #expect(try value.take(as: Storage.self).element == 42)
+    }
+
+    @Test func nestedWitnessUsesAssociatedConformanceRequirements() async throws {
+        let runtime = ABIRuntime.shared
+        let receiver = try await runtime.resolveSwiftType(
+            named: "ManagedSwiftFixtures.RuntimeNestedGetter",
+            genericArguments: [.type(RuntimeCollectionSourceValue.self)]
+        )
+        typealias Storage = RuntimeAssociatedElement<
+            RuntimeNestedSource<RuntimeCollectionSourceValue>
+        >
+        let storage = try await runtime.resolveSwiftType(
+            named: "ManagedSwiftFixtures.RuntimeAssociatedElement",
+            genericArguments: [.type(RuntimeNestedSource<RuntimeCollectionSourceValue>.self)]
+        )
+        let getter = try await receiver.resolveGetter(
+            named: "storage",
+            as: (() -> NativeSwiftValue).self,
+            valueABIs: [storage: .opaque(named: storage.name)],
+            receiverABI: .opaque(named: receiver.name)
+        )
+        let value = try unsafe getter.unsafeInvoke(
+            on: RuntimeNestedGetter<RuntimeCollectionSourceValue>(42)
+        )
+        #expect(try value.take(as: Storage.self).element == 42)
+    }
+
     @MainActor @Test
     func explicitNestedNominalABIComposesWithRuntimeGettersAndClosures() async throws {
         let runtime = ABIRuntime.shared

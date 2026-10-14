@@ -694,8 +694,13 @@ struct SwiftGenericBinding: Sendable {
                 }
             }
             if let handle {
+                // Nominal metadata may omit conditional and associated conformance requirements.
+                // Keep unresolved witness references for the declaration's binding.
                 let witness = try SwiftFormalType(SwiftSyntax(adopting: handle).root)
-                    .qualifyingAssociatedTypes(using: context.conformances)
+                    .qualifyingAssociatedTypes(
+                        using: context.conformances,
+                        requiringKnownProtocols: false
+                    )
                     .substituting(substitutions)
                 if !matches.contains(witness) { matches.append(witness) }
             }
