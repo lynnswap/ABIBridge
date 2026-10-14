@@ -206,6 +206,34 @@ let value = try unsafe checked.unsafeInvoke(on: receiver)
 
 Use ``NativeSwiftClosure`` for callback parameters and returned closures. Initializers transfer their owned context; ordinary methods borrow it. See <doc:SwiftClosureValues>.
 
+## Writable key paths
+
+Resolve a computed property's native `WritableKeyPath` when its root or value type is unavailable at compile time:
+
+```swift
+let settings = try await runtime.resolveSwiftType(named: "Example.Settings")
+let theme = try await runtime.resolveSwiftType(named: "Example.Theme")
+let themePath = try await settings.resolveWritableKeyPath(
+    named: "theme", valueType: theme
+)
+```
+
+The result is a ``NativeSwiftValue`` containing the actual `WritableKeyPath<Settings, Theme>`, or its `ReferenceWritableKeyPath` subclass for a nonmutating setter. Its property identity, equality, and hashing match a compiler-generated key path for that property. You can pass the owned value to a compatible native call, inspect an `AnyKeyPath` copy with `withCopy`, or use `take(as:)` with the exact key-path type when both types are importable. Copies retain the property's implementation images through the value handle's lifetime; keep the handle or its type alive if an extracted key path outlives the extraction scope.
+
+For a property defined in another module, supply its complete extension-qualified name:
+
+```swift
+let themePath = try await settings.resolveWritableKeyPath(
+    named: "(extension in Themes):Example.Settings.theme", valueType: theme
+)
+```
+
+The extension module must already be loaded. `resolveWritableKeyPathAndWait` performs the same operation synchronously. Async lookup prepares the descriptor on a worker and creates the owned value in the caller's isolation domain. Neither form reads or changes a root value.
+
+Applying an extracted key path invokes the native accessors synchronously. Apply it only on the actor or thread required by the property; the key path does not perform an actor hop.
+
+This operation requires a non-generic root and a nontrivial property descriptor containing writable computed-property accessors without captured arguments. A missing descriptor, a mismatched root or value type, a getter-only property, or a descriptor that requires additional generic context fails with a resolution error. Trivial descriptors omit the accessors needed for construction and are unsupported.
+
 ## Fixed value receivers and adapters
 
 For a supported fixed-layout value or a value conforming to ABIBridgeValue:

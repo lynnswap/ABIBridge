@@ -1,0 +1,76 @@
+public struct RuntimeKeyPathPayload: Equatable {
+    public var text: String
+
+    public init(_ text: String) { self.text = text }
+}
+
+public struct RuntimeKeyPathRoot {
+    private var storage: RuntimeKeyPathPayload
+    public private(set) var writes = 0
+
+    public init(_ text: String) { storage = RuntimeKeyPathPayload(text) }
+
+    public var payload: RuntimeKeyPathPayload {
+        get { storage }
+        set {
+            storage = newValue
+            writes += 1
+        }
+    }
+
+    public var readOnly: String { storage.text }
+}
+
+public func runtimePayloadKeyPath() -> AnyKeyPath { \RuntimeKeyPathRoot.payload }
+
+public func validateRuntimePayloadKeyPath(
+    _ keyPath: WritableKeyPath<RuntimeKeyPathRoot, RuntimeKeyPathPayload>
+) -> Bool {
+    let canonical = \RuntimeKeyPathRoot.payload
+    var root = RuntimeKeyPathRoot("original")
+    root[keyPath: keyPath] = RuntimeKeyPathPayload("updated")
+    return keyPath == canonical && [canonical: true][keyPath] == true
+        && root.payload.text == "updated" && root.writes == 1
+}
+
+public func writeRuntimePayload(through keyPath: AnyKeyPath, text: String) -> String? {
+    guard let keyPath = keyPath as? WritableKeyPath<RuntimeKeyPathRoot, RuntimeKeyPathPayload>
+    else { return nil }
+    var root = RuntimeKeyPathRoot("original")
+    root[keyPath: keyPath] = RuntimeKeyPathPayload(text)
+    return "\(root[keyPath: keyPath].text):\(root.writes)"
+}
+
+extension String {
+    public var runtimeKeyPathPayload: RuntimeKeyPathPayload {
+        get { RuntimeKeyPathPayload(self) }
+        set { self = newValue.text + "!" }
+    }
+}
+
+public func runtimeExtensionPayloadKeyPath() -> AnyKeyPath { \String.runtimeKeyPathPayload }
+
+public func writeRuntimeExtensionPayload(through keyPath: AnyKeyPath, text: String) -> String? {
+    guard let keyPath = keyPath as? WritableKeyPath<String, RuntimeKeyPathPayload>
+    else { return nil }
+    var root = "original"
+    root[keyPath: keyPath] = RuntimeKeyPathPayload(text)
+    return root[keyPath: keyPath].text
+}
+
+@frozen public struct RuntimeKeyPathStoredRoot {
+    public var number: Int
+
+    public init(_ number: Int) { self.number = number }
+}
+
+public final class RuntimeKeyPathReferenceRoot {
+    private var storage: String
+
+    public init(_ text: String) { storage = text }
+
+    public var text: String {
+        get { storage }
+        set { storage = newValue }
+    }
+}

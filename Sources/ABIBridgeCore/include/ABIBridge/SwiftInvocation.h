@@ -66,6 +66,9 @@ const void *ABISwiftExtendedExistentialShape(const void *metadata);
 const void *ABISwiftExtendedExistentialMetadata(const void *shape, const void *const *arguments);
 const void *ABISwiftMetatypeMetadata(const void *instance);
 const void *ABISwiftExistentialMetatypeMetadata(const void *instance);
+/// Instantiates a validated, nontrivial writable computed-property descriptor without captures. Returns a retained Swift AnyKeyPath object; the caller retains the descriptor's image while using it.
+const void *ABISwiftCreateWritableKeyPath(const void *descriptor,
+    const void *root, const void *value);
 /// Labels are nil or one space-terminated name per element; an empty name is unlabeled. The labels buffer only needs to remain valid until this call returns.
 const void *ABISwiftTupleTypeMetadata(const void *const *elements, size_t count, const char *labels);
 /// Canonical native Swift function metadata from Swift ABI function/parameter flags. flags carries the parameter count and marks any supplied extended flags. Differentiability/globalActor agree with the corresponding bits in flags.
