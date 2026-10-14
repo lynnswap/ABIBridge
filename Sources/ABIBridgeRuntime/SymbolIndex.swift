@@ -220,12 +220,17 @@ package struct SwiftModuleFilter {
 
     package init?(_ declaration: String) {
         var name = declaration.trimmingCharacters(in: .whitespacesAndNewlines)
-        for marker in [
+        let markers = [
             "nominal type descriptor for ", "protocol descriptor for ",
-            "type metadata accessor for ", "type metadata for ", "static ",
-        ] {
-            if name.hasPrefix(marker) { name.removeFirst(marker.count); break }
+            "type metadata accessor for ", "type metadata for ",
+            "async function pointer to ", "property descriptor for ",
+            "method descriptor for ", "static ",
+        ]
+        while let marker = markers.first(where: { name.hasPrefix($0) }) {
+            name.removeFirst(marker.count)
         }
+        // An extension's mangling starts with the extended type's module.
+        name = SymbolIndex.extensionMemberName(name) ?? name
         guard let dot = name.firstIndex(of: ".") else { return nil }
         let module = String(name[..<dot])
         guard module.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) != nil
@@ -1094,7 +1099,7 @@ package final class SymbolIndex {
 
     // Demangler markers are ASCII. Avoid locale-aware substring search on
     // every Swift symbol while retaining the spelling of Unicode identifiers.
-    private static func byteOffset(of marker: String, in name: String) -> Int? {
+    static func byteOffset(of marker: String, in name: String) -> Int? {
         name.withCString { start in
             marker.withCString { marker in strstr(start, marker).map { start.distance(to: $0) } }
         }

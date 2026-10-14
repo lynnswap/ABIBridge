@@ -34,6 +34,14 @@ struct RuntimeCallInterfaceKey: Sendable, Equatable {
 // Keys contain only native layouts. Codecs, metatypes, image discovery, and
 // callback bodies are resolved before reaching this cache.
 final class RuntimeCallInterfaceCache<Interface: Sendable>: Sendable {
+    #if DEBUG
+    private let beforeWaitingForPreparation: (@Sendable () -> Void)?
+
+    init(beforeWaitingForPreparation: (@Sendable () -> Void)? = nil) {
+        self.beforeWaitingForPreparation = beforeWaitingForPreparation
+    }
+    #endif
+
     private struct Entry: Sendable {
         let key: RuntimeCallInterfaceKey
         let preparation: Preparation
@@ -50,6 +58,13 @@ final class RuntimeCallInterfaceCache<Interface: Sendable>: Sendable {
 
         private let condition = NSCondition()
         private var state = State.pending
+        #if DEBUG
+        private let beforeWaiting: (@Sendable () -> Void)?
+
+        init(beforeWaiting: (@Sendable () -> Void)?) {
+            self.beforeWaiting = beforeWaiting
+        }
+        #endif
 
         var isCompleted: Bool {
             condition.lock()
@@ -72,6 +87,11 @@ final class RuntimeCallInterfaceCache<Interface: Sendable>: Sendable {
                     condition.unlock()
                     return try result.get()
                 case .running:
+                    #if DEBUG
+                    // Notify under the condition lock so completion cannot
+                    // overtake the waiter. The callback must not reenter the cache.
+                    beforeWaiting?()
+                    #endif
                     condition.wait()
                 case .completed(let result):
                     condition.unlock()
@@ -91,7 +111,11 @@ final class RuntimeCallInterfaceCache<Interface: Sendable>: Sendable {
             if let entry = entries.last(where: { $0.key == key }) {
                 return entry.preparation
             }
+            #if DEBUG
+            let preparation = Preparation(beforeWaiting: beforeWaitingForPreparation)
+            #else
             let preparation = Preparation()
+            #endif
             entries.append(Entry(key: key, preparation: preparation))
             return preparation
         }

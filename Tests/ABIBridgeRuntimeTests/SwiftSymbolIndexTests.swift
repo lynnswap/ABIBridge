@@ -7,6 +7,26 @@ import MachOKit
 import Testing
 
 struct SwiftSymbolIndexTests {
+    @Test func memberKeysKeepParameterLabelsAndUnicodeAccessorNames() {
+        let declarations = [
+            (
+                "First.choose(Swift.Int, transform: (Swift.Int) -> Swift.String) -> (Swift.Int, (Swift.Int) -> Swift.String)",
+                "First.choose(_:transform:)"
+            ),
+            (
+                "First.(unknown context at $1).Box<A where A == (Swift.Int) -> Swift.String>.apply(A) -> (Swift.Int) -> Swift.String",
+                "First.(unknown context at $1).Box.apply(_:)"
+            ),
+            (
+                "(extension in Second):First.値.cafe\u{301}.getter : (Swift.Int) -> Swift.String",
+                "First.値.cafe\u{301}.getter"
+            ),
+        ]
+        for (declaration, expected) in declarations {
+            #expect(SwiftMemberLookup.key(declaration) == DeclarationKey.make(expected))
+        }
+    }
+
     @Test func abbreviatedModuleRootsPreserveQueryOrder() async throws {
         let fixture = try FixtureLibrary(
             cxxSource: """

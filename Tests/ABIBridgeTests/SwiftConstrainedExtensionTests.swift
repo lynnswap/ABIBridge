@@ -97,7 +97,7 @@ extension ConstrainedOuter.Inner where First == Int, Second == String {
 
 struct SwiftConstrainedExtensionTests {
     @Test func objectiveCClassesAndProtocolsKeepDistinctSameTypeIdentities() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let concrete = try await runtime.object(ConstrainedBox<NSObject>(NSObject())).resolveMethod(
             named: "classIdentity()",
             as: (() -> String).self
@@ -114,7 +114,7 @@ struct SwiftConstrainedExtensionTests {
     }
 
     @Test func inapplicableAssociatedRequirementsDoNotHideOtherCandidates() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let method = try await runtime.object(ConstrainedPair<Bool, String>()).resolveMethod(
             named: "associatedChoice()",
             as: (() -> String).self
@@ -382,7 +382,7 @@ struct SwiftConstrainedExtensionTests {
     }
 
     @MainActor @Test func partialEqualNestedAndCompoundConstraints() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let pair = ConstrainedPair<Int, String>()
         let equal = ConstrainedPair<String, String>()
         let nested = ConstrainedOuter<Int>.Inner<String>()
@@ -405,7 +405,7 @@ struct SwiftConstrainedExtensionTests {
     }
 
     @MainActor @Test func mismatchedConstraintsRemainAbsent() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let inputs: [(AnyObject, String)] = [
             (ConstrainedBox(1.5), "title(_:)"),
             (ConstrainedPair<Int, String>(), "equal()"),
@@ -433,7 +433,7 @@ struct SwiftConstrainedExtensionTests {
     }
 
     @MainActor @Test func dependentConstraintsUseRuntimeConformancesAndSubstitution() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         #expect(ConstrainedBox(42).needsWitness() == "42")
         #expect(ConstrainedPair<[Int], String>().associated() == "associated")
         #expect(ConstrainedPair<Int, [Int]>().substituted() == "substituted")
@@ -487,7 +487,7 @@ struct SwiftConstrainedExtensionTests {
     func completeAsyncExtensionDeclarationsKeepTheirDescriptor(declaration: String) async throws {
         let receiver = AsyncConstrainedBox(42)
         #expect(await receiver.result() == 42)
-        let method = try await ABIRuntime().object(receiver).resolveMethod(
+        let method = try await ABIRuntime.shared.object(receiver).resolveMethod(
             named: declaration,
             as: (() async -> Int).self
         )
@@ -818,7 +818,7 @@ struct SwiftConstrainedExtensionTests {
         #expect(ConstrainedPair<Int, Bool>().overlap() == "first")
         #expect(ConstrainedPair<Bool, String>().overlap() == "second")
         do {
-            _ = try await ABIRuntime().object(ConstrainedPair<Int, String>()).resolveMethod(
+            _ = try await ABIRuntime.shared.object(ConstrainedPair<Int, String>()).resolveMethod(
                 named: "overlap()",
                 as: (() -> String).self
             )

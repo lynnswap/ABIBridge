@@ -1,15 +1,17 @@
 import ABIBridgeCore
 import ABIBridgeRuntime
-import Darwin
+import ObjectiveC
+import ObjectiveCFixtures
 import Testing
 
 struct NativeRuntimeContractTests {
     @Test func nativeBatchesReturnOwnedPerRequestOutcomes() throws {
         let runtime = try #require(ABICreateSymbolRuntime())
         defer { ABIReleaseSymbolRuntime(runtime) }
+        let imagePath = try #require(class_getImageName(ABIReplacementFixture.self))
         ABIResolveSymbols(runtime, nil, 0, nil)
-        try "getpid".withCString { name in
-            var scope = ABIImageSelector(scope: Int32(ABIImageAutomatic), selector: nil)
+        try "ABICAnswer".withCString { name in
+            var scope = ABIImageSelector(scope: Int32(ABIImagePath), selector: imagePath)
             try withUnsafePointer(to: &scope) { scope in
                 let declaration = ABIDeclaration(
                     name: name,
@@ -74,7 +76,10 @@ struct NativeRuntimeContractTests {
     @Test func nativeExactSpellingsPreserveTheirFormAndErrorCategory() throws {
         let runtime = try #require(ABICreateSymbolRuntime())
         defer { ABIReleaseSymbolRuntime(runtime) }
-        for (name, form) in [("getpid", Int32(ABINameLinker)), ("_getpid", Int32(ABINameMachO))] {
+        let imagePath = try #require(class_getImageName(ABIReplacementFixture.self))
+        for (name, form) in [
+            ("ABICAnswer", Int32(ABINameLinker)), ("_ABICAnswer", Int32(ABINameMachO)),
+        ] {
             var failure: OpaquePointer?
             let handle = name.withCString {
                 ABIResolveSymbolWithNameForm(
@@ -83,8 +88,8 @@ struct NativeRuntimeContractTests {
                     form,
                     Int32(ABILanguageC),
                     Int32(ABISymbolFunction),
-                    Int32(ABIImageAutomatic),
-                    nil,
+                    Int32(ABIImagePath),
+                    imagePath,
                     Int32(ABIImageLoadIfNeeded),
                     &failure
                 )
@@ -98,7 +103,7 @@ struct NativeRuntimeContractTests {
             #expect(
                 unsafe imported.withUnsafeAddress {
                     unsafeBitCast($0, to: (@convention(c) () -> Int32).self)()
-                } == getpid()
+                } == ABICAnswer()
             )
         }
         var failure: OpaquePointer?
@@ -124,13 +129,21 @@ struct NativeRuntimeContractTests {
     @Test func nativeVTableErrorsPreserveLookupCategories() throws {
         let runtime = try #require(ABICreateSymbolRuntime())
         defer { ABIReleaseSymbolRuntime(runtime) }
+        let imagePath = try #require(class_getImageName(ABIReplacementFixture.self))
         for (scope, expected) in [
             (-1, Int32(ABIFailureInvalidRequest)),
-            (Int32(ABIImageAutomatic), Int32(ABIFailureDeclarationNotFound)),
+            (Int32(ABIImagePath), Int32(ABIFailureDeclarationNotFound)),
         ] {
             var failure: OpaquePointer?
             let symbol = "ABIBridgeMissingType::Renderer".withCString {
-                ABIResolveCXXVTable(runtime, $0, scope, nil, Int32(ABIImageLoadIfNeeded), &failure)
+                ABIResolveCXXVTable(
+                    runtime,
+                    $0,
+                    scope,
+                    imagePath,
+                    Int32(ABIImageLoadIfNeeded),
+                    &failure
+                )
             }
             #expect(symbol == nil)
             let error = try #require(failure)

@@ -221,14 +221,15 @@ struct SwiftMemberInvocationTests {
         #expect(throws: ABIInvocationError.self) { try unsafe adaptedBinding.unsafeInvoke(0) }
     }
 
-    @MainActor @Test(arguments: [false, true], ["title()", "title() -> Swift.String"])
-    func privateReceiversKeepTheirDeclarationIdentity(_ second: Bool, _ member: String) async throws
-    {
+    @MainActor @Test(arguments: [false, true])
+    func privateReceiversKeepTheirDeclarationIdentity(_ second: Bool) async throws {
         let receiver = second ? makeSecondPrivateReceiver() : makeFirstPrivateReceiver()
         let runtime = ABIRuntime()
         let object = runtime.object(receiver)
-        let title = try await object.resolveMethod(named: member, as: (() -> String).self)
-        #expect(try unsafe title.unsafeInvoke() == (second ? "22" : "11"))
+        for member in ["title()", "title() -> Swift.String"] {
+            let title = try await object.resolveMethod(named: member, as: (() -> String).self)
+            #expect(try unsafe title.unsafeInvoke() == (second ? "22" : "11"))
+        }
         let echo = try await object.resolveMethod(named: "echo(_:)", as: ((Int) -> Int).self)
         #expect(try unsafe echo.unsafeInvoke(1) == (second ? 23 : 12))
         let inherited = try await object.resolveMethod(named: "inherited()", as: (() -> Int).self)
@@ -240,46 +241,57 @@ struct SwiftMemberInvocationTests {
         #expect(try unsafe getter.unsafeInvoke() == 42)
     }
 
-    @MainActor
-    @Test(arguments: ["method", "getter", "setter", "staticMethod", "staticGetter", "staticSetter"])
-    func missingMembersPreserveRequestedOwner(_ operation: String) async throws {
+    @MainActor @Test func missingMembersPreserveRequestedOwner() async throws {
         let runtime = ABIRuntime()
         let receiver = SwiftMemberLookupReceiver()
         let owner = "ABIBridgeTests.SwiftMemberLookupReceiver"
-        let type = try await runtime.resolveSwiftType(named: owner)
-        let expected: String
-        switch operation {
-        case "method": expected = owner + ".missing() -> Swift.Int"
-        case "getter": expected = owner + ".missing.getter : Swift.Int"
-        case "setter": expected = owner + ".missing.setter : Swift.Int"
-        case "staticMethod": expected = "static " + owner + ".missing() -> Swift.Int"
-        case "staticGetter": expected = "static " + owner + ".missing.getter : Swift.Int"
-        default: expected = "static " + owner + ".missing.setter : Swift.Int"
-        }
-        do {
+        let path = try #require(Bundle(for: SwiftMemberLookupReceiver.self).executableURL)
+        let type = try await runtime.resolveSwiftType(
+            named: owner,
+            in: .path(path),
+            loading: .loadedOnly
+        )
+        for operation in [
+            "method", "getter", "setter", "staticMethod", "staticGetter", "staticSetter",
+        ] {
+            let expected: String
             switch operation {
-            case "method":
-                _ = try await runtime.object(receiver).resolveMethod(
-                    named: "missing()",
-                    as: (() -> Int).self
-                )
-            case "getter":
-                _ = try await runtime.object(receiver).resolveGetter(
-                    named: "missing",
-                    as: (() -> Int).self
-                )
-            case "setter":
-                _ = try await runtime.object(receiver).resolveSetter(named: "missing", as: Int.self)
-            case "staticMethod":
-                _ = try await type.resolveStaticMethod(named: "missing()", as: (() -> Int).self)
-            case "staticGetter":
-                _ = try await type.resolveStaticGetter(named: "missing", as: (() -> Int).self)
-            default:
-                _ = try await type.resolveStaticSetter(named: "missing", as: Int.self)
+            case "method": expected = owner + ".missing() -> Swift.Int"
+            case "getter": expected = owner + ".missing.getter : Swift.Int"
+            case "setter": expected = owner + ".missing.setter : Swift.Int"
+            case "staticMethod": expected = "static " + owner + ".missing() -> Swift.Int"
+            case "staticGetter": expected = "static " + owner + ".missing.getter : Swift.Int"
+            default: expected = "static " + owner + ".missing.setter : Swift.Int"
             }
-            Issue.record("A missing member unexpectedly resolved")
-        } catch let ABIResolutionError.declarationNotFound(request) {
-            #expect(request == NativeDeclaration(name: expected, language: .swift))
+            await #expect(
+                throws: ABIResolutionError.declarationNotFound(
+                    NativeDeclaration(name: expected, language: .swift)
+                )
+            ) {
+                switch operation {
+                case "method":
+                    _ = try await runtime.object(receiver).resolveMethod(
+                        named: "missing()",
+                        as: (() -> Int).self
+                    )
+                case "getter":
+                    _ = try await runtime.object(receiver).resolveGetter(
+                        named: "missing",
+                        as: (() -> Int).self
+                    )
+                case "setter":
+                    _ = try await runtime.object(receiver).resolveSetter(
+                        named: "missing",
+                        as: Int.self
+                    )
+                case "staticMethod":
+                    _ = try await type.resolveStaticMethod(named: "missing()", as: (() -> Int).self)
+                case "staticGetter":
+                    _ = try await type.resolveStaticGetter(named: "missing", as: (() -> Int).self)
+                default:
+                    _ = try await type.resolveStaticSetter(named: "missing", as: Int.self)
+                }
+            }
         }
     }
 

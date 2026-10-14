@@ -48,7 +48,7 @@ private final class GenericCaptureState: Sendable {
 @Suite(.serialized)
 struct SwiftGenericCallTests {
     @Test func labelOnlyFreeFunctionsBindTheirNativeDeclarations() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let name = "ManagedSwiftFixtures.labelLookupGeneric(_:)"
         let scalar = try await runtime.resolveSwiftFunction(
             named: name,
@@ -79,7 +79,7 @@ struct SwiftGenericCallTests {
     }
 
     @Test func labelOnlyValueABIsUseTheProviderTypes() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair")
         let abi = try NativeType.structure(named: type.name, fields: [.int64, .int64])
         let make = try await runtime.resolveSwiftFunction(
@@ -218,7 +218,7 @@ struct SwiftGenericCallTests {
     }
 
     @Test func protocolNameSuffixDoesNotChangeGenericValueConvention() async throws {
-        let method = try await ABIRuntime().resolveSwiftFunction(
+        let method = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.similarlyNamedConstraintGeneric<A where A: ManagedSwiftFixtures.GenericNotAnyObject>(A) -> A",
             as: ((GenericConstraintValue) -> GenericConstraintValue).self,
             genericArguments: [.type(GenericConstraintValue.self)])
@@ -284,7 +284,7 @@ struct SwiftGenericCallTests {
 
     @Test func inoutClosuresDistinguishNativeGenericStorageFromConvertedFunctions() async throws {
         typealias Closure = NativeSwiftClosure<() -> String>
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let replaceFunction = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.replaceClosureGeneric<A>(inout () -> A, A) -> ()",
             as: ((NativeSwiftInout<Closure>, String) -> Void).self, genericArguments: [.type(String.self)])
@@ -339,7 +339,7 @@ struct SwiftGenericCallTests {
     }
 
     @MainActor @Test func classResultsUseTheExistingAnyObjectRepresentation() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let object = NSObject()
         let echo = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.echoGeneric<A>(A) -> A",
@@ -353,7 +353,7 @@ struct SwiftGenericCallTests {
     }
 
     @MainActor @Test func existentialAndProtocolMetatypesRoundTripWithGenericValues() async throws {
-        let function = try await ABIRuntime().resolveSwiftFunction(
+        let function = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.existentialMetatypesGeneric<A>(Swift.CustomStringConvertible.Type, Swift.CustomStringConvertible.Protocol, A) -> (Swift.CustomStringConvertible.Type, Swift.CustomStringConvertible.Protocol, A)",
             as: ((any CustomStringConvertible.Type, (any CustomStringConvertible).Type, String)
                 -> (any CustomStringConvertible.Type, (any CustomStringConvertible).Type, String)).self,
@@ -365,7 +365,7 @@ struct SwiftGenericCallTests {
     }
 
     @MainActor @Test func neverBoundErrorsPreserveTheFormalThrowingConvention() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let function = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.genericErrorType<A where A: Swift.Error>(A.Type) throws(A) -> Swift.Int64",
             as: ((Never.Type) -> Int64).self, genericArguments: [.type(Never.self)])
@@ -396,7 +396,7 @@ struct SwiftGenericCallTests {
     }
 
     @MainActor @Test func existentialBoundErrorsUseTypedGenericOutputs() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let error: any Error = GenericConversionFailure.rejected
         let function = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.genericErrorType<A where A: Swift.Error>(A.Type) throws(A) -> Swift.Int64",
@@ -483,7 +483,7 @@ struct SwiftGenericCallTests {
         }
     }
     @Test func associatedElementStorageUsesItsFormalWitness() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let array = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.arrayElementGeneric<A>(ManagedSwiftFixtures.GenericElementStorage<[A]>) -> ManagedSwiftFixtures.GenericElementStorage<[A]>",
             as: ((GenericElementStorage<[Int64]>) -> GenericElementStorage<[Int64]>).self,
@@ -550,7 +550,7 @@ struct SwiftGenericCallTests {
     }
 
     @Test func genericOwnershipPreservesRawStorageAndWritebackOnErrors() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let borrowed = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.borrowingGeneric<A>(A) -> A",
             as: ((NativeSwiftBorrowing<String>) -> String).self, genericArguments: [.type(String.self)])
@@ -596,7 +596,7 @@ struct SwiftGenericCallTests {
     }
 
     @Test func nominalPackSourcesMatchCompilerMetadataFulfillments() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let arguments: [NativeSwiftGenericArgument] = [.pack([.type(Int64.self), .type(String.self)])]
         let object = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.packClassSourceGeneric<each A where A: Swift.Equatable>(ManagedSwiftFixtures.GenericSourcePack<Pack{repeat A}>, repeat A) -> Swift.Int64",
@@ -621,7 +621,7 @@ struct SwiftGenericCallTests {
     }
 
     @Test func metatypesPreserveFormalAndConcreteCallingConventions() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let nominal = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.valueMetatypeGeneric<A>(ManagedSwiftFixtures.GenericMetatypeValue<A>.Type, Swift.Int64) -> (ManagedSwiftFixtures.GenericMetatypeValue<A>.Type, Swift.Int64)",
             as: ((GenericMetatypeValue<String>.Type, Int64) -> (GenericMetatypeValue<String>.Type, Int64)).self,
@@ -654,7 +654,7 @@ struct SwiftGenericCallTests {
     }
 
     @Test func optionalMetatypesPreserveTagsAcrossTupleAndGenericResults() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let optional = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.optionalMetatypeGeneric<A>(A.Type?) -> A.Type?",
             as: ((Int64.Type?) -> Int64.Type?).self, genericArguments: [.type(Int64.self)])
@@ -684,7 +684,7 @@ struct SwiftGenericCallTests {
     }
 
     @Test func metatypeCallbacksReabstractBothDirectionsAndAsyncResults() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let closure = try NativeSwiftClosure<(Int64.Type) -> Int64.Type> { type in
             #expect(type == Int64.self)
             return type
@@ -721,7 +721,7 @@ struct SwiftGenericCallTests {
     }
 
     @Test func explicitClassAndMetatypeArgumentsFulfillGenericRequirements() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let box = GenericSourceBox(GenericSourceValue(41))
         let mixed = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.classSourceGeneric<A, B where A: ManagedSwiftFixtures.GenericSourceChild>(ManagedSwiftFixtures.GenericSourceBox<A>, B) -> (Swift.Int64, B)",
@@ -752,7 +752,7 @@ struct SwiftGenericCallTests {
     }
 
     @Test func associatedClassObjectiveCAndSuperclassConstraintsUseClassConventions() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let associated = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.associatedObjectGeneric<A where A: ManagedSwiftFixtures.GenericObjectContainer>(A.Type, A.Item) -> A.Item",
             as: ((GenericObjectCarrier.Type, NSObject) -> NSObject).self,
@@ -919,7 +919,7 @@ struct SwiftGenericCallTests {
     }
 
     @Test func packCallbacksConvertRuntimeValuesAndPreserveNativeHandleReferences() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let name = "ManagedSwiftFixtures.callbackPackGeneric<each A>((repeat A) -> (repeat A), repeat A) -> (repeat A)"
         let inspect = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.inspectRuntimePack<each A>((repeat A) throws -> Swift.Int64, repeat A) throws -> Swift.Int64",

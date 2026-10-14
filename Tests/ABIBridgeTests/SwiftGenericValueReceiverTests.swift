@@ -25,7 +25,7 @@ extension GenericValueBox: ABIBridgeSwiftValue {
 @Suite(.serialized)
 struct SwiftGenericValueReceiverTests {
     @MainActor @Test func objectConstraintsAcceptObjectiveCExistentialSpecializations() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let object: AnyObject = NSObject()
         let free = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.objectConstraintGeneric<A where A: AnyObject>(A) -> A",
@@ -76,7 +76,7 @@ struct SwiftGenericValueReceiverTests {
     }
 
     @Test func memberWitnessesUseTheCanonicalRefinedSignature() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let associatedType = try await runtime.resolveSwiftType(
             named: "ManagedSwiftFixtures.GenericAssociatedOwner",
             genericArguments: [.type(GenericAssociatedValue.self)])
@@ -126,7 +126,7 @@ struct SwiftGenericValueReceiverTests {
     }
 
     @MainActor @Test func qualifiedMembersSelectTheRequestedConstraint() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let type = try await runtime.resolveSwiftType(
             named: "ManagedSwiftFixtures.GenericValueBox",
             genericArguments: [.type(Int.self)])
@@ -176,7 +176,7 @@ struct SwiftGenericValueReceiverTests {
         } catch ABIResolutionError.declarationNotFound {}
     }
     @MainActor @Test func genericMembersUseDeclarationOwnershipDefaults() async throws {
-        let type = try await ABIRuntime().resolveSwiftType(
+        let type = try await ABIRuntime.shared.resolveSwiftType(
             named: "ManagedSwiftFixtures.GenericValueBox",
             genericArguments: [.type(String.self)])
         let create = try await type.resolveInitializer(
@@ -195,7 +195,7 @@ struct SwiftGenericValueReceiverTests {
     }
 
     @MainActor @Test func nominalConstraintsAndNestedFieldsPreserveReceiverLayouts() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let object = NSObject()
         let objectType = try await runtime.resolveSwiftType(
             named: "ManagedSwiftFixtures.GenericObjectValue",
@@ -224,7 +224,7 @@ struct SwiftGenericValueReceiverTests {
     }
 
     @MainActor @Test func sameTypeNominalExpressionsDetermineMetadataAndReceiverConvention() async throws {
-        let type = try await ABIRuntime().resolveSwiftType(
+        let type = try await ABIRuntime.shared.resolveSwiftType(
             named: "ManagedSwiftFixtures.GenericValueBox",
             genericArguments: [.type([String].self)])
         let first = try await type.resolveMethod(
@@ -236,7 +236,7 @@ struct SwiftGenericValueReceiverTests {
     }
 
     @MainActor @Test func valuesAndEnumsUseUnboundFieldStorageWithoutAdapters() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let record = try await runtime.resolveSwiftType(
             named: "ManagedSwiftFixtures.GenericRecord",
             genericArguments: [.type(ResilientRecord.self)])
@@ -254,7 +254,7 @@ struct SwiftGenericValueReceiverTests {
     }
 
     @MainActor @Test func valueMembersShareInitializationMutationAndOwnership() async throws {
-        let type = try await ABIRuntime().resolveSwiftType(
+        let type = try await ABIRuntime.shared.resolveSwiftType(
             named: "ManagedSwiftFixtures.GenericValueBox",
             genericArguments: [.type(String.self)])
         let create = try await type.resolveInitializer(
@@ -290,7 +290,7 @@ struct SwiftGenericValueReceiverTests {
     }
 
     @MainActor @Test func constrainedMembersUseTheirOwnReceiverConvention() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let integer = try await runtime.resolveSwiftType(
             named: "ManagedSwiftFixtures.GenericValueBox",
             genericArguments: [.type(Int.self)])
@@ -311,7 +311,7 @@ struct SwiftGenericValueReceiverTests {
     }
 
     @MainActor @Test func fixedStorageRetainsExplicitMetadataAndDirectReceiver() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let type = try await runtime.resolveSwiftType(
             named: "ManagedSwiftFixtures.GenericPhantom",
             genericArguments: [.type(String.self)])
@@ -331,7 +331,7 @@ struct SwiftGenericValueReceiverTests {
     }
 
     @MainActor @Test func indirectValueReceiversComposeWithAsyncAndTypedErrors() async throws {
-        let type = try await ABIRuntime().resolveSwiftType(
+        let type = try await ABIRuntime.shared.resolveSwiftType(
             named: "ManagedSwiftFixtures.GenericValueBox",
             genericArguments: [.type(String.self)])
         let asynchronous = try await type.resolveMethod(named: "asynchronously()", as: (() async -> String).self)
@@ -351,7 +351,7 @@ struct SwiftGenericValueReceiverTests {
     }
 
     @Test func nominalArgumentsAndOptionalArraysUseFormalLayouts() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let function = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.boxedGeneric<A>(ManagedSwiftFixtures.GenericValueBox<A>) -> ManagedSwiftFixtures.GenericValueBox<A>",
             as: ((GenericValueBox<Int>) -> GenericValueBox<Int>).self, genericArguments: [.type(Int.self)])

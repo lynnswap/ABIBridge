@@ -36,7 +36,7 @@ jobs:
       - run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
 
   runtime-tests:
-    name: Runtime (${{ matrix.platform }}, Xcode ${{ matrix.xcode }})
+    name: Runtime and consumers (Xcode ${{ matrix.xcode }})
     if: github.event_name != 'pull_request' || github.event.action != 'closed'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -46,20 +46,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macOS
-            xcode: '26.6'
+          - xcode: '26.6'
             runner: macos-26
             developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
-          - platform: iOS
-            xcode: '26.6'
-            runner: macos-26
-            developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
-          - platform: macOS
-            xcode: '27.0'
-            runner: xcode-27
-            developer_dir: /Applications/Xcode_27.app/Contents/Developer
-          - platform: iOS
-            xcode: '27.0'
+          - xcode: '27.0'
             runner: xcode-27
             developer_dir: /Applications/Xcode_27.app/Contents/Developer
     steps:
@@ -74,13 +64,8 @@ jobs:
           xcrun swift --version
           echo "ABI_TEST_BUILD_DIR=$RUNNER_TEMP/DerivedData" >> "$GITHUB_ENV"
           echo "ABI_CONSUMER_BUILD_DIR=$RUNNER_TEMP/NativeConsumer" >> "$GITHUB_ENV"
-      - name: Check whitespace and manifest
-        if: matrix.platform == 'macOS' && matrix.xcode == '27.0'
-        run: |
-          git diff --check HEAD^ HEAD
-          xcrun swift package dump-package
       - name: Test Core and Runtime on macOS
-        if: ${{ !cancelled() && matrix.platform == 'macOS' }}
+        if: ${{ !cancelled() }}
         timeout-minutes: 25
         run: |
           if [[ -d Sources/ABIBridgeRuntime ]]; then
@@ -91,12 +76,8 @@ jobs:
               -destination 'platform=macOS,arch=arm64' \
               -derivedDataPath "$ABI_TEST_BUILD_DIR"
           fi
-      - name: Test public API behavior
-        if: ${{ !cancelled() && matrix.platform == 'macOS' && matrix.xcode == '27.0' && hashFiles('Sources/ABIBridgeRuntime/*.swift') != '' }}
-        timeout-minutes: 25
-        run: bash scripts/test-package.sh api
       - name: Test public compiler boundaries and optimized native linkage
-        if: ${{ !cancelled() && matrix.platform == 'macOS' }}
+        if: ${{ !cancelled() && matrix.xcode == '27.0' }}
         timeout-minutes: 25
         run: |
           if [[ -d Sources/ABIBridgeRuntime ]]; then
@@ -105,33 +86,51 @@ jobs:
             bash scripts/test-native-consumer.sh
           fi
       - name: Test SwiftUI public consumer
-        if: ${{ !cancelled() && matrix.platform == 'macOS' && matrix.xcode == '27.0' && hashFiles('Sources/ABIBridgeRuntime/*.swift') != '' }}
+        if: ${{ !cancelled() && matrix.xcode == '27.0' && hashFiles('Sources/ABIBridgeRuntime/*.swift') != '' }}
         timeout-minutes: 10
         run: bash scripts/test-native-consumer.sh swiftui
-      - name: Test Core and Runtime on iOS Simulator
-        if: ${{ !cancelled() && matrix.platform == 'iOS' && hashFiles('scripts/test-simulators.py') != '' }}
+      - name: Test native consumers and iOS Simulator
+        if: ${{ !cancelled() && matrix.xcode == '26.6' }}
         timeout-minutes: 35
         run: |
-          task_options=()
-          if [[ -d Sources/ABIBridgeRuntime ]]; then
-            task_options+=(--scheme ABIBridgeRuntime --skip-swiftui-build)
+          task_status=0
+          task_consumer_log="$RUNNER_TEMP/native-consumer-xcode-26.6.log"
+          (
+            if [[ -d Sources/ABIBridgeRuntime ]]; then
+              bash scripts/test-native-consumer.sh focused
+            else
+              bash scripts/test-native-consumer.sh
+            fi
+          ) > "$task_consumer_log" 2>&1 &
+          task_consumer_pid=$!
+          if [[ -f scripts/test-simulators.py ]]; then
+            task_options=()
+            if [[ -d Sources/ABIBridgeRuntime ]]; then
+              task_options+=(--scheme ABIBridgeRuntime --skip-swiftui-build)
+            fi
+            if ! python3 scripts/test-simulators.py --platforms iOS \
+              --build-dir "$ABI_TEST_BUILD_DIR" \
+              --result-dir "$RUNNER_TEMP/SimulatorResults" "${task_options[@]}"; then
+              task_status=1
+            fi
           fi
-          python3 scripts/test-simulators.py --platforms iOS \
-            --build-dir "$ABI_TEST_BUILD_DIR" \
-            --result-dir "$RUNNER_TEMP/SimulatorResults" "${task_options[@]}"
+          if ! wait "$task_consumer_pid"; then task_status=1; fi
+          cat "$task_consumer_log"
+          exit "$task_status"
       - name: Preserve failed test diagnostics
         if: always() && (failure() || cancelled())
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: tests-${{ matrix.platform }}-xcode-${{ matrix.xcode }}-${{ github.run_attempt }}
+          name: runtime-tests-xcode-${{ matrix.xcode }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/SimulatorResults
             ${{ runner.temp }}/DerivedData/Logs/Test
+            ${{ runner.temp }}/native-consumer-xcode-26.6.log
           if-no-files-found: warn
           retention-days: 7
 
-  platform-builds:
-    name: Apple device SDK builds (Xcode 27.0)
+  public-api-tests:
+    name: Public API (Xcode 27.0)
     if: github.event_name != 'pull_request' || github.event.action != 'closed'
     runs-on: xcode-27
     timeout-minutes: 40
@@ -142,16 +141,63 @@ jobs:
         with:
           ref: ${{ inputs.revision || github.sha }}
           persist-credentials: false
+          fetch-depth: 2
       - name: Show toolchain
         run: |
           xcodebuild -version
           xcrun swift --version
-      - name: Build all Apple platforms
+          echo "ABI_TEST_BUILD_DIR=$RUNNER_TEMP/DerivedData" >> "$GITHUB_ENV"
+      - name: Check whitespace and manifest
+        run: |
+          git diff --check HEAD^ HEAD
+          xcrun swift package dump-package
+      - name: Test public API behavior
+        if: ${{ !cancelled() && hashFiles('Sources/ABIBridgeRuntime/*.swift') != '' }}
+        timeout-minutes: 25
+        env:
+          ABI_TEST_PARALLEL_API: '1'
+        run: bash scripts/test-package.sh api
+      - name: Preserve failed test diagnostics
+        if: always() && (failure() || cancelled())
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: api-tests-xcode-27.0-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/DerivedData/Logs/Test
+          if-no-files-found: warn
+          retention-days: 7
+
+  platform-builds:
+    name: Apple device SDK builds (${{ matrix.platforms }}, Xcode 27.0)
+    if: github.event_name != 'pull_request' || github.event.action != 'closed'
+    runs-on: xcode-27
+    timeout-minutes: 40
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
+      ABI_DEVICE_PLATFORMS: ${{ matrix.platforms }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platforms: iOS tvOS
+            simulator: false
+          - platforms: visionOS watchOS
+            simulator: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+          persist-credentials: false
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcrun swift --version
+      - name: Build Apple platforms
         if: ${{ !cancelled() }}
         timeout-minutes: 35
         run: |
           task_status=0
-          for task_platform in iOS visionOS watchOS tvOS; do
+          read -r -a task_platforms <<< "$ABI_DEVICE_PLATFORMS"
+          for task_platform in "${task_platforms[@]}"; do
             echo "::group::Build $task_platform"
             if ! xcodebuild build -scheme ABIBridge \
               -destination "generic/platform=$task_platform" \
@@ -177,3 +223,24 @@ jobs:
             echo "::endgroup::"
           done
           exit "$task_status"
+      - name: Test Core and Runtime on iOS Simulator
+        if: ${{ !cancelled() && matrix.simulator && hashFiles('scripts/test-simulators.py') != '' }}
+        timeout-minutes: 35
+        run: |
+          task_options=()
+          if [[ -d Sources/ABIBridgeRuntime ]]; then
+            task_options+=(--scheme ABIBridgeRuntime --skip-swiftui-build)
+          fi
+          python3 scripts/test-simulators.py --platforms iOS \
+            --build-dir "$RUNNER_TEMP/DerivedData" \
+            --result-dir "$RUNNER_TEMP/SimulatorResults" "${task_options[@]}"
+      - name: Preserve failed Simulator diagnostics
+        if: always() && (failure() || cancelled()) && matrix.simulator
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: simulator-tests-xcode-27.0-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/SimulatorResults
+            ${{ runner.temp }}/DerivedData/Logs/Test
+          if-no-files-found: warn
+          retention-days: 7

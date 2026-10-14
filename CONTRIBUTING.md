@@ -52,6 +52,14 @@ Each selection uses its own directory under `.build/package-tests`. Set `ABI_TES
 
 The Runtime and public API schemes disable parallel tests because fixtures load and unload libraries in the process-wide image catalog. Individual tests still exercise concurrency. A suite's `serialized` trait does not isolate it from unrelated suites; see [Swift Testing parallelization](https://developer.apple.com/documentation/testing/parallelization).
 
+To run the full public API suite in two independent processes, as CI does:
+
+```sh
+ABI_TEST_PARALLEL_API=1 bash scripts/test-package.sh api
+```
+
+The helper builds once, then runs complementary groups with `test-without-building`. Tests remain sequential within each process. Both groups must finish successfully, and each saves a separate `.xcresult` bundle under the build directory's `Logs/Test`. This mode manages test filters and result paths; use the default mode when passing `-only-testing`, `-skip-testing`, or `-resultBundlePath`.
+
 During development, select a single suite:
 
 ```sh
@@ -97,6 +105,8 @@ python3 scripts/test-simulators.py --platforms iOS \
 
 The helper creates a dedicated device, runs tests without parallel destination clones, and deletes the device afterward. Omitting `--scheme` selects the public `ABIBridge` suite; omitting `--skip-swiftui-build` also builds `ABIBridgeSwiftUI`. It prefers a runtime matching the selected Xcode SDK and saves builds in `.build/simulator-tests` and results in `.build/simulator-results`. Tests that compile temporary libraries on the host run only on macOS.
 
+The helper keeps test logs and `.xcresult` bundles but skips verbose failure diagnostics, such as sysdiagnose, to avoid long delays after a failed test. Add `--collect-test-diagnostics on-failure` when reproducing a failure that needs those diagnostics.
+
 Use `--platforms iOS tvOS` to choose another combination. Omitting `--platforms` runs all four Simulator platforms sequentially; CI selects only iOS.
 
 For SDK or platform changes, build the affected device target:
@@ -122,18 +132,23 @@ Older `actionlint` versions do not recognize GitHub's [official `xcode-27` runne
 
 ## What CI runs
 
-[CI](.github/workflows/ci.yml) runs Core and Runtime together in four environment entries:
+[CI](.github/workflows/ci.yml) uses five macOS jobs:
 
-| Xcode | Runner | Runtime environments | Additional checks |
+| Job | Xcode | Runner | Checks |
 | --- | --- | --- | --- |
-| 26.6 | `macos-26` | macOS and iOS Simulator | Focused external consumers on macOS |
-| 27.0 | `xcode-27` | macOS and iOS Simulator | Public API suite and focused external/SwiftUI consumers on macOS |
+| Runtime and consumers | 26.6 | `macos-26` | macOS Core and Runtime, then focused external consumers and iOS Simulator Core and Runtime in parallel |
+| Runtime and consumers | 27.0 | `xcode-27` | macOS Core and Runtime, then focused external and SwiftUI consumers |
+| Public API | 27.0 | `xcode-27` | Manifest and whitespace checks, then the complete public API suite in two processes |
+| iOS and tvOS SDKs | 27.0 | `xcode-27` | Both products for iOS and tvOS; Release build of the arm64 validation app for iOS |
+| Other SDKs and iOS Simulator | 27.0 | `xcode-27` | Both products for visionOS and watchOS, then iOS Simulator Core and Runtime |
 
-The macOS/Xcode 27 job runs the public API suite in the runtime build directory. A separate Xcode 27 job builds both products for iOS, visionOS, watchOS, and tvOS. Timing loops, stress tests, full external consumer combinations, and architecture probes run locally.
+The jobs run independently. Package and SDK builds reuse one build directory within each job; focused and SwiftUI consumers share a separate consumer build directory. Release and CI automation tests run in a separate Linux job.
+
+Timing loops, stress tests, full external consumer combinations, and architecture probes run locally.
 
 The matrix checks metadata, calling conventions, image loading, and compiler workarounds in generic public entry points. The `xcode-27` runner uses macOS 27 and is in public preview. Device pointer authentication requires execution on matching hardware.
 
-Independent checks continue after failures. CI keeps failed package and Simulator diagnostics for seven days. Pull requests and releases require every CI job to succeed; closing a pull request cancels its superseded validation. Older release targets without the runtime target use their original package and consumer suites. DocC builds run separately with Xcode 27.0 when `main` changes.
+Independent checks continue after failures. CI keeps failed package and Simulator test logs and `.xcresult` bundles for seven days. Pull requests and releases require every CI job to succeed; closing a pull request cancels its superseded validation. Older release targets without the runtime target use their original package and consumer suites. DocC builds run separately with Xcode 27.0 when `main` changes.
 
 See [Runtime boundaries and CI coverage](Docs/RuntimeArchitecture.md) for module responsibilities, ownership, and the test contracts behind this split.
 
