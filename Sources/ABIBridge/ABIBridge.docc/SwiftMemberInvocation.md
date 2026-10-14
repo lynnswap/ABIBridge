@@ -232,6 +232,8 @@ The extension module must already be loaded. `resolveWritableKeyPathAndWait` per
 
 Applying an extracted key path invokes the native accessors synchronously. Apply it only on the actor or thread required by the property; the key path does not perform an actor hop.
 
+The property descriptor does not contain the Objective-C KVC compatibility string that a compiler can attach to a key-path literal. Resolved key paths support Swift access, equality, and hashing, but cannot be used with KVC/KVO APIs such as `NSObject.observe`.
+
 This operation requires a non-generic root and a nontrivial property descriptor containing writable computed-property accessors without captured arguments. A missing descriptor, a mismatched root or value type, a getter-only property, or a descriptor that requires additional generic context fails with a resolution error. Trivial descriptors omit the accessors needed for construction and are unsupported.
 
 ## Fixed value receivers and adapters

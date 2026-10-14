@@ -13,6 +13,8 @@ extension NativeSwiftType {
     /// on the caller's executor and retains the root, value, and property implementation images.
     /// Applying the extracted key path calls the native accessors synchronously. Use it
     /// on the actor or thread required by the property; it does not perform an actor hop.
+    /// The key path has no Objective-C KVC compatibility string and cannot be used with
+    /// KVC/KVO APIs such as `NSObject.observe`.
     /// - Parameters:
     ///   - name: A property name in this type's image, or a complete property name such as
     ///     `(extension in Module):OtherModule.Root.property` for an already-loaded extension.
