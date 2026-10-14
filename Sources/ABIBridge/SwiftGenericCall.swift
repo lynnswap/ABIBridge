@@ -772,7 +772,7 @@ struct SwiftGenericCallPlan: Sendable {
             if receiver == .address {
                 let canonical = try binding.canonicalType(of: formalSelf)
                 if canonical.nominalDeclaration != nil {
-                    let fulfilled = try binding.argumentFulfillments([], typeMetadata: canonical)
+                    let fulfilled = try binding.argumentFulfillments([], typeMetadata: [canonical])
                     // An indirect nominal self supplies its metadata before explicit
                     // arguments are considered, even when they fulfill the same types.
                     if !fulfilled.isEmpty {
@@ -781,8 +781,17 @@ struct SwiftGenericCallPlan: Sendable {
                     }
                 }
             }
-        } else if context != nil, receiver == .address, let enclosingMetadata {
-            return ([unsafeBitCast(enclosingMetadata, to: UInt.self)], .init())
+        } else if let context = receiverContext {
+            let fulfilled = try binding.argumentFulfillments(
+                [],
+                typeMetadata: context.parameters.filter {
+                    context.keyParameters.contains($0.name)
+                }.map { .named($0.name, []) }
+            )
+            if receiver == .address, let enclosingMetadata {
+                return ([unsafeBitCast(enclosingMetadata, to: UInt.self)], fulfilled)
+            }
+            return ([], fulfilled)
         }
         return ([], .init())
     }

@@ -123,6 +123,11 @@ public final class GenericSourceLeaf: GenericSourceBox<GenericSourceValue> {}
 public class GenericSourceNested<Value> {
     public let value: Value
     public init(_ value: Value) { self.value = value }
+    @inline(never) public func sourceTotal<Source: GenericSourceChild, Values: Collection>(
+        _ values: Values
+    ) throws -> Int64 where Value == GenericSourceBox<Source>, Values.Element == Int64 {
+        value.value.sourceNumber + values.reduce(0, +)
+    }
 }
 @inline(never) public func classSourceGeneric<Value: GenericSourceChild, Other>(
     _ box: GenericSourceBox<Value>, _ other: Other
@@ -184,6 +189,11 @@ public class GenericObjCValue: NSObject, GenericObjCConstraint {
 
 extension GenericValueBox {
     @inline(never) public func first<Element>() -> Element where Value == [Element] { value[0] }
+    @inline(never) public func sourceTotal<Source: GenericSourceChild, Values: Collection>(
+        _ values: Values
+    ) throws -> Int64 where Value == GenericSourceBox<Source>, Values.Element == Int64 {
+        value.value.sourceNumber + values.reduce(0, +)
+    }
 }
 
 public protocol GenericTree { associatedtype Child: GenericTree }

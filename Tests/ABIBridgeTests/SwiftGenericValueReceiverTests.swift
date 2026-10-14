@@ -24,6 +24,21 @@ extension GenericValueBox: ABIBridgeSwiftValue {
 
 @Suite(.serialized)
 struct SwiftGenericValueReceiverTests {
+    @MainActor @Test func valueReceiversFulfillNestedGenericRequirements() async throws {
+        let receiver = GenericValueBox(GenericSourceBox(GenericSourceValue(39)))
+        let type = try await ABIRuntime.shared.resolveSwiftType(
+            named: "ManagedSwiftFixtures.GenericValueBox",
+            genericArguments: [.type(GenericSourceBox<GenericSourceValue>.self)]
+        )
+        let total = try await type.resolveMethod(
+            named: "sourceTotal(_:)",
+            as: (([Int64]) throws -> Int64).self,
+            genericArguments: [.type(GenericSourceValue.self), .type([Int64].self)]
+        )
+        let values: [Int64] = [1, 2]
+        #expect(try unsafe total.unsafeInvoke(on: receiver, values) == receiver.sourceTotal(values))
+    }
+
     @MainActor @Test func objectConstraintsAcceptObjectiveCExistentialSpecializations() async throws {
         let runtime = ABIRuntime.shared
         let object: AnyObject = NSObject()
