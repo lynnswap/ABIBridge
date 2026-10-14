@@ -1,6 +1,6 @@
 import Foundation
 
-/// Swift IRGen derives generic requirements from direct class arguments and thick metatypes. An inexact source does not fulfill an archetype's own metadata, but its nominal generic arguments are exact sources. Swift 6.3: IRGen/GenProto.cpp and IRGen/Fulfillment.cpp.
+/// Swift IRGen derives generic requirements from receivers, direct class arguments, and thick metatypes. An inexact source does not fulfill an archetype's own metadata, but its nominal generic arguments are exact sources. Swift 6.3: IRGen/GenProto.cpp and IRGen/Fulfillment.cpp.
 extension SwiftGenericBinding {
     struct Fulfillments {
         var types: [SwiftFormalType] = []
@@ -11,7 +11,7 @@ extension SwiftGenericBinding {
 
     func argumentFulfillments(
         _ arguments: [SwiftFormalType],
-        typeMetadata: SwiftFormalType? = nil
+        typeMetadata: [SwiftFormalType] = []
     ) throws -> Fulfillments {
         var result = Fulfillments()
         func archetype(_ type: SwiftFormalType) -> Bool {
@@ -87,7 +87,7 @@ extension SwiftGenericBinding {
             default: return
             }
         }
-        if let typeMetadata { try searchNominal(typeMetadata) }
+        for type in typeMetadata { try searchType(type, exact: true) }
         try arguments.forEach(consider)
         return result
     }
