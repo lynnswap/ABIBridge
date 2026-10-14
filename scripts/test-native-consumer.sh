@@ -37,6 +37,7 @@ xcrun clang++ -std=c++20 -dynamiclib -mmacosx-version-min=15.4 \
 xcrun swiftc -parse-as-library -emit-library -emit-module -enable-library-evolution \
     -module-name SwiftFunctionFixture -emit-module-path "$task_fixture/SwiftFunctionFixture.swiftmodule" \
     "$task_root/Tests/NativeConsumer/SwiftFixture.swift" \
+    "$task_root/Tests/ManagedSwiftFixtures/KeyPaths.swift" \
     -o "$task_fixture/libSwiftFixture.dylib"
 xcrun swiftc -parse-as-library -emit-library -enable-library-evolution \
     -module-name SwiftExtensionFixture -I "$task_fixture" -L "$task_fixture" -lSwiftFixture \
