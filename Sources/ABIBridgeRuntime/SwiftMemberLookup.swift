@@ -59,19 +59,17 @@ package enum SwiftMemberLookup {
             return result
         }
         for accessor in [".getter : ", ".setter : "] {
-            if let range = text.range(of: accessor) {
+            if let offset = SymbolIndex.byteOffset(of: accessor, in: text) {
                 return DeclarationKey.make(
-                    head(String(text[..<range.lowerBound]))
+                    head(String(decoding: text.utf8.prefix(offset), as: UTF8.self))
                         + accessor.components(separatedBy: " : ")[0]
                 )
             }
         }
-        let input =
-            SwiftFormalSyntax.topLevelArrow(in: text).map { String(text[..<$0.lowerBound]) } ?? text
-        guard let opening = SwiftFormalSyntax.parameterOpening(in: input),
-            let closing = SwiftFormalSyntax.matchingClose(in: input, opening: opening)
+        guard let opening = SwiftFormalSyntax.parameterOpening(in: text),
+            let closing = SwiftFormalSyntax.matchingClose(in: text, opening: opening)
         else { return nil }
-        let fields = input[input.index(after: opening)..<closing]
+        let fields = text[text.index(after: opening)..<closing]
         let labels: [String]
         let possibleLabels = fields.split(separator: ":")
         if fields.last == ":",
@@ -88,7 +86,7 @@ package enum SwiftMemberLookup {
             }
         }
         return DeclarationKey.make(
-            head(String(input[..<opening])) + "(" + labels.map { $0 + ":" }.joined() + ")"
+            head(String(text[..<opening])) + "(" + labels.map { $0 + ":" }.joined() + ")"
         )
     }
 }

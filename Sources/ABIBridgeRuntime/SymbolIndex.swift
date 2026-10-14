@@ -1099,7 +1099,7 @@ package final class SymbolIndex {
 
     // Demangler markers are ASCII. Avoid locale-aware substring search on
     // every Swift symbol while retaining the spelling of Unicode identifiers.
-    private static func byteOffset(of marker: String, in name: String) -> Int? {
+    static func byteOffset(of marker: String, in name: String) -> Int? {
         name.withCString { start in
             marker.withCString { marker in strstr(start, marker).map { start.distance(to: $0) } }
         }
