@@ -98,6 +98,28 @@ public class ProtocolExtensionObject: ExistentialValue, ExistentialObjectValue, 
     }
 }
 public final class ProtocolExtensionDerivedObject: ProtocolExtensionObject, @unchecked Sendable {}
+extension ProtocolExtensionObject: GenericWitnessA {
+    public static func first() -> Int64 { 4 }
+}
+public final class ProtocolExtensionWitnessSubclass: OpaqueBase, GenericWitnessA,
+    @unchecked Sendable
+{
+    public static func first() -> Int64 { 4 }
+}
+extension GenericWitnessA where Self: ProtocolExtensionObject {
+    @inline(never) public func protocolExtensionSuperclassWitness<Other: GenericWitnessZ>(
+        _ value: Other
+    ) -> Int64 {
+        Self.first() * 10 + Other.last()
+    }
+}
+extension GenericWitnessA where Self: OpaqueBase {
+    @inline(never) public func protocolExtensionSubclassWitness<Other: GenericWitnessZ>(
+        _ value: Other
+    ) -> Int64 {
+        Self.first() * 10 + Other.last()
+    }
+}
 extension ExistentialValue {
     public var protocolExtensionValue: Self {
         get { self }
@@ -124,6 +146,9 @@ extension ExistentialObjectValue {
 }
 extension ExistentialValue where Self: AnyObject {
     @inline(never) public func protocolExtensionClassNumber() -> Int64 { number }
+    @inline(never) public mutating func protocolExtensionClassReplace(_ replacement: Self) {
+        self = replacement
+    }
 }
 @inline(never) public func makeConstrainedOpaque<Value: ExistentialValue>(_ value: Value) -> some ExistentialValue {
     HiddenConstrainedOpaque(value: value)

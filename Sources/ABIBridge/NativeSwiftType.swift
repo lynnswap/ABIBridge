@@ -218,6 +218,7 @@ public actor NativeSwiftType: Hashable {
                 metadata: metadata,
                 isMutating: isMutating,
                 isConsuming: isConsuming,
+                isProtocolSelf: generic?.binding.declaration.protocolSelf != nil,
                 validateClass: representation != nil && representation != metadata
             ),
             cachedCodec

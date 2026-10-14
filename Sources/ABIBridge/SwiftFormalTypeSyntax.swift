@@ -34,9 +34,7 @@ extension SwiftGenericDeclaration {
             if case .invertedProtocols = $0 { return false }
             return true
         } ?? []
-        if let protocolName, let protocolSelf {
-            requirements.append(.conformance(protocolSelf, protocolName))
-        }
+        var implicitRequirements = context?.requirements ?? []
         func collectContext(_ node: SwiftSyntax.Node) throws {
             for child in node.children() {
                 if child.kind == "DependentGenericSignature" {
@@ -68,6 +66,13 @@ extension SwiftGenericDeclaration {
                 }
             }
             value = try value.requiredChild(kind: "Type").requiredChild()
+        }
+        if let protocolName, let protocolSelf {
+            let requirement = Requirement.conformance(protocolSelf, protocolName)
+            if !requirements.contains(requirement) {
+                requirements.append(requirement)
+                implicitRequirements.append(requirement)
+            }
         }
         self.parameters = parameters
         consumesArguments = accessor == "Setter" || ["Allocator", "Constructor"].contains(declaration.kind)
@@ -103,7 +108,7 @@ extension SwiftGenericDeclaration {
             self.failure = failure
             self.isAsync = attributes.isAsync
         }
-        implicitRequirements = context?.requirements ?? []
+        self.implicitRequirements = implicitRequirements
         abiRequirements = try declaredSignature?.requirements(for: self)
         if let abiRequirements {
             self.requirements += abiRequirements.filter { !self.requirements.contains($0) }

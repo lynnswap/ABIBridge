@@ -200,6 +200,9 @@ struct SwiftConstrainedExtensionTests {
                         }
                     }
                     public struct Box<Value: Score> {}
+                    extension Score where Self: Base {
+                        public static func protocolScore() -> Int { Self.score() }
+                    }
                     extension Box where Value: Base {
                         public static func entry<Failure: Error>(_ error: Failure, _ shouldThrow: Bool) throws(Failure) -> Int {
                             if shouldThrow { throw error }
@@ -285,6 +288,25 @@ struct SwiftConstrainedExtensionTests {
                 declaredAs: "<A where A: " + baseModule + ".Base" + witness + "> () -> Swift.Int"
             )
             #expect(try unsafe getter.unsafeInvoke() == 42)
+            let protocolDeclaration =
+                "static (extension in \(module)):\(baseModule).Score< where A: \(baseModule).Base>.protocolScore() -> Swift.Int"
+            do {
+                _ = try await baseType.resolveStaticMethod(
+                    named: protocolDeclaration,
+                    as: (() -> Int).self
+                )
+                Issue.record(
+                    "A retroactive superclass conformance requires the provider's canonical signature"
+                )
+            } catch ABIResolutionError.unsupportedDeclaration(let reason) {
+                #expect(reason.contains("declaredAs:"))
+            }
+            let protocolScore = try await baseType.resolveStaticMethod(
+                named: protocolDeclaration,
+                as: (() -> Int).self,
+                declaredAs: "<A where A: " + baseModule + ".Base" + witness + "> () -> Swift.Int"
+            )
+            #expect(try unsafe protocolScore.unsafeInvoke() == 42)
         }
     }
 

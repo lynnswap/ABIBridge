@@ -365,6 +365,42 @@ struct SwiftOpaqueResultTests {
             try unsafe replace.unsafeInvoke(on: derived, replacement)
         }
         try derived.withCopy { #expect(($0 as? ProtocolExtensionDerivedObject)?.number == 43) }
+        let classReplace = try await type.resolveMethod(
+            named:
+                "(extension in ManagedSwiftFixtures):ManagedSwiftFixtures.ExistentialValue< where A: AnyObject>.protocolExtensionClassReplace(A) -> ()",
+            as: ((ProtocolExtensionObject) -> Void).self,
+            mutating: true
+        )
+        try #require(throws: ABIResolutionError.self) { _ = try classReplace.bind(to: replacement) }
+        try unsafe classReplace.unsafeInvoke(on: owner, replacement)
+        try owner.withCopy { #expect(($0 as? ProtocolExtensionObject) === replacement) }
+        var typed = reset
+        try unsafe classReplace.unsafeInvoke(on: &typed, replacement)
+        #expect(typed === replacement)
+    }
+
+    @Test func protocolExtensionSuperclassConstraintsPreserveRequiredWitnesses() async throws {
+        let runtime = ABIRuntime.shared
+        let cases: [(AnyObject, String, String)] = [
+            (
+                ProtocolExtensionObject(ErrorLifetimeToken(), 41), "ProtocolExtensionObject",
+                "protocolExtensionSuperclassWitness"
+            ),
+            (
+                ProtocolExtensionWitnessSubclass(ErrorLifetimeToken(), 42), "OpaqueBase",
+                "protocolExtensionSubclassWitness"
+            ),
+        ]
+        for (receiver, superclass, member) in cases {
+            let method = try await runtime.object(receiver).resolveMethod(
+                named:
+                    "(extension in ManagedSwiftFixtures):ManagedSwiftFixtures.GenericWitnessA< where A: ManagedSwiftFixtures.\(superclass)>.\(member)<A where A1: ManagedSwiftFixtures.GenericWitnessZ>(A1) -> Swift.Int64",
+                as: ((GenericWitnessValue) -> Int64).self,
+                genericArguments: [.type(GenericWitnessValue.self)]
+            )
+            let value = try unsafe method.unsafeInvoke(GenericWitnessValue())
+            #expect(value == 42)
+        }
     }
 
     @Test func genericOpaqueMembersCombineEnclosingAndMethodBindings() async throws {

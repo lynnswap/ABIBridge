@@ -3,6 +3,7 @@ import Foundation
 public protocol GenericWitnessA { static func first() -> Int64 }
 public protocol GenericWitnessZ { static func last() -> Int64 }
 public struct GenericWitnessValue: GenericWitnessA, GenericWitnessZ {
+    public init() {}
     public static func first() -> Int64 { 4 }
     public static func last() -> Int64 { 2 }
 }

@@ -81,7 +81,10 @@ struct SwiftReceiverPlan: Sendable {
     let metadata: Any.Type
 
     init(codec: SwiftReceiverCodec, metadata: Any.Type, isMutating: Bool,
-         isConsuming: Bool, validateClass: Bool) throws {
+        isConsuming: Bool,
+        isProtocolSelf: Bool,
+        validateClass: Bool
+    ) throws {
         guard !(isMutating && isConsuming) else {
             throw ABIResolutionError.unsupportedDeclaration("Swift self cannot be both mutating and consuming.")
         }
@@ -89,8 +92,8 @@ struct SwiftReceiverPlan: Sendable {
         self.metadata = metadata
         self.isMutating = isMutating
         self.isConsuming = isConsuming
-        // An unconstrained protocol Self remains indirect for class conformers.
-        if ABISwiftValueIsIndirect(codec.type.handle) {
+        // Mutating protocol Self addresses the receiver slot, even when class-bound.
+        if (isProtocolSelf && isMutating) || ABISwiftValueIsIndirect(codec.type.handle) {
             mode = .address
             expectedClass = nil
         } else if let objectType = metadata as? AnyClass {
