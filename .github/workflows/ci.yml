@@ -197,12 +197,13 @@ jobs:
         run: |
           task_status=0
           read -r -a task_platforms <<< "$ABI_DEVICE_PLATFORMS"
+          # Keep both SDK schemes uninstrumented so their dependencies can be reused.
           for task_platform in "${task_platforms[@]}"; do
             echo "::group::Build $task_platform"
             if ! xcodebuild build -scheme ABIBridge \
               -destination "generic/platform=$task_platform" \
               -derivedDataPath "$RUNNER_TEMP/DerivedData" \
-              WATCHOS_DEPLOYMENT_TARGET=11.4 CODE_SIGNING_ALLOWED=NO; then
+              WATCHOS_DEPLOYMENT_TARGET=11.4 CODE_SIGNING_ALLOWED=NO ENABLE_CODE_COVERAGE=NO; then
               task_status=1
             fi
             if [[ "$task_platform" == iOS ]]; then
@@ -216,7 +217,7 @@ jobs:
               if ! xcodebuild build -scheme ABIBridgeSwiftUI \
                 -destination "generic/platform=$task_platform" \
                 -derivedDataPath "$RUNNER_TEMP/DerivedData" \
-                WATCHOS_DEPLOYMENT_TARGET=11.4 CODE_SIGNING_ALLOWED=NO; then
+                WATCHOS_DEPLOYMENT_TARGET=11.4 CODE_SIGNING_ALLOWED=NO ENABLE_CODE_COVERAGE=NO; then
                 task_status=1
               fi
             fi
