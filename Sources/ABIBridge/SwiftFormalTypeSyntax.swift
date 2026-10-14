@@ -92,12 +92,32 @@ extension SwiftGenericDeclaration {
         consumesArguments = accessor == "Setter" || ["Allocator", "Constructor"].contains(declaration.kind)
         self.requirements = requirements.reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
         if let accessor {
-            let property = try SwiftFormalType(value)
-            arguments = accessor == "Setter" ? [property] : []
+            let property: SwiftFormalType
+            let indices: [SwiftFormalType]
+            let type = try SwiftFormalType(value)
+            if declaration.kind == "Subscript" {
+                guard case .function(let parameters, let element, _, let attributes) = type else {
+                    throw ABIResolutionError.unsupportedDeclaration(
+                        "The Swift subscript is missing its function type."
+                    )
+                }
+                indices = attributes.loweredParameters(parameters)
+                property = element
+            } else {
+                indices = []
+                property = type
+            }
+            // Subscripts encode an index-to-element function; a function-valued
+            // property still has no indices. Setters receive newValue first.
+            arguments = accessor == "Setter" ? [property] + indices : indices
             result = accessor == "Setter" ? .tuple([]) : property
             if accessor == "Getter" {
                 if let getterSignature = declaredSignature?.function {
-                    guard case .function(let parameters, _, let failure, let attributes) = getterSignature, parameters.isEmpty else {
+                    guard
+                        case .function(let parameters, _, let failure, let attributes) =
+                            getterSignature,
+                        declaration.kind == "Subscript" || parameters.isEmpty
+                    else {
                         throw ABIResolutionError.signatureMismatch(.init(expected: "A zero-argument declared getter signature", found: [getterSignature.spelling]))
                     }
                     self.failure = failure

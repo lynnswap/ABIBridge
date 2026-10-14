@@ -34,6 +34,25 @@ public final class GenericExtensionRenderer<Value> {
     GenericExtensionRenderer(value)
 }
 
+public struct RuntimeLookupElement: Identifiable {
+    public let id: String
+    public let number: Int64
+}
+public struct RuntimeLookup<Element: Identifiable> {
+    public var element: Element
+    public subscript(_ key: Element.ID) -> Element? {
+        get { key == element.id ? element : nil }
+        set { if key == element.id, let newValue { element = newValue } }
+    }
+}
+@inline(never) public func makeRuntimeLookup(_ id: String, _ number: Int64) -> some Any {
+    RuntimeLookup(element: RuntimeLookupElement(id: id, number: number))
+}
+@inline(never) public func makeRuntimeLookupKey(_ id: String) -> some Any { id }
+@inline(never) public func makeRuntimeLookupReplacement(_ id: String, _ number: Int64) -> some Any {
+    Optional(RuntimeLookupElement(id: id, number: number))
+}
+
 @inline(never) public func makeAdder(_ bias: Int64) -> (Int64) -> Int64 { { $0 + bias } }
 @inline(never) public func visitOwnedClosure(
     _ closure: @escaping (Int64) -> Int64,

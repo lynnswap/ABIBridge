@@ -726,7 +726,8 @@ public actor NativeSwiftType: Hashable {
             symbol: member.symbol,
             type: self,
             receiver: receiver,
-            consumesArguments: consumesArguments,
+            consumesArguments: consumesArguments
+                || member.symbol.declaration.name.contains(".setter : "),
             generic: member.generic?.includingReceiver(receiver.mode)
         )
     }
@@ -740,7 +741,8 @@ public actor NativeSwiftType: Hashable {
             symbol: member.symbol,
             metadata: metadata,
             owner: self,
-            consumesArguments: consumesArguments,
+            consumesArguments: consumesArguments
+                || member.symbol.declaration.name.contains(".setter : "),
             generic: classReceiver
                 ? member.generic.map { try $0.includingReceiver(.object) } : member.generic
         )

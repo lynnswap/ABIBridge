@@ -359,6 +359,80 @@ func prepare(_ path: String) async throws -> NativeSwiftFunction<(String) -> Str
 }
 
 @MainActor
+func validateRuntimeSubscripts(_ path: String) async throws {
+    guard let original = dlopen(path, RTLD_NOW | RTLD_LOCAL) else {
+        fatalError(String(cString: dlerror()))
+    }
+    defer { dlclose(original) }
+    let runtime = ABIRuntime()
+    let scope = ImageSelector.path(URL(fileURLWithPath: path))
+    let make = try await runtime.resolveSwiftFunction(
+        named: "SwiftFunctionFixture.makeRuntimeLookup(_:_:)",
+        as: ((String, Int64) -> NativeSwiftValue).self,
+        in: scope
+    )
+    let makeKey = try await runtime.resolveSwiftFunction(
+        named: "SwiftFunctionFixture.makeRuntimeLookupKey(_:)",
+        as: ((String) -> NativeSwiftValue).self,
+        in: scope
+    )
+    let makeReplacement = try await runtime.resolveSwiftFunction(
+        named: "SwiftFunctionFixture.makeRuntimeLookupReplacement(_:_:)",
+        as: ((String, Int64) -> NativeSwiftValue).self,
+        in: scope
+    )
+    let keyText = String(repeating: "external key ", count: 6)
+    let source = try unsafe make.unsafeInvoke(keyText, 41)
+    let key = try unsafe makeKey.unsafeInvoke(keyText)
+    let replacement = try unsafe makeReplacement.unsafeInvoke(keyText, 42)
+    let elementType = try await runtime.resolveSwiftType(
+        named: "SwiftFunctionFixture.RuntimeLookupElement",
+        in: scope
+    )
+    let abis = [
+        key.type: try NativeType.opaque(named: key.type.name),
+        replacement.type: try NativeType.opaque(named: replacement.type.name),
+    ]
+    let getter = try await source.type.resolveMethod(
+        named: "SwiftFunctionFixture.RuntimeLookup.subscript.getter : (A.ID) -> A?",
+        as: ((NativeSwiftValue) -> NativeSwiftValue).self,
+        declaredAs: "(A.ID) -> A?",
+        valueABIs: abis,
+        receiverABI: .opaque(named: source.type.name)
+    )
+    let setter = try await source.type.resolveMethod(
+        named: "SwiftFunctionFixture.RuntimeLookup.subscript.setter : (A.ID) -> A?",
+        as: ((NativeSwiftValue, NativeSwiftValue) -> Void).self,
+        valueABIs: abis,
+        receiverABI: .opaque(named: source.type.name),
+        mutating: true
+    )
+    let setterKey = try key.copy()
+    try unsafe setter.unsafeInvoke(on: source, replacement, setterKey)
+    precondition(replacement.isConsumed && setterKey.isConsumed)
+    precondition(!source.isConsumed && !key.isConsumed)
+    let result = try unsafe getter.unsafeInvoke(on: source, key)
+    guard
+        let element = try await result.resolveEnumPayload(
+            forCase: "some",
+            valueABIs: [elementType: .opaque(named: elementType.name)]
+        )
+    else {
+        fatalError("The subscript did not return the assigned element")
+    }
+    let number = try await elementType.resolveGetter(
+        named: "number",
+        as: (() -> Int64).self,
+        receiverABI: .opaque(named: elementType.name)
+    )
+    let actual = try unsafe number.unsafeInvoke(on: element)
+    precondition(actual == 42)
+    print(
+        "Public subscript accessors preserve runtime keys, optional results, and setter ownership"
+    )
+}
+
+@MainActor
 func prepareRuntimeProjection(
     _ path: String
 ) async throws -> NativeSwiftClosure<@MainActor () -> NativeSwiftValue> {
@@ -503,6 +577,8 @@ let isEmptyEnum = try await keyPathRuntime.resolveSwiftFunction(
 let hasEmptyCase = try unsafe isEmptyEnum.unsafeInvoke(emptyEnum)
 precondition(hasEmptyCase)
 print("Public runtime types construct enum cases without importing provider types")
+
+try await validateRuntimeSubscripts(path)
 
 let function = try await prepare(path)
 for length in [0, 1, 100, 4096] {

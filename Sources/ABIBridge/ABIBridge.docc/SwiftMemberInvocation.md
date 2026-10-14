@@ -240,6 +240,39 @@ let value = try unsafe checked.unsafeInvoke(on: receiver)
 
 Use ``NativeSwiftClosure`` for callback parameters and returned closures. Initializers transfer their owned context; ordinary methods borrow it. See <doc:SwiftClosureValues>.
 
+## Subscript accessors
+
+Use `resolveMethod` with the complete subscript getter or setter declaration. For `subscript(_ key: Element.ID) -> Element?` in a provider's `Lookup<Element: Identifiable>`, the getter takes one index and returns an optional element. The setter takes the new value first, followed by the indices.
+
+This example uses owned runtime values: `lookup` contains `Lookup<Element>`, `key` contains `Element.ID`, and `replacement` contains `Optional<Element>`. The provider's receiver, index, and result use indirect storage:
+
+```swift
+let valueABIs = [
+    key.type: try NativeType.opaque(named: key.type.name),
+    replacement.type: try NativeType.opaque(named: replacement.type.name),
+]
+let get = try await lookup.type.resolveMethod(
+    named: "Example.Lookup.subscript.getter : (A.ID) -> A?",
+    as: ((NativeSwiftValue) -> NativeSwiftValue).self,
+    valueABIs: valueABIs,
+    receiverABI: .opaque(named: lookup.type.name)
+)
+let set = try await lookup.type.resolveMethod(
+    named: "Example.Lookup.subscript.setter : (A.ID) -> A?",
+    as: ((NativeSwiftValue, NativeSwiftValue) -> Void).self,
+    valueABIs: valueABIs,
+    receiverABI: .opaque(named: lookup.type.name),
+    mutating: true
+)
+let setterKey = try key.copy()
+try unsafe set.unsafeInvoke(on: lookup, replacement, setterKey)
+let updated = try unsafe get.unsafeInvoke(on: lookup, key)
+```
+
+The setter consumes `replacement` and `setterKey`; the original `key` remains usable for the getter. Typed setter arguments transfer independent copies. Use `mutating: true` for a mutating value setter, and pass a typed receiver with `inout` or an owned `NativeSwiftValue` whose storage can be updated.
+
+`resolveMethodAndWait` performs the same lookup synchronously. Property getters, including properties returning closures, keep their zero-argument `resolveGetter` signature.
+
 ## Writable key paths
 
 Resolve a computed property's native `WritableKeyPath` when its root or value type is unavailable at compile time:

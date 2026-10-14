@@ -107,6 +107,46 @@ public protocol GenericNotAnyObject {}
     public var endIndex: Int { values.endIndex }
     public subscript(index: Int) -> Int64 { values[index] }
 }
+
+public struct GenericIdentifiedRecord: Identifiable {
+    public let id: String
+    public let value: Int64
+    public init(id: String, value: Int64) { self.id = id; self.value = value }
+}
+
+public struct GenericIdentifiedLookup<Element: Identifiable> {
+    public var elements: [Element]
+    public var formatter: (String) -> String
+
+    public init(_ elements: [Element]) {
+        self.elements = elements
+        formatter = { $0 }
+    }
+
+    public subscript(_ key: Element.ID) -> Element? {
+        get { elements.first { $0.id == key } }
+        set {
+            if let newValue {
+                if let index = elements.firstIndex(where: { $0.id == key }) {
+                    elements[index] = newValue
+                } else {
+                    elements.append(newValue)
+                }
+            } else {
+                elements.removeAll { $0.id == key }
+            }
+        }
+    }
+}
+
+@inline(never) public func makeGenericIdentifiedLookup(_ key: String) -> some Any {
+    GenericIdentifiedLookup([GenericIdentifiedRecord(id: key, value: 41)])
+}
+@inline(never) public func makeGenericLookupKey(_ key: String) -> some Any { key }
+@inline(never) public func makeGenericLookupReplacement(_ key: String, _ value: Int64) -> some Any {
+    Optional(GenericIdentifiedRecord(id: key, value: value))
+}
+
 @inline(never) public func fixedElementGeneric<Value>(
     _ value: GenericElementStorage<GenericFixedCollection<Value>>
 ) -> GenericElementStorage<GenericFixedCollection<Value>> { .init(value.element + 1) }
