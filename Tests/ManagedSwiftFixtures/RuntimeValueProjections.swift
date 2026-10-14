@@ -79,8 +79,17 @@ public enum RuntimeProjectionUnsupportedErrorPayload {
 
 public enum RuntimeProjectionMoveOnly: ~Copyable {
     case empty
+    case number(Int64)
+    case nothing(Void)
     case ticket(RuntimeTicket)
 }
+
+public struct RuntimeProjectionUnit: GenericAssociatedBase { public typealias Item = Void }
+public enum RuntimeProjectionAssociated<Source: GenericAssociatedBase>: ~Copyable {
+    case value(Source.Item)
+    case ticket(RuntimeTicket)
+}
+@inline(never) public func makeRuntimeProjectionUnit() -> some Any { () }
 @inline(never) public func makeRuntimeProjectionMoveOnly(
     _ token: ErrorLifetimeToken
 ) -> some ~Copyable {

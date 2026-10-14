@@ -386,6 +386,19 @@ func prepareRuntimeProjection(
     else {
         fatalError("Expected a preview payload")
     }
+    let constructed = try await value.type.makeEnumCase(
+        named: "preview",
+        payload: payload,
+        valueABIs: [bodyType: .opaque(named: bodyType.name)]
+    )
+    let readConstructed = try await runtime.resolveSwiftFunction(
+        named: "SwiftFunctionFixture.readRuntimeProjection(_:)",
+        as: ((NativeSwiftValue) -> Int64).self,
+        valueABIs: [value.type: .opaque(named: value.type.name)],
+        in: scope
+    )
+    let constructedNumber = try unsafe readConstructed.unsafeInvoke(constructed)
+    precondition(constructedNumber == 83 && !payload.isConsumed)
     let source = try payload.copyTupleElement(at: 0)
     let concreteSource = try source.copyUnderlyingValue()
     precondition(source.type != concreteSource.type)
@@ -397,7 +410,15 @@ func prepareRuntimeProjection(
     )
     let sourceNumber = try unsafe read.unsafeInvoke(on: concreteSource)
     precondition(sourceNumber == 41)
-    let closureValue = try payload.copyTupleElement(at: 1)
+    guard
+        let constructedPayload = try await constructed.resolveEnumPayload(
+            forCase: "preview",
+            valueABIs: [bodyType: .opaque(named: bodyType.name)]
+        )
+    else {
+        fatalError("Expected the constructed preview payload")
+    }
+    let closureValue = try constructedPayload.copyTupleElement(at: 1)
     let closure = try await closureValue.resolveClosure(
         as: (@MainActor () -> NativeSwiftValue).self
     )
@@ -469,13 +490,15 @@ print(
 )
 
 let enumType = try await keyPathRuntime.resolveSwiftType(
-    named: "SwiftFunctionFixture.RuntimeProjection", in: keyPathProvider
+    named: "SwiftFunctionFixture.RuntimeProjection",
+    in: keyPathProvider
 )
 let emptyEnum = try enumType.makeEnumCase(named: "empty")
 let isEmptyEnum = try await keyPathRuntime.resolveSwiftFunction(
     named: "SwiftFunctionFixture.isEmptyRuntimeProjection(_:)",
     as: ((NativeSwiftValue) -> Bool).self,
-    valueABIs: [enumType: .opaque(named: enumType.name)], in: keyPathProvider
+    valueABIs: [enumType: .opaque(named: enumType.name)],
+    in: keyPathProvider
 )
 let hasEmptyCase = try unsafe isEmptyEnum.unsafeInvoke(emptyEnum)
 precondition(hasEmptyCase)

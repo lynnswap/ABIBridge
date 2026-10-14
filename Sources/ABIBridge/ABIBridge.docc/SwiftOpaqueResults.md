@@ -97,7 +97,7 @@ These conventions also apply through async suspension. An async call started wit
 
 A `some P` result contains the actual hidden value. Class constraints select an owned object pointer; otherwise the result is indirect, even for a hidden integer or class instance. `withCopy` then lets Swift build an `Any` container. Declarations returning `any P` already use an existential container and follow <doc:SwiftExistentialValues>.
 
-## Create an enum case without a payload
+## Create enum values
 
 Use a concrete ``NativeSwiftType`` to construct a case without associated values:
 
@@ -109,6 +109,20 @@ let compact = try modeType.makeEnumCase(named: "compact")
 `makeEnumCase(named:)` returns a new ``NativeSwiftValue`` initialized by the enum's value witnesses. It reads the type's existing case metadata and runs synchronously on the caller's thread, without symbol lookup or call preparation. The value retains the type and its implementation images through destruction.
 
 The enum must be Escapable, but it need not be Copyable. A missing or ambiguous case name, a case requiring a payload, or an unsupported type throws. Use the unqualified case name without backticks, including for Swift keywords.
+
+For a case with associated values, pass an owned runtime payload obtained from a native call or another enum:
+
+```swift
+if let payload = try await result.resolveEnumPayload(forCase: "item") {
+    let item = try await result.type.makeEnumCase(named: "item", payload: payload)
+}
+```
+
+`makeEnumCase(named:payload:valueABIs:)` copies the entire payload without modifying or consuming the input. Its concrete metadata must exactly match the selected case's payload type. Multiple associated values use their native tuple representation, including labels. Direct and indirect cases own the copy independently. The payload must be Copyable; the containing enum need not be Copyable.
+
+Function values in the payload are adapted to the case's native convention. As with enum payload resolution, supply `valueABIs` for closed nominal closure parameters or results that require an explicit ABI. Preparation runs away from the caller's executor, while copying and captured-context binding stay on it. `makeEnumCaseAndWait(named:payload:valueABIs:)` performs the same operation synchronously and can block during preparation.
+
+A case without associated values, a mismatched payload type, or unavailable field metadata throws before an enum value is returned.
 
 ## Copy contained runtime values
 

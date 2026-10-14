@@ -130,8 +130,141 @@ public actor NativeSwiftType: Hashable {
             owner: self,
             codeLifetime: codeLifetime
         )
-        try withRuntimeErrors { try enumeration.initializeEmptyCase(at: index, in: storage.address) }
+        try withRuntimeErrors {
+            try enumeration.initializeEmptyCase(at: index, in: storage.address)
+        }
         storage.assumeInitialized { ABISwiftDestroyValue(nativeMetadata, $0) }
+        return NativeSwiftValue(storage: storage, type: self)
+    }
+
+    /// Creates an owned enum value by copying the case's entire associated payload.
+    ///
+    /// The payload's concrete type must exactly match the case's runtime payload metadata. Multiple associated values use their native tuple payload. The payload must be Copyable, and the enum must be Escapable; the enum need not be Copyable. The original payload is neither modified nor consumed. Direct and indirect cases retain independent ownership of the copied payload and its implementation images.
+    ///
+    /// Required closure ABI preparation runs away from the caller's executor. Copying and binding captured contexts run on the caller's executor. Function values are adapted from owned runtime storage to the case's native convention. Supply `valueABIs` for closed nominal types in their parameters or results whose ABI cannot be inferred from runtime metadata.
+    ///
+    /// - Parameters:
+    ///   - caseName: The unique unqualified case name, without argument labels or backticks.
+    ///   - payload: An owned value with the case's complete native payload type.
+    ///   - valueABIs: Explicit calling conventions for closed nominal types used by payload closures.
+    /// - Throws: `NativeSwiftValueError` for an unknown or ambiguous case name, a consumed or inaccessible payload, or a noncopyable payload; `ABIInvocationError` for a mismatched payload type; `ABIResolutionError` for a case without a payload or unsupported metadata.
+    public nonisolated(nonsending) func makeEnumCase(
+        named caseName: String,
+        payload: NativeSwiftValue,
+        valueABIs: [NativeSwiftType: NativeType] = [:]
+    ) async throws -> NativeSwiftValue {
+        let payloadType = payload.type
+        let prepared = try await NativePreparation.run {
+            try self.prepareEnumCase(
+                named: caseName,
+                payloadType: payloadType,
+                valueABIs: valueABIs
+            )
+        }
+        return try initializeEnumCase(payload: payload, prepared: prepared, valueABIs: valueABIs)
+    }
+
+    /// Creates an owned enum value synchronously on the caller's thread.
+    ///
+    /// This has the same payload and ownership contract as `makeEnumCase(named:payload:valueABIs:)`. It performs or joins required ABI preparation before returning, which can block the caller's thread.
+    public nonisolated func makeEnumCaseAndWait(
+        named caseName: String,
+        payload: NativeSwiftValue,
+        valueABIs: [NativeSwiftType: NativeType] = [:]
+    ) throws -> NativeSwiftValue {
+        let prepared = try prepareEnumCase(
+            named: caseName,
+            payloadType: payload.type,
+            valueABIs: valueABIs
+        )
+        return try initializeEnumCase(payload: payload, prepared: prepared, valueABIs: valueABIs)
+    }
+
+    private nonisolated func prepareEnumCase(
+        named caseName: String,
+        payloadType: NativeSwiftType,
+        valueABIs: [NativeSwiftType: NativeType]
+    ) throws -> (Int, SwiftRuntimeValueProjectionPlan) {
+        let enumeration = try withRuntimeErrors { try RuntimeEnumMetadata(metadata) }
+        let index = try enumeration.caseIndex(named: caseName)
+        guard SwiftCopyability.accepts(payloadType.metadata) else {
+            throw NativeSwiftValueError.noncopyableType
+        }
+        guard let expected = try withRuntimeErrors({ try enumeration.payloadType(at: index) })
+        else {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "The enum case '\(caseName)' has no associated payload."
+            )
+        }
+        guard expected == payloadType.metadata else {
+            throw ABIInvocationError.incompatibleValue(
+                expected: String(reflecting: expected),
+                actual: payloadType.name
+            )
+        }
+        guard SwiftEscapability.accepts(metadata) else {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "An owned runtime value requires an Escapable native type."
+            )
+        }
+        try validateSwiftRuntimeValueStorage(metadata)
+        try validateSwiftRuntimeValueStorage(expected)
+        return (
+            index,
+            try SwiftRuntimeValueProjectionPlan(
+                enumType: self,
+                caseIndex: index,
+                payload: expected,
+                valueABIs: valueABIs
+            )
+        )
+    }
+
+    private nonisolated func initializeEnumCase(
+        payload: NativeSwiftValue,
+        prepared: (Int, SwiftRuntimeValueProjectionPlan),
+        valueABIs: [NativeSwiftType: NativeType]
+    ) throws -> NativeSwiftValue {
+        let source = try payload.access(.borrowing)
+        let lifetime = SwiftValueCodeLifetime.connect(
+            [codeLifetime, payload.type.codeLifetime]
+                + valueABIs.keys.map(\.codeLifetime)
+                + (source.codeLifetime.map { [$0] } ?? []),
+            retaining: []
+        )!
+        let nativeMetadata = unsafeBitCast(metadata, to: UnsafeRawPointer.self)
+        let payloadMetadata = unsafeBitCast(payload.type.metadata, to: UnsafeRawPointer.self)
+        let payloadLayout = ABISwiftGetValueLayout(payloadMetadata)
+        let scratch = NativeValueStorage(
+            size: payloadLayout.stride,
+            alignment: payloadLayout.alignment,
+            owner: payload.type,
+            codeLifetime: lifetime
+        )
+        withExtendedLifetime(source) {
+            ABISwiftCopyValue(payloadMetadata, scratch.address, source.address)
+        }
+        scratch.assumeInitialized { ABISwiftDestroyValue(payloadMetadata, $0) }
+        prepared.1.apply(to: scratch, native: true)
+        let layout = ABISwiftGetValueLayout(nativeMetadata)
+        let storage = NativeValueStorage(
+            size: layout.stride,
+            alignment: layout.alignment,
+            owner: self,
+            codeLifetime: lifetime
+        )
+        let enumeration = try withRuntimeErrors { try RuntimeEnumMetadata(metadata) }
+        try withRuntimeErrors {
+            try enumeration.initializeCase(
+                at: prepared.0,
+                in: storage.address,
+                taking: scratch.address,
+                payloadType: payload.type.metadata
+            )
+        }
+        scratch.relinquishValue()
+        storage.assumeInitialized { ABISwiftDestroyValue(nativeMetadata, $0) }
+        storage.retainResource(scratch)
         return NativeSwiftValue(storage: storage, type: self)
     }
 
