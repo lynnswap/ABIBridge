@@ -80,20 +80,27 @@ struct SwiftReceiverPlan: Sendable {
     let expectedClass: AnyClass?
     let metadata: Any.Type
 
-    init(codec: SwiftReceiverCodec, metadata: Any.Type, isMutating: Bool,
+    init(
+        codec: SwiftReceiverCodec,
+        metadata: Any.Type,
+        isMutating: Bool?,
         isConsuming: Bool,
         isProtocolSelf: Bool,
         validateClass: Bool
     ) throws {
+        let indirect = ABISwiftValueIsIndirect(codec.type.handle)
+        let isMutating = isMutating ?? (!isConsuming && (indirect || !(metadata is AnyClass)))
         guard !(isMutating && isConsuming) else {
-            throw ABIResolutionError.unsupportedDeclaration("Swift self cannot be both mutating and consuming.")
+            throw ABIResolutionError.unsupportedDeclaration(
+                "Swift self cannot be both mutating and consuming."
+            )
         }
         self.codec = codec
         self.metadata = metadata
         self.isMutating = isMutating
         self.isConsuming = isConsuming
         // Mutating protocol Self addresses the receiver slot, even when class-bound.
-        if (isProtocolSelf && isMutating) || ABISwiftValueIsIndirect(codec.type.handle) {
+        if (isProtocolSelf && isMutating) || indirect {
             mode = .address
             expectedClass = nil
         } else if let objectType = metadata as? AnyClass {

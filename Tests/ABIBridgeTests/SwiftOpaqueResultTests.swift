@@ -310,6 +310,19 @@ struct SwiftOpaqueResultTests {
         try result?.withCopy { #expect(($0 as? any ExistentialValue)?.number == 43) }
         result = nil
         #expect(observed == nil && counts.destructions == 1)
+        let textObject = RuntimeKeyPathReferenceRoot("original")
+        for declaration in [
+            "(extension in ManagedSwiftFixtures):ManagedSwiftFixtures.ProtocolExtensionTextObject.protocolExtensionText.setter : Swift.String",
+            "(extension in ManagedSwiftFixtures):ManagedSwiftFixtures.ProtocolExtensionTextValue< where A: AnyObject>.protocolExtensionConstrainedText.setter : Swift.String",
+        ] {
+            let setter = try await runtime.object(textObject).resolveSetter(
+                named: declaration,
+                as: String.self
+            )
+            let updated = textObject.text + ":updated"
+            try unsafe setter.unsafeInvoke(updated)
+            #expect(textObject.text == updated)
+        }
     }
 
     @Test func protocolExtensionMembersRequireTheConcreteSelfConformance() async throws {
@@ -377,6 +390,15 @@ struct SwiftOpaqueResultTests {
         var typed = reset
         try unsafe classReplace.unsafeInvoke(on: &typed, replacement)
         #expect(typed === replacement)
+        let classSetter = try await type.resolveSetter(
+            named:
+                "(extension in ManagedSwiftFixtures):ManagedSwiftFixtures.ExistentialValue< where A: AnyObject>.protocolExtensionClassValue.setter : A",
+            as: ProtocolExtensionObject.self,
+            mutating: true
+        )
+        try #require(throws: ABIResolutionError.self) { _ = try classSetter.bind(to: reset) }
+        try unsafe classSetter.unsafeInvoke(on: owner, reset)
+        try owner.withCopy { #expect(($0 as? ProtocolExtensionObject) === reset) }
     }
 
     @Test func protocolExtensionSuperclassConstraintsPreserveRequiredWitnesses() async throws {

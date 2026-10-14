@@ -169,7 +169,7 @@ public actor NativeSwiftType: Hashable {
     }
 
     nonisolated func receiverPlan(
-        mutating isMutating: Bool,
+        mutating isMutating: Bool?,
         consuming isConsuming: Bool = false,
         generic: SwiftGenericCallPlan? = nil,
         receiverABI: NativeType? = nil
@@ -190,7 +190,7 @@ public actor NativeSwiftType: Hashable {
     }
 
     private nonisolated func prepareReceiverPlan(
-        mutating isMutating: Bool,
+        mutating isMutating: Bool?,
         consuming isConsuming: Bool,
         generic: SwiftGenericCallPlan?,
         receiverABI: NativeType?,
@@ -725,14 +725,14 @@ public actor NativeSwiftType: Hashable {
     ///
     /// Search and preparation run synchronously on the caller's thread.
     ///
-    /// Class receivers are references. Ordinary value setters receive self inout; consuming setters transfer a typed copy or NativeSwiftValue's owned value. An explicitly nonmutating setter can use mutating: false.
+    /// Setters with a class-bound formal self receive self as a reference. Ordinary value setters receive self inout, including protocol Self without a class constraint. Consuming setters transfer a typed copy or NativeSwiftValue's owned value. For an explicitly mutating or nonmutating setter, pass mutating: true or false.
     /// - Parameters:
     ///   - name: A property name or complete relative setter declaration.
     ///   - valueType: The incoming value representation.
     ///   - valueABIs: Formal ABIs for runtime-only closed nominal values in this lookup.
     ///   - declaredSignature: The formal setter type and optional canonical generic signature.
     ///   - receiverABI: Explicit self ABI; nil uses the type representation or generic declaration.
-    ///   - isMutating: An inout override. Nil selects inout unless consuming is true.
+    ///   - isMutating: An inout override. Nil uses a reference for class-bound self and inout for value self, unless consuming is true.
     ///   - isConsuming: Whether the setter consumes its receiver.
     /// - Returns: A reusable method with one explicit value argument.
     /// - Throws: A lookup or unsupported-representation error.
@@ -762,7 +762,7 @@ public actor NativeSwiftType: Hashable {
         }
         let generic = symbol.generic
         let receiver = try receiverPlan(
-            mutating: isMutating ?? !isConsuming,
+            mutating: isMutating,
             consuming: isConsuming,
             generic: generic,
             receiverABI: receiverABI

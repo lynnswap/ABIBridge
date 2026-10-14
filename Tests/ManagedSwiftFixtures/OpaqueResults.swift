@@ -144,7 +144,31 @@ extension ExistentialValue where Self == InlineExistentialValue {
 extension ExistentialObjectValue {
     @inline(never) public func protocolExtensionNumber() -> Int64 { number }
 }
+public protocol ProtocolExtensionTextObject: AnyObject { var text: String { get set } }
+public protocol ProtocolExtensionTextValue {
+    var text: String { get }
+    func updateText(_ text: String)
+}
+extension RuntimeKeyPathReferenceRoot: ProtocolExtensionTextObject, ProtocolExtensionTextValue {
+    public func updateText(_ text: String) { self.text = text }
+}
+extension ProtocolExtensionTextObject {
+    public var protocolExtensionText: String {
+        get { text }
+        set { text = newValue }
+    }
+}
+extension ProtocolExtensionTextValue where Self: AnyObject {
+    public var protocolExtensionConstrainedText: String {
+        get { text }
+        set { updateText(newValue) }
+    }
+}
 extension ExistentialValue where Self: AnyObject {
+    public var protocolExtensionClassValue: Self {
+        get { self }
+        mutating set { self = newValue }
+    }
     @inline(never) public func protocolExtensionClassNumber() -> Int64 { number }
     @inline(never) public mutating func protocolExtensionClassReplace(_ replacement: Self) {
         self = replacement
