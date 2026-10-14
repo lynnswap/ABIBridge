@@ -96,7 +96,7 @@ jobs:
         timeout-minutes: 25
         run: bash scripts/test-package.sh api
       - name: Test public compiler boundaries and optimized native linkage
-        if: ${{ !cancelled() && matrix.platform == 'macOS' }}
+        if: ${{ !cancelled() && matrix.platform == 'macOS' && matrix.xcode == '26.6' }}
         timeout-minutes: 25
         run: |
           if [[ -d Sources/ABIBridgeRuntime ]]; then
@@ -104,10 +104,6 @@ jobs:
           else
             bash scripts/test-native-consumer.sh
           fi
-      - name: Test SwiftUI public consumer
-        if: ${{ !cancelled() && matrix.platform == 'macOS' && matrix.xcode == '27.0' && hashFiles('Sources/ABIBridgeRuntime/*.swift') != '' }}
-        timeout-minutes: 10
-        run: bash scripts/test-native-consumer.sh swiftui
       - name: Test Core and Runtime on iOS Simulator
         if: ${{ !cancelled() && matrix.platform == 'iOS' && hashFiles('scripts/test-simulators.py') != '' }}
         timeout-minutes: 35
@@ -130,8 +126,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-  platform-builds:
-    name: Apple device SDK builds (Xcode 27.0)
+  public-consumers:
+    name: Public consumers (Xcode 27.0)
     if: github.event_name != 'pull_request' || github.event.action != 'closed'
     runs-on: xcode-27
     timeout-minutes: 40
@@ -146,12 +142,51 @@ jobs:
         run: |
           xcodebuild -version
           xcrun swift --version
-      - name: Build all Apple platforms
+          echo "ABI_CONSUMER_BUILD_DIR=$RUNNER_TEMP/NativeConsumer" >> "$GITHUB_ENV"
+      - name: Test public compiler boundaries and optimized native linkage
+        if: ${{ !cancelled() }}
+        timeout-minutes: 25
+        run: |
+          if [[ -d Sources/ABIBridgeRuntime ]]; then
+            bash scripts/test-native-consumer.sh focused
+          else
+            bash scripts/test-native-consumer.sh
+          fi
+      - name: Test SwiftUI public consumer
+        if: ${{ !cancelled() && hashFiles('Sources/ABIBridgeRuntime/*.swift') != '' }}
+        timeout-minutes: 10
+        run: bash scripts/test-native-consumer.sh swiftui
+
+  platform-builds:
+    name: Apple device SDK builds (${{ matrix.platforms }}, Xcode 27.0)
+    if: github.event_name != 'pull_request' || github.event.action != 'closed'
+    runs-on: xcode-27
+    timeout-minutes: 40
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
+      ABI_DEVICE_PLATFORMS: ${{ matrix.platforms }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platforms: iOS
+          - platforms: visionOS watchOS tvOS
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+          persist-credentials: false
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcrun swift --version
+      - name: Build Apple platforms
         if: ${{ !cancelled() }}
         timeout-minutes: 35
         run: |
           task_status=0
-          for task_platform in iOS visionOS watchOS tvOS; do
+          read -r -a task_platforms <<< "$ABI_DEVICE_PLATFORMS"
+          for task_platform in "${task_platforms[@]}"; do
             echo "::group::Build $task_platform"
             if ! xcodebuild build -scheme ABIBridge \
               -destination "generic/platform=$task_platform" \

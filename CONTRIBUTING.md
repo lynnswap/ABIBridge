@@ -129,9 +129,11 @@ Older `actionlint` versions do not recognize GitHub's [official `xcode-27` runne
 | Xcode | Runner | Runtime environments | Additional checks |
 | --- | --- | --- | --- |
 | 26.6 | `macos-26` | macOS and iOS Simulator | Focused external consumers on macOS |
-| 27.0 | `xcode-27` | macOS and iOS Simulator | Public API suite and focused external/SwiftUI consumers on macOS |
+| 27.0 | `xcode-27` | macOS and iOS Simulator | Public API suite on macOS |
 
-The macOS/Xcode 27 job runs the public API suite in the runtime build directory. A separate Xcode 27 job builds both products for iOS, visionOS, watchOS, and tvOS. Timing loops, stress tests, full external consumer combinations, and architecture probes run locally.
+The macOS/Xcode 27 runtime job runs the public API suite in the runtime build directory. A separate Xcode 27 job runs the focused external and SwiftUI consumers in parallel with the runtime jobs. Those consumer checks share one build directory.
+
+Device SDK builds run in two Xcode 27 jobs: one for iOS, and one for visionOS, watchOS, and tvOS. Each builds both products and reuses its build directory across sequential builds. The iOS job also builds the arm64 validation app in Release. Timing loops, stress tests, full external consumer combinations, and architecture probes run locally.
 
 The matrix checks metadata, calling conventions, image loading, and compiler workarounds in generic public entry points. The `xcode-27` runner uses macOS 27 and is in public preview. Device pointer authentication requires execution on matching hardware.
 
