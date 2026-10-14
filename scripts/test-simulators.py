@@ -57,7 +57,7 @@ def cleanup(device):
 
 
 def run_platform(platform, root, build_dir, result_dir, test_minutes, only_testing=(),
-                 scheme="ABIBridge", build_swiftui=True):
+                 scheme="ABIBridge", build_swiftui=True, collect_test_diagnostics="never"):
     failures = []
     device = None
     try:
@@ -75,6 +75,7 @@ def run_platform(platform, root, build_dir, result_dir, test_minutes, only_testi
         try:
             subprocess.run([*common, 'test', '-scheme', scheme,
                             '-parallel-testing-enabled', 'NO',
+                            '-collect-test-diagnostics', collect_test_diagnostics,
                             '-resultBundlePath', str(result_dir / f'{name}.xcresult'),
                             *[f'-only-testing:{selection}' for selection in only_testing]],
                            cwd=root, check=True, timeout=test_minutes * 60)
@@ -104,13 +105,15 @@ def main():
     parser.add_argument('--only-testing', action='append', default=[])
     parser.add_argument('--scheme', default='ABIBridge')
     parser.add_argument('--skip-swiftui-build', action='store_true')
+    parser.add_argument('--collect-test-diagnostics', choices=('never', 'on-failure'),
+                        default='never', help='Collect verbose failure diagnostics such as sysdiagnose')
     args = parser.parse_args()
     args.result_dir.mkdir(parents=True, exist_ok=True)
     failures = []
     for platform in args.platforms:
         failures.extend(run_platform(platform, root, args.build_dir.resolve(),
                                      args.result_dir.resolve(), args.test_minutes, args.only_testing,
-                                     args.scheme, not args.skip_swiftui_build))
+                                     args.scheme, not args.skip_swiftui_build, args.collect_test_diagnostics))
     for failure in failures:
         print(failure, file=sys.stderr)
     return 1 if failures else 0

@@ -55,6 +55,9 @@ class SimulatorTests(unittest.TestCase):
                 failures = simulators.run_platform('iOS', root, root / 'build', root / 'results', 25)
         self.assertEqual(len(failures), 1)
         self.assertIn('iOS tests', failures[0])
+        test = next(call for call in calls if 'test' in call)
+        self.assertEqual(test[test.index('-collect-test-diagnostics') + 1], 'never')
+        self.assertIn('-resultBundlePath', test)
         self.assertTrue(any('ABIBridgeSwiftUI' in call for call in calls))
         self.assertIn(['xcrun', 'simctl', 'shutdown', 'owned-device'], calls)
         self.assertIn(['xcrun', 'simctl', 'delete', 'owned-device'], calls)
@@ -80,13 +83,15 @@ class SimulatorTests(unittest.TestCase):
                     patch.object(simulators.subprocess, 'run') as run:
                 failures = simulators.run_platform(
                     'iOS', root, root / 'build', root / 'results', 10,
-                    scheme='ABIBridgeRuntime', build_swiftui=False)
+                    scheme='ABIBridgeRuntime', build_swiftui=False,
+                    collect_test_diagnostics='on-failure')
         self.assertEqual(failures, [])
         commands = [call.args[0] for call in run.call_args_list]
         builds = [command for command in commands if command[0] == 'xcodebuild']
         self.assertEqual(len(builds), 1)
         self.assertIn('ABIBridgeRuntime', builds[0])
         self.assertNotIn('ABIBridgeSwiftUI', builds[0])
+        self.assertEqual(builds[0][builds[0].index('-collect-test-diagnostics') + 1], 'on-failure')
         self.assertIn(['xcrun', 'simctl', 'delete', 'owned-device'], commands)
 
     def test_both_shutdown_and_deletion_failures_remain_observable(self):

@@ -97,6 +97,8 @@ python3 scripts/test-simulators.py --platforms iOS \
 
 The helper creates a dedicated device, runs tests without parallel destination clones, and deletes the device afterward. Omitting `--scheme` selects the public `ABIBridge` suite; omitting `--skip-swiftui-build` also builds `ABIBridgeSwiftUI`. It prefers a runtime matching the selected Xcode SDK and saves builds in `.build/simulator-tests` and results in `.build/simulator-results`. Tests that compile temporary libraries on the host run only on macOS.
 
+The helper keeps test logs and `.xcresult` bundles but skips verbose failure diagnostics, such as sysdiagnose, to avoid long delays after a failed test. Add `--collect-test-diagnostics on-failure` when reproducing a failure that needs those diagnostics.
+
 Use `--platforms iOS tvOS` to choose another combination. Omitting `--platforms` runs all four Simulator platforms sequentially; CI selects only iOS.
 
 For SDK or platform changes, build the affected device target:
@@ -133,7 +135,7 @@ The macOS/Xcode 27 job runs the public API suite in the runtime build directory.
 
 The matrix checks metadata, calling conventions, image loading, and compiler workarounds in generic public entry points. The `xcode-27` runner uses macOS 27 and is in public preview. Device pointer authentication requires execution on matching hardware.
 
-Independent checks continue after failures. CI keeps failed package and Simulator diagnostics for seven days. Pull requests and releases require every CI job to succeed; closing a pull request cancels its superseded validation. Older release targets without the runtime target use their original package and consumer suites. DocC builds run separately with Xcode 27.0 when `main` changes.
+Independent checks continue after failures. CI keeps failed package and Simulator test logs and `.xcresult` bundles for seven days. Pull requests and releases require every CI job to succeed; closing a pull request cancels its superseded validation. Older release targets without the runtime target use their original package and consumer suites. DocC builds run separately with Xcode 27.0 when `main` changes.
 
 See [Runtime boundaries and CI coverage](Docs/RuntimeArchitecture.md) for module responsibilities, ownership, and the test contracts behind this split.
 
