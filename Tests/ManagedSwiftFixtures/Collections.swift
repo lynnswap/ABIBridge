@@ -2,6 +2,18 @@
     value + [suffix]
 }
 
+@inline(never) public func variadicStrings(_ first: String, _ remaining: String...) -> [String] {
+    [first] + remaining
+}
+
+public struct VariadicTupleSeries<Value> {
+    public let values: [(Value, String)]
+
+    @inline(never) public init(_ first: (Value, String), _ remaining: (Value, String)...) {
+        values = [first] + remaining
+    }
+}
+
 @inline(never) public func optionalStrings(_ value: [String]?) -> [String]? { value }
 
 @inline(never) public func decorateOptionalString(_ value: String?) -> String? {

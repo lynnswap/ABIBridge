@@ -59,6 +59,10 @@ struct SwiftGenericBindingTests {
             ("(consuming Swift.Int64) -> Swift.Int64", Consuming.self),
             ("@Sendable (Swift.Int64) -> Swift.Int64", (@Sendable (Int64) -> Int64).self),
             (
+                "@Sendable (Swift.String, Swift.String...) -> [Swift.String]",
+                type(of: variadicStrings)
+            ),
+            (
                 "@concurrent (Swift.Int64) async -> Swift.Int64",
                 (@concurrent (Int64) async -> Int64).self
             ),

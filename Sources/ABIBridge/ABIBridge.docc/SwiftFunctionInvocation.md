@@ -105,6 +105,22 @@ Use ``NativeSwiftInout``, ``NativeSwiftBorrowing``, and ``NativeSwiftConsuming``
 
 Incorrect signatures, invalid pointers, and violated ownership or isolation contracts can corrupt memory. The unsafe invocation boundary exposes that responsibility; conversion and resolution failures use Swift errors.
 
+## Pass variadic arguments
+
+A native `T...` parameter takes one `Array<T>` argument in the call signature. For `func collect(_ values: String...) -> [String]`, use the complete declaration to select the variadic overload:
+
+```swift
+let collect = try runtime.resolveSwiftFunctionAndWait(
+    named: "Example.collect(Swift.String...) -> [Swift.String]",
+    as: (([String]) -> [String]).self
+)
+let values = try unsafe collect.unsafeInvoke(["first", "second"])
+```
+
+An empty array supplies zero variadic elements. Label-only typed lookup derives an ordinary array parameter from `[String]`, so keep `...` in the complete declaration when selecting a variadic overload.
+
+The same array representation applies to generic functions and initializers. A ``NativeSwiftValue`` argument must contain the native `Array<T>` value. Ordinary functions borrow it, while allocating initializers consume it under the ownership rules in <doc:SwiftArgumentConventions>. When supplying `declaredAs:`, retain `T...` in the source signature and use `Array<T>` in the callable signature.
+
 ## Architecture support
 
 The backend provides arm64, arm64_32, and x86_64 Swift register/stack call stubs. Arm64e builds authenticate the target using the function-pointer schema supplied by the native backend. Device-target compilation is separate from runtime testing on a pointer-authentication-enabled device.
