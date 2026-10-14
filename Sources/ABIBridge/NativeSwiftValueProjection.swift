@@ -1,6 +1,21 @@
 import ABIBridgeCore
 import ABIBridgeRuntime
 
+extension RuntimeEnumMetadata {
+    func caseIndex(named caseName: String) throws -> Int {
+        let matches = cases.indices.filter {
+            cases[$0].name.utf8.elementsEqual(caseName.utf8)
+        }
+        guard let index = matches.first else {
+            throw NativeSwiftValueError.enumCaseNotFound(name: caseName)
+        }
+        guard matches.count == 1 else {
+            throw NativeSwiftValueError.ambiguousEnumCase(name: caseName)
+        }
+        return index
+    }
+}
+
 extension NativeSwiftValue {
     /// Resolves an independently owned copy of the named enum case's entire payload.
     ///
@@ -49,15 +64,7 @@ extension NativeSwiftValue {
     private func enumPayloadSource(forCase caseName: String) throws -> EnumPayloadSource? {
         let source = try access(.borrowing)
         let enumMetadata = try withRuntimeErrors { try RuntimeEnumMetadata(type.metadata) }
-        let matches = enumMetadata.cases.indices.filter {
-            enumMetadata.cases[$0].name.utf8.elementsEqual(caseName.utf8)
-        }
-        guard let index = matches.first else {
-            throw NativeSwiftValueError.enumCaseNotFound(name: caseName)
-        }
-        guard matches.count == 1 else {
-            throw NativeSwiftValueError.ambiguousEnumCase(name: caseName)
-        }
+        let index = try enumMetadata.caseIndex(named: caseName)
         guard try withRuntimeErrors({ try enumMetadata.tag(of: source.address) }) == index,
             enumMetadata.cases[index].hasPayload
         else { return nil }

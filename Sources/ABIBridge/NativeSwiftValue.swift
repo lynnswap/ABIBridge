@@ -1,7 +1,7 @@
 import ABIBridgeCore
 import Foundation
 
-/// A failure inspecting, copying, or accessing a runtime Swift value.
+/// A failure creating, inspecting, copying, or accessing a runtime Swift value.
 public enum NativeSwiftValueError: Error, Sendable, Equatable {
     /// The native value has already been transferred out of this handle.
     case consumedValue
@@ -13,6 +13,8 @@ public enum NativeSwiftValueError: Error, Sendable, Equatable {
     case enumCaseNotFound(name: String)
     /// More than one runtime enum case has the requested name.
     case ambiguousEnumCase(name: String)
+    /// The runtime enum case requires an associated payload.
+    case enumCaseRequiresPayload(name: String)
     /// The tuple has no element at this zero-based index.
     case tupleElementIndexOutOfBounds(index: Int, count: Int)
 }

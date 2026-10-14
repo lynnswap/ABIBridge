@@ -1,3 +1,10 @@
+public enum RuntimeEmptyCaseMode: Int64 {
+    case `default` = 7
+    case `static` = 42
+}
+
+public enum RuntimeEmptyCaseSingleton { case only }
+
 public enum RuntimeProjectionChoice {
     case empty
     case text(String)
@@ -70,7 +77,10 @@ public enum RuntimeProjectionUnsupportedErrorPayload {
     }
 }
 
-public enum RuntimeProjectionMoveOnly: ~Copyable { case ticket(RuntimeTicket) }
+public enum RuntimeProjectionMoveOnly: ~Copyable {
+    case empty
+    case ticket(RuntimeTicket)
+}
 @inline(never) public func makeRuntimeProjectionMoveOnly(
     _ token: ErrorLifetimeToken
 ) -> some ~Copyable {

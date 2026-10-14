@@ -97,6 +97,19 @@ These conventions also apply through async suspension. An async call started wit
 
 A `some P` result contains the actual hidden value. Class constraints select an owned object pointer; otherwise the result is indirect, even for a hidden integer or class instance. `withCopy` then lets Swift build an `Any` container. Declarations returning `any P` already use an existential container and follow <doc:SwiftExistentialValues>.
 
+## Create an enum case without a payload
+
+Use a concrete ``NativeSwiftType`` to construct a case without associated values:
+
+```swift
+let modeType = try await runtime.resolveSwiftType(named: "Example.DisplayMode")
+let compact = try modeType.makeEnumCase(named: "compact")
+```
+
+`makeEnumCase(named:)` returns a new ``NativeSwiftValue`` initialized by the enum's value witnesses. It reads the type's existing case metadata and runs synchronously on the caller's thread, without symbol lookup or call preparation. The value retains the type and its implementation images through destruction.
+
+The enum must be Escapable, but it need not be Copyable. A missing or ambiguous case name, a case requiring a payload, or an unsupported type throws. Use the unqualified case name without backticks, including for Swift keywords.
+
 ## Copy contained runtime values
 
 An enum, tuple, or existential can contain a value whose type is unavailable to the consumer. Copy that value into another ``NativeSwiftValue`` and use its retained type for member lookup:

@@ -468,6 +468,19 @@ print(
     "Public runtime projections retain enum payload types and MainActor closures without importing provider types"
 )
 
+let enumType = try await keyPathRuntime.resolveSwiftType(
+    named: "SwiftFunctionFixture.RuntimeProjection", in: keyPathProvider
+)
+let emptyEnum = try enumType.makeEnumCase(named: "empty")
+let isEmptyEnum = try await keyPathRuntime.resolveSwiftFunction(
+    named: "SwiftFunctionFixture.isEmptyRuntimeProjection(_:)",
+    as: ((NativeSwiftValue) -> Bool).self,
+    valueABIs: [enumType: .opaque(named: enumType.name)], in: keyPathProvider
+)
+let hasEmptyCase = try unsafe isEmptyEnum.unsafeInvoke(emptyEnum)
+precondition(hasEmptyCase)
+print("Public runtime types construct enum cases without importing provider types")
+
 let function = try await prepare(path)
 for length in [0, 1, 100, 4096] {
     let value = String(repeating: "a", count: length)

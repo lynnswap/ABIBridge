@@ -32,7 +32,7 @@ struct ValueWitnessTable {
 struct EnumValueWitnessTable : ValueWitnessTable {
     uint32_t (*__ptrauth_swift_value_witness_function_pointer(0xa3b5) getEnumTag)(const void *, const void *);
     void (*__ptrauth_swift_value_witness_function_pointer(0x041d) destructiveProjectEnumData)(void *, const void *);
-    const void *destructiveInjectEnumTag;
+    void (*__ptrauth_swift_value_witness_function_pointer(0xb2e4) destructiveInjectEnumTag)(void *, uint32_t, const void *);
 };
 
 const ValueWitnessTable *valueWitnesses(const void *metadata) {
@@ -68,6 +68,13 @@ bool ABISwiftGetEnumTag(const void *metadata, const void *value, uint32_t *tag) 
     auto table = valueWitnesses(metadata);
     if (!(table->flags & 0x00200000)) return false;
     *tag = static_cast<const EnumValueWitnessTable *>(table)->getEnumTag(value, metadata);
+    return true;
+}
+
+bool ABISwiftInitializeEmptyEnumCase(const void *metadata, void *destination, uint32_t tag) {
+    auto table = valueWitnesses(metadata);
+    if (!(table->flags & 0x00200000)) return false;
+    static_cast<const EnumValueWitnessTable *>(table)->destructiveInjectEnumTag(destination, tag, metadata);
     return true;
 }
 

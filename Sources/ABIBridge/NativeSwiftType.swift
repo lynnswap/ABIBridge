@@ -103,6 +103,38 @@ public actor NativeSwiftType: Hashable {
         hasher.combine(ObjectIdentifier(metadata))
     }
 
+    /// Creates an owned value for a case without associated values.
+    ///
+    /// Case names must match one entry in this enum's runtime field metadata. The enum must be Escapable; it need not be Copyable. Construction uses the enum's value witnesses on the caller's thread without symbol lookup or call preparation. The returned value retains this type and its implementation images through destruction.
+    ///
+    /// - Parameter caseName: The unqualified case name, without argument labels or backticks.
+    /// - Returns: A newly initialized value with this concrete enum type.
+    /// - Throws: `NativeSwiftValueError` for an unknown or ambiguous name or a case requiring a payload; `ABIResolutionError` for an unsupported type or unavailable metadata.
+    public nonisolated func makeEnumCase(named caseName: String) throws -> NativeSwiftValue {
+        let enumeration = try withRuntimeErrors { try RuntimeEnumMetadata(metadata) }
+        let index = try enumeration.caseIndex(named: caseName)
+        guard !enumeration.cases[index].hasPayload else {
+            throw NativeSwiftValueError.enumCaseRequiresPayload(name: caseName)
+        }
+        guard SwiftEscapability.accepts(metadata) else {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "An owned runtime value requires an Escapable native type."
+            )
+        }
+        try validateSwiftRuntimeValueStorage(metadata)
+        let nativeMetadata = unsafeBitCast(metadata, to: UnsafeRawPointer.self)
+        let layout = ABISwiftGetValueLayout(nativeMetadata)
+        let storage = NativeValueStorage(
+            size: layout.stride,
+            alignment: layout.alignment,
+            owner: self,
+            codeLifetime: codeLifetime
+        )
+        try withRuntimeErrors { try enumeration.initializeEmptyCase(at: index, in: storage.address) }
+        storage.assumeInitialized { ABISwiftDestroyValue(nativeMetadata, $0) }
+        return NativeSwiftValue(storage: storage, type: self)
+    }
+
     /// The qualified type name. Runtime values can include instantiated generic arguments.
     public nonisolated let name: String
     /// An image retained with this type's metadata and implementations.
