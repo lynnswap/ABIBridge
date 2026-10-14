@@ -24,6 +24,94 @@ extension GenericValueBox: ABIBridgeSwiftValue {
 
 @Suite(.serialized)
 struct SwiftGenericValueReceiverTests {
+    @MainActor @Test func subscriptAccessorsPreserveIndicesAndOwnership() async throws {
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeGenericIdentifiedLookup(_:)",
+            as: ((String) -> NativeSwiftValue).self
+        )
+        let makeKey = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeGenericLookupKey(_:)",
+            as: ((String) -> NativeSwiftValue).self
+        )
+        let makeReplacement = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeGenericLookupReplacement(_:_:)",
+            as: ((String, Int64) -> NativeSwiftValue).self
+        )
+        let keyText = String(repeating: "lookup key ", count: 8)
+        var direct = GenericIdentifiedLookup([GenericIdentifiedRecord(id: keyText, value: 41)])
+        let source = try unsafe make.unsafeInvoke(keyText)
+        let key = try unsafe makeKey.unsafeInvoke(keyText)
+        let replacement = try unsafe makeReplacement.unsafeInvoke(keyText, 42)
+        let abis = [
+            key.type: try NativeType.opaque(named: key.type.name),
+            replacement.type: try NativeType.opaque(named: replacement.type.name),
+        ]
+        let getter = try await source.type.resolveMethod(
+            named: "ManagedSwiftFixtures.GenericIdentifiedLookup.subscript.getter : (A.ID) -> A?",
+            as: ((NativeSwiftValue) -> NativeSwiftValue).self,
+            valueABIs: abis,
+            receiverABI: .opaque(named: source.type.name)
+        )
+        let original = try unsafe getter.unsafeInvoke(on: source, key)
+        #expect(
+            try original.take(as: GenericIdentifiedRecord?.self)?.value == direct[keyText]?.value
+        )
+        #expect(!key.isConsumed && !source.isConsumed)
+        let missingKey = try unsafe makeKey.unsafeInvoke("missing")
+        let missing = try unsafe getter.unsafeInvoke(on: source, missingKey)
+        #expect(try missing.take(as: GenericIdentifiedRecord?.self) == nil)
+
+        let setter = try await source.type.resolveMethod(
+            named: "ManagedSwiftFixtures.GenericIdentifiedLookup.subscript.setter : (A.ID) -> A?",
+            as: ((NativeSwiftValue, NativeSwiftValue) -> Void).self,
+            valueABIs: abis,
+            receiverABI: .opaque(named: source.type.name),
+            mutating: true
+        )
+        let setterKey = try key.copy()
+        try unsafe setter.unsafeInvoke(on: source, replacement, setterKey)
+        direct[keyText] = GenericIdentifiedRecord(id: keyText, value: 42)
+        #expect(replacement.isConsumed && setterKey.isConsumed)
+        #expect(!key.isConsumed && !source.isConsumed)
+        let updated = try unsafe getter.unsafeInvoke(on: source, key)
+        #expect(
+            try updated.take(as: GenericIdentifiedRecord?.self)?.value == direct[keyText]?.value
+        )
+
+        let typedSetter = try await source.type.resolveMethod(
+            named: "ManagedSwiftFixtures.GenericIdentifiedLookup.subscript.setter : (A.ID) -> A?",
+            as: ((GenericIdentifiedRecord?, String) -> Void).self,
+            valueABIs: abis,
+            receiverABI: .opaque(named: source.type.name),
+            mutating: true
+        )
+        let typedValue = GenericIdentifiedRecord(id: keyText, value: 43)
+        try unsafe typedSetter.unsafeInvoke(on: source, Optional(typedValue), keyText)
+        direct[keyText] = typedValue
+        let typedUpdate = try unsafe getter.unsafeInvoke(on: source, key)
+        #expect(
+            try typedUpdate.take(as: GenericIdentifiedRecord?.self)?.value == direct[keyText]?.value
+        )
+        #expect(typedValue.id == keyText)
+
+        typealias Formatter = NativeSwiftClosure<(String) -> String>
+        let setFormatter = try await source.type.resolveSetter(
+            named: "formatter",
+            as: Formatter.self,
+            receiverABI: .opaque(named: source.type.name)
+        )
+        let prefix = String(repeating: "formatted ", count: 4)
+        try unsafe setFormatter.unsafeInvoke(on: source, Formatter { prefix + $0 })
+        let getFormatter = try await source.type.resolveGetter(
+            named: "formatter",
+            as: (() -> Formatter).self,
+            receiverABI: .opaque(named: source.type.name)
+        )
+        let formatter = try unsafe getFormatter.unsafeInvoke(on: source)
+        #expect(try unsafe formatter.unsafeInvoke(keyText) == prefix + keyText)
+    }
+
     @MainActor @Test func valueReceiversFulfillNestedGenericRequirements() async throws {
         let receiver = GenericValueBox(GenericSourceBox(GenericSourceValue(39)))
         let type = try await ABIRuntime.shared.resolveSwiftType(
