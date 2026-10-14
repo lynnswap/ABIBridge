@@ -156,9 +156,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platforms: iOS
+          - platforms: iOS tvOS
             consumers: false
-          - platforms: visionOS watchOS tvOS
+          - platforms: visionOS watchOS
             consumers: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
