@@ -143,7 +143,10 @@ public actor NativeSwiftType: Hashable {
     ///
     /// Required closure ABI preparation runs away from the caller's executor. Copying and binding captured contexts run on the caller's executor. Function values are adapted from owned runtime storage to the case's native convention. Supply `valueABIs` for closed nominal types in their parameters or results whose ABI cannot be inferred from runtime metadata.
     ///
-    /// - Parameter caseName: The unique unqualified case name, without argument labels or backticks.
+    /// - Parameters:
+    ///   - caseName: The unique unqualified case name, without argument labels or backticks.
+    ///   - payload: An owned value with the case's complete native payload type.
+    ///   - valueABIs: Explicit calling conventions for closed nominal types used by payload closures.
     /// - Throws: `NativeSwiftValueError` for an unknown or ambiguous case name, a consumed or inaccessible payload, or a noncopyable payload; `ABIInvocationError` for a mismatched payload type; `ABIResolutionError` for a case without a payload or unsupported metadata.
     public nonisolated(nonsending) func makeEnumCase(
         named caseName: String,
