@@ -61,7 +61,7 @@ private enum ReceiverFailure: Error { case rejected }
 struct SwiftGenericReceiverTests {
     @Test func genericOperatorsPreserveAliasesAndExplicitFixity() async throws {
         typealias Box = GenericOperatorBox<Int64>
-        let type = try await ABIRuntime().resolveSwiftType(
+        let type = try await ABIRuntime.shared.resolveSwiftType(
             named: "ManagedSwiftFixtures.GenericOperatorBox",
             genericArguments: [.type(Int64.self)])
         let lhs = Box(42), rhs = Box(1)
@@ -101,7 +101,7 @@ struct SwiftGenericReceiverTests {
     }
 
     @Test func callbackConventionsStayDistinctDuringMemberLookup() async throws {
-        let object = ABIRuntime().object(GenericCallbackConventions<Int64>())
+        let object = ABIRuntime.shared.object(GenericCallbackConventions<Int64>())
         let call = try await object.resolveMethod(
             named: "callback(_:)",
             as: ((NativeSwiftClosure<(Int64) -> Int64>) -> Int64).self
@@ -136,7 +136,7 @@ struct SwiftGenericReceiverTests {
     }
 
     @MainActor @Test func inapplicableOverloadsDoNotHideUsableMembers() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         for receiver in [GenericReceiver(ReceiverNumber(number: 42)),
                          InheritedGenericReceiver(ReceiverNumber(number: 43))] {
             let object = runtime.object(receiver)
@@ -151,7 +151,7 @@ struct SwiftGenericReceiverTests {
     }
 
     @MainActor @Test func completeMemberDeclarationsPreserveConcreteAdapters() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let receiver = GenericReceiver(ReceiverNumber(number: 42))
         let object = runtime.object(receiver)
         let name = "throwingTitle(Swift.Bool) throws -> Swift.String"
@@ -193,7 +193,7 @@ struct SwiftGenericReceiverTests {
     }
 
     @Test func completeInitializersAndAccessorsPreserveConcreteAdapters() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let type = try await runtime.resolveSwiftType(
             named: "ManagedSwiftFixtures.GenericEffectfulGetter",
             genericArguments: [.type(String.self), .type(GenericGetterFailure.self)])
@@ -218,14 +218,14 @@ struct SwiftGenericReceiverTests {
 
     @MainActor @Test func concreteMemberArgumentsKeepTheirBorrowingMarkers() async throws {
         let receiver = GenericReceiver(ReceiverNumber(number: 42))
-        let method = try await ABIRuntime().object(receiver).resolveMethod(
+        let method = try await ABIRuntime.shared.object(receiver).resolveMethod(
             named: "title(_:)",
             as: ((NativeSwiftBorrowing<String>) -> String).self)
         #expect(try unsafe method.unsafeInvoke(.init("borrowed:")) == receiver.title("borrowed:"))
     }
 
     @MainActor @Test func effectfulGenericGettersUseTheDeclaredErrorConvention() async throws {
-        let runtime = ABIRuntime()
+        let runtime = ABIRuntime.shared
         let owner = GenericEffectfulGetter("getter", GenericGetterFailure(42), false)
         let object = runtime.object(owner)
         let type = try await runtime.resolveSwiftType(
@@ -303,7 +303,7 @@ struct SwiftGenericReceiverTests {
     func dependentMembersAndIndependentParametersUseRawSwiftValues(_ inherited: Bool) async throws {
         let receiver: GenericReceiver<ReceiverNumber> = inherited
             ? InheritedGenericReceiver(.init(number: 42)) : GenericReceiver(.init(number: 42))
-        let object = ABIRuntime().object(receiver)
+        let object = ABIRuntime.shared.object(receiver)
         let projected = try await object.resolveMethod(named: "projected()", as: (() -> ReceiverNumber).self)
         let echo = try await object.resolveMethod(
             named: "echo(_:)",
@@ -408,7 +408,7 @@ struct SwiftGenericReceiverTests {
 
     @MainActor @Test func effectsUseExistingMethodTransports() async throws {
         let receiver = GenericReceiver(ReceiverNumber(number: 42))
-        let object = ABIRuntime().object(receiver)
+        let object = ABIRuntime.shared.object(receiver)
         let throwing = try await object.resolveMethod(
             named: "throwingTitle(_:)",
             as: ((Bool) throws -> String).self
@@ -426,7 +426,7 @@ struct SwiftGenericReceiverTests {
     @MainActor @Test func completeDependentSignaturesUseExplicitFormalABIAdapters() async throws {
         let value = ReceiverText(text: String(repeating: "owned", count: 100))
         let receiver = GenericReceiver(value)
-        let object = ABIRuntime().object(receiver)
+        let object = ABIRuntime.shared.object(receiver)
         let projected = try await object.resolveMethod(named: "projected() -> A", as: (() -> ReceiverText).self)
         let echo = try await object.resolveMethod(
             named: "echo(A) -> A",
@@ -454,7 +454,7 @@ struct SwiftGenericReceiverTests {
     }
 
     @MainActor @Test func dependentAndIndependentGenericsKeepAdapterBoundary() async throws {
-        let object = ABIRuntime().object(GenericReceiver(ReceiverNumber(number: 42)))
+        let object = ABIRuntime.shared.object(GenericReceiver(ReceiverNumber(number: 42)))
         do {
             _ = try await object.resolveMethod(named: "projected()", as: (() -> Int).self)
             Issue.record("Dependent result unexpectedly inferred a concrete ABI")
