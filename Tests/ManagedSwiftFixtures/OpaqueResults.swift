@@ -84,6 +84,47 @@ private struct HiddenConstrainedOpaque<Value: ExistentialValue>: ExistentialValu
     let value: Value
     var number: Int64 { value.number }
 }
+public struct ProtocolExtensionValue<Value: Sendable>: ExistentialValue {
+    public let value: Value
+    public let number: Int64
+    public init(_ value: Value, _ number: Int64) { self.value = value; self.number = number }
+}
+public class ProtocolExtensionObject: ExistentialValue, ExistentialObjectValue, @unchecked Sendable
+{
+    public let token: ErrorLifetimeToken
+    public let number: Int64
+    public init(_ token: ErrorLifetimeToken, _ number: Int64) {
+        self.token = token; self.number = number
+    }
+}
+public final class ProtocolExtensionDerivedObject: ProtocolExtensionObject, @unchecked Sendable {}
+extension ExistentialValue {
+    public var protocolExtensionValue: Self {
+        get { self }
+        set { self = newValue }
+    }
+    @inline(never) public static func protocolExtensionStatic(_ value: Self) -> Int64 {
+        value.number
+    }
+    @inline(never) public func protocolExtensionOpaque() -> some ExistentialValue {
+        HiddenConstrainedOpaque(value: self)
+    }
+    @inline(never) public func protocolExtensionPair<Other>(_ other: Other) -> (Self, Other) {
+        (self, other)
+    }
+    @inline(never) public mutating func protocolExtensionReplace(_ replacement: Self) {
+        self = replacement
+    }
+}
+extension ExistentialValue where Self == InlineExistentialValue {
+    @inline(never) public func protocolExtensionConcreteNumber() -> Int64 { number }
+}
+extension ExistentialObjectValue {
+    @inline(never) public func protocolExtensionNumber() -> Int64 { number }
+}
+extension ExistentialValue where Self: AnyObject {
+    @inline(never) public func protocolExtensionClassNumber() -> Int64 { number }
+}
 @inline(never) public func makeConstrainedOpaque<Value: ExistentialValue>(_ value: Value) -> some ExistentialValue {
     HiddenConstrainedOpaque(value: value)
 }

@@ -25,6 +25,7 @@ struct SwiftGenericDeclaration: Sendable, Equatable {
     // The full requirements above remain available for constraint validation.
     var abiRequirements: [Requirement]? = nil
     var implicitRequirements: [Requirement] = []
+    var protocolSelf: SwiftFormalType? = nil
 
 }
 

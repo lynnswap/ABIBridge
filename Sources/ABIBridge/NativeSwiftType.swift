@@ -91,6 +91,8 @@ struct SwiftMetadataResponse: BitwiseCopyable, ABIBridgeValue {
 /// A concrete Swift type and its retained implementation images.
 ///
 /// Type lookup requests complete metadata without constructing an instance. Generic arguments are validated by the Swift runtime. Member lookups reuse the image's existing symbol index. See <doc:SwiftMemberInvocation> for lookup and invocation conventions.
+///
+/// Complete protocol-extension declarations, such as `(extension in Module):Module.Protocol.member...`, bind Self to this concrete type for methods, accessors, and static members. genericArguments supplies only the type parameters introduced by the member.
 public actor NativeSwiftType: Hashable {
     /// Type handles compare by their concrete Swift metadata identity.
     public nonisolated static func == (lhs: NativeSwiftType, rhs: NativeSwiftType) -> Bool {
@@ -200,7 +202,8 @@ public actor NativeSwiftType: Hashable {
             let formalType = try explicitSwiftValueType(metadata, abi: receiverABI)
             codec = SwiftReceiverCodec(runtimeType: metadata, formalType: formalType)
             cachedCodec = nil
-        } else if (representation == nil || representation == metadata),
+        } else if (representation == nil || representation == metadata
+            || generic?.binding.declaration.protocolSelf != nil),
             let formalType = try generic?.receiverType()
         {
             codec = SwiftReceiverCodec(runtimeType: metadata, formalType: formalType)
@@ -290,6 +293,26 @@ public actor NativeSwiftType: Hashable {
             let request = try declaration(ownerName, usesBinding)
             if originalRequest == nil { originalRequest = request }
             let belongs = !exact || SwiftMemberLookup.belongs(request.name, to: ownerName)
+            if exact, !belongs, let signature,
+                SymbolIndex.extensionMemberName(request.name) != nil
+            {
+                let symbol = try resolveDeclaredMember(request, in: ownerImage, exact: true)
+                let (callable, _) = try SwiftGenericDeclaration.callable(
+                    in: SwiftSyntax(symbol: symbol.linkageName)
+                )
+                if callable.child(kind: "Extension")?.child(kind: "Protocol") != nil {
+                    let generic = try SwiftGenericCallPlan(
+                        symbol: symbol,
+                        genericArguments: genericArguments,
+                        signature: SwiftFunctionSignature(signature),
+                        resolver: resolver,
+                        implicitSelf: self,
+                        declaredSignature: declaredSignature,
+                        valueABIs: valueABIs
+                    )
+                    return (symbol, metadata, generic)
+                }
+            }
             if belongs && (!usesBinding || exact || explicitSignature) {
                 do {
                     let symbol: ResolvedSymbol

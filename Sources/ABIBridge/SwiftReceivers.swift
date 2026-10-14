@@ -89,14 +89,18 @@ struct SwiftReceiverPlan: Sendable {
         self.metadata = metadata
         self.isMutating = isMutating
         self.isConsuming = isConsuming
-        if let objectType = metadata as? AnyClass {
+        // An unconstrained protocol Self remains indirect for class conformers.
+        if ABISwiftValueIsIndirect(codec.type.handle) {
+            mode = .address
+            expectedClass = nil
+        } else if let objectType = metadata as? AnyClass {
             guard ABIValueTypeIsPointer(codec.type.handle) else {
                 throw ABIResolutionError.unsupportedDeclaration("A Swift class receiver requires a reference or pointer adapter.")
             }
             mode = .object
             expectedClass = validateClass ? objectType : nil
         } else {
-            mode = isMutating || ABISwiftValueIsIndirect(codec.type.handle) ? .address : .value
+            mode = isMutating ? .address : .value
             expectedClass = nil
         }
     }
@@ -112,7 +116,9 @@ struct SwiftReceiverPlan: Sendable {
         } else {
             return try codec.encode(receiver)
         }
-        if let expected = metadata as? AnyClass, let objectType = actual.metadata as? AnyClass {
+        if !(isMutating && mode == .address),
+            let expected = metadata as? AnyClass, let objectType = actual.metadata as? AnyClass
+        {
             guard SwiftObjectType(objectType)?.isSubclass(of: expected) == true else {
                 throw ABIInvocationError.incompatibleValue(expected: String(reflecting: metadata), actual: actual.name)
             }

@@ -638,11 +638,12 @@ struct SwiftGenericCallPlan: Sendable {
         signature: SwiftFunctionSignature,
         resolver: SymbolResolver,
         enclosing: SwiftGenericTypeMetadata? = nil,
+        implicitSelf: NativeSwiftType? = nil,
         receiver: SwiftReceiverMode? = nil,
         declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) throws {
-        let context = try enclosing.flatMap {
+        let context = try (implicitSelf == nil ? enclosing : nil).flatMap {
             $0.arguments.isEmpty ? nil : try SwiftGenericTypeContext(metadata: $0.value)
         }
         let declared = try declaredSignature.map(SwiftDeclaredSignature.init)
@@ -654,7 +655,8 @@ struct SwiftGenericCallPlan: Sendable {
         )
         var binding = try SwiftGenericBinding(
             declaration: declaration,
-            arguments: (enclosing?.arguments ?? []) + genericArguments,
+            arguments: (implicitSelf.map { [.type($0)] } ?? enclosing?.arguments ?? [])
+                + genericArguments,
             signature: signature,
             resolver: resolver,
             enclosing: context,
@@ -844,6 +846,13 @@ struct SwiftGenericCallPlan: Sendable {
     }
 
     func receiverType() throws -> CValueType? {
+        if let formalSelf = binding.declaration.protocolSelf {
+            return try Self.layout(
+                formalSelf,
+                actual: binding.types(formalSelf)[0],
+                binding: binding
+            )
+        }
         guard let context, let enclosingMetadata, !(enclosingMetadata is AnyClass) else {
             return nil
         }

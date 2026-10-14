@@ -367,6 +367,11 @@ struct SwiftConstrainedExtensionTests {
         )
         #expect(try unsafe numberMethod.unsafeInvoke("number:") == number.title("number:"))
         #expect(try unsafe textMethod.unsafeInvoke("text:") == text.title("text:"))
+        let qualified = try await runtime.object(number).resolveMethod(
+            named: numberMethod.method.symbol.declaration.name,
+            as: ((String) -> String).self
+        )
+        #expect(try unsafe qualified.unsafeInvoke("qualified:") == number.title("qualified:"))
         let getter = try await runtime.object(number).resolveGetter(
             named: "number",
             as: (() -> Int).self

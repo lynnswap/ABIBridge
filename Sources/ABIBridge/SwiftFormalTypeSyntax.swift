@@ -2,13 +2,31 @@ import ABIBridgeCore
 import Foundation
 
 extension SwiftGenericDeclaration {
-    init(linkageName: String, enclosing context: SwiftGenericTypeContext? = nil,
-         declaredSignature: SwiftDeclaredSignature? = nil, caller: SwiftFunctionSignature? = nil) throws {
-        let syntax = try SwiftSyntax(symbol: linkageName)
+    static func callable(
+        in syntax: SwiftSyntax
+    ) throws -> (declaration: SwiftSyntax.Node, accessor: String?) {
         var entry = syntax.root
         while ["Global", "Static"].contains(entry.kind) {
             entry = try entry.requiredChild()
         }
+        if ["Getter", "Setter"].contains(entry.kind) {
+            return (try entry.requiredChild(), entry.kind)
+        }
+        return (entry, nil)
+    }
+
+    init(
+        linkageName: String,
+        enclosing context: SwiftGenericTypeContext? = nil,
+        declaredSignature: SwiftDeclaredSignature? = nil,
+        caller: SwiftFunctionSignature? = nil
+    ) throws {
+        let (declaration, accessor) = try Self.callable(in: SwiftSyntax(symbol: linkageName))
+        // Protocol extensions omit Self from the function's generic signature.
+        // Member parameters start at the depth after that implicit parameter.
+        let protocolName = try declaration.child(kind: "Extension")?.child(kind: "Protocol")?.name()
+        let context = protocolName == nil ? context : nil
+        protocolSelf = protocolName.map { _ in .named("A", []) }
         // A nominal ~Copyable parameter may have a Copyable-only member.
         // Swift emits that member with the default requirement; members that
         // preserve suppression encode it in their own generic context.
@@ -16,6 +34,9 @@ extension SwiftGenericDeclaration {
             if case .invertedProtocols = $0 { return false }
             return true
         } ?? []
+        if let protocolName, let protocolSelf {
+            requirements.append(.conformance(protocolSelf, protocolName))
+        }
         func collectContext(_ node: SwiftSyntax.Node) throws {
             for child in node.children() {
                 if child.kind == "DependentGenericSignature" {
@@ -25,22 +46,14 @@ extension SwiftGenericDeclaration {
                 }
             }
         }
-        let declaration: SwiftSyntax.Node
-        let accessor: String?
-        if ["Getter", "Setter"].contains(entry.kind) {
-            accessor = entry.kind
-            declaration = try entry.requiredChild()
-        } else {
-            accessor = nil
-            declaration = entry
-        }
         guard ["Function", "Allocator", "Constructor", "Variable", "Subscript"].contains(declaration.kind),
               let type = declaration.child(kind: "Type") else {
             throw ABIResolutionError.unsupportedDeclaration("The Swift symbol does not describe a callable declaration: " + linkageName)
         }
         for child in declaration.children() where child.kind != "Type" { try collectContext(child) }
         var value = try type.requiredChild()
-        var parameters = context?.parameters ?? []
+        var parameters =
+            protocolName == nil ? context?.parameters ?? [] : [.init(name: "A", isPack: false)]
         if value.kind == "DependentGenericType" {
             let signature = try value.requiredChild(kind: "DependentGenericSignature")
             requirements += try Self.requirements(signature)
