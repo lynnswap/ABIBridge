@@ -103,10 +103,15 @@ public struct RuntimeProjectionBody: RuntimeProjectionSource {
     public init(_ number: Int64) { self.number = number }
 }
 public enum RuntimeProjection {
+    case empty
     case preview(
         source: any RuntimeProjectionSource,
         makeBody: @MainActor () -> RuntimeProjectionBody
     )
+}
+@inline(never) public func isEmptyRuntimeProjection(_ value: RuntimeProjection) -> Bool {
+    if case .empty = value { return true }
+    return false
 }
 @inline(never) public func makeRuntimeProjection(_ number: Int64) -> some Any {
     let makeBody: @MainActor () -> RuntimeProjectionBody = {

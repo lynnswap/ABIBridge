@@ -79,6 +79,86 @@ private final class ProjectionPreparationGate: Sendable {
 
 @Suite(.serialized)
 struct SwiftRuntimeValueProjectionTests {
+    @MainActor @Test
+    func createsNamedEmptyEnumCasesForNativeCalls() async throws {
+        let type = try await ABIRuntime.shared.resolveSwiftType(
+            named: "ManagedSwiftFixtures.RuntimeEmptyCaseMode"
+        )
+        let copy = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+            as: ((NativeSwiftValue) -> NativeSwiftValue).self,
+            genericArguments: [.type(type)]
+        )
+        for (name, expected) in [("default", RuntimeEmptyCaseMode.default), ("static", .static)] {
+            let value = try type.makeEnumCase(named: name)
+            let result = try unsafe copy.unsafeInvoke(value)
+            #expect(try result.take(as: RuntimeEmptyCaseMode.self) == expected)
+            #expect(try value.take(as: RuntimeEmptyCaseMode.self) == expected)
+        }
+        MainActor.assertIsolated()
+    }
+
+    @Test func createsZeroSizedEnumCases() async throws {
+        let type = try await ABIRuntime.shared.resolveSwiftType(
+            named: "ManagedSwiftFixtures.RuntimeEmptyCaseSingleton"
+        )
+        let value = try type.makeEnumCase(named: "only")
+        #expect(try value.take(as: RuntimeEmptyCaseSingleton.self) == .only)
+    }
+
+    @Test func emptyCasesInNontrivialEnumsCanBeCopiedAndDestroyed() async throws {
+        let type = try await ABIRuntime.shared.resolveSwiftType(
+            named: "ManagedSwiftFixtures.RuntimeProjectionChoice"
+        )
+        var value: NativeSwiftValue? = try type.makeEnumCase(named: "empty")
+        let copied = try #require(value).copy()
+        value = nil
+        guard case .empty = try copied.take(as: RuntimeProjectionChoice.self) else {
+            Issue.record("The constructed enum did not contain the empty case")
+            return
+        }
+        let optional = try await ABIRuntime.shared.resolveSwiftType(
+            named: "Swift.Optional", genericArguments: [.type(ErrorLifetimeToken.self)]
+        )
+        let none = try optional.makeEnumCase(named: "none")
+        #expect(try none.copy().take(as: ErrorLifetimeToken?.self) == nil)
+    }
+
+    @Test func createsEmptyCasesInNoncopyableEnums() async throws {
+        let type = try await ABIRuntime.shared.resolveSwiftType(
+            named: "ManagedSwiftFixtures.RuntimeProjectionMoveOnly"
+        )
+        let value = try type.makeEnumCase(named: "empty")
+        #expect(!value.isCopyable)
+        let moved = try value.take(as: RuntimeProjectionMoveOnly.self)
+        guard case .empty = consume moved else {
+            Issue.record("The constructed noncopyable enum did not contain the empty case")
+            return
+        }
+        #expect(value.isConsumed)
+    }
+
+    @Test func enumConstructionReportsUnsupportedCases() async throws {
+        let type = try await ABIRuntime.shared.resolveSwiftType(
+            named: "ManagedSwiftFixtures.RuntimeProjectionChoice"
+        )
+        #expect(throws: NativeSwiftValueError.enumCaseNotFound(name: "missing")) {
+            try type.makeEnumCase(named: "missing")
+        }
+        #expect(throws: NativeSwiftValueError.enumCaseRequiresPayload(name: "text")) {
+            try type.makeEnumCase(named: "text")
+        }
+        #expect(throws: NativeSwiftValueError.ambiguousEnumCase(name: "repeated")) {
+            try type.makeEnumCase(named: "repeated")
+        }
+        let structure = try await ABIRuntime.shared.resolveSwiftType(
+            named: "ManagedSwiftFixtures.RuntimeProjectionLarge"
+        )
+        #expect(throws: ABIResolutionError.self) {
+            try structure.makeEnumCase(named: "empty")
+        }
+    }
+
     @Test func enumCaseSelectionPreservesNilAndLookupFailures() async throws {
         let value = try await runtimeProjectionChoice(1)
         let payload = try #require(try await value.resolveEnumPayload(forCase: "text"))
@@ -692,6 +772,60 @@ struct SwiftRuntimeValueProjectionTests {
     }
 
     #if os(macOS)
+    @Test func constructedRuntimeOnlyEnumPreservesPayloadOwnershipAfterMutation() async throws {
+        let module = "EmptyEnum_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+        let fixture = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                nonisolated(unsafe) private var destructions: Int64 = 0
+                public final class Token {
+                    deinit { destructions += 1 }
+                }
+                public enum Selection {
+                    case empty
+                    case payload(Token)
+                    public func isEmpty() -> Bool {
+                        switch self {
+                        case .empty: true
+                        case .payload: false
+                        }
+                    }
+                    public mutating func fill() { self = .payload(Token()) }
+                }
+                public func destructionCount() -> Int64 { destructions }
+                """,
+            linkArguments: ["-swift-version", "6", "-enable-library-evolution"]
+        )
+        defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        let type = try await runtime.resolveSwiftType(
+            named: module + ".Selection", in: .path(fixture.libraryURL)
+        )
+        let count = try await runtime.resolveSwiftFunction(
+            named: module + ".destructionCount()", as: (() -> Int64).self,
+            in: .path(fixture.libraryURL)
+        )
+        let read = try await type.resolveMethod(
+            named: "isEmpty()", as: (() -> Bool).self,
+            receiverABI: .opaque(named: type.name)
+        )
+        let fill = try await type.resolveMethod(
+            named: "fill()", as: (() -> Void).self,
+            receiverABI: .opaque(named: type.name), mutating: true
+        )
+        var value: NativeSwiftValue? = try type.makeEnumCase(named: "empty")
+        #expect(try unsafe count.unsafeInvoke() == 0)
+        #expect(try unsafe read.unsafeInvoke(on: #require(value)))
+        try unsafe fill.unsafeInvoke(on: #require(value))
+        #expect(try unsafe !read.unsafeInvoke(on: #require(value)))
+        var copied: NativeSwiftValue? = try #require(value).copy()
+        value = nil
+        #expect(try unsafe count.unsafeInvoke() == 0)
+        #expect(try unsafe !read.unsafeInvoke(on: #require(copied)))
+        copied = nil
+        #expect(try unsafe count.unsafeInvoke() == 1)
+    }
+
     @MainActor @Test
     func legacyMainActorFunctionMetadataAcceptsTheSwiftSixSendableSignature() async throws {
         let module =

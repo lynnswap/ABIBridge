@@ -48,6 +48,14 @@ package struct RuntimeEnumMetadata {
         return Int(tag)
     }
 
+    package func initializeEmptyCase(at index: Int, in storage: UnsafeMutableRawPointer) throws {
+        guard ABISwiftInitializeEmptyEnumCase(metadata, storage, UInt32(index)) else {
+            throw RuntimeResolutionError.metadataUnavailable(
+                "The enum's value witnesses are unavailable."
+            )
+        }
+    }
+
     package func payloadType(at index: Int) throws -> Any.Type? {
         guard cases[index].hasPayload else { return nil }
         guard let payload = ABISwiftEnumCasePayloadMetadata(metadata, index) else {

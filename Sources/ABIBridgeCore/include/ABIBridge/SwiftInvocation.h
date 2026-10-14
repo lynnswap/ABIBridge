@@ -26,6 +26,8 @@ void ABISwiftDestroyValue(const void *metadata, void *value);
 
 /// Enum operations require valid enum metadata with enum value witnesses.
 bool ABISwiftGetEnumTag(const void *metadata, const void *value, uint32_t *tag);
+/// Initializes uninitialized enum storage using a tag already established to name a case without a payload. Returns false when enum value witnesses are unavailable.
+bool ABISwiftInitializeEmptyEnumCase(const void *metadata, void *destination, uint32_t tag);
 /// Consumes an initialized enum copy into its payload. An indirect payload is copied out of its retained box; destination is uninitialized payload storage.
 void ABISwiftTakeEnumPayload(const void *metadata, void *enumCopy,
     const void *payloadMetadata, bool indirect, void *destination);
