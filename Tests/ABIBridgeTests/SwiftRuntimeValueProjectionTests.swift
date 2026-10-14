@@ -332,9 +332,17 @@ struct SwiftRuntimeValueProjectionTests {
             Issue.record("A genuine Void payload was not constructed")
             return
         }
-        #expect(throws: ABIResolutionError.self) {
-            try direct.makeEnumCaseAndWait(named: "ticket", payload: payload)
+        #expect {
+            _ = try direct.makeEnumCaseAndWait(named: "ticket", payload: payload)
+        } throws: { error in
+            if case ABIResolutionError.metadataUnavailable = error { return true }
+            if case ABIInvocationError.incompatibleValue(let expected, let actual) = error {
+                return expected == String(reflecting: RuntimeTicket.self)
+                    && actual == String(reflecting: Void.self)
+            }
+            return false
         }
+        #expect(!payload.isConsumed)
         let generic = try await ABIRuntime.shared.resolveSwiftType(
             named: "ManagedSwiftFixtures.RuntimeProjectionGeneric",
             genericArguments: [.type(Void.self)]
