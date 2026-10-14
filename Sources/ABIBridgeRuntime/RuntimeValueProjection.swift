@@ -70,7 +70,7 @@ package struct RuntimeEnumMetadata {
             // https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/IRGen/GenReflection.cpp
             guard let syntax = ABICopySwiftEnumCasePayloadSyntax(metadata, index) else {
                 throw RuntimeResolutionError.metadataUnavailable(
-                    "The enum case's payload type is hidden by runtime field metadata."
+                    "The enum case's payload type cannot be verified from runtime field metadata."
                 )
             }
             ABIReleaseSwiftSyntax(syntax)

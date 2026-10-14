@@ -1,6 +1,6 @@
 import ABIBridgeRuntime
 
-/// A projected function keeps its field's ABI until it enters generic value storage.
+/// Function fields can use a different ABI from owned generic value storage.
 struct SwiftRuntimeValueProjectionPlan: Sendable {
     private let conversions: SwiftRuntimeClosureConversions
     private let enumType: NativeSwiftType

@@ -393,7 +393,7 @@ func prepareRuntimeProjection(
     )
     let readConstructed = try await runtime.resolveSwiftFunction(
         named: "SwiftFunctionFixture.readRuntimeProjection(_:)",
-        as: (@MainActor (NativeSwiftValue) -> Int64).self,
+        as: ((NativeSwiftValue) -> Int64).self,
         valueABIs: [value.type: .opaque(named: value.type.name)],
         in: scope
     )
