@@ -108,10 +108,10 @@ struct SwiftRuntimeValueProjectionPlan: Sendable {
         conversions = try SwiftRuntimeClosureConversions(functions: functions)
     }
 
-    func apply(to storage: NativeValueStorage) {
+    func apply(to storage: NativeValueStorage, native: Bool = false) {
         conversions.apply(
             to: storage,
-            native: false,
+            native: native,
             retainingCode: (enumType, valueTypes),
             codeLifetime: storage.codeLifetime
         )

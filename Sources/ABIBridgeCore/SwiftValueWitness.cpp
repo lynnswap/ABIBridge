@@ -7,8 +7,10 @@ extern "C" void *swift_projectBox(void *);
 extern "C" const void *swift_getObjectType(void *);
 namespace {
 struct ErrorValueResult { const void *value; const void *metadata; const void *witness; };
+struct BoxPair { void *object; void *buffer; };
 }
 extern "C" void swift_getErrorValue(const void *, void **, ErrorValueResult *);
+extern "C" BoxPair __attribute__((swiftcall)) swift_allocBox(const void *);
 
 namespace {
 // Swift's stable value-witness layout and address-discriminated authentication.
@@ -74,6 +76,21 @@ bool ABISwiftGetEnumTag(const void *metadata, const void *value, uint32_t *tag) 
 bool ABISwiftInitializeEmptyEnumCase(const void *metadata, void *destination, uint32_t tag) {
     auto table = valueWitnesses(metadata);
     if (!(table->flags & 0x00200000)) return false;
+    static_cast<const EnumValueWitnessTable *>(table)->destructiveInjectEnumTag(destination, tag, metadata);
+    return true;
+}
+
+bool ABISwiftInitializeEnumCase(const void *metadata, void *destination, uint32_t tag,
+    const void *payloadMetadata, bool indirect, void *payload) {
+    auto table = valueWitnesses(metadata);
+    if (!(table->flags & 0x00200000)) return false;
+    if (indirect) {
+        auto box = swift_allocBox(payloadMetadata);
+        valueWitnesses(payloadMetadata)->initializeWithTake(box.buffer, payload, payloadMetadata);
+        std::memcpy(destination, &box.object, sizeof(box.object));
+    } else {
+        valueWitnesses(payloadMetadata)->initializeWithTake(destination, payload, payloadMetadata);
+    }
     static_cast<const EnumValueWitnessTable *>(table)->destructiveInjectEnumTag(destination, tag, metadata);
     return true;
 }
