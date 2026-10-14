@@ -1,4 +1,5 @@
 import ABIBridge
+import ABIBridgeTestSupport
 import Foundation
 import Testing
 
@@ -180,6 +181,102 @@ extension NativeValue {
 }
 
 struct SwiftMemberInvocationTests {
+    #if os(macOS)
+    @Test func protocolRequirementGettersUseTheReceiversConformance() async throws {
+        let module = "ProtocolGetter_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+        let library = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                public struct Payload {
+                    public let object: AnyObject
+                    public let text: String
+                }
+                public protocol Provider {
+                    var payload: Payload { get }
+                }
+                public protocol ObjectProviderProtocol: AnyObject {
+                    var payload: Payload { get }
+                }
+                public struct ValueProvider: Provider {
+                    let object: AnyObject
+                    public var payload: Payload { Payload(object: object, text: "value") }
+                }
+                public final class ObjectProvider: Provider, ObjectProviderProtocol {
+                    let object: AnyObject
+                    init(_ object: AnyObject) { self.object = object }
+                    public var payload: Payload { Payload(object: object, text: "object") }
+                }
+                public func makeValueProvider(_ object: AnyObject) -> ValueProvider {
+                    ValueProvider(object: object)
+                }
+                public func makeObjectProvider(_ object: AnyObject) -> ObjectProvider {
+                    ObjectProvider(object)
+                }
+                """,
+            linkArguments: ["-enable-library-evolution"]
+        )
+        defer { library.cleanup() }
+        let runtime = ABIRuntime()
+        let payloadType = try await runtime.resolveSwiftType(named: module + ".Payload")
+        let payloadABI = try NativeType.opaque(named: payloadType.name)
+        let declaration = module + ".Provider.payload.getter : " + payloadType.name
+        let objectGetter = try await payloadType.resolveGetter(
+            named: "object",
+            as: (() -> AnyObject).self,
+            receiverABI: payloadABI
+        )
+        let textGetter = try await payloadType.resolveGetter(
+            named: "text",
+            as: (() -> String).self,
+            receiverABI: payloadABI
+        )
+        for (name, text, protocolName) in [
+            ("ValueProvider", "value", "Provider"),
+            ("ObjectProvider", "object", "Provider"),
+            ("ObjectProvider", "object", "ObjectProviderProtocol"),
+        ] {
+            let type = try await runtime.resolveSwiftType(named: module + "." + name)
+            let factory = try await runtime.resolveSwiftFunction(
+                named: module + ".make" + name + "(Swift.AnyObject) -> " + type.name,
+                as: ((AnyObject) -> NativeSwiftValue).self,
+                valueABIs: [
+                    type: name == "ValueProvider" ? try .opaque(named: type.name) : .pointer
+                ]
+            )
+            let getter = try await type.resolveGetter(
+                named: module + "." + protocolName + ".payload.getter : " + payloadType.name,
+                as: (() -> NativeSwiftValue).self,
+                valueABIs: [payloadType: payloadABI]
+            )
+            weak var observed: NSObject?
+            var result: NativeSwiftValue?
+            do {
+                let object = NSObject()
+                observed = object
+                let receiver = try unsafe factory.unsafeInvoke(object)
+                result = try unsafe getter.unsafeInvoke(on: receiver)
+                #expect(try unsafe objectGetter.unsafeInvoke(on: #require(result)) === object)
+                #expect(try unsafe textGetter.unsafeInvoke(on: #require(result)) == text)
+            }
+            runtime.removeCachedResults()
+            #expect(observed != nil)
+            result = nil
+            #expect(observed == nil)
+        }
+        let unrelated = try await runtime.resolveSwiftType(named: "ABIBridgeTests.SwiftMemberPoint")
+        #expect {
+            try unrelated.resolveGetterAndWait(
+                named: declaration,
+                as: (() -> NativeSwiftValue).self,
+                valueABIs: [payloadType: payloadABI]
+            )
+        } throws: { error in
+            guard case ABIResolutionError.signatureMismatch = error else { return false }
+            return true
+        }
+    }
+    #endif
+
     @MainActor @Test func extractedMethodsAndBindingsHaveIndependentReceiverLifetimes() async throws
     {
         let runtime = ABIRuntime()

@@ -224,7 +224,7 @@ package struct SwiftModuleFilter {
             "nominal type descriptor for ", "protocol descriptor for ",
             "type metadata accessor for ", "type metadata for ",
             "async function pointer to ", "property descriptor for ",
-            "method descriptor for ", "static ",
+            "method descriptor for ", "dispatch thunk of ", "static ",
         ]
         while let marker = markers.first(where: { name.hasPrefix($0) }) {
             name.removeFirst(marker.count)
