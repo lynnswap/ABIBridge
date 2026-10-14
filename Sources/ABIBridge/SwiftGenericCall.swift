@@ -676,7 +676,7 @@ struct SwiftGenericCallPlan: Sendable {
             .function
         {
             _ = try SwiftGenericParameters(
-                formal: arguments,
+                formal: attributes.loweredParameters(arguments),
                 actual: signature.parameters,
                 binding: binding,
                 defaultConsuming: declaration.consumesArguments

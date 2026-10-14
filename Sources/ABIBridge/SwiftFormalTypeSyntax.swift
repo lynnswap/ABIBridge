@@ -98,7 +98,7 @@ extension SwiftGenericDeclaration {
             guard case .function(let arguments, let result, let failure, let attributes) = try SwiftFormalType(value) else {
                 throw ABIResolutionError.unsupportedDeclaration("The Swift declaration is missing its function type.")
             }
-            self.arguments = arguments
+            self.arguments = attributes.loweredParameters(arguments)
             self.result = result
             self.failure = failure
             self.isAsync = attributes.isAsync

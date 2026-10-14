@@ -17,6 +17,42 @@ private struct RejectingCollectionArgument: ABIBridgeValue {
 }
 
 struct SwiftCollectionValueTests {
+    @Test func variadicFunctionsBorrowOneArrayArgument() async throws {
+        let runtime = ABIRuntime()
+        let path = try #require(Bundle(for: LifetimeToken.self).executableURL)
+        let name =
+            "ManagedSwiftFixtures.variadicStrings(Swift.String, Swift.String...) -> [Swift.String]"
+        let call = try await runtime.resolveSwiftFunction(
+            named: name,
+            as: ((String, [String]) -> [String]).self,
+            declaredAs: "(Swift.String, Swift.String...) -> [Swift.String]",
+            in: .path(path)
+        )
+        let long = String(repeating: "owned", count: 100)
+        let input = [long, "tail"]
+        var output = try unsafe call.unsafeInvoke("first", input)
+        #expect(output == variadicStrings("first", long, "tail"))
+        output[1] = "changed"
+        #expect(input == [long, "tail"])
+
+        let own = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+            as: (([String]) -> NativeSwiftValue).self,
+            genericArguments: [.type([String].self)],
+            in: .path(path)
+        )
+        let nativeInput = try unsafe own.unsafeInvoke(input)
+        let runtimeCall = try await runtime.resolveSwiftFunction(
+            named: name,
+            as: ((String, NativeSwiftValue) -> NativeSwiftValue).self,
+            in: .path(path)
+        )
+        let nativeOutput = try unsafe runtimeCall.unsafeInvoke("first", nativeInput)
+        #expect(try nativeOutput.take(as: [String].self) == variadicStrings("first", long, "tail"))
+        #expect(!nativeInput.isConsumed)
+        #expect(try nativeInput.take(as: [String].self) == input)
+    }
+
     @Test func nativeArrayCallsPreserveCopyOnWrite() async throws {
         let append = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.appendStrings(_:_:)", as: (([String], String) -> [String]).self

@@ -53,6 +53,54 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
 }
 
 @Suite struct SwiftRuntimeValueTests {
+    @Test(arguments: [false, true])
+    func variadicTupleInitializersConsumeTheArrayTail(_ hasTail: Bool) async throws {
+        typealias Entry = (LifetimeToken, String)
+        let runtime = ABIRuntime()
+        let path = try #require(Bundle(for: LifetimeToken.self).executableURL)
+        let type = try await runtime.resolveSwiftType(
+            named: "ManagedSwiftFixtures.VariadicTupleSeries",
+            in: .path(path),
+            genericArguments: [.type(LifetimeToken.self)]
+        )
+        let initialize = try await type.resolveInitializer(
+            named:
+                "init((A, Swift.String), (A, Swift.String)...) -> ManagedSwiftFixtures.VariadicTupleSeries<A>",
+            as: ((NativeSwiftValue, NativeSwiftValue) -> NativeSwiftValue).self,
+            valueABIs: [type: .opaque(named: type.name)]
+        )
+        let ownEntry = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+            as: ((Entry) -> NativeSwiftValue).self,
+            genericArguments: [.type(Entry.self)],
+            in: .path(path)
+        )
+        let ownTail = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+            as: (([Entry]) -> NativeSwiftValue).self,
+            genericArguments: [.type([Entry].self)],
+            in: .path(path)
+        )
+        weak var observed: LifetimeToken?
+        var deaths = 0
+        var result: NativeSwiftValue?
+        do {
+            let token = LifetimeToken { deaths += 1 }
+            observed = token
+            let first = try unsafe ownEntry.unsafeInvoke((token, "first"))
+            let remaining = try unsafe ownTail.unsafeInvoke(hasTail ? [(token, "tail")] : [])
+            result = try unsafe initialize.unsafeInvoke(first, remaining)
+            #expect(first.isConsumed && remaining.isConsumed)
+        }
+        #expect(observed != nil && deaths == 0)
+        try result?.withCopy {
+            let series = try #require($0 as? VariadicTupleSeries<LifetimeToken>)
+            #expect(series.values.map(\.1) == (hasTail ? ["first", "tail"] : ["first"]))
+            #expect(series.values.allSatisfy { $0.0 === observed })
+        }
+        result = nil
+        #expect(observed == nil && deaths == 1)
+    }
 
     @Test func ordinaryRuntimeResultsRequireScopedInvocation() async throws {
         let runtime = ABIRuntime.shared

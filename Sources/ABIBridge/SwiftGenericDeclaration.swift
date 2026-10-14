@@ -144,6 +144,14 @@ struct SwiftFunctionAttributes: Sendable, Equatable {
     // Ownership remains on each formal parameter; these are its other ABI flags.
     var parameterFlags: [UInt32] = []
 
+    func loweredParameters(_ parameters: [SwiftFormalType]) -> [SwiftFormalType] {
+        guard !parameterFlags.isEmpty else { return parameters }
+        // Function metadata keeps the variadic element type; calls pass one Array.
+        return parameters.enumerated().map { index, type in
+            parameterFlags[index] & 0x80 != 0 ? .nominal("Swift.Array", [type]) : type
+        }
+    }
+
     var spelling: String {
         var result = isEscaping ? "@escaping " : "@noescape "
         if isSendable { result += "@Sendable " }

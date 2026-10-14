@@ -52,6 +52,14 @@ Each selection uses its own directory under `.build/package-tests`. Set `ABI_TES
 
 The Runtime and public API schemes disable parallel tests because fixtures load and unload libraries in the process-wide image catalog. Individual tests still exercise concurrency. A suite's `serialized` trait does not isolate it from unrelated suites; see [Swift Testing parallelization](https://developer.apple.com/documentation/testing/parallelization).
 
+To run the full public API suite in two independent processes, as CI does:
+
+```sh
+ABI_TEST_PARALLEL_API=1 bash scripts/test-package.sh api
+```
+
+The helper builds once, then runs complementary groups with `test-without-building`. Tests remain sequential within each process. Both groups must finish successfully, and each saves a separate `.xcresult` bundle under the build directory's `Logs/Test`. This mode manages test filters and result paths; use the default mode when passing `-only-testing`, `-skip-testing`, or `-resultBundlePath`.
+
 During development, select a single suite:
 
 ```sh
@@ -124,13 +132,13 @@ Older `actionlint` versions do not recognize GitHub's [official `xcode-27` runne
 
 ## What CI runs
 
-[CI](.github/workflows/ci.yml) uses five macOS jobs, each running its checks sequentially:
+[CI](.github/workflows/ci.yml) uses five macOS jobs:
 
 | Job | Xcode | Runner | Checks |
 | --- | --- | --- | --- |
 | Runtime | 26.6 | `macos-26` | macOS Core and Runtime, focused external consumers, then iOS Simulator Core and Runtime |
 | Runtime | 27.0 | `xcode-27` | macOS Core and Runtime, then iOS Simulator Core and Runtime |
-| Public API | 27.0 | `xcode-27` | Manifest and whitespace checks, then the complete public API suite |
+| Public API | 27.0 | `xcode-27` | Manifest and whitespace checks, then the complete public API suite in two processes |
 | iOS SDK | 27.0 | `xcode-27` | Both products; Release build of the arm64 validation app |
 | Other SDKs and consumers | 27.0 | `xcode-27` | Both products for visionOS, watchOS, and tvOS, then focused external and SwiftUI consumers |
 
