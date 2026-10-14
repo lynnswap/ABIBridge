@@ -1,8 +1,51 @@
 import ABIBridge
+import Foundation
 import ManagedSwiftFixtures
+import Synchronization
 import Testing
 
 struct SwiftKeyPathTests {
+    @MainActor @Test func explicitObjectiveCKeySurvivesExtractionAndSupportsObservation()
+        async throws
+    {
+        func makePath() async throws -> ReferenceWritableKeyPath<RuntimeKeyPathObservedRoot, String>
+        {
+            let runtime = ABIRuntime()
+            let root = try await runtime.resolveSwiftType(
+                named: "ManagedSwiftFixtures.RuntimeKeyPathObservedRoot"
+            )
+            let string = try await runtime.resolveSwiftType(named: "Swift.String")
+            let value = try await root.resolveWritableKeyPath(
+                named: "text",
+                valueType: string,
+                keyValueCodingKey: "nativeText"
+            )
+            let copy = try value.copy()
+            return try copy.take(
+                as: ReferenceWritableKeyPath<RuntimeKeyPathObservedRoot, String>.self
+            )
+        }
+
+        weak var releasedPath: AnyKeyPath?
+        do {
+            let path = try await makePath()
+            releasedPath = path
+            let canonical = \RuntimeKeyPathObservedRoot.text
+            #expect(path == canonical)
+            #expect(path._kvcKeyPathString == canonical._kvcKeyPathString)
+            let receiver = RuntimeKeyPathObservedRoot()
+            let observed = Mutex<[String]>([])
+            let observation = receiver.observe(path, options: [.new]) { _, change in
+                if let value = change.newValue { observed.withLock { $0.append(value) } }
+            }
+            receiver[keyPath: path] = "updated"
+            #expect(observed.withLock { $0 } == ["updated"])
+            #expect(receiver.value(forKey: "nativeText") as? String == "updated")
+            observation.invalidate()
+        }
+        #expect(releasedPath == nil)
+    }
+
     @MainActor @Test func computedPropertyPreservesNativeIdentityAndWriteback() async throws {
         let runtime = ABIRuntime()
         let root = try await runtime.resolveSwiftType(

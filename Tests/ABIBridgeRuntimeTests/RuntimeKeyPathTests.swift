@@ -3,6 +3,24 @@ import ManagedSwiftFixtures
 import Testing
 
 struct RuntimeKeyPathTests {
+    @Test func keyValueCodingKeyCannotSilentlyTruncateAtNull() throws {
+        let descriptor = try CallSymbols.resolve(
+            "property descriptor for ManagedSwiftFixtures.RuntimeKeyPathObservedRoot.text : Swift.String",
+            kind: .data
+        )
+        #expect {
+            try RuntimeWritableKeyPathPlan(
+                descriptor: descriptor,
+                root: RuntimeKeyPathObservedRoot.self,
+                value: String.self,
+                keyValueCodingKey: "nativeText\0other"
+            )
+        } throws: { error in
+            if case RuntimeResolutionError.unsupportedDeclaration = error { return true }
+            return false
+        }
+    }
+
     @Test func nonmutatingDescriptorCreatesReferenceWritableKeyPath() throws {
         let descriptor = try CallSymbols.resolve(
             "property descriptor for ManagedSwiftFixtures.RuntimeKeyPathReferenceRoot.text : Swift.String",

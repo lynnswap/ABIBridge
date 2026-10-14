@@ -435,6 +435,25 @@ print(
     "Public writable key paths preserve native identity and writeback without importing provider types"
 )
 
+let observedRoot = try await keyPathRuntime.resolveSwiftType(
+    named: "SwiftFunctionFixture.RuntimeKeyPathObservedRoot",
+    in: keyPathProvider
+)
+let keyPathString = try await keyPathRuntime.resolveSwiftType(named: "Swift.String")
+let observedKeyPath = try await observedRoot.resolveWritableKeyPath(
+    named: "text",
+    valueType: keyPathString,
+    keyValueCodingKey: "nativeText"
+)
+let validateObservedKeyPath = try await keyPathRuntime.resolveSwiftFunction(
+    named: "SwiftFunctionFixture.validateRuntimeObservedKeyPath(_:)",
+    as: ((NativeSwiftValue) -> Bool).self,
+    in: keyPathProvider
+)
+let keyPathObservationMatches = try unsafe validateObservedKeyPath.unsafeInvoke(observedKeyPath)
+precondition(keyPathObservationMatches)
+print("Public writable key paths support KVO with an explicit Objective-C key")
+
 let runtimeProjection = try await prepareRuntimeProjection(path)
 let projectionBody = try unsafe runtimeProjection.unsafeInvoke()
 precondition(projectionBody.type.name == "SwiftFunctionFixture.RuntimeProjectionBody")

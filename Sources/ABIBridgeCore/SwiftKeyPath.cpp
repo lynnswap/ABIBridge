@@ -1,6 +1,8 @@
 #include <ABIBridge/SwiftInvocation.h>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <new>
 
 extern "C" const void *swift_getKeyPath(const void *, const void *);
 
@@ -26,11 +28,9 @@ struct KeyPathPattern {
     char valueName[3];
     const void *descriptor;
 };
-}
 
-const void *ABISwiftCreateWritableKeyPath(const void *descriptor,
-    const void *root, const void *value) {
-    KeyPathPattern pattern{};
+void initializePattern(KeyPathPattern &pattern, const void *descriptor) {
+    pattern = {};
     pattern.environment = offsetof(KeyPathPattern, environmentDepth)
         - offsetof(KeyPathPattern, environment);
     // A low tag bit distinguishes mangled type references from metadata.
@@ -53,6 +53,30 @@ const void *ABISwiftCreateWritableKeyPath(const void *descriptor,
     pattern.valueName[0] = 'q';
     pattern.valueName[1] = '_';
     pattern.descriptor = descriptor;
+}
+}
+
+const void *ABISwiftCreateWritableKeyPath(const void *descriptor,
+    const void *root, const void *value) {
+    KeyPathPattern pattern;
+    initializePattern(pattern, descriptor);
+    const void *arguments[] = {root, value};
+    return swift_getKeyPath(&pattern, arguments);
+}
+
+size_t ABISwiftKeyPathPatternSize(void) {
+    return sizeof(KeyPathPattern);
+}
+
+const void *ABISwiftCreateWritableKeyPathWithKVCKey(const void *descriptor,
+    const void *root, const void *value, const char *key, void *storage) {
+    auto &pattern = *new (storage) KeyPathPattern;
+    initializePattern(pattern, descriptor);
+    auto keyStorage = static_cast<char *>(storage) + sizeof(KeyPathPattern);
+    std::memcpy(keyStorage, key, std::strlen(key) + 1);
+    // The runtime borrows this string instead of copying it. Keep it beside
+    // the pattern so its relative reference fits independently of image layout.
+    pattern.kvcString = sizeof(KeyPathPattern) - offsetof(KeyPathPattern, kvcString);
     const void *arguments[] = {root, value};
     return swift_getKeyPath(&pattern, arguments);
 }

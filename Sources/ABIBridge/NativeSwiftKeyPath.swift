@@ -13,21 +13,29 @@ extension NativeSwiftType {
     /// on the caller's executor and retains the root, value, and property implementation images.
     /// Applying the extracted key path calls the native accessors synchronously. Use it
     /// on the actor or thread required by the property; it does not perform an actor hop.
-    /// The key path has no Objective-C KVC compatibility string and cannot be used with
-    /// KVC/KVO APIs such as `NSObject.observe`.
+    /// To use the result with KVC/KVO, supply the property's Objective-C key through
+    /// `keyValueCodingKey`. The caller must provide the key for this same property;
+    /// resolution does not verify that correspondence. KVC and KVO apply their usual runtime requirements.
     /// - Parameters:
     ///   - name: A property name in this type's image, or a complete property name such as
     ///     `(extension in Module):OtherModule.Root.property` for an already-loaded extension.
     ///   - valueType: The property's actual value type, checked against its descriptor declaration.
+    ///   - keyValueCodingKey: The property's Objective-C KVC key, including any `@objc` rename.
+    ///     Nil omits the KVC compatibility string.
     /// - Returns: A `NativeSwiftValue` containing the concrete `Swift.WritableKeyPath`,
     ///   or its `Swift.ReferenceWritableKeyPath` subclass for a nonmutating setter.
     /// - Throws: A lookup error or an unsupported property descriptor error.
     public nonisolated(nonsending) func resolveWritableKeyPath(
         named name: String,
-        valueType: NativeSwiftType
+        valueType: NativeSwiftType,
+        keyValueCodingKey: String? = nil
     ) async throws -> NativeSwiftValue {
         let prepared = try await NativePreparation.run {
-            try self.prepareWritableKeyPath(named: name, valueType: valueType)
+            try self.prepareWritableKeyPath(
+                named: name,
+                valueType: valueType,
+                keyValueCodingKey: keyValueCodingKey
+            )
         }
         return try makeWritableKeyPath(prepared, valueType: valueType)
     }
@@ -35,18 +43,24 @@ extension NativeSwiftType {
     /// Resolves a writable key path synchronously on the caller's thread.
     ///
     /// This has the same property, type, and ownership contract as
-    /// `resolveWritableKeyPath(named:valueType:)`. Lookup and preparation can block.
+    /// `resolveWritableKeyPath(named:valueType:keyValueCodingKey:)`. Lookup and preparation can block.
     public nonisolated func resolveWritableKeyPathAndWait(
         named name: String,
-        valueType: NativeSwiftType
+        valueType: NativeSwiftType,
+        keyValueCodingKey: String? = nil
     ) throws -> NativeSwiftValue {
-        let prepared = try prepareWritableKeyPath(named: name, valueType: valueType)
+        let prepared = try prepareWritableKeyPath(
+            named: name,
+            valueType: valueType,
+            keyValueCodingKey: keyValueCodingKey
+        )
         return try makeWritableKeyPath(prepared, valueType: valueType)
     }
 
     private nonisolated func prepareWritableKeyPath(
         named name: String,
-        valueType: NativeSwiftType
+        valueType: NativeSwiftType,
+        keyValueCodingKey: String?
     ) throws -> (plan: RuntimeWritableKeyPathPlan, image: NativeImage) {
         let generic = try genericMetadata ?? SwiftGenericTypeMetadata(metadata: metadata)
         guard generic.arguments.isEmpty, SwiftGenericSyntax.groups(in: name).isEmpty else {
@@ -77,7 +91,8 @@ extension NativeSwiftType {
             try RuntimeWritableKeyPathPlan(
                 descriptor: descriptor.runtimeValue,
                 root: metadata,
-                value: valueType.metadata
+                value: valueType.metadata,
+                keyValueCodingKey: keyValueCodingKey
             )
         }
         return (plan, descriptor.image)

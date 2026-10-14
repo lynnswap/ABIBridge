@@ -1,3 +1,6 @@
+import Foundation
+import Synchronization
+
 public struct RuntimeKeyPathPayload: Equatable {
     public var text: String
 
@@ -73,4 +76,28 @@ public final class RuntimeKeyPathReferenceRoot {
         get { storage }
         set { storage = newValue }
     }
+}
+
+public final class RuntimeKeyPathObservedRoot: NSObject {
+    private var storage = "original"
+
+    @objc(nativeText) public dynamic var text: String {
+        get { storage }
+        set { storage = newValue }
+    }
+}
+
+public func validateRuntimeObservedKeyPath(
+    _ keyPath: ReferenceWritableKeyPath<RuntimeKeyPathObservedRoot, String>
+) -> Bool {
+    guard keyPath._kvcKeyPathString == "nativeText" else { return false }
+    let receiver = RuntimeKeyPathObservedRoot()
+    let observed = Mutex<[String]>([])
+    let observation = receiver.observe(keyPath, options: [.new]) { _, change in
+        if let value = change.newValue { observed.withLock { $0.append(value) } }
+    }
+    defer { observation.invalidate() }
+    receiver[keyPath: keyPath] = "updated"
+    return observed.withLock { $0 } == ["updated"]
+        && keyPath == \RuntimeKeyPathObservedRoot.text
 }

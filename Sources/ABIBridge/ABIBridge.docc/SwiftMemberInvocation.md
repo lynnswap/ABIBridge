@@ -232,7 +232,17 @@ The extension module must already be loaded. `resolveWritableKeyPathAndWait` per
 
 Applying an extracted key path invokes the native accessors synchronously. Apply it only on the actor or thread required by the property; the key path does not perform an actor hop.
 
-The property descriptor does not contain the Objective-C KVC compatibility string that a compiler can attach to a key-path literal. Resolved key paths support Swift access, equality, and hashing, but cannot be used with KVC/KVO APIs such as `NSObject.observe`.
+For KVC/KVO APIs such as `NSObject.observe`, supply the property's actual Objective-C key. For example, a property declared as `@objc(displayTitle) var title: String` uses `displayTitle`:
+
+```swift
+let rendererType = try await runtime.resolveSwiftType(named: "Example.Renderer")
+let stringType = try await runtime.resolveSwiftType(named: "Swift.String")
+let titlePath = try await rendererType.resolveWritableKeyPath(
+    named: "title", valueType: stringType, keyValueCodingKey: "displayTitle"
+)
+```
+
+The key-path object retains its KVC string after extraction or copying. The provider's declaration must establish that the supplied key refers to the same property; lookup cannot validate that correspondence. The root and property must meet the KVC/KVO API's usual requirements. Omitting `keyValueCodingKey` leaves the KVC compatibility string absent, while preserving Swift access, equality, and hashing.
 
 This operation requires a non-generic root and a nontrivial property descriptor containing writable computed-property accessors without captured arguments. A missing descriptor, a mismatched root or value type, a getter-only property, or a descriptor that requires additional generic context fails with a resolution error. Trivial descriptors omit the accessors needed for construction and are unsupported.
 

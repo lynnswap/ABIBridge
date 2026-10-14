@@ -69,6 +69,11 @@ const void *ABISwiftExistentialMetatypeMetadata(const void *instance);
 /// Instantiates a validated, nontrivial writable computed-property descriptor without captures. Returns a retained Swift AnyKeyPath object; the caller retains the descriptor's image while using it.
 const void *ABISwiftCreateWritableKeyPath(const void *descriptor,
     const void *root, const void *value);
+/// Byte size of the writable key-path pattern, aligned to a native pointer.
+size_t ABISwiftKeyPathPatternSize(void);
+/// Instantiates the same descriptor with a KVC key. storage is pointer-aligned and has room for ABISwiftKeyPathPatternSize() plus the key's UTF-8 bytes and terminator. The caller retains storage for the returned object's lifetime.
+const void *ABISwiftCreateWritableKeyPathWithKVCKey(const void *descriptor,
+    const void *root, const void *value, const char *key, void *storage);
 /// Labels are nil or one space-terminated name per element; an empty name is unlabeled. The labels buffer only needs to remain valid until this call returns.
 const void *ABISwiftTupleTypeMetadata(const void *const *elements, size_t count, const char *labels);
 /// Canonical native Swift function metadata from Swift ABI function/parameter flags. flags carries the parameter count and marks any supplied extended flags. Differentiability/globalActor agree with the corresponding bits in flags.

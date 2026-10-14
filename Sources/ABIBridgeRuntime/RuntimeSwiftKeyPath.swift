@@ -1,11 +1,36 @@
 import ABIBridgeCore
+import ObjectiveC
+
+private final class RuntimeKeyPathPatternStorage {
+    let address: UnsafeMutableRawPointer
+
+    init(keyByteCount: Int) {
+        address = .allocate(
+            byteCount: ABISwiftKeyPathPatternSize() + keyByteCount,
+            alignment: MemoryLayout<UnsafeRawPointer>.alignment
+        )
+    }
+
+    deinit { address.deallocate() }
+}
 
 package struct RuntimeWritableKeyPathPlan: Sendable {
     private let descriptor: RuntimeSymbol
     private let root: Any.Type
     private let value: Any.Type
+    private let keyValueCodingKey: String?
 
-    package init(descriptor: RuntimeSymbol, root: Any.Type, value: Any.Type) throws {
+    package init(
+        descriptor: RuntimeSymbol,
+        root: Any.Type,
+        value: Any.Type,
+        keyValueCodingKey: String? = nil
+    ) throws {
+        guard keyValueCodingKey?.utf8.contains(0) != true else {
+            throw RuntimeResolutionError.unsupportedDeclaration(
+                "The key-value coding key cannot contain a null character."
+            )
+        }
         guard descriptor.sectionRange.contains(descriptor.address),
             descriptor.sectionRange.upperBound - descriptor.address >= 4
         else {
@@ -45,16 +70,39 @@ package struct RuntimeWritableKeyPathPlan: Sendable {
         self.descriptor = descriptor
         self.root = root
         self.value = value
+        self.keyValueCodingKey = keyValueCodingKey
     }
 
     package func instantiate() -> AnyKeyPath {
         descriptor.withUnsafeAddress { address in
-            let result = ABISwiftCreateWritableKeyPath(
-                address,
-                unsafeBitCast(root, to: UnsafeRawPointer.self),
-                unsafeBitCast(value, to: UnsafeRawPointer.self)
-            )!
-            return Unmanaged<AnyKeyPath>.fromOpaque(result).takeRetainedValue()
+            let rootMetadata = unsafeBitCast(root, to: UnsafeRawPointer.self)
+            let valueMetadata = unsafeBitCast(value, to: UnsafeRawPointer.self)
+            guard let keyValueCodingKey else {
+                let result = ABISwiftCreateWritableKeyPath(address, rootMetadata, valueMetadata)!
+                return Unmanaged<AnyKeyPath>.fromOpaque(result).takeRetainedValue()
+            }
+            let keyBytes = keyValueCodingKey.utf8CString
+            let owner = RuntimeKeyPathPatternStorage(keyByteCount: keyBytes.count)
+            let result = keyBytes.withUnsafeBufferPointer {
+                ABISwiftCreateWritableKeyPathWithKVCKey(
+                    address,
+                    rootMetadata,
+                    valueMetadata,
+                    $0.baseAddress!,
+                    owner.address
+                )!
+            }
+            let keyPath = Unmanaged<AnyKeyPath>.fromOpaque(result).takeRetainedValue()
+            // The KVC string must outlive copies extracted from NativeSwiftValue.
+            // KeyPath is a native class object; its associated owner releases the
+            // borrowed string storage when the last KeyPath reference is released.
+            objc_setAssociatedObject(
+                keyPath,
+                Unmanaged.passUnretained(owner).toOpaque(),
+                owner,
+                .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+            )
+            return keyPath
         }
     }
 }
