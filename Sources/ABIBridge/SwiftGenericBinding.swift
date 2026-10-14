@@ -694,9 +694,9 @@ struct SwiftGenericBinding: Sendable {
                 }
             }
             if let handle {
-                let witness = try SwiftFormalType(SwiftSyntax(adopting: handle).root).substituting(
-                    substitutions
-                )
+                let witness = try SwiftFormalType(SwiftSyntax(adopting: handle).root)
+                    .qualifyingAssociatedTypes(using: context.conformances)
+                    .substituting(substitutions)
                 if !matches.contains(witness) { matches.append(witness) }
             }
         }

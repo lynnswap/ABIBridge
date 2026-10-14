@@ -4,6 +4,27 @@ import Testing
 
 @Suite(.serialized)
 struct SwiftParameterizedRuntimeGetterTests {
+    @Test func associatedWitnessPreservesItsDeclaringProtocol() async throws {
+        let runtime = ABIRuntime.shared
+        let receiver = try await runtime.resolveSwiftType(
+            named: "ManagedSwiftFixtures.RuntimeAssociatedGetter",
+            genericArguments: [.type(Int64.self)]
+        )
+        typealias Storage = RuntimeAssociatedElement<FreshCollectionSuperclassValue<[Int64]>>
+        let storage = try await runtime.resolveSwiftType(
+            named: "ManagedSwiftFixtures.RuntimeAssociatedElement",
+            genericArguments: [.type(FreshCollectionSuperclassValue<[Int64]>.self)]
+        )
+        let getter = try await receiver.resolveGetter(
+            named: "storage",
+            as: (() -> NativeSwiftValue).self,
+            valueABIs: [storage: .opaque(named: storage.name)],
+            receiverABI: .opaque(named: receiver.name)
+        )
+        let value = try unsafe getter.unsafeInvoke(on: RuntimeAssociatedGetter<Int64>(42))
+        #expect(try value.take(as: Storage.self).element == 42)
+    }
+
     @MainActor @Test
     func explicitNestedNominalABIComposesWithRuntimeGettersAndClosures() async throws {
         let runtime = ABIRuntime.shared
