@@ -11,6 +11,12 @@ extension SwiftGenericDeclaration {
         while ["Global", "Static"].contains(entry.kind) {
             entry = try entry.requiredChild()
         }
+        if entry.kind == "DispatchThunk",
+            let function = entry.child(kind: "Function"),
+            let owner = function.child(kind: "Protocol")
+        {
+            return (function, nil, owner)
+        }
         var protocolRequirement: SwiftSyntax.Node?
         if entry.kind == "DispatchThunk",
             let getter = entry.child(kind: "Getter"),

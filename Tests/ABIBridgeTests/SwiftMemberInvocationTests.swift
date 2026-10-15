@@ -275,6 +275,148 @@ struct SwiftMemberInvocationTests {
             return true
         }
     }
+    @Test func protocolRequirementMethodsBindAssociatedTypesAndIndirectSelf() async throws {
+        let module = "ProtocolMethod_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+        let library = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                public struct Payload {
+                    public let object: AnyObject
+                    public let number: Int64
+                }
+                public protocol RequestProtocol { associatedtype Output }
+                public struct Request: RequestProtocol {
+                    public typealias Output = Payload
+                    let number: Int64
+                }
+                public struct Environment { let offset: Int64 }
+                public final class Service {
+                    let offset: Int64
+                    init(_ offset: Int64) { self.offset = offset }
+                }
+                public final class Box<Value> {
+                    public let value: Value
+                    init(_ value: Value) { self.value = value }
+                }
+                public protocol Processor {
+                    associatedtype Job: RequestProtocol
+                    associatedtype Environment
+                    func process(_ job: Job, in environment: Environment, using service: Service) -> Box<Job.Output>
+                }
+                public struct ValueProcessor: Processor {
+                    let object: AnyObject
+                    public func process(_ job: Request, in environment: Environment, using service: Service) -> Box<Payload> {
+                        Box(Payload(object: object, number: job.number * 100 + environment.offset * 10 + service.offset))
+                    }
+                }
+                public final class ObjectProcessor: Processor {
+                    let object: AnyObject
+                    init(_ object: AnyObject) { self.object = object }
+                    public func process(_ job: Request, in environment: Environment, using service: Service) -> Box<Payload> {
+                        Box(Payload(object: object, number: job.number * 100 + environment.offset * 10 + service.offset + 1))
+                    }
+                }
+                public func makeValueProcessor(_ object: AnyObject) -> ValueProcessor { ValueProcessor(object: object) }
+                public func makeObjectProcessor(_ object: AnyObject) -> ObjectProcessor { ObjectProcessor(object) }
+                public func makeRequest() -> Request { Request(number: 30) }
+                public func makeEnvironment() -> Environment { Environment(offset: 7) }
+                public func makeService() -> Service { Service(5) }
+                public func direct(_ object: AnyObject, _ useClass: Bool) -> Int64 {
+                    func invoke<Value: Processor>(_ value: Value) -> Int64
+                    where Value.Job == Request, Value.Environment == Environment {
+                        value.process(makeRequest(), in: makeEnvironment(), using: makeService()).value.number
+                    }
+                    return useClass ? invoke(ObjectProcessor(object)) : invoke(ValueProcessor(object: object))
+                }
+                """,
+            linkArguments: ["-O", "-enable-library-evolution"]
+        )
+        defer { library.cleanup() }
+        let runtime = ABIRuntime()
+        let payloadType = try await runtime.resolveSwiftType(named: module + ".Payload")
+        let payloadABI = try NativeType.opaque(named: payloadType.name)
+        let serviceType = try await runtime.resolveSwiftType(named: module + ".Service")
+        let declaration =
+            module + ".Processor.process(_: A.Job, in: A.Environment, using: "
+            + serviceType.name + ") -> " + module + ".Box<A.Job.Output>"
+        typealias Signature = (NativeSwiftValue, NativeSwiftValue, NativeSwiftValue) ->
+            NativeSwiftValue
+        let objectGetter = try await payloadType.resolveGetter(
+            named: "object",
+            as: (() -> AnyObject).self,
+            receiverABI: payloadABI
+        )
+        let numberGetter = try await payloadType.resolveGetter(
+            named: "number",
+            as: (() -> Int64).self,
+            receiverABI: payloadABI
+        )
+        let direct = try await runtime.resolveSwiftFunction(
+            named: module + ".direct(_:_:)",
+            as: ((AnyObject, Bool) -> Int64).self
+        )
+        var inputs: [NativeSwiftValue] = []
+        for name in ["Request", "Environment", "Service"] {
+            let type = try await runtime.resolveSwiftType(named: module + "." + name)
+            let make = try await runtime.resolveSwiftFunction(
+                named: module + ".make" + name + "()",
+                as: (() -> NativeSwiftValue).self,
+                valueABIs: [type: name == "Service" ? .pointer : try .opaque(named: type.name)]
+            )
+            inputs.append(try unsafe make.unsafeInvoke())
+        }
+        for name in ["ValueProcessor", "ObjectProcessor"] {
+            let type = try await runtime.resolveSwiftType(named: module + "." + name)
+            let factory = try await runtime.resolveSwiftFunction(
+                named: module + ".make" + name + "(_:)",
+                as: ((AnyObject) -> NativeSwiftValue).self,
+                valueABIs: [
+                    type: name == "ValueProcessor" ? try .opaque(named: type.name) : .pointer
+                ]
+            )
+            let method = try await type.resolveMethod(
+                named: declaration,
+                as: Signature.self
+            )
+            #expect(method.symbol.declaration.name.hasPrefix("dispatch thunk of "))
+            weak var observed: NSObject?
+            var result: NativeSwiftValue?
+            do {
+                let object = NSObject()
+                observed = object
+                let receiver = try unsafe factory.unsafeInvoke(object)
+                let expected = try unsafe direct.unsafeInvoke(object, name == "ObjectProcessor")
+                result = try unsafe method.unsafeInvoke(
+                    on: receiver,
+                    inputs[0],
+                    inputs[1],
+                    inputs[2]
+                )
+                let valueGetter = try await #require(result).type.resolveGetter(
+                    named: "value",
+                    as: (() -> NativeSwiftValue).self
+                )
+                let payload = try unsafe valueGetter.unsafeInvoke(on: #require(result))
+                #expect(try unsafe objectGetter.unsafeInvoke(on: payload) === object)
+                #expect(try unsafe numberGetter.unsafeInvoke(on: payload) == expected)
+                #expect(!receiver.isConsumed && inputs.allSatisfy { !$0.isConsumed })
+            }
+            runtime.removeCachedResults()
+            #expect(observed != nil)
+            result = nil
+            #expect(observed == nil)
+        }
+        let unrelated = try await runtime.resolveSwiftType(named: "ABIBridgeTests.SwiftMemberPoint")
+        #expect {
+            try unrelated.resolveMethodAndWait(
+                named: declaration,
+                as: Signature.self
+            )
+        } throws: { error in
+            guard case ABIResolutionError.signatureMismatch = error else { return false }
+            return true
+        }
+    }
     #endif
 
     @MainActor @Test func extractedMethodsAndBindingsHaveIndependentReceiverLifetimes() async throws
