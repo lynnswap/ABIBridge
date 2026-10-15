@@ -417,6 +417,74 @@ struct SwiftMemberInvocationTests {
             return true
         }
     }
+    @Test func protocolRequirementMethodsPreserveMethodGenericMetadataAndWitnesses() async throws {
+        let module =
+            "ProtocolGenericMethod_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+        let library = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                public protocol Mapper {
+                    func runtimeType<Value>(_ value: Value) -> Any.Type
+                    func describe<Value: CustomStringConvertible>(_ value: Value) -> String
+                    func withBoxes<Value>(_ value: Box<Value>, _ owner: Box<Self>) -> Any.Type
+                }
+                public final class Box<Value> {
+                    let value: Value
+                    init(_ value: Value) { self.value = value }
+                }
+                public final class ObjectMapper: Mapper {
+                    public init() {}
+                    public func runtimeType<Value>(_ value: Value) -> Any.Type { Value.self }
+                    public func describe<Value: CustomStringConvertible>(_ value: Value) -> String { value.description }
+                    public func withBoxes<Value>(_ value: Box<Value>, _ owner: Box<ObjectMapper>) -> Any.Type { Value.self }
+                }
+                public func makeMapper() -> ObjectMapper { ObjectMapper() }
+                public func makeBox(_ value: ObjectMapper) -> Box<ObjectMapper> { Box(value) }
+                public func makeValueBox(_ value: String) -> Box<String> { Box(value) }
+                """,
+            linkArguments: ["-O", "-enable-library-evolution"]
+        )
+        defer { library.cleanup() }
+        let runtime = ABIRuntime()
+        let make = try await runtime.resolveSwiftFunction(
+            named: module + ".makeMapper()",
+            as: (() -> NativeSwiftValue).self
+        )
+        let receiver = try unsafe make.unsafeInvoke()
+        let method = try await receiver.type.resolveMethod(
+            named: module + ".Mapper.runtimeType<A>(A1) -> Any.Type",
+            as: ((String) -> Any.Type).self,
+            genericArguments: [.type(String.self)]
+        )
+        let actual = try unsafe method.unsafeInvoke(on: receiver, "metadata")
+        try #require(ObjectIdentifier(actual) == ObjectIdentifier(String.self))
+        let describe = try await receiver.type.resolveMethod(
+            named: module
+                + ".Mapper.describe<A where A1: Swift.CustomStringConvertible>(A1) -> Swift.String",
+            as: ((Int64) -> String).self,
+            genericArguments: [.type(Int64.self)]
+        )
+        #expect(try unsafe describe.unsafeInvoke(on: receiver, 42) == "42")
+        let makeBox = try await runtime.resolveSwiftFunction(
+            named: module + ".makeBox(_:)",
+            as: ((NativeSwiftValue) -> NativeSwiftValue).self
+        )
+        let owner = try unsafe makeBox.unsafeInvoke(receiver)
+        let makeValueBox = try await runtime.resolveSwiftFunction(
+            named: module + ".makeValueBox(_:)",
+            as: ((String) -> NativeSwiftValue).self
+        )
+        let input = try unsafe makeValueBox.unsafeInvoke("metadata")
+        let withBoxes = try await receiver.type.resolveMethod(
+            named: module + ".Mapper.withBoxes<A>(" + module + ".Box<A1>, " + module
+                + ".Box<A>) -> Any.Type",
+            as: ((NativeSwiftValue, NativeSwiftValue) -> Any.Type).self,
+            genericArguments: [.type(String.self)]
+        )
+        let withBoxesType = try unsafe withBoxes.unsafeInvoke(on: receiver, input, owner)
+        #expect(ObjectIdentifier(withBoxesType) == ObjectIdentifier(String.self))
+        #expect(!receiver.isConsumed && !input.isConsumed && !owner.isConsumed)
+    }
     #endif
 
     @MainActor @Test func extractedMethodsAndBindingsHaveIndependentReceiverLifetimes() async throws

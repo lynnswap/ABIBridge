@@ -765,6 +765,7 @@ struct SwiftGenericCallPlan: Sendable {
     private func receiverMetadata() throws -> (
         prefix: [UInt], fulfilled: SwiftGenericBinding.Fulfillments
     ) {
+        if binding.declaration.dispatchProtocol != nil { return ([], .init()) }
         if let formalSelf = binding.declaration.protocolSelf {
             if receiver == .object {
                 return ([], try binding.argumentFulfillments([formalSelf]))
