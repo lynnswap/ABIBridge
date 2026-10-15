@@ -469,7 +469,9 @@ public actor NativeSwiftType: Hashable {
                 let symbol: ResolvedSymbol?
                 if SymbolIndex.extensionMemberName(request.name) != nil {
                     symbol = try resolveDeclaredMember(request, in: ownerImage, exact: true)
-                } else if request.name.contains(".getter : ") {
+                } else if request.name.contains(".getter : ")
+                    || SwiftFormalSyntax.topLevelArrow(in: request.name) != nil
+                {
                     do {
                         symbol = try resolver.resolve(
                             .init(name: "dispatch thunk of " + request.name, language: .swift),
@@ -614,6 +616,8 @@ public actor NativeSwiftType: Hashable {
     /// Search and preparation run synchronously on the caller's thread.
     ///
     /// The signature excludes self. Mutating value members require an explicit mutating flag because their source-level symbol does not encode it. Consuming members similarly require consuming: true. Typed receivers transfer a copy; NativeSwiftValue transfers its owned value. Borrowed views allow nonconsuming calls within their active scope; only native inout callback borrows permit mutation.
+    ///
+    /// A complete instance protocol requirement declaration binds Self to this concrete type and resolves its dispatch thunk. Lookup requires the native conformance and preserves the protocol's formal Self convention.
     ///
     /// For runtime-only self, receiverABI supplies established fixed components or an opaque descriptor for formally indirect self. Metadata supplies storage dimensions, not the declaration's passing convention.
     /// - Parameters:

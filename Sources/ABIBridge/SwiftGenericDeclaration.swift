@@ -26,6 +26,7 @@ struct SwiftGenericDeclaration: Sendable, Equatable {
     var abiRequirements: [Requirement]? = nil
     var implicitRequirements: [Requirement] = []
     var protocolSelf: SwiftFormalType? = nil
+    var dispatchProtocol: String? = nil
 
 }
 

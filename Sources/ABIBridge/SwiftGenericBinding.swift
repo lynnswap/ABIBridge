@@ -385,8 +385,32 @@ struct SwiftGenericBinding: Sendable {
                 metadataWords.append(contentsOf: witnesses.map { (.conformance(index), $0) })
             }
         }
-        let fulfilled = try argumentFulfillments(declaration.arguments)
-        metadataWords = try metadataWords.filter { try !isFulfilled($0.source, by: fulfilled) }
+        if let protocolName = declaration.dispatchProtocol,
+            let protocolSelf = declaration.protocolSelf,
+            case .named(let name, []) = protocolSelf
+        {
+            let witnessIndex = conformances.firstIndex {
+                $0.subject == protocolSelf && $0.name == protocolName
+            }!
+            // Requirement thunks keep every generic argument and append their
+            // fixed Self metadata and owner witness after the method's arguments.
+            metadataWords.removeAll { source, _ in
+                switch source {
+                case .parameter(let parameter): parameter == name
+                case .conformance(let index): index == witnessIndex
+                case .shape: false
+                }
+            }
+            metadataWords.append(
+                (.parameter(name), unsafeBitCast(bound[name]!.types[0], to: UInt.self))
+            )
+            metadataWords.append(
+                (.conformance(witnessIndex), witnessesByConformance[witnessIndex]![0])
+            )
+        } else {
+            let fulfilled = try argumentFulfillments(declaration.arguments)
+            metadataWords = try metadataWords.filter { try !isFulfilled($0.source, by: fulfilled) }
+        }
     }
 
     func metadataArguments(
@@ -429,6 +453,7 @@ struct SwiftGenericBinding: Sendable {
         in context: SwiftGenericTypeContext?,
         additionallyFulfilledBy fulfilled: Fulfillments? = nil
     ) throws -> [(source: MetadataSource, value: UInt)] {
+        if declaration.dispatchProtocol != nil { return metadataWords }
         let parameters = Set(context?.parameters.map(\.name) ?? [])
         return try metadataWords.filter { source, _ in
             if let fulfilled, try isFulfilled(source, by: fulfilled) { return false }

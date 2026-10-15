@@ -104,7 +104,21 @@ Lookup binds `Self` to the whole concrete type represented by `type`, including 
 
 Getters, setters, and static members use the same rule with their corresponding lookup factories and complete extension-qualified declarations.
 
-## Call a protocol requirement getter
+## Call an instance protocol requirement
+
+Use the complete protocol declaration with `resolveMethod` to call an instance method requirement. For a concrete `builder` conforming to `Example.Builder`, whose `Request` associated type has an `Output` associated type:
+
+```swift
+let build = try await builder.type.resolveMethod(
+    named: "Example.Builder.build(_: A.Request, in: A.Context, using: Example.Service) -> Example.Reply<A.Request.Output>",
+    as: ((NativeSwiftValue, NativeSwiftValue, NativeSwiftValue) -> NativeSwiftValue).self
+)
+let reply = try unsafe build.unsafeInvoke(on: builder, request, context, service)
+```
+
+Here `builder`, `request`, `context`, and `service` are owned runtime values. `Service` and `Reply<Output>` are native classes, and `build` is synchronous. Awaiting lookup prepares the call; invoking it returns the native reply. Any later async operation on the reply has its own signature.
+
+Lookup binds `Self` to the builder's concrete type and resolves `Request`, `Context`, and `Request.Output` through its native conformances. Supply `genericArguments:` only for type parameters introduced by the method. `resolveMethodAndWait` performs the same lookup synchronously.
 
 For an owned `NativeSwiftValue` named `receiver` whose concrete type conforms to `Example.Provider`, use the complete protocol getter declaration:
 
@@ -120,7 +134,7 @@ let payload = try unsafe getter.unsafeInvoke(on: receiver)
 
 This example assumes the native synchronous getter returns a resilient `Payload` through indirect result storage. The returned value owns its contents; see <doc:SwiftOpaqueResults> for runtime values and formal value ABIs.
 
-Lookup resolves the protocol's dispatch thunk in loaded images and binds `Self` to the receiver's concrete type. It checks the native conformance before invocation and retains the protocol and conformance implementation images. The native thunk selects the getter implementation from that conformance. A non-class-bound protocol keeps its formally indirect `Self` convention even when the concrete receiver is a class.
+Method and getter lookup resolve the protocol's dispatch thunk in loaded images. They check the native conformance before invocation and retain the protocol and conformance implementation images. The native thunk selects the implementation from that conformance. A non-class-bound protocol keeps its formally indirect `Self` convention even when the concrete receiver is a class.
 
 ## Await type and member preparation
 

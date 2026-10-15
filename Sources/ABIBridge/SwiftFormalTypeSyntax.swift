@@ -11,6 +11,12 @@ extension SwiftGenericDeclaration {
         while ["Global", "Static"].contains(entry.kind) {
             entry = try entry.requiredChild()
         }
+        if entry.kind == "DispatchThunk",
+            let function = entry.child(kind: "Function"),
+            let owner = function.child(kind: "Protocol")
+        {
+            return (function, nil, owner)
+        }
         var protocolRequirement: SwiftSyntax.Node?
         if entry.kind == "DispatchThunk",
             let getter = entry.child(kind: "Getter"),
@@ -41,6 +47,7 @@ extension SwiftGenericDeclaration {
             ?? declaration.child(kind: "Extension")?.child(kind: "Protocol"))?.name()
         let context = protocolName == nil ? context : nil
         protocolSelf = protocolName.map { _ in .named("A", []) }
+        dispatchProtocol = try protocolRequirement?.name()
         // A nominal ~Copyable parameter may have a Copyable-only member.
         // Swift emits that member with the default requirement; members that
         // preserve suppression encode it in their own generic context.
