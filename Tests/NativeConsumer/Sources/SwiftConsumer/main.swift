@@ -150,11 +150,11 @@ struct SwiftConsumer {
         #elseif arch(x86_64)
         precondition(metadata.architecture.cpuType == CPU_TYPE_X86_64)
         #endif
-        let functionAddress = unsafe cAdd.symbol.withUnsafeAddress {
-            UInt64(UInt(bitPattern: $0))
+        unsafe cAdd.symbol.withUnsafeAddress {
+            let functionAddress = UInt64(UInt(bitPattern: $0))
+            precondition(metadata.functionStartAddresses?.contains(functionAddress) == true)
+            precondition(metadata.sections.contains { $0.addressRange.contains(functionAddress) })
         }
-        precondition(metadata.functionStartAddresses?.contains(functionAddress) == true)
-        precondition(metadata.sections.contains { $0.addressRange.contains(functionAddress) })
         let large = try runtime.resolveCXXFunctionAndWait(
             named: "ABIBridgeFixture::large(long)",
             as: ((Int) -> LargeValue).self,

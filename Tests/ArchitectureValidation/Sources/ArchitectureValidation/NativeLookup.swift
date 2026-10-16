@@ -111,13 +111,15 @@ import Foundation
     checks.append(
         "Image CPU oracle: type=0x\(String(UInt32(bitPattern: metadata.architecture.cpuType), radix: 16)), subtype=0x\(String(UInt32(bitPattern: metadata.architecture.cpuSubtype), radix: 16)), is64Bit=\(metadata.is64Bit)"
     )
-    let functionAddress = unsafe function.withUnsafeAddress { UInt64(UInt(bitPattern: $0)) }
-    guard metadata.functionStartAddresses?.contains(functionAddress) == true,
-        metadata.sections.contains(where: { $0.addressRange.contains(functionAddress) })
-    else {
-        throw ArchitectureValidationFailure(
-            description: "Image metadata omits the compiled C function entry"
-        )
+    try unsafe function.withUnsafeAddress {
+        let functionAddress = UInt64(UInt(bitPattern: $0))
+        guard metadata.functionStartAddresses?.contains(functionAddress) == true,
+            metadata.sections.contains(where: { $0.addressRange.contains(functionAddress) })
+        else {
+            throw ArchitectureValidationFailure(
+                description: "Image metadata omits the compiled C function entry"
+            )
+        }
     }
     checks.append("Image function starts contain the compiled C fixture entry")
 
@@ -161,13 +163,15 @@ import Foundation
 
     let systemFunction = try runtime.resolveAndWait(.init(name: "getpid", language: .c))
     let systemMetadata = try await runtime.resolveImageMetadata(in: systemFunction.image)
-    let systemAddress = unsafe systemFunction.withUnsafeAddress { UInt64(UInt(bitPattern: $0)) }
-    guard systemMetadata.image == systemFunction.image,
-        systemMetadata.sections.contains(where: { $0.addressRange.contains(systemAddress) })
-    else {
-        throw ArchitectureValidationFailure(
-            description: "System image metadata omits its resolved function"
-        )
+    try unsafe systemFunction.withUnsafeAddress {
+        let systemAddress = UInt64(UInt(bitPattern: $0))
+        guard systemMetadata.image == systemFunction.image,
+            systemMetadata.sections.contains(where: { $0.addressRange.contains(systemAddress) })
+        else {
+            throw ArchitectureValidationFailure(
+                description: "System image metadata omits its resolved function"
+            )
+        }
     }
     let starts = systemMetadata.functionStartAddresses.map { String($0.count) } ?? "absent"
     checks.append(

@@ -49,7 +49,7 @@ struct ImageMetadataTests {
             in: image
         )
         #expect(
-            unsafe function.withUnsafeAddress { UInt64(UInt(bitPattern: $0)) } == functionAddress
+            unsafe function.withUnsafeAddress { UInt64(UInt(bitPattern: $0)) == functionAddress }
         )
         let text = try #require(
             metadata.sections.first {
@@ -94,8 +94,12 @@ struct ImageMetadataTests {
                 as: ((Int32, Int32) -> Int32).self,
                 in: retained.image
             )
-            let address = unsafe function.symbol.withUnsafeAddress { UInt64(UInt(bitPattern: $0)) }
-            #expect(try #require(retained.functionStartAddresses).contains(address))
+            let starts = try #require(retained.functionStartAddresses)
+            #expect(
+                unsafe function.symbol.withUnsafeAddress {
+                    starts.contains(UInt64(UInt(bitPattern: $0)))
+                }
+            )
             #expect(try unsafe function.unsafeInvoke(20, 22) == 42)
         }()
         metadata = nil
@@ -134,11 +138,15 @@ struct ImageMetadataTests {
             .init(name: "CFRunLoopGetTypeID", language: .c),
             in: image
         )
-        let address = unsafe function.withUnsafeAddress { UInt64(UInt(bitPattern: $0)) }
-        let section = try #require(metadata.sections.first { $0.addressRange.contains(address) })
-        #expect(section.addressRange == function.sectionRange)
-        if let starts = metadata.functionStartAddresses {
-            #expect(starts.contains(address))
+        try unsafe function.withUnsafeAddress {
+            let address = UInt64(UInt(bitPattern: $0))
+            let section = try #require(
+                metadata.sections.first { $0.addressRange.contains(address) }
+            )
+            #expect(section.addressRange == function.sectionRange)
+            if let starts = metadata.functionStartAddresses {
+                #expect(starts.contains(address))
+            }
         }
     }
 }
