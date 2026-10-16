@@ -143,6 +143,18 @@ struct SwiftConsumer {
             as: ((Int32, Int32) -> Int32).self,
             in: .path(url)
         )
+        let metadata = try await runtime.resolveImageMetadata(in: image)
+        precondition(metadata.image == image && metadata.is64Bit)
+        #if arch(arm64)
+        precondition(metadata.architecture.cpuType == CPU_TYPE_ARM64)
+        #elseif arch(x86_64)
+        precondition(metadata.architecture.cpuType == CPU_TYPE_X86_64)
+        #endif
+        unsafe cAdd.symbol.withUnsafeAddress {
+            let functionAddress = UInt64(UInt(bitPattern: $0))
+            precondition(metadata.functionStartAddresses?.contains(functionAddress) == true)
+            precondition(metadata.sections.contains { $0.addressRange.contains(functionAddress) })
+        }
         let large = try runtime.resolveCXXFunctionAndWait(
             named: "ABIBridgeFixture::large(long)",
             as: ((Int) -> LargeValue).self,
@@ -174,6 +186,21 @@ struct SwiftConsumer {
         loader = nil
         runtime.removeCachedResults()
 
+        let literal = Data("Hello, \0".utf8)
+        var foundLiteral = false
+        for section in metadata.sections where section.name == "__cstring" {
+            let bytes = try NativeMemoryRegion(
+                address: UInt(section.addressRange.lowerBound),
+                byteCount: Int(section.addressRange.upperBound - section.addressRange.lowerBound),
+                retaining: metadata.image
+            ).read()
+            precondition(bytes.isComplete)
+            foundLiteral = foundLiteral || Data(bytes.bytes).range(of: literal) != nil
+        }
+        precondition(foundLiteral)
+        print(
+            "Public image metadata passed: CPU type \(metadata.architecture.cpuType), subtype \(String(UInt32(bitPattern: metadata.architecture.cpuSubtype), radix: 16)), compiled function entry, and retained C string storage."
+        )
         let sum = try unsafe add.unsafeInvoke(20, 22)
         let cSum = try unsafe cAdd.unsafeInvoke(12, 30)
         precondition(sum == 42 && cSum == 42)
