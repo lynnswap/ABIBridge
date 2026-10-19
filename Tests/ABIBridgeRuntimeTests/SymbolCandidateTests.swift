@@ -5,6 +5,58 @@ import Foundation
 import Testing
 
 struct SymbolCandidateTests {
+    @Test func combinedExtractionPreservesIndependentRawCandidateMatching() {
+        let groups: [[RuntimeDeclaration]] = [
+            [
+                .init(machOName: "_café", language: .c),
+                .init(machOName: "_name\0suffix", language: .c),
+                .init(name: "First::Counter::one()", language: .cxx),
+                .init(name: "First.echo()", language: .swift),
+            ],
+            [
+                .init(name: "First::Box<int>::value()", language: .cxx),
+                .init(machOName: "_ordinary", language: .swift),
+            ],
+            [
+                .init(name: "Swift.Array.value()", language: .swift),
+                .init(machOName: "", language: .cxx),
+            ],
+        ]
+        let names = [
+            "", "_", "__", "_$", "$S", "_ordinary", "_name", "_café", "_cafe\u{301}",
+            "__ZN5First7Counter3oneEv", "_ZN5First7Counter3twoEv", "_ZN5First9Different3oneEv",
+            "_ZN5First3BoxIiE5valueEv", "__ZTIi", "_Z", "__$s5First4echoyyF",
+            "_$s5First4echoyyF", "$S5First4echoyyF", "_$s6Second4echoyyF",
+            "_$s03FooA04echoyyF", "_$sSQMp", "_$sSo8NSObjectCMn",
+        ]
+        let sources = SharedCacheSymbols.CapturedSymbols(
+            slide: 0,
+            readers: [
+                { record in
+                    for name in names { name.withCString { record($0, 1) } }
+                }
+            ]
+        )
+        for declarations in groups {
+            let queries = declarations.map(SymbolQuery.init)
+            for includeFallback in [false, true] {
+                let expected = names.filter { name in
+                    name.withCString { raw in
+                        queries.contains { $0.acceptsCandidate(raw) }
+                            && (includeFallback
+                                || SwiftModuleFilter.knownModulePrefix(raw) != false)
+                    }
+                }.map { Array($0.utf8) }
+                let result = sources.extract(
+                    matching: queries[0],
+                    includingSwiftFallback: includeFallback,
+                    relatedQueries: Array(queries.dropFirst())
+                )
+                #expect(result.symbols.map { Array($0.name.utf8) } == expected)
+            }
+        }
+    }
+
     @Test func decoratedSwiftDeclarationsKeepOwnerModuleCoverage() {
         for declaration in [
             "async function pointer to static (extension in Second):First.Value.member() async -> ()",
