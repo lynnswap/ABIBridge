@@ -117,6 +117,12 @@ jobs:
           if ! wait "$task_consumer_pid"; then task_status=1; fi
           cat "$task_consumer_log"
           exit "$task_status"
+      - name: Clean up interrupted Simulator tests
+        if: always()
+        run: |
+          if compgen -G "$RUNNER_TEMP/SimulatorResults/*.device.json" > /dev/null; then
+            python3 scripts/test-simulators.py --cleanup --result-dir "$RUNNER_TEMP/SimulatorResults"
+          fi
       - name: Preserve failed test diagnostics
         if: always() && (failure() || cancelled())
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -235,6 +241,12 @@ jobs:
           python3 scripts/test-simulators.py --platforms iOS \
             --build-dir "$RUNNER_TEMP/DerivedData" \
             --result-dir "$RUNNER_TEMP/SimulatorResults" "${task_options[@]}"
+      - name: Clean up interrupted Simulator tests
+        if: always()
+        run: |
+          if compgen -G "$RUNNER_TEMP/SimulatorResults/*.device.json" > /dev/null; then
+            python3 scripts/test-simulators.py --cleanup --result-dir "$RUNNER_TEMP/SimulatorResults"
+          fi
       - name: Preserve failed Simulator diagnostics
         if: always() && (failure() || cancelled()) && matrix.simulator
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
