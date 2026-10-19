@@ -6,6 +6,7 @@ package final class SharedCacheSymbolScan: @unchecked Sendable {
     private let condition = NSCondition()
     private let query: SymbolQuery
     private let includingSwiftFallback: Bool
+    private let relatedQueries: [SymbolQuery]
     private enum State {
         case pending(SharedCacheSymbols.CapturedSymbols)
         case running
@@ -24,11 +25,13 @@ package final class SharedCacheSymbolScan: @unchecked Sendable {
     package init(
         sources: SharedCacheSymbols.CapturedSymbols,
         query: SymbolQuery,
-        includingSwiftFallback: Bool
+        includingSwiftFallback: Bool,
+        relatedQueries: [SymbolQuery] = []
     ) {
         state = .pending(sources)
         self.query = query
         self.includingSwiftFallback = includingSwiftFallback
+        self.relatedQueries = relatedQueries
     }
 
     package func result() -> SharedCacheSymbols.Extraction {
@@ -39,7 +42,9 @@ package final class SharedCacheSymbolScan: @unchecked Sendable {
                 state = .running
                 condition.unlock()
                 let result = sources.extract(
-                    matching: query, includingSwiftFallback: includingSwiftFallback
+                    matching: query,
+                    includingSwiftFallback: includingSwiftFallback,
+                    relatedQueries: relatedQueries
                 )
                 condition.lock()
                 state = .completed(result)

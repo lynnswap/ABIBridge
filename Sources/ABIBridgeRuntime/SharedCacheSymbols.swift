@@ -26,37 +26,59 @@ package final class SharedCacheSymbols {
     package struct Extraction {
         package let symbols: [IndexedSymbol]
         package let foundDefinitions: Bool
+        package var coveredQueries: [SymbolQuery] = []
     }
 
     package struct CapturedSymbols {
         package typealias Reader = ((UnsafePointer<CChar>, UInt64) -> Void) -> Void
         private let slide: Int64
         private let readers: [Reader]
+        // Complete image captures can serve multiple declarations in one traversal.
+        package let imageIdentity: RuntimeImageIdentity?
 
-        package init(slide: Int64, readers: [Reader]) {
+        package init(
+            slide: Int64,
+            readers: [Reader],
+            imageIdentity: RuntimeImageIdentity? = nil
+        ) {
             self.slide = slide
             self.readers = readers
+            self.imageIdentity = imageIdentity
         }
 
         package func extract(
             matching query: SymbolQuery,
-            includingSwiftFallback: Bool
+            includingSwiftFallback: Bool,
+            relatedQueries: [SymbolQuery] = []
         ) -> Extraction {
+            var scopes: Set<SymbolCandidateScope> = [query.candidateScope]
+            let queries =
+                [query] + relatedQueries.filter { scopes.insert($0.candidateScope).inserted }
             var result: [IndexedSymbol] = []
             var foundDefinitions = false
-            func record(_ name: UnsafePointer<CChar>, _ value: UInt64) {
-                guard let address = SymbolIndex.slid(value, by: slide) else { return }
-                foundDefinitions = true
-                if query.acceptsCandidate(name),
-                    includingSwiftFallback || SwiftModuleFilter.knownModulePrefix(name) != false
-                {
-                    result.append(
-                        IndexedSymbol(name: String(cString: name), address: address, source: .sharedCache)
-                    )
+            SymbolCandidateMatcher(queries).withMatcher { accepts in
+                func record(_ name: UnsafePointer<CChar>, _ value: UInt64) {
+                    guard let address = SymbolIndex.slid(value, by: slide) else { return }
+                    foundDefinitions = true
+                    if accepts(name),
+                        includingSwiftFallback || SwiftModuleFilter.knownModulePrefix(name) != false
+                    {
+                        result.append(
+                            IndexedSymbol(
+                                name: String(cString: name),
+                                address: address,
+                                source: .sharedCache
+                            )
+                        )
+                    }
                 }
+                for read in readers { read(record) }
             }
-            for read in readers { read(record) }
-            return Extraction(symbols: result, foundDefinitions: foundDefinitions)
+            return Extraction(
+                symbols: result,
+                foundDefinitions: foundDefinitions,
+                coveredQueries: queries
+            )
         }
     }
 
@@ -77,7 +99,8 @@ package final class SharedCacheSymbols {
                 cacheSlide == image.identity.slide,
                 UInt64(text.virtualMemoryAddress) >= cache.mainCacheHeader.sharedRegionStart
             {
-                let offset = UInt64(text.virtualMemoryAddress) - cache.mainCacheHeader.sharedRegionStart
+                let offset =
+                    UInt64(text.virtualMemoryAddress) - cache.mainCacheHeader.sharedRegionStart
                 if let info = cache.localSymbolsInfo, let symbols = info.symbols64(in: cache),
                     let range = localRange(
                         offset,
@@ -90,7 +113,9 @@ package final class SharedCacheSymbols {
                         withExtendedLifetime(cache) {
                             for index in range {
                                 let symbol = symbols.symbols.advanced(by: index).pointee
-                                let name = symbols.stringBase.advanced(by: numericCast(symbol.n_un.n_strx))
+                                let name = symbols.stringBase.advanced(
+                                    by: numericCast(symbol.n_un.n_strx)
+                                )
                                 let address = symbols.addressStart + numericCast(symbol.n_value)
                                 if address >= 0 { record(name, UInt64(address)) }
                             }
@@ -105,7 +130,8 @@ package final class SharedCacheSymbols {
                 let fileText = file.segments64.first(where: { $0.segmentName == "__TEXT" }),
                 UInt64(fileText.virtualMemoryAddress) >= cache.mainCacheHeader.sharedRegionStart
             {
-                let offset = UInt64(fileText.virtualMemoryAddress) - cache.mainCacheHeader.sharedRegionStart
+                let offset =
+                    UInt64(fileText.virtualMemoryAddress) - cache.mainCacheHeader.sharedRegionStart
                 if let info = cache.localSymbolsInfo, let symbols = info.symbols64(in: cache),
                     let range = localRange(
                         offset,
@@ -128,7 +154,11 @@ package final class SharedCacheSymbols {
                 readers += captureSymbolFiles(header: cache.mainCacheHeader, offset: offset)
             }
         }
-        return CapturedSymbols(slide: image.identity.slide, readers: readers)
+        return CapturedSymbols(
+            slide: image.identity.slide,
+            readers: readers,
+            imageIdentity: image.identity
+        )
     }
 
     private func localRange(

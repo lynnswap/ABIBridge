@@ -214,6 +214,62 @@ package struct SymbolQuery {
     }
 }
 
+package struct SymbolCandidateMatcher {
+    private var storage: [CChar] = [0]
+    private var exactOffsets: [Int] = []
+    private var ownerOffsets: [Int] = []
+    private var allCXX = false
+    private var swiftQueries: [SymbolQuery] = []
+
+    package init(_ queries: [SymbolQuery]) {
+        for query in queries {
+            switch query.candidateScope {
+            case .exact(let bytes):
+                guard !bytes.contains(0) else { continue }
+                exactOffsets.append(storage.count)
+                storage += bytes.map { CChar(bitPattern: $0) } + [0]
+            case .cxxOwner(let owner):
+                ownerOffsets.append(storage.count)
+                storage += owner.utf8CString
+            case .language(.cxx):
+                allCXX = true
+            case .swiftModule, .swiftFallback, .language(.swift):
+                swiftQueries.append(query)
+            default:
+                break
+            }
+        }
+    }
+
+    package func withMatcher<Value>(
+        _ body: (_ accepts: (UnsafePointer<CChar>) -> Bool) -> Value
+    ) -> Value {
+        storage.withUnsafeBufferPointer { bytes in
+            let strings = bytes.baseAddress!
+            return body { name in
+                for offset in exactOffsets {
+                    if strcmp(name, strings + offset) == 0 { return true }
+                }
+                if name.pointee == 95,
+                    name[1] == 90 || (name[1] == 95 && name[2] == 90)
+                {
+                    if allCXX { return true }
+                    for offset in ownerOffsets {
+                        if strstr(name, strings + offset) != nil { return true }
+                    }
+                    return false
+                }
+                var swiftName = name
+                if swiftName.pointee == 95 { swiftName += 1 }
+                guard swiftName.pointee == 36,
+                    swiftName[1] == 115 || swiftName[1] == 83
+                else { return false }
+                return swiftQueries.contains { $0.acceptsCandidate(name) }
+            }
+        }
+    }
+}
+
 package struct SwiftModuleFilter {
     package let module: String
     private let prefix: String
@@ -360,6 +416,8 @@ package final class SymbolIndex {
         let descriptorKind: DescriptorKind?
     }
     private var sourceSymbols: [SourceScope: [IndexedSymbol]] = [:]
+    // Loaded definitions remain valid when shared-cache locals extend an index.
+    private var imageSymbols: [SourceScope: [IndexedSymbol]] = [:]
     private var sharedCacheScopes: Set<SymbolCandidateScope> = []
     private struct SharedCacheScanKey: Hashable {
         let candidates: SymbolCandidateScope
@@ -384,6 +442,7 @@ package final class SymbolIndex {
     )
     private var decoded: [Scope: [Int: [IndexedSymbol]]] = [:]
     private var linkerNames: [[UInt8]: [IndexedSymbol]] = [:]
+    private var imageLinkerNames: [[UInt8]: [IndexedSymbol]] = [:]
     private var swiftExtensions: [Scope: [Int: [IndexedSymbol]]] = [:]
     private var swiftMembers: [Scope: [Int: [IndexedSymbol]]] = [:]
 
@@ -449,7 +508,8 @@ package final class SymbolIndex {
         for query: SymbolQuery,
         source: SharedCacheSymbols.Source,
         includingSwiftFallback: Bool,
-        capturing sources: SharedCacheSymbols.CapturedSymbols
+        capturing sources: SharedCacheSymbols.CapturedSymbols,
+        relatedQueries: [SymbolQuery] = []
     ) -> SharedCacheSymbolScan {
         let key = SharedCacheScanKey(
             candidates: query.candidateScope,
@@ -461,7 +521,8 @@ package final class SymbolIndex {
         let scan = SharedCacheSymbolScan(
             sources: sources,
             query: query,
-            includingSwiftFallback: includingSwiftFallback
+            includingSwiftFallback: includingSwiftFallback,
+            relatedQueries: sources.imageIdentity == image.identity ? relatedQueries : []
         )
         sharedCacheScans[key] = scan
         return scan
@@ -473,6 +534,11 @@ package final class SymbolIndex {
     }
 
     package func appendSharedCacheSymbols(_ more: [IndexedSymbol], matching query: SymbolQuery) {
+        appendSharedCacheSymbols(more, matching: [query])
+    }
+
+    package func appendSharedCacheSymbols(_ more: [IndexedSymbol], matching queries: [SymbolQuery])
+    {
         let hasFallback = hasSharedSwiftFallback
         // The first Swift module read already includes all uncertain roots.
         // Concurrent or broader reads must not append that same payload again.
@@ -486,10 +552,12 @@ package final class SymbolIndex {
             && additions.contains {
                 $0.name.withCString { SwiftModuleFilter.knownModulePrefix($0) == false }
             }
-        sharedCacheScopes.insert(query.candidateScope)
-        switch query.candidateScope {
-        case .swiftModule, .language(.swift): sharedCacheScopes.insert(.swiftFallback)
-        default: break
+        for query in queries {
+            sharedCacheScopes.insert(query.candidateScope)
+            switch query.candidateScope {
+            case .swiftModule, .language(.swift): sharedCacheScopes.insert(.swiftFallback)
+            default: break
+            }
         }
         guard !additions.isEmpty else { return }
         let fallback = (
@@ -580,11 +648,17 @@ package final class SymbolIndex {
     private func exactSymbols(named name: String, key: [UInt8]) -> [IndexedSymbol] {
         guard !key.contains(0) else { return [] }
         if let cached = linkerNames[key] { return cached }
-        var matches = name.withCString { name in tableSymbols { strcmp($0, name) == 0 } }
-        if let offset = exportedOffset(named: key),
-            let symbol = imageSymbol(name: name, offset: offset)
-        {
-            matches.append(symbol)
+        var matches: [IndexedSymbol]
+        if let cached = imageLinkerNames[key] {
+            matches = cached
+        } else {
+            matches = name.withCString { name in tableSymbols { strcmp($0, name) == 0 } }
+            if let offset = exportedOffset(named: key),
+                let symbol = imageSymbol(name: name, offset: offset)
+            {
+                matches.append(symbol)
+            }
+            imageLinkerNames[key] = matches
         }
         matches += localSymbols.filter { $0.name.utf8.elementsEqual(key) }
         linkerNames[key] = matches
@@ -641,17 +715,23 @@ package final class SymbolIndex {
             guard let swiftBucket else { return true }
             return SwiftModuleFilter.knownModulePrefix(raw) == (swiftBucket == .knownModule)
         }
-        var symbols =
-            query.declaration.language == .swift && descriptorKind == nil
-            ? swiftSymbols(matching: accepts) : tableSymbols(matching: accepts)
-        if let trie = exportTrie {
-            symbols += filteredExports(
-                in: trie,
-                prefixes: prefixes,
-                query: query,
-                swiftBucket: swiftBucket,
-                accepts: accepts
-            )
+        var symbols: [IndexedSymbol]
+        if let cached = imageSymbols[scope] {
+            symbols = cached
+        } else {
+            symbols =
+                query.declaration.language == .swift && descriptorKind == nil
+                ? swiftSymbols(matching: accepts) : tableSymbols(matching: accepts)
+            if let trie = exportTrie {
+                symbols += filteredExports(
+                    in: trie,
+                    prefixes: prefixes,
+                    query: query,
+                    swiftBucket: swiftBucket,
+                    accepts: accepts
+                )
+            }
+            imageSymbols[scope] = symbols
         }
         symbols += localSymbols.filter { $0.name.withCString(accepts) }
         // Definitions commonly occur in both nlist and the export trie.

@@ -90,6 +90,78 @@ private func capturedSources(
 }
 
 struct SharedCacheScanTests {
+    @Test func batchLookupTraversesImageSymbolsOnceAndLeavesFallbacksLazy() throws {
+        let fixture = try FixtureLibrary()
+        defer { fixture.cleanup() }
+        let address = UInt64(try fixture.address(kind: 0))
+        let reads = Mutex(0)
+        let names = [
+            "_ABIBatchValue",
+            "__ZN5First7Counter3oneEv",
+            "__ZN5First7Counter3twoEv",
+            "__ZN5First9Different3oneEv",
+            "__ZN5First8Fallback3oneEv",
+        ]
+        let resolver = RuntimeSymbolResolver(capturingSharedCacheSymbols: { image, _, source in
+            guard source == .loaded else { return nil }
+            return SharedCacheSymbols.CapturedSymbols(
+                slide: 0,
+                readers: [
+                    { record in
+                        reads.withLock { $0 += 1 }
+                        for name in names {
+                            name.withCString { record($0, address) }
+                        }
+                    }
+                ],
+                imageIdentity: image.identity
+            )
+        })
+        let selector = RuntimeImageSelector.path(fixture.libraryURL)
+        let fallback = RuntimeDeclaration(name: "First::Fallback::one()", language: .cxx)
+        let requests: [RuntimeSymbolRequest] = [
+            .init(
+                .init(name: "ABIBatchValue", language: .c),
+                fallbacks: [fallback],
+                in: [selector],
+                loading: .loadedOnly
+            ),
+            .init(
+                .init(name: "First::Counter::one()", language: .cxx),
+                alternatives: [.init(machOName: "__ZN5First7Counter3oneEv", language: .cxx)],
+                in: [selector],
+                loading: .loadedOnly
+            ),
+            .init(
+                .init(name: "First::Counter::two()", language: .cxx),
+                in: [selector],
+                loading: .loadedOnly
+            ),
+            .init(
+                .init(name: "First::Different::one()", language: .cxx),
+                in: [selector],
+                loading: .loadedOnly
+            ),
+            .init(
+                .init(name: "First::Missing::one()", language: .cxx),
+                in: [selector],
+                loading: .loadedOnly
+            ),
+        ]
+        let results = resolver.resolve(requests)
+        for result in results.dropLast() {
+            #expect(try result.get().address == address)
+        }
+        #expect(throws: RuntimeResolutionError.declarationNotFound(requests.last!.declaration)) {
+            try results.last!.get()
+        }
+        #expect(reads.withLock { $0 } == 1)
+        #expect(
+            try resolver.resolve(fallback, in: selector, loading: .loadedOnly).address == address
+        )
+        #expect(reads.withLock { $0 } == 2)
+    }
+
     @Test func concurrentLookupJoinsCapturedScan() async throws {
         let fixture = try FixtureLibrary()
         defer { fixture.cleanup() }

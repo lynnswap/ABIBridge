@@ -14,26 +14,38 @@ package final class RuntimeSymbolResolver: Sendable {
     private let state = Mutex(ResolutionState())
 
     #if DEBUG
-    private let sharedCacheCapture: (@Sendable (
-        RuntimeImage, RuntimeDeclaration, SharedCacheSymbols.Source
-    ) -> SharedCacheSymbols.CapturedSymbols?)?
+    private let sharedCacheCapture:
+        (
+            @Sendable (
+                RuntimeImage, RuntimeDeclaration, SharedCacheSymbols.Source
+            ) -> SharedCacheSymbols.CapturedSymbols?
+        )?
     package enum CachePublication: Sendable {
         case automaticScope, importIndex, virtualEntries
     }
-    private let beforeCachePublication: (@Sendable (
-        CachePublication, RuntimeSymbolResolver
-    ) -> Void)?
+    private let beforeCachePublication:
+        (
+            @Sendable (
+                CachePublication, RuntimeSymbolResolver
+            ) -> Void
+        )?
 
-    package init(capturingSharedCacheSymbols capture: @escaping @Sendable (
-        RuntimeImage, RuntimeDeclaration, SharedCacheSymbols.Source
-    ) -> SharedCacheSymbols.CapturedSymbols?) {
+    package init(
+        capturingSharedCacheSymbols capture:
+            @escaping @Sendable (
+                RuntimeImage, RuntimeDeclaration, SharedCacheSymbols.Source
+            ) -> SharedCacheSymbols.CapturedSymbols?
+    ) {
         sharedCacheCapture = capture
         beforeCachePublication = nil
     }
 
-    package init(beforePublishingCache callback: @escaping @Sendable (
-        CachePublication, RuntimeSymbolResolver
-    ) -> Void) {
+    package init(
+        beforePublishingCache callback:
+            @escaping @Sendable (
+                CachePublication, RuntimeSymbolResolver
+            ) -> Void
+    ) {
         sharedCacheCapture = nil
         beforeCachePublication = callback
     }
@@ -118,7 +130,8 @@ package final class RuntimeSymbolResolver: Sendable {
         _ declaration: RuntimeDeclaration,
         in scope: SearchScope,
         extensionsOnly: Bool = false,
-        genericContext: SwiftGenericContext? = nil
+        genericContext: SwiftGenericContext? = nil,
+        relatedQueries: [SymbolQuery] = []
     ) throws -> RuntimeSymbol {
         guard !scope.images.isEmpty else {
             throw scope.isComplete
@@ -130,7 +143,8 @@ package final class RuntimeSymbolResolver: Sendable {
                     declaration,
                     images: scope.images,
                     extensionsOnly: extensionsOnly,
-                    genericContext: genericContext
+                    genericContext: genericContext,
+                    relatedQueries: relatedQueries
                 )
             } catch RuntimeResolutionError.declarationNotFound where !scope.isComplete {
                 throw RuntimeResolutionError.imageUnavailable
@@ -151,7 +165,8 @@ package final class RuntimeSymbolResolver: Sendable {
                     declaration,
                     images: cache.images,
                     extensionsOnly: extensionsOnly,
-                    genericContext: genericContext
+                    genericContext: genericContext,
+                    relatedQueries: relatedQueries
                 )
             )
         } catch let failure as RuntimeResolutionError {
@@ -254,14 +269,23 @@ package final class RuntimeSymbolResolver: Sendable {
 
     package func resolve(_ requests: [RuntimeSymbolRequest]) -> [Result<RuntimeSymbol, any Error>] {
         var scopes: [Scope: Result<SearchScope, any Error>] = [:]
+        var relatedQueries: [Scope: [SymbolQuery]] = [:]
+        for request in requests {
+            let queries = ([request.declaration] + request.alternatives).map(SymbolQuery.init)
+            for selector in request.imageScopes {
+                relatedQueries[Scope(selector: selector, loading: request.loading), default: []] +=
+                    queries
+            }
+        }
         return requests.map { request in
-            Result { try resolve(request, scopes: &scopes) }
+            Result { try resolve(request, scopes: &scopes, relatedQueries: relatedQueries) }
         }
     }
 
     private func resolve(
         _ request: RuntimeSymbolRequest,
-        scopes: inout [Scope: Result<SearchScope, any Error>]
+        scopes: inout [Scope: Result<SearchScope, any Error>],
+        relatedQueries: [Scope: [SymbolQuery]] = [:]
     ) throws -> RuntimeSymbol {
         var missing: RuntimeResolutionError = .imageNotLoaded
         for (index, candidate) in ([request.declaration] + request.fallbacks).enumerated() {
@@ -271,7 +295,8 @@ package final class RuntimeSymbolResolver: Sendable {
                     alternatives: index == 0 ? request.alternatives : [],
                     in: request.imageScopes,
                     loading: request.loading,
-                    scopes: &scopes
+                    scopes: &scopes,
+                    relatedQueries: relatedQueries
                 )
             } catch let error as RuntimeResolutionError {
                 switch error {
@@ -289,7 +314,8 @@ package final class RuntimeSymbolResolver: Sendable {
         alternatives: [RuntimeDeclaration],
         in imageScopes: [RuntimeImageSelector],
         loading: RuntimeImageLoadingPolicy,
-        scopes: inout [Scope: Result<SearchScope, any Error>]
+        scopes: inout [Scope: Result<SearchScope, any Error>],
+        relatedQueries: [Scope: [SymbolQuery]]
     ) throws -> RuntimeSymbol {
         for declaration in [primary] + alternatives { try validate(declaration) }
         var missing: RuntimeResolutionError = .imageNotLoaded
@@ -315,7 +341,11 @@ package final class RuntimeSymbolResolver: Sendable {
             var match: RuntimeSymbol?
             for declaration in [primary] + alternatives {
                 do {
-                    let found = try resolve(declaration, in: search)
+                    let found = try resolve(
+                        declaration,
+                        in: search,
+                        relatedQueries: relatedQueries[key] ?? []
+                    )
                     if let previous = match {
                         guard previous.address == found.address,
                             previous.image.identity == found.image.identity
@@ -448,7 +478,9 @@ package final class RuntimeSymbolResolver: Sendable {
     }
 
     package func importIndex(for image: RuntimeImage) throws -> ImportIndex {
-        let (cached, generation) = state.withLock { ($0.imports[image.identity], $0.cacheGeneration) }
+        let (cached, generation) = state.withLock {
+            ($0.imports[image.identity], $0.cacheGeneration)
+        }
         if let cached { return cached }
         // File/cache discovery can enter dyld; keep it outside the resolver lock.
         let candidate = try ImportIndex(image: image)
@@ -538,7 +570,8 @@ package final class RuntimeSymbolResolver: Sendable {
         _ declaration: RuntimeDeclaration,
         images: [RuntimeImage],
         extensionsOnly: Bool = false,
-        genericContext: SwiftGenericContext? = nil
+        genericContext: SwiftGenericContext? = nil,
+        relatedQueries: [SymbolQuery] = []
     ) throws -> RuntimeSymbol {
         // Keep these indexes for the whole lookup even if another caller clears
         // the cache while shared-cache metadata is being read.
@@ -567,7 +600,7 @@ package final class RuntimeSymbolResolver: Sendable {
             let primary = try matches(.image)
             if !primary.isEmpty { return try select(declaration, from: primary) }
 
-            loadSharedCacheSymbols(for: query, into: candidates)
+            loadSharedCacheSymbols(for: query, into: candidates, relatedQueries: relatedQueries)
             let fallback = try matches(.sharedCache)
             if fallback.isEmpty, let unsupported { throw unsupported }
             return try select(declaration, from: fallback)
@@ -600,7 +633,11 @@ package final class RuntimeSymbolResolver: Sendable {
         }
     }
 
-    private func loadSharedCacheSymbols(for query: SymbolQuery, into candidates: [SymbolIndex]) {
+    private func loadSharedCacheSymbols(
+        for query: SymbolQuery,
+        into candidates: [SymbolIndex],
+        relatedQueries: [SymbolQuery] = []
+    ) {
         let missing = state.withLock { _ in
             candidates.indices.filter { !candidates[$0].hasSharedCacheSymbols(for: query) }
                 .map { ($0, !candidates[$0].hasSharedSwiftFallback) }
@@ -608,7 +645,10 @@ package final class RuntimeSymbolResolver: Sendable {
         // Discovery can enter dyld. Only scans of captured sources become
         // joinable, and each image/scope is independent of the rest of a batch.
         let cache = SharedCacheSymbols()
-        func capture(_ index: SymbolIndex, source: SharedCacheSymbols.Source)
+        func capture(
+            _ index: SymbolIndex,
+            source: SharedCacheSymbols.Source
+        )
             -> SharedCacheSymbols.CapturedSymbols?
         {
             #if DEBUG
@@ -621,25 +661,41 @@ package final class RuntimeSymbolResolver: Sendable {
         for (position, includeFallback) in missing {
             let index = candidates[position]
             if state.withLock({ _ in index.hasSharedCacheSymbols(for: query) }) { continue }
+            let related = state.withLock { _ in
+                relatedQueries.filter { !index.hasSharedCacheSymbols(for: $0) }
+            }
             var symbols: [IndexedSymbol] = []
+            var coveredQueries = [query]
             if let sources = capture(index, source: .loaded) {
-                guard let loaded = scanSharedCacheSymbols(
-                    sources, source: .loaded, for: query, in: index,
-                    includingSwiftFallback: includeFallback
-                ) else { continue }
+                guard
+                    let loaded = scanSharedCacheSymbols(
+                        sources,
+                        source: .loaded,
+                        for: query,
+                        in: index,
+                        includingSwiftFallback: includeFallback,
+                        relatedQueries: related
+                    )
+                else { continue }
                 symbols = loaded.symbols
+                coveredQueries = loaded.coveredQueries
                 if !loaded.foundDefinitions, let sources = capture(index, source: .file),
                     let file = scanSharedCacheSymbols(
-                        sources, source: .file, for: query, in: index,
-                        includingSwiftFallback: includeFallback
+                        sources,
+                        source: .file,
+                        for: query,
+                        in: index,
+                        includingSwiftFallback: includeFallback,
+                        relatedQueries: related
                     )
                 {
                     symbols += file.symbols
+                    coveredQueries = file.coveredQueries
                 }
             }
             let retired = state.withLock { _ in
                 if !index.hasSharedCacheSymbols(for: query) {
-                    index.appendSharedCacheSymbols(symbols, matching: query)
+                    index.appendSharedCacheSymbols(symbols, matching: coveredQueries)
                 }
                 return index.removeSharedCacheScans(for: query)
             }
@@ -652,14 +708,18 @@ package final class RuntimeSymbolResolver: Sendable {
         source: SharedCacheSymbols.Source,
         for query: SymbolQuery,
         in index: SymbolIndex,
-        includingSwiftFallback: Bool
+        includingSwiftFallback: Bool,
+        relatedQueries: [SymbolQuery]
     ) -> SharedCacheSymbols.Extraction? {
         let scan = withExtendedLifetime(sources) {
             state.withLock { _ -> SharedCacheSymbolScan? in
                 if index.hasSharedCacheSymbols(for: query) { return nil }
                 return index.sharedCacheScan(
-                    for: query, source: source,
-                    includingSwiftFallback: includingSwiftFallback, capturing: sources
+                    for: query,
+                    source: source,
+                    includingSwiftFallback: includingSwiftFallback,
+                    capturing: sources,
+                    relatedQueries: relatedQueries
                 )
             }
         }
