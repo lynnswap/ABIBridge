@@ -90,7 +90,7 @@ Concrete members capture the selected implementation. Lookup prefers declaration
 
 ## Call class members exported only through dispatch thunks
 
-A library-evolution framework can export only the dispatch thunk and method descriptor of an open or nonfinal class member, without its implementation symbol. Method, getter, and setter lookup on a concrete nongeneric class then uses the thunk's declaration for the signature and captures the entry in the lookup type's class metadata:
+A library-evolution framework can export only the dispatch thunk and method descriptor of an open or nonfinal class member, without its implementation symbol. Method, getter, and setter lookup on a concrete nongeneric class then reads the member's code from the lookup type's class metadata entry:
 
 ```swift
 let view = try ABIRuntime.shared.resolveSwiftTypeAndWait(named: "Example.CanvasView")
@@ -98,9 +98,9 @@ let setShowsGrid = try view.resolveSetterAndWait(named: "showsGrid", as: Bool.se
 try unsafe setShowsGrid.unsafeInvoke(on: canvas, true)
 ```
 
-The handle keeps the no-redispatch contract above. An override declared without its own thunk is found through the introducing declaration and selected from the lookup type's entry, so a subclass override runs only when the subclass is the lookup type or the bound receiver's class. The entry is read during lookup; later changes to the class metadata do not update an existing handle. The handle's `symbol` is the dispatch thunk.
+The resulting `symbol` names the member's declaration, uses the thunk's mangled name without its thunk suffix, and addresses the code stored in that entry. Binding, opaque results, virtual hooks, and replacements therefore treat it like an exported implementation, and calls keep the no-redispatch contract above. An override declared without its own thunk is found through the introducing declaration, so a subclass override runs only when the subclass is the lookup type or the bound receiver's class. The entry is read during lookup; later changes to the class metadata do not update an existing handle.
 
-Synchronous instance members are supported, including declarations bound with `valueABIs:`. Async members and static or class members available only through thunks report ``ABIResolutionError/unsupportedDeclaration(_:)``. Lookup still reports `declarationNotFound` when neither the implementation nor a thunk exists.
+Relative names, complete declarations, `declaredAs:`, and `valueABIs:` use the same rules. Async members and static or class members available only through thunks report ``ABIResolutionError/unsupportedDeclaration(_:)``. Lookup still reports `declarationNotFound` when neither the implementation nor a thunk exists.
 
 ## Call a protocol extension
 
