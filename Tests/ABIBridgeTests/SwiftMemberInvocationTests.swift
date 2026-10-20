@@ -509,12 +509,16 @@ struct SwiftMemberInvocationTests {
                     open var mode: Mode = .off
                     open var count: Int64 = 0
                     @inline(never) open func value(_ input: Int64) -> Int64 { input + 1 }
+                    @inline(never) open func replacement(_ input: Int64) -> Int64 { input + 100 }
+                    @inline(never) open func opaque() -> some Equatable { count }
                 }
                 open class Derived: Base {
                     @inline(never) public override func value(_ input: Int64) -> Int64 { input + 2 }
+                    @inline(never) public override func replacement(_ input: Int64) -> Int64 { input + 200 }
                 }
                 public func makeBase() -> Base { Base() }
                 public func makeDerived() -> Base { Derived() }
+                @inline(never) public func value(_ object: Base, _ input: Int64) -> Int64 { object.value(input) }
                 @inline(never) public func describe(_ object: Base) -> String { "\\(object.mode):\\(object.count)" }
                 """,
             stripped: true,
@@ -581,6 +585,37 @@ struct SwiftMemberInvocationTests {
         )
         try unsafe setMode.unsafeInvoke(on: baseObject, try mode.makeEnumCase(named: "on"))
         #expect(try unsafe describe.unsafeInvoke(baseObject) == "on:7")
+
+        // Relative names that need binding search dispatch thunks too.
+        let declared = try await base.resolveMethod(
+            named: "value(_:)",
+            as: ((Int64) -> Int64).self,
+            declaredAs: "(Swift.Int64) -> Swift.Int64"
+        )
+        #expect(try unsafe declared.unsafeInvoke(on: baseObject, 40) == 41)
+        // The opaque result descriptor is named by the member, not its thunk.
+        let opaque = try await base.resolveMethod(
+            named: "opaque()",
+            as: (() -> NativeSwiftValue).self
+        )
+        #expect(try unsafe opaque.unsafeInvoke(on: baseObject).withCopy { $0 as? Int64 } == 7)
+        // Replacement publishes the captured entry. A redispatching thunk would
+        // reach Derived's override of the replacement instead.
+        let replacement = try await base.resolveMethod(
+            named: "replacement(_:)",
+            as: ((Int64) -> Int64).self
+        )
+        let plan = try unsafe derivedValue.prepareVirtualReplacementAndWait(with: replacement)
+        let oracle = try await runtime.resolveSwiftFunction(
+            named: module + ".value(" + base.name + ", Swift.Int64) -> Swift.Int64",
+            as: ((AnyObject, Int64) -> Int64).self,
+            in: scope
+        )
+        try unsafe plan.install()
+        defer { try? plan.restore() }
+        #expect(try unsafe oracle.unsafeInvoke(derivedObject, 40) == 140)
+        try plan.restore()
+        #expect(try unsafe oracle.unsafeInvoke(derivedObject, 40) == 42)
     }
     #endif
 

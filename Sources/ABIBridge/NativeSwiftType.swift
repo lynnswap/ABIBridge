@@ -433,31 +433,68 @@ public actor NativeSwiftType: Hashable {
 
     // Generic packs expand caller arguments without changing the source labels.
     // Their requests keep those labels until declaration binding determines arity.
-    // `classEntry` marks a class member found only through its dispatch thunk;
-    // its implementation comes from the selected class's virtual-table entry.
     private typealias ResolvedMember = (
-        symbol: ResolvedSymbol, metadata: Any.Type, generic: SwiftGenericCallPlan?,
-        classEntry: Bool
+        symbol: ResolvedSymbol, metadata: Any.Type, generic: SwiftGenericCallPlan?
     )
 
     private static let dispatchThunkPrefix = "dispatch thunk of "
 
-    // Library-evolution frameworks can export only the dispatch thunk and method
-    // descriptor of an open or nonfinal member. The thunk carries the complete
-    // declaration and lowering; the implementation is read from the class entry.
-    private nonisolated func resolveClassDispatchThunk(
+    // Library-evolution frameworks can export only the dispatch thunk and
+    // method descriptor of an open or nonfinal class member. The member's code
+    // is then read from this type's virtual-table entry. The result names the
+    // member itself, so binding, hooks, and replacement treat it like an
+    // exported implementation, and calls do not redispatch.
+    private nonisolated func classEntry(forThunk thunk: ResolvedSymbol) throws -> ResolvedSymbol {
+        guard thunk.declaration.name.hasPrefix(Self.dispatchThunkPrefix),
+            thunk.linkageName.hasSuffix("Tj")
+        else { throw ABIResolutionError.declarationNotFound(thunk.declaration) }
+        let declaration = NativeDeclaration(
+            name: String(thunk.declaration.name.dropFirst(Self.dispatchThunkPrefix.count)),
+            language: .swift
+        )
+        let entry = try SwiftClassDispatch(
+            metadata: metadata,
+            declaration: declaration,
+            resolver: resolver
+        )
+        let authentication = entry.authentication
+        guard let slot = UnsafeRawPointer(bitPattern: entry.address),
+            let code = ABIUnsafeReadAuthenticatedPointer(
+                slot,
+                authentication.keyCode,
+                authentication.discriminator,
+                authentication.addressDiversity
+            ),
+            let image = try swiftImplementationImage(containing: code)
+        else { throw ABIResolutionError.invalidAddress }
+        let address = UInt64(UInt(bitPattern: code))
+        let sections = try withRuntimeErrors {
+            try ImageMetadataReader.read(image: image.runtimeValue).sections
+        }
+        guard let section = sections.first(where: { $0.addressRange.contains(address) }) else {
+            throw ABIResolutionError.invalidAddress
+        }
+        return ResolvedSymbol(
+            declaration: declaration,
+            image: image,
+            sectionRange: section.addressRange,
+            source: thunk.source,
+            address: address,
+            linkageName: String(thunk.linkageName.dropLast(2))
+        )
+    }
+
+    private nonisolated func resolveClassEntry(
         _ declaration: NativeDeclaration,
         in image: NativeImage
-    ) throws -> ResolvedSymbol? {
-        do {
-            return try resolver.resolve(
+    ) throws -> ResolvedSymbol {
+        try classEntry(
+            forThunk: resolver.resolve(
                 .init(name: Self.dispatchThunkPrefix + declaration.name, language: .swift),
                 in: image,
                 loading: .loadedOnly
             )
-        } catch ABIResolutionError.declarationNotFound {
-            return nil
-        }
+        )
     }
 
     private nonisolated func resolveMember(
@@ -523,14 +560,13 @@ public actor NativeSwiftType: Hashable {
                             declaredSignature: declaredSignature,
                             valueABIs: valueABIs
                         )
-                        return (symbol, metadata, generic, false)
+                        return (symbol, metadata, generic)
                     }
                 }
             }
             if belongs && (!usesBinding || exact || explicitSignature) {
                 do {
                     let symbol: ResolvedSymbol
-                    var classEntry = false
                     do {
                         if usesBinding && explicitSignature && !exact {
                             // Extensions still need candidate binding to preserve constraints and their declaration names.
@@ -550,15 +586,8 @@ public actor NativeSwiftType: Hashable {
                                 }
                             }
                         }
-                    } catch ABIResolutionError.declarationNotFound
-                        where ownerClass != nil
-                    {
-                        guard let thunk = try resolveClassDispatchThunk(request, in: ownerImage)
-                        else {
-                            throw ABIResolutionError.declarationNotFound(request)
-                        }
-                        symbol = thunk
-                        classEntry = true
+                    } catch ABIResolutionError.declarationNotFound where ownerClass != nil {
+                        symbol = try resolveClassEntry(request, in: ownerImage)
                     }
                     let generic: SwiftGenericCallPlan?
                     if usesBinding, let signature {
@@ -572,7 +601,7 @@ public actor NativeSwiftType: Hashable {
                     } else {
                         generic = nil
                     }
-                    return (symbol, owner, generic, classEntry)
+                    return (symbol, owner, generic)
                 } catch ABIResolutionError.declarationNotFound {
                 } catch ABIResolutionError.signatureMismatch
                     where usesBinding && explicitSignature && !exact
@@ -586,12 +615,24 @@ public actor NativeSwiftType: Hashable {
             }
             if belongs && usesBinding && !exact, let signature {
                 do {
-                    for extensionsOnly in [false, true] {
-                        let candidates = try resolver.swiftDeclarationCandidates(
-                            request,
-                            in: extensionsOnly ? nil : ownerImage,
-                            extensionsOnly: extensionsOnly
-                        )
+                    // Dispatch thunks stand in for class members whose
+                    // implementations are not exported; see classEntry(forThunk:).
+                    for source in 0..<(ownerClass == nil ? 2 : 3) {
+                        let extensionsOnly = source == 1
+                        let candidates =
+                            source == 2
+                            ? try resolver.swiftDeclarationCandidates(
+                                .init(
+                                    name: Self.dispatchThunkPrefix + request.name,
+                                    language: .swift
+                                ),
+                                in: ownerImage
+                            ).map(classEntry(forThunk:))
+                            : try resolver.swiftDeclarationCandidates(
+                                request,
+                                in: extensionsOnly ? nil : ownerImage,
+                                extensionsOnly: extensionsOnly
+                            )
                         let matches = candidates.compactMap { symbol -> ResolvedMember? in
                             if explicitSignature,
                                 ![
@@ -618,7 +659,7 @@ public actor NativeSwiftType: Hashable {
                                     try explicitSignature
                                         || plan.matches(SwiftFunctionSignature(signature))
                                 else { return nil }
-                                return (symbol, owner, plan, false)
+                                return (symbol, owner, plan)
                             } catch ABIResolutionError.signatureMismatch { return nil } catch {
                                 preparationFailure = error
                                 return nil
@@ -771,7 +812,7 @@ public actor NativeSwiftType: Hashable {
         receiver: SwiftReceiverPlan,
         consumesArguments: Bool = false
     ) throws -> NativeSwiftMethod<Signature> {
-        let method = try NativeSwiftMethod<Signature>(
+        try NativeSwiftMethod(
             symbol: member.symbol,
             type: self,
             receiver: receiver,
@@ -779,33 +820,6 @@ public actor NativeSwiftType: Hashable {
                 || member.symbol.declaration.name.contains(".setter : "),
             generic: member.generic?.includingReceiver(receiver.mode)
         )
-        guard member.classEntry else { return method }
-        if case .asynchronous = method.call {
-            throw ABIResolutionError.unsupportedDeclaration(
-                "An async class member exported only through its dispatch thunk has no supported entry capture."
-            )
-        }
-        // Capture the entry of the type used for lookup, so calls keep the
-        // no-redispatch contract of other member handles.
-        let entry = try SwiftClassDispatch(
-            metadata: metadata,
-            declaration: .init(
-                name: String(
-                    member.symbol.declaration.name.dropFirst(Self.dispatchThunkPrefix.count)
-                ),
-                language: .swift
-            ),
-            resolver: resolver
-        )
-        guard
-            let implementation = try SwiftReplacementStorage.capture(
-                [(entry.address, entry.authentication)],
-                retaining: nil
-            )[0].original
-        else {
-            throw ABIResolutionError.invalidAddress
-        }
-        return method.capturing(implementation)
     }
 
     private nonisolated func prepareFunction<Signature>(
@@ -813,12 +827,7 @@ public actor NativeSwiftType: Hashable {
         consumesArguments: Bool = false,
         classReceiver: Bool
     ) throws -> NativeSwiftFunction<Signature> {
-        guard !member.classEntry else {
-            throw ABIResolutionError.unsupportedDeclaration(
-                "Static members exported only through dispatch thunks have no supported entry capture."
-            )
-        }
-        return try NativeSwiftFunction(
+        try NativeSwiftFunction(
             symbol: member.symbol,
             metadata: metadata,
             owner: self,

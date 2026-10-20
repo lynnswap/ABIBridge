@@ -25,15 +25,6 @@ extension SwiftGenericDeclaration {
             protocolRequirement = owner
             entry = getter
         }
-        if entry.kind == "DispatchThunk",
-            let member = entry.child(kind: "Function") ?? entry.child(kind: "Getter")
-                ?? entry.child(kind: "Setter"),
-            (member.kind == "Function" ? member : member.child(kind: "Variable"))?
-                .child(kind: "Protocol") == nil
-        {
-            // A class member's dispatch thunk shares the member's declaration and lowering.
-            entry = member
-        }
         if ["Getter", "Setter"].contains(entry.kind) {
             return (try entry.requiredChild(), entry.kind, protocolRequirement)
         }
