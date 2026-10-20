@@ -434,7 +434,7 @@ public actor NativeSwiftType: Hashable {
     // Generic packs expand caller arguments without changing the source labels.
     // Their requests keep those labels until declaration binding determines arity.
     private typealias ResolvedMember = (
-        symbol: ResolvedSymbol, metadata: Any.Type, generic: SwiftGenericCallPlan?
+        entry: SwiftEntry, metadata: Any.Type, generic: SwiftGenericCallPlan?
     )
 
     private nonisolated func resolveMember(
@@ -491,8 +491,9 @@ public actor NativeSwiftType: Hashable {
                     if requirement != nil
                         || callable.child(kind: "Extension")?.child(kind: "Protocol") != nil
                     {
+                        let entry = SwiftEntry(symbol: symbol)
                         let generic = try SwiftGenericCallPlan(
-                            symbol: symbol,
+                            entry: entry,
                             genericArguments: genericArguments,
                             signature: SwiftFunctionSignature(signature),
                             resolver: resolver,
@@ -500,7 +501,7 @@ public actor NativeSwiftType: Hashable {
                             declaredSignature: declaredSignature,
                             valueABIs: valueABIs
                         )
-                        return (symbol, metadata, generic)
+                        return (entry, metadata, generic)
                     }
                 }
             }
@@ -515,10 +516,11 @@ public actor NativeSwiftType: Hashable {
                             try ownerClass.flatMap { try SwiftGenericContext($0, owner: ownerName) }
                         }
                     }
+                    let entry = SwiftEntry(symbol: symbol)
                     let generic: SwiftGenericCallPlan?
                     if usesBinding, let signature {
                         generic = try genericPlan(
-                            (symbol, owner),
+                            (entry, owner),
                             signature: signature,
                             arguments: genericArguments,
                             declaredSignature: declaredSignature,
@@ -527,7 +529,7 @@ public actor NativeSwiftType: Hashable {
                     } else {
                         generic = nil
                     }
-                    return (symbol, owner, generic)
+                    return (entry, owner, generic)
                 } catch ABIResolutionError.declarationNotFound {
                 } catch ABIResolutionError.signatureMismatch
                     where usesBinding && explicitSignature && !exact
@@ -548,6 +550,7 @@ public actor NativeSwiftType: Hashable {
                             extensionsOnly: extensionsOnly
                         )
                         let matches = candidates.compactMap { symbol -> ResolvedMember? in
+                            let entry = SwiftEntry(symbol: symbol)
                             if explicitSignature,
                                 ![
                                     symbol.declaration.name,
@@ -562,7 +565,7 @@ public actor NativeSwiftType: Hashable {
                             do {
                                 guard
                                     let plan = try genericPlan(
-                                        (symbol, owner),
+                                        (entry, owner),
                                         signature: signature,
                                         arguments: genericArguments,
                                         declaredSignature: declaredSignature,
@@ -573,7 +576,7 @@ public actor NativeSwiftType: Hashable {
                                     try explicitSignature
                                         || plan.matches(SwiftFunctionSignature(signature))
                                 else { return nil }
-                                return (symbol, owner, plan)
+                                return (entry, owner, plan)
                             } catch ABIResolutionError.signatureMismatch { return nil } catch {
                                 preparationFailure = error
                                 return nil
@@ -582,7 +585,7 @@ public actor NativeSwiftType: Hashable {
                         if matches.count > 1 {
                             throw ABIResolutionError.ambiguousDeclaration(
                                 request,
-                                candidates: matches.map { $0.symbol.linkageName }
+                                candidates: matches.map { $0.entry.linkageName }
                             )
                         }
                         if let match = matches.first { return match }
@@ -641,7 +644,7 @@ public actor NativeSwiftType: Hashable {
         mutating isMutating: Bool = false,
         consuming isConsuming: Bool = false
     ) throws -> NativeSwiftMethod<Signature> {
-        let symbol = try resolveMember(
+        let member = try resolveMember(
             signature: signature,
             genericArguments: genericArguments,
             exact: SwiftMemberLookup.isQualified(name),
@@ -654,14 +657,14 @@ public actor NativeSwiftType: Hashable {
                 ? NativeDeclaration(name: member, language: .swift)
                 : swiftFunctionDeclaration(named: member, as: signature)
         }
-        let generic = symbol.generic
+        let generic = member.generic
         let receiver = try receiverPlan(
             mutating: isMutating,
             consuming: isConsuming,
             generic: generic,
             receiverABI: receiverABI
         )
-        return try prepareMethod(symbol, receiver: receiver)
+        return try prepareMethod(member, receiver: receiver)
     }
 
     /// Resolves and prepares a method without blocking the caller's executor.
@@ -694,7 +697,7 @@ public actor NativeSwiftType: Hashable {
     }
 
     private nonisolated func genericPlan(
-        _ member: (symbol: ResolvedSymbol, metadata: Any.Type),
+        _ member: (entry: SwiftEntry, metadata: Any.Type),
         signature: Any.Type,
         arguments: [NativeSwiftGenericArgument] = [],
         receiver: SwiftReceiverMode? = nil,
@@ -710,7 +713,7 @@ public actor NativeSwiftType: Hashable {
                 || SwiftFunctionSignature(signature).requiresValueDeclaration
         else { return nil }
         return try SwiftGenericCallPlan(
-            symbol: member.symbol,
+            entry: member.entry,
             genericArguments: arguments,
             signature: SwiftFunctionSignature(signature),
             resolver: resolver,
@@ -727,11 +730,11 @@ public actor NativeSwiftType: Hashable {
         consumesArguments: Bool = false
     ) throws -> NativeSwiftMethod<Signature> {
         try NativeSwiftMethod(
-            symbol: member.symbol,
+            entry: member.entry,
             type: self,
             receiver: receiver,
             consumesArguments: consumesArguments
-                || member.symbol.declaration.name.contains(".setter : "),
+                || member.entry.declaration.name.contains(".setter : "),
             generic: member.generic?.includingReceiver(receiver.mode)
         )
     }
@@ -742,11 +745,11 @@ public actor NativeSwiftType: Hashable {
         classReceiver: Bool
     ) throws -> NativeSwiftFunction<Signature> {
         try NativeSwiftFunction(
-            symbol: member.symbol,
+            entry: member.entry,
             metadata: metadata,
             owner: self,
             consumesArguments: consumesArguments
-                || member.symbol.declaration.name.contains(".setter : "),
+                || member.entry.declaration.name.contains(".setter : "),
             generic: classReceiver
                 ? member.generic.map { try $0.includingReceiver(.object) } : member.generic
         )
@@ -786,7 +789,7 @@ public actor NativeSwiftType: Hashable {
         }
         let member = metadata is AnyClass ? "__allocating_" + name : name
         let resultName = try initializerResultName(signature)
-        let symbol = try resolveMember(
+        let initializer = try resolveMember(
             signature: signature,
             genericArguments: genericArguments,
             inherited: false,
@@ -804,7 +807,7 @@ public actor NativeSwiftType: Hashable {
                 )
         }
         return try prepareFunction(
-            symbol,
+            initializer,
             consumesArguments: true,
             classReceiver: metadata is AnyClass
         )
@@ -853,7 +856,7 @@ public actor NativeSwiftType: Hashable {
         declaredAs declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) throws -> NativeSwiftFunction<Signature> {
-        let symbol = try resolveMember(
+        let member = try resolveMember(
             signature: signature,
             genericArguments: genericArguments,
             exact: SwiftMemberLookup.isQualified(name),
@@ -866,7 +869,7 @@ public actor NativeSwiftType: Hashable {
                 ? NativeDeclaration(name: member, language: .swift)
                 : swiftFunctionDeclaration(named: member, as: signature)
         }
-        return try prepareFunction(symbol, classReceiver: symbol.metadata is AnyClass)
+        return try prepareFunction(member, classReceiver: member.metadata is AnyClass)
     }
 
     /// Resolves and prepares a static or class method without blocking the caller's executor.
@@ -939,7 +942,7 @@ public actor NativeSwiftType: Hashable {
         mutating isMutating: Bool? = nil,
         consuming isConsuming: Bool = false
     ) throws -> NativeSwiftMethod<(Value) -> Void> {
-        let symbol = try resolveMember(
+        let member = try resolveMember(
             signature: ((Value) -> Void).self,
             exact: SwiftMemberLookup.isQualified(name),
             explicitSignature: SwiftMemberLookup.hasSignature(name),
@@ -954,14 +957,14 @@ public actor NativeSwiftType: Hashable {
                 isStatic: false
             )
         }
-        let generic = symbol.generic
+        let generic = member.generic
         let receiver = try receiverPlan(
             mutating: isMutating,
             consuming: isConsuming,
             generic: generic,
             receiverABI: receiverABI
         )
-        return try prepareMethod(symbol, receiver: receiver, consumesArguments: true)
+        return try prepareMethod(member, receiver: receiver, consumesArguments: true)
     }
 
     /// Resolves and prepares a property setter without blocking the caller's executor.
@@ -1008,7 +1011,7 @@ public actor NativeSwiftType: Hashable {
         declaredAs declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) throws -> NativeSwiftFunction<(Value) -> Void> {
-        let symbol = try resolveMember(
+        let member = try resolveMember(
             signature: ((Value) -> Void).self,
             exact: SwiftMemberLookup.isQualified(name),
             explicitSignature: SwiftMemberLookup.hasSignature(name),
@@ -1024,9 +1027,9 @@ public actor NativeSwiftType: Hashable {
             )
         }
         return try prepareFunction(
-            symbol,
+            member,
             consumesArguments: true,
-            classReceiver: symbol.metadata is AnyClass
+            classReceiver: member.metadata is AnyClass
         )
     }
 
@@ -1419,7 +1422,7 @@ extension NativeSwiftType {
         consuming isConsuming: Bool = false
     ) throws -> NativeSwiftMethod<Signature> {
         let result = try getterResult(signature)
-        let symbol = try resolveMember(
+        let member = try resolveMember(
             signature: signature,
             exact: SwiftMemberLookup.isQualified(name),
             explicitSignature: SwiftMemberLookup.hasSignature(name),
@@ -1434,14 +1437,14 @@ extension NativeSwiftType {
                 isStatic: false
             )
         }
-        let generic = symbol.generic
+        let generic = member.generic
         let receiver = try receiverPlan(
             mutating: isMutating,
             consuming: isConsuming,
             generic: generic,
             receiverABI: receiverABI
         )
-        return try prepareMethod(symbol, receiver: receiver)
+        return try prepareMethod(member, receiver: receiver)
     }
 
     /// Resolves and prepares a getter without blocking the caller's executor.
@@ -1481,7 +1484,7 @@ extension NativeSwiftType {
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) throws -> NativeSwiftFunction<Signature> {
         let result = try getterResult(signature)
-        let symbol = try resolveMember(
+        let member = try resolveMember(
             signature: signature,
             exact: SwiftMemberLookup.isQualified(name),
             explicitSignature: SwiftMemberLookup.hasSignature(name),
@@ -1496,7 +1499,7 @@ extension NativeSwiftType {
                 isStatic: true
             )
         }
-        return try prepareFunction(symbol, classReceiver: symbol.metadata is AnyClass)
+        return try prepareFunction(member, classReceiver: member.metadata is AnyClass)
     }
 
     /// Resolves and prepares a static or class property getter without blocking the caller's executor.

@@ -72,15 +72,15 @@ extension NativeSwiftImportedReplacement: @unchecked Sendable where Implementati
 
 extension ABIRuntime {
     nonisolated func prepareSwiftImportReplacementAndWait(
-        target: ResolvedSymbol,
-        replacement: ResolvedSymbol,
+        target: NativeDeclaration,
+        replacement: SwiftEntry,
         importer: ImageSelector,
         provider: ImageSelector?,
         owner: (any Sendable)?
     ) throws -> SwiftReplacementStorage {
         let selection = try ImportedFunctionSelection(
             resolver: resolver,
-            declaration: target.declaration,
+            declaration: target,
             importer: importer,
             provider: provider,
             language: .swift
@@ -338,8 +338,8 @@ extension NativeSwiftFunction {
         }
         try SwiftErrorPlan.validateReplacement(replacement.errorPlan, for: errorPlan)
         let storage = try runtime.prepareSwiftImportReplacementAndWait(
-            target: symbol,
-            replacement: replacement.symbol,
+            target: declaration,
+            replacement: replacement.entry,
             importer: importer,
             provider: provider,
             owner: owner
@@ -590,8 +590,8 @@ extension NativeSwiftMethod {
     ) throws -> NativeSwiftImportedReplacement<NativeSwiftMethodImplementation<Signature>> {
         try SwiftErrorPlan.validateReplacement(replacement.errorPlan, for: errorPlan)
         let storage = try runtime.prepareSwiftImportReplacementAndWait(
-            target: symbol,
-            replacement: replacement.symbol,
+            target: declaration,
+            replacement: replacement.entry,
             importer: importer,
             provider: provider,
             owner: owner

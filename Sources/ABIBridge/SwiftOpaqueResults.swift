@@ -8,7 +8,7 @@ final class SwiftOpaqueResultPlan: Sendable {
     private init(
         metadata: Any.Type,
         classBound: Bool,
-        owners: [ResolvedSymbol],
+        owners: [NativeImage],
         resolver: SymbolResolver
     ) throws {
         let layout = ABISwiftGetValueLayout(unsafeBitCast(metadata, to: UnsafeRawPointer.self))
@@ -20,19 +20,19 @@ final class SwiftOpaqueResultPlan: Sendable {
             metadata: metadata,
             type: type,
             resolver: resolver,
-            retaining: owners.map(\.image)
+            retaining: owners
         )
     }
 
     static func make(
         for result: Any.Type,
-        symbol: ResolvedSymbol,
+        entry: SwiftEntry,
         resolver: SymbolResolver?
     ) throws -> SwiftOpaqueResultPlan? {
         guard result == NativeSwiftValue.self || result == NativeSwiftBorrowedValue.self else {
             return nil
         }
-        guard let origin = DeclarationKey.demangle(symbol.linkageName, language: .swift) else {
+        guard let origin = DeclarationKey.demangle(entry.linkageName, language: .swift) else {
             throw ABIResolutionError.metadataUnavailable(
                 "The matched opaque declaration is unavailable."
             )
@@ -48,29 +48,29 @@ final class SwiftOpaqueResultPlan: Sendable {
                 "Opaque result storage requires the outer native result's complete type."
             )
         }
-        return try resolve(symbol: symbol, resolver: resolver)
+        return try resolve(entry: entry, resolver: resolver)
     }
 
     static func resolve(
-        symbol: ResolvedSymbol,
+        entry: SwiftEntry,
         resolver: SymbolResolver?
     ) throws -> SwiftOpaqueResultPlan {
-        let prepared = try prepare(symbol: symbol, resolver: resolver, indices: [0], binding: nil)
+        let prepared = try prepare(entry: entry, resolver: resolver, indices: [0], binding: nil)
         return prepared[0]!
     }
 
     static func resolve(
-        symbol: ResolvedSymbol,
+        entry: SwiftEntry,
         resolver: SymbolResolver,
         indices: Set<Int>,
         binding: SwiftGenericBinding
     ) throws -> [Int: SwiftRuntimeValuePlan] {
-        try prepare(symbol: symbol, resolver: resolver, indices: indices, binding: binding)
+        try prepare(entry: entry, resolver: resolver, indices: indices, binding: binding)
             .mapValues(\.value)
     }
 
     private static func prepare(
-        symbol: ResolvedSymbol,
+        entry: SwiftEntry,
         resolver: SymbolResolver?,
         indices: Set<Int>,
         binding: SwiftGenericBinding?
@@ -80,7 +80,7 @@ final class SwiftOpaqueResultPlan: Sendable {
                 "Opaque results require source declaration lookup."
             )
         }
-        guard var origin = DeclarationKey.demangle(symbol.linkageName, language: .swift) else {
+        guard var origin = DeclarationKey.demangle(entry.linkageName, language: .swift) else {
             throw ABIResolutionError.metadataUnavailable(
                 "The matched opaque declaration is unavailable."
             )
@@ -94,7 +94,7 @@ final class SwiftOpaqueResultPlan: Sendable {
                 language: .swift,
                 kind: .data
             ),
-            in: symbol.image,
+            in: entry.provenance,
             loading: .loadedOnly
         )
         let descriptor = try Descriptor(symbolDescriptor)
@@ -135,7 +135,7 @@ final class SwiftOpaqueResultPlan: Sendable {
             results[index] = try SwiftOpaqueResultPlan(
                 metadata: unsafeBitCast(response.address, to: Any.Type.self),
                 classBound: descriptor.isClassBound(index: index, binding: binding),
-                owners: [symbol, symbolDescriptor, accessor],
+                owners: [entry.provenance, symbolDescriptor.image, accessor.image],
                 resolver: resolver
             )
         }

@@ -39,30 +39,30 @@ final class SwiftCall: Sendable {
     }
 
     @unsafe func unsafeInvoke<Result, each Argument>(
-        symbol: ResolvedSymbol, context: UnsafeRawPointer? = nil,
+        entry: SwiftEntry, context: UnsafeRawPointer? = nil,
         trailingValue: NativeValueStorage? = nil, receiverStorage: NativeValueStorage? = nil, retaining owner: Any? = nil,
         retainingCode codeOwner: Any? = nil,
-        didInvoke: (() -> Void)? = nil, implementation: SwiftImplementation? = nil,
+        didInvoke: (() -> Void)? = nil,
         _ values: repeat each Argument
     ) throws -> Result {
         try self.values.requireIndependentResult()
-        return try unsafe invoke(symbol: symbol, context: context, trailingValue: trailingValue, receiverStorage: receiverStorage,
-            retaining: owner, retainingCode: codeOwner, didInvoke: didInvoke, implementation: implementation, repeat each values) { output, owner, codeOwner in
+        return try unsafe invoke(entry: entry, context: context, trailingValue: trailingValue, receiverStorage: receiverStorage,
+            retaining: owner, retainingCode: codeOwner, didInvoke: didInvoke, repeat each values) { output, owner, codeOwner in
             try self.values.decode(output, retaining: owner, retainingCode: codeOwner)
         }
     }
 
     @unsafe func unsafeInvoke<Result: ~Copyable, each Argument>(
-        symbol: ResolvedSymbol, context: UnsafeRawPointer? = nil,
+        entry: SwiftEntry, context: UnsafeRawPointer? = nil,
         trailingValue: NativeValueStorage? = nil, receiverStorage: NativeValueStorage? = nil, retaining owner: Any? = nil,
         retainingCode codeOwner: Any? = nil,
-        didInvoke: (() -> Void)? = nil, implementation: SwiftImplementation? = nil,
+        didInvoke: (() -> Void)? = nil,
         _ values: repeat each Argument,
         withResult body: (NativeSwiftBorrowedValue) throws -> Result
     ) throws -> Result {
         let result = try self.values.scopedResult()
-        return try unsafe invoke(symbol: symbol, context: context, trailingValue: trailingValue, receiverStorage: receiverStorage,
-            retaining: owner, retainingCode: codeOwner, didInvoke: didInvoke, implementation: implementation, repeat each values) { output, _, _ in
+        return try unsafe invoke(entry: entry, context: context, trailingValue: trailingValue, receiverStorage: receiverStorage,
+            retaining: owner, retainingCode: codeOwner, didInvoke: didInvoke, repeat each values) { output, _, _ in
             try result.withBorrowedResult(output, body)
         }
     }
@@ -95,18 +95,19 @@ final class SwiftCall: Sendable {
     }
 
     @unsafe func invoke<Result: ~Copyable, each Argument>(
-        symbol: ResolvedSymbol, context: UnsafeRawPointer? = nil,
+        entry: SwiftEntry, context: UnsafeRawPointer? = nil,
         trailingValue: NativeValueStorage? = nil, receiverStorage: NativeValueStorage? = nil, retaining owner: Any? = nil,
         retainingCode codeOwner: Any? = nil,
-        didInvoke: (() -> Void)? = nil, implementation: SwiftImplementation? = nil,
+        didInvoke: (() -> Void)? = nil,
         _ values: repeat each Argument,
         processingResult: (NativeValueStorage, Any?, Any?) throws -> Result
     ) throws -> Result {
-        try unsafe symbol.withUnsafeAddress { address in
+        try unsafe entry.withFunction { function in
             try unsafe invoke(
-                function: implementation?.function ?? ABIUnsafeFunctionAtAddress(address),
-                context: context, trailingValue: trailingValue, receiverStorage: receiverStorage, retaining: (owner ?? symbol, implementation),
-                retainingCode: (symbol.image, implementation, codeOwner), images: [symbol.image] + [implementation?.image].compactMap { $0 },
+                function: function,
+                context: context, trailingValue: trailingValue, receiverStorage: receiverStorage,
+                retaining: (owner ?? entry.symbol, entry.implementation),
+                retainingCode: (entry.symbol.image, entry.implementation, codeOwner), images: entry.codeImages,
                 didInvoke: didInvoke, repeat each values, processingResult: processingResult
             )
         }

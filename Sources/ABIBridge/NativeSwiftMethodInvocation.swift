@@ -137,7 +137,7 @@ func prepareSwiftMethodHandler<Signature, Result, each Argument>(
         @escaping @Sendable (NativeSwiftMethodInvocation<Signature>, repeat each Argument) throws ->
         Result
 ) -> SwiftHookHandler {
-    let declaration = method.symbol.declaration
+    let declaration = method.declaration
     let description = hookDescription(
         declaration: declaration,
         signature: Signature.self,
@@ -219,7 +219,7 @@ extension NativeSwiftMethod {
                 retaining: self
             )
             let receiverView = SwiftHookReceiverView(self)
-            let declaration = symbol.declaration
+            let declaration = self.declaration
             let description = hookDescription(
                 declaration: declaration,
                 signature: Signature.self,

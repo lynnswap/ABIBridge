@@ -393,7 +393,7 @@ struct SwiftImportedReplacementTests {
         }
         let storage = try SwiftReplacementStorage(
             slots: slots,
-            replacement: replacement.symbol,
+            replacement: replacement.entry,
             retaining: fixture,
             codeOwner: nil,
             transport: transport
@@ -528,7 +528,7 @@ struct SwiftImportedReplacementTests {
         )
         let storage = try SwiftReplacementStorage(
             slots: [(UInt(bitPattern: page), .unsigned)],
-            replacement: replacement.symbol,
+            replacement: replacement.entry,
             retaining: fixture,
             codeOwner: nil,
             transport: transport
