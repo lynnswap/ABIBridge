@@ -501,7 +501,7 @@ extension ABIRuntime {
         declaredSignature: String?,
         valueABIs: [NativeSwiftType: NativeType],
         resolve: (NativeDeclaration) throws -> ResolvedSymbol,
-        candidates: (NativeDeclaration) throws -> [ResolvedSymbol]
+        candidates: (NativeDeclaration) throws -> [SwiftCandidate]
     ) throws -> NativeSwiftFunction<Signature> {
         let description = try SwiftFunctionSignature(signature)
         let usesBinding =
@@ -521,33 +521,21 @@ extension ABIRuntime {
                 valueABIs: valueABIs
             )
         }
-        var preparationFailure: (any Error)?
-        let matches = try candidates(declaration).map(SwiftEntry.init(symbol:)).compactMap {
-            entry -> (SwiftEntry, SwiftGenericCallPlan)? in
-            do {
-                let plan = try SwiftGenericCallPlan(
-                    entry: entry,
-                    genericArguments: genericArguments,
-                    signature: description,
-                    resolver: resolver,
-                    declaredSignature: declaredSignature,
-                    valueABIs: valueABIs
-                )
-                return try plan.matches(description) ? (entry, plan) : nil
-            } catch ABIResolutionError.signatureMismatch { return nil } catch {
-                preparationFailure = error; return nil
-            }
-        }
-        if matches.count > 1 {
-            throw ABIResolutionError.ambiguousDeclaration(
-                declaration,
-                candidates: matches.map { $0.0.linkageName }
+        let selection = try SwiftCandidateSelection(candidates(declaration)) { candidate in
+            let plan = try SwiftGenericCallPlan(
+                entry: candidate.entry,
+                genericArguments: genericArguments,
+                signature: description,
+                resolver: resolver,
+                declaredSignature: declaredSignature,
+                valueABIs: valueABIs
             )
+            return try plan.matches(description) ? plan : nil
         }
-        if let (entry, plan) = matches.first {
+        if let (entry, plan) = try selection.selected(for: declaration) {
             return try NativeSwiftFunction(entry: entry, resolver: resolver, generic: plan)
         }
-        if let preparationFailure { throw preparationFailure }
+        if let failure = selection.failure { throw failure }
         throw ABIResolutionError.declarationNotFound(declaration)
     }
 

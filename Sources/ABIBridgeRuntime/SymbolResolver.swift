@@ -407,7 +407,7 @@ package final class RuntimeSymbolResolver: Sendable {
         _ declaration: RuntimeDeclaration,
         in selector: RuntimeImageSelector,
         loading: RuntimeImageLoadingPolicy
-    ) throws -> [RuntimeSymbol] {
+    ) throws -> [RuntimeSwiftCandidate] {
         try validate(declaration)
         return try swiftDeclarationCandidates(
             declaration,
@@ -421,7 +421,7 @@ package final class RuntimeSymbolResolver: Sendable {
         in image: RuntimeImage?,
         loading: RuntimeImageLoadingPolicy = .loadedOnly,
         extensionsOnly: Bool = false
-    ) throws -> [RuntimeSymbol] {
+    ) throws -> [RuntimeSwiftCandidate] {
         try validate(declaration)
         let scope =
             try image.map { SearchScope.images([loading == .ifNeeded ? try $0.opened() : $0]) }
@@ -437,10 +437,13 @@ package final class RuntimeSymbolResolver: Sendable {
         _ declaration: RuntimeDeclaration,
         in scope: SearchScope,
         extensionsOnly: Bool
-    ) throws -> [RuntimeSymbol] {
+    ) throws -> [RuntimeSwiftCandidate] {
         let query = SymbolQuery(declaration)
         let indexes = state.withLock { state in scope.images.map { state.index(for: $0) } }
-        func matches(_ source: RuntimeSymbol.Source) -> [RuntimeSymbol] {
+        func matches(
+            _ source: RuntimeSymbol.Source,
+            in indexes: [SymbolIndex]
+        ) -> [RuntimeSwiftCandidate] {
             state.withLock { _ in
                 indexes.flatMap {
                     $0.swiftDeclarationCandidates(
@@ -451,12 +454,32 @@ package final class RuntimeSymbolResolver: Sendable {
                 }
             }
         }
-        let primary = matches(.image)
-        if !primary.isEmpty { return primary }
-        loadSharedCacheSymbols(for: query, into: indexes)
-        let fallback = matches(.sharedCache)
-        if fallback.isEmpty && !scope.isComplete { throw RuntimeResolutionError.imageUnavailable }
-        return fallback
+        let primary = matches(.image, in: indexes)
+        guard !primary.isEmpty else {
+            loadSharedCacheSymbols(for: query, into: indexes)
+            let fallback = matches(.sharedCache, in: indexes)
+            if fallback.isEmpty && !scope.isComplete {
+                throw RuntimeResolutionError.imageUnavailable
+            }
+            return fallback
+        }
+        // A shared-cache image exports a member's dispatch thunk while only the
+        // cache's local symbols describe the member's code.
+        let implemented = Set(
+            primary.lazy.filter { $0.record.role == .implementation }.map(\.record.identity)
+        )
+        let dispatched = primary.filter {
+            $0.record.role == .dispatchThunk && !implemented.contains($0.record.identity)
+        }
+        guard !dispatched.isEmpty else { return primary }
+        let images = Set(dispatched.map(\.symbol.image))
+        let owners = indexes.filter { images.contains($0.image) }
+        let identities = Set(dispatched.map(\.record.identity))
+        loadSharedCacheSymbols(for: query, into: owners)
+        return primary
+            + matches(.sharedCache, in: owners).filter {
+                $0.record.role == .implementation && identities.contains($0.record.identity)
+            }
     }
 
     package func removeCachedResults() {

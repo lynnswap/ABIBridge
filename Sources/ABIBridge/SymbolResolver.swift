@@ -72,13 +72,13 @@ final class SymbolResolver: Sendable {
         _ declaration: NativeDeclaration,
         in selector: ImageSelector,
         loading: ImageLoadingPolicy
-    ) throws -> [ResolvedSymbol] {
+    ) throws -> [SwiftCandidate] {
         try withRuntimeErrors {
             try runtime.swiftDeclarationCandidates(
                 declaration.runtimeValue,
                 in: selector.runtimeValue,
                 loading: loading.runtimeValue
-            ).map(ResolvedSymbol.init)
+            ).map(SwiftCandidate.init)
         }
     }
     func swiftDeclarationCandidates(
@@ -86,14 +86,14 @@ final class SymbolResolver: Sendable {
         in image: NativeImage?,
         loading: ImageLoadingPolicy = .loadedOnly,
         extensionsOnly: Bool = false
-    ) throws -> [ResolvedSymbol] {
+    ) throws -> [SwiftCandidate] {
         try withRuntimeErrors {
             try runtime.swiftDeclarationCandidates(
                 declaration.runtimeValue,
                 in: image?.runtimeValue,
                 loading: loading.runtimeValue,
                 extensionsOnly: extensionsOnly
-            ).map(ResolvedSymbol.init)
+            ).map(SwiftCandidate.init)
         }
     }
     func removeCachedResults() { runtime.removeCachedResults() }

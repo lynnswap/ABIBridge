@@ -1,3 +1,4 @@
+import ABIBridgeRuntime
 import ABIBridgeCore
 
 /// A selected Swift declaration and the code that calls of it run.
@@ -15,13 +16,32 @@ struct SwiftEntry: Sendable {
     let linkageName: String
     /// The image that holds the declaration's descriptors.
     let provenance: NativeImage
+    /// What the symbol declares, when it is a Swift declaration.
+    let record: RuntimeSwiftDeclaration?
     /// Code selected instead of the symbol's address.
     var implementation: SwiftImplementation?
 
     init(symbol: ResolvedSymbol) {
+        self.init(
+            symbol: symbol,
+            record: RuntimeSwiftDeclaration(linkageName: symbol.linkageName),
+            declaration: symbol.declaration,
+            linkageName: symbol.linkageName
+        )
+    }
+
+    /// An entry whose symbol, such as a dispatch thunk, can name a
+    /// declaration other than its own.
+    init(
+        symbol: ResolvedSymbol,
+        record: RuntimeSwiftDeclaration?,
+        declaration: NativeDeclaration,
+        linkageName: String
+    ) {
         self.symbol = symbol
-        declaration = symbol.declaration
-        linkageName = symbol.linkageName
+        self.record = record
+        self.declaration = declaration
+        self.linkageName = linkageName
         provenance = symbol.image
     }
 
@@ -52,6 +72,36 @@ struct SwiftEntry: Sendable {
         return try SwiftImplementation(
             function: implementation.function,
             retaining: (owner, implementation)
+        )
+    }
+}
+
+/// A Swift symbol found for a lookup, with the declaration it defines or dispatches.
+struct SwiftCandidate: Sendable {
+    let symbol: ResolvedSymbol
+    let record: RuntimeSwiftDeclaration
+    /// The declaration the symbol defines or, for a thunk, dispatches.
+    let declaration: NativeDeclaration
+    /// The declaration's name without the module of an extension that declares it.
+    let memberName: String
+
+    init(_ value: RuntimeSwiftCandidate) {
+        symbol = ResolvedSymbol(value.symbol)
+        record = value.record
+        declaration = NativeDeclaration(value.declaration)
+        memberName = value.memberName
+    }
+
+    /// The entry a call through this candidate uses. A protocol requirement
+    /// is called through its dispatch thunk, which selects the witness; other
+    /// candidates name the declaration they define or dispatch.
+    var entry: SwiftEntry {
+        SwiftEntry(
+            symbol: symbol,
+            record: record,
+            declaration: record.context == .protocolRequirement ? symbol.declaration : declaration,
+            linkageName: record.context == .protocolRequirement
+                ? symbol.linkageName : record.identity
         )
     }
 }

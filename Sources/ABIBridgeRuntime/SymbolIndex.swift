@@ -445,6 +445,7 @@ package final class SymbolIndex {
     private var imageLinkerNames: [[UInt8]: [IndexedSymbol]] = [:]
     private var swiftExtensions: [Scope: [Int: [IndexedSymbol]]] = [:]
     private var swiftMembers: [Scope: [Int: [IndexedSymbol]]] = [:]
+    private var swiftRecords: [IndexedSymbol: RuntimeSwiftDeclaration?] = [:]
 
     package init(image: RuntimeImage) {
         self.image = image
@@ -940,11 +941,13 @@ package final class SymbolIndex {
         )
     }
 
+    // A dispatch thunk is keyed by the member it dispatches, so one query
+    // returns a declaration's code and its thunk together.
     package func swiftDeclarationCandidates(
         _ query: SymbolQuery,
         source: RuntimeSymbol.Source,
         extensionsOnly: Bool
-    ) -> [RuntimeSymbol] {
+    ) -> [RuntimeSwiftCandidate] {
         guard let key = SwiftMemberLookup.key(query.declaration.name) else { return [] }
         var symbols: [IndexedSymbol] = []
         for bucket in [SwiftBucket.knownModule, .fallback] {
@@ -959,9 +962,7 @@ package final class SymbolIndex {
             if swiftMembers[scope] == nil {
                 var members: [Int: [IndexedSymbol]] = [:]
                 for symbol in self.symbols(for: query, swiftBucket: bucket) {
-                    guard let name = DeclarationKey.demangle(symbol.name, language: .swift) else {
-                        continue
-                    }
+                    guard let name = Self.memberName(of: symbol) else { continue }
                     for name in [name, Self.operatorAlias(name)].compactMap({ $0 }) {
                         guard let key = SwiftMemberLookup.key(name) else { continue }
                         members[DeclarationKey.fingerprint(key), default: []].append(symbol)
@@ -974,23 +975,46 @@ package final class SymbolIndex {
         var addresses: Set<UInt64> = []
         return symbols.compactMap { symbol in
             guard symbol.source == source,
-                let name = DeclarationKey.demangle(symbol.name, language: .swift),
-                extensionsOnly == (Self.extensionMemberName(name) != nil),
+                let record = record(of: symbol),
+                extensionsOnly == record.context.isExtension,
+                let name = Self.memberName(of: symbol),
                 [name, Self.operatorAlias(name)].compactMap({ $0 }).contains(where: {
                     SwiftMemberLookup.key($0) == key
                 }),
                 let section = sections.first(where: { $0.range.contains(symbol.address) }),
-                section.accepts(query.declaration.kind), addresses.insert(symbol.address).inserted
+                section.accepts(query.declaration.kind),
+                let spelling = DeclarationKey.demangle(symbol.name, language: .swift),
+                addresses.insert(symbol.address).inserted
             else { return nil }
-            return RuntimeSymbol(
+            return RuntimeSwiftCandidate(
+                symbol: RuntimeSymbol(
+                    declaration: .init(name: spelling, language: .swift),
+                    image: image,
+                    sectionRange: section.range,
+                    source: source,
+                    address: symbol.address,
+                    linkageName: symbol.name
+                ),
+                record: record,
                 declaration: .init(name: name, language: .swift),
-                image: image,
-                sectionRange: section.range,
-                source: source,
-                address: symbol.address,
-                linkageName: symbol.name
+                memberName: Self.extensionMemberName(name) ?? name
             )
         }
+    }
+
+    private func record(of symbol: IndexedSymbol) -> RuntimeSwiftDeclaration? {
+        if let cached = swiftRecords[symbol] { return cached }
+        let record = RuntimeSwiftDeclaration(linkageName: symbol.name)
+        swiftRecords[symbol] = record
+        return record
+    }
+
+    // The source name of the declaration a symbol defines or dispatches. Swift
+    // mangles a dispatch thunk as its declaration followed by `Tj`.
+    private static func memberName(of symbol: IndexedSymbol) -> String? {
+        let mangled =
+            symbol.name.hasSuffix("Tj") ? String(symbol.name.dropLast(2)) : symbol.name
+        return DeclarationKey.demangle(mangled, language: .swift)
     }
 
     // Fingerprints keep the index compact; the full normalized spelling is
