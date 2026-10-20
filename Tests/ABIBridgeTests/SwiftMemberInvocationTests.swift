@@ -485,6 +485,103 @@ struct SwiftMemberInvocationTests {
         #expect(ObjectIdentifier(withBoxesType) == ObjectIdentifier(String.self))
         #expect(!receiver.isConsumed && !input.isConsumed && !owner.isConsumed)
     }
+
+    @Test func classMembersExportedOnlyThroughDispatchThunksCaptureTheSelectedEntry() async throws {
+        let module = "ThunkOnly_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let prefix = "_$s\(module.utf8.count)\(module)"
+        let lists = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString
+        )
+        try FileManager.default.createDirectory(at: lists, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: lists) }
+        // Keep dispatch thunks and method descriptors while hiding and stripping
+        // member bodies, as frameworks such as SimulatorKit ship them.
+        let hidden = lists.appendingPathComponent("hidden.txt")
+        try ["4BaseC", "7DerivedC"].flatMap { owner in
+            ["F", "vg", "vs", "vM"].map { prefix + owner + "*" + $0 }
+        }.joined(separator: "\n").write(to: hidden, atomically: true, encoding: .utf8)
+        let library = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                public enum Mode { case on, off }
+                open class Base {
+                    public init() {}
+                    open var mode: Mode = .off
+                    open var count: Int64 = 0
+                    @inline(never) open func value(_ input: Int64) -> Int64 { input + 1 }
+                }
+                open class Derived: Base {
+                    @inline(never) public override func value(_ input: Int64) -> Int64 { input + 2 }
+                }
+                public func makeBase() -> Base { Base() }
+                public func makeDerived() -> Base { Derived() }
+                @inline(never) public func describe(_ object: Base) -> String { "\\(object.mode):\\(object.count)" }
+                """,
+            stripped: true,
+            linkArguments: [
+                "-O", "-enable-library-evolution", "-Xlinker", "-unexported_symbols_list",
+                "-Xlinker", hidden.path,
+            ]
+        )
+        defer { library.cleanup() }
+
+        let runtime = ABIRuntime(), scope = ImageSelector.path(library.libraryURL)
+        await #expect(throws: ABIResolutionError.self) {
+            try await runtime.resolve(
+                .init(name: module + ".Base.value(Swift.Int64) -> Swift.Int64", language: .swift),
+                in: scope
+            )
+        }
+        let base = try await runtime.resolveSwiftType(named: module + ".Base", in: scope)
+        let derived = try await runtime.resolveSwiftType(named: module + ".Derived", in: scope)
+        let mode = try await runtime.resolveSwiftType(named: module + ".Mode", in: scope)
+        func make(_ name: String) async throws -> AnyObject {
+            let make = try await runtime.resolveSwiftFunction(
+                named: module + "." + name + "() -> " + base.name,
+                as: (() -> AnyObject).self,
+                in: scope
+            )
+            return try unsafe make.unsafeInvoke()
+        }
+        let baseObject = try await make("makeBase"), derivedObject = try await make("makeDerived")
+        let describe = try await runtime.resolveSwiftFunction(
+            named: module + ".describe(" + base.name + ") -> Swift.String",
+            as: ((AnyObject) -> String).self,
+            in: scope
+        )
+
+        // The lookup type's entry is captured; a subclass receiver does not redispatch.
+        let baseValue = try await base.resolveMethod(
+            named: "value(_:)",
+            as: ((Int64) -> Int64).self
+        )
+        #expect(try unsafe baseValue.unsafeInvoke(on: baseObject, 40) == 41)
+        #expect(try unsafe baseValue.unsafeInvoke(on: derivedObject, 40) == 41)
+        // An override has no thunk of its own; the inherited slot of the lookup type holds it.
+        let derivedValue = try derived.resolveMethodAndWait(
+            named: "value(_:)",
+            as: ((Int64) -> Int64).self
+        )
+        #expect(try unsafe derivedValue.unsafeInvoke(on: derivedObject, 40) == 42)
+        let bound = try await runtime.object(derivedObject).resolveMethod(
+            named: "value(_:)",
+            as: ((Int64) -> Int64).self
+        )
+        #expect(try unsafe bound.unsafeInvoke(40) == 42)
+
+        let setCount = try await base.resolveSetter(named: "count", as: Int64.self)
+        let getCount = try await base.resolveGetter(named: "count", as: (() -> Int64).self)
+        try unsafe setCount.unsafeInvoke(on: baseObject, 7)
+        #expect(try unsafe getCount.unsafeInvoke(on: baseObject) == 7)
+        // A runtime-only resilient value binds its declaration through the thunk.
+        let setMode = try await base.resolveSetter(
+            named: "mode.setter : " + mode.name,
+            as: NativeSwiftValue.self,
+            valueABIs: [mode: .opaque(named: mode.name)]
+        )
+        try unsafe setMode.unsafeInvoke(on: baseObject, try mode.makeEnumCase(named: "on"))
+        #expect(try unsafe describe.unsafeInvoke(baseObject) == "on:7")
+    }
     #endif
 
     @MainActor @Test func extractedMethodsAndBindingsHaveIndependentReceiverLifetimes() async throws
