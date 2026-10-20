@@ -532,13 +532,15 @@ struct SwiftMemberInvocationTests {
         )
         defer { library.cleanup() }
         // A same-signature member in another module's extension does not hide
-        // the defining class's member.
+        // the defining class's member; one with another effect remains
+        // available.
         let extensions = try FixtureLibrary(
             swiftModule: "ThunkExtension_" + UUID().uuidString.replacingOccurrences(of: "-", with: ""),
             swiftSource: """
                 import \(module)
                 extension Base {
                     @inline(never) public func value(_ input: Int64) -> Int64 { input + 50 }
+                    public var count: Int64 { get async { 99 } }
                 }
                 """,
             linkArguments: ["-I", library.directory.path, library.libraryURL.path]
@@ -593,6 +595,12 @@ struct SwiftMemberInvocationTests {
         let getCount = try await base.resolveGetter(named: "count", as: (() -> Int64).self)
         try unsafe setCount.unsafeInvoke(on: baseObject, 7)
         #expect(try unsafe getCount.unsafeInvoke(on: baseObject) == 7)
+        let extensionCount = try await base.resolveGetter(
+            named: "count",
+            as: (() async -> Int64).self,
+            declaredAs: "() async -> Swift.Int64"
+        )
+        #expect(try await unsafe extensionCount.unsafeInvoke(on: baseObject) == 99)
         // A runtime-only resilient value binds its declaration through the thunk.
         let setMode = try await base.resolveSetter(
             named: "mode.setter : " + mode.name,

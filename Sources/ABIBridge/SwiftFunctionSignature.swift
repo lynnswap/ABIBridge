@@ -151,16 +151,6 @@ enum SwiftCallablePlan: Sendable {
                 entry: entry,
                 resolver: resolver
             )
-        // Code selected from a slot carries its own effect.
-        if entry.implementation != nil, description.isAsync != (entry.asyncEntry != nil) {
-            throw ABIResolutionError.signatureMismatch(
-                .init(
-                    declaration: entry.declaration,
-                    expected: description.isAsync ? "async" : "synchronous",
-                    found: [entry.asyncEntry != nil ? "async" : "synchronous"]
-                )
-            )
-        }
         if description.isAsync {
             guard let resolver else {
                 throw ABIResolutionError.metadataUnavailable(

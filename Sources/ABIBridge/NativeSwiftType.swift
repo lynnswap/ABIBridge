@@ -400,6 +400,7 @@ public actor NativeSwiftType: Hashable {
         _ declaration: NativeDeclaration,
         in image: NativeImage,
         exact: Bool = false,
+        asynchronous: Bool? = nil,
         genericContext: () throws -> SwiftGenericContext? = { nil }
     ) throws -> SwiftEntry {
         do {
@@ -410,7 +411,7 @@ public actor NativeSwiftType: Hashable {
         let dispatched = try SwiftCandidateSelection(
             resolver.swiftDeclarationCandidates(declaration, in: image)
                 .filter { !$0.record.runsOwnCode },
-            dispatch: dispatchedEntry
+            dispatch: { try self.dispatchedEntry($0, asynchronous: asynchronous) }
         ) { candidate, _ -> Void? in
             DeclarationKey.make(candidate.declaration.name, language: .swift) == key ? () : nil
         }
@@ -444,7 +445,13 @@ public actor NativeSwiftType: Hashable {
     // descriptor of a member. The member's code is then this type's
     // virtual-table entry: the implementation visible to this type, which
     // calls run without redispatching on the receiver.
-    private nonisolated func dispatchedEntry(_ candidate: SwiftCandidate) throws -> SwiftEntry {
+    ///
+    /// - Parameter asynchronous: The requested effect, when known. A slot
+    ///   with another effect does not apply to the request.
+    private nonisolated func dispatchedEntry(
+        _ candidate: SwiftCandidate,
+        asynchronous: Bool?
+    ) throws -> SwiftEntry {
         guard !candidate.record.isStatic else {
             throw ABIResolutionError.unsupportedDeclaration(
                 "\(candidate.declaration.name) is exported only through its dispatch thunk; class-method virtual-table entries are not selected."
@@ -458,6 +465,15 @@ public actor NativeSwiftType: Hashable {
             resolver: resolver,
             asynchronous: nil
         )
+        if let asynchronous, asynchronous != dispatch.isAsync {
+            throw ABIResolutionError.signatureMismatch(
+                .init(
+                    declaration: candidate.declaration,
+                    expected: asynchronous ? "async" : "synchronous",
+                    found: [dispatch.isAsync ? "async" : "synchronous"]
+                )
+            )
+        }
         let code = try SwiftSlotCode(
             at: dispatch.address,
             authentication: dispatch.authentication,
@@ -528,6 +544,7 @@ public actor NativeSwiftType: Hashable {
         var ownerName = try declarationName()
         var hasUnavailableExtensions = false
         var preparationFailure: (any Error)?
+        let asynchronous = try signature.map { try SwiftFunctionSignature($0).isAsync }
         while true {
             let owner: Any.Type = ownerClass ?? metadata
             let enclosing =
@@ -563,7 +580,12 @@ public actor NativeSwiftType: Hashable {
                             symbol: try resolver.resolve(request, in: ownerImage, loading: .loadedOnly)
                         )
                     } else {
-                        entry = try resolveDeclaredMember(request, in: ownerImage, exact: exact) {
+                        entry = try resolveDeclaredMember(
+                            request,
+                            in: ownerImage,
+                            exact: exact,
+                            asynchronous: asynchronous
+                        ) {
                             try ownerClass.flatMap { try SwiftGenericContext($0, owner: ownerName) }
                         }
                     }
@@ -601,7 +623,7 @@ public actor NativeSwiftType: Hashable {
                                 in: extensionsOnly ? nil : ownerImage,
                                 extensionsOnly: extensionsOnly
                             ),
-                            dispatch: dispatchedEntry
+                            dispatch: { try self.dispatchedEntry($0, asynchronous: asynchronous) }
                         ) { candidate, entry -> SwiftGenericCallPlan? in
                             let name = candidate.declaration.name
                             if explicitSignature,
