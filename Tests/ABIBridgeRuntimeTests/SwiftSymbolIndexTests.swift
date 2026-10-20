@@ -373,14 +373,21 @@ struct SwiftSymbolIndexTests {
             try RuntimeSymbolResolver().swiftDeclarationCandidates(request, in: image).first
         )
         #expect(thunk.record.role == .dispatchThunk)
+        // value() -> Swift.String: an overload that only local symbols describe.
+        let identity = thunk.record.identity
+        #expect(identity.hasSuffix("SiyF"))
+        let overload = String(identity.dropLast(4)) + "SSyF"
         let resolver = RuntimeSymbolResolver(capturingSharedCacheSymbols: { _, _, source in
             guard source == .loaded else { return nil }
             return SharedCacheSymbols.CapturedSymbols(
                 slide: 0,
                 readers: [
                     { record in
-                        ("_" + thunk.record.identity).withCString {
-                            record($0, thunk.symbol.address)
+                        // Candidates at one address are one definition.
+                        for (offset, name) in [identity, overload].enumerated() {
+                            ("_" + name).withCString {
+                                record($0, thunk.symbol.address + UInt64(offset * 4))
+                            }
                         }
                     }
                 ],
@@ -388,9 +395,9 @@ struct SwiftSymbolIndexTests {
             )
         })
         let candidates = try resolver.swiftDeclarationCandidates(request, in: image)
-        #expect(candidates.map(\.record.role) == [.dispatchThunk, .implementation])
-        #expect(candidates.map(\.symbol.source) == [.image, .sharedCache])
-        #expect(Set(candidates.map(\.record.identity)).count == 1)
+        #expect(candidates.map(\.record.role) == [.dispatchThunk, .implementation, .implementation])
+        #expect(candidates.map(\.symbol.source) == [.image, .sharedCache, .sharedCache])
+        #expect(Set(candidates.map(\.record.identity)) == [identity, overload])
     }
 
     @Test func laterLocalSymbolsRefreshPartialFallbackAndPreserveUnrelatedGroups() async throws {

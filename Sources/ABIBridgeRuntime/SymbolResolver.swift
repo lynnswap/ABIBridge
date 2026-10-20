@@ -454,20 +454,21 @@ package final class RuntimeSymbolResolver: Sendable {
                 }
             }
         }
+        // Image symbols take precedence; shared-cache local symbols describe
+        // code that the images do not. A dispatch thunk is not code, so images
+        // that export only thunks still consult the shared cache.
         let primary = matches(.image, in: indexes)
-        guard !primary.isEmpty else {
+        let implemented = Set(
+            primary.lazy.filter { $0.record.role == .implementation }.map(\.record.identity)
+        )
+        guard !implemented.isEmpty else {
             loadSharedCacheSymbols(for: query, into: indexes)
             let fallback = matches(.sharedCache, in: indexes)
             if fallback.isEmpty && !scope.isComplete {
                 throw RuntimeResolutionError.imageUnavailable
             }
-            return fallback
+            return primary + fallback
         }
-        // A shared-cache image exports a member's dispatch thunk while only the
-        // cache's local symbols describe the member's code.
-        let implemented = Set(
-            primary.lazy.filter { $0.record.role == .implementation }.map(\.record.identity)
-        )
         let dispatched = primary.filter {
             $0.record.role == .dispatchThunk && !implemented.contains($0.record.identity)
         }
