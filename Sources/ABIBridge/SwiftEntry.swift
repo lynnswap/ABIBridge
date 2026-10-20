@@ -39,9 +39,19 @@ struct SwiftEntry: Sendable {
     }
 
     /// The code a call runs, owned together with `owner`.
+    ///
+    /// Published code without an owner is pinned once per image generation,
+    /// so an owner is attached only when one exists.
     func implementation(retaining owner: (any Sendable)?) throws -> SwiftImplementation {
-        try unsafe withFunction { function in
-            try SwiftImplementation(function: function, retaining: (owner, implementation))
+        guard let implementation else {
+            return try unsafe symbol.withUnsafeAddress {
+                try SwiftImplementation(function: ABIUnsafeFunctionAtAddress($0), retaining: owner)
+            }
         }
+        guard let owner else { return implementation }
+        return try SwiftImplementation(
+            function: implementation.function,
+            retaining: (owner, implementation)
+        )
     }
 }
