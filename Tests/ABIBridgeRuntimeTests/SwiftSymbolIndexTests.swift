@@ -346,6 +346,60 @@ struct SwiftSymbolIndexTests {
         }
     }
 
+    @Test func dispatchThunksBringMemberCodeFromSharedCacheLocals() async throws {
+        let module = "ThunkFixture"
+        // Library evolution exports an open member's dispatch thunk; stripping
+        // removes the member's own local symbol, as in shared-cache images.
+        let fixture = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                open class Counter {
+                    public init() {}
+                    open func value() -> Int { 1 }
+                }
+                """,
+            stripped: true,
+            linkArguments: ["-parse-as-library", "-enable-library-evolution"]
+        )
+        defer { fixture.cleanup() }
+        let request = RuntimeDeclaration(
+            name: module + ".Counter.value() -> Swift.Int",
+            language: .swift
+        )
+        let image = try #require(
+            try await RuntimeSymbolResolver().images(matching: .path(fixture.libraryURL)).first
+        )
+        let thunk = try #require(
+            try RuntimeSymbolResolver().swiftDeclarationCandidates(request, in: image).first
+        )
+        #expect(thunk.record.role == .dispatchThunk)
+        // value() -> Swift.String: an overload that only local symbols describe.
+        let identity = thunk.record.identity
+        #expect(identity.hasSuffix("SiyF"))
+        let overload = String(identity.dropLast(4)) + "SSyF"
+        let resolver = RuntimeSymbolResolver(capturingSharedCacheSymbols: { _, _, source in
+            guard source == .loaded else { return nil }
+            return SharedCacheSymbols.CapturedSymbols(
+                slide: 0,
+                readers: [
+                    { record in
+                        // Candidates at one address are one definition.
+                        for (offset, name) in [identity, overload].enumerated() {
+                            ("_" + name).withCString {
+                                record($0, thunk.symbol.address + UInt64(offset * 4))
+                            }
+                        }
+                    }
+                ],
+                imageIdentity: image.identity
+            )
+        })
+        let candidates = try resolver.swiftDeclarationCandidates(request, in: image)
+        #expect(candidates.map(\.record.role) == [.dispatchThunk, .implementation, .implementation])
+        #expect(candidates.map(\.symbol.source) == [.image, .sharedCache, .sharedCache])
+        #expect(Set(candidates.map(\.record.identity)) == [identity, overload])
+    }
+
     @Test func laterLocalSymbolsRefreshPartialFallbackAndPreserveUnrelatedGroups() async throws {
         let fixture = try FixtureLibrary()
         defer { fixture.cleanup() }

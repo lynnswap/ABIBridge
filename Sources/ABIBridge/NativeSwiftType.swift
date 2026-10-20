@@ -401,33 +401,63 @@ public actor NativeSwiftType: Hashable {
         in image: NativeImage,
         exact: Bool = false,
         genericContext: () throws -> SwiftGenericContext? = { nil }
-    ) throws -> ResolvedSymbol {
+    ) throws -> SwiftEntry {
         do {
-            return try resolver.resolve(declaration, in: image, loading: .loadedOnly)
+            return SwiftEntry(symbol: try resolver.resolve(declaration, in: image, loading: .loadedOnly))
         } catch ABIResolutionError.declarationNotFound {
-            if exact {
-                let key = DeclarationKey.make(declaration.name, language: .swift)
-                let matches = try resolver.swiftDeclarationCandidates(
-                    declaration,
-                    in: nil,
-                    extensionsOnly: true
-                ).filter {
-                    let name = $0.declaration.name
-                    return DeclarationKey.make(name, language: .swift) == key
-                        || SymbolIndex.extensionMemberName(name).map {
-                            DeclarationKey.make($0, language: .swift) == key
-                        } == true
-                }
-                guard matches.count == 1 else {
-                    if matches.isEmpty { throw ABIResolutionError.declarationNotFound(declaration) }
-                    throw ABIResolutionError.ambiguousDeclaration(
+            guard exact else {
+                return SwiftEntry(
+                    symbol: try resolver.resolveSwiftExtension(
                         declaration,
-                        candidates: matches.map(\.linkageName)
+                        genericContext: genericContext()
                     )
-                }
-                return matches[0]
+                )
             }
-            return try resolver.resolveSwiftExtension(declaration, genericContext: genericContext())
+            let key = DeclarationKey.make(declaration.name, language: .swift)
+            let selection = try SwiftCandidateSelection(
+                resolver.swiftDeclarationCandidates(declaration, in: nil, extensionsOnly: true)
+            ) { candidate -> Void? in
+                [candidate.declaration.name, candidate.memberName].contains {
+                    DeclarationKey.make($0, language: .swift) == key
+                } ? () : nil
+            }
+            guard let (entry, _) = try selection.selected(for: declaration) else {
+                throw selection.failure ?? ABIResolutionError.declarationNotFound(declaration)
+            }
+            return entry
+        }
+    }
+
+    // A member named by its protocol: a requirement, called through its
+    // dispatch thunk so that the conformance selects the witness, or a
+    // protocol extension member.
+    private nonisolated func protocolMember(
+        _ request: NativeDeclaration,
+        in image: NativeImage
+    ) throws -> SwiftEntry? {
+        let entry: SwiftEntry
+        if SymbolIndex.extensionMemberName(request.name) != nil {
+            entry = try resolveDeclaredMember(request, in: image, exact: true)
+        } else if request.name.contains(".getter : ")
+            || SwiftFormalSyntax.topLevelArrow(in: request.name) != nil
+        {
+            let key = DeclarationKey.make(request.name, language: .swift)
+            let selection = try SwiftCandidateSelection(
+                resolver.swiftDeclarationCandidates(request, in: nil)
+            ) { candidate -> Void? in
+                candidate.record.role == .dispatchThunk
+                    && candidate.record.context == .protocolRequirement
+                    && DeclarationKey.make(candidate.declaration.name, language: .swift) == key
+                    ? () : nil
+            }
+            guard let (selected, _) = try selection.selected(for: request) else { return nil }
+            entry = selected
+        } else {
+            return nil
+        }
+        switch entry.record?.context {
+        case .protocolRequirement?, .protocolExtension?: return entry
+        default: return nil
         }
     }
 
@@ -465,58 +495,33 @@ public actor NativeSwiftType: Hashable {
             let request = try declaration(ownerName, usesBinding)
             if originalRequest == nil { originalRequest = request }
             let belongs = !exact || SwiftMemberLookup.belongs(request.name, to: ownerName)
-            if exact, !belongs, let signature {
-                let symbol: ResolvedSymbol?
-                if SymbolIndex.extensionMemberName(request.name) != nil {
-                    symbol = try resolveDeclaredMember(request, in: ownerImage, exact: true)
-                } else if request.name.contains(".getter : ")
-                    || SwiftFormalSyntax.topLevelArrow(in: request.name) != nil
-                {
-                    do {
-                        symbol = try resolver.resolve(
-                            .init(name: "dispatch thunk of " + request.name, language: .swift),
-                            in: .automatic,
-                            loading: .loadedOnly
-                        )
-                    } catch ABIResolutionError.declarationNotFound {
-                        symbol = nil
-                    }
-                } else {
-                    symbol = nil
-                }
-                if let symbol {
-                    let (callable, _, requirement) = try SwiftGenericDeclaration.callable(
-                        in: SwiftSyntax(symbol: symbol.linkageName)
-                    )
-                    if requirement != nil
-                        || callable.child(kind: "Extension")?.child(kind: "Protocol") != nil
-                    {
-                        let entry = SwiftEntry(symbol: symbol)
-                        let generic = try SwiftGenericCallPlan(
-                            entry: entry,
-                            genericArguments: genericArguments,
-                            signature: SwiftFunctionSignature(signature),
-                            resolver: resolver,
-                            implicitSelf: self,
-                            declaredSignature: declaredSignature,
-                            valueABIs: valueABIs
-                        )
-                        return (entry, metadata, generic)
-                    }
-                }
+            if exact, !belongs, let signature,
+                let entry = try protocolMember(request, in: ownerImage)
+            {
+                let generic = try SwiftGenericCallPlan(
+                    entry: entry,
+                    genericArguments: genericArguments,
+                    signature: SwiftFunctionSignature(signature),
+                    resolver: resolver,
+                    implicitSelf: self,
+                    declaredSignature: declaredSignature,
+                    valueABIs: valueABIs
+                )
+                return (entry, metadata, generic)
             }
             if belongs && (!usesBinding || exact || explicitSignature) {
                 do {
-                    let symbol: ResolvedSymbol
+                    let entry: SwiftEntry
                     if usesBinding && explicitSignature && !exact {
                         // Extensions still need candidate binding to preserve constraints and their declaration names.
-                        symbol = try resolver.resolve(request, in: ownerImage, loading: .loadedOnly)
+                        entry = SwiftEntry(
+                            symbol: try resolver.resolve(request, in: ownerImage, loading: .loadedOnly)
+                        )
                     } else {
-                        symbol = try resolveDeclaredMember(request, in: ownerImage, exact: exact) {
+                        entry = try resolveDeclaredMember(request, in: ownerImage, exact: exact) {
                             try ownerClass.flatMap { try SwiftGenericContext($0, owner: ownerName) }
                         }
                     }
-                    let entry = SwiftEntry(symbol: symbol)
                     let generic: SwiftGenericCallPlan?
                     if usesBinding, let signature {
                         generic = try genericPlan(
@@ -543,52 +548,42 @@ public actor NativeSwiftType: Hashable {
             }
             if belongs && usesBinding && !exact, let signature {
                 do {
+                    // The defining type's members take precedence over extension members.
                     for extensionsOnly in [false, true] {
-                        let candidates = try resolver.swiftDeclarationCandidates(
-                            request,
-                            in: extensionsOnly ? nil : ownerImage,
-                            extensionsOnly: extensionsOnly
-                        )
-                        let matches = candidates.compactMap { symbol -> ResolvedMember? in
-                            let entry = SwiftEntry(symbol: symbol)
+                        let selection = try SwiftCandidateSelection(
+                            resolver.swiftDeclarationCandidates(
+                                request,
+                                in: extensionsOnly ? nil : ownerImage,
+                                extensionsOnly: extensionsOnly
+                            )
+                        ) { candidate -> SwiftGenericCallPlan? in
+                            let name = candidate.declaration.name
                             if explicitSignature,
-                                ![
-                                    symbol.declaration.name,
-                                    SymbolIndex.operatorAlias(symbol.declaration.name),
-                                ].compactMap({ $0 }).contains(where: {
-                                    SwiftMemberLookup.signatureKey($0)
-                                        == SwiftMemberLookup.signatureKey(request.name)
-                                })
+                                ![name, SymbolIndex.operatorAlias(name)].compactMap({ $0 })
+                                    .contains(where: {
+                                        SwiftMemberLookup.signatureKey($0)
+                                            == SwiftMemberLookup.signatureKey(request.name)
+                                    })
                             {
                                 return nil
                             }
-                            do {
-                                guard
-                                    let plan = try genericPlan(
-                                        (entry, owner),
-                                        signature: signature,
-                                        arguments: genericArguments,
-                                        declaredSignature: declaredSignature,
-                                        valueABIs: valueABIs
-                                    )
-                                else { return nil }
-                                guard
-                                    try explicitSignature
-                                        || plan.matches(SwiftFunctionSignature(signature))
-                                else { return nil }
-                                return (entry, owner, plan)
-                            } catch ABIResolutionError.signatureMismatch { return nil } catch {
-                                preparationFailure = error
-                                return nil
-                            }
+                            guard
+                                let plan = try genericPlan(
+                                    (candidate.entry, owner),
+                                    signature: signature,
+                                    arguments: genericArguments,
+                                    declaredSignature: declaredSignature,
+                                    valueABIs: valueABIs
+                                ),
+                                try explicitSignature
+                                    || plan.matches(SwiftFunctionSignature(signature))
+                            else { return nil }
+                            return plan
                         }
-                        if matches.count > 1 {
-                            throw ABIResolutionError.ambiguousDeclaration(
-                                request,
-                                candidates: matches.map { $0.entry.linkageName }
-                            )
+                        if let (entry, plan) = try selection.selected(for: request) {
+                            return (entry, owner, plan)
                         }
-                        if let match = matches.first { return match }
+                        if let failure = selection.failure { preparationFailure = failure }
                     }
                 } catch ABIResolutionError.imageUnavailable {
                     hasUnavailableExtensions = true
@@ -734,7 +729,7 @@ public actor NativeSwiftType: Hashable {
             type: self,
             receiver: receiver,
             consumesArguments: consumesArguments
-                || member.entry.declaration.name.contains(".setter : "),
+                || member.entry.record?.accessor == .setter,
             generic: member.generic?.includingReceiver(receiver.mode)
         )
     }
@@ -749,7 +744,7 @@ public actor NativeSwiftType: Hashable {
             metadata: metadata,
             owner: self,
             consumesArguments: consumesArguments
-                || member.entry.declaration.name.contains(".setter : "),
+                || member.entry.record?.accessor == .setter,
             generic: classReceiver
                 ? member.generic.map { try $0.includingReceiver(.object) } : member.generic
         )
