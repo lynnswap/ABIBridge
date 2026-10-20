@@ -62,7 +62,7 @@ private enum PublishedSwiftCode {
 public struct NativeSwiftFunctionImplementation<Signature>: Sendable {
     private let function: NativeSwiftFunction<Signature>
     /// The declaration whose importing reference was captured, not the name of an implementation installed earlier by another writer.
-    public var declaration: NativeDeclaration { function.symbol.declaration }
+    public var declaration: NativeDeclaration { function.declaration }
     init(_ prototype: NativeSwiftFunction<Signature>, _ entry: SwiftImplementation) {
         function = prototype.capturing(entry)
     }
@@ -85,7 +85,7 @@ public struct NativeSwiftFunctionImplementation<Signature>: Sendable {
 public struct NativeSwiftMethodImplementation<Signature>: Sendable {
     private let method: NativeSwiftMethod<Signature>
     /// The declaration whose reference was captured; not an inferred code identity.
-    public var declaration: NativeDeclaration { method.symbol.declaration }
+    public var declaration: NativeDeclaration { method.declaration }
     init(_ prototype: NativeSwiftMethod<Signature>, _ entry: SwiftImplementation) {
         method = prototype.capturing(entry)
     }
@@ -273,22 +273,14 @@ final class SwiftReplacementStorage: @unchecked Sendable {
 
     convenience init(
         slots: [(UInt, NativePointerAuthentication)],
-        replacement symbol: ResolvedSymbol,
+        replacement: SwiftEntry,
         retaining owners: Any,
         codeOwner: (any Sendable)?,
         transport: SwiftReplacementTransport = .live
     ) throws {
-        let replacement = try unsafe symbol.withUnsafeAddress { address in
-            try SwiftImplementation(
-                bits: UInt(bitPattern: address),
-                storage: address,
-                authentication: .unsigned,
-                retaining: codeOwner
-            )!
-        }
         try self.init(
             captured: Self.capture(slots, retaining: codeOwner),
-            replacement: replacement,
+            replacement: replacement.implementation(retaining: codeOwner),
             retaining: owners,
             transport: transport
         )

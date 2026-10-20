@@ -215,10 +215,12 @@ extension SwiftCallInterface {
 ///
 /// See <doc:SwiftFunctionInvocation> for supported value representations and <doc:GenericSwiftValues> for generic calls. Undescribed resilient values and ordinary unwrapped closures need separate representations.
 public struct NativeSwiftFunction<Signature>: Sendable {
-    /// The declaration and image retained for this function.
-    public let symbol: ResolvedSymbol
+    /// The exported symbol that names this function's declaration.
+    public var symbol: ResolvedSymbol { entry.symbol }
+    /// The selected declaration, as written in source.
+    public var declaration: NativeDeclaration { entry.declaration }
 
-    private var implementation: SwiftImplementation?
+    private(set) var entry: SwiftEntry
     let call: SwiftCallablePlan
     private let context: UInt
     private let typeOwner: NativeSwiftType?
@@ -234,14 +236,32 @@ public struct NativeSwiftFunction<Signature>: Sendable {
         resolver: SymbolResolver? = nil,
         generic: SwiftGenericCallPlan? = nil
     ) throws {
-        self.symbol = symbol
+        try self.init(
+            entry: SwiftEntry(symbol: symbol),
+            metadata: metadata,
+            owner: owner,
+            consumesArguments: consumesArguments,
+            resolver: resolver,
+            generic: generic
+        )
+    }
+
+    init(
+        entry: SwiftEntry,
+        metadata: Any.Type? = nil,
+        owner: NativeSwiftType? = nil,
+        consumesArguments: Bool = false,
+        resolver: SymbolResolver? = nil,
+        generic: SwiftGenericCallPlan? = nil
+    ) throws {
+        self.entry = entry
         self.consumesArguments = consumesArguments
         isGeneric = generic?.binding.declaration.parameters.isEmpty == false
         context = metadata.map { unsafeBitCast($0, to: UInt.self) } ?? 0
         typeOwner = owner
         call = try SwiftCallablePlan(
             signature: Signature.self,
-            symbol: symbol,
+            entry: entry,
             resolver: resolver ?? owner?.resolver,
             consumesArguments: consumesArguments,
             generic: generic
@@ -250,7 +270,7 @@ public struct NativeSwiftFunction<Signature>: Sendable {
 
     func capturing(_ implementation: SwiftImplementation) -> Self {
         var result = self
-        result.implementation = implementation
+        result.entry.implementation = implementation
         return result
     }
 
@@ -270,11 +290,10 @@ public struct NativeSwiftFunction<Signature>: Sendable {
             preconditionFailure("A synchronous signature has a synchronous call plan.")
         }
         return try unsafe call.unsafeInvoke(
-            symbol: symbol,
+            entry: entry,
             context: UnsafeRawPointer(bitPattern: context),
-            retaining: (symbol, typeOwner),
+            retaining: (entry.symbol, typeOwner),
             retainingCode: typeOwner?.image,
-            implementation: implementation,
             repeat each values
         )
     }
@@ -287,11 +306,10 @@ public struct NativeSwiftFunction<Signature>: Sendable {
             preconditionFailure("A synchronous signature has a synchronous call plan.")
         }
         return try unsafe call.unsafeInvoke(
-            symbol: symbol,
+            entry: entry,
             context: UnsafeRawPointer(bitPattern: context),
-            retaining: (symbol, typeOwner),
+            retaining: (entry.symbol, typeOwner),
             retainingCode: typeOwner?.image,
-            implementation: implementation,
             repeat each values
         )
     }
@@ -338,13 +356,13 @@ public struct NativeSwiftFunction<Signature>: Sendable {
     @unsafe @usableFromInline nonisolated(nonsending) func invokeAsync<Result, each Argument>(
         _ values: repeat each Argument
     ) async throws -> Result {
-        guard case .asynchronous(let call, let entry) = call else {
+        guard case .asynchronous(let call, let implementation) = call else {
             preconditionFailure("An async signature has an async call plan.")
         }
         return try unsafe await call.unsafeInvoke(
-            implementation: entry,
+            implementation: implementation,
             context: UnsafeRawPointer(bitPattern: context),
-            retaining: (entry, typeOwner),
+            retaining: (implementation, typeOwner),
             retainingCode: typeOwner?.image,
             repeat each values
         )
@@ -360,11 +378,10 @@ public struct NativeSwiftFunction<Signature>: Sendable {
             preconditionFailure("A synchronous signature has a synchronous call plan.")
         }
         return try unsafe call.unsafeInvoke(
-            symbol: symbol,
+            entry: entry,
             context: UnsafeRawPointer(bitPattern: context),
-            retaining: (symbol, typeOwner),
+            retaining: (entry.symbol, typeOwner),
             retainingCode: typeOwner?.image,
-            implementation: implementation,
             repeat each values,
             withResult: body
         )
@@ -381,11 +398,10 @@ public struct NativeSwiftFunction<Signature>: Sendable {
             preconditionFailure("A synchronous signature has a synchronous call plan.")
         }
         return try unsafe call.unsafeInvoke(
-            symbol: symbol,
+            entry: entry,
             context: UnsafeRawPointer(bitPattern: context),
-            retaining: (symbol, typeOwner),
+            retaining: (entry.symbol, typeOwner),
             retainingCode: typeOwner?.image,
-            implementation: implementation,
             repeat each values,
             withResult: body
         )
@@ -462,13 +478,13 @@ public struct NativeSwiftFunction<Signature>: Sendable {
         _ values: repeat each Argument,
         withResult body: (NativeSwiftBorrowedValue) async throws -> Output
     ) async throws -> Output {
-        guard case .asynchronous(let call, let entry) = call else {
+        guard case .asynchronous(let call, let implementation) = call else {
             preconditionFailure("An async signature has an async call plan.")
         }
         return try unsafe await call.unsafeInvoke(
-            implementation: entry,
+            implementation: implementation,
             context: UnsafeRawPointer(bitPattern: context),
-            retaining: (entry, typeOwner),
+            retaining: (implementation, typeOwner),
             retainingCode: typeOwner?.image,
             repeat each values,
             withResult: body
@@ -498,7 +514,7 @@ extension ABIRuntime {
         let declaration = NativeDeclaration(name: name, language: .swift)
         if SwiftMemberLookup.hasSignature(name) {
             return try preparedGenericFunction(
-                symbol: resolve(declaration),
+                entry: SwiftEntry(symbol: resolve(declaration)),
                 signature: signature,
                 genericArguments: genericArguments,
                 declaredSignature: declaredSignature,
@@ -506,18 +522,18 @@ extension ABIRuntime {
             )
         }
         var preparationFailure: (any Error)?
-        let matches = try candidates(declaration).compactMap {
-            symbol -> (ResolvedSymbol, SwiftGenericCallPlan)? in
+        let matches = try candidates(declaration).map(SwiftEntry.init(symbol:)).compactMap {
+            entry -> (SwiftEntry, SwiftGenericCallPlan)? in
             do {
                 let plan = try SwiftGenericCallPlan(
-                    symbol: symbol,
+                    entry: entry,
                     genericArguments: genericArguments,
                     signature: description,
                     resolver: resolver,
                     declaredSignature: declaredSignature,
                     valueABIs: valueABIs
                 )
-                return try plan.matches(description) ? (symbol, plan) : nil
+                return try plan.matches(description) ? (entry, plan) : nil
             } catch ABIResolutionError.signatureMismatch { return nil } catch {
                 preparationFailure = error; return nil
             }
@@ -528,8 +544,8 @@ extension ABIRuntime {
                 candidates: matches.map { $0.0.linkageName }
             )
         }
-        if let (symbol, plan) = matches.first {
-            return try NativeSwiftFunction(symbol: symbol, resolver: resolver, generic: plan)
+        if let (entry, plan) = matches.first {
+            return try NativeSwiftFunction(entry: entry, resolver: resolver, generic: plan)
         }
         if let preparationFailure { throw preparationFailure }
         throw ABIResolutionError.declarationNotFound(declaration)

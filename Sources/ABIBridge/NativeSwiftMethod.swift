@@ -12,10 +12,12 @@ public struct NativeSwiftWritebackError: Error {
 ///
 /// Invocation calls the implementation selected during lookup. It does not perform virtual redispatch. Handles retain their type and implementation images, while callers satisfy receiver lifetime and isolation requirements.
 public struct NativeSwiftMethod<Signature>: Sendable {
-    /// The selected source-level declaration and retained implementation image.
-    public let symbol: ResolvedSymbol
+    /// The exported symbol that names this member's declaration.
+    public var symbol: ResolvedSymbol { entry.symbol }
+    /// The selected declaration, as written in source.
+    public var declaration: NativeDeclaration { entry.declaration }
 
-    private var implementation: SwiftImplementation?
+    private(set) var entry: SwiftEntry
     let type: NativeSwiftType
     let receiver: SwiftReceiverPlan
     let consumesArguments: Bool
@@ -24,17 +26,23 @@ public struct NativeSwiftMethod<Signature>: Sendable {
 
     init(symbol: ResolvedSymbol, type: NativeSwiftType, receiver: SwiftReceiverPlan,
          consumesArguments: Bool = false, generic: SwiftGenericCallPlan? = nil) throws {
-        self.symbol = symbol
+        try self.init(entry: SwiftEntry(symbol: symbol), type: type, receiver: receiver,
+            consumesArguments: consumesArguments, generic: generic)
+    }
+
+    init(entry: SwiftEntry, type: NativeSwiftType, receiver: SwiftReceiverPlan,
+         consumesArguments: Bool = false, generic: SwiftGenericCallPlan? = nil) throws {
+        self.entry = entry
         self.type = type
         self.receiver = receiver
         self.consumesArguments = consumesArguments
-        call = try SwiftCallablePlan(signature: Signature.self, symbol: symbol, resolver: type.resolver,
+        call = try SwiftCallablePlan(signature: Signature.self, entry: entry, resolver: type.resolver,
             trailingType: receiver.trailingType, consumesArguments: consumesArguments, generic: generic)
     }
 
     func capturing(_ implementation: SwiftImplementation) -> Self {
         var result = self
-        result.implementation = implementation
+        result.entry.implementation = implementation
         return result
     }
 
@@ -117,13 +125,13 @@ public struct NativeSwiftMethod<Signature>: Sendable {
         var invoked = false
         defer { if !invoked { consumedObject?.release() } }
         return try unsafe call.invoke(
-            symbol: symbol, context: context,
+            entry: entry, context: context,
             trailingValue: receiver.mode == .value ? storage : nil, receiverStorage: storage,
-            retaining: (symbol, type, storage.ownerForResult), retainingCode: type.image, didInvoke: {
+            retaining: (entry.symbol, type, storage.ownerForResult), retainingCode: type.image, didInvoke: {
                 invoked = true
                 if receiver.isConsuming && (receiver.mode != .object || storage.transfersOwnership) { storage.relinquishValue() }
                 didInvoke?()
-            }, implementation: implementation, repeat each values, processingResult: processingResult
+            }, repeat each values, processingResult: processingResult
         )
     }
 }
@@ -332,7 +340,7 @@ extension NativeSwiftMethod {
             try unsafe invoke(storage, didInvoke: { invoked = true }, repeat each values)
         }
         return try self.receiver.finishInvocation(outcome, storage: storage, invoked: invoked, receiver: &receiver,
-            retaining: (storage.writebackOwner(retaining: [symbol.image, type.image]), implementation))
+            retaining: (storage.writebackOwner(retaining: entry.codeImages + [type.image]), entry.implementation))
     }
 
     @unsafe @usableFromInline nonisolated(nonsending) func invokeAsync<Receiver, Result, each Argument>(
@@ -354,7 +362,7 @@ extension NativeSwiftMethod {
         do { outcome = .success(try unsafe await invokeAsync(storage, didInvoke: { invoked = true }, repeat each values)) }
         catch { outcome = .failure(error) }
         return try self.receiver.finishInvocation(outcome, storage: storage, invoked: invoked, receiver: &receiver,
-            retaining: storage.writebackOwner(retaining: [symbol.image, type.image]))
+            retaining: storage.writebackOwner(retaining: entry.codeImages + [type.image]))
     }
 
 }
@@ -428,7 +436,7 @@ extension NativeSwiftMethod {
             })
         } catch { outcome = .failure(error) }
         return try self.receiver.finishInvocation(outcome, storage: storage, invoked: invoked, receiver: &receiver,
-            retaining: (storage.writebackOwner(retaining: [symbol.image, type.image]), implementation))
+            retaining: (storage.writebackOwner(retaining: entry.codeImages + [type.image]), entry.implementation))
 
     }
 
@@ -532,7 +540,7 @@ extension NativeSwiftMethod {
             })
         } catch { outcome = .failure(error) }
         return try self.receiver.finishInvocation(outcome, storage: storage, invoked: invoked, receiver: &receiver,
-            retaining: (storage.writebackOwner(retaining: [symbol.image, type.image]), implementation))
+            retaining: (storage.writebackOwner(retaining: entry.codeImages + [type.image]), entry.implementation))
 
     }
 

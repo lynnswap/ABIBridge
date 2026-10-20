@@ -333,7 +333,7 @@ struct SwiftExistentialValueTests {
             as: Signature.self
         )
         let plan = try SwiftGenericCallPlan(
-            symbol: function.symbol,
+            entry: function.entry,
             genericArguments: [],
             signature: SwiftFunctionSignature(Signature.self),
             resolver: .shared

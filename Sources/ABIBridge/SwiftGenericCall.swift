@@ -633,7 +633,7 @@ struct SwiftGenericCallPlan: Sendable {
     let errorType: CValueType?
 
     init(
-        symbol: ResolvedSymbol,
+        entry: SwiftEntry,
         genericArguments: [NativeSwiftGenericArgument],
         signature: SwiftFunctionSignature,
         resolver: SymbolResolver,
@@ -648,7 +648,7 @@ struct SwiftGenericCallPlan: Sendable {
         }
         let declared = try declaredSignature.map(SwiftDeclaredSignature.init)
         let declaration = try SwiftGenericDeclaration(
-            linkageName: symbol.linkageName,
+            linkageName: entry.linkageName,
             enclosing: context,
             declaredSignature: declared,
             caller: signature
@@ -660,12 +660,12 @@ struct SwiftGenericCallPlan: Sendable {
             signature: signature,
             resolver: resolver,
             enclosing: context,
-            image: symbol.image,
+            image: entry.provenance,
             valueABIs: valueABIs
         )
         if !declaration.result.opaqueIndices.isEmpty {
             binding.opaqueResults = try SwiftOpaqueResultPlan.resolve(
-                symbol: symbol,
+                entry: entry,
                 resolver: resolver,
                 indices: declaration.result.opaqueIndices,
                 binding: binding
@@ -2027,20 +2027,20 @@ extension SwiftGenericBinding {
 
 extension ABIRuntime {
     nonisolated func preparedGenericFunction<Signature>(
-        symbol: ResolvedSymbol,
+        entry: SwiftEntry,
         signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument],
         declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) throws -> NativeSwiftFunction<Signature> {
         let plan = try SwiftGenericCallPlan(
-            symbol: symbol,
+            entry: entry,
             genericArguments: genericArguments,
             signature: SwiftFunctionSignature(signature),
             resolver: resolver,
             declaredSignature: declaredSignature,
             valueABIs: valueABIs
         )
-        return try NativeSwiftFunction(symbol: symbol, resolver: resolver, generic: plan)
+        return try NativeSwiftFunction(entry: entry, resolver: resolver, generic: plan)
     }
 }

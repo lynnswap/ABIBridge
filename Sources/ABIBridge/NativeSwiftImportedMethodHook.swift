@@ -160,7 +160,7 @@ extension NativeSwiftMethod {
         prepared: (signature: SwiftHookSignature, handler: SwiftHookHandler)
     ) async throws -> NativeSwiftImportedFunctionHook {
         let selection = try await runtime.swiftHookSelection(
-            declaration: symbol.declaration,
+            declaration: self.declaration,
             importer: importer,
             provider: provider
         )

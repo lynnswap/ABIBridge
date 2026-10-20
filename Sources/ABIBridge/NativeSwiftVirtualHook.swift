@@ -111,7 +111,7 @@ extension NativeSwiftMethod {
         let entry = try await NativePreparation.run { [self] in
             let dispatch = try SwiftClassDispatch(
                 metadata: type.metadata,
-                declaration: symbol.declaration,
+                declaration: self.declaration,
                 resolver: type.resolver,
                 asynchronous: prepared.signature.asyncInterface != nil
             )

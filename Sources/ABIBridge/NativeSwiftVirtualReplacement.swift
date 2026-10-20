@@ -215,12 +215,12 @@ extension NativeSwiftMethod {
         let metadata = type.metadata
         let entry = try SwiftClassDispatch(
             metadata: metadata,
-            declaration: symbol.declaration,
+            declaration: self.declaration,
             resolver: type.resolver
         )
         let storage = try SwiftReplacementStorage(
             slots: [(entry.address, entry.authentication)],
-            replacement: replacement.symbol,
+            replacement: replacement.entry,
             retaining: (self, replacement, entry.descriptor),
             codeOwner: owner
         )

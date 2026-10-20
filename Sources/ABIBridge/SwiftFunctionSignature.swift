@@ -135,7 +135,7 @@ enum SwiftCallablePlan: Sendable {
 
     init(
         signature: Any.Type,
-        symbol: ResolvedSymbol,
+        entry: SwiftEntry,
         resolver: SymbolResolver?,
         trailingType: CValueType? = nil,
         consumesArguments: Bool = false,
@@ -148,7 +148,7 @@ enum SwiftCallablePlan: Sendable {
             ? nil
             : SwiftOpaqueResultPlan.make(
                 for: description.result,
-                symbol: symbol,
+                entry: entry,
                 resolver: resolver
             )
         if description.isAsync {
@@ -167,7 +167,7 @@ enum SwiftCallablePlan: Sendable {
                     opaqueResult: opaque,
                     generic: generic
                 ),
-                try SwiftAsyncImplementation(symbol: symbol, resolver: resolver)
+                try SwiftAsyncImplementation(entry: entry, resolver: resolver)
             )
         } else {
             self = .synchronous(
