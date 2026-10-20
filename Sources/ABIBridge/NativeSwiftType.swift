@@ -467,32 +467,21 @@ public actor NativeSwiftType: Hashable {
             )
         else { throw ABIResolutionError.invalidAddress }
         let address = UInt64(UInt(bitPattern: code))
-        let linkageName = String(thunk.linkageName.dropLast(2))
-        // Generated code, such as a virtual hook's process-lived dispatcher,
-        // has no containing image or section; the declaring image stays retained.
-        guard let image = try swiftImplementationImage(containing: code) else {
-            return ResolvedSymbol(
-                declaration: declaration,
-                image: thunk.image,
-                sectionRange: address..<address,
-                source: thunk.source,
-                address: address,
-                linkageName: linkageName
-            )
-        }
+        // The declaring image keeps metadata lookups, such as opaque result
+        // descriptors, with the declaration. Code outside it (an override from
+        // a subclass image, or a published replacement or hook) stays loaded
+        // through the lookup type's image or ABIBridge's process-lived owners.
         let sections = try withRuntimeErrors {
-            try ImageMetadataReader.read(image: image.runtimeValue).sections
-        }
-        guard let section = sections.first(where: { $0.addressRange.contains(address) }) else {
-            throw ABIResolutionError.invalidAddress
+            try ImageMetadataReader.read(image: thunk.image.runtimeValue).sections
         }
         return ResolvedSymbol(
             declaration: declaration,
-            image: image,
-            sectionRange: section.addressRange,
+            image: thunk.image,
+            sectionRange: sections.first { $0.addressRange.contains(address) }?.addressRange
+                ?? address..<address,
             source: thunk.source,
             address: address,
-            linkageName: linkageName
+            linkageName: String(thunk.linkageName.dropLast(2))
         )
     }
 

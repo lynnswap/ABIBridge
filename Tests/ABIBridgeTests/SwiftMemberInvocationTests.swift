@@ -619,6 +619,38 @@ struct SwiftMemberInvocationTests {
         try plan.restore()
         #expect(try unsafe oracle.unsafeInvoke(derivedObject, 40) == 42)
 
+        // A replacement from another image keeps the declaration's opaque
+        // descriptor lookup in the declaring image.
+        let patchModule = "ThunkPatch_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let patch = try FixtureLibrary(
+            swiftModule: patchModule,
+            swiftSource: """
+                open class Patch {
+                    public init() {}
+                    @inline(never) open func opaque() -> some Equatable { Int64(9) }
+                }
+                """,
+            linkArguments: ["-O", "-enable-library-evolution"]
+        )
+        defer { patch.cleanup() }
+        let patchType = try await runtime.resolveSwiftType(
+            named: patchModule + ".Patch",
+            in: .path(patch.libraryURL)
+        )
+        let patchOpaque = try await patchType.resolveMethod(
+            named: "opaque()",
+            as: (() -> NativeSwiftValue).self
+        )
+        let opaquePlan = try unsafe opaque.prepareVirtualReplacementAndWait(with: patchOpaque)
+        try unsafe opaquePlan.install()
+        defer { try? opaquePlan.restore() }
+        let replaced = try base.resolveMethodAndWait(
+            named: "opaque()",
+            as: (() -> NativeSwiftValue).self
+        )
+        #expect(try unsafe replaced.unsafeInvoke(on: baseObject).withCopy { $0 as? Int64 } == 9)
+        try opaquePlan.restore()
+
         // A hook's generated dispatcher has no image; a later lookup still captures it.
         let hook = try await unsafe derivedValue.hookVirtualCalls(onFailure: { _ in }) {
             call,
