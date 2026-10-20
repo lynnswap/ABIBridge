@@ -98,7 +98,7 @@ let setShowsGrid = try view.resolveSetterAndWait(named: "showsGrid", as: Bool.se
 try unsafe setShowsGrid.unsafeInvoke(on: canvas, true)
 ```
 
-The resulting `symbol` names the member's declaration, uses the thunk's mangled name without its thunk suffix, and addresses the code stored in that entry. Binding, opaque results, virtual hooks, and replacements therefore treat it like an exported implementation, and calls keep the no-redispatch contract above. An override declared without its own thunk is found through the introducing declaration, so a subclass override runs only when the subclass is the lookup type or the bound receiver's class. The entry is read during lookup; later changes to the class metadata do not update an existing handle.
+The resulting `symbol` names the member's declaration, uses the thunk's mangled name without its thunk suffix, and addresses the code stored in that entry. Binding, opaque results, virtual hooks, and replacements therefore treat it like an exported implementation, and calls keep the no-redispatch contract above. An override declared without its own thunk is found through the introducing declaration, so a subclass override runs only when the subclass is the lookup type or the bound receiver's class. The entry is read during lookup, including a replacement or hook dispatcher installed there; later changes to the class metadata do not update an existing handle.
 
 Relative names, complete declarations, `declaredAs:`, and `valueABIs:` use the same rules. Async members and static or class members available only through thunks report ``ABIResolutionError/unsupportedDeclaration(_:)``. Lookup still reports `declarationNotFound` when neither the implementation nor a thunk exists.
 

@@ -464,10 +464,22 @@ public actor NativeSwiftType: Hashable {
                 authentication.keyCode,
                 authentication.discriminator,
                 authentication.addressDiversity
-            ),
-            let image = try swiftImplementationImage(containing: code)
+            )
         else { throw ABIResolutionError.invalidAddress }
         let address = UInt64(UInt(bitPattern: code))
+        let linkageName = String(thunk.linkageName.dropLast(2))
+        // Generated code, such as a virtual hook's process-lived dispatcher,
+        // has no containing image or section; the declaring image stays retained.
+        guard let image = try swiftImplementationImage(containing: code) else {
+            return ResolvedSymbol(
+                declaration: declaration,
+                image: thunk.image,
+                sectionRange: address..<address,
+                source: thunk.source,
+                address: address,
+                linkageName: linkageName
+            )
+        }
         let sections = try withRuntimeErrors {
             try ImageMetadataReader.read(image: image.runtimeValue).sections
         }
@@ -480,8 +492,28 @@ public actor NativeSwiftType: Hashable {
             sectionRange: section.addressRange,
             source: thunk.source,
             address: address,
-            linkageName: String(thunk.linkageName.dropLast(2))
+            linkageName: linkageName
         )
+    }
+
+    // Each thunk candidate is converted separately, so an unsupported overload,
+    // such as an async member, does not hide another candidate.
+    private nonisolated func classEntryCandidates(
+        _ declaration: NativeDeclaration,
+        in image: NativeImage,
+        failure: inout (any Error)?
+    ) throws -> [ResolvedSymbol] {
+        try resolver.swiftDeclarationCandidates(
+            .init(name: Self.dispatchThunkPrefix + declaration.name, language: .swift),
+            in: image
+        ).compactMap { thunk in
+            do {
+                return try classEntry(forThunk: thunk)
+            } catch ABIResolutionError.unsupportedDeclaration(let reason) {
+                failure = ABIResolutionError.unsupportedDeclaration(reason)
+                return nil
+            }
+        }
     }
 
     private nonisolated func resolveClassEntry(
@@ -621,13 +653,11 @@ public actor NativeSwiftType: Hashable {
                         let extensionsOnly = source == 1
                         let candidates =
                             source == 2
-                            ? try resolver.swiftDeclarationCandidates(
-                                .init(
-                                    name: Self.dispatchThunkPrefix + request.name,
-                                    language: .swift
-                                ),
-                                in: ownerImage
-                            ).map(classEntry(forThunk:))
+                            ? try classEntryCandidates(
+                                request,
+                                in: ownerImage,
+                                failure: &preparationFailure
+                            )
                             : try resolver.swiftDeclarationCandidates(
                                 request,
                                 in: extensionsOnly ? nil : ownerImage,

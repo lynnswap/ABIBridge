@@ -509,6 +509,7 @@ struct SwiftMemberInvocationTests {
                     open var mode: Mode = .off
                     open var count: Int64 = 0
                     @inline(never) open func value(_ input: Int64) -> Int64 { input + 1 }
+                    @inline(never) open func value(_ input: Int64) async -> Int64 { input + 3 }
                     @inline(never) open func replacement(_ input: Int64) -> Int64 { input + 100 }
                     @inline(never) open func opaque() -> some Equatable { count }
                 }
@@ -586,7 +587,8 @@ struct SwiftMemberInvocationTests {
         try unsafe setMode.unsafeInvoke(on: baseObject, try mode.makeEnumCase(named: "on"))
         #expect(try unsafe describe.unsafeInvoke(baseObject) == "on:7")
 
-        // Relative names that need binding search dispatch thunks too.
+        // Relative names that need binding search dispatch thunks too, and the
+        // unsupported async overload does not hide the synchronous one.
         let declared = try await base.resolveMethod(
             named: "value(_:)",
             as: ((Int64) -> Int64).self,
@@ -616,6 +618,19 @@ struct SwiftMemberInvocationTests {
         #expect(try unsafe oracle.unsafeInvoke(derivedObject, 40) == 140)
         try plan.restore()
         #expect(try unsafe oracle.unsafeInvoke(derivedObject, 40) == 42)
+
+        // A hook's generated dispatcher has no image; a later lookup still captures it.
+        let hook = try await unsafe derivedValue.hookVirtualCalls(onFailure: { _ in }) {
+            call,
+            input in
+            try call.proceed(input) + 1000
+        }
+        defer { hook.invalidate() }
+        let hooked = try derived.resolveMethodAndWait(
+            named: "value(_:)",
+            as: ((Int64) -> Int64).self
+        )
+        #expect(try unsafe hooked.unsafeInvoke(on: derivedObject, 40) == 1042)
     }
     #endif
 
