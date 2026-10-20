@@ -9,18 +9,31 @@ struct SwiftCandidateSelection<Value> {
     private(set) var accepted: [(entry: SwiftEntry, value: Value)] = []
     private var rejections: [(declaration: NativeDeclaration, error: any Error)] = []
 
-    /// - Parameter accept: Prepares a candidate, or returns nil when it does
-    ///   not apply. A signature mismatch also means it does not apply.
-    init(_ candidates: [SwiftCandidate], accept: (SwiftCandidate) throws -> Value?) {
+    /// - Parameters:
+    ///   - dispatch: Selects the code of a member exported only through its
+    ///     class dispatch thunk. Without it, such candidates are rejected.
+    ///   - accept: Prepares a candidate's entry, or returns nil when the
+    ///     candidate does not apply. A signature mismatch also means it does
+    ///     not apply.
+    init(
+        _ candidates: [SwiftCandidate],
+        dispatch: ((SwiftCandidate) throws -> SwiftEntry)? = nil,
+        accept: (SwiftCandidate, SwiftEntry) throws -> Value?
+    ) {
         for candidate in Self.distinct(candidates) {
             do {
-                if !candidate.record.runsOwnCode {
+                let entry: SwiftEntry
+                if candidate.record.runsOwnCode {
+                    entry = candidate.entry
+                } else if let dispatch {
+                    entry = try dispatch(candidate)
+                } else {
                     throw ABIResolutionError.unsupportedDeclaration(
                         "\(candidate.declaration.name) is exported only through its dispatch thunk."
                     )
                 }
-                guard let value = try accept(candidate) else { continue }
-                accepted.append((candidate.entry, value))
+                guard let value = try accept(candidate, entry) else { continue }
+                accepted.append((entry, value))
             } catch ABIResolutionError.signatureMismatch {
             } catch {
                 rejections.append((candidate.declaration, error))

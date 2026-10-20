@@ -3,12 +3,19 @@ import ABIBridgeCore
 import Synchronization
 
 struct SwiftAsyncImplementation: Sendable {
-    /// The image that declares the function and its async function pointer.
-    let provenance: NativeImage
-    let descriptor: ResolvedSymbol
+    /// The images that keep the entry's descriptor and code loaded.
+    let images: [NativeImage]
     let entry: SwiftAsyncEntry
+    /// Owns code selected outside the declaring image.
+    private let code: SwiftImplementation?
 
     init(entry declaration: SwiftEntry, resolver: SymbolResolver) throws {
+        if let entry = declaration.asyncEntry {
+            images = [declaration.provenance] + [declaration.implementation?.image].compactMap { $0 }
+            self.entry = entry
+            code = declaration.implementation
+            return
+        }
         let descriptor = try resolver.resolve(
             .init(
                 name: "async function pointer to " + declaration.declaration.name,
@@ -18,11 +25,11 @@ struct SwiftAsyncImplementation: Sendable {
             in: declaration.provenance,
             loading: .loadedOnly
         )
-        provenance = declaration.provenance
-        self.descriptor = descriptor
+        images = [declaration.provenance, descriptor.image]
         entry = try SwiftAsyncEntry(
             descriptor: UnsafeRawPointer(bitPattern: UInt(descriptor.address))!
         )
+        code = nil
     }
 }
 
@@ -254,7 +261,7 @@ final class SwiftAsyncCall: Sendable {
             receiverStorage: receiverStorage,
             retaining: (implementation, owner),
             retainingCode: (implementation, codeOwner),
-            images: [implementation.provenance, implementation.descriptor.image],
+            images: implementation.images,
             didInvoke: didInvoke,
             repeat each values,
             processingResult: processingResult

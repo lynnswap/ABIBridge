@@ -20,6 +20,9 @@ struct SwiftEntry: Sendable {
     let record: RuntimeSwiftDeclaration?
     /// Code selected instead of the symbol's address.
     var implementation: SwiftImplementation?
+    /// The async function pointer selected with `implementation` for an
+    /// async declaration.
+    var asyncEntry: SwiftAsyncEntry?
 
     init(symbol: ResolvedSymbol) {
         self.init(

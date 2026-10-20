@@ -404,7 +404,18 @@ public actor NativeSwiftType: Hashable {
     ) throws -> SwiftEntry {
         do {
             return SwiftEntry(symbol: try resolver.resolve(declaration, in: image, loading: .loadedOnly))
-        } catch ABIResolutionError.declarationNotFound {
+        } catch ABIResolutionError.declarationNotFound {}
+        // The defining type's members precede extension members.
+        let key = DeclarationKey.make(declaration.name, language: .swift)
+        let dispatched = try SwiftCandidateSelection(
+            resolver.swiftDeclarationCandidates(declaration, in: image)
+                .filter { !$0.record.runsOwnCode },
+            dispatch: dispatchedEntry
+        ) { candidate, _ -> Void? in
+            DeclarationKey.make(candidate.declaration.name, language: .swift) == key ? () : nil
+        }
+        if let (entry, _) = try dispatched.selected(for: declaration) { return entry }
+        do {
             guard exact else {
                 return SwiftEntry(
                     symbol: try resolver.resolveSwiftExtension(
@@ -413,10 +424,9 @@ public actor NativeSwiftType: Hashable {
                     )
                 )
             }
-            let key = DeclarationKey.make(declaration.name, language: .swift)
             let selection = try SwiftCandidateSelection(
                 resolver.swiftDeclarationCandidates(declaration, in: nil, extensionsOnly: true)
-            ) { candidate -> Void? in
+            ) { candidate, _ -> Void? in
                 [candidate.declaration.name, candidate.memberName].contains {
                     DeclarationKey.make($0, language: .swift) == key
                 } ? () : nil
@@ -425,7 +435,40 @@ public actor NativeSwiftType: Hashable {
                 throw selection.failure ?? ABIResolutionError.declarationNotFound(declaration)
             }
             return entry
+        } catch ABIResolutionError.declarationNotFound where dispatched.failure != nil {
+            throw dispatched.failure!
         }
+    }
+
+    // A library-evolution class can export only the dispatch thunk and method
+    // descriptor of a member. The member's code is then this type's
+    // virtual-table entry: the implementation visible to this type, which
+    // calls run without redispatching on the receiver.
+    private nonisolated func dispatchedEntry(_ candidate: SwiftCandidate) throws -> SwiftEntry {
+        guard !candidate.record.isStatic else {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "\(candidate.declaration.name) is exported only through its dispatch thunk; class-method virtual-table entries are not selected."
+            )
+        }
+        let dispatch = try SwiftClassDispatch(
+            metadata: metadata,
+            declaration: candidate.declaration,
+            resolver: resolver,
+            asynchronous: candidate.record.isAsync
+        )
+        let code = try SwiftSlotCode(
+            at: dispatch.address,
+            authentication: dispatch.authentication,
+            asynchronous: candidate.record.isAsync,
+            retaining: nil
+        )
+        guard let implementation = code.implementation else {
+            throw ABIResolutionError.invalidAddress
+        }
+        var entry = candidate.entry
+        entry.implementation = implementation
+        entry.asyncEntry = code.asyncEntry
+        return entry
     }
 
     // A member named by its protocol: a requirement, called through its
@@ -444,7 +487,7 @@ public actor NativeSwiftType: Hashable {
             let key = DeclarationKey.make(request.name, language: .swift)
             let selection = try SwiftCandidateSelection(
                 resolver.swiftDeclarationCandidates(request, in: nil)
-            ) { candidate -> Void? in
+            ) { candidate, _ -> Void? in
                 candidate.record.role == .dispatchThunk
                     && candidate.record.context == .protocolRequirement
                     && DeclarationKey.make(candidate.declaration.name, language: .swift) == key
@@ -555,8 +598,9 @@ public actor NativeSwiftType: Hashable {
                                 request,
                                 in: extensionsOnly ? nil : ownerImage,
                                 extensionsOnly: extensionsOnly
-                            )
-                        ) { candidate -> SwiftGenericCallPlan? in
+                            ),
+                            dispatch: dispatchedEntry
+                        ) { candidate, entry -> SwiftGenericCallPlan? in
                             let name = candidate.declaration.name
                             if explicitSignature,
                                 ![name, SymbolIndex.operatorAlias(name)].compactMap({ $0 })
@@ -569,7 +613,7 @@ public actor NativeSwiftType: Hashable {
                             }
                             guard
                                 let plan = try genericPlan(
-                                    (candidate.entry, owner),
+                                    (entry, owner),
                                     signature: signature,
                                     arguments: genericArguments,
                                     declaredSignature: declaredSignature,
