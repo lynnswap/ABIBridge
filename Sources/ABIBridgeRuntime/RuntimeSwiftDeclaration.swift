@@ -40,8 +40,6 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
     /// witness. A class member's thunk instead redispatches on the receiver.
     package var runsOwnCode: Bool { role == .implementation || context == .protocolRequirement }
     package let isStatic: Bool
-    /// Whether the declaration is an async function.
-    package let isAsync: Bool
     package let context: Context
     /// The mangled name of the declaration itself. A declaration's code and
     /// its dispatch thunk share this identity.
@@ -88,12 +86,6 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
             let owner = node.child(0)
         else { return nil }
         self.isStatic = isStatic
-        var type = node.children.first { $0.kind == "Type" }?.child(0)
-        if type?.kind == "DependentGenericType" {
-            type = type?.children.first { $0.kind == "Type" }?.child(0)
-        }
-        isAsync =
-            type?.kind == "FunctionType" && type!.children.contains { $0.kind == "AsyncAnnotation" }
         switch owner.kind {
         case "Protocol":
             context = .protocolRequirement

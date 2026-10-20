@@ -10,12 +10,13 @@ struct SwiftClassDispatch {
         NativePointerAuthentication(runtime.authentication)
     }
     var isSetter: Bool { runtime.isSetter }
+    var isAsync: Bool { runtime.isAsync }
     var descriptor: ResolvedSymbol { ResolvedSymbol(runtime.descriptor) }
     init(
         metadata: Any.Type,
         declaration: NativeDeclaration,
         resolver: SymbolResolver,
-        asynchronous: Bool = false
+        asynchronous: Bool? = false
     ) throws {
         runtime = try withRuntimeErrors {
             try RuntimeClassDispatch(

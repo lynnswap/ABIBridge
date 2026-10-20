@@ -513,6 +513,7 @@ struct SwiftMemberInvocationTests {
                     @inline(never) open func replacement(_ input: Int64) -> Int64 { input + 100 }
                     @inline(never) open func opaque() -> some Equatable { count }
                     @inline(never) open class func kind() -> Int64 { 5 }
+                    open var asyncCount: Int64 { get async { count } }
                 }
                 open class Derived: Base {
                     @inline(never) public override func value(_ input: Int64) -> Int64 { input + 2 }
@@ -609,6 +610,12 @@ struct SwiftMemberInvocationTests {
             declaredAs: "(Swift.Int64) -> Swift.Int64"
         )
         #expect(try unsafe declared.unsafeInvoke(on: baseObject, 40) == 41)
+        // An accessor's async effect comes from its method descriptor.
+        let asyncCount = try await base.resolveGetter(
+            named: "asyncCount",
+            as: (() async -> Int64).self
+        )
+        #expect(try await unsafe asyncCount.unsafeInvoke(on: baseObject) == 7)
         // Class-method entries are not selected; the failure says why.
         do {
             _ = try await base.resolveStaticMethod(named: "kind()", as: (() -> Int64).self)

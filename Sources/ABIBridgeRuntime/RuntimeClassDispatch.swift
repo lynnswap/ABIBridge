@@ -6,6 +6,8 @@ package struct RuntimeClassDispatch {
     package let address: UInt
     package let authentication: RuntimePointerAuthentication
     package let isSetter: Bool
+    /// Whether the slot holds an async function pointer instead of code.
+    package let isAsync: Bool
 
     package let descriptor: RuntimeSymbol
 
@@ -13,7 +15,7 @@ package struct RuntimeClassDispatch {
         metadata: Any.Type,
         declaration: RuntimeDeclaration,
         resolver: RuntimeSymbolResolver,
-        asynchronous: Bool = false
+        asynchronous: Bool? = false
     ) throws {
         guard let selected = metadata as? AnyClass else {
             throw Self.unsupported("Virtual replacement requires a Swift class instance method.")
@@ -84,7 +86,8 @@ package struct RuntimeClassDispatch {
                             try layout.offset() + Int(method - layout.methods) / 8 * Self.word
                         let flags: UInt32 = try Self.read(method)
                         let kind = flags & 0xf
-                        guard flags & 0x10 != 0, (flags & 0x40 != 0) == asynchronous,
+                        let isAsync = flags & 0x40 != 0
+                        guard flags & 0x10 != 0, asynchronous.map({ $0 == isAsync }) ?? true,
                             [0, 2, 3].contains(kind)
                         else {
                             throw Self.unsupported(
@@ -102,12 +105,13 @@ package struct RuntimeClassDispatch {
                         authentication =
                             RuntimePointerAuthentication.isEnabled
                             ? .signed(
-                                key: asynchronous ? .dataA : .instructionA,
+                                key: isAsync ? .dataA : .instructionA,
                                 discriminator: UInt(flags >> 16),
                                 addressDiversity: true
                             ) : .unsigned
                         descriptor = resolved
                         isSetter = kind == 3
+                        self.isAsync = isAsync
                         return
                     }
                 }

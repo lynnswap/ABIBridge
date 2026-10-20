@@ -450,16 +450,18 @@ public actor NativeSwiftType: Hashable {
                 "\(candidate.declaration.name) is exported only through its dispatch thunk; class-method virtual-table entries are not selected."
             )
         }
+        // The method descriptor, not the declaration's spelling, says whether
+        // the slot holds an async function pointer; accessors can be async.
         let dispatch = try SwiftClassDispatch(
             metadata: metadata,
             declaration: candidate.declaration,
             resolver: resolver,
-            asynchronous: candidate.record.isAsync
+            asynchronous: nil
         )
         let code = try SwiftSlotCode(
             at: dispatch.address,
             authentication: dispatch.authentication,
-            asynchronous: candidate.record.isAsync,
+            asynchronous: dispatch.isAsync,
             retaining: nil
         )
         guard let implementation = code.implementation else {
