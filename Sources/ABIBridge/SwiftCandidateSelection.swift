@@ -14,9 +14,7 @@ struct SwiftCandidateSelection<Value> {
     init(_ candidates: [SwiftCandidate], accept: (SwiftCandidate) throws -> Value?) {
         for candidate in Self.distinct(candidates) {
             do {
-                if candidate.record.role == .dispatchThunk,
-                    candidate.record.context != .protocolRequirement
-                {
+                if !candidate.record.runsOwnCode {
                     throw ABIResolutionError.unsupportedDeclaration(
                         "\(candidate.declaration.name) is exported only through its dispatch thunk."
                     )
@@ -57,11 +55,9 @@ struct SwiftCandidateSelection<Value> {
 
     // A declaration's code and its dispatch thunk in one image share an identity.
     private static func distinct(_ candidates: [SwiftCandidate]) -> [SwiftCandidate] {
-        let implemented = Set(
-            candidates.lazy.filter { $0.record.role == .implementation }.map(SwiftDeclarationKey.init)
-        )
+        let implemented = Set(candidates.lazy.filter(\.record.runsOwnCode).map(SwiftDeclarationKey.init))
         return candidates.filter {
-            $0.record.role == .implementation || !implemented.contains(SwiftDeclarationKey($0))
+            $0.record.runsOwnCode || !implemented.contains(SwiftDeclarationKey($0))
         }
     }
 }

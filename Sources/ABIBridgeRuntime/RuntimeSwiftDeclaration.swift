@@ -35,6 +35,10 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
 
     package let role: Role
     package let accessor: Accessor?
+    /// Whether a call can run the symbol's own code: a declaration's code,
+    /// or a protocol requirement's thunk, which selects the conformance's
+    /// witness. A class member's thunk instead redispatches on the receiver.
+    package var runsOwnCode: Bool { role == .implementation || context == .protocolRequirement }
     package let isStatic: Bool
     package let context: Context
     /// The mangled name of the declaration itself. A declaration's code and
