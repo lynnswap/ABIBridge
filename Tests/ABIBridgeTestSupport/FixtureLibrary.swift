@@ -138,6 +138,10 @@ package final class FixtureLibrary {
         )
     }
 
+    package func symbol(named name: String) throws -> UnsafeMutableRawPointer {
+        try #require(dlsym(handle, name), Comment(rawValue: "Missing fixture symbol \(name)"))
+    }
+
     package func address(kind: Int32) throws -> UInt {
         let symbol = try #require(dlsym(handle, "ABIFixtureAddress"))
         let function = unsafeBitCast(symbol, to: (@convention(c) (Int32) -> UInt).self)

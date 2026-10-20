@@ -49,6 +49,7 @@ Conversion to `ABIResolutionError` preserves the runtime error's category and as
 | `ABIBridgeCoreTests` | Pointer mutation, partial memory reads, native resolution outcomes, Objective-C dispatch and object ownership | Four environment entries |
 | `ABIBridgeRuntimeTests` | Image/symbol interpretation, metadata, physical call plans, callback allocation and ownership | The same four entries, in the same jobs |
 | `ABIBridgeTests` | Public API combinations, formal binding and selection, value conversion, errors, and handle lifetimes | macOS with Xcode 27 |
+| `ConformanceMatrixTests` in `ABIBridgeTests` | Results of declaration and value kinds against compiled callers, per provider build variant; unsupported cells are recorded known issues | Three variants; all six locally |
 | Selected `Tests/NativeConsumer` clients | External imports, C/C++/Objective-C++ headers, optimized C linkage, compiler-sensitive generic and async public entry points | macOS with both Xcodes |
 | `SwiftUIConsumer` and its contract check | Public SwiftUI construction, plugin views, and ownership | macOS with Xcode 27 |
 | `ABIBridgeLocalTests` | Hook timing loops and 10,000 closure handoffs | Local only |

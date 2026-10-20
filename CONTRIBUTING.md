@@ -69,6 +69,17 @@ bash scripts/test-package.sh api \
 
 For changes to value handling, ownership, or calling conventions, also run the affected suites with `-configuration Release`. The focused external consumer check below verifies native C linkage in Release.
 
+### Conformance matrix
+
+`ConformanceMatrixTests` compiles one provider module per build variant and compares each ABIBridge call with a compiled native call of the same declaration. Variants combine library evolution, optimization, and stripped local symbols, which leave library-evolution class members with only their dispatch thunks and method descriptors. CI runs three variants; run all six locally with:
+
+```sh
+TEST_RUNNER_ABI_CONFORMANCE_VARIANTS=all bash scripts/test-package.sh api \
+  -only-testing:ABIBridgeTests/ConformanceMatrixTests
+```
+
+A cell that does not pass yet is recorded as a known issue that names the issue expected to fix it. When a change makes such a cell pass, the test fails until the expectation is removed. Add a case to `Tests/ABIBridgeTests/Conformance/ConformanceCases.swift` when adding support for a declaration or value kind.
+
 ### Native consumers and ABI checks
 
 When changing native headers, symbol lookup, call marshalling, or hooks, run the external consumer suite:
