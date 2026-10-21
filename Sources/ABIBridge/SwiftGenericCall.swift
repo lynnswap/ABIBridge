@@ -911,7 +911,8 @@ struct SwiftGenericCallPlan: Sendable {
             return try SwiftValueSchema.layout(
                 formalSelf,
                 actual: binding.types(formalSelf)[0],
-                binding: binding
+                binding: binding,
+                position: .parameter
             )
         }
         guard let context, let enclosingMetadata, !(enclosingMetadata is AnyClass) else {
@@ -1024,13 +1025,16 @@ struct SwiftGenericCallPlan: Sendable {
         } || binding.convertsReference(signature.result, for: binding.declaration.result, isResult: true)
     }
 
+    /// - Parameter position: `.parameter` for a whole parameter, or the
+    ///   position of a tuple element.
     static func argument(
         _ formal: SwiftFormalType,
         actual: Any.Type,
         binding: SwiftGenericBinding,
         defaultConsuming: Bool = false,
         asynchronous: Bool? = nil,
-        callback: Bool = false
+        callback: Bool = false,
+        position: SwiftValuePosition = .parameter
     ) throws -> SwiftGenericArgument {
         if callback, case .inoutValue(let pointee) = formal, actual == NativeSwiftBorrowedValue.self
         {
@@ -1041,7 +1045,8 @@ struct SwiftGenericCallPlan: Sendable {
                     metadata: metadata,
                     binding: binding,
                     asynchronous: asynchronous ?? binding.declaration.isAsync,
-                    handle: SwiftRuntimeHandle(type: NativeSwiftBorrowedValue.self, projection: .none)
+                    handle: SwiftRuntimeHandle(type: NativeSwiftBorrowedValue.self, projection: .none),
+                    position: position
                 ),
                 convention: .inoutValue,
                 asynchronous: asynchronous ?? binding.declaration.isAsync
@@ -1057,7 +1062,8 @@ struct SwiftGenericCallPlan: Sendable {
                 actual: argument.wrapper.wrappedType,
                 binding: binding,
                 defaultConsuming: argument.wrapper.convention == .consuming,
-                asynchronous: asynchronous
+                asynchronous: asynchronous,
+                position: position
             )
             return .convention(try argument.wrapper.makeArgumentCodec(generic: value))
         }
@@ -1076,7 +1082,8 @@ struct SwiftGenericCallPlan: Sendable {
                         metadata: metadata,
                         binding: binding,
                         asynchronous: asynchronous ?? binding.declaration.isAsync,
-                        handle: handle
+                        handle: handle,
+                        position: position
                     ),
                     convention: defaultConsuming ? .consuming : .borrowing,
                     asynchronous: asynchronous ?? binding.declaration.isAsync
@@ -1097,6 +1104,7 @@ struct SwiftGenericCallPlan: Sendable {
             if let explicit = try binding.explicitHostValueType(actual) {
                 return .value(explicit, consuming: false)
             }
+            try binding.validateInferredHostValue(actual, for: formal)
             guard
                 let tuple = try concreteTuple(
                     actual,
@@ -1116,7 +1124,8 @@ struct SwiftGenericCallPlan: Sendable {
                     canonical,
                     actual: actual,
                     binding: binding,
-                    asynchronous: asynchronous ?? binding.declaration.isAsync
+                    asynchronous: asynchronous ?? binding.declaration.isAsync,
+                    position: position
                 ),
                 consuming: defaultConsuming,
                 asynchronous: asynchronous ?? binding.declaration.isAsync
@@ -1126,7 +1135,10 @@ struct SwiftGenericCallPlan: Sendable {
             return .concrete
         }
         try binding.validate(actual, for: formal)
-        return .value(try SwiftValueSchema.layout(formal, actual: actual, binding: binding), consuming: false)
+        return .value(
+            try SwiftValueSchema.layout(formal, actual: actual, binding: binding, position: position),
+            consuming: false
+        )
     }
 
     /// Whether the host type alone lowers a value whose native type has no
@@ -1154,19 +1166,31 @@ struct SwiftGenericCallPlan: Sendable {
             && !needsDeclaration(actual)
     }
 
+    /// - Parameter position: `.result` for a whole result, or the position of
+    ///   a tuple element.
     static func result(
         _ formal: SwiftFormalType,
         actual: Any.Type,
-        binding: SwiftGenericBinding
+        binding: SwiftGenericBinding,
+        position: SwiftValuePosition = .result
     ) throws -> SwiftGenericResult {
         if let handle = runtimeHandle(actual) {
             let metadata = try binding.types(formal)[0]
             if metadata != actual {
-                return .runtimeValue(try runtimeValue(formal, metadata: metadata, binding: binding, handle: handle))
+                return .runtimeValue(
+                    try runtimeValue(
+                        formal,
+                        metadata: metadata,
+                        binding: binding,
+                        handle: handle,
+                        position: position
+                    )
+                )
             }
         }
         if representsClosedValue(formal, actual: actual, binding: binding) {
             if let explicit = try binding.explicitHostValueType(actual) { return .value(explicit) }
+            try binding.validateInferredHostValue(actual, for: formal)
             if try binding.hasExplicitHostField(actual),
                 let tuple = try concreteTuple(actual, explicitLayout: binding.explicitHostValueType)
             {
@@ -1176,7 +1200,7 @@ struct SwiftGenericCallPlan: Sendable {
         }
         let canonical = try binding.canonicalType(of: formal)
         if case .tuple = canonical {
-            return .tuple(try tuple(canonical, actual: actual, binding: binding))
+            return .tuple(try tuple(canonical, actual: actual, binding: binding, position: position))
         }
         if let (function, closure) = try binding.closureFunction(canonical, for: actual) {
             let plan = try Self.closure(
@@ -1188,7 +1212,9 @@ struct SwiftGenericCallPlan: Sendable {
         }
         if binding.dependsOnParameters(formal) || !formal.opaqueIndices.isEmpty {
             let native = try binding.resultType(actual, for: formal)
-            return .value(try SwiftValueSchema.layout(formal, actual: native, binding: binding))
+            return .value(
+                try SwiftValueSchema.layout(formal, actual: native, binding: binding, position: position)
+            )
         }
         return .concrete
     }
@@ -1216,7 +1242,8 @@ struct SwiftGenericCallPlan: Sendable {
         metadata: Any.Type,
         binding: SwiftGenericBinding,
         asynchronous: Bool = false,
-        handle: SwiftRuntimeHandle
+        handle: SwiftRuntimeHandle,
+        position: SwiftValuePosition
     ) throws -> SwiftRuntimeValuePlan {
         let canonical = try binding.canonicalType(of: formal)
         // A stored closure needs its closure plan, which runtime values do not
@@ -1233,7 +1260,8 @@ struct SwiftGenericCallPlan: Sendable {
                 actual: metadata,
                 binding: binding,
                 asynchronous: asynchronous,
-                nativeStorage: true
+                nativeStorage: true,
+                position: position
             )
         } else {
             nativeTuple = nil
@@ -1248,7 +1276,7 @@ struct SwiftGenericCallPlan: Sendable {
         }
         let plan = try binding.runtimeValuePlan(
             metadata: metadata,
-            type: SwiftValueSchema.layout(formal, actual: metadata, binding: binding),
+            type: SwiftValueSchema.layout(formal, actual: metadata, binding: binding, position: position),
             nativeTuple: nativeTuple,
             nativeClosure: nativeClosure
         )
@@ -1266,12 +1294,15 @@ struct SwiftGenericCallPlan: Sendable {
         )
     }
 
+    /// - Parameter position: The tuple's own position. Elements of a
+    ///   parameter are whole parameters; elements of a result are nested.
     static func tuple(
         _ formal: SwiftFormalType,
         actual: Any.Type,
         binding: SwiftGenericBinding,
         asynchronous: Bool = false,
-        nativeStorage: Bool = false
+        nativeStorage: Bool = false,
+        position: SwiftValuePosition = .nested
     ) throws -> SwiftTupleValuePlan {
         guard case .tuple(let fields, let labels) = formal else {
             preconditionFailure("A tuple plan requires its formal tuple declaration.")
@@ -1313,13 +1344,19 @@ struct SwiftGenericCallPlan: Sendable {
                     actual: host.type,
                     binding: binding,
                     asynchronous: asynchronous,
-                    nativeStorage: nativeStorage
+                    nativeStorage: nativeStorage,
+                    position: position.tupleElement
                 )
                 nested = value; argument = .tuple(value, asynchronous: asynchronous);
                 result = .tuple(value)
             } else if nativeStorage {
                 nested = nil
-                let type = try SwiftValueSchema.layout(field, actual: native.type, binding: binding)
+                let type = try SwiftValueSchema.layout(
+                    field,
+                    actual: native.type,
+                    binding: binding,
+                    position: position.tupleElement
+                )
                 argument = .value(type, consuming: false)
                 result = .value(type)
             } else {
@@ -1329,9 +1366,15 @@ struct SwiftGenericCallPlan: Sendable {
                     field,
                     actual: host.type,
                     binding: binding,
-                    asynchronous: asynchronous
+                    asynchronous: asynchronous,
+                    position: position.tupleElement
                 )
-                result = try Self.result(field, actual: host.type, binding: binding)
+                result = try Self.result(
+                    field,
+                    actual: host.type,
+                    binding: binding,
+                    position: position.tupleElement
+                )
             }
             let nativeClosure: SwiftGenericClosurePlan?
             if nativeStorage, case .function = canonical {
@@ -1715,7 +1758,14 @@ struct SwiftGenericCallPlan: Sendable {
                 if runtimeArguments[index] == nil {
                     try binding.validateArgument(actual, for: formal)
                 }
-                logicalTypes.append(try SwiftValueSchema.layout(formal, actual: actual, binding: binding))
+                logicalTypes.append(
+                    try SwiftValueSchema.layout(
+                        formal,
+                        actual: actual,
+                        binding: binding,
+                        position: .parameter
+                    )
+                )
                 authentication.append(
                     contentsOf: try authTypes(formal, actual: actual, binding: binding)
                 )
@@ -1741,7 +1791,12 @@ struct SwiftGenericCallPlan: Sendable {
         let resultType =
             try usesStorageConvention
             ? SwiftValueSchema.storage(of: nativeResult)
-            : SwiftValueSchema.layout(result, actual: nativeResult, binding: binding)
+            : SwiftValueSchema.layout(
+                result,
+                actual: nativeResult,
+                binding: binding,
+                position: .result
+            )
         let resultPlan = try Self.result(result, actual: signature.result, binding: binding)
         let errorType = try failure.flatMap {
             if usesStorageConvention && signature.failure != (any Error).self {
@@ -1871,9 +1926,11 @@ struct SwiftGenericCallPlan: Sendable {
             )
             return ["(" + swiftClosureAuthDescription(parameters: inputs, results: outputs) + ")"]
         }
-        // An Optional's payload can have a declared ABI, so its passing
-        // convention comes from the declaration's layout.
-        if !binding.dependsOnParameters(formal), formal.opaqueIndices.isEmpty, formal.optionalWrapped == nil {
+        // An Optional's payload can have a declared ABI, and an inferred
+        // value's passing convention depends on its inferred layout.
+        if !binding.dependsOnParameters(formal), formal.opaqueIndices.isEmpty,
+            formal.optionalWrapped == nil, !SwiftInferredValue.lowersByInference(actual)
+        {
             let explicit =
                 formal.nominalDeclaration == nil ? nil : try binding.explicitValueType(actual)
             if explicit == nil {
@@ -1882,7 +1939,12 @@ struct SwiftGenericCallPlan: Sendable {
                 return [try swiftClosureAuthType(actual)]
             }
         }
-        let layout = try SwiftValueSchema.layout(formal, actual: actual, binding: binding)
+        let layout = try SwiftValueSchema.layout(
+            formal,
+            actual: actual,
+            binding: binding,
+            position: isResult ? .result : .parameter
+        )
         if ABISwiftValueIsIndirect(layout.handle) { return ["-indirect"] }
         return [try swiftClosureTypeHash(actual)]
     }

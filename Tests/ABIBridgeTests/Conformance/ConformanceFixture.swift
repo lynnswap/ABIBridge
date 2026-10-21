@@ -202,6 +202,10 @@ struct ConformanceCase: Sendable, CustomTestStringConvertible {
     let invoke: @Sendable (ConformanceFixture) async throws -> String
     /// A reason and the issue expected to resolve it, for cells that do not pass yet.
     var knownIssue: @Sendable (ConformanceVariant) -> String? = { _ in nil }
+    /// For variants whose binary evidence cannot decide the call's convention,
+    /// the evidence that the `metadataUnavailable` failure must name instead
+    /// of matching the compiled caller.
+    var expectedError: @Sendable (ConformanceVariant) -> String? = { _ in nil }
 
     var testDescription: String { id }
 }

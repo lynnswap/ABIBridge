@@ -9,7 +9,8 @@ struct SwiftReceiverCodec: Sendable {
     let destroy: @Sendable (UnsafeMutableRawPointer) -> Void
 
     init<Value>(_ valueType: Value.Type, formalType: CValueType? = nil) throws {
-        let codec = try SwiftValueCodec<Value>()
+        // Self is a whole position: an undecided value can still pass indirectly.
+        let codec = try SwiftValueCodec<Value>(position: .parameter)
         type = formalType ?? codec.type
         representation = ObjectIdentifier(Value.self)
         encode = { value in

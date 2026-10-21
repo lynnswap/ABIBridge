@@ -18,6 +18,13 @@ func swiftClosureAuthType(_ type: Any.Type) throws -> String {
             return "-indirect"
         }
     }
+    if SwiftInferredValue.lowersByInference(type), !(type is any NativeOptionalValue.Type) {
+        func layout<Value>(_: Value.Type) throws -> CValueType { try SwiftValueCodec<Value>().type }
+        let layout = try _openExistential(type, do: layout)
+        if withExtendedLifetime(layout, { ABISwiftValueIsIndirect(layout.handle) }) {
+            return "-indirect"
+        }
+    }
     // A native Optional function keeps the function pair's storage.
     var payload = type
     while let optional = payload as? any NativeOptionalValue.Type { payload = optional.wrappedType }
@@ -71,11 +78,12 @@ func swiftClosureTypeHash(_ type: Any.Type) throws -> String {
             "No Swift closure type identity for \(String(reflecting: type))."
         )
     }
-    // SIL hashes these nominal declarations without their generic substitutions.
+    // SIL hashes nominal declarations without their generic substitutions.
     if let collection = type as? any SwiftCollectionValue.Type {
         name = collection.mangledDeclaration
     }
-    if (managed || type is any NativePointerValue.Type), name.hasSuffix("G") {
+    let kind = runtimeMetadataKind(type)
+    if kind == .structure || kind == .enumeration, name.hasSuffix("G") {
         name = try swiftNominalClosureName(name)
     }
     return "$s" + name
@@ -84,7 +92,7 @@ func swiftClosureTypeHash(_ type: Any.Type) throws -> String {
 // A bound nominal mangling contains its declaration before the generic
 // argument list. Let Swift's demangler validate candidate prefixes rather than
 // interpreting identifier lengths, word substitutions, or nested contexts here.
-private func swiftNominalClosureName(_ mangled: String) throws -> String {
+func swiftNominalClosureName(_ mangled: String) throws -> String {
     guard let fullName = DeclarationKey.demangle("$s" + mangled, language: .swift) else {
         throw ABIResolutionError.metadataUnavailable("No generic Swift value identity.")
     }

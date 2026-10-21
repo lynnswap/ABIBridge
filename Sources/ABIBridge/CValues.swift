@@ -57,6 +57,23 @@ final class CValueType: Sendable {
     convenience init(swiftOptionalSingleton: Void) {
         self.init(RuntimeValueType(swiftOptionalSingleton: ()))
     }
+    convenience init(
+        swiftAggregate fields: [CValueType],
+        offsets: [Int],
+        size: Int,
+        alignment: Int
+    ) throws {
+        self.init(
+            try withRuntimeErrors {
+                try RuntimeValueType(
+                    swiftAggregate: fields.map(\.runtime),
+                    offsets: offsets,
+                    size: size,
+                    alignment: alignment
+                )
+            }
+        )
+    }
     convenience init(swiftComponents components: CValueType, size: Int, alignment: Int) throws {
         self.init(
             try withRuntimeErrors {
@@ -140,6 +157,17 @@ struct CValueCodec<Value>: Sendable {
             }
         }
     }
+
+    /// Whether `init` finds a representation for Value. It checks the same
+    /// cases without building one.
+    static var hasRepresentation: Bool {
+        let baseType = (Value.self as? any NativeOptionalValue.Type)?.wrappedType ?? Value.self
+        return Value.self == Void.self || Value.self == Bool.self || isScalar
+            || baseType is any NativePointerValue.Type || isStandardValue
+            || baseType is any ABIBridgeValue.Type
+    }
+
+    static var isScalar: Bool { scalarKind() != nil }
 
     /// Whether values go through a foreign representation instead of their Swift storage.
     var convertsValue: Bool {
@@ -254,6 +282,11 @@ struct CValueCodec<Value>: Sendable {
             return MemoryLayout<CGFloat>.size == 8 ? ABIValueDouble : ABIValueFloat
         }
         return nil
+    }
+
+    private static var isStandardValue: Bool {
+        Value.self == NSRange.self || Value.self == CGPoint.self || Value.self == CGSize.self
+            || Value.self == CGRect.self
     }
 
     private static func standardValueType() throws -> CValueType? {

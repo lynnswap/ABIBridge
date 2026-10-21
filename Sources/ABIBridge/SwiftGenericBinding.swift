@@ -1589,6 +1589,35 @@ struct SwiftGenericBinding: Sendable {
         type is AnyClass ? nil : try explicitValueType(type)
     }
 
+    /// Inference reads the metadata it lowers, so it describes a declaration
+    /// only through the declaration's own formal type. A closed host value
+    /// can be an adapter with another Swift name, which says nothing about the
+    /// declaration's convention.
+    func validateInferredHostValue(_ type: Any.Type, for formal: SwiftFormalType) throws {
+        guard SwiftInferredValue.lowersByInference(type) else { return }
+        func validate(_ host: Any.Type, _ native: Any.Type) throws {
+            if host == native { return }
+            if let host = SwiftTupleMetadata(host), let native = SwiftTupleMetadata(native),
+                host.elements.count == native.elements.count
+            {
+                for (host, native) in zip(host.elements, native.elements) {
+                    try validate(host.type, native.type)
+                }
+                return
+            }
+            if let host = host as? any NativeOptionalValue.Type,
+                let native = native as? any NativeOptionalValue.Type
+            {
+                return try validate(host.wrappedType, native.wrappedType)
+            }
+            guard SwiftInferredValue.lowersByInference(host) else { return }
+            throw ABIResolutionError.metadataUnavailable(
+                "ABIBridge infers the Swift calling convention of a value only from its declaration's formal type, \(String(reflecting: native)); the host type \(String(reflecting: host)) is an adapter. Describe it with valueABIs or an ABIBridgeSwiftValue conformance."
+            )
+        }
+        try validate(type, types(formal)[0])
+    }
+
     func hasExplicitHostField(_ type: Any.Type) throws -> Bool {
         guard let tuple = SwiftTupleMetadata(type) else { return false }
         return try tuple.elements.contains {

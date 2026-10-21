@@ -9,7 +9,7 @@ import Foundation
 private func describe(_ value: some Any) -> String { String(describing: value) }
 
 extension ConformanceCase {
-    static let all: [ConformanceCase] = functions + values + classes + protocols
+    static let all: [ConformanceCase] = functions + values + inferredValues + classes + protocols
 
     /// Without library evolution, protocol requirements have no dispatch thunks.
     static let witnessDispatch: @Sendable (ConformanceVariant) -> String? = {
@@ -248,9 +248,6 @@ extension ConformanceCase {
                     as: ((NativeSwiftValue) -> String).self
                 )
                 return try unsafe text.unsafeInvoke(move.unsafeInvoke(make.unsafeInvoke(), 3))
-            },
-            knownIssue: { _ in
-                "Runtime-only value conventions are not inferred from declarations (#404, #406)"
             }
         ),
         ConformanceCase(

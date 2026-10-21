@@ -248,24 +248,32 @@ struct ManagedSwiftValueTests {
         #expect(destroyed == 1)
     }
 
-    @Test func metatypesDoNotEnableUnsupportedDirectCalls() async {
-        #expect {
-            _ = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
-                named: "ManagedSwiftFixtures.transformManaged(_:)",
-                as: ((ManagedRecord) -> ManagedRecord).self
+    /// ManagedRecord is frozen in this library-evolution module, so it passes
+    /// directly; ResilientRecord is resilient and passes indirectly.
+    @Test func declarationTypesInferTheirConventions() async throws {
+        let managed = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
+            named: "ManagedSwiftFixtures.transformManaged(_:)",
+            as: ((ManagedRecord) -> ManagedRecord).self
+        )
+        let resilient = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
+            named: "ManagedSwiftFixtures.transformResilient(_:)",
+            as: ((ResilientRecord) -> ResilientRecord).self
+        )
+        weak var weakToken: LifetimeToken?
+        var destroyed = 0
+        do {
+            let token = LifetimeToken { destroyed += 1 }
+            weakToken = token
+            let record = try unsafe managed.unsafeInvoke(ManagedRecord(token: token, number: 41))
+            #expect(record.number == 42)
+            #expect(record.token === token)
+            let wrapped = try unsafe resilient.unsafeInvoke(
+                ResilientRecord(token: token, number: 7)
             )
-        } throws: { error in
-            if case ABIResolutionError.unsupportedDeclaration = error { return true }
-            return false
+            #expect(wrapped.number == 8)
+            #expect(wrapped.token === token)
         }
-        #expect {
-            _ = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
-                named: "ManagedSwiftFixtures.transformResilient(_:)",
-                as: ((ResilientRecord) -> ResilientRecord).self
-            )
-        } throws: { error in
-            if case ABIResolutionError.unsupportedDeclaration = error { return true }
-            return false
-        }
+        #expect(weakToken == nil)
+        #expect(destroyed == 1)
     }
 }
