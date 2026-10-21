@@ -526,7 +526,8 @@ extension ABIRuntime {
         let extensionsOnly = SymbolIndex.extensionMemberName(name) != nil
         func select(includingSharedCache: Bool) throws -> SwiftCandidateSelection<SelectedFunctionPlan> {
             try SwiftCandidateSelection(
-                candidates(declaration, extensionsOnly, includingSharedCache)
+                candidates(declaration, extensionsOnly, includingSharedCache),
+                namesDeclaration: complete
             ) { candidate, entry -> SelectedFunctionPlan? in
                 if complete {
                     let names = [candidate.declaration.name, candidate.memberName]
