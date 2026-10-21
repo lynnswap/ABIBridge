@@ -114,34 +114,34 @@ struct ObjCCallSignature<Result, each Argument>: Sendable {
         using body: (UnsafeBufferPointer<UnsafeRawPointer>, UnsafeMutableRawPointer) throws -> Void
     ) throws -> Result {
         if let direct { return try direct.invoke(repeat each values, using: body) }
-        // The method autoreleases its error; read it before this pool drains.
-        return try autoreleasepool {
-            let slot = UnsafeMutablePointer<UnsafeRawPointer?>.allocate(capacity: 1)
-            slot.initialize(to: nil)
-            defer { slot.deallocate() }
-            let failed: Bool
-            var value: Result?
-            if let nilResult {
-                value = try nilResult.invoke(
-                    repeat each values,
-                    errorSlot: UnsafeMutableRawPointer(slot),
-                    using: body
-                )
-                failed = value == nil
-            } else {
-                failed = try !falseResult!.invoke(
-                    repeat each values,
-                    errorSlot: UnsafeMutableRawPointer(slot),
-                    using: body
-                )
-                value = (() as! Result)
-            }
-            guard failed else { return value! }
-            let error = slot.withMemoryRebound(to: NSError?.self, capacity: 1) {
-                AutoreleasingUnsafeMutablePointer<NSError?>($0).pointee
-            }
-            throw error ?? NativeObjCUnreportedFailure(declaration: declaration)
+        // The slot does not own the error the method autoreleases into it;
+        // reading it through an autoreleasing pointer retains it. No pool is
+        // drained here, so other autoreleased outputs stay valid for the caller.
+        let slot = UnsafeMutablePointer<UnsafeRawPointer?>.allocate(capacity: 1)
+        slot.initialize(to: nil)
+        defer { slot.deallocate() }
+        let failed: Bool
+        var value: Result?
+        if let nilResult {
+            value = try nilResult.invoke(
+                repeat each values,
+                errorSlot: UnsafeMutableRawPointer(slot),
+                using: body
+            )
+            failed = value == nil
+        } else {
+            failed = try !falseResult!.invoke(
+                repeat each values,
+                errorSlot: UnsafeMutableRawPointer(slot),
+                using: body
+            )
+            value = (() as! Result)
         }
+        guard failed else { return value! }
+        let error = slot.withMemoryRebound(to: NSError?.self, capacity: 1) {
+            AutoreleasingUnsafeMutablePointer<NSError?>($0).pointee
+        }
+        throw error ?? NativeObjCUnreportedFailure(declaration: declaration)
     }
 
     private static func unqualified(_ encoding: UnsafePointer<CChar>) -> String {

@@ -110,6 +110,31 @@ struct ObjectiveCErrorConventionTests {
         #expect(error?.code == 9)
     }
 
+    @Test func otherAutoreleasedOutputsOutliveTheCall() throws {
+        let fill = try ABIRuntime.shared.object(ABIErrorConventionFixture(value: 0))
+            .resolveMethodAndWait(
+                selector: "fill:error:",
+                as: ((AutoreleasingUnsafeMutablePointer<AnyObject?>?) throws -> Void).self
+            )
+        let slot = UnsafeMutableRawPointer.allocate(
+            byteCount: MemoryLayout<UnsafeRawPointer?>.size,
+            alignment: MemoryLayout<UnsafeRawPointer?>.alignment
+        )
+        slot.storeBytes(of: nil, as: UnsafeRawPointer?.self)
+        defer { slot.deallocate() }
+        let before = ABIErrorConventionFixture.liveFilledObjects
+        try autoreleasepool {
+            let output = AutoreleasingUnsafeMutablePointer<AnyObject?>(
+                slot.assumingMemoryBound(to: AnyObject?.self)
+            )
+            try unsafe fill.unsafeInvoke(output)
+            // The caller's pool, not the call, owns the autoreleased output.
+            #expect(ABIErrorConventionFixture.liveFilledObjects == before + 1)
+            #expect(output.pointee != nil)
+        }
+        #expect(ABIErrorConventionFixture.liveFilledObjects == before)
+    }
+
     @Test func exceptionsAreThrownInsteadOfUnwinding() throws {
         let fixture = try ABIErrorConventionFixture(value: 0)
         let runtime = ABIRuntime.shared

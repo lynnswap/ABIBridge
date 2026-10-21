@@ -24,6 +24,10 @@ FOUNDATION_EXPORT NSErrorDomain const ABIErrorConventionFixtureDomain;
 - (NSInteger)count:(NSError **)error;
 /// Raises an NSException with the given reason.
 - (NSInteger)raise:(NSString *)reason;
+/// Stores an autoreleased object in output and succeeds.
+- (BOOL)fill:(id _Nullable * _Nullable)output error:(NSError **)error;
+/// The number of objects stored by fill:error: that are still alive.
+@property(class, readonly) NSInteger liveFilledObjects;
 @end
 
 @interface ABIVariadicFixture : NSObject
