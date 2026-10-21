@@ -1640,8 +1640,8 @@ struct SwiftGenericCallPlan: Sendable {
                     )
                     if let conversion = runtimeArguments[index] {
                         logicalTypes.append(
-                            try SwiftValueSchema.storage(of: 
-                                conversion.plan.valueType.metadata
+                            try SwiftValueSchema.storage(
+                                of: conversion.plan.valueType.metadata
                             )
                         )
                     } else {
