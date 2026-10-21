@@ -17,9 +17,9 @@ extension ConformanceCase {
             ? nil : "Requirements without dispatch thunks need witness tables (#407)"
     }
 
-    /// Members exported only as dispatch thunks need class dispatch support.
-    static let classDispatch: @Sendable (ConformanceVariant) -> String? = {
-        $0.bodies == .stripped ? "Thunk-only class members need class dispatch (#397)" : nil
+    /// Class methods exported only as dispatch thunks are not selected yet.
+    static let classMethodDispatch: @Sendable (ConformanceVariant) -> String? = {
+        $0.bodies == .stripped ? "Thunk-only class methods need class-method dispatch (#413)" : nil
     }
 
     static let functions: [ConformanceCase] = [
@@ -368,8 +368,7 @@ extension ConformanceCase {
                         1
                     )
                 )
-            },
-            knownIssue: classDispatch
+            }
         ),
         ConformanceCase(
             id: "class.accessors",
@@ -386,8 +385,7 @@ extension ConformanceCase {
                     try unsafe await type.resolveGetter(named: "value", as: (() -> Int64).self)
                         .unsafeInvoke(on: counter)
                 )
-            },
-            knownIssue: classDispatch
+            }
         ),
         ConformanceCase(
             id: "class.override",
@@ -404,8 +402,7 @@ extension ConformanceCase {
                         1
                     )
                 )
-            },
-            knownIssue: classDispatch
+            }
         ),
         ConformanceCase(
             id: "class.capturedBase",
@@ -423,8 +420,7 @@ extension ConformanceCase {
                         1
                     )
                 )
-            },
-            knownIssue: classDispatch
+            }
         ),
         ConformanceCase(
             id: "class.boundObject",
@@ -437,8 +433,7 @@ extension ConformanceCase {
                     as: ((Int64) -> Int64).self
                 )
                 return String(try unsafe add.unsafeInvoke(1))
-            },
-            knownIssue: classDispatch
+            }
         ),
         ConformanceCase(
             id: "class.final",
@@ -488,7 +483,7 @@ extension ConformanceCase {
                 )
                 return try unsafe call.unsafeInvoke()
             },
-            knownIssue: classDispatch
+            knownIssue: classMethodDispatch
         ),
         ConformanceCase(
             id: "class.async",
@@ -504,8 +499,7 @@ extension ConformanceCase {
                         on: f.make("cmMakeCounter", returning: "CMCounter")
                     )
                 )
-            },
-            knownIssue: classDispatch
+            }
         ),
         ConformanceCase(
             id: "class.opaque",
@@ -519,8 +513,7 @@ extension ConformanceCase {
                 return try unsafe call.unsafeInvoke(
                     on: f.make("cmMakeCounter", returning: "CMCounter")
                 ).withCopy { describe($0) }
-            },
-            knownIssue: classDispatch
+            }
         ),
         ConformanceCase(
             id: "class.initializer",
@@ -537,8 +530,7 @@ extension ConformanceCase {
                     as: (() -> String).self
                 )
                 return try unsafe text.unsafeInvoke(on: make.unsafeInvoke(3))
-            },
-            knownIssue: classDispatch  // `describe()` is thunk-only; the initializer is exported.
+            }
         ),
         ConformanceCase(
             id: "class.supertypeResult",

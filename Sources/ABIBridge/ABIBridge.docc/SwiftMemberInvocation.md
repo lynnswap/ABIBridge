@@ -88,6 +88,20 @@ Type lookup obtains the nominal descriptor and requests complete metadata. For a
 
 Concrete members capture the selected implementation. Lookup prefers declarations in the type's defining image, then searches extension-qualified implementations in loaded images, and then walks superclass declarations in each superclass's defining image. These calls do not perform virtual redispatch. Existing receiver metadata also supplies the context for concrete members declared by a generic superclass.
 
+## Call class members exported only through dispatch thunks
+
+A library-evolution framework can export only the dispatch thunk and method descriptor of an open or nonfinal class member, without its implementation symbol. Method, getter, and setter lookup on a class then reads the member's code from the lookup type's class metadata entry:
+
+```swift
+let view = try ABIRuntime.shared.resolveSwiftTypeAndWait(named: "Example.CanvasView")
+let setShowsGrid = try view.resolveSetterAndWait(named: "showsGrid", as: Bool.self)
+try unsafe setShowsGrid.unsafeInvoke(on: canvas, true)
+```
+
+The handle's `symbol` is the dispatch thunk, its `declaration` is the member, and calls run the code stored in the entry, so they keep the no-redispatch contract above. Binding, opaque results, async calls, virtual hooks, and replacements use the member's declaration and declaring image. Such a member takes precedence over a same-signature member that another module's extension declares. An override declared without its own thunk is found through the introducing declaration, so a subclass override runs only when the subclass is the lookup type or the bound receiver's class. The entry is read during lookup, including a replacement or hook dispatcher installed there; later changes to the class metadata do not update an existing handle.
+
+Relative names, complete declarations, `declaredAs:`, and `valueABIs:` use the same rules. Class methods available only through thunks report ``ABIResolutionError/unsupportedDeclaration(_:)``. Lookup still reports `declarationNotFound` when neither the implementation nor a thunk exists.
+
 ## Call a protocol extension
 
 For a renderer conforming to `Example.Renderable`, resolve the protocol extension's `summary()` using its complete source declaration:

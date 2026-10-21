@@ -226,47 +226,18 @@ final class SwiftReplacementStorage: @unchecked Sendable {
         asyncDescriptors: Bool = false
     ) throws -> [CapturedSlot] {
         try slots.map { address, authentication in
-            var before: UInt = 0
-            guard
-                ABIReadMemory(address, MemoryLayout<UInt>.size, &before).status
-                    == ABIMemoryReadComplete,
-                let storage = UnsafeRawPointer(bitPattern: address)
-            else { throw ABIResolutionError.invalidAddress }
-            if asyncDescriptors {
-                guard
-                    let descriptor = ABIUnsafeAuthenticatePointerSlot(
-                        before,
-                        storage,
-                        authentication.keyCode,
-                        authentication.discriminator,
-                        authentication.addressDiversity
-                    )
-                else { throw ABIResolutionError.invalidAddress }
-                let entry = try SwiftAsyncEntry(descriptor: descriptor)
-                let image = try swiftImplementationImage(containing: descriptor)
-                let original = try SwiftImplementation(
-                    function: entry.function,
-                    retaining: (owner, entry, image)
-                )
-                return CapturedSlot(
-                    address: address,
-                    before: before,
-                    original: original,
-                    authentication: authentication,
-                    asyncEntry: entry
-                )
-            }
+            let code = try SwiftSlotCode(
+                at: address,
+                authentication: authentication,
+                asynchronous: asyncDescriptors,
+                retaining: owner
+            )
             return CapturedSlot(
                 address: address,
-                before: before,
-                original: try SwiftImplementation(
-                    bits: before,
-                    storage: storage,
-                    authentication: authentication,
-                    retaining: owner
-                ),
+                before: code.bits,
+                original: code.implementation,
                 authentication: authentication,
-                asyncEntry: nil
+                asyncEntry: code.asyncEntry
             )
         }
     }
@@ -403,5 +374,57 @@ final class SwiftReplacementStorage: @unchecked Sendable {
             }
         }
         return state.slots.indices.filter { state.slots[$0].pending || state.slots[$0].needsRepair }
+    }
+}
+
+/// The code a function-pointer slot, such as a class's virtual-table entry,
+/// holds when it is read.
+struct SwiftSlotCode {
+    /// The slot's raw bits.
+    let bits: UInt
+    /// The authenticated code; for an async slot, its entry's function.
+    let implementation: SwiftImplementation?
+    /// The async function pointer an async slot holds.
+    let asyncEntry: SwiftAsyncEntry?
+
+    init(
+        at address: UInt,
+        authentication: NativePointerAuthentication,
+        asynchronous: Bool,
+        retaining owner: (any Sendable)?
+    ) throws {
+        var bits: UInt = 0
+        guard
+            ABIReadMemory(address, MemoryLayout<UInt>.size, &bits).status
+                == ABIMemoryReadComplete,
+            let storage = UnsafeRawPointer(bitPattern: address)
+        else { throw ABIResolutionError.invalidAddress }
+        self.bits = bits
+        guard asynchronous else {
+            implementation = try SwiftImplementation(
+                bits: bits,
+                storage: storage,
+                authentication: authentication,
+                retaining: owner
+            )
+            asyncEntry = nil
+            return
+        }
+        guard
+            let descriptor = ABIUnsafeAuthenticatePointerSlot(
+                bits,
+                storage,
+                authentication.keyCode,
+                authentication.discriminator,
+                authentication.addressDiversity
+            )
+        else { throw ABIResolutionError.invalidAddress }
+        let entry = try SwiftAsyncEntry(descriptor: descriptor)
+        let image = try swiftImplementationImage(containing: descriptor)
+        implementation = try SwiftImplementation(
+            function: entry.function,
+            retaining: (owner, entry, image)
+        )
+        asyncEntry = entry
     }
 }

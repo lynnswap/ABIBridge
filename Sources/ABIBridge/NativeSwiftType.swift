@@ -400,32 +400,109 @@ public actor NativeSwiftType: Hashable {
         _ declaration: NativeDeclaration,
         in image: NativeImage,
         exact: Bool = false,
+        asynchronous: Bool? = nil,
         genericContext: () throws -> SwiftGenericContext? = { nil }
     ) throws -> SwiftEntry {
         do {
             return SwiftEntry(symbol: try resolver.resolve(declaration, in: image, loading: .loadedOnly))
-        } catch ABIResolutionError.declarationNotFound {
-            guard exact else {
-                return SwiftEntry(
-                    symbol: try resolver.resolveSwiftExtension(
-                        declaration,
-                        genericContext: genericContext()
-                    )
-                )
-            }
-            let key = DeclarationKey.make(declaration.name, language: .swift)
-            let selection = try SwiftCandidateSelection(
-                resolver.swiftDeclarationCandidates(declaration, in: nil, extensionsOnly: true)
-            ) { candidate -> Void? in
-                [candidate.declaration.name, candidate.memberName].contains {
-                    DeclarationKey.make($0, language: .swift) == key
-                } ? () : nil
-            }
-            guard let (entry, _) = try selection.selected(for: declaration) else {
-                throw selection.failure ?? ABIResolutionError.declarationNotFound(declaration)
-            }
-            return entry
+        } catch ABIResolutionError.declarationNotFound {}
+        // The defining type's members precede extension members.
+        let key = DeclarationKey.make(declaration.name, language: .swift)
+        let dispatched = try SwiftCandidateSelection(
+            resolver.swiftDeclarationCandidates(declaration, in: image)
+                .filter { !$0.record.runsOwnCode },
+            dispatch: { try self.dispatchedEntry($0, asynchronous: asynchronous) }
+        ) { candidate, _ -> Void? in
+            DeclarationKey.make(candidate.declaration.name, language: .swift) == key ? () : nil
         }
+        if let (entry, _) = try dispatched.selected(for: declaration) { return entry }
+        // A matching member of the defining type hides extension members even
+        // when its code cannot be selected.
+        if let unavailable = dispatched.unavailable { throw unavailable }
+        guard exact else {
+            return SwiftEntry(
+                symbol: try resolver.resolveSwiftExtension(
+                    declaration,
+                    genericContext: genericContext()
+                )
+            )
+        }
+        let selection = try SwiftCandidateSelection(
+            resolver.swiftDeclarationCandidates(declaration, in: nil, extensionsOnly: true)
+        ) { candidate, _ -> Void? in
+            [candidate.declaration.name, candidate.memberName].contains {
+                DeclarationKey.make($0, language: .swift) == key
+            } ? () : nil
+        }
+        guard let (entry, _) = try selection.selected(for: declaration) else {
+            throw selection.failure ?? ABIResolutionError.declarationNotFound(declaration)
+        }
+        return entry
+    }
+
+    // A library-evolution class can export only the dispatch thunk and method
+    // descriptor of a member. The member's code is then this type's
+    // virtual-table entry: the implementation visible to this type, which
+    // calls run without redispatching on the receiver.
+    ///
+    /// - Parameter asynchronous: The requested effect, when known. A slot
+    ///   with another effect does not apply to the request.
+    private nonisolated func dispatchedEntry(
+        _ candidate: SwiftCandidate,
+        asynchronous: Bool?
+    ) throws -> SwiftEntry {
+        // The method descriptor, not the declaration's spelling, says whether
+        // the slot holds an async function pointer; accessors can be async.
+        func requireEffect(_ isAsync: Bool) throws {
+            guard let asynchronous, asynchronous != isAsync else { return }
+            throw ABIResolutionError.signatureMismatch(
+                .init(
+                    declaration: candidate.declaration,
+                    expected: asynchronous ? "async" : "synchronous",
+                    found: [isAsync ? "async" : "synchronous"]
+                )
+            )
+        }
+        guard !candidate.record.isStatic else {
+            // Class-method entries are not selected (#413), but whether the
+            // member applies still depends on its descriptor's effect.
+            if asynchronous != nil {
+                let descriptor = try resolver.resolve(
+                    NativeDeclaration(
+                        machOName: "_" + candidate.record.identity + "Tq",
+                        language: .swift,
+                        kind: .data
+                    ),
+                    in: candidate.symbol.image,
+                    loading: .loadedOnly
+                )
+                let flags = unsafe descriptor.withUnsafeAddress { $0.load(as: UInt32.self) }
+                try requireEffect(flags & 0x40 != 0)
+            }
+            throw ABIResolutionError.unsupportedDeclaration(
+                "\(candidate.declaration.name) is exported only through its dispatch thunk; class-method virtual-table entries are not selected."
+            )
+        }
+        let dispatch = try SwiftClassDispatch(
+            metadata: metadata,
+            declaration: candidate.declaration,
+            resolver: resolver,
+            asynchronous: nil
+        )
+        try requireEffect(dispatch.isAsync)
+        let code = try SwiftSlotCode(
+            at: dispatch.address,
+            authentication: dispatch.authentication,
+            asynchronous: dispatch.isAsync,
+            retaining: nil
+        )
+        guard let implementation = code.implementation else {
+            throw ABIResolutionError.invalidAddress
+        }
+        var entry = candidate.entry
+        entry.implementation = implementation
+        entry.asyncEntry = code.asyncEntry
+        return entry
     }
 
     // A member named by its protocol: a requirement, called through its
@@ -444,7 +521,7 @@ public actor NativeSwiftType: Hashable {
             let key = DeclarationKey.make(request.name, language: .swift)
             let selection = try SwiftCandidateSelection(
                 resolver.swiftDeclarationCandidates(request, in: nil)
-            ) { candidate -> Void? in
+            ) { candidate, _ -> Void? in
                 candidate.record.role == .dispatchThunk
                     && candidate.record.context == .protocolRequirement
                     && DeclarationKey.make(candidate.declaration.name, language: .swift) == key
@@ -483,6 +560,7 @@ public actor NativeSwiftType: Hashable {
         var ownerName = try declarationName()
         var hasUnavailableExtensions = false
         var preparationFailure: (any Error)?
+        let asynchronous = try signature.map { try SwiftFunctionSignature($0).isAsync }
         while true {
             let owner: Any.Type = ownerClass ?? metadata
             let enclosing =
@@ -518,7 +596,12 @@ public actor NativeSwiftType: Hashable {
                             symbol: try resolver.resolve(request, in: ownerImage, loading: .loadedOnly)
                         )
                     } else {
-                        entry = try resolveDeclaredMember(request, in: ownerImage, exact: exact) {
+                        entry = try resolveDeclaredMember(
+                            request,
+                            in: ownerImage,
+                            exact: exact,
+                            asynchronous: asynchronous
+                        ) {
                             try ownerClass.flatMap { try SwiftGenericContext($0, owner: ownerName) }
                         }
                     }
@@ -547,6 +630,9 @@ public actor NativeSwiftType: Hashable {
                 }
             }
             if belongs && usesBinding && !exact, let signature {
+                // A member that applies but has no selectable code still hides
+                // extension and superclass members.
+                var shadowing: (any Error)?
                 do {
                     // The defining type's members take precedence over extension members.
                     for extensionsOnly in [false, true] {
@@ -555,8 +641,9 @@ public actor NativeSwiftType: Hashable {
                                 request,
                                 in: extensionsOnly ? nil : ownerImage,
                                 extensionsOnly: extensionsOnly
-                            )
-                        ) { candidate -> SwiftGenericCallPlan? in
+                            ),
+                            dispatch: { try self.dispatchedEntry($0, asynchronous: asynchronous) }
+                        ) { candidate, entry -> SwiftGenericCallPlan? in
                             let name = candidate.declaration.name
                             if explicitSignature,
                                 ![name, SymbolIndex.operatorAlias(name)].compactMap({ $0 })
@@ -569,7 +656,7 @@ public actor NativeSwiftType: Hashable {
                             }
                             guard
                                 let plan = try genericPlan(
-                                    (candidate.entry, owner),
+                                    (entry, owner),
                                     signature: signature,
                                     arguments: genericArguments,
                                     declaredSignature: declaredSignature,
@@ -583,6 +670,10 @@ public actor NativeSwiftType: Hashable {
                         if let (entry, plan) = try selection.selected(for: request) {
                             return (entry, owner, plan)
                         }
+                        if let unavailable = selection.unavailable {
+                            shadowing = unavailable
+                            break
+                        }
                         if let failure = selection.failure { preparationFailure = failure }
                     }
                 } catch ABIResolutionError.imageUnavailable {
@@ -590,6 +681,7 @@ public actor NativeSwiftType: Hashable {
                 } catch ABIResolutionError.unsupportedDeclaration(let reason) {
                     preparationFailure = ABIResolutionError.unsupportedDeclaration(reason)
                 }
+                if let shadowing { throw shadowing }
             }
             guard inherited, let current = ownerClass, let parent = class_getSuperclass(current)
             else {

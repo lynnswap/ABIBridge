@@ -521,9 +521,9 @@ extension ABIRuntime {
                 valueABIs: valueABIs
             )
         }
-        let selection = try SwiftCandidateSelection(candidates(declaration)) { candidate in
+        let selection = try SwiftCandidateSelection(candidates(declaration)) { _, entry in
             let plan = try SwiftGenericCallPlan(
-                entry: candidate.entry,
+                entry: entry,
                 genericArguments: genericArguments,
                 signature: description,
                 resolver: resolver,

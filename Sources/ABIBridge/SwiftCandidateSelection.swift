@@ -8,22 +8,48 @@ import ABIBridgeRuntime
 struct SwiftCandidateSelection<Value> {
     private(set) var accepted: [(entry: SwiftEntry, value: Value)] = []
     private var rejections: [(declaration: NativeDeclaration, error: any Error)] = []
+    /// Why a declaration that applies to the request has no selectable code.
+    /// Such a declaration still takes precedence over later lookup tiers.
+    private(set) var unavailable: (any Error)?
 
-    /// - Parameter accept: Prepares a candidate, or returns nil when it does
-    ///   not apply. A signature mismatch also means it does not apply.
-    init(_ candidates: [SwiftCandidate], accept: (SwiftCandidate) throws -> Value?) {
+    /// - Parameters:
+    ///   - dispatch: Selects the code of a member exported only through its
+    ///     class dispatch thunk. Without it, such candidates are rejected.
+    ///   - accept: Prepares a candidate from the entry of its declaration, or
+    ///     returns nil when the candidate does not apply. A signature mismatch
+    ///     also means it does not apply. Code is selected only afterwards.
+    init(
+        _ candidates: [SwiftCandidate],
+        dispatch: ((SwiftCandidate) throws -> SwiftEntry)? = nil,
+        accept: (SwiftCandidate, SwiftEntry) throws -> Value?
+    ) {
         for candidate in Self.distinct(candidates) {
+            let value: Value
             do {
-                if !candidate.record.runsOwnCode {
+                guard let applicable = try accept(candidate, candidate.entry) else { continue }
+                value = applicable
+            } catch ABIResolutionError.signatureMismatch {
+                continue
+            } catch {
+                rejections.append((candidate.declaration, error))
+                continue
+            }
+            do {
+                let entry: SwiftEntry
+                if candidate.record.runsOwnCode {
+                    entry = candidate.entry
+                } else if let dispatch {
+                    entry = try dispatch(candidate)
+                } else {
                     throw ABIResolutionError.unsupportedDeclaration(
                         "\(candidate.declaration.name) is exported only through its dispatch thunk."
                     )
                 }
-                guard let value = try accept(candidate) else { continue }
-                accepted.append((candidate.entry, value))
+                accepted.append((entry, value))
             } catch ABIResolutionError.signatureMismatch {
             } catch {
                 rejections.append((candidate.declaration, error))
+                if unavailable == nil { unavailable = error }
             }
         }
     }

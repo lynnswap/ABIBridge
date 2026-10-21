@@ -485,6 +485,239 @@ struct SwiftMemberInvocationTests {
         #expect(ObjectIdentifier(withBoxesType) == ObjectIdentifier(String.self))
         #expect(!receiver.isConsumed && !input.isConsumed && !owner.isConsumed)
     }
+
+    @Test func classMembersExportedOnlyThroughDispatchThunksCaptureTheSelectedEntry() async throws {
+        let module = "ThunkOnly_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let prefix = "_$s\(module.utf8.count)\(module)"
+        let lists = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString
+        )
+        try FileManager.default.createDirectory(at: lists, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: lists) }
+        // Keep dispatch thunks and method descriptors while hiding and stripping
+        // member bodies, as frameworks such as SimulatorKit ship them.
+        let hidden = lists.appendingPathComponent("hidden.txt")
+        try ["4BaseC", "7DerivedC"].flatMap { owner in
+            ["F", "FZ", "vg", "vgZ", "vs", "vM"].map { prefix + owner + "*" + $0 }
+        }.joined(separator: "\n").write(to: hidden, atomically: true, encoding: .utf8)
+        let library = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                public enum Mode { case on, off }
+                open class Base {
+                    public init() {}
+                    open var mode: Mode = .off
+                    open var count: Int64 = 0
+                    @inline(never) open func value(_ input: Int64) -> Int64 { input + 1 }
+                    @inline(never) open func value(_ input: Int64) async -> Int64 { input + 3 }
+                    @inline(never) open func replacement(_ input: Int64) -> Int64 { input + 100 }
+                    @inline(never) open func opaque() -> some Equatable { count }
+                    @inline(never) open class func kind() -> Int64 { 5 }
+                    open class var kindValue: Int64 { 5 }
+                    open var asyncCount: Int64 { get async { count } }
+                }
+                open class Derived: Base {
+                    @inline(never) public override func value(_ input: Int64) -> Int64 { input + 2 }
+                    @inline(never) public override func replacement(_ input: Int64) -> Int64 { input + 200 }
+                }
+                public func makeBase() -> Base { Base() }
+                public func makeDerived() -> Base { Derived() }
+                @inline(never) public func value(_ object: Base, _ input: Int64) -> Int64 { object.value(input) }
+                @inline(never) public func describe(_ object: Base) -> String { "\\(object.mode):\\(object.count)" }
+                """,
+            stripped: true,
+            linkArguments: [
+                "-O", "-enable-library-evolution", "-emit-module", "-Xlinker",
+                "-unexported_symbols_list", "-Xlinker", hidden.path,
+            ]
+        )
+        defer { library.cleanup() }
+        // A same-signature member in another module's extension does not hide
+        // the defining class's member; one with another effect remains
+        // available.
+        let extensions = try FixtureLibrary(
+            swiftModule: "ThunkExtension_" + UUID().uuidString.replacingOccurrences(of: "-", with: ""),
+            swiftSource: """
+                import \(module)
+                extension Base {
+                    @inline(never) public func value(_ input: Int64) -> Int64 { input + 50 }
+                    public var count: Int64 { get async { 99 } }
+                    public static func kind() -> Int64 { 77 }
+                    public static var kindValue: Int64 { get async { 88 } }
+                }
+                """,
+            linkArguments: ["-I", library.directory.path, library.libraryURL.path]
+        )
+        defer { extensions.cleanup() }
+
+        let runtime = ABIRuntime(), scope = ImageSelector.path(library.libraryURL)
+        await #expect(throws: ABIResolutionError.self) {
+            try await runtime.resolve(
+                .init(name: module + ".Base.value(Swift.Int64) -> Swift.Int64", language: .swift),
+                in: scope
+            )
+        }
+        let base = try await runtime.resolveSwiftType(named: module + ".Base", in: scope)
+        let derived = try await runtime.resolveSwiftType(named: module + ".Derived", in: scope)
+        let mode = try await runtime.resolveSwiftType(named: module + ".Mode", in: scope)
+        func make(_ name: String) async throws -> AnyObject {
+            let make = try await runtime.resolveSwiftFunction(
+                named: module + "." + name + "() -> " + base.name,
+                as: (() -> AnyObject).self,
+                in: scope
+            )
+            return try unsafe make.unsafeInvoke()
+        }
+        let baseObject = try await make("makeBase"), derivedObject = try await make("makeDerived")
+        let describe = try await runtime.resolveSwiftFunction(
+            named: module + ".describe(" + base.name + ") -> Swift.String",
+            as: ((AnyObject) -> String).self,
+            in: scope
+        )
+
+        // The lookup type's entry is captured; a subclass receiver does not redispatch.
+        let baseValue = try await base.resolveMethod(
+            named: "value(_:)",
+            as: ((Int64) -> Int64).self
+        )
+        #expect(try unsafe baseValue.unsafeInvoke(on: baseObject, 40) == 41)
+        #expect(try unsafe baseValue.unsafeInvoke(on: derivedObject, 40) == 41)
+        // An override has no thunk of its own; the inherited slot of the lookup type holds it.
+        let derivedValue = try derived.resolveMethodAndWait(
+            named: "value(_:)",
+            as: ((Int64) -> Int64).self
+        )
+        #expect(try unsafe derivedValue.unsafeInvoke(on: derivedObject, 40) == 42)
+        let bound = try await runtime.object(derivedObject).resolveMethod(
+            named: "value(_:)",
+            as: ((Int64) -> Int64).self
+        )
+        #expect(try unsafe bound.unsafeInvoke(40) == 42)
+
+        let setCount = try await base.resolveSetter(named: "count", as: Int64.self)
+        let getCount = try await base.resolveGetter(named: "count", as: (() -> Int64).self)
+        try unsafe setCount.unsafeInvoke(on: baseObject, 7)
+        #expect(try unsafe getCount.unsafeInvoke(on: baseObject) == 7)
+        let extensionCount = try await base.resolveGetter(
+            named: "count",
+            as: (() async -> Int64).self,
+            declaredAs: "() async -> Swift.Int64"
+        )
+        #expect(try await unsafe extensionCount.unsafeInvoke(on: baseObject) == 99)
+        // A runtime-only resilient value binds its declaration through the thunk.
+        let setMode = try await base.resolveSetter(
+            named: "mode.setter : " + mode.name,
+            as: NativeSwiftValue.self,
+            valueABIs: [mode: .opaque(named: mode.name)]
+        )
+        try unsafe setMode.unsafeInvoke(on: baseObject, try mode.makeEnumCase(named: "on"))
+        #expect(try unsafe describe.unsafeInvoke(baseObject) == "on:7")
+
+        // Relative names that need binding search dispatch thunks too, and the
+        // async overload does not match the synchronous request.
+        let declared = try await base.resolveMethod(
+            named: "value(_:)",
+            as: ((Int64) -> Int64).self,
+            declaredAs: "(Swift.Int64) -> Swift.Int64"
+        )
+        #expect(try unsafe declared.unsafeInvoke(on: baseObject, 40) == 41)
+        // An accessor's async effect comes from its method descriptor.
+        let asyncCount = try await base.resolveGetter(
+            named: "asyncCount",
+            as: (() async -> Int64).self
+        )
+        #expect(try await unsafe asyncCount.unsafeInvoke(on: baseObject) == 7)
+        // Class-method entries are not selected; the failure says why, and
+        // the class's method still hides the extension's.
+        for declared in [nil, "() -> Swift.Int64"] {
+            do {
+                _ = try await base.resolveStaticMethod(
+                    named: "kind()",
+                    as: (() -> Int64).self,
+                    declaredAs: declared
+                )
+                Issue.record("A thunk-only class method resolved")
+            } catch ABIResolutionError.unsupportedDeclaration(let reason) {
+                #expect(reason.contains("dispatch thunk"))
+            }
+        }
+        // A class getter's descriptor says it is synchronous, so it does not
+        // hide an async extension getter requested with its declaration.
+        let extensionKind = try await base.resolveStaticGetter(
+            named: "kindValue",
+            as: (() async -> Int64).self,
+            declaredAs: "() async -> Swift.Int64"
+        )
+        #expect(try await unsafe extensionKind.unsafeInvoke() == 88)
+        // The opaque result descriptor is named by the member, not its thunk.
+        let opaque = try await base.resolveMethod(
+            named: "opaque()",
+            as: (() -> NativeSwiftValue).self
+        )
+        #expect(try unsafe opaque.unsafeInvoke(on: baseObject).withCopy { $0 as? Int64 } == 7)
+        // Replacement publishes the captured entry. A redispatching thunk would
+        // reach Derived's override of the replacement instead.
+        let replacement = try await base.resolveMethod(
+            named: "replacement(_:)",
+            as: ((Int64) -> Int64).self
+        )
+        let plan = try unsafe derivedValue.prepareVirtualReplacementAndWait(with: replacement)
+        let oracle = try await runtime.resolveSwiftFunction(
+            named: module + ".value(" + base.name + ", Swift.Int64) -> Swift.Int64",
+            as: ((AnyObject, Int64) -> Int64).self,
+            in: scope
+        )
+        try unsafe plan.install()
+        defer { try? plan.restore() }
+        #expect(try unsafe oracle.unsafeInvoke(derivedObject, 40) == 140)
+        try plan.restore()
+        #expect(try unsafe oracle.unsafeInvoke(derivedObject, 40) == 42)
+
+        // A replacement from another image keeps the declaration's opaque
+        // descriptor lookup in the declaring image.
+        let patchModule = "ThunkPatch_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let patch = try FixtureLibrary(
+            swiftModule: patchModule,
+            swiftSource: """
+                open class Patch {
+                    public init() {}
+                    @inline(never) open func opaque() -> some Equatable { Int64(9) }
+                }
+                """,
+            linkArguments: ["-O", "-enable-library-evolution"]
+        )
+        defer { patch.cleanup() }
+        let patchType = try await runtime.resolveSwiftType(
+            named: patchModule + ".Patch",
+            in: .path(patch.libraryURL)
+        )
+        let patchOpaque = try await patchType.resolveMethod(
+            named: "opaque()",
+            as: (() -> NativeSwiftValue).self
+        )
+        let opaquePlan = try unsafe opaque.prepareVirtualReplacementAndWait(with: patchOpaque)
+        try unsafe opaquePlan.install()
+        defer { try? opaquePlan.restore() }
+        let replaced = try base.resolveMethodAndWait(
+            named: "opaque()",
+            as: (() -> NativeSwiftValue).self
+        )
+        #expect(try unsafe replaced.unsafeInvoke(on: baseObject).withCopy { $0 as? Int64 } == 9)
+        try opaquePlan.restore()
+
+        // A hook's generated dispatcher has no image; a later lookup still captures it.
+        let hook = try await unsafe derivedValue.hookVirtualCalls(onFailure: { _ in }) {
+            call,
+            input in
+            try call.proceed(input) + 1000
+        }
+        defer { hook.invalidate() }
+        let hooked = try derived.resolveMethodAndWait(
+            named: "value(_:)",
+            as: ((Int64) -> Int64).self
+        )
+        #expect(try unsafe hooked.unsafeInvoke(on: derivedObject, 40) == 1042)
+    }
     #endif
 
     @MainActor @Test func extractedMethodsAndBindingsHaveIndependentReceiverLifetimes() async throws
