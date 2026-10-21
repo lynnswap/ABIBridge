@@ -522,53 +522,68 @@ public actor NativeSwiftType: Hashable {
                 _ = try swiftFunctionDeclaration(named: declaration.name, as: signature)
             }
             let extensionModule = Self.extensionModule(of: declaration.name)
+            func select(
+                extensionsOnly: Bool,
+                includingSharedCache: Bool
+            ) throws -> SwiftCandidateSelection<SelectedMemberPlan> {
+                SwiftCandidateSelection(
+                    try resolver.swiftDeclarationCandidates(
+                        declaration,
+                        in: isProtocolMember || extensionsOnly ? nil : ownerImage,
+                        extensionsOnly: extensionsOnly,
+                        includingSharedCache: includingSharedCache
+                    ),
+                    namesDeclaration: isComplete,
+                    dispatch: { try self.dispatchedEntry($0, asynchronous: description.isAsync) }
+                ) { candidate, entry -> SelectedMemberPlan? in
+                    if isProtocolMember {
+                        switch candidate.record.context {
+                        case .protocolRequirement where candidate.record.role == .dispatchThunk,
+                            .protocolExtension:
+                            break
+                        default: return nil
+                        }
+                    }
+                    if let extensionModule,
+                        Self.extensionModule(of: candidate.declaration.name) != extensionModule
+                    {
+                        return nil
+                    }
+                    if isComplete {
+                        guard Self.spells(candidate, declaration.name, exactly: isQualified)
+                        else { return nil }
+                        guard usesBinding else { return SelectedMemberPlan(plan: nil) }
+                    }
+                    let plan = try SwiftGenericCallPlan(
+                        entry: entry,
+                        genericArguments: genericArguments,
+                        signature: description,
+                        resolver: resolver,
+                        enclosing: enclosing,
+                        implicitSelf: isProtocolMember ? self : nil,
+                        declaredSignature: declaredSignature,
+                        valueABIs: valueABIs
+                    )
+                    if !isComplete { try plan.check(description) }
+                    // A concrete call needs no binding, but a handle that
+                    // converts class references keeps its plan so hooks can
+                    // reject it.
+                    return SelectedMemberPlan(
+                        plan: usesBinding || plan.convertsReferences(description) ? plan : nil
+                    )
+                }
+            }
             // The members a type declares hide those its extensions declare.
             for extensionsOnly in [false, true] where extensionsOnly || extensionModule == nil {
-                let selection: SwiftCandidateSelection<SelectedMemberPlan>
+                var selection: SwiftCandidateSelection<SelectedMemberPlan>
                 do {
-                    selection = SwiftCandidateSelection(
-                        try resolver.swiftDeclarationCandidates(
-                            declaration,
-                            in: isProtocolMember || extensionsOnly ? nil : ownerImage,
-                            extensionsOnly: extensionsOnly
-                        ),
-                        namesDeclaration: isComplete,
-                        dispatch: { try self.dispatchedEntry($0, asynchronous: description.isAsync) }
-                    ) { candidate, entry -> SelectedMemberPlan? in
-                        if isProtocolMember {
-                            switch candidate.record.context {
-                            case .protocolRequirement where candidate.record.role == .dispatchThunk,
-                                .protocolExtension:
-                                break
-                            default: return nil
-                            }
-                        }
-                        if let extensionModule,
-                            Self.extensionModule(of: candidate.declaration.name) != extensionModule
-                        {
-                            return nil
-                        }
-                        if isComplete {
-                            guard Self.spells(candidate, declaration.name, exactly: isQualified)
-                            else { return nil }
-                            guard usesBinding else { return SelectedMemberPlan(plan: nil) }
-                        }
-                        let plan = try SwiftGenericCallPlan(
-                            entry: entry,
-                            genericArguments: genericArguments,
-                            signature: description,
-                            resolver: resolver,
-                            enclosing: enclosing,
-                            implicitSelf: isProtocolMember ? self : nil,
-                            declaredSignature: declaredSignature,
-                            valueABIs: valueABIs
-                        )
-                        if !isComplete { try plan.check(description) }
-                        // A concrete call needs no binding, but a handle that
-                        // converts class references keeps its plan so hooks
-                        // can reject it.
-                        return SelectedMemberPlan(
-                            plan: usesBinding || plan.convertsReferences(description) ? plan : nil
+                    selection = try select(extensionsOnly: extensionsOnly, includingSharedCache: false)
+                    // The images can hold other overloads while only the shared
+                    // cache's local symbols describe the requested one.
+                    if selection.accepted.isEmpty && selection.failure == nil {
+                        selection = try select(
+                            extensionsOnly: extensionsOnly,
+                            includingSharedCache: true
                         )
                     }
                 } catch ABIResolutionError.imageUnavailable {
