@@ -671,18 +671,9 @@ struct SwiftClassHookTests {
             named: baseName,
             in: fixture.providerScope
         )
-        let destroy = try await base.resolveMethod(
-            named: "deinit",
-            as: (() -> UnsafeRawPointer?).self
-        )
         do {
-            _ = try await unsafe destroy.hookImportedCalls(
-                in: fixture.callerScope,
-                onFailure: { Issue.record("Unexpected: \($0)") }
-            ) { _ in nil }
-            Issue.record(
-                "An initializing/deinitializing receiver cannot use an ordinary method hook"
-            )
+            _ = try await base.resolveMethod(named: "deinit", as: (() -> UnsafeRawPointer?).self)
+            Issue.record("A deinitializing receiver cannot use an ordinary method")
         } catch ABIResolutionError.unsupportedDeclaration {}
     }
 

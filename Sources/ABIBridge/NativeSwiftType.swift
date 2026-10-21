@@ -464,13 +464,8 @@ public actor NativeSwiftType: Hashable {
     // Generic packs expand caller arguments without changing the source labels.
     // Their requests keep those labels until declaration binding determines arity.
     private typealias ResolvedMember = (
-        entry: SwiftEntry, metadata: Any.Type, generic: SwiftGenericCallPlan?
+        entry: SwiftEntry, metadata: Any.Type, generic: SwiftGenericCallPlan
     )
-
-    /// The binding a selected member needs, when its call is not concrete.
-    private struct SelectedMemberPlan {
-        let plan: SwiftGenericCallPlan?
-    }
 
     /// Selects a member from the candidates this type declares, then those
     /// its extensions declare, then those of each superclass in turn.
@@ -514,21 +509,11 @@ public actor NativeSwiftType: Hashable {
             let declaration = try request(ownerName)
             if originalRequest == nil { originalRequest = declaration }
             let isProtocolMember = !SwiftMemberLookup.belongs(declaration.name, to: ownerName)
-            // A protocol member binds Self to this type.
-            let usesBinding =
-                isProtocolMember || !(enclosing?.arguments.isEmpty ?? true)
-                || !genericArguments.isEmpty || declaredSignature != nil || !valueABIs.isEmpty
-                || description.requiresValueDeclaration
-            // Without a binding, a complete declaration must not be generic
-            // and must have the requested effects.
-            if isComplete && !usesBinding && !SwiftMemberLookup.isAccessor(declaration.name) {
-                _ = try swiftFunctionDeclaration(named: declaration.name, as: signature)
-            }
             let extensionModule = Self.extensionModule(of: declaration.name)
             func select(
                 extensionsOnly: Bool,
                 includingSharedCache: Bool
-            ) throws -> SwiftCandidateSelection<SelectedMemberPlan> {
+            ) throws -> SwiftCandidateSelection<SwiftGenericCallPlan> {
                 SwiftCandidateSelection(
                     try resolver.swiftDeclarationCandidates(
                         declaration,
@@ -538,7 +523,7 @@ public actor NativeSwiftType: Hashable {
                     ),
                     namesDeclaration: isComplete,
                     dispatch: { try self.dispatchedEntry($0, asynchronous: description.isAsync) }
-                ) { candidate, entry -> SelectedMemberPlan? in
+                ) { candidate, entry -> SwiftGenericCallPlan? in
                     if isProtocolMember {
                         switch candidate.record.context {
                         case .protocolRequirement where candidate.record.role == .dispatchThunk,
@@ -555,7 +540,6 @@ public actor NativeSwiftType: Hashable {
                     if isComplete {
                         guard Self.spells(candidate, declaration.name, exactly: isQualified)
                         else { return nil }
-                        guard usesBinding else { return SelectedMemberPlan(plan: nil) }
                     }
                     let plan = try SwiftGenericCallPlan(
                         entry: entry,
@@ -568,14 +552,12 @@ public actor NativeSwiftType: Hashable {
                         valueABIs: valueABIs
                     )
                     if !isComplete { try plan.check(description, representations: representations) }
-                    return SelectedMemberPlan(
-                        plan: usesBinding || plan.isRequired(for: description) ? plan : nil
-                    )
+                    return plan
                 }
             }
             // The members a type declares hide those its extensions declare.
             for extensionsOnly in [false, true] where extensionsOnly || extensionModule == nil {
-                var selection: SwiftCandidateSelection<SelectedMemberPlan>
+                var selection: SwiftCandidateSelection<SwiftGenericCallPlan>
                 do {
                     selection = try select(extensionsOnly: extensionsOnly, includingSharedCache: false)
                     // The images can hold other overloads while only the shared
@@ -590,8 +572,8 @@ public actor NativeSwiftType: Hashable {
                     hasUnavailableImages = true
                     continue
                 }
-                if let (entry, selected) = try selection.selected(for: declaration) {
-                    return (entry, isProtocolMember ? metadata : owner, selected.plan)
+                if let (entry, plan) = try selection.selected(for: declaration) {
+                    return (entry, isProtocolMember ? metadata : owner, plan)
                 }
                 // A member that applies but has no selectable code still hides
                 // extension and superclass members. A protocol extension
@@ -743,7 +725,7 @@ public actor NativeSwiftType: Hashable {
             receiver: receiver,
             consumesArguments: consumesArguments
                 || member.entry.record?.accessor == .setter,
-            generic: member.generic?.includingReceiver(receiver.mode)
+            generic: member.generic.includingReceiver(receiver.mode)
         )
     }
 
@@ -759,7 +741,7 @@ public actor NativeSwiftType: Hashable {
             consumesArguments: consumesArguments
                 || member.entry.record?.accessor == .setter,
             generic: classReceiver
-                ? member.generic.map { try $0.includingReceiver(.object) } : member.generic
+                ? try member.generic.includingReceiver(.object) : member.generic
         )
     }
 

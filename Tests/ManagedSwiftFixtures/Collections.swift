@@ -30,6 +30,10 @@ public struct VariadicTupleSeries<Value> {
     body(value)
 }
 
+@inline(never) public func applyDictionaryClosure(
+    _ body: ([String: Int64]) -> Set<Int64>, _ value: [String: Int64]
+) -> Set<Int64> { body(value) }
+
 @inline(never) public func applyOptionalArrayClosure(
     _ body: ([String]?) -> [String]?, _ value: [String]?
 ) -> [String]? { body(value) }

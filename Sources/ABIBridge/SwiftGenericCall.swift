@@ -653,10 +653,20 @@ struct SwiftGenericCallPlan: Sendable {
             declaredSignature: declared,
             caller: signature
         )
+        let implicitArguments = implicitSelf.map { [.type($0)] } ?? enclosing?.arguments ?? []
+        // Callers supply only the parameters the declaration itself introduces.
+        let introduced = declaration.parameters.count - implicitArguments.count
+        guard genericArguments.count == introduced else {
+            throw ABIResolutionError.signatureMismatch(
+                .init(
+                    expected: "\(introduced) generic arguments",
+                    found: ["\(genericArguments.count) generic arguments"]
+                )
+            )
+        }
         var binding = try SwiftGenericBinding(
             declaration: declaration,
-            arguments: (implicitSelf.map { [.type($0)] } ?? enclosing?.arguments ?? [])
-                + genericArguments,
+            arguments: implicitArguments + genericArguments,
             signature: signature,
             resolver: resolver,
             enclosing: context,
@@ -997,14 +1007,6 @@ struct SwiftGenericCallPlan: Sendable {
         } catch let ABIResolutionError.signatureMismatch(mismatch) {
             throw ABIResolutionError.signatureMismatch(mismatch.at(.result))
         }
-    }
-
-    /// Whether a call with the requested signature needs this plan even when
-    /// the declaration is concrete: an opaque result's descriptor supplies its
-    /// type and convention, and a handle that converts class references keeps
-    /// its plan so hooks can reject it.
-    func isRequired(for signature: SwiftFunctionSignature) -> Bool {
-        !binding.declaration.result.opaqueIndices.isEmpty || convertsReferences(signature)
     }
 
     /// Whether a call converts a class reference at some position, which a

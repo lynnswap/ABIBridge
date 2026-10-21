@@ -73,7 +73,7 @@ Invocation can throw bridge errors even when the native signature is nonthrowing
 | --- | --- |
 | Bool, signed/unsigned 8–64-bit integers, Int, UInt, Float, Double, CGFloat | Native Swift scalar arguments and results |
 | Class references, AnyObject, and their optional forms | Guaranteed arguments and owned results |
-| String, Array<Element>, and their single-level optional forms | Stable Swift storage with Swift ownership, including array element lifetimes |
+| String, Array<Element>, Dictionary<Key, Value>, Set<Element>, and their single-level optional forms | Stable Swift storage with Swift ownership, including element lifetimes |
 | `NativeSwiftClosure<Signature>` | Owned callbacks and returned closures; the function signature carries native errors, async effects, and the caller-isolated or concurrent convention |
 | Unsafe pointers, OpaquePointer, Selector, and optional pointers | Borrowed pointer values |
 | CGPoint, CGSize, CGRect, NSRange | Known fixed value layouts lowered with the Swift ABI |
@@ -93,7 +93,7 @@ Signatures outside these representations require a compiled adapter. <doc:Manage
 
 ## Ownership and isolation
 
-Object, String, and Array arguments stay alive through the call, including supported optional forms. Results transfer Swift ownership to the caller; pointer results remain borrowed. Array elements use compiler-owned copying and destruction, so an element needs no standalone direct-call representation. Arrays keep their copy-on-write behavior, and an optional array distinguishes nil from an empty array.
+Object, String, and collection arguments stay alive through the call, including supported optional forms. Results transfer Swift ownership to the caller; pointer results remain borrowed. Collection keys, values, and elements use compiler-owned copying and destruction, so they need no standalone direct-call representation. Collections keep their copy-on-write behavior, and an optional collection distinguishes nil from an empty one.
 
 Custom wrappers establish their own native value contract. Their returned ``NativeValue`` retains the resolved symbol.
 

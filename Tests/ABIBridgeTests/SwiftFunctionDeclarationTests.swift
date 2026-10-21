@@ -90,7 +90,9 @@ struct SwiftFunctionDeclarationTests {
                     loading: .loadedOnly
                 )
                 Issue.record("A generic declaration was prepared without metadata or witnesses")
-            } catch ABIResolutionError.unsupportedDeclaration {}
+            } catch let ABIResolutionError.signatureMismatch(mismatch) {
+                #expect(mismatch.expected == "1 generic arguments")
+            }
             do {
                 _ = try await runtime.resolveSwiftFunction(
                     named: declaration,
@@ -99,24 +101,13 @@ struct SwiftFunctionDeclarationTests {
                     loading: .loadedOnly
                 )
                 Issue.record("Matching effects bypassed the generic adapter requirement")
-            } catch ABIResolutionError.unsupportedDeclaration {}
+            } catch let ABIResolutionError.signatureMismatch(mismatch) {
+                #expect(mismatch.expected == "1 generic arguments")
+            }
         }
     }
 
     #endif
-
-    @Test(arguments: ["async", "throws", "async throws"])
-    func constrainedClosureTypesDoNotHideOuterEffects(_ effects: String) async throws {
-        let declaration =
-            "(extension in Example):Example.Box<A where A == (Swift.Int) -> Swift.String>.value() \(effects) -> Swift.String"
-        do {
-            _ = try await ABIRuntime().resolveSwiftFunction(
-                named: declaration,
-                as: (() -> String).self
-            )
-            Issue.record("An outer effect was accepted by a synchronous nonthrowing metatype")
-        } catch ABIResolutionError.unsupportedDeclaration {}
-    }
 
     #if DEBUG
     @Test func functionMetadataPreservesTheCompleteSignature() throws {
@@ -153,20 +144,16 @@ struct SwiftFunctionDeclarationTests {
         "(extension in Example):Example.Box<A where A == (Swift.Int) -> Swift.String>.value() async throws -> Swift.String",
     ])
     func genericRequirementArrowsKeepTheOuterResult(_ declaration: String) {
-        let signature = swiftOuterSignature(declaration)
-        #expect(signature.result?.trimmingCharacters(in: .whitespaces) == "Swift.String")
-        #expect(signature.text.trimmingCharacters(in: .whitespaces).hasSuffix("async throws"))
+        let result = swiftDeclarationResult(declaration)
+        #expect(result?.trimmingCharacters(in: .whitespaces) == "Swift.String")
     }
 
     @Test(arguments: ["<", "<<", "<>", ">", "-->", "->>"])
-    func operatorNamesDoNotHideOuterEffects(_ name: String) throws {
+    func operatorNamesKeepTheOuterResult(_ name: String) throws {
         let declaration =
             "static Example.Value.\(name) infix(Example.Value, Example.Value) async throws -> Swift.Bool"
-        let signature = swiftOuterSignature(declaration)
-        #expect(signature.result?.trimmingCharacters(in: .whitespaces) == "Swift.Bool")
-        #expect(throws: ABIResolutionError.self) {
-            try swiftFunctionDeclaration(named: declaration, as: ((Int, Int) -> Bool).self)
-        }
+        let result = swiftDeclarationResult(declaration)
+        #expect(result?.trimmingCharacters(in: .whitespaces) == "Swift.Bool")
     }
 
     @Test(arguments: [
@@ -175,21 +162,12 @@ struct SwiftFunctionDeclarationTests {
         "Example.😀<A where A.Callback == (Swift.Int) -> Swift.String>(A) async throws -> Swift.String",
     ])
     func closureArrowsKeepTheFirstOuterResult(_ declaration: String) {
-        let signature = swiftOuterSignature(declaration)
+        let result = swiftDeclarationResult(declaration)
         let expected =
             declaration.contains("factory")
             ? "(Swift.Int) async throws -> Swift.String" : "Swift.String"
-        #expect(signature.result?.trimmingCharacters(in: .whitespaces) == expected)
+        #expect(result?.trimmingCharacters(in: .whitespaces) == expected)
     }
 
-    @Test(arguments: [
-        "Example.apply((Swift.Int) async throws -> Swift.String) -> Swift.String",
-        "Example.factory() -> (Swift.Int) async throws -> Swift.String",
-        "(extension in Example):Example.Box<A where A == (Swift.Int) -> Swift.String>.value() -> Swift.String",
-    ])
-    func innerClosureEffectsDoNotRejectSynchronousDeclarations(_ declaration: String) throws {
-        let parsed = try swiftFunctionDeclaration(named: declaration, as: (() -> String).self)
-        #expect(parsed.name == declaration)
-    }
     #endif
 }

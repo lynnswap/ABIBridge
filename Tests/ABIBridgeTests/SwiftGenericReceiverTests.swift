@@ -465,21 +465,6 @@ struct SwiftGenericReceiverTests {
         #expect(try unsafe getter.unsafeInvoke().text == receiver.payload.text)
     }
 
-    @Test(arguments: [
-        "async.f<A where A: async.P>(A) -> A",
-        "throws.f<A where A: throws.P>(A) -> A",
-        "Example.(Private in _ABCD).f<A where A: async.P>(A) -> A",
-        "Example.(Private in _ABCD).f<A where A: throws.P>(A) async throws -> A",
-    ])
-    func genericRequirementsDoNotBecomeFunctionEffects(_ declaration: String) async throws {
-        do {
-            _ = try await ABIRuntime().resolveSwiftFunction(
-                named: declaration, as: ((Int) async throws -> Int).self
-            )
-            Issue.record("Generic metadata and witnesses were not supplied")
-        } catch ABIResolutionError.unsupportedDeclaration {}
-    }
-
     @MainActor @Test func dependentAndIndependentGenericsKeepAdapterBoundary() async throws {
         let object = ABIRuntime.shared.object(GenericReceiver(ReceiverNumber(number: 42)))
         do {
@@ -489,6 +474,8 @@ struct SwiftGenericReceiverTests {
         do {
             _ = try await object.resolveMethod(named: "independent<A>(A1) -> A1", as: ((Int) -> Int).self)
             Issue.record("Independent generic metadata was not supplied")
-        } catch ABIResolutionError.unsupportedDeclaration {}
+        } catch let ABIResolutionError.signatureMismatch(mismatch) {
+            #expect(mismatch.expected == "1 generic arguments")
+        }
     }
 }

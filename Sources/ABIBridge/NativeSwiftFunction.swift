@@ -40,133 +40,6 @@ func swiftNativeTypeName(_ type: Any.Type) throws -> String {
     return name
 }
 
-func swiftFunctionDeclaration<Signature>(
-    named name: String,
-    as signature: Signature.Type,
-    resultName: String? = nil,
-    defaultConsuming: Bool = false
-) throws -> NativeDeclaration {
-    let description = try SwiftFunctionSignature(signature)
-    return try swiftFunctionDeclaration(
-        named: name,
-        parameterTypes: description.parameters,
-        resultType: description.result,
-        failureType: description.failure,
-        isAsync: description.isAsync,
-        resultName: resultName,
-        defaultConsuming: defaultConsuming
-    )
-}
-
-func swiftFunctionDeclaration(
-    named name: String,
-    parameterTypes: [Any.Type],
-    resultType: Any.Type,
-    failureType: Any.Type,
-    isAsync: Bool,
-    resultName: String? = nil,
-    defaultConsuming: Bool = false
-) throws -> NativeDeclaration {
-    let throwing =
-        failureType == Never.self
-        ? ""
-        : failureType == (any Error).self
-            ? " throws" : " throws(" + (try swiftFunctionTypeName(failureType)) + ")"
-    let effects = (isAsync ? " async" : "") + throwing
-    var declaration = name
-    // A full demangled declaration is useful when a foreign wrapper's Swift
-    // type name differs from the native type. Label-only names infer types.
-    if SwiftFormalSyntax.topLevelArrow(in: name) == nil, name.last == ")",
-        let opening = name.lastIndex(of: "(")
-    {
-        let text = name[name.index(after: opening)..<name.index(before: name.endIndex)]
-        let labels = text.split(separator: ":").map(String.init)
-        let labelsOnly =
-            text.isEmpty
-            || (text.last == ":"
-                && labels.allSatisfy {
-                    !$0.isEmpty && $0.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" }
-                })
-        if labelsOnly {
-            let parameters = try parameterTypes.map {
-                try swiftArgumentTypeName($0, defaultConsuming: defaultConsuming)
-            }
-            guard labels.count == parameters.count else {
-                throw ABIResolutionError.signatureMismatch(
-                    .init(
-                        expected: "\(parameters.count) argument labels",
-                        found: [name]
-                    )
-                )
-            }
-            let omitLabels = labels.allSatisfy { $0 == "_" }
-            let fields = zip(labels, parameters).map { label, type in
-                omitLabels ? type : label + ": " + type
-            }
-            declaration =
-                String(name[..<opening]) + "(" + fields.joined(separator: ", ") + ")" + effects
-                + " -> " + (try resultName ?? swiftFunctionTypeName(resultType))
-        }
-    }
-    let outerSignature = swiftOuterSignature(declaration).text
-    // Effects are trailing words after the parameter list. A module called
-    // async or throws inside a generic requirement is part of the type name.
-    var words = outerSignature.split(whereSeparator: \.isWhitespace)
-    var effectWords: [Substring] = []
-    while let last = words.last, last == "async" || last == "throws" {
-        effectWords.append(words.removeLast())
-    }
-    let prefix = outerSignature[..<(effectWords.last?.startIndex ?? outerSignature.endIndex)]
-    let member = prefix.split(separator: ".").last ?? prefix
-    let generic =
-        prefix.last(where: { !$0.isWhitespace }) == ">"
-        && member.contains { $0.isLetter || $0.isNumber || $0 == "_" }
-    guard !generic, (isAsync || !effectWords.contains("async")),
-        (failureType != Never.self || !effectWords.contains("throws"))
-    else {
-        throw ABIResolutionError.unsupportedDeclaration(
-            "Generic signatures require genericArguments; async and throwing calls require matching function types."
-        )
-    }
-    return NativeDeclaration(name: declaration, language: .swift)
-}
-
-// Scan backward so a `<` operator before the parameter list cannot open a
-// generic group. Closure and requirement arrows do not describe the result.
-func swiftOuterSignature(_ declaration: String) -> (text: String, result: Substring?) {
-    var parentheses = 0, generics = 0
-    var text = ""
-    var result: Substring?
-    var index = declaration.endIndex
-    while index > declaration.startIndex {
-        index = declaration.index(before: index)
-        let character = declaration[index]
-        let previous = index > declaration.startIndex ? declaration.index(before: index) : nil
-        let arrow = character == ">" && previous.map { declaration[$0] == "-" } == true
-        if parentheses == 0, generics == 0, arrow,
-            SwiftFormalSyntax.isResultArrow(in: declaration, at: previous!)
-        {
-            result = declaration[declaration.index(after: index)...]
-            text.removeAll(keepingCapacity: true)
-            index = previous!
-            continue
-        }
-        if character == ")" {
-            parentheses += 1
-        } else if character == "(" {
-            parentheses -= 1
-        } else if parentheses == 0 {
-            if character == ">", !arrow {
-                generics += 1
-            } else if character == "<", generics > 0 {
-                generics -= 1
-            }
-            text.append(character)
-        }
-    }
-    return (String(text.reversed()), result)
-}
-
 final class SwiftCallInterface: @unchecked Sendable {
     let runtime: RuntimeSwiftCallInterface
     var handle: OpaquePointer { runtime.handle }
@@ -228,31 +101,38 @@ public struct NativeSwiftFunction<Signature>: Sendable {
     let isGeneric: Bool
     var errorPlan: SwiftErrorPlan? { call.errorPlan }
 
-    init(
-        symbol: ResolvedSymbol,
-        metadata: Any.Type? = nil,
-        owner: NativeSwiftType? = nil,
-        consumesArguments: Bool = false,
-        resolver: SymbolResolver? = nil,
-        generic: SwiftGenericCallPlan? = nil
-    ) throws {
-        try self.init(
-            entry: SwiftEntry(symbol: symbol),
-            metadata: metadata,
-            owner: owner,
-            consumesArguments: consumesArguments,
-            resolver: resolver,
-            generic: generic
-        )
+    /// Calls a Swift runtime entry point that has no source declaration, with
+    /// the caller's signature as its ABI.
+    init(runtimeSymbol symbol: ResolvedSymbol) throws {
+        try self.init(entry: SwiftEntry(symbol: symbol), plan: nil)
     }
 
+    /// - Parameter generic: The selected declaration's call plan.
     init(
         entry: SwiftEntry,
         metadata: Any.Type? = nil,
         owner: NativeSwiftType? = nil,
         consumesArguments: Bool = false,
         resolver: SymbolResolver? = nil,
-        generic: SwiftGenericCallPlan? = nil
+        generic: SwiftGenericCallPlan
+    ) throws {
+        try self.init(
+            entry: entry,
+            metadata: metadata,
+            owner: owner,
+            consumesArguments: consumesArguments,
+            resolver: resolver,
+            plan: generic
+        )
+    }
+
+    private init(
+        entry: SwiftEntry,
+        metadata: Any.Type? = nil,
+        owner: NativeSwiftType? = nil,
+        consumesArguments: Bool = false,
+        resolver: SymbolResolver? = nil,
+        plan generic: SwiftGenericCallPlan?
     ) throws {
         self.entry = entry
         self.consumesArguments = consumesArguments
@@ -493,11 +373,6 @@ public struct NativeSwiftFunction<Signature>: Sendable {
 
 }
 
-/// The binding a selected function needs, when its call is not concrete.
-private struct SelectedFunctionPlan {
-    let plan: SwiftGenericCallPlan?
-}
-
 extension ABIRuntime {
     // A complete declaration names the native function, so its spelling
     // selects candidates and the requested types may adapt them. A label-only
@@ -514,21 +389,15 @@ extension ABIRuntime {
         ) throws -> [SwiftCandidate]
     ) throws -> NativeSwiftFunction<Signature> {
         let description = try SwiftFunctionSignature(signature)
-        let usesBinding =
-            !genericArguments.isEmpty || declaredSignature != nil || !valueABIs.isEmpty
-            || description.requiresValueDeclaration
         let declaration = NativeDeclaration(name: name, language: .swift)
         let complete = SwiftMemberLookup.hasSignature(name)
-        // Without a binding, a complete declaration must not be generic and
-        // must have the requested effects.
-        if complete && !usesBinding { _ = try swiftFunctionDeclaration(named: name, as: signature) }
         let key = DeclarationKey.make(name, language: .swift)
         let extensionsOnly = SymbolIndex.extensionMemberName(name) != nil
-        func select(includingSharedCache: Bool) throws -> SwiftCandidateSelection<SelectedFunctionPlan> {
+        func select(includingSharedCache: Bool) throws -> SwiftCandidateSelection<SwiftGenericCallPlan> {
             try SwiftCandidateSelection(
                 candidates(declaration, extensionsOnly, includingSharedCache),
                 namesDeclaration: complete
-            ) { candidate, entry -> SelectedFunctionPlan? in
+            ) { candidate, entry -> SwiftGenericCallPlan? in
                 if complete {
                     let names = [candidate.declaration.name, candidate.memberName]
                     guard
@@ -536,7 +405,6 @@ extension ABIRuntime {
                             DeclarationKey.make($0, language: .swift) == key
                         })
                     else { return nil }
-                    guard usesBinding else { return SelectedFunctionPlan(plan: nil) }
                 }
                 let plan = try SwiftGenericCallPlan(
                     entry: entry,
@@ -547,9 +415,7 @@ extension ABIRuntime {
                     valueABIs: valueABIs
                 )
                 if !complete { try plan.check(description) }
-                return SelectedFunctionPlan(
-                    plan: usesBinding || plan.isRequired(for: description) ? plan : nil
-                )
+                return plan
             }
         }
         var selection = try select(includingSharedCache: false)
@@ -558,8 +424,8 @@ extension ABIRuntime {
         if selection.accepted.isEmpty && selection.failure == nil {
             selection = try select(includingSharedCache: true)
         }
-        if let (entry, prepared) = try selection.selected(for: declaration) {
-            return try NativeSwiftFunction(entry: entry, resolver: resolver, generic: prepared.plan)
+        if let (entry, plan) = try selection.selected(for: declaration) {
+            return try NativeSwiftFunction(entry: entry, resolver: resolver, generic: plan)
         }
         if let failure = selection.failure ?? selection.mismatch { throw failure }
         throw ABIResolutionError.declarationNotFound(declaration)
