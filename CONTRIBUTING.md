@@ -90,6 +90,14 @@ bash scripts/test-native-consumer.sh
 
 This builds C, C++, Objective-C++, and Swift clients of the public product. It also runs the Swift compiler probes, which inspect generated code for argument passing, results, ownership, and pointer authentication across architectures.
 
+Inferred struct and enum conventions depend on a checked-in list of the SDK's `@frozen @_addressableForDependencies` declarations. When a new SDK adds one, `scripts/check-inferred-swift-value-codegen.py` fails until you regenerate the list with each supported Xcode:
+
+```sh
+python3 scripts/generate-swift-self-addressable-types.py \
+  --developer-dir /Applications/Xcode_26.6.app/Contents/Developer \
+  --developer-dir /Applications/Xcode_27.app/Contents/Developer
+```
+
 For the subset used by CI, run `bash scripts/test-native-consumer.sh focused`. It checks external headers, optimized C linkage, and compiler-sensitive Swift entry points. `bash scripts/test-native-consumer.sh swiftui` runs the public SwiftUI consumer and its contract check. Set `ABI_CONSUMER_BUILD_DIR` to choose a separate build directory for another toolchain.
 
 Run the architecture fixtures and the trampoline comparison when changing ABI handling:

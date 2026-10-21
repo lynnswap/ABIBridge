@@ -6,7 +6,7 @@ Receive a runtime-only value in a native callback and call its members using its
 
 Resolve the nominal type and prepare ordinary getter or method handles; their `AndWait` variants select synchronous lookup. The same member handle accepts an owned ``NativeSwiftValue`` or an active ``NativeSwiftBorrowedValue``.
 
-Supply `receiverABI` when the receiver's passing convention is unavailable from its representation or generic declaration. Use `.opaque` for formally indirect self and established components for a direct value. Metadata supplies storage dimensions, not the passing convention.
+Supply `receiverABI` when the receiver's passing convention is unavailable from its representation, its generic declaration, or the convention inferred from its metadata; see <doc:SwiftFunctionInvocation#Infer-struct-and-enum-conventions>. Use `.opaque` for formally indirect self and established components for a direct value.
 
 For an independently compiled module with a resilient `Record`, a `text: String` getter and `func visit(_ body: (Record) -> Void)`, a consumer can prepare everything before native callback entry:
 
@@ -34,7 +34,7 @@ nonisolated(nonsending) func visitRecords(
 }
 ```
 
-A complete source declaration identifies the callback's native argument type. `valueABIs` supplies the passing convention for a closed nominal value unavailable to the host. Here `.opaque` means formally indirect passing; metadata provides dimensions and value operations. A fixed value with established direct components can use `NativeType.structure`.
+A complete source declaration identifies the callback's native argument type. `valueABIs` supplies the passing convention for a closed nominal value unavailable to the host when ABIBridge cannot infer it. Here `.opaque` means formally indirect passing; metadata provides dimensions and value operations. A fixed value with established direct components can use `NativeType.structure`.
 
 The map applies to this lookup, including nested callbacks and member arguments/results. Generic archetypes keep the original declaration's lowering.
 

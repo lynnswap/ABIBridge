@@ -77,6 +77,7 @@ Invocation can throw bridge errors even when the native signature is nonthrowing
 | `NativeSwiftClosure<Signature>` | Owned callbacks and returned closures; the function signature carries native errors, async effects, and the caller-isolated or concurrent convention |
 | Unsafe pointers, OpaquePointer, Selector, and optional pointers | Borrowed pointer values |
 | CGPoint, CGSize, CGRect, NSRange | Known fixed value layouts lowered with the Swift ABI |
+| Other structs and enums | Conventions inferred from their metadata when binary evidence decides them; see <doc:SwiftFunctionInvocation#Infer-struct-and-enum-conventions> |
 | Any, simple and parameterized protocol existentials, and their single-level optional forms | Compiler-managed containers with the native existential calling convention; see <doc:SwiftExistentialValues> |
 | ABIBridgeSwiftValue | Actual Swift values with explicit fixed or formally indirect conventions and compiler-owned copying/destruction |
 | ABIBridgeValue | Explicit trivial native layouts representable by NativeType's scalar/structure descriptions |
@@ -93,6 +94,22 @@ The call interface uses Swift register and stack conventions, including direct a
 Use ``ABIBridgeSwiftValue`` for an imported struct or enum with an established fixed or formally indirect ABI; see <doc:ExplicitSwiftValues>. Its layout must match the declaration's field offsets, padding, and passing convention. A C-compatible storage description cannot describe every Swift value.
 
 Signatures outside these representations require a compiled adapter. <doc:ManagedSwiftValues> shows a C-compatible storage bridge for managed structs and imported resilient values. Closure, existential, and generic support has its own boundaries in the linked guides.
+
+## Infer struct and enum conventions
+
+A struct or enum without a built-in representation, an ``ABIBridgeSwiftValue`` conformance, or a `valueABIs:` entry is lowered from its runtime metadata. Inference covers `NativeSwiftValue` arguments and results, Optional payloads, tuple elements, closure parameters and results, and `self`. A host type is inferred only where it is the declaration's own type: an adapter with a different Swift name needs an explicit ABI.
+
+A value is loadable unless it is resilient to clients or stores an address-only field: a resilient value, a `weak` or non-native `unowned` reference, or an opaque existential. Loadable values use the same register expansion as explicit layouts and pass indirectly above four registers; address-only values always pass by address. Fields come from reflection records at the offsets in the value's metadata, and preparation checks that they rebuild the value's size and alignment.
+
+Metadata does not record `@frozen`, so ABIBridge decides resilience from binary evidence:
+
+- A value whose value witnesses leave the addressable-for-dependencies bit clear stores nothing resilient, once its module shows that it sets the bit (Swift 6.2 and later compilers) or that it is built without library evolution.
+- In a library-evolution module, a set bit that none of the value's fields explains marks the value resilient. Fields of type `String`, `Data`, or an imported C struct always set the bit.
+- A resilient enum exports enum case symbols. A module built without library evolution exports trivial property descriptors for its stored properties.
+
+When the evidence leaves the question open, a whole parameter, result, or `self` still passes by address if the value's frozen lowering already exceeds four registers, because both conventions then agree. Otherwise preparation throws ``ABIResolutionError/metadataUnavailable(_:)``, naming the type, its module, the missing evidence, and the explicit ABI to supply. A public struct with a `String` field and a generic struct such as `Range<Int>` from a library-evolution module are typical cases.
+
+Imported C structs and unions, tuple fields containing metatypes, SIMD vectors, `Float16`, `Int128`, and noncopyable values are not inferred; preparation throws ``ABIResolutionError/unsupportedDeclaration(_:)``. Describe such values with `valueABIs:` or an ``ABIBridgeSwiftValue`` conformance. Both take precedence over inference.
 
 ## Ownership and isolation
 

@@ -67,7 +67,7 @@ try unsafe add.unsafeInvoke(on: result, 5)
 print(try unsafe read.unsafeInvoke(on: result))
 ```
 
-The opaque descriptor describes the factory's result convention, not every underlying member's self convention. Supply receiverABI when that convention is unavailable from the type's representation or generic declaration. Fixed components use the same NativeType contract as ABIBridgeSwiftValue; an opaque descriptor selects formally indirect self. Class receivers use their reference representation without an override.
+The opaque descriptor describes the factory's result convention, not every underlying member's self convention. Supply receiverABI when that convention is unavailable from the type's representation, its generic declaration, or the convention inferred from its metadata; see <doc:SwiftFunctionInvocation#Infer-struct-and-enum-conventions>. Fixed components use the same NativeType contract as ABIBridgeSwiftValue; an opaque descriptor selects formally indirect self. Class receivers use their reference representation without an override.
 
 Members prepared with `consuming: true` transfer the owned payload, including noncopyable values. Active borrowed views support nonconsuming members, with mutation allowed only by their borrow contract. Getter signatures use a complete zero-argument function type. For earlier borrowed-member APIs, see <doc:SwiftAPIMigration>.
 
@@ -153,7 +153,7 @@ An enum's concrete function fields can use a different calling convention from a
 
 Tuple and existential copies use already established value conventions and run synchronously without symbol-index search. Member or closure preparation uses the async `resolve…` or synchronous `resolve…AndWait` operation afterward. See <doc:SwiftClosureValues> for calling an extracted closure.
 
-Member invocation keeps its existing ABI requirements. A getter returning a closed nominal enum or struct can require `valueABIs:` even when `NativeSwiftValue` receives the result. Supply an established direct representation or formally indirect `.opaque` convention as described in <doc:BorrowedSwiftValues>; storage dimensions alone do not establish that calling convention.
+Member invocation keeps its existing ABI requirements. A getter returning a closed nominal enum or struct whose convention ABIBridge cannot infer requires `valueABIs:` even when `NativeSwiftValue` receives the result. Supply an established direct representation or formally indirect `.opaque` convention as described in <doc:BorrowedSwiftValues>; storage dimensions alone do not establish that calling convention.
 
 This also applies to a nominal aggregate nested in a generic owner when its ABI cannot be inferred from the declaration, such as `Source<A>.Structure`. Use the retained type of the instantiated aggregate as the `valueABIs` key. An override does not change an archetype's formally indirect convention or the established conventions of generic classes and standard collections.
 
@@ -181,7 +181,7 @@ let number = try unsafe make.unsafeInvoke(owner, withResult: { view in
 })
 ```
 
-Prepare member handles such as `read` before entering a synchronous body. They use the existing receiver ABI contract; a resilient value receiver can require an explicit opaque `receiverABI`. The same `withResult:` form is available on member and bound-method handles. Async signatures accept an async body and keep the result valid through its suspension.
+Prepare member handles such as `read` before entering a synchronous body. They use the existing receiver ABI contract; a value receiver whose convention ABIBridge cannot infer requires an explicit `receiverABI`. The same `withResult:` form is available on member and bound-method handles. Async signatures accept an async body and keep the result valid through its suspension.
 
 Invocation retains argument and receiver access through the body. On return or throw, the view expires, the result is destroyed, and writeback completes. Saving the view preserves type information only.
 

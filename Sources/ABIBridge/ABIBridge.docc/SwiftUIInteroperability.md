@@ -10,7 +10,7 @@ Choose a Swift invocation path from the native result type and the types availab
 | Concrete Container<Text> from a resilient module | Import the provider and declare its indirect convention | Use a nongeneric factory or concrete entry |
 | Generic function constrained to View, such as `(T) -> T` | Import SwiftUI and bind the concrete content type | Use `genericArguments:` to supply metadata and existing View witnesses |
 
-Generic bindings use the declaration's formal calling convention and existing View conformance. A concrete nominal result still needs an established representation; knowing its metatype does not infer an arbitrary SwiftUI value's direct calling convention. See <doc:GenericSwiftValues> and <doc:ExplicitSwiftValues>.
+Generic bindings use the declaration's formal calling convention and existing View conformance. A concrete nominal result still needs an established representation when ABIBridge cannot infer its convention from metadata; see <doc:SwiftFunctionInvocation#Infer-struct-and-enum-conventions>. See <doc:GenericSwiftValues> and <doc:ExplicitSwiftValues>.
 
 ## A compiled host factory
 
