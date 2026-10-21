@@ -535,8 +535,7 @@ enum SwiftInferredValue {
         let kind = info.isEnum ? "enum" : "struct"
         let evidence = module.evidence
         if evidence?.libraryEvolution == .disabled { return .fixed }
-        let declaration = module.declaration
-        if info.isEnum, let image = module.image, let declaration,
+        if info.isEnum, let image = module.image, let declaration = module.declaration,
             RuntimeSymbolResolver.shared.exportsSwiftEnumCases(declaration: declaration, in: image)
         {
             return .resilient
@@ -564,18 +563,8 @@ enum SwiftInferredValue {
             }
         }
         // Missing exports decide only what the value witnesses left open.
-        if let image = module.image, let declaration, let evidence {
-            let exported = RuntimeSymbolResolver.shared.exportsSwiftDescriptor(
-                declaration: declaration,
-                at: UInt64(
-                    UInt(
-                        bitPattern: ABISwiftTypeDescriptor(
-                            unsafeBitCast(metadata, to: UnsafeRawPointer.self)
-                        )
-                    )
-                ),
-                in: image
-            )
+        if module.image != nil, let evidence {
+            let exported = module.declaration != nil
             // An exported enum without case symbols is frozen.
             if info.isEnum, exported { return .fixed }
             // A declaration a library does not export is not public, so it is
@@ -583,15 +572,26 @@ enum SwiftInferredValue {
             if !exported, evidence.isLibrary, evidence.exportsSymbols { return .fixed }
         }
         let moduleName = module.name.map { "module `\($0)`" } ?? "its module"
+        let unreadable = "ABIBridge cannot read the exports of \(moduleName)"
+        let undecidedModule = "\(moduleName) does not show whether it is built with library evolution"
         if let explanation {
+            let status =
+                switch evidence?.libraryEvolution {
+                case .enabled:
+                    "library-evolution \(moduleName) does not record whether \(kind) `\(name)` is @frozen"
+                case nil: "\(unreadable), so it cannot tell whether \(kind) `\(name)` is resilient"
+                default: "\(undecidedModule), or whether \(kind) `\(name)` is @frozen"
+                }
             return .unknown(
-                "library-evolution \(moduleName) does not record whether public \(kind) `\(name)` is @frozen; "
-                    + "\(explanation) its addressable-for-dependencies value-witness bit"
+                "\(status); \(explanation) its addressable-for-dependencies value-witness bit"
             )
         }
         if !isStatic {
+            let module =
+                evidence == nil
+                ? unreadable : "\(moduleName) shows no evidence that it is built without library evolution"
             return .unknown(
-                "\(info.isGeneric ? "generic " : "")\(kind) `\(name)` has runtime-built metadata, whose value witnesses do not show whether it is @frozen, and \(moduleName) shows no evidence that it is built without library evolution"
+                "\(info.isGeneric ? "generic " : "")\(kind) `\(name)` has runtime-built metadata, whose value witnesses do not show whether it is @frozen, and \(module)"
             )
         }
         if !module.setsAddressableForDependencies {
@@ -600,7 +600,7 @@ enum SwiftInferredValue {
             )
         }
         return .unknown(
-            "\(moduleName) shows no library-evolution evidence, so the addressable-for-dependencies value-witness bit of `\(name)` does not decide whether it is @frozen"
+            "\(evidence == nil ? unreadable : undecidedModule), so the addressable-for-dependencies value-witness bit of `\(name)` does not decide whether it is @frozen"
         )
     }
 
@@ -661,7 +661,8 @@ enum SwiftInferredValue {
 private struct ModuleContext {
     let name: String?
     let image: RuntimeImage?
-    /// The type's mangled declaration, without generic arguments.
+    /// The type's mangled declaration as its image exports the type's
+    /// descriptor, or nil when the export trie does not show the descriptor.
     let declaration: String?
     let evidence: RuntimeSwiftModuleEvidence?
     let setsAddressableForDependencies: Bool
@@ -706,33 +707,88 @@ private struct ModuleContext {
         }
         image = cached.image
         setsAddressableForDependencies = cached.setsAddressableForDependencies
-        declaration = Self.declaration(of: metadata)
-        let mangling = Self.mangling(ofModule: name)
-        if let mangling, let image = cached.image,
-            name == "Swift" || declaration?.hasPrefix(mangling) == true
+        guard let image = cached.image else {
+            declaration = nil; evidence = nil
+            return
+        }
+        let mangled = _mangledTypeName(metadata)
+        evidence = mangled.flatMap { Self.mangling(ofModule: name, in: $0) }.map {
+            RuntimeSwiftModuleEvidence.evidence(forModule: $0, in: image)
+        }
+        let address = UInt64(UInt(bitPattern: descriptor))
+        // The runtime spelling finds standard library substitutions such as
+        // `Si`, whose symbols lie outside the module's context; the module's
+        // exports by address find declarations the runtime spells otherwise.
+        if let spelled = mangled.flatMap({ Self.declaration(of: $0, metadata: metadata) }),
+            RuntimeSymbolResolver.shared.exportedAddress(named: "_$s" + spelled + "Mn", in: image)
+                == address
         {
-            evidence = RuntimeSwiftModuleEvidence.evidence(forModule: mangling, in: image)
+            declaration = spelled
         } else {
-            evidence = nil
+            declaration = evidence?.exportedDeclaration(at: address)
         }
     }
 
-    /// The standard library's context is `s`; another module's is its
-    /// length-prefixed name, which has no substitutions when it is a plain
-    /// ASCII identifier. Declarations confirm the prefix.
-    private static func mangling(ofModule name: String) -> String? {
+    /// The module's context as it starts a mangled type name and the
+    /// module's symbols: `s` for the standard library, otherwise the leading
+    /// identifier, when it names the module. Within that identifier, a word
+    /// that repeats an earlier one is mangled as a letter.
+    /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/Demangling/Demangler.cpp
+    private static func mangling(ofModule name: String, in mangled: String) -> String? {
         if name == "Swift" { return "s" }
-        func isLetter(_ byte: UInt8) -> Bool {
-            byte == 95 || (65...90).contains(byte) || (97...122).contains(byte)
-        }
-        guard let first = name.utf8.first, isLetter(first),
-            name.utf8.allSatisfy({ isLetter($0) || (48...57).contains($0) })
+        let text = Array(mangled.utf8)
+        func isDigit(_ byte: UInt8) -> Bool { (48...57).contains(byte) }
+        func isUpper(_ byte: UInt8) -> Bool { (65...90).contains(byte) }
+        func isLower(_ byte: UInt8) -> Bool { (97...122).contains(byte) }
+        guard let first = text.first, isDigit(first),
+            !text.starts(with: Array("00".utf8))
         else { return nil }
-        return "\(name.utf8.count)\(name)"
+        var position = first == 48 ? 1 : 0
+        var substitutes = first == 48
+        var identifier: [UInt8] = []
+        var words: [ArraySlice<UInt8>] = []
+        repeat {
+            while substitutes, position < text.count,
+                isUpper(text[position]) || isLower(text[position])
+            {
+                let letter = text[position]
+                position += 1
+                substitutes = isLower(letter)
+                let index = Int(letter - (substitutes ? 97 : 65))
+                guard index < words.count else { return nil }
+                identifier += words[index]
+            }
+            if position < text.count, text[position] == 48 {
+                position += 1
+                break
+            }
+            let start = position
+            while position < text.count, isDigit(text[position]) { position += 1 }
+            guard let length = Int(String(decoding: text[start..<position], as: UTF8.self)),
+                length > 0, position + length <= text.count
+            else { return nil }
+            let part = text[position..<position + length]
+            identifier += part
+            // A word starts at a character other than a digit or `_` and
+            // ends before `_` or an uppercase letter after a non-uppercase one.
+            var word: Int?
+            for index in part.startIndex...part.endIndex {
+                let byte = index < part.endIndex ? part[index] : 0
+                if let start = word,
+                    byte == 95 || byte == 0 || (!isUpper(part[index - 1]) && isUpper(byte))
+                {
+                    if index - start >= 2, words.count < 26 { words.append(part[start..<index]) }
+                    word = nil
+                }
+                if word == nil, !isDigit(byte), byte != 95, byte != 0 { word = index }
+            }
+            position += length
+        } while substitutes
+        guard identifier.elementsEqual(name.utf8) else { return nil }
+        return String(decoding: text[..<position], as: UTF8.self)
     }
 
-    private static func declaration(of metadata: Any.Type) -> String? {
-        guard let mangled = _mangledTypeName(metadata) else { return nil }
+    private static func declaration(of mangled: String, metadata: Any.Type) -> String? {
         var info = ABISwiftValueDescriptorInfo()
         guard
             ABISwiftGetValueDescriptorInfo(

@@ -159,8 +159,8 @@ typedef enum ABISwiftReferenceStorage {
 ABISwiftReferenceStorage ABISwiftTypeFieldReferenceStorage(const void *metadata, size_t index);
 /// Whether a field record's declared type mentions a generic parameter of its enclosing type.
 bool ABISwiftTypeFieldIsGenericDependent(const void *metadata, size_t index);
-/// The reference ownership of the struct field named name in a raw nominal descriptor, or ABISwiftReferenceStorageUnknown when the descriptor is not a struct or has no such field record.
-ABISwiftReferenceStorage ABISwiftStructDescriptorFieldReferenceStorage(const void *descriptor, const char *name);
+/// Whether the struct field named name in a raw nominal descriptor is one a key path addresses as stored in a library-evolution module: its record's type is not weak, unowned, or unowned(unsafe) storage and contains no function or metatype, which key paths reabstract. False when the descriptor is not a struct or has no such field record.
+bool ABISwiftStructDescriptorFieldHasStoredKeyPathComponent(const void *descriptor, const char *name);
 /// The module that declares the nominal type, borrowing its descriptor's name.
 const char *ABISwiftTypeModuleName(const void *metadata);
 /// Whether the image declaring the type has a nongeneric, statically initialized struct or enum of the same module whose value witnesses set the addressable-for-dependencies bit. Swift 6.1 and earlier never set it.

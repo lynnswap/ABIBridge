@@ -11,7 +11,8 @@ new compiler fails CI instead of mislowering values:
   clear for any value without library evolution that stores neither;
 - resilient enums, and only those, export enum case symbols (WC);
 - a stored property's descriptor has a stored component with library
-  evolution and is trivial without it, while an unowned one is always trivial;
+  evolution and is trivial without it, while an unowned one, and a `let` of a
+  function or metatype, which key paths reabstract, are always trivial;
 - on arm64e, a closure parameter that is passed indirectly hashes as
   `-indirect`, and generic arguments do not change a nominal type's hash.
 
@@ -33,6 +34,7 @@ public struct OpenLabel { public var text: String; public var n: Int64 }
 @frozen public enum FrozenShape { case circle(Double), none }
 public enum OpenShape { case circle(Double), none }
 public struct UnownedHolder { public unowned let owner: Box; public var x: Double }
+public struct Reabstracted { public let call: () -> Void; public let type: Int.Type }
 @frozen public struct Wide { public var a: Int64, b: Int64, c: Int64, d: Int64, e: Int64 }
 @frozen public struct Pair<T> { public var a: T; public var b: T }
 
@@ -141,6 +143,9 @@ def check(ir, target, evolution):
     require((stored >> 24 & 0x7f) == (1 if evolution else 0) and (evolution or stored == 0),
             f"stored property descriptor header {stored:#x}")
     require(unowned == 0, f"unowned property descriptor header {unowned:#x}")
+    for suffix in ["4callyycvpMV", "4typeSimvpMV"]:
+        header = property_header(ir, target, mangled("Reabstracted") + "V" + suffix)
+        require(header == 0, f"reabstracted let descriptor {suffix} header {header:#x}")
 
     report = {"flags": {name: f"{value:#x}" for name, value in flags.items()},
               "enumCases": cases, "storedProperty": f"{stored:#x}"}

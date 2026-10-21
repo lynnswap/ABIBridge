@@ -1,4 +1,9 @@
+#if DEBUG
+@testable import ABIBridge
+import ABIBridgeCore
+#else
 import ABIBridge
+#endif
 import ABIBridgeTestSupport
 import Foundation
 import Testing
@@ -18,11 +23,12 @@ struct SwiftInferredValueTests {
 
     private func provider(
         _ source: String,
-        arguments: [String] = []
+        arguments: [String] = [],
+        modulePrefix: String = "Inferred_"
     ) throws -> (
         library: FixtureLibrary, module: String
     ) {
-        let module = "Inferred_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let module = modulePrefix + UUID().uuidString.replacingOccurrences(of: "-", with: "")
         let library = try FixtureLibrary(
             swiftModule: module,
             swiftSource: source,
@@ -56,6 +62,25 @@ struct SwiftInferredValueTests {
             return message.contains(evidence)
                 && message.contains("valueABIs or an ABIBridgeSwiftValue conformance")
         }
+    }
+
+    /// Passes the result of `make` to `describe`, both taking runtime values.
+    private func describeMade(
+        _ make: String,
+        _ describe: String,
+        in library: FixtureLibrary
+    ) async throws -> String {
+        let make = try await runtime.resolveSwiftFunction(
+            named: make,
+            as: (() -> NativeSwiftValue).self,
+            in: .path(library.libraryURL)
+        )
+        let describe = try await runtime.resolveSwiftFunction(
+            named: describe,
+            as: ((NativeSwiftValue) -> String).self,
+            in: .path(library.libraryURL)
+        )
+        return try unsafe describe.unsafeInvoke(make.unsafeInvoke())
     }
 
     @Test func fieldsWithoutReflectionRecordsAreNotInferred() async throws {
@@ -202,8 +227,189 @@ struct SwiftInferredValueTests {
             module + ".makeOpen()",
             in: library,
             as: (() -> NativeSwiftValue).self,
-            naming: "module `\(module)` shows no library-evolution evidence"
+            naming: "module `\(module)` does not show whether it is built with library evolution"
         )
+    }
+
+    /// Without evidence of how a module is built, the failure does not call
+    /// it a library-evolution module.
+    @Test func undecidedModulesAreNotCalledLibraryEvolutionModules() async throws {
+        let (library, module) = try provider(
+            """
+            public struct Open {
+                var text: String
+                var x: Double
+                public init() { text = "open"; x = 1 }
+            }
+            @inline(never) public func makeOpen() -> Open { Open() }
+            """
+        )
+        defer { library.cleanup() }
+        await expectFailure(
+            module + ".makeOpen()",
+            in: library,
+            as: (() -> NativeSwiftValue).self,
+            naming:
+                "Cannot infer the Swift calling convention of \(module).Open in module \(module): module `\(module)` does not show whether it is built with library evolution, or whether struct `\(module).Open` is @frozen; its field `text: Swift.String` explains"
+        )
+    }
+
+    /// Key paths reabstract a stored `let` of these types, so library
+    /// evolution gives it a trivial descriptor like a computed property.
+    @Test(arguments: [
+        "public let callback: () -> Void = {}",
+        "public let type: Int.Type = Int.self",
+        "public let optional: (() -> Int)? = nil",
+        "public let pair: (Int, (Int) -> Int) = (1, { $0 })",
+    ])
+    func trivialDescriptorsOfReabstractedLetsDoNotProveAFixedLayout(
+        _ property: String
+    ) async throws {
+        let (library, module) = try provider(
+            """
+            public struct Holder {
+                \(property)
+                public init() {}
+            }
+            public struct Open {
+                var x: Double
+                var y: Double
+                public init() { x = 1; y = 2 }
+            }
+            @inline(never) public func makeOpen() -> Open { Open() }
+            """,
+            arguments: ["-enable-library-evolution"]
+        )
+        defer { library.cleanup() }
+        await expectFailure(
+            module + ".makeOpen()",
+            in: library,
+            as: (() -> NativeSwiftValue).self,
+            naming: "module `\(module)` does not show whether it is built with library evolution"
+        )
+    }
+
+    /// Before Swift 6.2, no value witnesses set the addressable bit, so its
+    /// absence certifies nothing in a module where no type sets it.
+    @Test func modulesThatNeverSetTheAddressableBitAreNotTrusted() async throws {
+        let (library, module) = try provider(
+            """
+            @frozen public struct Point {
+                public var x: Double
+                public var y: Double
+                public init() { x = 1; y = 2 }
+            }
+            @inline(never) public func makePoint() -> Point { Point() }
+            """,
+            arguments: ["-enable-library-evolution"]
+        )
+        defer { library.cleanup() }
+        await expectFailure(
+            module + ".makePoint()",
+            in: library,
+            as: (() -> NativeSwiftValue).self,
+            naming:
+                "module `\(module)` never sets the addressable-for-dependencies value-witness bit"
+        )
+    }
+
+    /// A module's symbols spell a word that repeats in its name as a
+    /// substitution, which its evidence lookup must reproduce.
+    @Test(arguments: [false, true])
+    func modulesWithRepeatedWordsKeepTheirEvidence(evolution: Bool) async throws {
+        let (library, module) = try provider(
+            """
+            public struct Labeled {
+                public var text: String
+                public var x: Double
+                public init() { text = "label"; x = 1.5 }
+            }
+            public struct Plain {
+                public var x: Double
+                public var y: Double
+                public init() { x = 2.5; y = 3.5 }
+            }
+            @inline(never) public func makeLabeled() -> Labeled { Labeled() }
+            @inline(never) public func describeLabeled(_ v: Labeled) -> String { "\\(v.text),\\(v.x)" }
+            @inline(never) public func makePlain() -> Plain { Plain() }
+            @inline(never) public func describePlain(_ v: Plain) -> String { "\\(v.x),\\(v.y)" }
+            """,
+            arguments: evolution ? ["-enable-library-evolution"] : [],
+            modulePrefix: "Inferred_F8F8_"
+        )
+        defer { library.cleanup() }
+        // A library-evolution module does not record whether Labeled is frozen.
+        if !evolution {
+            #expect(
+                try await describeMade(
+                    module + ".makeLabeled()",
+                    module + ".describeLabeled(_:)",
+                    in: library
+                ) == "label,1.5"
+            )
+        }
+        #expect(
+            try await describeMade(
+                module + ".makePlain()",
+                module + ".describePlain(_:)",
+                in: library
+            ) == "2.5,3.5"
+        )
+    }
+
+    /// A runtime type name omits a constrained extension's generic
+    /// signature, which the type's exported symbols spell.
+    @Test func typesInConstrainedExtensionsKeepTheirExportEvidence() async throws {
+        let (library, module) = try provider(
+            """
+            public enum Marker { case a, b }
+            public struct Box<T> {}
+            extension Box where T: Equatable {
+                public struct Inner {
+                    var x: Double
+                    var y: Double
+                    public init() { x = 1; y = 2 }
+                }
+                public enum Kind { case real(Double), whole(Int64), none }
+            }
+            @inline(never) public func makeInner() -> Box<Int>.Inner { .init() }
+            @inline(never) public func makeKind(_ k: Int64) -> Box<Int>.Kind {
+                k == 0 ? .real(1.5) : k == 1 ? .whole(7) : .none
+            }
+            @inline(never) public func kindType() -> Any.Type { Box<Int>.Kind.self }
+            """,
+            arguments: ["-enable-library-evolution"]
+        )
+        defer { library.cleanup() }
+        // An exported generic struct is not known to be frozen.
+        await expectFailure(
+            module + ".makeInner()",
+            in: library,
+            as: (() -> NativeSwiftValue).self,
+            naming: "has runtime-built metadata"
+        )
+        #if DEBUG
+        // Its enum case symbols make Kind resilient, so it passes by address.
+        let kindType = try await runtime.resolveSwiftFunction(
+            named: module + ".kindType()",
+            as: (() -> Any.Type).self,
+            in: .path(library.libraryURL)
+        )
+        let layout = try SwiftInferredValue.layout(
+            of: try unsafe kindType.unsafeInvoke(),
+            position: .nested
+        )
+        try #require(withExtendedLifetime(layout) { ABISwiftValueIsIndirect(layout.handle) })
+        let make = try await runtime.resolveSwiftFunction(
+            named: module + ".makeKind(_:)",
+            as: ((Int64) -> NativeSwiftValue).self,
+            in: .path(library.libraryURL)
+        )
+        let kinds = try [Int64(0), 1, 2].map {
+            try unsafe make.unsafeInvoke($0).withCopy { String(describing: $0) }
+        }
+        #expect(kinds == ["real(1.5)", "whole(7)", "none"])
+        #endif
     }
 
     /// Inference reads the declaration's formal type, not a host type that
