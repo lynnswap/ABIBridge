@@ -16,11 +16,15 @@ struct SwiftCandidateSelection<Value> {
     /// - Parameters:
     ///   - dispatch: Selects the code of a member exported only through its
     ///     class dispatch thunk. Without it, such candidates are rejected.
+    ///   - namesDeclaration: Whether the request spells the complete
+    ///     declaration of every candidate that `accept` does not skip. A
+    ///     mismatch of such a candidate at any position is then reported.
     ///   - accept: Prepares a candidate from the entry of its declaration, or
     ///     returns nil when the candidate does not apply. A signature mismatch
     ///     also means it does not apply. Code is selected only afterwards.
     init(
         _ candidates: [SwiftCandidate],
+        namesDeclaration: Bool = false,
         dispatch: ((SwiftCandidate) throws -> SwiftEntry)? = nil,
         accept: (SwiftCandidate, SwiftEntry) throws -> Value?
     ) {
@@ -33,10 +37,11 @@ struct SwiftCandidateSelection<Value> {
                 // An argument or result that does not convert is an
                 // incompatible request. A declaration whose context does not
                 // bind, such as an extension constrained to other types, does
-                // not apply and stays absent.
+                // not apply and stays absent unless the request named it.
                 switch mismatch.position {
                 case .argument, .result: mismatches.append((candidate.declaration, mismatch))
-                case .signature, .argumentCount: break
+                case .signature, .argumentCount:
+                    if namesDeclaration { mismatches.append((candidate.declaration, mismatch)) }
                 }
                 continue
             } catch {

@@ -6,6 +6,17 @@ import Testing
 struct SwiftSignatureCompatibilityTests {
     private let runtime = ABIRuntime.shared
 
+    private func expectNativeTypesRequired(_ body: () async throws -> Void) async {
+        do {
+            try await body()
+            Issue.record("A hook accepted converted types")
+        } catch ABIResolutionError.unsupportedDeclaration(let reason) {
+            #expect(reason.contains("native parameter and result types"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
     @Test func resultsConvertToRequestedSuperclassesAndOptional() async throws {
         let base = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.compatibilityMakeDerived()",
@@ -115,9 +126,34 @@ struct SwiftSignatureCompatibilityTests {
         #expect(
             try unsafe describe.unsafeInvoke(on: CompatibilityBase(), CompatibilityDerived()) == "derived"
         )
-        await #expect(throws: ABIResolutionError.self) {
+        await expectNativeTypesRequired {
             _ = try await unsafe describe.hookVirtualCalls(onFailure: { _ in }) { call, value in
                 try call.proceed(value)
+            }
+        }
+    }
+
+    @Test func labelOnlyNamesSelectCompatibleFunctions() async throws {
+        let make = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.compatibilityMakeDerived()",
+            as: (() -> CompatibilityBase).self
+        )
+        #expect(try unsafe make.unsafeInvoke().name() == "derived")
+        // An imported hook would return a superclass instance as the subclass.
+        await expectNativeTypesRequired {
+            _ = try await unsafe make.hookImportedCalls(in: .automatic, onFailure: { _ in }) { call in
+                try call.proceed()
+            }
+        }
+        // An erased result is a conversion too: a hook could return any object.
+        let erased = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.compatibilityMakeDerived()",
+            as: (() -> AnyObject).self
+        )
+        #expect((try unsafe erased.unsafeInvoke() as? CompatibilityDerived)?.name() == "derived")
+        await expectNativeTypesRequired {
+            _ = try await unsafe erased.hookImportedCalls(in: .automatic, onFailure: { _ in }) { call in
+                try call.proceed()
             }
         }
     }
@@ -131,7 +167,7 @@ struct SwiftSignatureCompatibilityTests {
         )
         #expect(try unsafe make.unsafeInvoke(on: CompatibilityBase()).name() == "derived")
         // A hook would have to return a superclass instance as the subclass.
-        await #expect(throws: ABIResolutionError.self) {
+        await expectNativeTypesRequired {
             _ = try await unsafe make.hookVirtualCalls(onFailure: { _ in }) { call in
                 try call.proceed()
             }

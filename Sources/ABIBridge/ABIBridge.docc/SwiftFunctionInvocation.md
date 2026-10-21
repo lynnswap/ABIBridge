@@ -14,7 +14,9 @@ let decorate = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
 let message = try unsafe decorate.unsafeInvoke("Hello")
 ```
 
-A label-only name obtains parameter and result type names from the function metatype. For example, `Example.combine(_:suffix:)` has one unlabeled argument and one labeled `suffix`; its label count must match the signature. Use a complete demangled declaration when a custom wrapper has a different name from the native type.
+A label-only name selects the declaration with those labels whose native parameter and result types accept the function metatype. For example, `Example.combine(_:suffix:)` has one unlabeled argument and one labeled `suffix`; its label count must match the signature. When several overloads at the same lookup level accept the signature, lookup reports them as ambiguous; an exported overload takes precedence over one that only the shared cache's local symbols describe (see <doc:SymbolLookup>). Use a complete demangled declaration to select one overload, or when a custom wrapper has a different name from the native type.
+
+For a label-only name, a class argument can be a subclass of the native parameter's class, including when that parameter is `Optional`, and a class result can be requested as a superclass or `AnyObject`, also wrapped in `Optional`. These conversions apply only to the call's own arguments and result, not to `inout` values, tuple fields, or closure signatures. A handle selected through such a conversion cannot install hooks, because a hook would have to pass values back as the native types.
 
 The framework/path and retained-image overloads use the same symbol indexes as other runtime lookups. Explicit targets are acquired by default; `loading: .loadedOnly` opts out. See <doc:ImageLoading>.
 

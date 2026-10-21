@@ -543,8 +543,7 @@ extension ConformanceCase {
                     as: (() -> String).self
                 )
                 return try unsafe text.unsafeInvoke(on: make.unsafeInvoke())
-            },
-            knownIssue: { _ in "Requested result types build the declaration name (#404)" }
+            }
         ),
     ]
 

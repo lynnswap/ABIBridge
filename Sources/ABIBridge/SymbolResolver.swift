@@ -71,13 +71,17 @@ final class SymbolResolver: Sendable {
     func swiftDeclarationCandidates(
         _ declaration: NativeDeclaration,
         in selector: ImageSelector,
-        loading: ImageLoadingPolicy
+        loading: ImageLoadingPolicy,
+        extensionsOnly: Bool = false,
+        includingSharedCache: Bool = false
     ) throws -> [SwiftCandidate] {
         try withRuntimeErrors {
             try runtime.swiftDeclarationCandidates(
                 declaration.runtimeValue,
                 in: selector.runtimeValue,
-                loading: loading.runtimeValue
+                loading: loading.runtimeValue,
+                extensionsOnly: extensionsOnly,
+                includingSharedCache: includingSharedCache
             ).map(SwiftCandidate.init)
         }
     }
@@ -85,14 +89,16 @@ final class SymbolResolver: Sendable {
         _ declaration: NativeDeclaration,
         in image: NativeImage?,
         loading: ImageLoadingPolicy = .loadedOnly,
-        extensionsOnly: Bool = false
+        extensionsOnly: Bool = false,
+        includingSharedCache: Bool = false
     ) throws -> [SwiftCandidate] {
         try withRuntimeErrors {
             try runtime.swiftDeclarationCandidates(
                 declaration.runtimeValue,
                 in: image?.runtimeValue,
                 loading: loading.runtimeValue,
-                extensionsOnly: extensionsOnly
+                extensionsOnly: extensionsOnly,
+                includingSharedCache: includingSharedCache
             ).map(SwiftCandidate.init)
         }
     }

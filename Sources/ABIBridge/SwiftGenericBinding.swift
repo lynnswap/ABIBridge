@@ -1499,6 +1499,10 @@ struct SwiftGenericBinding: Sendable {
         let nativeOptional = native as? any NativeOptionalValue.Type
         let requestedOptional = actual as? any NativeOptionalValue.Type
         let requested = requestedOptional?.wrappedType ?? actual
+        // A result can also erase a native class reference to AnyObject.
+        if isResult, requested == AnyObject.self, (nativeOptional?.wrappedType ?? native) is AnyClass {
+            return nativeOptional == nil || requestedOptional != nil
+        }
         // An adapter class marshals through its own representation, not as a
         // reference to itself.
         guard let nativeClass = (nativeOptional?.wrappedType ?? native) as? AnyClass,
