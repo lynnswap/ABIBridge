@@ -102,8 +102,15 @@ struct SwiftOptionalValueTests {
         #expect(try unsafe describeFrozen.unsafeInvoke(frozen) == "frozen#5")
         #expect(try unsafe describeFrozen.unsafeInvoke(nil) == "nil")
 
-        // The value must have the wrapped type, and the declaration an Optional.
+        // The value must have the wrapped type, and the declaration an Optional,
+        // including an opaque result's underlying type.
         #expect(throws: ABIInvocationError.self) { try unsafe describe.unsafeInvoke(frozen) }
+        await #expect(throws: ABIResolutionError.self) {
+            _ = try await runtime.resolveSwiftFunction(
+                named: "ManagedSwiftFixtures.compatibilityOpaqueCount()",
+                as: (() -> NativeSwiftValue?).self
+            )
+        }
         await #expect(throws: ABIResolutionError.self) {
             _ = try await runtime.resolveSwiftFunction(
                 named: "ManagedSwiftFixtures.makeOptionalRuntimeRecord(Swift.Int64) -> Swift.Optional<ManagedSwiftFixtures.OptionalRuntimeRecord>",

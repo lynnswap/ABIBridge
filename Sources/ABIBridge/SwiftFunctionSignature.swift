@@ -609,7 +609,11 @@ struct SwiftCallbackValues: Sendable {
             guard plan.optionalPayload != nil else { return decode }
             return { address, scope in
                 let value = try decode(address, scope)
-                if let owned = value as? NativeSwiftValue { return try plan.hostValue(owned) }
+                if let owned = value as? NativeSwiftValue {
+                    // A consumed input can be the canonical handle a hook keeps
+                    // for recovery, so its payload comes from a copy.
+                    return try plan.hostValue(consuming ? owned.copy() : owned)
+                }
                 return try plan.hostValue(value as! NativeSwiftBorrowedValue)
             }
         }

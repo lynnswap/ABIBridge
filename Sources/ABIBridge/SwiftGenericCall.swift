@@ -746,10 +746,9 @@ struct SwiftGenericCallPlan: Sendable {
             binding: binding,
             defaultConsuming: declaration.consumesArguments
         )
-        if let opaque,
-            signature.result != NativeSwiftValue.self
-                && signature.result != NativeSwiftBorrowedValue.self
-        {
+        // A runtime value handle, Optional or not, takes the opaque result's
+        // underlying type from the declaration.
+        if let opaque, Self.runtimeHandle(signature.result) == nil {
             _ = try binding.resultType(signature.result, for: declaration.result)
             result = .value(opaque.type)
         } else {
