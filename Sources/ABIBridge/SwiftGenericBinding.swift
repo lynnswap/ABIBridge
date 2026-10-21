@@ -1683,7 +1683,13 @@ struct SwiftGenericBinding: Sendable {
         return (function, closure)
     }
 
-    func validateArgument(_ actual: Any.Type, for formal: SwiftFormalType) throws {
+    /// - Parameter position: `.parameter` for a whole argument, or the
+    ///   position of a tuple element.
+    func validateArgument(
+        _ actual: Any.Type,
+        for formal: SwiftFormalType,
+        position: SwiftValuePosition = .parameter
+    ) throws {
         if let (function, closure) = try closureFunction(formal, for: actual) {
             _ = try SwiftGenericCallPlan.closure(
                 function,
@@ -1695,7 +1701,12 @@ struct SwiftGenericBinding: Sendable {
         } else {
             let canonical = try canonicalType(of: formal)
             if case .tuple = canonical {
-                _ = try SwiftGenericCallPlan.tuple(canonical, actual: actual, binding: self)
+                _ = try SwiftGenericCallPlan.tuple(
+                    canonical,
+                    actual: actual,
+                    binding: self,
+                    position: position
+                )
                 return
             }
             try validate(actual, for: formal)

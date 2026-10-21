@@ -1361,7 +1361,7 @@ struct SwiftGenericCallPlan: Sendable {
                 result = .value(type)
             } else {
                 nested = nil
-                try binding.validateArgument(host.type, for: field)
+                try binding.validateArgument(host.type, for: field, position: position.tupleElement)
                 argument = try Self.argument(
                     field,
                     actual: host.type,
@@ -1425,7 +1425,12 @@ struct SwiftGenericCallPlan: Sendable {
         return try SwiftTupleValuePlan(
             hostMetadata: actual,
             nativeMetadata: native,
-            type: SwiftValueSchema.tupleLayout(fields, actual: native, binding: binding),
+            type: SwiftValueSchema.tupleLayout(
+                fields,
+                actual: native,
+                binding: binding,
+                position: position
+            ),
             fields: prepared,
             groups: groups
         )

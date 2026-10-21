@@ -550,6 +550,45 @@ extension ConformanceCase {
                 "cmDescribeWide(_:)"
             )
         },
+        // A tuple parameter's elements are separate parameters, so each is a
+        // whole position.
+        ConformanceCase(
+            id: "value.tupleParameter.inferred",
+            provider: """
+                @inline(never) public func cmDescribeWidePair(_ p: (CMWide, Int64)) -> String {
+                    cmDescribeWide(p.0) + "#\\(p.1)"
+                }
+                """,
+            oracle: "return cmDescribeWidePair((cmMakeWide(), 7))"
+        ) { f in
+            let make = try await f.function("cmMakeWide()", as: (() -> NativeSwiftValue).self)
+            let text = try await f.function(
+                "cmDescribeWidePair(_:)",
+                as: (((NativeSwiftValue, Int64)) -> String).self
+            )
+            return try unsafe text.unsafeInvoke((make.unsafeInvoke(), 7))
+        },
+        // A tuple result lowers as one value, so its elements are nested.
+        ConformanceCase(
+            id: "value.tupleResult.inferred",
+            provider: """
+                @inline(never) public func cmMakeWidePair() -> (CMWide, Int64) { (cmMakeWide(), 8) }
+                """,
+            oracle: "let pair = cmMakeWidePair(); return cmDescribeWide(pair.0) + \"#\\(pair.1)\"",
+            invoke: { f in
+                let make = try await f.function(
+                    "cmMakeWidePair()",
+                    as: (() -> (NativeSwiftValue, Int64)).self
+                )
+                let text = try await f.function(
+                    "cmDescribeWide(_:)",
+                    as: ((NativeSwiftValue) -> String).self
+                )
+                let pair = try unsafe make.unsafeInvoke()
+                return try unsafe text.unsafeInvoke(pair.0) + "#\(pair.1)"
+            },
+            expectedError: undecidedWithLibraryEvolution("its field `name: Swift.String` explains")
+        ),
         ConformanceCase(
             id: "value.functionFields.inferred",
             provider: """
