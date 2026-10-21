@@ -1105,7 +1105,10 @@ struct SwiftGenericCallPlan: Sendable {
                 asynchronous: asynchronous ?? binding.declaration.isAsync
             )
         }
-        guard binding.dependsOnParameters(formal) || !formal.opaqueIndices.isEmpty else {
+        guard
+            binding.dependsOnParameters(formal) || !formal.opaqueIndices.isEmpty
+                || binding.hasExplicitABI(actual)
+        else {
             return .concrete
         }
         try binding.validate(actual, for: formal)
@@ -1115,7 +1118,8 @@ struct SwiftGenericCallPlan: Sendable {
     /// Whether the host type alone lowers a value whose native type has no
     /// generic or opaque part. Such a host type can be an adapter with a
     /// different Swift name, so its codec takes precedence over the formal
-    /// type; closures and runtime values still need the declaration.
+    /// type; closures, runtime values, and types with `valueABIs` still need
+    /// the declaration.
     private static func representsClosedValue(
         _ formal: SwiftFormalType,
         actual: Any.Type,
@@ -1133,7 +1137,7 @@ struct SwiftGenericCallPlan: Sendable {
             if let tuple = SwiftTupleMetadata(type) {
                 return tuple.elements.contains { needsDeclaration($0.type) }
             }
-            return false
+            return binding.hasExplicitABI(type)
         }
         return !binding.dependsOnParameters(formal) && formal.opaqueIndices.isEmpty
             && !needsDeclaration(actual)
@@ -1163,7 +1167,9 @@ struct SwiftGenericCallPlan: Sendable {
             )
             return .closure(try closure.makeGenericClosureCodec(plan: plan))
         }
-        if binding.dependsOnParameters(formal) || !formal.opaqueIndices.isEmpty {
+        if binding.dependsOnParameters(formal) || !formal.opaqueIndices.isEmpty
+            || binding.hasExplicitABI(actual)
+        {
             let native = try binding.resultType(actual, for: formal)
             return .value(try layout(formal, actual: native, binding: binding))
         }

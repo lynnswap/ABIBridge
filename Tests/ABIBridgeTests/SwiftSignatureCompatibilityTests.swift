@@ -225,6 +225,24 @@ struct SwiftSignatureCompatibilityTests {
         #expect(result.0.value == 42 && result.1 == 2)
     }
 
+    @Test func valueABIsLowerClosedValuesOfHostTypes() async throws {
+        let count = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityCount")
+        let valueABIs = [count: try NativeType.structure(named: "CompatibilityCount", fields: [.int64])]
+        let doubled = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.compatibilityCountDoubled(_:)",
+            as: ((CompatibilityCount) -> CompatibilityCount).self,
+            valueABIs: valueABIs
+        )
+        #expect(try unsafe doubled.unsafeInvoke(CompatibilityCount(21)).value == 42)
+        let pair = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.compatibilityCountPair(_:)",
+            as: (((CompatibilityCount, Int64)) -> (CompatibilityCount, Int64)).self,
+            valueABIs: valueABIs
+        )
+        let result = try unsafe pair.unsafeInvoke((CompatibilityCount(40), 2))
+        #expect(result.0.value == 42 && result.1 == 2)
+    }
+
     @Test func completeDeclarationsLowerLocalTypesThroughHostRepresentations() async throws {
         let outer = "ManagedSwiftFixtures.compatibilityLocalCount(Swift.Int64) -> Swift.Int64"
         let count = "Count #1 in " + outer

@@ -64,6 +64,10 @@ extension CompatibilityBase: CompatibilityNamed {
     public var doubled: CompatibilityCount { CompatibilityCount(value * 2) }
 }
 
+@inline(never) public func compatibilityCountDoubled(_ count: CompatibilityCount) -> CompatibilityCount {
+    count.doubled
+}
+
 @inline(never) public func compatibilityCountPair(
     _ pair: (CompatibilityCount, Int64)
 ) -> (CompatibilityCount, Int64) { (CompatibilityCount(pair.0.value + pair.1), pair.1) }

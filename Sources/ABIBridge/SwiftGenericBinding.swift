@@ -1583,6 +1583,8 @@ struct SwiftGenericBinding: Sendable {
         }
     }
 
+    func hasExplicitABI(_ type: Any.Type) -> Bool { valueABIs[ObjectIdentifier(type)] != nil }
+
     func explicitValueType(_ type: Any.Type) throws -> CValueType? {
         try valueABIs[ObjectIdentifier(type)].map { try explicitSwiftValueType(type, abi: $0) }
     }

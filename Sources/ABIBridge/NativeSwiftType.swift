@@ -645,7 +645,7 @@ public actor NativeSwiftType: Hashable {
     ///   - name: A relative member name or a complete qualified declaration.
     ///   - signature: Explicit arguments and result.
     ///   - genericArguments: Type arguments introduced by the member.
-    ///   - valueABIs: Formal ABIs for runtime-only closed nominal values in this lookup.
+    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types without another representation.
     ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
     ///   - receiverABI: Explicit self ABI; nil uses the type representation or generic declaration.
     ///   - isMutating: Whether a value receiver is passed inout.
@@ -754,7 +754,7 @@ public actor NativeSwiftType: Hashable {
     ///   - name: The relative initializer name, such as init(text:).
     ///   - signature: Explicit arguments and constructed result.
     ///   - genericArguments: Type arguments introduced by the initializer.
-    ///   - valueABIs: Formal ABIs for runtime-only closed nominal values in this lookup.
+    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types without another representation.
     ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
     /// - Returns: A reusable initializer retaining its type and implementation.
     /// - Throws: A lookup, representation, or preparation error.
@@ -820,7 +820,7 @@ public actor NativeSwiftType: Hashable {
     ///   - name: A relative member name or a complete qualified declaration.
     ///   - signature: Explicit arguments and result.
     ///   - genericArguments: Type arguments introduced by the member.
-    ///   - valueABIs: Formal ABIs for runtime-only closed nominal values in this lookup.
+    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types without another representation.
     ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
     /// - Returns: A reusable function retaining its type and implementation.
     /// - Throws: A lookup, representation, or preparation error.
@@ -892,7 +892,7 @@ public actor NativeSwiftType: Hashable {
     /// - Parameters:
     ///   - name: A property name or complete relative setter declaration.
     ///   - valueType: The incoming value representation.
-    ///   - valueABIs: Formal ABIs for runtime-only closed nominal values in this lookup.
+    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types without another representation.
     ///   - declaredSignature: The formal setter type and optional canonical generic signature.
     ///   - receiverABI: Explicit self ABI; nil uses the type representation or generic declaration.
     ///   - isMutating: An inout override. Nil follows the declaration's default self convention unless consuming is true.
@@ -965,7 +965,7 @@ public actor NativeSwiftType: Hashable {
     /// - Parameters:
     ///   - name: A property name or complete relative setter declaration.
     ///   - valueType: The incoming value representation.
-    ///   - valueABIs: Formal ABIs for runtime-only closed nominal values in this lookup.
+    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types without another representation.
     ///   - declaredSignature: The formal setter type and optional canonical generic signature.
     /// - Returns: A one-argument function with bound type metadata.
     /// - Throws: A lookup or unsupported-representation error.
