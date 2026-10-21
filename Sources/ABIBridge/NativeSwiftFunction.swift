@@ -493,48 +493,70 @@ public struct NativeSwiftFunction<Signature>: Sendable {
 
 }
 
+/// The binding a selected function needs, when its call is not concrete.
+private struct SelectedFunctionPlan {
+    let plan: SwiftGenericCallPlan?
+}
+
 extension ABIRuntime {
+    // A complete declaration names the native function, so its spelling
+    // selects candidates and the requested types may adapt them. A label-only
+    // name selects the candidates whose native signatures the requested
+    // types are compatible with.
     private nonisolated func prepareSwiftFunction<Signature>(
         named name: String,
         as signature: Signature.Type,
         genericArguments: [NativeSwiftGenericArgument],
         declaredSignature: String?,
         valueABIs: [NativeSwiftType: NativeType],
-        resolve: (NativeDeclaration) throws -> ResolvedSymbol,
-        candidates: (NativeDeclaration) throws -> [SwiftCandidate]
+        candidates: (
+            _ declaration: NativeDeclaration, _ extensionsOnly: Bool, _ includingSharedCache: Bool
+        ) throws -> [SwiftCandidate]
     ) throws -> NativeSwiftFunction<Signature> {
         let description = try SwiftFunctionSignature(signature)
         let usesBinding =
             !genericArguments.isEmpty || declaredSignature != nil || !valueABIs.isEmpty
             || description.requiresValueDeclaration
-        guard usesBinding else {
-            let declaration = try swiftFunctionDeclaration(named: name, as: signature)
-            return try NativeSwiftFunction(symbol: resolve(declaration), resolver: resolver)
-        }
         let declaration = NativeDeclaration(name: name, language: .swift)
-        if SwiftMemberLookup.hasSignature(name) {
-            return try preparedGenericFunction(
-                entry: SwiftEntry(symbol: resolve(declaration)),
-                signature: signature,
-                genericArguments: genericArguments,
-                declaredSignature: declaredSignature,
-                valueABIs: valueABIs
-            )
+        let complete = SwiftMemberLookup.hasSignature(name)
+        // Without a binding, a complete declaration must not be generic and
+        // must have the requested effects.
+        if complete && !usesBinding { _ = try swiftFunctionDeclaration(named: name, as: signature) }
+        let key = DeclarationKey.make(name, language: .swift)
+        let extensionsOnly = SymbolIndex.extensionMemberName(name) != nil
+        func select(includingSharedCache: Bool) throws -> SwiftCandidateSelection<SelectedFunctionPlan> {
+            try SwiftCandidateSelection(
+                candidates(declaration, extensionsOnly, includingSharedCache)
+            ) { candidate, entry -> SelectedFunctionPlan? in
+                if complete {
+                    let names = [candidate.declaration.name, candidate.memberName]
+                    guard
+                        (names + names.compactMap(SymbolIndex.operatorAlias)).contains(where: {
+                            DeclarationKey.make($0, language: .swift) == key
+                        })
+                    else { return nil }
+                    guard usesBinding else { return SelectedFunctionPlan(plan: nil) }
+                }
+                let plan = try SwiftGenericCallPlan(
+                    entry: entry,
+                    genericArguments: genericArguments,
+                    signature: description,
+                    resolver: resolver,
+                    declaredSignature: declaredSignature,
+                    valueABIs: valueABIs
+                )
+                if !complete { try plan.check(description) }
+                return SelectedFunctionPlan(plan: usesBinding ? plan : nil)
+            }
         }
-        let selection = try SwiftCandidateSelection(candidates(declaration)) { _, entry in
-            let plan = try SwiftGenericCallPlan(
-                entry: entry,
-                genericArguments: genericArguments,
-                signature: description,
-                resolver: resolver,
-                declaredSignature: declaredSignature,
-                valueABIs: valueABIs
-            )
-            try plan.check(description)
-            return plan
+        var selection = try select(includingSharedCache: false)
+        // The images can hold other overloads while only the shared cache's
+        // local symbols describe the requested one.
+        if selection.accepted.isEmpty && selection.failure == nil {
+            selection = try select(includingSharedCache: true)
         }
-        if let (entry, plan) = try selection.selected(for: declaration) {
-            return try NativeSwiftFunction(entry: entry, resolver: resolver, generic: plan)
+        if let (entry, prepared) = try selection.selected(for: declaration) {
+            return try NativeSwiftFunction(entry: entry, resolver: resolver, generic: prepared.plan)
         }
         if let failure = selection.failure ?? selection.mismatch { throw failure }
         throw ABIResolutionError.declarationNotFound(declaration)
@@ -569,8 +591,15 @@ extension ABIRuntime {
             genericArguments: genericArguments,
             declaredSignature: declaredSignature,
             valueABIs: valueABIs,
-            resolve: { try resolver.resolve($0, in: scope, loading: loading) },
-            candidates: { try resolver.swiftDeclarationCandidates($0, in: scope, loading: loading) }
+            candidates: {
+                try resolver.swiftDeclarationCandidates(
+                    $0,
+                    in: scope,
+                    loading: loading,
+                    extensionsOnly: $1,
+                    includingSharedCache: $2
+                )
+            }
         )
     }
 
@@ -630,8 +659,15 @@ extension ABIRuntime {
             genericArguments: genericArguments,
             declaredSignature: declaredSignature,
             valueABIs: valueABIs,
-            resolve: { try resolver.resolve($0, in: image, loading: loading) },
-            candidates: { try resolver.swiftDeclarationCandidates($0, in: image, loading: loading) }
+            candidates: {
+                try resolver.swiftDeclarationCandidates(
+                    $0,
+                    in: image,
+                    loading: loading,
+                    extensionsOnly: $1,
+                    includingSharedCache: $2
+                )
+            }
         )
     }
 

@@ -16,9 +16,12 @@ struct SwiftAsyncImplementation: Sendable {
             code = declaration.implementation
             return
         }
+        // Swift mangles a declaration's async function pointer as the
+        // declaration followed by `Tu`.
+        let linkageName = declaration.linkageName
         let descriptor = try resolver.resolve(
-            .init(
-                name: "async function pointer to " + declaration.declaration.name,
+            NativeDeclaration(
+                machOName: (linkageName.hasPrefix("_") ? "" : "_") + linkageName + "Tu",
                 language: .swift,
                 kind: .data
             ),

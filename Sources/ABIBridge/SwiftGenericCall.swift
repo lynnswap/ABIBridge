@@ -2059,23 +2059,3 @@ extension SwiftGenericBinding {
         }
     }
 }
-
-extension ABIRuntime {
-    nonisolated func preparedGenericFunction<Signature>(
-        entry: SwiftEntry,
-        signature: Signature.Type,
-        genericArguments: [NativeSwiftGenericArgument],
-        declaredSignature: String? = nil,
-        valueABIs: [NativeSwiftType: NativeType] = [:]
-    ) throws -> NativeSwiftFunction<Signature> {
-        let plan = try SwiftGenericCallPlan(
-            entry: entry,
-            genericArguments: genericArguments,
-            signature: SwiftFunctionSignature(signature),
-            resolver: resolver,
-            declaredSignature: declaredSignature,
-            valueABIs: valueABIs
-        )
-        return try NativeSwiftFunction(entry: entry, resolver: resolver, generic: plan)
-    }
-}

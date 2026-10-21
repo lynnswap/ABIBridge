@@ -403,16 +403,22 @@ package final class RuntimeSymbolResolver: Sendable {
         )
     }
 
+    /// - Parameter includingSharedCache: Also returns code that only the
+    ///   shared cache's local symbols describe, even when the images contain
+    ///   other candidates.
     package func swiftDeclarationCandidates(
         _ declaration: RuntimeDeclaration,
         in selector: RuntimeImageSelector,
-        loading: RuntimeImageLoadingPolicy
+        loading: RuntimeImageLoadingPolicy,
+        extensionsOnly: Bool = false,
+        includingSharedCache: Bool = false
     ) throws -> [RuntimeSwiftCandidate] {
         try validate(declaration)
         return try swiftDeclarationCandidates(
             declaration,
             in: searchScope(selector, loading: loading),
-            extensionsOnly: false
+            extensionsOnly: extensionsOnly,
+            includingSharedCache: includingSharedCache
         )
     }
 
@@ -420,7 +426,8 @@ package final class RuntimeSymbolResolver: Sendable {
         _ declaration: RuntimeDeclaration,
         in image: RuntimeImage?,
         loading: RuntimeImageLoadingPolicy = .loadedOnly,
-        extensionsOnly: Bool = false
+        extensionsOnly: Bool = false,
+        includingSharedCache: Bool = false
     ) throws -> [RuntimeSwiftCandidate] {
         try validate(declaration)
         let scope =
@@ -429,14 +436,16 @@ package final class RuntimeSymbolResolver: Sendable {
         return try swiftDeclarationCandidates(
             declaration,
             in: scope,
-            extensionsOnly: extensionsOnly
+            extensionsOnly: extensionsOnly,
+            includingSharedCache: includingSharedCache
         )
     }
 
     private func swiftDeclarationCandidates(
         _ declaration: RuntimeDeclaration,
         in scope: SearchScope,
-        extensionsOnly: Bool
+        extensionsOnly: Bool,
+        includingSharedCache: Bool
     ) throws -> [RuntimeSwiftCandidate] {
         let query = SymbolQuery(declaration)
         let indexes = state.withLock { state in scope.images.map { state.index(for: $0) } }
@@ -460,10 +469,13 @@ package final class RuntimeSymbolResolver: Sendable {
         // shared cache.
         let primary = matches(.image, in: indexes)
         let implemented = Set(primary.lazy.filter(\.record.runsOwnCode).map(\.record.identity))
-        guard !implemented.isEmpty else {
+        guard !implemented.isEmpty, !includingSharedCache else {
             loadSharedCacheSymbols(for: query, into: indexes)
-            let fallback = matches(.sharedCache, in: indexes)
-            if fallback.isEmpty && !scope.isComplete {
+            // Images and the shared cache can both describe the same code.
+            let fallback = matches(.sharedCache, in: indexes).filter {
+                !implemented.contains($0.record.identity)
+            }
+            if fallback.isEmpty && implemented.isEmpty && !scope.isComplete {
                 throw RuntimeResolutionError.imageUnavailable
             }
             return primary + fallback
