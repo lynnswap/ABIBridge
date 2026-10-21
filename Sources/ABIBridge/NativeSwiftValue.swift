@@ -248,6 +248,21 @@ private final class SwiftRuntimeValueAccess {
     deinit { if active { releaseAccess() } }
 }
 
+/// Gives up a source handle's value once, when native code or a forwarding
+/// hook takes the Optional that holds a copy of it.
+final class SwiftOptionalSourceTransfer {
+    private let lock = NSLock()
+    private var pending: (() -> Void)?
+    init(_ giveUp: @escaping () -> Void) { pending = giveUp }
+    func complete() {
+        lock.lock()
+        let giveUp = pending
+        pending = nil
+        lock.unlock()
+        giveUp?()
+    }
+}
+
 /// Native metadata owns value operations; the formal declaration owns ABI placement.
 struct SwiftRuntimeValuePlan: Sendable {
     let valueType: NativeSwiftType
@@ -323,7 +338,7 @@ struct SwiftRuntimeValuePlan: Sendable {
     /// `NativeSwiftBorrowedValue?`. A value is copied into the payload; a
     /// consumed handle gives up its value when native code takes the Optional.
     private func wrapOptional(_ value: Any, payload: NativeSwiftType, convention: SwiftArgumentConvention,
-                              asynchronous: Bool) throws -> NativeSwiftValue {
+                              asynchronous: Bool) throws -> (value: NativeSwiftValue, transfer: SwiftOptionalSourceTransfer?) {
         guard convention != .inoutValue else {
             throw ABIResolutionError.unsupportedDeclaration("An inout Optional runtime value is unsupported.")
         }
@@ -341,7 +356,7 @@ struct SwiftRuntimeValuePlan: Sendable {
             let storage = makeStorage()
             ABISwiftInitializeEmptyEnumCase(metadata, storage.address, 1)
             storage.assumeInitialized { ABISwiftDestroyValue(metadata, $0) }
-            return NativeSwiftValue(storage: storage, type: valueType)
+            return (NativeSwiftValue(storage: storage, type: valueType), nil)
         }
         guard Self.accepts(source.type, as: payload, convention: convention) else {
             throw ABIInvocationError.incompatibleValue(expected: payload.name, actual: source.type.name)
@@ -350,14 +365,19 @@ struct SwiftRuntimeValuePlan: Sendable {
         let layout = ABISwiftGetValueLayout(payloadMetadata)
         let copy = NativeValueStorage(size: layout.stride, alignment: layout.alignment)
         ABISwiftCopyValue(payloadMetadata, copy.address, source.access.address)
-        let storage = makeStorage(didRelinquish: convention == .consuming ? {
+        let transfer = convention == .consuming ? SwiftOptionalSourceTransfer {
             ABISwiftDestroyValue(payloadMetadata, source.access.address)
             source.access.relinquishValue()
-        } : nil)
+        } : nil
+        let storage = makeStorage(didRelinquish: transfer.map { transfer in { transfer.complete() } })
+        // The Optional also needs the code the payload's value needs.
+        if let lifetime = storage.codeLifetime, let payloadLifetime = source.access.codeLifetime {
+            _ = SwiftValueCodeLifetime.connect([lifetime, payloadLifetime], retaining: [])
+        }
         ABISwiftInitializeEnumCase(metadata, storage.address, 0, payloadMetadata, false, copy.address)
         storage.assumeInitialized { ABISwiftDestroyValue(metadata, $0) }
         storage.retainResource(source.access)
-        return NativeSwiftValue(storage: storage, type: valueType)
+        return (NativeSwiftValue(storage: storage, type: valueType), transfer)
     }
 
     /// Projects a native Optional for the host: nil, or its payload as an
@@ -536,7 +556,17 @@ struct SwiftRuntimeValuePlan: Sendable {
                                            asynchronous: asynchronous)
             var plan = self
             plan.optionalPayload = nil
-            return try plan.encode(wrapped, convention: convention, asynchronous: asynchronous)
+            let access = try plan.encode(wrapped.value, convention: convention, asynchronous: asynchronous)
+            // A hook forwarding the Optional takes it without native code
+            // consuming it, so the transfer also gives up the source's value.
+            if let transfer = wrapped.transfer, let forward = access.transferHookOwnership {
+                access.transferHookOwnership = {
+                    let storage = try forward()
+                    transfer.complete()
+                    return storage
+                }
+            }
+            return access
         }
         let actual: NativeSwiftType
         if let owned = value as? NativeSwiftValue { actual = owned.type }

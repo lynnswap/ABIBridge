@@ -247,6 +247,64 @@ struct SwiftImportedFunctionHookTests {
         #expect(failures.withLock { $0 } == 1)
     }
 
+    @Test func forwardedOptionalHandlesConsumeTheirSource() async throws {
+        let fixture = try CompiledSwiftReplacementFixture(
+            providerExtra: """
+                public struct HookOptionalRecord {
+                    public var count: Int64
+                    public init(count: Int64) { self.count = count }
+                }
+                @inline(never) public func makeHookOptionalRecord(_ count: Int64) -> HookOptionalRecord? {
+                    HookOptionalRecord(count: count)
+                }
+                @inline(never) public func countHookOptionalRecord(_ record: consuming HookOptionalRecord?) -> Int64 {
+                    record?.count ?? -1
+                }
+                """,
+            callerExtra: """
+                @inline(never) public func callCountHookOptionalRecord(_ count: Int64) -> Int64 {
+                    countHookOptionalRecord(makeHookOptionalRecord(count))
+                }
+                """
+        )
+        defer { fixture.cleanup() }
+        let runtime = fixture.runtime
+        let record = try await runtime.resolveSwiftType(
+            named: fixture.module + ".HookOptionalRecord",
+            in: fixture.providerScope
+        )
+        let count = try await runtime.resolveSwiftFunction(
+            named: fixture.module + ".countHookOptionalRecord(_:)",
+            as: ((NativeSwiftConsuming<NativeSwiftValue?>) -> Int64).self,
+            valueABIs: [record: try .structure(named: "HookOptionalRecord", fields: [.int64])],
+            in: fixture.providerScope
+        )
+        let caller = try await runtime.resolveSwiftFunction(
+            named: fixture.callerModule + ".callCountHookOptionalRecord(_:)",
+            as: ((Int64) -> Int64).self,
+            in: fixture.callerScope
+        )
+        let saved = SavedRuntimeHookValues()
+        let inner = try unsafe await count.hookImportedCalls(
+            in: fixture.callerScope,
+            using: runtime,
+            onFailure: { Issue.record($0) }
+        ) { call, incoming in try call.proceed(incoming) }
+        defer { inner.invalidate() }
+        let outer = try unsafe await count.hookImportedCalls(
+            in: fixture.callerScope,
+            using: runtime,
+            onFailure: { Issue.record($0) }
+        ) { call, incoming in
+            saved.input = incoming.value
+            return try call.proceed(incoming)
+        }
+        defer { outer.invalidate() }
+        #expect(try unsafe caller.unsafeInvoke(5) == 5)
+        // Forwarding the Optional transfers its payload, as for a plain handle.
+        #expect(saved.input?.isConsumed == true)
+    }
+
     @Test func virtualHooksTransferTheSameNoncopyableRuntimeOwner() async throws {
         let fixture = try CompiledSwiftReplacementFixture()
         defer { fixture.cleanup() }
