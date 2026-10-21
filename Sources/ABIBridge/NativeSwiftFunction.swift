@@ -440,7 +440,7 @@ extension ABIRuntime {
     ///   - signature: The complete Swift function type, including native error and async isolation conventions.
     ///   - scope: Images to search; automatic scope considers only loaded images.
     ///   - genericArguments: Scalar types and packs in declaration parameter order.
-    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types. They take precedence over conformances and inferred conventions.
+    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types. They take precedence over conformances and inferred conventions where the signature names their types, but inference does not consult them for the fields of a value it lowers.
     ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
     ///   - loading: Whether an explicit image may be acquired and initialized.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
@@ -508,7 +508,7 @@ extension ABIRuntime {
     ///   - signature: The complete Swift function type, including native error and async isolation conventions.
     ///   - image: An image whose symbol index is reused.
     ///   - genericArguments: Scalar types and packs in declaration parameter order.
-    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types. They take precedence over conformances and inferred conventions.
+    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types. They take precedence over conformances and inferred conventions where the signature names their types, but inference does not consult them for the fields of a value it lowers.
     ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.

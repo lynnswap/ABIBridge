@@ -37,8 +37,9 @@ struct SwiftOptionalValueTests {
         #expect(try unsafe pair.unsafeInvoke(nil) == nil)
     }
 
-    /// Runtime-only records and the ABIs their declarations use until layouts
-    /// are inferred (#430).
+    /// Runtime-only records and the ABIs their declarations use. Library
+    /// evolution hides whether these String-holding records are frozen, and
+    /// Optional payloads need that answer, so they keep explicit ABIs.
     private static func recordABIs() async throws -> [NativeSwiftType: NativeType] {
         let runtime = ABIRuntime.shared
         let record = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.OptionalRuntimeRecord")
