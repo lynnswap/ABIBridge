@@ -408,16 +408,32 @@ public actor NativeSwiftType: Hashable {
         asynchronous: Bool?
     ) throws -> SwiftEntry {
         // The method descriptor, not the declaration's spelling, says whether
-        // the slot holds an async function pointer; accessors can be async.
-        func requireEffect(_ isAsync: Bool) throws {
-            guard let asynchronous, asynchronous != isAsync else { return }
-            throw ABIResolutionError.signatureMismatch(
-                .init(
-                    declaration: candidate.declaration,
-                    expected: asynchronous ? "async" : "synchronous",
-                    found: [isAsync ? "async" : "synchronous"]
-                )
+        // the slot holds an async function pointer; accessors can be async. A
+        // member with a dispatch thunk introduces its slot, so its own
+        // descriptor has the slot's flags. Checking them before the class
+        // layout is decoded lets a member with another effect yield to later
+        // candidates even when the layout is unsupported.
+        if let asynchronous {
+            let descriptor = try resolver.resolve(
+                NativeDeclaration(
+                    machOName: "_" + candidate.record.identity + "Tq",
+                    language: .swift,
+                    kind: .data
+                ),
+                in: candidate.symbol.image,
+                loading: .loadedOnly
             )
+            let flags = unsafe descriptor.withUnsafeAddress { $0.load(as: UInt32.self) }
+            let isAsync = flags & 0x40 != 0
+            guard asynchronous == isAsync else {
+                throw ABIResolutionError.signatureMismatch(
+                    .init(
+                        declaration: candidate.declaration,
+                        expected: asynchronous ? "async" : "synchronous",
+                        found: [isAsync ? "async" : "synchronous"]
+                    )
+                )
+            }
         }
         let dispatch = try SwiftClassDispatch(
             metadata: metadata,
@@ -425,7 +441,6 @@ public actor NativeSwiftType: Hashable {
             resolver: resolver,
             asynchronous: nil
         )
-        try requireEffect(dispatch.isAsync)
         let code = try SwiftSlotCode(
             at: dispatch.address,
             authentication: dispatch.authentication,
