@@ -364,6 +364,15 @@ public actor NativeSwiftType: Hashable {
         let protocolSelf = try generic.flatMap { plan in
             try plan.binding.declaration.protocolSelf.map { try plan.binding.canonicalType(of: $0) }
         }
+        // A representation that is not the type itself is an adapter, whose
+        // own inferred layout says nothing about the declaration's self.
+        if receiverABI == nil, let representation, representation != metadata,
+            SwiftInferredValue.lowersByInference(representation)
+        {
+            throw ABIResolutionError.metadataUnavailable(
+                "ABIBridge infers the Swift calling convention of self only from \(name); its representation \(String(reflecting: representation)) is an adapter. Describe it with receiverABI or an ABIBridgeSwiftValue conformance."
+            )
+        }
         let codec: SwiftReceiverCodec
         let cachedCodec: SwiftReceiverCodec?
         if let receiverABI {
@@ -380,15 +389,6 @@ public actor NativeSwiftType: Hashable {
             }
             cachedCodec = nil
         } else {
-            // A representation that is not the type itself is an adapter, which
-            // inference cannot describe.
-            if let representation, representation != metadata,
-                SwiftInferredValue.lowersByInference(representation)
-            {
-                throw ABIResolutionError.metadataUnavailable(
-                    "ABIBridge infers the Swift calling convention of self only from \(name); its representation \(String(reflecting: representation)) is an adapter. Describe it with receiverABI or an ABIBridgeSwiftValue conformance."
-                )
-            }
             codec = try cachedReceiver ?? SwiftReceiverCodec.make(for: representation ?? metadata)
             cachedCodec = codec
         }

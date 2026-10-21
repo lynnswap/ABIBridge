@@ -9,9 +9,10 @@ import Foundation
 import Testing
 
 #if os(macOS)
-private struct AdapterPoint {
-    var x: Double
-    var y: Double
+/// A host struct that shares a provider point's layout under another name.
+public struct InferredAdapterPoint {
+    public var x: Double
+    public var y: Double
 }
 
 /// Values whose conventions inference cannot establish fail during
@@ -440,24 +441,111 @@ struct SwiftInferredValueTests {
     }
 
     /// Inference reads the declaration's formal type, not a host type that
-    /// merely shares its layout.
+    /// merely shares its layout, wherever the host type stands for it.
     @Test func adapterHostTypesNeedAnExplicitABI() async throws {
+        let (library, module) = try provider(
+            """
+            public protocol Summer { func total() -> Double }
+            public struct Point: Summer {
+                public var x: Double
+                public var y: Double
+                public init(x: Double, y: Double) { self.x = x; self.y = y }
+                @inline(never) public func total() -> Double { x + y }
+                @inline(never) public func sum() -> Double { x + y }
+            }
+            extension Summer {
+                @inline(never) public func doubled() -> Double { total() * 2 }
+            }
+            @inline(never) public func makePoint() -> Point { Point(x: 1, y: 2) }
+            @inline(never) public func describe(_ p: Point) -> String { "\\(p.x),\\(p.y)" }
+            """,
+            arguments: ["-enable-library-evolution"]
+        )
+        defer { library.cleanup() }
+        // Complete names skip the signature check that relative names apply.
+        let adapter = "the host type \(String(reflecting: InferredAdapterPoint.self)) is an adapter"
+        await expectFailure(
+            "\(module).describe(\(module).Point) -> Swift.String",
+            in: library,
+            as: ((InferredAdapterPoint) -> String).self,
+            naming: adapter
+        )
+        await expectFailure(
+            "\(module).makePoint() -> \(module).Point",
+            in: library,
+            as: (() -> InferredAdapterPoint).self,
+            naming: adapter
+        )
+        let point = try await runtime.resolveSwiftType(
+            named: module + ".Point",
+            as: InferredAdapterPoint.self,
+            in: .path(library.libraryURL)
+        )
+        for member in [
+            "sum()",
+            "\(module).Summer.total() -> Swift.Double",
+            "(extension in \(module)):\(module).Summer.doubled() -> Swift.Double",
+        ] {
+            await #expect("\(member)") {
+                _ = try await point.resolveMethod(named: member, as: (() -> Double).self)
+            } throws: { error in
+                guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                    return false
+                }
+                return message.contains(
+                    "its representation \(String(reflecting: InferredAdapterPoint.self)) is an adapter"
+                ) && message.contains("receiverABI or an ABIBridgeSwiftValue conformance")
+            }
+        }
+    }
+
+    /// A tuple element's valueABIs layout describes an adapter; an Optional
+    /// payload still lowers through the adapter's own type.
+    @Test func adapterTupleElementsUseTheirValueABIs() async throws {
         let (library, module) = try provider(
             """
             @frozen public struct Point {
                 public var x: Double
                 public var y: Double
             }
-            @inline(never) public func describe(_ p: Point) -> String { "\\(p.x),\\(p.y)" }
+            @inline(never) public func sum(_ p: (Point, Int64)) -> Double { p.0.x + p.0.y + Double(p.1) }
+            @inline(never) public func pair(_ n: Int64) -> (Point, Int64) { (Point(x: 1.5, y: 2.5), n) }
+            @inline(never) public func maybe(_ p: Point?) -> Double { p.map { $0.x + $0.y } ?? -1 }
             """
         )
         defer { library.cleanup() }
-        await expectFailure(
-            module + ".describe(_:)",
-            in: library,
-            as: ((AdapterPoint) -> String).self,
-            naming: "the host type \(String(reflecting: AdapterPoint.self)) is an adapter"
+        let host = try await runtime.resolveSwiftType(named: "ABIBridgeTests.InferredAdapterPoint")
+        let valueABIs: [NativeSwiftType: NativeType] = [
+            host: try .structure(named: "Pair", fields: [.double, .double])
+        ]
+        let sum = try await runtime.resolveSwiftFunction(
+            named: "\(module).sum((\(module).Point, Swift.Int64)) -> Swift.Double",
+            as: (((InferredAdapterPoint, Int64)) -> Double).self,
+            valueABIs: valueABIs,
+            in: .path(library.libraryURL)
         )
+        #expect(try unsafe sum.unsafeInvoke((InferredAdapterPoint(x: 1.5, y: 2.5), 3)) == 7)
+        let pair = try await runtime.resolveSwiftFunction(
+            named: "\(module).pair(Swift.Int64) -> (\(module).Point, Swift.Int64)",
+            as: ((Int64) -> (InferredAdapterPoint, Int64)).self,
+            valueABIs: valueABIs,
+            in: .path(library.libraryURL)
+        )
+        let value = try unsafe pair.unsafeInvoke(9)
+        #expect(value.0.x == 1.5 && value.0.y == 2.5 && value.1 == 9)
+        await #expect {
+            _ = try await runtime.resolveSwiftFunction(
+                named: "\(module).maybe(\(module).Point?) -> Swift.Double",
+                as: ((InferredAdapterPoint?) -> Double).self,
+                valueABIs: valueABIs,
+                in: .path(library.libraryURL)
+            )
+        } throws: { error in
+            guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                return false
+            }
+            return message.contains("is an adapter")
+        }
     }
 }
 #endif

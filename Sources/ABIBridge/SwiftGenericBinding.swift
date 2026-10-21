@@ -1592,30 +1592,33 @@ struct SwiftGenericBinding: Sendable {
     /// Inference reads the metadata it lowers, so it describes a declaration
     /// only through the declaration's own formal type. A closed host value
     /// can be an adapter with another Swift name, which says nothing about the
-    /// declaration's convention.
+    /// declaration's convention. A tuple element's `valueABIs` layout
+    /// describes it; an Optional payload lowers through its type's own codec.
     func validateInferredHostValue(_ type: Any.Type, for formal: SwiftFormalType) throws {
         guard SwiftInferredValue.lowersByInference(type) else { return }
-        func validate(_ host: Any.Type, _ native: Any.Type) throws {
+        func validate(_ host: Any.Type, _ native: Any.Type, inOptional: Bool) throws {
             if host == native { return }
             if let host = SwiftTupleMetadata(host), let native = SwiftTupleMetadata(native),
                 host.elements.count == native.elements.count
             {
                 for (host, native) in zip(host.elements, native.elements) {
-                    try validate(host.type, native.type)
+                    try validate(host.type, native.type, inOptional: inOptional)
                 }
                 return
             }
             if let host = host as? any NativeOptionalValue.Type,
                 let native = native as? any NativeOptionalValue.Type
             {
-                return try validate(host.wrappedType, native.wrappedType)
+                return try validate(host.wrappedType, native.wrappedType, inOptional: true)
             }
-            guard SwiftInferredValue.lowersByInference(host) else { return }
+            guard SwiftInferredValue.lowersByInference(host),
+                try inOptional || explicitHostValueType(host) == nil
+            else { return }
             throw ABIResolutionError.metadataUnavailable(
-                "ABIBridge infers the Swift calling convention of a value only from its declaration's formal type, \(String(reflecting: native)); the host type \(String(reflecting: host)) is an adapter. Describe it with valueABIs or an ABIBridgeSwiftValue conformance."
+                "ABIBridge infers the Swift calling convention of a value only from its declaration's formal type, \(String(reflecting: native)); the host type \(String(reflecting: host)) is an adapter. Describe it with \(inOptional ? "" : "valueABIs or ")an ABIBridgeSwiftValue conformance."
             )
         }
-        try validate(type, types(formal)[0])
+        try validate(type, types(formal)[0], inOptional: false)
     }
 
     func hasExplicitHostField(_ type: Any.Type) throws -> Bool {
