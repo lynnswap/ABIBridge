@@ -977,7 +977,9 @@ struct SwiftMemberInvocationTests {
         do {
             _ = try await type.resolveMethod(named: member, as: (() -> Int).self)
             Issue.record("Typed-throwing members need a throwing function metatype")
-        } catch ABIResolutionError.unsupportedDeclaration {}
+        } catch let ABIResolutionError.signatureMismatch(mismatch) {
+            #expect(mismatch.expected == "ABIBridgeTests.SwiftMemberFailure")
+        }
         do {
             _ = try await runtime.resolveSwiftFunction(
                 named:
@@ -986,7 +988,9 @@ struct SwiftMemberInvocationTests {
                 in: type.image
             )
             Issue.record("Typed-throwing free functions need a throwing function metatype")
-        } catch ABIResolutionError.unsupportedDeclaration {}
+        } catch let ABIResolutionError.signatureMismatch(mismatch) {
+            #expect(mismatch.expected == "ABIBridgeTests.SwiftMemberFailure")
+        }
         let initializer =
             "init(borrowedChild: __shared ABIBridgeTests.SwiftMemberRenderer) -> ABIBridgeTests.SwiftMemberRenderer"
         _ = try runtime.resolveAndWait(

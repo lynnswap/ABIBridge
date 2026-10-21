@@ -257,6 +257,12 @@ extension SwiftFormalType {
             self = .associated(base, member, protocolName: qualifier)
         case "Structure", "Enum", "Class", "Protocol", "TypeAlias":
             let nameNode = children[1]
+            guard nameNode.kind != "LocalDeclName" else {
+                // A function-local type has no qualified name for metadata
+                // lookup, so only a host representation can lower it.
+                self = .nominal(try node.name(), [])
+                break
+            }
             let name = try nameNode.kind == "Identifier" ? nameNode.requiredText() : nameNode.name()
             var context = children[0]
             if context.kind == "Extension" { context = context.children()[1] }

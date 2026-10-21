@@ -96,7 +96,7 @@ let function: NativeSwiftFunction<(Int64) -> String>
 let callback: NativeSwiftClosure<() -> String>
 ```
 
-Apply this change to `NativeSwiftMethod`, `NativeBoundSwiftMethod`, `NativeSwiftFunctionImplementation`, and `NativeSwiftMethodImplementation`. Replace separate async function/method handles and throwing/async/concurrent closure types with the corresponding handle and complete `Signature`. Include `@Sendable` for a native Sendable closure. Invocation can still throw bridge errors for a nonthrowing native declaration; native async signatures need `await`.
+Apply this change to `NativeSwiftMethod`, `NativeBoundSwiftMethod`, `NativeSwiftFunctionImplementation`, and `NativeSwiftMethodImplementation`. Replace separate async function/method handles and throwing/async/concurrent closure types with the corresponding handle and complete `Signature`. Include `@Sendable` for a native Sendable closure. Lookup compares these effects with the native declaration and reports a difference as ``ABIResolutionError/signatureMismatch(_:)``. Invocation can still throw bridge errors for a nonthrowing native declaration; native async signatures need `await`.
 
 Replace a Swift getter's result metatype, such as `String.self`, with its zero-argument function metatype:
 
@@ -120,7 +120,7 @@ let callback = try NativeSwiftClosure<() -> String> { "value" }
 let result = try unsafe run.unsafeInvoke(callback)
 ```
 
-A `.type` can contain a retained ``NativeSwiftType`` when the concrete type is unavailable. Nominal lookup binds the enclosing context; member lookup supplies only its additional parameters. Existing metadata and conformances supply dependent types and witnesses.
+A `.type` can contain a retained ``NativeSwiftType`` when the concrete type is unavailable. Nominal lookup binds the enclosing context; member lookup supplies only its additional parameters. A different number of arguments reports ``ABIResolutionError/signatureMismatch(_:)`` with the expected count. Existing metadata and conformances supply dependent types and witnesses.
 
 Label-only names select a declaration whose bound signature matches `as:`. Keep a complete source declaration when selecting an exact overload or using a host adapter with a different Swift type name. `declaredAs:` supplies formal information missing from the binary, and `valueABIs:` supplies an established native convention for a closed runtime-only nominal value. Neither spelling permits guessing the ABI from metadata size. See <doc:GenericSwiftValues>.
 

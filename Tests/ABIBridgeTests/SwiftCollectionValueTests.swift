@@ -111,6 +111,12 @@ struct SwiftCollectionValueTests {
         )
         let transform = try NativeSwiftClosure { (value: [String]) in value + ["callback"] }
         #expect(try unsafe apply.unsafeInvoke(transform, ["input"]) == ["input", "callback"])
+        let applyDictionary = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.applyDictionaryClosure(_:_:)",
+            as: ((NativeSwiftClosure<([String: Int64]) -> Set<Int64>>, [String: Int64]) -> Set<Int64>).self
+        )
+        let values = try NativeSwiftClosure { (value: [String: Int64]) in Set(value.values).union([9]) }
+        #expect(try unsafe applyDictionary.unsafeInvoke(values, ["a": 1, "b": 2]) == [1, 2, 9])
         let make = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeArrayClosure(_:)", as: ((String) -> NativeSwiftClosure<([String]) -> [String]>).self
         )

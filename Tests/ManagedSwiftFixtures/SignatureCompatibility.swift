@@ -64,6 +64,16 @@ extension CompatibilityBase: CompatibilityNamed {
     public var doubled: CompatibilityCount { CompatibilityCount(value * 2) }
 }
 
+@inline(never) public func compatibilityCountPair(
+    _ pair: (CompatibilityCount, Int64)
+) -> (CompatibilityCount, Int64) { (CompatibilityCount(pair.0.value + pair.1), pair.1) }
+
+@inline(never) public func compatibilityLocalCount(_ value: Int64) -> Int64 {
+    struct Count { var value: Int64 }
+    @inline(never) func bump(_ count: Count) -> Count { Count(value: count.value + 1) }
+    return bump(Count(value: value)).value
+}
+
 public protocol CompatibilityLabeled: AnyObject { var compatibilityTag: String { get set } }
 
 extension CompatibilityLabeled {

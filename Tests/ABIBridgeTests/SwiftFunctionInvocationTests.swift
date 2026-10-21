@@ -412,7 +412,7 @@ struct SwiftFunctionInvocationTests {
         #expect(throws: ABIResolutionError.self) {
             _ = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
                 named: "ABIBridgeTests.swiftABIAnswer() -> Swift.Int32",
-                as: (() -> [String: Int]).self
+                as: (() -> Character).self
             )
         }
         #expect(throws: ABIResolutionError.self) {

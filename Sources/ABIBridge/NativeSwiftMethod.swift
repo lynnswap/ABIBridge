@@ -24,14 +24,9 @@ public struct NativeSwiftMethod<Signature>: Sendable {
     var errorPlan: SwiftErrorPlan? { call.errorPlan }
     let call: SwiftCallablePlan
 
-    init(symbol: ResolvedSymbol, type: NativeSwiftType, receiver: SwiftReceiverPlan,
-         consumesArguments: Bool = false, generic: SwiftGenericCallPlan? = nil) throws {
-        try self.init(entry: SwiftEntry(symbol: symbol), type: type, receiver: receiver,
-            consumesArguments: consumesArguments, generic: generic)
-    }
-
+    /// - Parameter generic: The selected declaration's call plan.
     init(entry: SwiftEntry, type: NativeSwiftType, receiver: SwiftReceiverPlan,
-         consumesArguments: Bool = false, generic: SwiftGenericCallPlan? = nil) throws {
+         consumesArguments: Bool = false, generic: SwiftGenericCallPlan) throws {
         self.entry = entry
         self.type = type
         self.receiver = receiver

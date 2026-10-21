@@ -1213,6 +1213,10 @@ struct SwiftGenericBindingTests {
             try SwiftFunctionSignature(((LargeManagedValue) -> LargeManagedValue).self)
                 .closureDiscriminator() == 55683
         )
+        #expect(
+            try SwiftFunctionSignature((([String: Int64]) -> Set<Int64>).self)
+                .closureDiscriminator() == 63592
+        )
     }
 
     @Test func collectionSugarMatchesRuntimeAndToolchainDemanglers() {

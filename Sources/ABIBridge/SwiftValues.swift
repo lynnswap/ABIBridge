@@ -11,9 +11,15 @@ func explicitSwiftValueType(_ metadata: Any.Type, abi: NativeType) throws -> CVa
     return try CValueType(indirectSwiftSize: layout.size, alignment: layout.alignment)
 }
 
-// Array's frozen representation holds one buffer reference regardless of Element.
-protocol SwiftArrayValue {}
-extension Array: SwiftArrayValue {}
+// Array, Dictionary, and Set each hold one storage reference regardless of
+// their element types, so they are passed as one pointer.
+protocol SwiftCollectionValue {
+    /// The standard substitution that mangles the collection's declaration.
+    static var mangledDeclaration: String { get }
+}
+extension Array: SwiftCollectionValue { static var mangledDeclaration: String { "Sa" } }
+extension Dictionary: SwiftCollectionValue { static var mangledDeclaration: String { "SD" } }
+extension Set: SwiftCollectionValue { static var mangledDeclaration: String { "Sh" } }
 
 struct SwiftValueCodec<Value>: Sendable {
     let type: CValueType
@@ -103,7 +109,7 @@ struct SwiftValueCodec<Value>: Sendable {
         } else if let existential = SwiftExistentialRepresentation(base) {
             type = try existential.valueType(for: Value.self)
             cValue = nil
-        } else if base is any SwiftArrayValue.Type {
+        } else if base is any SwiftCollectionValue.Type {
             type = try CValueType(scalar: ABIValuePointer)
             cValue = nil
         } else if base == String.self {

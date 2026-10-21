@@ -42,8 +42,8 @@ func swiftClosureAuthType(_ type: Any.Type) throws -> String {
         )
     }
     // SIL hashes these nominal declarations without their generic substitutions.
-    if base is any SwiftArrayValue.Type {
-        name = "Sa"
+    if let collection = base as? any SwiftCollectionValue.Type {
+        name = collection.mangledDeclaration
     }
     if (managed || base is any NativePointerValue.Type), name.hasSuffix("G") {
         name = try swiftNominalClosureName(name)

@@ -653,10 +653,20 @@ struct SwiftGenericCallPlan: Sendable {
             declaredSignature: declared,
             caller: signature
         )
+        let implicitArguments = implicitSelf.map { [.type($0)] } ?? enclosing?.arguments ?? []
+        // Callers supply only the parameters the declaration itself introduces.
+        let introduced = declaration.parameters.count - implicitArguments.count
+        guard genericArguments.count == introduced else {
+            throw ABIResolutionError.signatureMismatch(
+                .init(
+                    expected: "\(introduced) generic arguments",
+                    found: ["\(genericArguments.count) generic arguments"]
+                )
+            )
+        }
         var binding = try SwiftGenericBinding(
             declaration: declaration,
-            arguments: (implicitSelf.map { [.type($0)] } ?? enclosing?.arguments ?? [])
-                + genericArguments,
+            arguments: implicitArguments + genericArguments,
             signature: signature,
             resolver: resolver,
             enclosing: context,
@@ -999,14 +1009,6 @@ struct SwiftGenericCallPlan: Sendable {
         }
     }
 
-    /// Whether a call with the requested signature needs this plan even when
-    /// the declaration is concrete: an opaque result's descriptor supplies its
-    /// type and convention, and a handle that converts class references keeps
-    /// its plan so hooks can reject it.
-    func isRequired(for signature: SwiftFunctionSignature) -> Bool {
-        !binding.declaration.result.opaqueIndices.isEmpty || convertsReferences(signature)
-    }
-
     /// Whether a call converts a class reference at some position, which a
     /// hook cannot do in the opposite direction.
     func convertsReferences(_ signature: SwiftFunctionSignature) -> Bool {
@@ -1082,6 +1084,14 @@ struct SwiftGenericCallPlan: Sendable {
                 asynchronous: asynchronous ?? binding.declaration.isAsync
             )
         }
+        if representsClosedValue(formal, actual: actual, binding: binding) {
+            guard let tuple = try concreteTuple(actual) else { return .concrete }
+            return .tuple(
+                tuple,
+                consuming: defaultConsuming,
+                asynchronous: asynchronous ?? binding.declaration.isAsync
+            )
+        }
         let canonical = try binding.canonicalType(of: formal)
         if case .tuple = canonical {
             return .tuple(
@@ -1102,6 +1112,33 @@ struct SwiftGenericCallPlan: Sendable {
         return .value(try Self.layout(formal, actual: actual, binding: binding), consuming: false)
     }
 
+    /// Whether the host type alone lowers a value whose native type has no
+    /// generic or opaque part. Such a host type can be an adapter with a
+    /// different Swift name, so its codec takes precedence over the formal
+    /// type; closures and runtime values still need the declaration.
+    private static func representsClosedValue(
+        _ formal: SwiftFormalType,
+        actual: Any.Type,
+        binding: SwiftGenericBinding
+    ) -> Bool {
+        func needsDeclaration(_ type: Any.Type) -> Bool {
+            if type is any SwiftClosureValue.Type || type == NativeSwiftValue.self
+                || type == NativeSwiftBorrowedValue.self
+            {
+                return true
+            }
+            if let convention = type as? any SwiftConventionArgument.Type {
+                return needsDeclaration(convention.wrappedType)
+            }
+            if let tuple = SwiftTupleMetadata(type) {
+                return tuple.elements.contains { needsDeclaration($0.type) }
+            }
+            return false
+        }
+        return !binding.dependsOnParameters(formal) && formal.opaqueIndices.isEmpty
+            && !needsDeclaration(actual)
+    }
+
     static func result(
         _ formal: SwiftFormalType,
         actual: Any.Type,
@@ -1113,6 +1150,7 @@ struct SwiftGenericCallPlan: Sendable {
                 return .runtimeValue(try runtimeValue(formal, metadata: metadata, binding: binding))
             }
         }
+        if representsClosedValue(formal, actual: actual, binding: binding) { return .concrete }
         let canonical = try binding.canonicalType(of: formal)
         if case .tuple = canonical {
             return .tuple(try tuple(canonical, actual: actual, binding: binding))

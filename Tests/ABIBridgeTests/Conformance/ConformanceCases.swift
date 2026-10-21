@@ -66,8 +66,7 @@ extension ConformanceCase {
                 )
                 return try unsafe call.unsafeInvoke(["a": 1]).sorted { $0.key < $1.key }
                     .map { "\($0.key)=\($0.value)" }.joined(separator: ",")
-            },
-            knownIssue: { _ in "Closed Dictionary values have no lowering (#406)" }
+            }
         ),
         ConformanceCase(
             id: "function.set",
@@ -77,8 +76,7 @@ extension ConformanceCase {
             invoke: { f in
                 let call = try await f.function("cmSet(_:)", as: ((Set<Int64>) -> Set<Int64>).self)
                 return describe(try unsafe call.unsafeInvoke([1, 2]).sorted())
-            },
-            knownIssue: { _ in "Closed Set values have no lowering (#406)" }
+            }
         ),
         ConformanceCase(
             id: "function.optionalScalar",

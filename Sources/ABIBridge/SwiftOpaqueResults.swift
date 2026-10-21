@@ -41,7 +41,7 @@ final class SwiftOpaqueResultPlan: Sendable {
         if let getter = origin.range(of: ".getter : ") {
             resultName = origin[getter.upperBound...]
         } else {
-            resultName = swiftOuterSignature(origin).result
+            resultName = swiftDeclarationResult(origin)
         }
         guard resultName?.split(whereSeparator: \.isWhitespace) == ["some"] else {
             throw ABIResolutionError.unsupportedDeclaration(
@@ -106,7 +106,7 @@ final class SwiftOpaqueResultPlan: Sendable {
         )
         let function = try NativeSwiftFunction<
             (UInt, UnsafeRawPointer?, UnsafeRawPointer, UInt) -> SwiftMetadataResponse
-        >(symbol: accessor)
+        >(runtimeSymbol: accessor)
         var results: [Int: SwiftOpaqueResultPlan] = [:]
         for index in indices.sorted() {
             guard index >= 0,
@@ -369,4 +369,37 @@ struct SwiftResultCodec<Value>: Sendable {
         if let opaque { return try opaque.decode(storage) as! Value }
         return try ordinary!.decode(storage, retaining: owner, retainingCode: codeOwner)
     }
+}
+
+// Scan backward so a `<` operator before the parameter list cannot open a
+// generic group. Closure and requirement arrows do not describe the result.
+func swiftDeclarationResult(_ declaration: String) -> Substring? {
+    var parentheses = 0, generics = 0
+    var result: Substring?
+    var index = declaration.endIndex
+    while index > declaration.startIndex {
+        index = declaration.index(before: index)
+        let character = declaration[index]
+        let previous = index > declaration.startIndex ? declaration.index(before: index) : nil
+        let arrow = character == ">" && previous.map { declaration[$0] == "-" } == true
+        if parentheses == 0, generics == 0, arrow,
+            SwiftFormalSyntax.isResultArrow(in: declaration, at: previous!)
+        {
+            result = declaration[declaration.index(after: index)...]
+            index = previous!
+            continue
+        }
+        if character == ")" {
+            parentheses += 1
+        } else if character == "(" {
+            parentheses -= 1
+        } else if parentheses == 0 {
+            if character == ">", !arrow {
+                generics += 1
+            } else if character == "<", generics > 0 {
+                generics -= 1
+            }
+        }
+    }
+    return result
 }
