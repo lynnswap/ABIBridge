@@ -145,6 +145,17 @@ struct SwiftSignatureCompatibilityTests {
                 try call.proceed()
             }
         }
+        // An erased result is a conversion too: a hook could return any object.
+        let erased = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.compatibilityMakeDerived()",
+            as: (() -> AnyObject).self
+        )
+        #expect((try unsafe erased.unsafeInvoke() as? CompatibilityDerived)?.name() == "derived")
+        await expectNativeTypesRequired {
+            _ = try await unsafe erased.hookImportedCalls(in: .automatic, onFailure: { _ in }) { call in
+                try call.proceed()
+            }
+        }
     }
 
     @Test func hooksRequireTheNativeTypes() async throws {
