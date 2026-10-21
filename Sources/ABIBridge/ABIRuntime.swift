@@ -17,7 +17,7 @@ public actor ABIRuntime {
     /// Creates a runtime with independent image and declaration indexes.
     public init() { resolver = SymbolResolver() }
 
-    private init(resolver: SymbolResolver) { self.resolver = resolver }
+    init(resolver: SymbolResolver) { self.resolver = resolver }
 
     /// Returns retained handles for matching loaded images.
     ///

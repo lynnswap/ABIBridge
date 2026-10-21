@@ -214,7 +214,9 @@ struct SwiftGenericReceiverTests {
                 as: ((ReceiverBoolAdapter) -> ReceiverBoolAdapter).self
             )
             Issue.record("A dependent argument must still use its bound Swift type")
-        } catch ABIResolutionError.declarationNotFound {}
+        } catch let ABIResolutionError.signatureMismatch(mismatch) {
+            #expect(mismatch.declaration?.name.contains("echo(A) -> A") == true)
+        }
     }
 
     @Test func completeInitializersAndAccessorsPreserveConcreteAdapters() async throws {

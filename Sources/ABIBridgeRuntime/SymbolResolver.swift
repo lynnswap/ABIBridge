@@ -60,18 +60,12 @@ package final class RuntimeSymbolResolver: Sendable {
         let loading: RuntimeImageLoadingPolicy
     }
 
-    private struct LookupKey: Hashable, Sendable {
-        let declaration: RuntimeDeclaration
-        let extensionsOnly: Bool
-        let genericContext: SwiftGenericContext?
-    }
-
     // Results have their own lock. Retiring the node releases all image leases
     // outside the resolver lock, including after a concurrent cache clear.
     private final class AutomaticScope: Sendable {
         let revision: UInt64
         let images: [RuntimeImage]
-        let results = Mutex<[LookupKey: Result<RuntimeSymbol, RuntimeResolutionError>]>([:])
+        let results = Mutex<[RuntimeDeclaration: Result<RuntimeSymbol, RuntimeResolutionError>]>([:])
         init(revision: UInt64, images: [RuntimeImage]) {
             self.revision = revision; self.images = images
         }
@@ -129,8 +123,6 @@ package final class RuntimeSymbolResolver: Sendable {
     private func resolve(
         _ declaration: RuntimeDeclaration,
         in scope: SearchScope,
-        extensionsOnly: Bool = false,
-        genericContext: SwiftGenericContext? = nil,
         relatedQueries: [SymbolQuery] = []
     ) throws -> RuntimeSymbol {
         guard !scope.images.isEmpty else {
@@ -142,21 +134,13 @@ package final class RuntimeSymbolResolver: Sendable {
                 return try unique(
                     declaration,
                     images: scope.images,
-                    extensionsOnly: extensionsOnly,
-                    genericContext: genericContext,
                     relatedQueries: relatedQueries
                 )
             } catch RuntimeResolutionError.declarationNotFound where !scope.isComplete {
                 throw RuntimeResolutionError.imageUnavailable
-            } catch RuntimeResolutionError.unsupportedDeclaration where !scope.isComplete {
-                throw RuntimeResolutionError.imageUnavailable
             }
         }
-        let key = LookupKey(
-            declaration: declaration,
-            extensionsOnly: extensionsOnly,
-            genericContext: genericContext
-        )
+        let key = declaration
         if let cached = cache.results.withLock({ $0[key] }) { return try cached.get() }
         let result: Result<RuntimeSymbol, RuntimeResolutionError>
         do {
@@ -164,8 +148,6 @@ package final class RuntimeSymbolResolver: Sendable {
                 try unique(
                     declaration,
                     images: cache.images,
-                    extensionsOnly: extensionsOnly,
-                    genericContext: genericContext,
                     relatedQueries: relatedQueries
                 )
             )
@@ -391,18 +373,6 @@ package final class RuntimeSymbolResolver: Sendable {
         }
     }
 
-    package func resolveSwiftExtension(
-        _ declaration: RuntimeDeclaration,
-        genericContext: SwiftGenericContext? = nil
-    ) throws -> RuntimeSymbol {
-        try resolve(
-            declaration,
-            in: searchScope(.automatic, loading: .loadedOnly),
-            extensionsOnly: true,
-            genericContext: genericContext
-        )
-    }
-
     /// - Parameter includingSharedCache: Also returns code that only the
     ///   shared cache's local symbols describe, even when the images contain
     ///   other candidates.
@@ -604,8 +574,6 @@ package final class RuntimeSymbolResolver: Sendable {
     private func unique(
         _ declaration: RuntimeDeclaration,
         images: [RuntimeImage],
-        extensionsOnly: Bool = false,
-        genericContext: SwiftGenericContext? = nil,
         relatedQueries: [SymbolQuery] = []
     ) throws -> RuntimeSymbol {
         // Keep these indexes for the whole lookup even if another caller clears
@@ -613,32 +581,16 @@ package final class RuntimeSymbolResolver: Sendable {
         let query = SymbolQuery(declaration)
         let candidates = state.withLock { state in images.map { state.index(for: $0) } }
         return try withExtendedLifetime(candidates) {
-            var unsupported: RuntimeResolutionError?
             func matches(_ source: RuntimeSymbol.Source) throws -> [RuntimeSymbol] {
                 try state.withLock { _ in
-                    try candidates.compactMap { index in
-                        do {
-                            return try index.resolve(
-                                query,
-                                source: source,
-                                extensionsOnly: extensionsOnly,
-                                genericContext: genericContext
-                            )
-                        } catch let error as RuntimeResolutionError {
-                            guard case .unsupportedDeclaration = error else { throw error }
-                            unsupported = error
-                            return nil
-                        }
-                    }
+                    try candidates.compactMap { try $0.resolve(query, source: source) }
                 }
             }
             let primary = try matches(.image)
             if !primary.isEmpty { return try select(declaration, from: primary) }
 
             loadSharedCacheSymbols(for: query, into: candidates, relatedQueries: relatedQueries)
-            let fallback = try matches(.sharedCache)
-            if fallback.isEmpty, let unsupported { throw unsupported }
-            return try select(declaration, from: fallback)
+            return try select(declaration, from: try matches(.sharedCache))
         }
     }
 

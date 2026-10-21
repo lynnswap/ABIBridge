@@ -56,13 +56,7 @@ struct CXXSymbolFilterTests {
             source: .image
         )
         let query = SymbolQuery(.init(name: "Example :: f( unsigned int )", language: .cxx))
-        var unsupported: RuntimeResolutionError?
-        let matches = SymbolIndex.matching(
-            [differentType, intended, sameDeclaration],
-            query: query,
-            extensionsOnly: false,
-            unsupported: &unsupported
-        )
+        let matches = SymbolIndex.matching([differentType, intended, sameDeclaration], query: query)
         #expect(matches.map(\.address) == [1, 2])
     }
 

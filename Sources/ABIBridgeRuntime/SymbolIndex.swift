@@ -443,7 +443,6 @@ package final class SymbolIndex {
     private var decoded: [Scope: [Int: [IndexedSymbol]]] = [:]
     private var linkerNames: [[UInt8]: [IndexedSymbol]] = [:]
     private var imageLinkerNames: [[UInt8]: [IndexedSymbol]] = [:]
-    private var swiftExtensions: [Scope: [Int: [IndexedSymbol]]] = [:]
     private var swiftMembers: [Scope: [Int: [IndexedSymbol]]] = [:]
     private var swiftRecords: [IndexedSymbol: RuntimeSwiftDeclaration?] = [:]
 
@@ -563,20 +562,17 @@ package final class SymbolIndex {
         guard !additions.isEmpty else { return }
         let fallback = (
             sourceSymbols.filter { $0.key.candidates == .swiftFallback },
-            decoded[Self.swiftFallbackScope], swiftExtensions[Self.swiftFallbackScope],
-            swiftMembers[Self.swiftFallbackScope]
+            decoded[Self.swiftFallbackScope], swiftMembers[Self.swiftFallbackScope]
         )
         localSymbols += additions
         sourceSymbols.removeAll()
         decoded.removeAll()
-        swiftExtensions.removeAll()
         swiftMembers.removeAll()
         linkerNames.removeAll()
         if !changesFallback {
             sourceSymbols = fallback.0
             decoded[Self.swiftFallbackScope] = fallback.1
-            swiftExtensions[Self.swiftFallbackScope] = fallback.2
-            swiftMembers[Self.swiftFallbackScope] = fallback.3
+            swiftMembers[Self.swiftFallbackScope] = fallback.2
         }
     }
 
@@ -787,24 +783,11 @@ package final class SymbolIndex {
         return symbols
     }
 
-    package func matches(
-        _ declaration: RuntimeDeclaration,
-        extensionsOnly: Bool = false
-    ) -> [IndexedSymbol] {
-        var unsupported: RuntimeResolutionError?
-        return matches(
-            SymbolQuery(declaration),
-            extensionsOnly: extensionsOnly,
-            unsupported: &unsupported
-        )
+    package func matches(_ declaration: RuntimeDeclaration) -> [IndexedSymbol] {
+        matches(SymbolQuery(declaration))
     }
 
-    private func matches(
-        _ query: SymbolQuery,
-        extensionsOnly: Bool,
-        genericContext: SwiftGenericContext? = nil,
-        unsupported: inout RuntimeResolutionError?
-    ) -> [IndexedSymbol] {
+    private func matches(_ query: SymbolQuery) -> [IndexedSymbol] {
         let declaration = query.declaration
         if let name = query.exactName {
             return exactSymbols(named: name, key: query.key)
@@ -821,44 +804,17 @@ package final class SymbolIndex {
                 let candidates =
                     symbols(for: query, swiftBucket: .knownModule, descriptorKind: descriptor)
                     + symbols(for: query, swiftBucket: .fallback, descriptorKind: descriptor)
-                return Self.matching(
-                    candidates,
-                    query: query,
-                    extensionsOnly: extensionsOnly,
-                    genericContext: genericContext,
-                    unsupported: &unsupported
-                )
+                return Self.matching(candidates, query: query)
             }
-            return indexedMatches(
-                query,
-                extensionsOnly: extensionsOnly,
-                swiftBucket: .knownModule,
-                genericContext: genericContext,
-                unsupported: &unsupported
-            )
-                + indexedMatches(
-                    query,
-                    extensionsOnly: extensionsOnly,
-                    swiftBucket: .fallback,
-                    genericContext: genericContext,
-                    unsupported: &unsupported
-                )
+            return indexedMatches(query, swiftBucket: .knownModule)
+                + indexedMatches(query, swiftBucket: .fallback)
         }
-        return indexedMatches(
-            query,
-            extensionsOnly: extensionsOnly,
-            swiftBucket: nil,
-            genericContext: genericContext,
-            unsupported: &unsupported
-        )
+        return indexedMatches(query, swiftBucket: nil)
     }
 
     private func indexedMatches(
         _ query: SymbolQuery,
-        extensionsOnly: Bool,
-        swiftBucket: SwiftBucket?,
-        genericContext: SwiftGenericContext?,
-        unsupported: inout RuntimeResolutionError?
+        swiftBucket: SwiftBucket?
     ) -> [IndexedSymbol] {
         let declaration = query.declaration
         let filter = query.filter
@@ -870,75 +826,31 @@ package final class SymbolIndex {
                 fragments: filter?.fragments ?? query.swiftModule.map { [$0.module] } ?? [],
                 swiftFallback: false
             )
-        if extensionsOnly, let extensions = swiftExtensions[scope] {
-            return Self.matching(
-                extensions[query.fingerprint] ?? [],
-                query: query,
-                extensionsOnly: true,
-                genericContext: genericContext,
-                unsupported: &unsupported
-            )
-        }
         if decoded[scope] == nil {
             let candidates = symbols(for: query, swiftBucket: swiftBucket)
             var index: [Int: [IndexedSymbol]] = [:]
-            var extensions: [Int: [IndexedSymbol]] = [:]
             for symbol in candidates {
                 guard filter?.matches(symbol.name) ?? true else { continue }
                 guard
                     let name = DeclarationKey.demangle(symbol.name, language: declaration.language)
                 else { continue }
-                // An extension fallback needs no index of ordinary declarations
-                // in unrelated images. Reject those before alias/key creation.
-                if extensionsOnly && Self.extensionMemberName(name) == nil { continue }
                 var names = [name]
                 if declaration.language == .swift {
                     if let alias = Self.operatorAlias(name) { names.append(alias) }
                     if let alias = Self.nominalDescriptorAlias(name) { names.append(alias) }
                 }
                 for name in names {
-                    if !extensionsOnly {
-                        index[
-                            DeclarationKey.fingerprint(
-                                DeclarationKey.make(name, language: declaration.language)
-                            ),
-                            default: []
-                        ].append(symbol)
-                    }
-                    if declaration.language == .swift,
-                        let unqualified = Self.extensionMemberName(name)
-                    {
-                        extensions[
-                            DeclarationKey.fingerprint(
-                                DeclarationKey.make(unqualified, language: .swift)
-                            ),
-                            default: []
-                        ].append(symbol)
-                        if let constrained = SwiftConstrainedExtension(unqualified) {
-                            extensions[
-                                DeclarationKey.fingerprint(
-                                    DeclarationKey.make(constrained.memberName, language: .swift)
-                                ),
-                                default: []
-                            ].append(symbol)
-                        }
-                    }
+                    index[
+                        DeclarationKey.fingerprint(
+                            DeclarationKey.make(name, language: declaration.language)
+                        ),
+                        default: []
+                    ].append(symbol)
                 }
             }
-            if !extensionsOnly { decoded[scope] = index }
-            if declaration.language == .swift { swiftExtensions[scope] = extensions }
+            decoded[scope] = index
         }
-        let candidates =
-            extensionsOnly
-            ? swiftExtensions[scope]?[query.fingerprint] ?? []
-            : decoded[scope]?[query.fingerprint] ?? []
-        return Self.matching(
-            candidates,
-            query: query,
-            extensionsOnly: extensionsOnly,
-            genericContext: genericContext,
-            unsupported: &unsupported
-        )
+        return Self.matching(decoded[scope]?[query.fingerprint] ?? [], query: query)
     }
 
     // A dispatch thunk is keyed by the member it dispatches, so one query
@@ -1021,10 +933,7 @@ package final class SymbolIndex {
     // always checked before a candidate can affect resolution or ambiguity.
     package static func matching(
         _ candidates: [IndexedSymbol],
-        query: SymbolQuery,
-        extensionsOnly: Bool,
-        genericContext: SwiftGenericContext? = nil,
-        unsupported: inout RuntimeResolutionError?
+        query: SymbolQuery
     ) -> [IndexedSymbol] {
         candidates.filter { symbol in
             guard
@@ -1038,130 +947,10 @@ package final class SymbolIndex {
                 if let alias = operatorAlias(name) { names.append(alias) }
                 if let alias = nominalDescriptorAlias(name) { names.append(alias) }
             }
-            return names.contains { name in
-                if extensionsOnly {
-                    guard let unqualified = extensionMemberName(name) else { return false }
-                    if DeclarationKey.make(unqualified, language: .swift) == query.key {
-                        return true
-                    }
-                    guard let constrained = SwiftConstrainedExtension(unqualified),
-                        DeclarationKey.make(constrained.memberName, language: .swift) == query.key
-                    else { return false }
-                    guard let genericContext else {
-                        unsupported = .unsupportedDeclaration(
-                            "No generic receiver context establishes \(unqualified)."
-                        )
-                        return false
-                    }
-                    do throws(RuntimeResolutionError) {
-                        return try genericContext.satisfies(constrained) {
-                            dependentType(
-                                $0,
-                                requirement: $1,
-                                in: symbol.name,
-                                extensionMember: constrained
-                            )
-                        }
-                    } catch { unsupported = error; return false }
-                }
-                return DeclarationKey.make(name, language: query.declaration.language) == query.key
+            return names.contains {
+                DeclarationKey.make($0, language: query.declaration.language) == query.key
             }
         }
-    }
-
-    private static let dependentMember = try! NSRegularExpression(
-        pattern: "Q(?:[zZxX]|[yY](?:[zs]|d[0-9]*_[0-9]*_|[0-9]*_))"
-    )
-    private static let genericParameter = try! NSRegularExpression(
-        pattern: "x|q(?:[zs]|d[0-9]*_[0-9]*_|[0-9]*_)"
-    )
-
-    package static func dependentType(
-        _ reference: String,
-        requirement: String,
-        in mangled: String,
-        extensionMember: SwiftConstrainedExtension,
-        occurrence: Int? = nil
-    ) -> Bool {
-        var context: String?
-        for index in mangled.indices where mangled[index] == "E" {
-            let prefix = String(mangled[...index])
-            guard let declaration = DeclarationKey.demangle(prefix + "1fyyF", language: .swift),
-                let unqualified = extensionMemberName(declaration),
-                let parsed = SwiftConstrainedExtension(unqualified),
-                parsed.owner == extensionMember.owner,
-                parsed.requirements == extensionMember.requirements
-            else { continue }
-            context = prefix
-            break
-        }
-        guard let context else { return true }
-        guard let requirementIndex = extensionMember.requirements.firstIndex(of: requirement) else {
-            return true
-        }
-        let head = reference.prefix { $0 != "." }
-        let newHead = head == "A" ? "B" : "A"
-        let old = requirement.components(separatedBy: "==")
-        guard old.count == 2 else { return true }
-        func establishesDependence(_ context: String) -> Bool {
-            guard let declaration = DeclarationKey.demangle(context + "1fyyF", language: .swift),
-                let unqualified = extensionMemberName(declaration),
-                let parsed = SwiftConstrainedExtension(unqualified),
-                parsed.owner == extensionMember.owner,
-                parsed.requirements.count == extensionMember.requirements.count
-            else { return false }
-            let changed = parsed.requirements[requirementIndex].components(separatedBy: "==")
-            guard changed.count == 2, old[0] == changed[0] else { return false }
-            let before = SwiftGenericSyntax.names(in: old[1])
-            let after = SwiftGenericSyntax.names(in: changed[1])
-            guard before.count == after.count else { return false }
-            var observed = false
-            var expected = ""
-            var cursor = old[1].startIndex
-            for (index, pair) in zip(before, after).enumerated() {
-                let (before, after) = pair
-                if before != after {
-                    guard before == head || before.hasPrefix(head + "."),
-                        after == newHead + before.dropFirst(head.count)
-                    else { return false }
-                    if before == reference && (occurrence == nil || occurrence == index) {
-                        observed = true
-                    }
-                }
-                expected += old[1][cursor..<before.startIndex] + after
-                cursor = before.endIndex
-            }
-            expected += old[1][cursor...]
-            return observed && expected == changed[1]
-        }
-        // Validate complete extension contexts: a type prefix inside an open
-        // generic argument list cannot be demangled on its own. A native change
-        // must rename this reference while preserving the rest of the RHS.
-        for match in genericParameter.matches(
-            in: context,
-            range: NSRange(context.startIndex..., in: context)
-        ) {
-            guard let range = Range(match.range, in: context) else { continue }
-            let altered =
-                String(context[..<range.lowerBound]) + (head == "A" ? "q_" : "x")
-                + context[range.upperBound...]
-            if establishesDependence(altered) { return true }
-        }
-        for match in dependentMember.matches(
-            in: context,
-            range: NSRange(context.startIndex..., in: context)
-        ) {
-            guard let range = Range(match.range, in: context) else { continue }
-            let code = context[range].dropFirst().first!
-            // Relative-base Qx/QX members use the parameter handled above.
-            if code == "x" || code == "X" { continue }
-            let chain = code == "Y" || code == "Z"
-            let replacement = head == "A" ? (chain ? "QY_" : "Qy_") : (chain ? "QZ" : "Qz")
-            let altered =
-                String(context[..<range.lowerBound]) + replacement + context[range.upperBound...]
-            if establishesDependence(altered) { return true }
-        }
-        return false
     }
 
     package static func nominalDescriptorAlias(_ name: String) -> String? {
@@ -1239,30 +1028,18 @@ package final class SymbolIndex {
 
     package func resolve(
         _ declaration: RuntimeDeclaration,
-        source: RuntimeSymbol.Source,
-        extensionsOnly: Bool = false
+        source: RuntimeSymbol.Source
     ) throws -> RuntimeSymbol? {
-        try resolve(SymbolQuery(declaration), source: source, extensionsOnly: extensionsOnly)
+        try resolve(SymbolQuery(declaration), source: source)
     }
 
     package func resolve(
         _ query: SymbolQuery,
-        source: RuntimeSymbol.Source,
-        extensionsOnly: Bool = false,
-        genericContext: SwiftGenericContext? = nil
+        source: RuntimeSymbol.Source
     ) throws -> RuntimeSymbol? {
         let declaration = query.declaration
-        var unsupported: RuntimeResolutionError?
-        let candidates = matches(
-            query,
-            extensionsOnly: extensionsOnly,
-            genericContext: genericContext,
-            unsupported: &unsupported
-        ).filter { $0.source == source }
-        guard !candidates.isEmpty else {
-            if let unsupported { throw unsupported }
-            return nil
-        }
+        let candidates = matches(query).filter { $0.source == source }
+        guard !candidates.isEmpty else { return nil }
         var addresses: [UInt64: (IndexedSymbol, SymbolSection)] = [:]
         for candidate in candidates {
             if candidate.address != 0,

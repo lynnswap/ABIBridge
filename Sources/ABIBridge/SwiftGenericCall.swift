@@ -916,7 +916,32 @@ struct SwiftGenericCallPlan: Sendable {
     /// Only the call's own arguments and result convert class references.
     /// Values reached through `inout` and other conventions, tuples, and
     /// closures stay exact, because their values can flow the other way.
-    func check(_ signature: SwiftFunctionSignature) throws {
+    ///
+    /// - Parameter representations: Host types that stand for native types,
+    ///   such as the representation a member's owner was resolved with. A
+    ///   representation applies only where the requested type itself does not.
+    func check(
+        _ signature: SwiftFunctionSignature,
+        representations: [ObjectIdentifier: Any.Type] = [:]
+    ) throws {
+        func represented(_ type: Any.Type) -> Any.Type? {
+            if let native = representations[ObjectIdentifier(type)] { return native }
+            guard let optional = type as? any NativeOptionalValue.Type,
+                let native = representations[ObjectIdentifier(optional.wrappedType)]
+            else { return nil }
+            func optionalType<Wrapped>(_: Wrapped.Type) -> Any.Type { Wrapped?.self }
+            return optionalType(native)
+        }
+        func accepting(_ requested: Any.Type, _ accepts: (Any.Type) throws -> Void) throws {
+            do {
+                try accepts(requested)
+            } catch let error as ABIResolutionError {
+                guard case .signatureMismatch = error, let native = represented(requested) else {
+                    throw error
+                }
+                do { try accepts(native) } catch ABIResolutionError.signatureMismatch { throw error }
+            }
+        }
         func validate(
             _ actual: Any.Type,
             for formal: SwiftFormalType,
@@ -935,9 +960,11 @@ struct SwiftGenericCallPlan: Sendable {
                     for: formal,
                     defaultConsuming: binding.declaration.consumesArguments
                 ) {
-                    try binding.validateArgument(argument.wrapper.wrappedType, for: argument.value)
+                    try accepting(argument.wrapper.wrappedType) {
+                        try binding.validateArgument($0, for: argument.value)
+                    }
                 } else {
-                    try binding.validateArgument(actual, for: formal)
+                    try accepting(actual) { try binding.validateArgument($0, for: formal) }
                 }
             } catch let ABIResolutionError.signatureMismatch(mismatch) {
                 throw ABIResolutionError.signatureMismatch(mismatch.at(.argument(index)))
@@ -961,18 +988,23 @@ struct SwiftGenericCallPlan: Sendable {
                 }
             }
         }
-        guard
-            !binding.convertsReference(
-                signature.result,
-                for: binding.declaration.result,
-                isResult: true
-            )
-        else { return }
         do {
-            _ = try binding.resultType(signature.result, for: binding.declaration.result)
+            try accepting(signature.result) { result in
+                guard !binding.convertsReference(result, for: binding.declaration.result, isResult: true)
+                else { return }
+                _ = try binding.resultType(result, for: binding.declaration.result)
+            }
         } catch let ABIResolutionError.signatureMismatch(mismatch) {
             throw ABIResolutionError.signatureMismatch(mismatch.at(.result))
         }
+    }
+
+    /// Whether a call with the requested signature needs this plan even when
+    /// the declaration is concrete: an opaque result's descriptor supplies its
+    /// type and convention, and a handle that converts class references keeps
+    /// its plan so hooks can reject it.
+    func isRequired(for signature: SwiftFunctionSignature) -> Bool {
+        !binding.declaration.result.opaqueIndices.isEmpty || convertsReferences(signature)
     }
 
     /// Whether a call converts a class reference at some position, which a

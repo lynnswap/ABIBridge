@@ -22,9 +22,21 @@ package enum SwiftMemberLookup {
 
     package static func isQualified(_ declaration: String) -> Bool { owner(of: declaration) != nil }
 
+    /// Whether a declaration spells everything that selects it: a function
+    /// type, an accessor's value type, or a destructor, which has no parameters.
     package static func hasSignature(_ declaration: String) -> Bool {
-        SwiftFormalSyntax.topLevelArrow(in: declaration) != nil
-            || declaration.contains(".getter : ") || declaration.contains(".setter : ")
+        SwiftFormalSyntax.topLevelArrow(in: declaration) != nil || isAccessor(declaration)
+            || isDestructor(declaration)
+    }
+
+    static func isDestructor(_ declaration: String) -> Bool {
+        let name = SymbolIndex.extensionMemberName(declaration) ?? declaration
+        return !name.contains("(") && (name == "deinit" || name.hasSuffix(".deinit")
+            || name.hasSuffix(".__deallocating_deinit") || name == "__deallocating_deinit")
+    }
+
+    package static func isAccessor(_ declaration: String) -> Bool {
+        declaration.contains(".getter : ") || declaration.contains(".setter : ")
     }
 
     /// Compare an explicitly supplied function/property signature independently of the context requirements, which the generic binding validates.
@@ -66,6 +78,7 @@ package enum SwiftMemberLookup {
                 )
             }
         }
+        if isDestructor(text) { return DeclarationKey.make(head(text)) }
         guard let opening = SwiftFormalSyntax.parameterOpening(in: text),
             let closing = SwiftFormalSyntax.matchingClose(in: text, opening: opening)
         else { return nil }

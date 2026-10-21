@@ -158,6 +158,74 @@ struct SwiftSignatureCompatibilityTests {
         }
     }
 
+    @Test func labelOnlyMembersSelectCompatibleDeclarations() async throws {
+        let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityBase")
+        // Both properties are declared with the subclass type, in the class
+        // and in an extension from another module.
+        for name in ["derived", "extensionDerived"] {
+            let getter = try await type.resolveGetter(named: name, as: (() -> CompatibilityBase).self)
+            #expect(try unsafe getter.unsafeInvoke(on: CompatibilityBase()).name() == "derived")
+        }
+        let derived = try await type.resolveGetter(named: "derived", as: (() -> CompatibilityBase).self)
+        await expectNativeTypesRequired {
+            _ = try await unsafe derived.hookVirtualCalls(onFailure: { _ in }) { call in
+                try call.proceed()
+            }
+        }
+        // A complete declaration need not name the extension's module.
+        let name = try await type.resolveMethod(
+            named: "extensionAsyncName() async -> Swift.String",
+            as: (@concurrent () async -> String).self
+        )
+        #expect(try unsafe await name.unsafeInvoke(on: CompatibilityBase()) == "async")
+        // Label-only protocol members: a requirement, and an extension member
+        // named without its module.
+        let label = try await type.resolveMethod(
+            named: "ManagedSwiftFixtures.CompatibilityNamed.compatibilityLabel()",
+            as: (() -> String).self
+        )
+        #expect(try unsafe label.unsafeInvoke(on: CompatibilityBase()) == "base")
+        let greeting = try await type.resolveMethod(
+            named: "ManagedSwiftFixtures.CompatibilityNamed.compatibilityGreeting()",
+            as: (() -> String).self
+        )
+        #expect(try unsafe greeting.unsafeInvoke(on: CompatibilityBase()) == "hello base")
+    }
+
+    @Test func protocolRequirementsPrecedeTheirDefaultImplementations() async throws {
+        let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityTagged")
+        let set = try await type.resolveSetter(
+            named: "ManagedSwiftFixtures.CompatibilityLabeled.compatibilityTag",
+            as: String.self
+        )
+        let tagged = CompatibilityTagged()
+        try unsafe set.unsafeInvoke(on: tagged, "renamed")
+        #expect(tagged.compatibilityTag == "renamed")
+    }
+
+    @Test func labelOnlyMembersAcceptTheOwnersRepresentation() async throws {
+        let type = try await runtime.resolveSwiftType(
+            named: "ManagedSwiftFixtures.CompatibilityCount",
+            as: HostCount.self
+        )
+        let make = try await type.resolveInitializer(named: "init(_:)", as: ((Int64) -> HostCount).self)
+        let count = try unsafe make.unsafeInvoke(21)
+        #expect(count.value == 21)
+        let doubled = try await type.resolveGetter(named: "doubled", as: (() -> HostCount).self)
+        #expect(try unsafe doubled.unsafeInvoke(on: count).value == 42)
+    }
+
+    @Test func labelOnlyNamesReturnOpaqueResultsAsTheirUnderlyingType() async throws {
+        let function = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.compatibilityOpaqueCount()",
+            as: (() -> Int64).self
+        )
+        #expect(try unsafe function.unsafeInvoke() == 41)
+        let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityBase")
+        let method = try await type.resolveMethod(named: "opaqueCount()", as: (() -> Int64).self)
+        #expect(try unsafe method.unsafeInvoke(on: CompatibilityBase()) == 42)
+    }
+
     @Test func hooksRequireTheNativeTypes() async throws {
         let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityBase")
         let make = try await type.resolveMethod(
@@ -172,6 +240,16 @@ struct SwiftSignatureCompatibilityTests {
                 try call.proceed()
             }
         }
+    }
+}
+
+/// A host representation of `CompatibilityCount`.
+private struct HostCount: ABIBridgeValue {
+    let value: Int64
+    static var abiType: NativeType { .int64 }
+    init(nativeValue: NativeValue) throws { value = try unsafe nativeValue.read(as: Int64.self) }
+    static func nativeValue(from value: HostCount) throws -> NativeValue {
+        try NativeValue(copying: value.value, as: .int64)
     }
 }
 

@@ -19,11 +19,11 @@ extension SwiftGenericDeclaration {
         }
         var protocolRequirement: SwiftSyntax.Node?
         if entry.kind == "DispatchThunk",
-            let getter = entry.child(kind: "Getter"),
-            let owner = getter.child(kind: "Variable")?.child(kind: "Protocol")
+            let accessor = entry.child(kind: "Getter") ?? entry.child(kind: "Setter"),
+            let owner = accessor.child(kind: "Variable")?.child(kind: "Protocol")
         {
             protocolRequirement = owner
-            entry = getter
+            entry = accessor
         }
         if ["Getter", "Setter"].contains(entry.kind) {
             return (try entry.requiredChild(), entry.kind, protocolRequirement)
@@ -129,10 +129,15 @@ extension SwiftGenericDeclaration {
                     }
                     self.failure = failure
                     self.isAsync = attributes.isAsync
-                } else {
-                    if let caller, caller.failure != Never.self {
+                } else if let caller, caller.failure != Never.self {
+                    // Without generic parameters, the error type cannot
+                    // depend on them, so the caller's error type applies.
+                    guard parameters.isEmpty else {
                         throw ABIResolutionError.unsupportedDeclaration("A throwing generic getter requires declaredAs: with its source function type; its symbol does not encode the formal error type.")
                     }
+                    failure = try SwiftFormalType(swiftNativeTypeName(caller.failure))
+                    isAsync = caller.isAsync
+                } else {
                     failure = nil
                     isAsync = caller?.isAsync ?? false
                 }

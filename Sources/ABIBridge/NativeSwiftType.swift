@@ -92,7 +92,7 @@ struct SwiftMetadataResponse: BitwiseCopyable, ABIBridgeValue {
 ///
 /// Type lookup requests complete metadata without constructing an instance. Generic arguments are validated by the Swift runtime. Member lookups reuse the image's existing symbol index. See <doc:SwiftMemberInvocation> for lookup and invocation conventions.
 ///
-/// Complete protocol-extension declarations, such as `(extension in Module):Module.Protocol.member...`, bind Self to this concrete type for methods, accessors, and static members. genericArguments supplies only the type parameters introduced by the member.
+/// Protocol-qualified names, such as `Module.Protocol.member()` or a complete `(extension in Module):Module.Protocol.member() -> ...` declaration, bind Self to this concrete type for methods, accessors, and static members. genericArguments supplies only the type parameters introduced by the member.
 public actor NativeSwiftType: Hashable {
     /// Type handles compare by their concrete Swift metadata identity.
     public nonisolated static func == (lhs: NativeSwiftType, rhs: NativeSwiftType) -> Bool {
@@ -396,50 +396,6 @@ public actor NativeSwiftType: Hashable {
         )
     }
 
-    private nonisolated func resolveDeclaredMember(
-        _ declaration: NativeDeclaration,
-        in image: NativeImage,
-        exact: Bool = false,
-        asynchronous: Bool? = nil,
-        genericContext: () throws -> SwiftGenericContext? = { nil }
-    ) throws -> SwiftEntry {
-        do {
-            return SwiftEntry(symbol: try resolver.resolve(declaration, in: image, loading: .loadedOnly))
-        } catch ABIResolutionError.declarationNotFound {}
-        // The defining type's members precede extension members.
-        let key = DeclarationKey.make(declaration.name, language: .swift)
-        let dispatched = try SwiftCandidateSelection(
-            resolver.swiftDeclarationCandidates(declaration, in: image)
-                .filter { !$0.record.runsOwnCode },
-            dispatch: { try self.dispatchedEntry($0, asynchronous: asynchronous) }
-        ) { candidate, _ -> Void? in
-            DeclarationKey.make(candidate.declaration.name, language: .swift) == key ? () : nil
-        }
-        if let (entry, _) = try dispatched.selected(for: declaration) { return entry }
-        // A matching member of the defining type hides extension members even
-        // when its code cannot be selected.
-        if let unavailable = dispatched.unavailable { throw unavailable }
-        guard exact else {
-            return SwiftEntry(
-                symbol: try resolver.resolveSwiftExtension(
-                    declaration,
-                    genericContext: genericContext()
-                )
-            )
-        }
-        let selection = try SwiftCandidateSelection(
-            resolver.swiftDeclarationCandidates(declaration, in: nil, extensionsOnly: true)
-        ) { candidate, _ -> Void? in
-            [candidate.declaration.name, candidate.memberName].contains {
-                DeclarationKey.make($0, language: .swift) == key
-            } ? () : nil
-        }
-        guard let (entry, _) = try selection.selected(for: declaration) else {
-            throw selection.failure ?? ABIResolutionError.declarationNotFound(declaration)
-        }
-        return entry
-    }
-
     // A library-evolution class can export only the dispatch thunk and method
     // descriptor of a member. The member's code is then this type's
     // virtual-table entry: the implementation visible to this type, which
@@ -505,188 +461,153 @@ public actor NativeSwiftType: Hashable {
         return entry
     }
 
-    // A member named by its protocol: a requirement, called through its
-    // dispatch thunk so that the conformance selects the witness, or a
-    // protocol extension member.
-    private nonisolated func protocolMember(
-        _ request: NativeDeclaration,
-        in image: NativeImage
-    ) throws -> SwiftEntry? {
-        let entry: SwiftEntry
-        if SymbolIndex.extensionMemberName(request.name) != nil {
-            entry = try resolveDeclaredMember(request, in: image, exact: true)
-        } else if request.name.contains(".getter : ")
-            || SwiftFormalSyntax.topLevelArrow(in: request.name) != nil
-        {
-            let key = DeclarationKey.make(request.name, language: .swift)
-            let selection = try SwiftCandidateSelection(
-                resolver.swiftDeclarationCandidates(request, in: nil)
-            ) { candidate, _ -> Void? in
-                candidate.record.role == .dispatchThunk
-                    && candidate.record.context == .protocolRequirement
-                    && DeclarationKey.make(candidate.declaration.name, language: .swift) == key
-                    ? () : nil
-            }
-            guard let (selected, _) = try selection.selected(for: request) else { return nil }
-            entry = selected
-        } else {
-            return nil
-        }
-        switch entry.record?.context {
-        case .protocolRequirement?, .protocolExtension?: return entry
-        default: return nil
-        }
-    }
-
     // Generic packs expand caller arguments without changing the source labels.
     // Their requests keep those labels until declaration binding determines arity.
     private typealias ResolvedMember = (
         entry: SwiftEntry, metadata: Any.Type, generic: SwiftGenericCallPlan?
     )
 
+    /// The binding a selected member needs, when its call is not concrete.
+    private struct SelectedMemberPlan {
+        let plan: SwiftGenericCallPlan?
+    }
+
+    /// Selects a member from the candidates this type declares, then those
+    /// its extensions declare, then those of each superclass in turn.
+    ///
+    /// A complete declaration selects the candidates it spells, and the
+    /// requested types may adapt them. A label-only name selects the
+    /// candidates whose native signatures accept the requested types. A name
+    /// qualified by a protocol selects its requirement, called through the
+    /// dispatch thunk so that the conformance selects the witness, or a
+    /// protocol extension member.
+    ///
+    /// - Parameters:
+    ///   - name: The requested name, relative to the owner or qualified.
+    ///   - request: The member's name, qualified by an owner's declaration name.
     private nonisolated func resolveMember(
-        signature: Any.Type? = nil,
+        named name: String,
+        signature: Any.Type,
         genericArguments: [NativeSwiftGenericArgument] = [],
         inherited: Bool = true,
-        exact: Bool = false,
-        explicitSignature: Bool = false,
         declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:],
-        _ declaration: @Sendable (String, Bool) throws -> NativeDeclaration
+        _ request: (_ owner: String) throws -> NativeDeclaration
     ) throws -> ResolvedMember {
+        let description = try SwiftFunctionSignature(signature)
+        let isComplete = SwiftMemberLookup.hasSignature(name)
+        // A qualified declaration can spell the requirements of its context.
+        let isQualified = SwiftMemberLookup.isQualified(name)
+        // The representation this type was resolved with stands for it.
+        let representations =
+            representation.flatMap { $0 == metadata ? nil : [ObjectIdentifier($0): metadata] } ?? [:]
         var originalRequest: NativeDeclaration?
         var ownerClass: AnyClass? = metadata as? AnyClass
         var ownerImage = image
         var ownerName = try declarationName()
-        var hasUnavailableExtensions = false
+        var hasUnavailableImages = false
         var preparationFailure: (any Error)?
-        let asynchronous = try signature.map { try SwiftFunctionSignature($0).isAsync }
         while true {
             let owner: Any.Type = ownerClass ?? metadata
             let enclosing =
                 try owner == metadata ? genericMetadata : SwiftGenericTypeMetadata(metadata: owner)
+            let declaration = try request(ownerName)
+            if originalRequest == nil { originalRequest = declaration }
+            let isProtocolMember = !SwiftMemberLookup.belongs(declaration.name, to: ownerName)
+            // A protocol member binds Self to this type.
             let usesBinding =
-                try signature != nil
-                && (!(enclosing?.arguments.isEmpty ?? true) || !genericArguments.isEmpty
-                    || declaredSignature != nil || !valueABIs.isEmpty
-                    || SwiftFunctionSignature(signature!).requiresValueDeclaration)
-            let request = try declaration(ownerName, usesBinding)
-            if originalRequest == nil { originalRequest = request }
-            let belongs = !exact || SwiftMemberLookup.belongs(request.name, to: ownerName)
-            if exact, !belongs, let signature,
-                let entry = try protocolMember(request, in: ownerImage)
-            {
-                let generic = try SwiftGenericCallPlan(
-                    entry: entry,
-                    genericArguments: genericArguments,
-                    signature: SwiftFunctionSignature(signature),
-                    resolver: resolver,
-                    implicitSelf: self,
-                    declaredSignature: declaredSignature,
-                    valueABIs: valueABIs
-                )
-                return (entry, metadata, generic)
+                isProtocolMember || !(enclosing?.arguments.isEmpty ?? true)
+                || !genericArguments.isEmpty || declaredSignature != nil || !valueABIs.isEmpty
+                || description.requiresValueDeclaration
+            // Without a binding, a complete declaration must not be generic
+            // and must have the requested effects.
+            if isComplete && !usesBinding && !SwiftMemberLookup.isAccessor(declaration.name) {
+                _ = try swiftFunctionDeclaration(named: declaration.name, as: signature)
             }
-            if belongs && (!usesBinding || exact || explicitSignature) {
-                do {
-                    let entry: SwiftEntry
-                    if usesBinding && explicitSignature && !exact {
-                        // Extensions still need candidate binding to preserve constraints and their declaration names.
-                        entry = SwiftEntry(
-                            symbol: try resolver.resolve(request, in: ownerImage, loading: .loadedOnly)
-                        )
-                    } else {
-                        entry = try resolveDeclaredMember(
-                            request,
-                            in: ownerImage,
-                            exact: exact,
-                            asynchronous: asynchronous
-                        ) {
-                            try ownerClass.flatMap { try SwiftGenericContext($0, owner: ownerName) }
-                        }
-                    }
-                    let generic: SwiftGenericCallPlan?
-                    if usesBinding, let signature {
-                        generic = try genericPlan(
-                            (entry, owner),
-                            signature: signature,
-                            arguments: genericArguments,
-                            declaredSignature: declaredSignature,
-                            valueABIs: valueABIs
-                        )
-                    } else {
-                        generic = nil
-                    }
-                    return (entry, owner, generic)
-                } catch ABIResolutionError.declarationNotFound {
-                } catch ABIResolutionError.signatureMismatch
-                    where usesBinding && explicitSignature && !exact
-                {
-                    // Preserve candidate filtering and diagnostics when the direct match cannot bind.
-                } catch ABIResolutionError.unsupportedDeclaration(let reason) {
-                    preparationFailure = ABIResolutionError.unsupportedDeclaration(reason)
-                } catch ABIResolutionError.imageUnavailable {
-                    hasUnavailableExtensions = true
-                }
-            }
-            if belongs && usesBinding && !exact, let signature {
-                // A member that applies but has no selectable code still hides
-                // extension and superclass members.
-                var shadowing: (any Error)?
-                do {
-                    // The defining type's members take precedence over extension members.
-                    for extensionsOnly in [false, true] {
-                        let selection = try SwiftCandidateSelection(
-                            resolver.swiftDeclarationCandidates(
-                                request,
-                                in: extensionsOnly ? nil : ownerImage,
-                                extensionsOnly: extensionsOnly
-                            ),
-                            dispatch: { try self.dispatchedEntry($0, asynchronous: asynchronous) }
-                        ) { candidate, entry -> SwiftGenericCallPlan? in
-                            let name = candidate.declaration.name
-                            if explicitSignature,
-                                ![name, SymbolIndex.operatorAlias(name)].compactMap({ $0 })
-                                    .contains(where: {
-                                        SwiftMemberLookup.signatureKey($0)
-                                            == SwiftMemberLookup.signatureKey(request.name)
-                                    })
-                            {
-                                return nil
-                            }
-                            guard
-                                let plan = try genericPlan(
-                                    (entry, owner),
-                                    signature: signature,
-                                    arguments: genericArguments,
-                                    declaredSignature: declaredSignature,
-                                    valueABIs: valueABIs
-                                )
-                            else { return nil }
-                            if !explicitSignature { try plan.check(SwiftFunctionSignature(signature)) }
-                            return plan
-                        }
-                        if let (entry, plan) = try selection.selected(for: request) {
-                            return (entry, owner, plan)
-                        }
-                        if let unavailable = selection.unavailable {
-                            shadowing = unavailable
+            let extensionModule = Self.extensionModule(of: declaration.name)
+            func select(
+                extensionsOnly: Bool,
+                includingSharedCache: Bool
+            ) throws -> SwiftCandidateSelection<SelectedMemberPlan> {
+                SwiftCandidateSelection(
+                    try resolver.swiftDeclarationCandidates(
+                        declaration,
+                        in: isProtocolMember || extensionsOnly ? nil : ownerImage,
+                        extensionsOnly: extensionsOnly,
+                        includingSharedCache: includingSharedCache
+                    ),
+                    namesDeclaration: isComplete,
+                    dispatch: { try self.dispatchedEntry($0, asynchronous: description.isAsync) }
+                ) { candidate, entry -> SelectedMemberPlan? in
+                    if isProtocolMember {
+                        switch candidate.record.context {
+                        case .protocolRequirement where candidate.record.role == .dispatchThunk,
+                            .protocolExtension:
                             break
-                        }
-                        if let failure = selection.failure ?? selection.mismatch {
-                            preparationFailure = failure
+                        default: return nil
                         }
                     }
-                } catch ABIResolutionError.imageUnavailable {
-                    hasUnavailableExtensions = true
-                } catch ABIResolutionError.unsupportedDeclaration(let reason) {
-                    preparationFailure = ABIResolutionError.unsupportedDeclaration(reason)
+                    if let extensionModule,
+                        Self.extensionModule(of: candidate.declaration.name) != extensionModule
+                    {
+                        return nil
+                    }
+                    if isComplete {
+                        guard Self.spells(candidate, declaration.name, exactly: isQualified)
+                        else { return nil }
+                        guard usesBinding else { return SelectedMemberPlan(plan: nil) }
+                    }
+                    let plan = try SwiftGenericCallPlan(
+                        entry: entry,
+                        genericArguments: genericArguments,
+                        signature: description,
+                        resolver: resolver,
+                        enclosing: enclosing,
+                        implicitSelf: isProtocolMember ? self : nil,
+                        declaredSignature: declaredSignature,
+                        valueABIs: valueABIs
+                    )
+                    if !isComplete { try plan.check(description, representations: representations) }
+                    return SelectedMemberPlan(
+                        plan: usesBinding || plan.isRequired(for: description) ? plan : nil
+                    )
                 }
-                if let shadowing { throw shadowing }
+            }
+            // The members a type declares hide those its extensions declare.
+            for extensionsOnly in [false, true] where extensionsOnly || extensionModule == nil {
+                var selection: SwiftCandidateSelection<SelectedMemberPlan>
+                do {
+                    selection = try select(extensionsOnly: extensionsOnly, includingSharedCache: false)
+                    // The images can hold other overloads while only the shared
+                    // cache's local symbols describe the requested one.
+                    if selection.accepted.isEmpty && selection.failure == nil {
+                        selection = try select(
+                            extensionsOnly: extensionsOnly,
+                            includingSharedCache: true
+                        )
+                    }
+                } catch ABIResolutionError.imageUnavailable {
+                    hasUnavailableImages = true
+                    continue
+                }
+                if let (entry, selected) = try selection.selected(for: declaration) {
+                    return (entry, isProtocolMember ? metadata : owner, selected.plan)
+                }
+                // A member that applies but has no selectable code still hides
+                // extension and superclass members. A protocol extension
+                // member is not the requirement, so it cannot stand in for one
+                // that fails.
+                if let unavailable = selection.unavailable { throw unavailable }
+                if isProtocolMember && !extensionsOnly, let failure = selection.failure {
+                    throw failure
+                }
+                if let failure = selection.failure ?? selection.mismatch {
+                    preparationFailure = failure
+                }
             }
             guard inherited, let current = ownerClass, let parent = class_getSuperclass(current)
             else {
-                if hasUnavailableExtensions { throw ABIResolutionError.imageUnavailable }
+                if hasUnavailableImages { throw ABIResolutionError.imageUnavailable }
                 if let preparationFailure { throw preparationFailure }
                 throw ABIResolutionError.declarationNotFound(originalRequest!)
             }
@@ -702,13 +623,40 @@ public actor NativeSwiftType: Hashable {
         }
     }
 
+    /// Whether a candidate is the declaration a complete request spells.
+    ///
+    /// - Parameter exactly: Whether the request also spells the requirements
+    ///   of the candidate's context. Otherwise binding checks them.
+    private static func spells(
+        _ candidate: SwiftCandidate,
+        _ request: String,
+        exactly: Bool
+    ) -> Bool {
+        let names = [candidate.declaration.name, candidate.memberName]
+        let spellings = names + names.compactMap(SymbolIndex.operatorAlias)
+        guard !exactly, let key = SwiftMemberLookup.signatureKey(request) else {
+            let key = DeclarationKey.make(request, language: .swift)
+            return spellings.contains { DeclarationKey.make($0, language: .swift) == key }
+        }
+        return spellings.contains { SwiftMemberLookup.signatureKey($0) == key }
+    }
+
+    /// The `(extension in Module):` prefix naming the module that declares an
+    /// extension member.
+    private static func extensionModule(of name: String) -> Substring? {
+        let declaration = name.hasPrefix("static ") ? name.dropFirst(7) : Substring(name)
+        guard declaration.hasPrefix("(extension in "), let end = declaration.range(of: "):")
+        else { return nil }
+        return declaration[..<end.upperBound]
+    }
+
     /// Resolves a concrete instance implementation using a function-type metatype.
     ///
     /// Search and preparation run synchronously on the caller's thread.
     ///
     /// The signature excludes self. Mutating value members require an explicit mutating flag because their source-level symbol does not encode it. Consuming members similarly require consuming: true. Typed receivers transfer a copy; NativeSwiftValue transfers its owned value. Borrowed views allow nonconsuming calls within their active scope; only native inout callback borrows permit mutation.
     ///
-    /// A complete instance protocol requirement declaration binds Self to this concrete type and resolves its dispatch thunk. Lookup requires the native conformance and preserves the protocol's formal Self convention.
+    /// A protocol-qualified instance requirement binds Self to this concrete type and resolves its dispatch thunk. Lookup requires the native conformance and preserves the protocol's formal Self convention.
     ///
     /// For runtime-only self, receiverABI supplies established fixed components or an opaque descriptor for formally indirect self. Metadata supplies storage dimensions, not the declaration's passing convention.
     /// - Parameters:
@@ -733,17 +681,16 @@ public actor NativeSwiftType: Hashable {
         consuming isConsuming: Bool = false
     ) throws -> NativeSwiftMethod<Signature> {
         let member = try resolveMember(
+            named: name,
             signature: signature,
             genericArguments: genericArguments,
-            exact: SwiftMemberLookup.isQualified(name),
-            explicitSignature: SwiftMemberLookup.hasSignature(name),
             declaredSignature: declaredSignature,
             valueABIs: valueABIs
-        ) { owner, usesBinding in
-            let member = try SwiftMemberLookup.qualifiedName(name, owner: owner)
-            return try usesBinding
-                ? NativeDeclaration(name: member, language: .swift)
-                : swiftFunctionDeclaration(named: member, as: signature)
+        ) { owner in
+            NativeDeclaration(
+                name: try SwiftMemberLookup.qualifiedName(name, owner: owner),
+                language: .swift
+            )
         }
         let generic = member.generic
         let receiver = try receiverPlan(
@@ -784,33 +731,6 @@ public actor NativeSwiftType: Hashable {
         }
     }
 
-    private nonisolated func genericPlan(
-        _ member: (entry: SwiftEntry, metadata: Any.Type),
-        signature: Any.Type,
-        arguments: [NativeSwiftGenericArgument] = [],
-        receiver: SwiftReceiverMode? = nil,
-        declaredSignature: String? = nil,
-        valueABIs: [NativeSwiftType: NativeType] = [:]
-    ) throws -> SwiftGenericCallPlan? {
-        let enclosing =
-            try member.metadata == metadata
-            ? genericMetadata : SwiftGenericTypeMetadata(metadata: member.metadata)
-        guard
-            try !(enclosing?.arguments.isEmpty ?? true) || !arguments.isEmpty
-                || declaredSignature != nil || !valueABIs.isEmpty
-                || SwiftFunctionSignature(signature).requiresValueDeclaration
-        else { return nil }
-        return try SwiftGenericCallPlan(
-            entry: member.entry,
-            genericArguments: arguments,
-            signature: SwiftFunctionSignature(signature),
-            resolver: resolver,
-            enclosing: enclosing,
-            receiver: receiver,
-            declaredSignature: declaredSignature,
-            valueABIs: valueABIs
-        )
-    }
 
     private nonisolated func prepareMethod<Signature>(
         _ member: ResolvedMember,
@@ -843,13 +763,6 @@ public actor NativeSwiftType: Hashable {
         )
     }
 
-    private nonisolated func initializerResultName(
-        _ signature: Any.Type
-    ) throws -> String {
-        let name = try declarationName()
-        return try SwiftFunctionSignature(signature).result is any NativeOptionalValue.Type
-            ? "Swift.Optional<" + name + ">" : name
-    }
     /// Resolves a concrete allocating initializer.
     ///
     /// Search and preparation run synchronously on the caller's thread.
@@ -876,23 +789,15 @@ public actor NativeSwiftType: Hashable {
             )
         }
         let member = metadata is AnyClass ? "__allocating_" + name : name
-        let resultName = try initializerResultName(signature)
         let initializer = try resolveMember(
+            named: name,
             signature: signature,
             genericArguments: genericArguments,
             inherited: false,
-            explicitSignature: SwiftMemberLookup.hasSignature(name),
             declaredSignature: declaredSignature,
             valueABIs: valueABIs
-        ) { owner, usesBinding in
-            try usesBinding
-                ? NativeDeclaration(name: owner + "." + member, language: .swift)
-                : swiftFunctionDeclaration(
-                    named: owner + "." + member,
-                    as: signature,
-                    resultName: resultName,
-                    defaultConsuming: true
-                )
+        ) { owner in
+            NativeDeclaration(name: owner + "." + member, language: .swift)
         }
         return try prepareFunction(
             initializer,
@@ -945,17 +850,16 @@ public actor NativeSwiftType: Hashable {
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) throws -> NativeSwiftFunction<Signature> {
         let member = try resolveMember(
+            named: name,
             signature: signature,
             genericArguments: genericArguments,
-            exact: SwiftMemberLookup.isQualified(name),
-            explicitSignature: SwiftMemberLookup.hasSignature(name),
             declaredSignature: declaredSignature,
             valueABIs: valueABIs
-        ) { owner, usesBinding in
-            let member = try SwiftMemberLookup.qualifiedName(name, owner: owner, isStatic: true)
-            return try usesBinding
-                ? NativeDeclaration(name: member, language: .swift)
-                : swiftFunctionDeclaration(named: member, as: signature)
+        ) { owner in
+            NativeDeclaration(
+                name: try SwiftMemberLookup.qualifiedName(name, owner: owner, isStatic: true),
+                language: .swift
+            )
         }
         return try prepareFunction(member, classReceiver: member.metadata is AnyClass)
     }
@@ -986,20 +890,12 @@ public actor NativeSwiftType: Hashable {
     private nonisolated func accessorDeclaration(
         named name: String,
         ownerName: String,
-        valueType: Any.Type,
         setter: Bool,
         isStatic: Bool
     ) throws -> NativeDeclaration {
         let accessor = setter ? ".setter : " : ".getter : "
-        let member: String
-        if name.contains(accessor) {
-            member = name
-        } else {
-            let valueName =
-                valueType == (representation ?? metadata)
-                ? try declarationName() : try swiftFunctionTypeName(valueType)
-            member = name + accessor + valueName
-        }
+        // A property name leaves the value type to the selected declaration.
+        let member = name.contains(accessor) ? name : name + accessor + "_"
         return .init(
             name: try SwiftMemberLookup.qualifiedName(member, owner: ownerName, isStatic: isStatic),
             language: .swift
@@ -1031,16 +927,14 @@ public actor NativeSwiftType: Hashable {
         consuming isConsuming: Bool = false
     ) throws -> NativeSwiftMethod<(Value) -> Void> {
         let member = try resolveMember(
+            named: name,
             signature: ((Value) -> Void).self,
-            exact: SwiftMemberLookup.isQualified(name),
-            explicitSignature: SwiftMemberLookup.hasSignature(name),
             declaredSignature: declaredSignature,
             valueABIs: valueABIs
-        ) { owner, _ in
+        ) { owner in
             try accessorDeclaration(
                 named: name,
                 ownerName: owner,
-                valueType: valueType,
                 setter: true,
                 isStatic: false
             )
@@ -1100,16 +994,14 @@ public actor NativeSwiftType: Hashable {
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) throws -> NativeSwiftFunction<(Value) -> Void> {
         let member = try resolveMember(
+            named: name,
             signature: ((Value) -> Void).self,
-            exact: SwiftMemberLookup.isQualified(name),
-            explicitSignature: SwiftMemberLookup.hasSignature(name),
             declaredSignature: declaredSignature,
             valueABIs: valueABIs
-        ) { owner, _ in
+        ) { owner in
             try accessorDeclaration(
                 named: name,
                 ownerName: owner,
-                valueType: valueType,
                 setter: true,
                 isStatic: true
             )
@@ -1499,7 +1391,7 @@ extension NativeSwiftType {
     ///
     /// For a throwing generic getter, declaredAs supplies the source function type, such as "() throws(B) -> A". Getter symbols omit the formal error type; A and B refer to the enclosing declaration's generic parameters. valueABIs supplies formal ABIs for runtime-only closed nominal values. Receiver ownership and writeback follow the ordinary member contract. receiverABI can describe runtime-only fixed components or formally indirect self, as for method lookup.
     ///
-    /// A complete protocol requirement getter declaration binds Self to this concrete type and resolves its dispatch thunk in loaded images. Lookup requires the type's native conformance; invocation uses that conformance's implementation and formal Self convention.
+    /// A protocol-qualified requirement getter binds Self to this concrete type and resolves its dispatch thunk in loaded images. Lookup requires the type's native conformance; invocation uses that conformance's implementation and formal Self convention.
     public nonisolated func resolveGetterAndWait<Signature>(
         named name: String,
         as signature: Signature.Type,
@@ -1509,18 +1401,16 @@ extension NativeSwiftType {
         mutating isMutating: Bool = false,
         consuming isConsuming: Bool = false
     ) throws -> NativeSwiftMethod<Signature> {
-        let result = try getterResult(signature)
+        try validateGetterSignature(signature)
         let member = try resolveMember(
+            named: name,
             signature: signature,
-            exact: SwiftMemberLookup.isQualified(name),
-            explicitSignature: SwiftMemberLookup.hasSignature(name),
             declaredSignature: declaredSignature,
             valueABIs: valueABIs
-        ) { owner, _ in
+        ) { owner in
             try accessorDeclaration(
                 named: name,
                 ownerName: owner,
-                valueType: result,
                 setter: false,
                 isStatic: false
             )
@@ -1571,18 +1461,16 @@ extension NativeSwiftType {
         declaredAs declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) throws -> NativeSwiftFunction<Signature> {
-        let result = try getterResult(signature)
+        try validateGetterSignature(signature)
         let member = try resolveMember(
+            named: name,
             signature: signature,
-            exact: SwiftMemberLookup.isQualified(name),
-            explicitSignature: SwiftMemberLookup.hasSignature(name),
             declaredSignature: declaredSignature,
             valueABIs: valueABIs
-        ) { owner, _ in
+        ) { owner in
             try accessorDeclaration(
                 named: name,
                 ownerName: owner,
-                valueType: result,
                 setter: false,
                 isStatic: true
             )
@@ -1611,7 +1499,7 @@ extension NativeSwiftType {
         }
     }
 
-    private nonisolated func getterResult(_ signature: Any.Type) throws -> Any.Type {
+    private nonisolated func validateGetterSignature(_ signature: Any.Type) throws {
         let description = try SwiftFunctionSignature(signature)
         guard description.parameters.isEmpty else {
             throw ABIResolutionError.signatureMismatch(
@@ -1621,6 +1509,5 @@ extension NativeSwiftType {
                 )
             )
         }
-        return description.result
     }
 }

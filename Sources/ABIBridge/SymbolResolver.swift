@@ -55,19 +55,6 @@ final class SymbolResolver: Sendable {
             NativeImage(try runtime.image(forSwiftClass: type) { try lookup().runtimeValue })
         }
     }
-    func resolveSwiftExtension(
-        _ declaration: NativeDeclaration,
-        genericContext: SwiftGenericContext? = nil
-    ) throws -> ResolvedSymbol {
-        try withRuntimeErrors {
-            ResolvedSymbol(
-                try runtime.resolveSwiftExtension(
-                    declaration.runtimeValue,
-                    genericContext: genericContext
-                )
-            )
-        }
-    }
     func swiftDeclarationCandidates(
         _ declaration: NativeDeclaration,
         in selector: ImageSelector,
