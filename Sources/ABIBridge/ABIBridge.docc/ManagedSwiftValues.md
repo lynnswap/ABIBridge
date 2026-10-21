@@ -8,7 +8,7 @@ A concrete metatype lets Swift code allocate and operate on a value through the 
 
 | Value | Direct Swift frontend | Compiled adapter |
 | --- | --- | --- |
-| String, Array<Element>, Dictionary<Key, Value>, Set<Element>, their single-level optional forms, and class references | Supported with Swift ownership | Available when another part of the signature needs adaptation |
+| String, Array<Element>, Dictionary<Key, Value>, Set<Element>, their single-level optional forms, and class references | Supported with Swift ownership; a collection of runtime-only elements passes as a collection of `NativeSwiftValue`, see <doc:SwiftFunctionInvocation> | Available when another part of the signature needs adaptation |
 | Fixed trivial layouts described by ABIBridgeValue | Supported within the documented Swift subset | Required if the declaration has additional unsupported conventions |
 | A struct or enum containing a reference | An explicit ABIBridgeSwiftValue conformance supports an established fixed ABI | The compiler adapts additional calling conventions |
 | A value Optional, such as Int64? or a closure Optional | Supported when the wrapped value has a direct representation; an Optional of a runtime-only value passes as `NativeSwiftValue?` | The compiler handles other payloads and their nil representation |

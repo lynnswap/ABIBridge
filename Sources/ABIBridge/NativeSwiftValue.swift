@@ -269,10 +269,29 @@ struct SwiftRuntimeValuePlan: Sendable {
     let type: CValueType
     let nativeTuple: SwiftTupleValuePlan?
     let nativeClosure: SwiftGenericClosurePlan?
-    /// The wrapped type when the host represents this Optional as
-    /// `NativeSwiftValue?` or `NativeSwiftBorrowedValue?`: nil is the empty
-    /// case, and a value of this type is the payload.
-    private(set) var optionalPayload: NativeSwiftType?
+    /// How the host represents the native value, when not as a handle of it.
+    enum Projection: @unchecked Sendable {
+        /// `NativeSwiftValue?` or `NativeSwiftBorrowedValue?` for this Optional:
+        /// nil is the empty case, and a value of the wrapped type is the payload.
+        case optional(payload: NativeSwiftType)
+        /// A host collection of handles for this Array, Set, or Dictionary.
+        case collection(SwiftRuntimeCollectionPlan)
+    }
+    private(set) var projection: Projection?
+    var optionalPayload: NativeSwiftType? {
+        if case .optional(let payload) = projection { payload } else { nil }
+    }
+    private var collection: SwiftRuntimeCollectionPlan? {
+        if case .collection(let collection) = projection { collection } else { nil }
+    }
+    /// The owned host type for the native value.
+    var hostType: Any.Type {
+        switch projection {
+        case nil: NativeSwiftValue.self
+        case .optional: NativeSwiftValue?.self
+        case .collection(let collection): collection.host.type
+        }
+    }
     private let closureConversions: SwiftRuntimeClosureConversions
     var hasClosureConversions: Bool { !closureConversions.isEmpty }
     private let size: Int
@@ -330,7 +349,14 @@ struct SwiftRuntimeValuePlan: Sendable {
         // A value passed to native code is copied into the Optional.
         guard SwiftCopyability.accepts(payloadType) else { throw NativeSwiftValueError.noncopyableType }
         var plan = self
-        plan.optionalPayload = try swiftRuntimeValueType(metadata: payloadType, retaining: [valueType])
+        plan.projection = .optional(payload: try swiftRuntimeValueType(metadata: payloadType, retaining: [valueType]))
+        return plan
+    }
+
+    /// This plan with the host passing the collection as `host`.
+    func projectingCollection(_ host: SwiftHostCollection) throws -> SwiftRuntimeValuePlan {
+        var plan = self
+        plan.projection = .collection(try SwiftRuntimeCollectionPlan(native: valueType, host: host))
         return plan
     }
 
@@ -426,13 +452,52 @@ struct SwiftRuntimeValuePlan: Sendable {
     }
 
     /// The host value for a native result or callback input: the value itself,
-    /// or for an Optional the host passes as `NativeSwiftValue?`, its projection.
+    /// or its projection for the host's `NativeSwiftValue?` or collection.
     func hostValue(_ value: NativeSwiftValue) throws -> Any {
-        optionalPayload == nil ? value : try unwrapOptional(value) as Any
+        switch projection {
+        case nil: return value
+        case .optional: return try unwrapOptional(value) as Any
+        case .collection(let collection):
+            let storage = try value.valueOwner.transferStorage()
+            return collection.hostValue(ofNative: storage.address, lifetime: storage.codeLifetime)
+        }
     }
 
     func hostValue(_ value: NativeSwiftBorrowedValue) throws -> Any {
-        optionalPayload == nil ? value : try unwrapOptional(value) as Any
+        switch projection {
+        case nil: return value
+        case .optional: return try unwrapOptional(value) as Any
+        case .collection(let collection):
+            return try value.borrow.withAddress {
+                collection.hostValue(ofNative: $0, lifetime: value.type.codeLifetime)
+            }
+        }
+    }
+
+    /// Projects native storage the caller owns for the host, which owns the
+    /// projection. Requires a projection.
+    func project(_ storage: NativeValueStorage) -> Any {
+        if let collection {
+            return collection.hostValue(ofNative: storage.address, lifetime: storage.codeLifetime)
+        }
+        return projectOptional(storage) as Any
+    }
+
+    /// Takes the host value a callback returned in `storage`.
+    func takeHostValue(from storage: NativeValueStorage) -> Any {
+        func take<Host>(_: Host.Type) -> Any { storage.take(as: Host.self) }
+        return _openExistential(hostType, do: take)
+    }
+
+    /// Storage holding `value` as the host type.
+    func hostStorage(_ value: Any, codeLifetime: SwiftValueCodeLifetime?) -> NativeValueStorage {
+        func store<Host>(_: Host.Type) -> NativeValueStorage {
+            let storage = NativeValueStorage(size: MemoryLayout<Host>.stride, alignment: MemoryLayout<Host>.alignment,
+                                             codeLifetime: codeLifetime)
+            storage.initialize(value as! Host)
+            return storage
+        }
+        return _openExistential(hostType, do: store)
     }
 
     func restoredCallbackArgument(from address: UnsafeRawPointer) -> NativeValueStorage? {
@@ -540,7 +605,7 @@ struct SwiftRuntimeValuePlan: Sendable {
         return try await body(NativeSwiftBorrowedValue(type: type, borrow: borrow))
     }
 
-    private static func accepts(_ actual: NativeSwiftType, as expected: NativeSwiftType,
+    static func accepts(_ actual: NativeSwiftType, as expected: NativeSwiftType,
                                 convention: SwiftArgumentConvention) -> Bool {
         if actual.metadata == expected.metadata { return true }
         // An inout Base may replace a Derived reference with another Base.
@@ -551,11 +616,20 @@ struct SwiftRuntimeValuePlan: Sendable {
     }
 
     func encode(_ value: Any, convention: SwiftArgumentConvention, asynchronous: Bool) throws -> NativeValueStorage {
+        if let collection {
+            guard convention != .inoutValue else {
+                throw ABIResolutionError.unsupportedDeclaration("An inout runtime collection is unsupported.")
+            }
+            var plan = self
+            plan.projection = nil
+            return try plan.encode(try collection.makeNative(value, type: valueType), convention: convention,
+                                   asynchronous: asynchronous)
+        }
         if let optionalPayload {
             let wrapped = try wrapOptional(value, payload: optionalPayload, convention: convention,
                                            asynchronous: asynchronous)
             var plan = self
-            plan.optionalPayload = nil
+            plan.projection = nil
             let access = try plan.encode(wrapped.value, convention: convention, asynchronous: asynchronous)
             // A hook forwarding the Optional takes it without native code
             // consuming it, so the transfer also gives up the source's value.

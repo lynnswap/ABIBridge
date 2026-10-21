@@ -606,7 +606,7 @@ struct SwiftCallbackValues: Sendable {
                 }
                 return plan.copyCallbackArgument(from: source, type: nativeType)
             }
-            guard plan.optionalPayload != nil else { return decode }
+            guard plan.projection != nil else { return decode }
             return { address, scope in
                 let value = try decode(address, scope)
                 if let owned = value as? NativeSwiftValue {

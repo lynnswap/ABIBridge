@@ -54,6 +54,28 @@ typedef struct ABISwiftExistentialProjection {
 bool ABISwiftProjectExistentialValue(const void *metadata, const void *value,
     ABISwiftExistentialProjection *result);
 
+/// Standard library collection operations through libswiftCore's exported entry points. Metadata arguments are complete; hashable is the type's Hashable witness table. Collection values are single retained references: create functions return +1 values, other functions borrow them, and inout functions update them in place.
+const void *ABISwiftHashableConformance(const void *metadata);
+/// Returns an array of count elements whose uninitialized storage starts at *elements; the caller initializes every element.
+const void *ABISwiftArrayCreate(const void *element, intptr_t count, void **elements);
+intptr_t ABISwiftArrayCount(const void *array, const void *element);
+/// Initializes destination with a copy of the element at index, which must be in bounds.
+void ABISwiftArrayCopyElement(const void *array, intptr_t index, const void *element, void *destination);
+const void *ABISwiftSetCreate(intptr_t capacity, const void *element, const void *hashable);
+/// Takes member. Returns false, destroying it, when an equal member is present.
+bool ABISwiftSetInsert(const void **set, void *member, const void *element, const void *hashable);
+const void *ABISwiftDictionaryCreate(intptr_t capacity, const void *key, const void *value, const void *hashable);
+/// Takes value and borrows key, replacing the value of an equal key.
+void ABISwiftDictionaryUpdate(const void **dictionary, void *key, void *value,
+    const void *keyType, const void *valueType, const void *hashable);
+/// Receives one owned element (second is NULL) or one owned key and value, which it must take or destroy.
+typedef void (*ABISwiftCollectionVisitor)(void *context, void *first, void *second);
+/// Visits a set's members or a dictionary's pairs in iteration order.
+void ABISwiftSetForEach(const void *set, const void *element, const void *hashable,
+    void *context, ABISwiftCollectionVisitor visit);
+void ABISwiftDictionaryForEach(const void *dictionary, const void *keyType, const void *valueType,
+    const void *hashable, void *context, ABISwiftCollectionVisitor visit);
+
 /// Reads a valid compiler-emitted generic protocol-requirement reference. Authenticates indirect Swift descriptor pointers before reading their flags.
 bool ABISwiftProtocolRequirementIsClassBound(const void *reference);
 /// Runtime metadata operations over valid compiler-emitted Swift descriptors. Type construction requires an already validated metadata/witness argument list.

@@ -235,7 +235,7 @@ Synchronous and async closures use the scalar, pointer, managed, explicit-layout
 
 Array elements use compiler-owned storage and need no direct-call conformance. A standalone element still needs a supported representation. Optionals of supported values, including nested Optionals and closures, use their Swift enum storage.
 
-Custom ``ABIBridgeValue`` conversions are outside this callback path: the callback uses actual Swift values. A callback receives and returns an Optional of a runtime-only value as `NativeSwiftValue?` or `NativeSwiftBorrowedValue?`; unsupported generic shapes need a compiler adapter. Runtime-only nominal values can supply an established ABI through `valueABIs`; see <doc:BorrowedSwiftValues>.
+Custom ``ABIBridgeValue`` conversions are outside this callback path: the callback uses actual Swift values. A callback receives and returns an Optional of a runtime-only value as `NativeSwiftValue?` or `NativeSwiftBorrowedValue?`, and a collection of runtime-only elements as a collection of `NativeSwiftValue` copies; unsupported generic shapes need a compiler adapter. Runtime-only nominal values can supply an established ABI through `valueABIs`; see <doc:BorrowedSwiftValues>.
 
 Incoming closure-valued hook arguments use the same scoped borrow as ordinary callback inputs. A nonescaping input remains usable during the hook body and expires afterward. Copying an input requires the native declaration to grant escaping ownership. See <doc:SwiftFunctionHooks> and <doc:SwiftMethodHooks> for continuation and failure recovery.
 
