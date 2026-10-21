@@ -26,3 +26,19 @@ public final class CompatibilityDerived: CompatibilityBase {
 @inline(never) public func compatibilityDerivedName(_ value: CompatibilityDerived) -> String {
     value.name()
 }
+
+@inline(never) public func compatibilityReplace(_ value: inout CompatibilityBase) {
+    value = CompatibilityBase()
+}
+
+@inline(never) public func compatibilityPair() -> (CompatibilityBase, Int64) { (CompatibilityBase(), 1) }
+
+@inline(never) public func compatibilityApply(
+    _ body: (CompatibilityBase) -> CompatibilityDerived
+) -> String {
+    body(CompatibilityBase()).name()
+}
+
+extension CompatibilityBase {
+    @inline(never) public func describe(_ value: CompatibilityBase) -> String { value.name() }
+}

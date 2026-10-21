@@ -63,6 +63,57 @@ struct SwiftSignatureCompatibilityTests {
         }
     }
 
+    @Test func valuesThatCanFlowBackStayExact() async throws {
+        // The callee can store a superclass instance through inout.
+        await #expect(throws: ABIResolutionError.self) {
+            _ = try await runtime.resolveSwiftFunction(
+                named: "ManagedSwiftFixtures.compatibilityReplace(_:)",
+                as: ((NativeSwiftInout<CompatibilityDerived>) -> Void).self,
+                declaredAs: "(inout ManagedSwiftFixtures.CompatibilityBase) -> ()"
+            )
+        }
+        // A tuple field is a result, which cannot narrow to a subclass.
+        await #expect(throws: ABIResolutionError.self) {
+            _ = try await runtime.resolveSwiftFunction(
+                named: "ManagedSwiftFixtures.compatibilityPair()",
+                as: (() -> (CompatibilityDerived, Int64)).self,
+                declaredAs: "() -> (ManagedSwiftFixtures.CompatibilityBase, Swift.Int64)"
+            )
+        }
+        // A callback receives native arguments and returns a native result.
+        await #expect(throws: ABIResolutionError.self) {
+            _ = try await runtime.resolveSwiftFunction(
+                named: "ManagedSwiftFixtures.compatibilityApply(_:)",
+                as: ((NativeSwiftClosure<(CompatibilityDerived) -> CompatibilityBase>) -> String).self,
+                declaredAs:
+                    "((ManagedSwiftFixtures.CompatibilityBase) -> ManagedSwiftFixtures.CompatibilityDerived) -> Swift.String"
+            )
+        }
+        // Convention wrappers keep the native type, so hooks cannot see a
+        // superclass instance as the subclass.
+        let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityBase")
+        await #expect(throws: ABIResolutionError.self) {
+            _ = try await type.resolveMethod(
+                named: "describe(_:)",
+                as: ((NativeSwiftBorrowing<CompatibilityDerived>) -> String).self,
+                declaredAs: "(ManagedSwiftFixtures.CompatibilityBase) -> Swift.String"
+            )
+        }
+        let describe = try await type.resolveMethod(
+            named: "describe(_:)",
+            as: ((CompatibilityDerived) -> String).self,
+            declaredAs: "(ManagedSwiftFixtures.CompatibilityBase) -> Swift.String"
+        )
+        #expect(
+            try unsafe describe.unsafeInvoke(on: CompatibilityBase(), CompatibilityDerived()) == "derived"
+        )
+        await #expect(throws: ABIResolutionError.self) {
+            _ = try await unsafe describe.hookVirtualCalls(onFailure: { _ in }) { call, value in
+                try call.proceed(value)
+            }
+        }
+    }
+
     @Test func hooksRequireTheNativeTypes() async throws {
         let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityBase")
         let make = try await type.resolveMethod(

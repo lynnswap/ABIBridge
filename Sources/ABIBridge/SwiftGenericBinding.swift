@@ -1514,9 +1514,6 @@ struct SwiftGenericBinding: Sendable {
         if actual == NativeSwiftValue.self || actual == NativeSwiftBorrowedValue.self {
             return try types(formal)[0]
         }
-        if convertsReference(actual, for: formal, isResult: true) {
-            return try types(formal)[0]
-        }
         let canonical = try canonicalType(of: formal)
         if case .tuple = canonical {
             let plan = try SwiftGenericCallPlan.tuple(canonical, actual: actual, binding: self)
@@ -1606,8 +1603,6 @@ struct SwiftGenericBinding: Sendable {
             )
         } else if actual == NativeSwiftValue.self || actual == NativeSwiftBorrowedValue.self {
             _ = try types(formal)
-        } else if convertsReference(actual, for: formal, isResult: false) {
-            return
         } else {
             let canonical = try canonicalType(of: formal)
             if case .tuple = canonical {

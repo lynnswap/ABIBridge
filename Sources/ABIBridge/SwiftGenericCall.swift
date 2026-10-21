@@ -912,6 +912,10 @@ struct SwiftGenericCallPlan: Sendable {
 
     /// Checks that a call with the requested signature can use this
     /// declaration, reporting the first incompatible argument or the result.
+    ///
+    /// Only the call's own arguments and result convert class references.
+    /// Values reached through `inout` and other conventions, tuples, and
+    /// closures stay exact, because their values can flow the other way.
     func check(_ signature: SwiftFunctionSignature) throws {
         func validate(
             _ actual: Any.Type,
@@ -920,6 +924,12 @@ struct SwiftGenericCallPlan: Sendable {
             at index: Int
         ) throws {
             do {
+                if formal.argumentConvention == nil,
+                    !(actual is any SwiftConventionArgument.Type),
+                    binding.convertsReference(actual, for: formal, isResult: false)
+                {
+                    return
+                }
                 if let argument = try binding.conventionArgument(
                     actual,
                     for: formal,
@@ -951,6 +961,13 @@ struct SwiftGenericCallPlan: Sendable {
                 }
             }
         }
+        guard
+            !binding.convertsReference(
+                signature.result,
+                for: binding.declaration.result,
+                isResult: true
+            )
+        else { return }
         do {
             _ = try binding.resultType(signature.result, for: binding.declaration.result)
         } catch let ABIResolutionError.signatureMismatch(mismatch) {
