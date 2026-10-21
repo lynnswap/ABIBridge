@@ -498,7 +498,7 @@ struct SwiftMemberInvocationTests {
         // member bodies, as frameworks such as SimulatorKit ship them.
         let hidden = lists.appendingPathComponent("hidden.txt")
         try ["4BaseC", "7DerivedC"].flatMap { owner in
-            ["F", "FZ", "vg", "vs", "vM"].map { prefix + owner + "*" + $0 }
+            ["F", "FZ", "vg", "vgZ", "vs", "vM"].map { prefix + owner + "*" + $0 }
         }.joined(separator: "\n").write(to: hidden, atomically: true, encoding: .utf8)
         let library = try FixtureLibrary(
             swiftModule: module,
@@ -513,6 +513,7 @@ struct SwiftMemberInvocationTests {
                     @inline(never) open func replacement(_ input: Int64) -> Int64 { input + 100 }
                     @inline(never) open func opaque() -> some Equatable { count }
                     @inline(never) open class func kind() -> Int64 { 5 }
+                    open class var kindValue: Int64 { 5 }
                     open var asyncCount: Int64 { get async { count } }
                 }
                 open class Derived: Base {
@@ -542,6 +543,7 @@ struct SwiftMemberInvocationTests {
                     @inline(never) public func value(_ input: Int64) -> Int64 { input + 50 }
                     public var count: Int64 { get async { 99 } }
                     public static func kind() -> Int64 { 77 }
+                    public static var kindValue: Int64 { get async { 88 } }
                 }
                 """,
             linkArguments: ["-I", library.directory.path, library.libraryURL.path]
@@ -639,6 +641,14 @@ struct SwiftMemberInvocationTests {
                 #expect(reason.contains("dispatch thunk"))
             }
         }
+        // A class getter's descriptor says it is synchronous, so it does not
+        // hide an async extension getter requested with its declaration.
+        let extensionKind = try await base.resolveStaticGetter(
+            named: "kindValue",
+            as: (() async -> Int64).self,
+            declaredAs: "() async -> Swift.Int64"
+        )
+        #expect(try await unsafe extensionKind.unsafeInvoke() == 88)
         // The opaque result descriptor is named by the member, not its thunk.
         let opaque = try await base.resolveMethod(
             named: "opaque()",
