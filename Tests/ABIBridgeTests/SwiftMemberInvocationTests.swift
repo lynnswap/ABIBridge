@@ -497,7 +497,7 @@ struct SwiftMemberInvocationTests {
         // Keep dispatch thunks and method descriptors while hiding and stripping
         // member bodies, as frameworks such as SimulatorKit ship them.
         let hidden = lists.appendingPathComponent("hidden.txt")
-        try ["4BaseC", "7DerivedC"].flatMap { owner in
+        try ["4BaseC", "7DerivedC", "7GenericC"].flatMap { owner in
             ["F", "FZ", "vg", "vgZ", "vs", "vM"].map { prefix + owner + "*" + $0 }
         }.joined(separator: "\n").write(to: hidden, atomically: true, encoding: .utf8)
         let library = try FixtureLibrary(
@@ -518,9 +518,15 @@ struct SwiftMemberInvocationTests {
                 }
                 open class Derived: Base {
                     @inline(never) public override func value(_ input: Int64) -> Int64 { input + 2 }
+                    @inline(never) public override class func kind() -> Int64 { 6 }
                     @inline(never) public override func replacement(_ input: Int64) -> Int64 { input + 200 }
                 }
+                open class Generic<Element> {
+                    public init() {}
+                    open class var kindValue: Int64 { 5 }
+                }
                 public func makeBase() -> Base { Base() }
+                public func makeGeneric() -> Generic<Int64> { Generic() }
                 public func makeDerived() -> Base { Derived() }
                 @inline(never) public func value(_ object: Base, _ input: Int64) -> Int64 { object.value(input) }
                 @inline(never) public func describe(_ object: Base) -> String { "\\(object.mode):\\(object.count)" }
@@ -544,6 +550,9 @@ struct SwiftMemberInvocationTests {
                     public var count: Int64 { get async { 99 } }
                     public static func kind() -> Int64 { 77 }
                     public static var kindValue: Int64 { get async { 88 } }
+                }
+                extension Generic {
+                    public static var kindValue: Int64 { get async { 89 } }
                 }
                 """,
             linkArguments: ["-I", library.directory.path, library.libraryURL.path]
@@ -627,20 +636,20 @@ struct SwiftMemberInvocationTests {
             as: (() async -> Int64).self
         )
         #expect(try await unsafe asyncCount.unsafeInvoke(on: baseObject) == 7)
-        // Class-method entries are not selected; the failure says why, and
-        // the class's method still hides the extension's.
+        // Class members also use the lookup type's slot, and the class's
+        // method hides the extension's.
         for declared in [nil, "() -> Swift.Int64"] {
-            do {
-                _ = try await base.resolveStaticMethod(
-                    named: "kind()",
-                    as: (() -> Int64).self,
-                    declaredAs: declared
-                )
-                Issue.record("A thunk-only class method resolved")
-            } catch ABIResolutionError.unsupportedDeclaration(let reason) {
-                #expect(reason.contains("dispatch thunk"))
-            }
+            let kind = try await base.resolveStaticMethod(
+                named: "kind()",
+                as: (() -> Int64).self,
+                declaredAs: declared
+            )
+            #expect(try unsafe kind.unsafeInvoke() == 5)
         }
+        let derivedKind = try await derived.resolveStaticMethod(named: "kind()", as: (() -> Int64).self)
+        #expect(try unsafe derivedKind.unsafeInvoke() == 6)
+        let kindValue = try await base.resolveStaticGetter(named: "kindValue", as: (() -> Int64).self)
+        #expect(try unsafe kindValue.unsafeInvoke() == 5)
         // A class getter's descriptor says it is synchronous, so it does not
         // hide an async extension getter requested with its declaration.
         let extensionKind = try await base.resolveStaticGetter(
@@ -649,6 +658,20 @@ struct SwiftMemberInvocationTests {
             declaredAs: "() async -> Swift.Int64"
         )
         #expect(try await unsafe extensionKind.unsafeInvoke() == 88)
+        // The descriptor decides this before the class layout is decoded, so
+        // a generic class, whose slots are not selected, does not hide it either.
+        let makeGeneric = try await runtime.resolveSwiftFunction(
+            named: module + ".makeGeneric()",
+            as: (() -> NativeSwiftValue).self,
+            in: scope
+        )
+        let generic = try unsafe makeGeneric.unsafeInvoke().type
+        let genericKind = try await generic.resolveStaticGetter(
+            named: "kindValue",
+            as: (() async -> Int64).self,
+            declaredAs: "() async -> Swift.Int64"
+        )
+        #expect(try await unsafe genericKind.unsafeInvoke() == 89)
         // The opaque result descriptor is named by the member, not its thunk.
         let opaque = try await base.resolveMethod(
             named: "opaque()",

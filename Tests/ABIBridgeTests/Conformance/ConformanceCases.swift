@@ -18,10 +18,6 @@ extension ConformanceCase {
     }
 
     /// Class methods exported only as dispatch thunks are not selected yet.
-    static let classMethodDispatch: @Sendable (ConformanceVariant) -> String? = {
-        $0.bodies == .stripped ? "Thunk-only class methods need class-method dispatch (#413)" : nil
-    }
-
     static let functions: [ConformanceCase] = [
         ConformanceCase(
             id: "function.scalar",
@@ -478,8 +474,7 @@ extension ConformanceCase {
                     as: (() -> String).self
                 )
                 return try unsafe call.unsafeInvoke()
-            },
-            knownIssue: classMethodDispatch
+            }
         ),
         ConformanceCase(
             id: "class.async",
