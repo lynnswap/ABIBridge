@@ -602,11 +602,11 @@ enum SwiftInferredValue {
             )
         }
         if !isStatic {
-            let module =
+            let status =
                 evidence == nil
                 ? unreadable : "\(moduleName) shows no evidence that it is built without library evolution"
             return .unknown(
-                "\(info.isGeneric ? "generic " : "")\(kind) `\(name)` has runtime-built metadata, whose value witnesses do not show whether it is @frozen, and \(module)"
+                "\(info.isGeneric ? "generic " : "")\(kind) `\(name)` has runtime-built metadata, whose value witnesses do not show whether it is @frozen, and \(status)"
             )
         }
         if !module.setsAddressableForDependencies {

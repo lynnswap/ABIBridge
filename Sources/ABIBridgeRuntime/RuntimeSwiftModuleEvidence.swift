@@ -13,8 +13,8 @@ import Synchronization
 /// trivial (header 0). A library-evolution module also gives trivial
 /// descriptors to computed, static, and reference-storage properties, and to
 /// a `let` whose type a key path reabstracts, such as a function or a
-/// metatype. Only an instance property backed by a struct's stored field of
-/// another type counts as evidence against library evolution.
+/// metatype. Only an instance property backed by a struct's stored field that
+/// a key path stores directly counts as evidence against library evolution.
 /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/SILGen/SILGen.cpp
 ///
 /// Absent symbols are evidence only through the export trie, never through
