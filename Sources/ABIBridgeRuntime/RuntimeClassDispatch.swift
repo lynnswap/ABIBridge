@@ -20,6 +20,9 @@ package struct RuntimeClassDispatch {
         guard let selected = metadata as? AnyClass else {
             throw Self.unsupported("Virtual replacement requires a Swift class instance method.")
         }
+        // A class member's slot holds its implementation for the metatype.
+        let isClassMember = declaration.name.hasPrefix("static ")
+        let qualifiedName = isClassMember ? String(declaration.name.dropFirst(7)) : declaration.name
         let selectedAddress = UInt(bitPattern: unsafeBitCast(selected, to: UnsafeRawPointer.self))
         let selectedHeader = try Header(address: selectedAddress)
         var current: AnyClass? = selected
@@ -34,9 +37,9 @@ package struct RuntimeClassDispatch {
                 suggestedName: runtimeName,
                 resolver: resolver
             )
-            let isDeclarationOwner = member == nil && declaration.name.hasPrefix(name + ".")
+            let isDeclarationOwner = member == nil && qualifiedName.hasPrefix(name + ".")
             if isDeclarationOwner {
-                member = String(declaration.name.dropFirst(name.count + 1))
+                member = String(qualifiedName.dropFirst(name.count + 1))
             }
             if let member {
                 let header = try Header(
@@ -47,7 +50,8 @@ package struct RuntimeClassDispatch {
                         declaringLayout = try Descriptor(address: classDescriptor)
                     }
                     let request = RuntimeDeclaration(
-                        name: "method descriptor for " + name + "." + member,
+                        name: "method descriptor for " + (isClassMember ? "static " : "") + name
+                            + "." + member,
                         language: .swift,
                         kind: .data
                     )
@@ -87,11 +91,12 @@ package struct RuntimeClassDispatch {
                         let flags: UInt32 = try Self.read(method)
                         let kind = flags & 0xf
                         let isAsync = flags & 0x40 != 0
-                        guard flags & 0x10 != 0, asynchronous.map({ $0 == isAsync }) ?? true,
+                        let isInstance = flags & 0x10 != 0
+                        guard isInstance != isClassMember, asynchronous.map({ $0 == isAsync }) ?? true,
                             [0, 2, 3].contains(kind)
                         else {
                             throw Self.unsupported(
-                                "This virtual descriptor is not a matching instance method, getter or setter."
+                                "This virtual descriptor is not a matching method, getter or setter."
                             )
                         }
                         guard offset >= -selectedHeader.addressPoint,
