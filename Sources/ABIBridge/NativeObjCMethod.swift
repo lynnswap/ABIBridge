@@ -6,11 +6,11 @@ import Foundation
 /// The handle retains its class image and optional code owner, but no receiver instance or fixed IMP. Compatible subclass overrides and later replacements participate in normal message dispatch. The caller honors receiver isolation and the prepared declaration's ABI and ownership contract.
 public struct NativeObjCMethod<Result, each Argument> {
     private let binding: ObjCInvocationBinding
-    private let signature: ObjCMethodSignature<Result, repeat each Argument>
+    private let signature: ObjCCallSignature<Result, repeat each Argument>
 
     init(
         binding: ObjCInvocationBinding,
-        signature: ObjCMethodSignature<Result, repeat each Argument>
+        signature: ObjCCallSignature<Result, repeat each Argument>
     ) {
         self.binding = binding
         self.signature = signature
@@ -18,7 +18,7 @@ public struct NativeObjCMethod<Result, each Argument> {
 
     /// Sends the prepared message to a compatible instance or class object.
     ///
-    /// The receiver stays alive throughout the call. Its current method encoding must remain compatible with the prepared declaration. Foreign exceptions are not converted into Swift errors.
+    /// The receiver stays alive throughout the call. Its current method encoding must remain compatible with the prepared declaration. An Objective-C exception is thrown as ``NativeObjCException``; a method prepared with a `throws` signature throws the `NSError` it reports.
     @unsafe public func unsafeInvoke(
         on receiver: AnyObject,
         _ values: repeat each Argument
@@ -98,14 +98,40 @@ extension ABIRuntime {
         options: NativeMethodOptions = .init(),
         retaining owner: Any? = nil
     ) throws -> NativeObjCMethod<Result, repeat each Argument> {
-        let prepared: (ObjCInvocationPlan, ObjCMethodSignature<Result, repeat each Argument>) =
+        let prepared: (ObjCInvocationPlan, ObjCCallSignature<Result, repeat each Argument>) =
             try prepareObjCMethod(
                 on: type,
                 selector: selector,
-                as: signature,
                 variadicFrom: variadicFrom,
                 classMethod: classMethod,
-                options: options
+                options: options,
+                reportsErrors: false
+            )
+        return NativeObjCMethod(
+            binding: ObjCInvocationBinding(plan: prepared.0, retaining: owner),
+            signature: prepared.1
+        )
+    }
+
+    /// Prepares a class-declared message that reports failure through a trailing `NSError **` parameter.
+    ///
+    /// The signature omits that parameter and declares `throws`, as the Swift importer does for Cocoa methods. A `Void` result corresponds to a `BOOL` method that fails with `NO`; another result corresponds to an object method that fails with `nil`. Invocation supplies the error slot and throws the method's `NSError`, or ``NativeObjCUnreportedFailure`` when it failed without one.
+    public nonisolated func resolveObjCMethodAndWait<Result, each Argument>(
+        on type: AnyClass,
+        selector: String,
+        as signature: ((repeat each Argument) throws -> Result).Type,
+        classMethod: Bool = false,
+        options: NativeMethodOptions = .init(),
+        retaining owner: Any? = nil
+    ) throws -> NativeObjCMethod<Result, repeat each Argument> {
+        let prepared: (ObjCInvocationPlan, ObjCCallSignature<Result, repeat each Argument>) =
+            try prepareObjCMethod(
+                on: type,
+                selector: selector,
+                variadicFrom: nil,
+                classMethod: classMethod,
+                options: options,
+                reportsErrors: true
             )
         return NativeObjCMethod(
             binding: ObjCInvocationBinding(plan: prepared.0, retaining: owner),
@@ -125,16 +151,45 @@ extension ABIRuntime {
         options: NativeMethodOptions = .init(),
         retaining owner: Any? = nil
     ) async throws -> NativeObjCMethod<Result, repeat each Argument> {
-        let prepared = try await NativePreparation.run {
-            try self.prepareObjCMethod(
-                on: type,
-                selector: selector,
-                as: signature,
-                variadicFrom: variadicFrom,
-                classMethod: classMethod,
-                options: options
-            )
-        }
+        let prepared: (ObjCInvocationPlan, ObjCCallSignature<Result, repeat each Argument>) =
+            try await NativePreparation.run {
+                try self.prepareObjCMethod(
+                    on: type,
+                    selector: selector,
+                    variadicFrom: variadicFrom,
+                    classMethod: classMethod,
+                    options: options,
+                    reportsErrors: false
+                )
+            }
+        return NativeObjCMethod(
+            binding: ObjCInvocationBinding(plan: prepared.0, retaining: owner),
+            signature: prepared.1
+        )
+    }
+
+    /// Resolves a class-declared message that reports failure through a trailing `NSError **` parameter, without blocking the caller's executor.
+    ///
+    /// The error convention matches the synchronous `throws` overload.
+    public nonisolated(nonsending) func resolveObjCMethod<Result, each Argument>(
+        on type: AnyClass,
+        selector: String,
+        as signature: ((repeat each Argument) throws -> Result).Type,
+        classMethod: Bool = false,
+        options: NativeMethodOptions = .init(),
+        retaining owner: Any? = nil
+    ) async throws -> NativeObjCMethod<Result, repeat each Argument> {
+        let prepared: (ObjCInvocationPlan, ObjCCallSignature<Result, repeat each Argument>) =
+            try await NativePreparation.run {
+                try self.prepareObjCMethod(
+                    on: type,
+                    selector: selector,
+                    variadicFrom: nil,
+                    classMethod: classMethod,
+                    options: options,
+                    reportsErrors: true
+                )
+            }
         return NativeObjCMethod(
             binding: ObjCInvocationBinding(plan: prepared.0, retaining: owner),
             signature: prepared.1
@@ -144,11 +199,11 @@ extension ABIRuntime {
     private nonisolated func prepareObjCMethod<Result, each Argument>(
         on type: AnyClass,
         selector: String,
-        as signature: ((repeat each Argument) -> Result).Type,
         variadicFrom: Int?,
         classMethod: Bool,
-        options: NativeMethodOptions
-    ) throws -> (ObjCInvocationPlan, ObjCMethodSignature<Result, repeat each Argument>) {
+        options: NativeMethodOptions,
+        reportsErrors: Bool
+    ) throws -> (ObjCInvocationPlan, ObjCCallSignature<Result, repeat each Argument>) {
         let declaration = objcMethodDeclaration(
             on: type,
             selector: selector,
@@ -169,10 +224,11 @@ extension ABIRuntime {
         }
         guard let handle else { throw objcResolutionError(error, declaration: declaration) }
         let plan = ObjCInvocationPlan(handle, declaration: declaration)
-        let prepared = try ObjCMethodSignature<Result, repeat each Argument>(
+        let prepared = try ObjCCallSignature<Result, repeat each Argument>(
             handle: handle,
             declaration: declaration,
-            variadicFrom: variadicFrom
+            variadicFrom: variadicFrom,
+            reportsErrors: reportsErrors
         )
         return (plan, prepared)
     }

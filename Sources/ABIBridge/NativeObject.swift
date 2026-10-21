@@ -268,6 +268,22 @@ public final class NativeObject {
         return try NativeBoundObjCMethod(binding: binding, variadicFrom: variadicFrom)
     }
 
+    /// Resolves a selector that reports failure through a trailing `NSError **` parameter.
+    ///
+    /// The signature omits that parameter and declares `throws`. A `Void` result corresponds to a `BOOL` method that fails with `NO`; another result corresponds to an object method that fails with `nil`. Invocation supplies the error slot and throws the method's `NSError`, or ``NativeObjCUnreportedFailure`` when it failed without one.
+    public func resolveMethodAndWait<Result, each Argument>(
+        selector: String,
+        as signature: ((repeat each Argument) throws -> Result).Type,
+        options: NativeMethodOptions = .init()
+    ) throws -> NativeBoundObjCMethod<Result, repeat each Argument> {
+        let binding = try objcInvocationBinding(
+            selector: selector,
+            options: options,
+            prepareImages: true
+        )
+        return try NativeBoundObjCMethod(binding: binding, reportsErrors: true)
+    }
+
     /// Resolves a selector while preparing its image and call ABI away from the caller's executor.
     ///
     /// Receiver-specific dynamic resolution and forwarding-signature callbacks stay on the caller's executor to honor its isolation. The receiver and returned bound handle never move to the worker. Image acquisition and signature decoding run on the worker; shared call interfaces join any preparation already in progress. Invocation remains an explicit operation on the caller's executor.
@@ -276,6 +292,36 @@ public final class NativeObject {
         as signature: ((repeat each Argument) -> Result).Type,
         variadicFrom: Int? = nil,
         options: NativeMethodOptions = .init()
+    ) async throws -> NativeBoundObjCMethod<Result, repeat each Argument> {
+        try await resolveMethod(
+            selector: selector,
+            variadicFrom: variadicFrom,
+            options: options,
+            reportsErrors: false
+        )
+    }
+
+    /// Resolves a selector that reports failure through a trailing `NSError **` parameter, preparing its image and call ABI away from the caller's executor.
+    ///
+    /// The error convention matches `resolveMethodAndWait(selector:as:options:)` for a `throws` signature.
+    public nonisolated(nonsending) func resolveMethod<Result, each Argument>(
+        selector: String,
+        as signature: ((repeat each Argument) throws -> Result).Type,
+        options: NativeMethodOptions = .init()
+    ) async throws -> NativeBoundObjCMethod<Result, repeat each Argument> {
+        try await resolveMethod(
+            selector: selector,
+            variadicFrom: nil,
+            options: options,
+            reportsErrors: true
+        )
+    }
+
+    private nonisolated(nonsending) func resolveMethod<Result, each Argument>(
+        selector: String,
+        variadicFrom: Int?,
+        options: NativeMethodOptions,
+        reportsErrors: Bool
     ) async throws -> NativeBoundObjCMethod<Result, repeat each Argument> {
         let binding = try objcInvocationBinding(
             selector: selector,
@@ -286,16 +332,17 @@ public final class NativeObject {
             ABICopyObjCInvocationPlan(binding.handle),
             declaration: binding.declaration
         )
-        let prepared: ObjCMethodSignature<Result, repeat each Argument> =
+        let prepared: ObjCCallSignature<Result, repeat each Argument> =
             try await NativePreparation.run {
                 var error: NSError?
                 guard ABIObjCPrepareInvocationPlan(plan.handle, &error) else {
                     throw objcResolutionError(error, declaration: plan.declaration)
                 }
-                return try ObjCMethodSignature(
+                return try ObjCCallSignature(
                     handle: plan.handle,
                     declaration: plan.declaration,
-                    variadicFrom: variadicFrom
+                    variadicFrom: variadicFrom,
+                    reportsErrors: reportsErrors
                 )
             }
         return NativeBoundObjCMethod(binding: binding, signature: prepared)
@@ -379,7 +426,7 @@ final class ObjCInvocationPlan: Sendable {
 /// The handle can be reused without repeating signature decoding. Invocation creates an independent argument frame for every call and has no fixed limit on the number of explicit arguments. See <doc:ObjectiveCInvocation>.
 public struct NativeBoundObjCMethod<Result, each Argument> {
     private let binding: ObjCInvocationBinding
-    private let signature: ObjCMethodSignature<Result, repeat each Argument>
+    private let signature: ObjCCallSignature<Result, repeat each Argument>
 
     /// The prepared message, independent of this retained receiver binding.
     ///
@@ -395,18 +442,23 @@ public struct NativeBoundObjCMethod<Result, each Argument> {
         )
     }
 
-    init(binding: ObjCInvocationBinding, variadicFrom: Int? = nil) throws {
+    init(
+        binding: ObjCInvocationBinding,
+        variadicFrom: Int? = nil,
+        reportsErrors: Bool = false
+    ) throws {
         self.binding = binding
-        signature = try ObjCMethodSignature(
+        signature = try ObjCCallSignature(
             handle: binding.handle,
             declaration: binding.declaration,
-            variadicFrom: variadicFrom
+            variadicFrom: variadicFrom,
+            reportsErrors: reportsErrors
         )
     }
 
     init(
         binding: ObjCInvocationBinding,
-        signature: ObjCMethodSignature<Result, repeat each Argument>
+        signature: ObjCCallSignature<Result, repeat each Argument>
     ) {
         self.binding = binding
         self.signature = signature
@@ -414,7 +466,7 @@ public struct NativeBoundObjCMethod<Result, each Argument> {
 
     /// Calls the method using normal Objective-C dispatch.
     ///
-    /// The caller honors the receiver's actor/thread requirements, pointer lifetimes, ownership annotations, block signatures, and nullability. Retainable arguments stay alive for the call and results use Swift ownership. Foreign exceptions are not translated.
+    /// The caller honors the receiver's actor/thread requirements, pointer lifetimes, ownership annotations, block signatures, and nullability. Retainable arguments stay alive for the call and results use Swift ownership. An Objective-C exception is thrown as ``NativeObjCException``; a method prepared with a `throws` signature throws the `NSError` it reports.
     ///
     /// - Parameter values: Explicit arguments, excluding self and the selector.
     /// - Returns: The result converted to the requested Swift type.
@@ -454,18 +506,26 @@ struct ObjCMethodSignature<Result, each Argument>: Sendable {
     let result: ObjCValueCodec<Result>
     private let storageLayout: NativeCallStorageLayout
     let variadicInterface: CCallInterface?
+    /// Whether the native method has a trailing `NSError **` parameter that
+    /// the Swift arguments omit.
+    let hasErrorSlot: Bool
 
-    init(handle: OpaquePointer, declaration: NativeDeclaration, variadicFrom: Int? = nil) throws {
+    init(
+        handle: OpaquePointer,
+        declaration: NativeDeclaration,
+        variadicFrom: Int? = nil,
+        errorSlot: Bool = false
+    ) throws {
         var count = 0
         for _ in repeat (each Argument).self { count += 1 }
-        let fixedCount = ABIObjCInvocationParameterCount(handle)
+        let fixedCount = ABIObjCInvocationParameterCount(handle) - (errorSlot ? 1 : 0)
         guard variadicFrom.map({ $0 == fixedCount && count >= $0 }) ?? (count == fixedCount) else {
             throw ABIResolutionError.signatureMismatch(
                 .init(
                     declaration: declaration,
                     position: .argumentCount,
                     expected: "\(count) arguments",
-                    found: ["\(ABIObjCInvocationParameterCount(handle)) arguments"]
+                    found: ["\(fixedCount) arguments"]
                 )
             )
         }
@@ -514,6 +574,11 @@ struct ObjCMethodSignature<Result, each Argument>: Sendable {
         }
         var layouts: [(size: Int, alignment: Int)] = []
         for codec in repeat each arguments { layouts.append((codec.size, codec.alignment)) }
+        if errorSlot {
+            layouts.append(
+                (MemoryLayout<UnsafeRawPointer>.size, MemoryLayout<UnsafeRawPointer>.alignment)
+            )
+        }
         storageLayout = try NativeCallStorageLayout(
             result: (result.size, result.alignment),
             parameters: layouts
@@ -521,6 +586,7 @@ struct ObjCMethodSignature<Result, each Argument>: Sendable {
         self.arguments = arguments
         self.result = result
         self.variadicInterface = variadicInterface
+        hasErrorSlot = errorSlot
     }
 
     func callInterface() throws -> CCallInterface {
@@ -529,11 +595,14 @@ struct ObjCMethodSignature<Result, each Argument>: Sendable {
             try CValueType(scalar: ABIValuePointer), try CValueType(scalar: ABIValuePointer),
         ]
         for codec in repeat each arguments { parameters.append(try codec.cType()) }
+        if hasErrorSlot { parameters.append(try CValueType(scalar: ABIValuePointer)) }
         return try CCallInterface(result: result.cType(), parameters: parameters)
     }
 
+    /// - Parameter errorSlot: The `NSError **` argument, for a signature with an error slot.
     func invoke(
         _ values: repeat each Argument,
+        errorSlot: UnsafeMutableRawPointer? = nil,
         using body: (UnsafeBufferPointer<UnsafeRawPointer>, UnsafeMutableRawPointer) throws -> Void
     ) throws -> Result {
         try storageLayout.withStorage { addresses, output in
@@ -544,6 +613,9 @@ struct ObjCMethodSignature<Result, each Argument>: Sendable {
                     owners.append(owner)
                 }
                 index += 1
+            }
+            if hasErrorSlot {
+                addresses[index]!.storeBytes(of: errorSlot, as: UnsafeMutableRawPointer?.self)
             }
             return try withExtendedLifetime(owners) {
                 try addresses.withMemoryRebound(to: UnsafeRawPointer.self) { addresses in

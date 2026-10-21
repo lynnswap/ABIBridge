@@ -187,3 +187,61 @@ static NSInteger workerLookupIncrement(id receiver, SEL selector, NSInteger valu
     return values;
 }
 @end
+
+NSErrorDomain const ABIErrorConventionFixtureDomain = @"ABIErrorConventionFixture";
+
+static NSInteger ABILiveFilledObjects;
+@interface ABIFilledObject : NSObject
+@end
+@implementation ABIFilledObject
+- (instancetype)init {
+    if ((self = [super init])) ABILiveFilledObjects++;
+    return self;
+}
+- (void)dealloc {
+    ABILiveFilledObjects--;
+#if !__has_feature(objc_arc)
+    [super dealloc];
+#endif
+}
+@end
+
+@implementation ABIErrorConventionFixture
++ (instancetype)fixtureWithValue:(NSInteger)value error:(NSError **)error {
+    if (value < 0) {
+        if (error) *error = [NSError errorWithDomain:ABIErrorConventionFixtureDomain code:value userInfo:nil];
+        return nil;
+    }
+    ABIErrorConventionFixture *fixture = [self new];
+    fixture->_value = value;
+    return fixture;
+}
+- (BOOL)check:(BOOL)succeed error:(NSError **)error {
+    if (!succeed && error) {
+        *error = [NSError errorWithDomain:ABIErrorConventionFixtureDomain code:self.value userInfo:nil];
+    }
+    return succeed;
+}
+- (NSString *)describe:(NSInteger)value error:(NSError **)error {
+    if (value < 0) {
+        if (error) *error = [NSError errorWithDomain:ABIErrorConventionFixtureDomain code:value userInfo:nil];
+        return nil;
+    }
+    return [NSString stringWithFormat:@"%ld", (long)value];
+}
+- (BOOL)failSilently:(NSError **)error { return NO; }
+- (NSInteger)count:(NSError **)error { return NSNotFound; }
+- (NSInteger)raise:(NSString *)reason {
+    [NSException raise:NSInvalidArgumentException format:@"%@", reason];
+    return 0;
+}
+- (BOOL)fill:(id *)output error:(NSError **)error {
+#if __has_feature(objc_arc)
+    if (output) *output = [ABIFilledObject new];
+#else
+    if (output) *output = [[ABIFilledObject new] autorelease];
+#endif
+    return YES;
+}
++ (NSInteger)liveFilledObjects { return ABILiveFilledObjects; }
+@end

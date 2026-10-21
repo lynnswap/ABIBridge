@@ -50,7 +50,7 @@ FOUNDATION_EXPORT const char *ABIObjCInvocationResultType(const ABIObjCInvocatio
 FOUNDATION_EXPORT size_t ABIObjCInvocationParameterSize(const ABIObjCInvocation *invocation, size_t index);
 FOUNDATION_EXPORT size_t ABIObjCInvocationResultSize(const ABIObjCInvocation *invocation);
 
-/// Creates a separate NSInvocation frame and dispatches the selector normally. The caller keeps argument storage and referenced values alive through this synchronous call. Object/block results are transferred at +1 in result; scalar/value results are copied without ownership conversion. Foreign exceptions are not translated. Result may be null only for void.
+/// Creates a separate NSInvocation frame and dispatches the selector normally. The caller keeps argument storage and referenced values alive through this synchronous call. Object/block results are transferred at +1 in result; scalar/value results are copied without ownership conversion. An Objective-C exception fails the call with an error in ABIObjCExceptionErrorDomain. Result may be null only for void.
 FOUNDATION_EXPORT BOOL ABIInvokeObjCInvocation(
     ABIObjCInvocation *invocation, void * _Nullable result,
     const void * _Nonnull const * _Nullable arguments, NSError * _Nullable * _Nullable error);
@@ -60,7 +60,7 @@ FOUNDATION_EXPORT BOOL ABIInvokeObjCDispatch(
     ABIObjCInvocation *invocation, id receiver, void * _Nullable result,
     const void * _Nonnull const * _Nullable arguments, NSError * _Nullable * _Nullable error);
 
-/// Calls a captured IMP with a prepared C interface whose first two parameters are receiver/selector pointers. Validates receiver compatibility and transfers retainable results at +1. This does not perform message forwarding.
+/// Calls a captured IMP with a prepared C interface whose first two parameters are receiver/selector pointers. Validates receiver compatibility and transfers retainable results at +1. This does not perform message forwarding. An Objective-C exception fails the call with an error in ABIObjCExceptionErrorDomain.
 FOUNDATION_EXPORT BOOL ABIInvokeObjCImplementation(
     ABIObjCInvocation *invocation, ABICallInterface *interface, id receiver,
     void * _Nullable result, const void * _Nonnull const * _Nullable arguments,
