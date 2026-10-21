@@ -136,7 +136,9 @@ struct SwiftGenericReceiverTests {
                     as: ((NativeSwiftClosure<(Int64) -> Int64>) -> Int64).self
                 )
                 Issue.record("A Swift closure must not match a foreign function convention")
-            } catch ABIResolutionError.declarationNotFound {}
+            } catch let ABIResolutionError.signatureMismatch(mismatch) {
+                #expect(mismatch.position == .argument(0))
+            }
         }
         let cBody: @convention(c) (Int64) -> Int64 = { $0 + 2 }
         let cCall = try await object.resolveMethod(
@@ -189,15 +191,23 @@ struct SwiftGenericReceiverTests {
             named: name,
             as: ((NativeSwiftBorrowing<ReceiverBoolAdapter>) throws -> String).self)
         #expect(try unsafe borrowed.unsafeInvoke(.init(ReceiverBoolAdapter(false))) == "42")
-        for invalidName in ["throwingTitle(_:)", "throwingTitle(Swift.String) throws -> Swift.String"] {
-            do {
-                _ = try await object.resolveMethod(
-                    named: invalidName,
-                    as: ((ReceiverBoolAdapter) throws -> String).self
-                )
-                Issue.record("An adapter must use the selected native declaration's concrete type")
-            } catch ABIResolutionError.declarationNotFound {}
+        // The native declaration takes a Bool, not the adapter's String.
+        do {
+            _ = try await object.resolveMethod(
+                named: "throwingTitle(_:)",
+                as: ((ReceiverBoolAdapter) throws -> String).self
+            )
+            Issue.record("An adapter must use the selected native declaration's concrete type")
+        } catch let ABIResolutionError.signatureMismatch(mismatch) {
+            #expect(mismatch.position == .argument(0))
         }
+        do {
+            _ = try await object.resolveMethod(
+                named: "throwingTitle(Swift.String) throws -> Swift.String",
+                as: ((ReceiverBoolAdapter) throws -> String).self
+            )
+            Issue.record("An adapter must use the selected native declaration's concrete type")
+        } catch ABIResolutionError.declarationNotFound {}
         do {
             _ = try await object.resolveMethod(
                 named: "echo(A) -> A",

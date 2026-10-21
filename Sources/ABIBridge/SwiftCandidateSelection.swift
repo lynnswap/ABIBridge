@@ -30,7 +30,14 @@ struct SwiftCandidateSelection<Value> {
                 guard let applicable = try accept(candidate, candidate.entry) else { continue }
                 value = applicable
             } catch let ABIResolutionError.signatureMismatch(mismatch) {
-                mismatches.append((candidate.declaration, mismatch))
+                // An argument or result that does not convert is an
+                // incompatible request. A declaration whose context does not
+                // bind, such as an extension constrained to other types, does
+                // not apply and stays absent.
+                switch mismatch.position {
+                case .argument, .result: mismatches.append((candidate.declaration, mismatch))
+                case .signature, .argumentCount: break
+                }
                 continue
             } catch {
                 rejections.append((candidate.declaration, error))
