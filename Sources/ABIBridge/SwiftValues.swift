@@ -1,16 +1,5 @@
 import ABIBridgeCore
 
-func explicitSwiftValueType(_ metadata: Any.Type, abi: NativeType) throws -> CValueType {
-    let layout = ABISwiftGetValueLayout(unsafeBitCast(metadata, to: UnsafeRawPointer.self))
-    if let components = abi.cType {
-        guard (layout.size...layout.stride).contains(components.size) else {
-            throw ABIResolutionError.unsupportedDeclaration("Swift ABI components must cover the native value without exceeding its stride.")
-        }
-        return try CValueType(swiftComponents: components, size: layout.size, alignment: layout.alignment)
-    }
-    return try CValueType(indirectSwiftSize: layout.size, alignment: layout.alignment)
-}
-
 // Array, Dictionary, and Set each hold one storage reference regardless of
 // their element types, so they are passed as one pointer.
 protocol SwiftCollectionValue {
@@ -65,8 +54,17 @@ struct SwiftValueCodec<Value>: Sendable {
         }
         closure = nil
         let base = (Value.self as? any NativeOptionalValue.Type)?.wrappedType ?? Value.self
+        // These wrappers are host classes; their reference is not the native value.
+        guard Value.self == base
+            || (base != NativeSwiftValue.self && base != NativeSwiftBorrowedValue.self)
+        else {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "An Optional runtime value is unsupported; pass a NativeSwiftValue of the Optional type."
+            )
+        }
         let isObject = base is AnyClass || base == AnyObject.self
-        let isAdapter = base is any ABIBridgeValue.Type
+        // A type with its own Swift ABI keeps it, even in an Optional.
+        let isAdapter = base is any ABIBridgeValue.Type && !(base is any ABIBridgeSwiftValue.Type)
         let managed = Value.self as? any ABIBridgeSwiftValue.Type
         objectResult = isObject && (!isAdapter || managed != nil)
         if let tuple = SwiftTupleMetadata(Value.self) {
@@ -116,6 +114,25 @@ struct SwiftValueCodec<Value>: Sendable {
             let word = try CValueType(scalar: MemoryLayout<UInt>.size == 8 ? ABIValueUInt64 : ABIValueUInt32)
             type = try CValueType(fields: Array(repeating: word, count: MemoryLayout<String>.size / MemoryLayout<UInt>.size))
             cValue = nil
+        } else if let optional = Value.self as? any NativeOptionalValue.Type,
+            !(base is any NativePointerValue.Type)
+        {
+            // An Optional of a value with Swift storage is a Swift enum.
+            func wrapped<Wrapped>(_ type: Wrapped.Type) throws -> CValueType {
+                let codec = try SwiftValueCodec<Wrapped>()
+                guard codec.storesSwiftValue else {
+                    throw ABIResolutionError.unsupportedDeclaration(
+                        "An Optional requires its wrapped value's Swift storage: \(String(reflecting: Wrapped.self))."
+                    )
+                }
+                return codec.type
+            }
+            type = try SwiftValueSchema.optionalStorage(
+                of: Value.self,
+                wrapped: _openExistential(optional.wrappedType, do: wrapped),
+                wrappedType: optional.wrappedType
+            )
+            cValue = nil
         } else {
             let codec = try CValueCodec<Value>()
             cValue = codec
@@ -128,6 +145,11 @@ struct SwiftValueCodec<Value>: Sendable {
                 )
             }
         }
+    }
+
+    /// Whether a value of this type is passed as its own Swift storage, without conversion.
+    var storesSwiftValue: Bool {
+        closure == nil && tuple == nil && cValue?.convertsValue != true
     }
 
     func makeStorage() -> NativeValueStorage {

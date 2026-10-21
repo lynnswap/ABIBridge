@@ -48,6 +48,9 @@ private struct CallerNestedRecord: BitwiseCopyable, ABIBridgeValue {
 @inline(never) public func callerMode(_ value: CallerMode) -> CallerMode {
     value == .slow ? .fast : .slow
 }
+@inline(never) public func optionalCallerMode(_ value: CallerMode?) -> CallerMode? {
+    value.map(callerMode)
+}
 
 @inline(never) public func callerRecord(_ value: CallerRecord) -> CallerRecord {
     CallerRecord(value: value.value + 1.5, tag: value.tag + 2)
@@ -182,6 +185,13 @@ struct CallerDescribedValueTests {
         #expect(try unsafe c.unsafeInvoke(.slow) == .fast)
         #expect(try unsafe cxx.unsafeInvoke(.slow) == .fast)
         #expect(try unsafe swift.unsafeInvoke(.slow) == .fast)
+        // An Optional keeps the Swift ABI rather than the foreign conversion.
+        let optional = try await runtime.resolveSwiftFunction(
+            named: "ABIBridgeTests.optionalCallerMode(_:)",
+            as: ((CallerMode?) -> CallerMode?).self
+        )
+        #expect(try unsafe optional.unsafeInvoke(.slow) == .fast)
+        #expect(try unsafe optional.unsafeInvoke(nil) == nil)
         #expect(try unsafe c.unsafeInvoke(.fast) == .slow)
         #expect(try unsafe cxx.unsafeInvoke(.fast) == .slow)
         #expect(try unsafe swift.unsafeInvoke(.fast) == .slow)

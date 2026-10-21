@@ -91,8 +91,7 @@ extension ConformanceCase {
                 )
                 return
                     "\(describe(try unsafe call.unsafeInvoke(nil)))|\(describe(try unsafe call.unsafeInvoke(21)))"
-            },
-            knownIssue: { _ in "Optional scalars have no lowering (#406)" }
+            }
         ),
         ConformanceCase(
             id: "function.optionalString",
@@ -142,8 +141,7 @@ extension ConformanceCase {
                 let tripled = try NativeSwiftClosure<(Int64) -> Int64> { $0 * 3 }
                 return
                     "\(try unsafe call.unsafeInvoke(nil, 5))|\(try unsafe call.unsafeInvoke(tripled, 5))"
-            },
-            knownIssue: { _ in "Optional closures are not lowered as closures (#406)" }
+            }
         ),
         ConformanceCase(
             id: "function.returnedClosure",

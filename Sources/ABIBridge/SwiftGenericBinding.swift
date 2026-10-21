@@ -1529,7 +1529,7 @@ struct SwiftGenericBinding: Sendable {
             try plan.validateOwnedResult()
             return plan.nativeMetadata
         }
-        if case .function = canonical, actual is any SwiftClosureValue.Type {
+        if try closureFunction(canonical, for: actual) != nil {
             try validateArgument(actual, for: canonical)
             return try types(canonical)[0]
         }
@@ -1597,7 +1597,7 @@ struct SwiftGenericBinding: Sendable {
     }
 
     func explicitValueType(_ type: Any.Type) throws -> CValueType? {
-        try valueABIs[ObjectIdentifier(type)].map { try explicitSwiftValueType(type, abi: $0) }
+        try valueABIs[ObjectIdentifier(type)].map { try SwiftValueSchema.explicitLayout(of: type, abi: $0) }
     }
 
     func runtimeValuePlan(
@@ -1616,10 +1616,48 @@ struct SwiftGenericBinding: Sendable {
         )
     }
 
+    /// The function type that a host closure lowers, unwrapping the formal
+    /// Optional of an Optional closure.
+    func closureFunction(
+        _ formal: SwiftFormalType,
+        for actual: Any.Type
+    ) throws -> (function: SwiftFormalType, closure: any SwiftClosureValue.Type)? {
+        guard let closure = actual as? any SwiftClosureValue.Type else { return nil }
+        var function = formal
+        if closure.isOptional {
+            let wrappedHost = (actual as? any NativeOptionalValue.Type)?.wrappedType
+            guard (wrappedHost as? any SwiftClosureValue.Type)?.isOptional != true else {
+                throw ABIResolutionError.unsupportedDeclaration(
+                    "Nested Optional closures are unsupported: \(String(reflecting: actual))."
+                )
+            }
+            let canonical = try canonicalType(of: formal)
+            guard let wrapped = canonical.optionalWrapped else {
+                // An Optional handle could pass nil to a nonoptional closure.
+                if case .function = canonical {
+                    throw ABIResolutionError.signatureMismatch(
+                        .init(expected: canonical.spelling, found: [String(reflecting: actual)])
+                    )
+                }
+                return nil
+            }
+            function = try canonicalType(of: wrapped)
+            // Reabstraction adapters and generic pointer-auth types do not yet
+            // carry the Optional of a closure (#408).
+            guard !dependsOnParameters(function) else {
+                throw ABIResolutionError.unsupportedDeclaration(
+                    "Optional closures of generic function types are unsupported: \(function.spelling)?."
+                )
+            }
+        }
+        guard case .function = function else { return nil }
+        return (function, closure)
+    }
+
     func validateArgument(_ actual: Any.Type, for formal: SwiftFormalType) throws {
-        if case .function = formal, let closure = actual as? any SwiftClosureValue.Type {
+        if let (function, closure) = try closureFunction(formal, for: actual) {
             _ = try SwiftGenericCallPlan.closure(
-                formal,
+                function,
                 signature: SwiftFunctionSignature(closure.swiftFunctionType),
                 binding: self
             )

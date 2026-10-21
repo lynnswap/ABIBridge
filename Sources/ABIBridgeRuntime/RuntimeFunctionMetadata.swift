@@ -19,6 +19,14 @@ package struct RuntimeFunctionMetadata: Sendable {
     package let globalActor: Any.Type?
     package let extendedFlags: UInt32
 
+    /// Whether `type` is a thick Swift function type, stored as a function
+    /// and context pair.
+    package static func isSwiftFunction(_ type: Any.Type) -> Bool {
+        let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
+        guard metadata.load(as: UInt.self) == 0x302 else { return false }
+        return metadata.load(fromByteOffset: MemoryLayout<UInt>.size, as: UInt.self) >> 16 & 0xff == 0
+    }
+
     package init(_ type: Any.Type) throws {
         let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
         let word = MemoryLayout<UInt>.size

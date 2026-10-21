@@ -478,6 +478,12 @@ ABISwiftCallInterface *ABICreateSwiftThrowingCallInterface(
 
 void ABIReleaseSwiftCallInterface(ABISwiftCallInterface *interface) { delete interface; }
 bool ABISwiftValueIsIndirect(const ABIValueType *type) { return lower(*type->storage).indirect; }
+static bool isAddressOnly(const TypeStorage &type) {
+    return (type.swiftIndirect && !type.swiftPack)
+        || std::any_of(type.fields.begin(), type.fields.end(),
+                       [](const auto &field) { return isAddressOnly(*field); });
+}
+bool ABISwiftValueIsAddressOnly(const ABIValueType *type) { return isAddressOnly(*type->storage); }
 
 static void marshalSwiftArguments(
     ABISwiftCallInterface *interface, void *const *arguments, void *result, void *errorResult,

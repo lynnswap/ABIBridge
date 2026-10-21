@@ -233,9 +233,9 @@ Reuse a prepared callback when its capture lifetime permits it. Each native cont
 
 Synchronous and async closures use the scalar, pointer, managed, explicit-layout, existential, and tuple representations in <doc:SwiftFunctionInvocation>, together with the runtime-value and nested-closure forms above. They support zero arguments, empty-tuple arguments, and Void results.
 
-Array elements use compiler-owned storage and need no direct-call conformance. A standalone element still needs a supported representation. Nested optional containers require an adapter.
+Array elements use compiler-owned storage and need no direct-call conformance. A standalone element still needs a supported representation. Optionals of supported values, including nested Optionals and closures, use their Swift enum storage.
 
-Custom ``ABIBridgeValue`` conversions are outside this callback path: the callback uses actual Swift values. Unsupported value Optionals and generic shapes need a compiler adapter. Runtime-only nominal values can supply an established ABI through `valueABIs`; see <doc:BorrowedSwiftValues>.
+Custom ``ABIBridgeValue`` conversions are outside this callback path: the callback uses actual Swift values. Optional runtime values and unsupported generic shapes need a compiler adapter. Runtime-only nominal values can supply an established ABI through `valueABIs`; see <doc:BorrowedSwiftValues>.
 
 Incoming closure-valued hook arguments use the same scoped borrow as ordinary callback inputs. A nonescaping input remains usable during the hook body and expires afterward. Copying an input requires the native declaration to grant escaping ownership. See <doc:SwiftFunctionHooks> and <doc:SwiftMethodHooks> for continuation and failure recovery.
 

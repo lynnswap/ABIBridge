@@ -349,7 +349,7 @@ public final class NativeSwiftInout<Value> {
                                 byteCount: MemoryLayout<ABISwiftClosureValue>.size
                             )
                             replacement.relinquishValue()
-                            ABIReleaseSwiftClosureContext(previous.context)
+                            ABIReleaseSwiftClosureContext(previous.ownedContext)
                         }
                     }
                     return buffer

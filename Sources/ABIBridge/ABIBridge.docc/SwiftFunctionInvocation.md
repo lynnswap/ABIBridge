@@ -84,12 +84,13 @@ Invocation can throw bridge errors even when the native signature is nonthrowing
 | Ordinary tuples | Labeled or nested fields with their native Swift layouts, runtime value handles, or closure handles; see <doc:SwiftClosureValues> |
 | Ordinary and existential metatypes, including parameterized protocols | Preserve thin values, runtime type metadata, and required witnesses |
 | Void | An empty result or explicit empty-tuple argument |
+| Optionals of representations that keep their Swift storage, including nested Optionals, and `NativeSwiftClosure<Signature>?` in nongeneric positions | Swift enum storage: the payload and tag pass as integer data, and a nil closure has a null function. `NativeSwiftValue?`, nonpointer `ABIBridgeValue?`, Optionals of thin metatypes, nested Optional closures, and generic Optional closures are rejected |
 
 The call interface uses Swift register and stack conventions, including direct and indirect results. There is no fixed argument-count limit.
 
 Use ``ABIBridgeSwiftValue`` for an imported struct or enum with an established fixed or formally indirect ABI; see <doc:ExplicitSwiftValues>. Its layout must match the declaration's field offsets, padding, and passing convention. A C-compatible storage description cannot describe every Swift value.
 
-Signatures outside these representations require a compiled adapter. <doc:ManagedSwiftValues> shows a C-compatible storage bridge for managed structs, value Optionals, and imported resilient values. Closure, existential, and generic support has its own boundaries in the linked guides.
+Signatures outside these representations require a compiled adapter. <doc:ManagedSwiftValues> shows a C-compatible storage bridge for managed structs and imported resilient values. Closure, existential, and generic support has its own boundaries in the linked guides.
 
 ## Ownership and isolation
 
