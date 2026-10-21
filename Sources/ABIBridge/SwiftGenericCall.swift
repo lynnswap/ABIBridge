@@ -918,26 +918,36 @@ struct SwiftGenericCallPlan: Sendable {
     /// closures stay exact, because their values can flow the other way.
     ///
     /// - Parameter representations: Host types that stand for native types,
-    ///   such as the representation a member's owner was resolved with.
+    ///   such as the representation a member's owner was resolved with. A
+    ///   representation applies only where the requested type itself does not.
     func check(
         _ signature: SwiftFunctionSignature,
         representations: [ObjectIdentifier: Any.Type] = [:]
     ) throws {
-        func native(_ type: Any.Type) -> Any.Type {
+        func represented(_ type: Any.Type) -> Any.Type? {
             if let native = representations[ObjectIdentifier(type)] { return native }
             guard let optional = type as? any NativeOptionalValue.Type,
                 let native = representations[ObjectIdentifier(optional.wrappedType)]
-            else { return type }
+            else { return nil }
             func optionalType<Wrapped>(_: Wrapped.Type) -> Any.Type { Wrapped?.self }
             return optionalType(native)
         }
+        func accepting(_ requested: Any.Type, _ accepts: (Any.Type) throws -> Void) throws {
+            do {
+                try accepts(requested)
+            } catch let error as ABIResolutionError {
+                guard case .signatureMismatch = error, let native = represented(requested) else {
+                    throw error
+                }
+                do { try accepts(native) } catch ABIResolutionError.signatureMismatch { throw error }
+            }
+        }
         func validate(
-            _ requested: Any.Type,
+            _ actual: Any.Type,
             for formal: SwiftFormalType,
             using binding: SwiftGenericBinding,
             at index: Int
         ) throws {
-            let actual = native(requested)
             do {
                 if formal.argumentConvention == nil,
                     !(actual is any SwiftConventionArgument.Type),
@@ -950,12 +960,11 @@ struct SwiftGenericCallPlan: Sendable {
                     for: formal,
                     defaultConsuming: binding.declaration.consumesArguments
                 ) {
-                    try binding.validateArgument(
-                        native(argument.wrapper.wrappedType),
-                        for: argument.value
-                    )
+                    try accepting(argument.wrapper.wrappedType) {
+                        try binding.validateArgument($0, for: argument.value)
+                    }
                 } else {
-                    try binding.validateArgument(actual, for: formal)
+                    try accepting(actual) { try binding.validateArgument($0, for: formal) }
                 }
             } catch let ABIResolutionError.signatureMismatch(mismatch) {
                 throw ABIResolutionError.signatureMismatch(mismatch.at(.argument(index)))
@@ -979,11 +988,12 @@ struct SwiftGenericCallPlan: Sendable {
                 }
             }
         }
-        let result = native(signature.result)
-        guard !binding.convertsReference(result, for: binding.declaration.result, isResult: true)
-        else { return }
         do {
-            _ = try binding.resultType(result, for: binding.declaration.result)
+            try accepting(signature.result) { result in
+                guard !binding.convertsReference(result, for: binding.declaration.result, isResult: true)
+                else { return }
+                _ = try binding.resultType(result, for: binding.declaration.result)
+            }
         } catch let ABIResolutionError.signatureMismatch(mismatch) {
             throw ABIResolutionError.signatureMismatch(mismatch.at(.result))
         }
