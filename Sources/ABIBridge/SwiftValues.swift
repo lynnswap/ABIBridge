@@ -39,13 +39,13 @@ struct SwiftValueCodec<Value>: Sendable {
     }
 
     /// - Parameter position: Where the value occurs, which decides how an
-    ///   undecided inferred value is passed. Payloads and elements this codec
-    ///   lowers are nested.
+    ///   undecided inferred value is passed. Optional payloads are nested;
+    ///   tuple elements take the tuple's element position.
     init(position: SwiftValuePosition = .nested) throws {
         guard !(Value.self is any SwiftConventionArgument.Type) else {
             throw ABIResolutionError.unsupportedDeclaration("Swift argument convention markers require the invocation argument path; results and managed callbacks cannot use them.")
         }
-        let preparedTuple = try SwiftGenericCallPlan.concreteTuple(Value.self)
+        let preparedTuple = try SwiftGenericCallPlan.concreteTuple(Value.self, position: position)
         tuple = preparedTuple?.needsConversion == true ? preparedTuple : nil
         if let tuple {
             type = tuple.type; closure = nil; cValue = nil; objectResult = false
@@ -77,7 +77,7 @@ struct SwiftValueCodec<Value>: Sendable {
                       !(type is any SwiftClosureValue.Type) else {
                     throw ABIResolutionError.unsupportedDeclaration("Tuple elements require their native Swift storage representation.")
                 }
-                return try SwiftValueCodec<Element>().type
+                return try SwiftValueCodec<Element>(position: position.tupleElement).type
             }
             type = try tuple.layout(for: Value.self, fields: tuple.elements.map {
                 try _openExistential($0.type, do: field)

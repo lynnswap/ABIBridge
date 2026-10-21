@@ -835,7 +835,7 @@ struct NativeSwiftClosureTests {
             )
             let digits = try #require(Range(auth.range(at: 1), in: line))
             let expected = try #require(UInt16(line[digits]))
-            let name = try swiftClosureAuthType(entry.0)
+            let name = try swiftClosureAuthType(entry.0, position: .parameter)
             #expect(
                 swiftClosureDiscriminator(parameters: [name], result: name) == expected,
                 "\(entry.1)"
@@ -1258,18 +1258,18 @@ struct NativeSwiftClosureTests {
     @Test func closureDiscriminatorsMatchCompilerEvidence() throws {
         #expect(
             swiftClosureDiscriminator(
-                parameters: [try swiftClosureAuthType(Int64.self)],
-                result: try swiftClosureAuthType(Int64.self)
+                parameters: [try swiftClosureAuthType(Int64.self, position: .parameter)],
+                result: try swiftClosureAuthType(Int64.self, position: .result)
             ) == 21761
         )
         #expect(swiftClosureDiscriminator(parameters: ["-indirect"], result: "-indirect") == 55683)
         #expect(
-            try swiftClosureAuthType(LifetimeToken.self)
-                == swiftClosureAuthType(LifetimeToken?.self)
+            try swiftClosureAuthType(LifetimeToken.self, position: .parameter)
+                == swiftClosureAuthType(LifetimeToken?.self, position: .parameter)
         )
         #expect(
-            try swiftClosureAuthType(UnsafePointer<Int64>.self)
-                == swiftClosureAuthType(UnsafePointer<UInt8>.self)
+            try swiftClosureAuthType(UnsafePointer<Int64>.self, position: .parameter)
+                == swiftClosureAuthType(UnsafePointer<UInt8>.self, position: .parameter)
         )
     }
 

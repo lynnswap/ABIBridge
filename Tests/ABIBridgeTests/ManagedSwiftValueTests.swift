@@ -276,4 +276,48 @@ struct ManagedSwiftValueTests {
         #expect(weakToken == nil)
         #expect(destroyed == 1)
     }
+
+    /// WideLabel's convention is undecided, but its five-register frozen
+    /// lowering passes by address at whole positions either way, including
+    /// for host values of the declaration's own type.
+    @Test func undecidedHostValuesPassByAddressAtWholePositions() async throws {
+        let runtime = ABIRuntime.shared
+        let describe = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.describeWideLabel(_:)",
+            as: ((WideLabel) -> String).self
+        )
+        #expect(try unsafe describe.unsafeInvoke(WideLabel(name: "host", a: 4)) == "host:4,5,6")
+        let make = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeWideLabel(_:)",
+            as: ((String) -> WideLabel).self
+        )
+        let made = try unsafe make.unsafeInvoke("made")
+        #expect(made.name == "made" && made.a == 1 && made.c == 3)
+        let apply = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.applyWideLabel(_:_:)",
+            as: ((NativeSwiftClosure<(WideLabel) -> WideLabel>, WideLabel) -> String).self
+        )
+        let callback = try NativeSwiftClosure { (value: WideLabel) in
+            WideLabel(name: value.name + "!", a: value.c)
+        }
+        #expect(try unsafe apply.unsafeInvoke(callback, WideLabel(name: "cb", a: 1)) == "cb!:3,4,5")
+        // A tuple parameter's elements are whole parameters.
+        let pair = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.describeWideLabelPair(_:)",
+            as: (((WideLabel, Int64)) -> String).self
+        )
+        #expect(try unsafe pair.unsafeInvoke((WideLabel(name: "pair", a: 1), 7)) == "pair:1,2,3#7")
+        // A tuple result's elements are nested, where the conventions differ.
+        await #expect {
+            _ = try await runtime.resolveSwiftFunction(
+                named: "ManagedSwiftFixtures.makeWideLabelPair(_:)",
+                as: ((String) -> (WideLabel, Int64)).self
+            )
+        } throws: { error in
+            guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                return false
+            }
+            return message.contains("its field `name: Swift.String` explains")
+        }
+    }
 }

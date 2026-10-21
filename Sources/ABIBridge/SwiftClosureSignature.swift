@@ -5,7 +5,9 @@ import Synchronization
 // The SIL discriminator hashes formal value types, not their register widths.
 // Class identity, isolation, and ownership qualifiers are intentionally erased.
 // https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/IRGen/GenPointerAuth.cpp
-func swiftClosureAuthType(_ type: Any.Type) throws -> String {
+/// - Parameter position: Where the value occurs in the closure's signature,
+///   which decides how an undecided inferred value is passed.
+func swiftClosureAuthType(_ type: Any.Type, position: SwiftValuePosition) throws -> String {
     guard !(type is any SwiftConventionArgument.Type) else {
         throw ABIResolutionError.unsupportedDeclaration(
             "Inout and ownership-qualified callback parameters require a scoped native adapter."
@@ -19,7 +21,9 @@ func swiftClosureAuthType(_ type: Any.Type) throws -> String {
         }
     }
     if SwiftInferredValue.lowersByInference(type), !(type is any NativeOptionalValue.Type) {
-        func layout<Value>(_: Value.Type) throws -> CValueType { try SwiftValueCodec<Value>().type }
+        func layout<Value>(_: Value.Type) throws -> CValueType {
+            try SwiftValueCodec<Value>(position: position).type
+        }
         let layout = try _openExistential(type, do: layout)
         if withExtendedLifetime(layout, { ABISwiftValueIsIndirect(layout.handle) }) {
             return "-indirect"
@@ -117,15 +121,17 @@ func swiftNominalClosureName(_ mangled: String) throws -> String {
     )
 }
 
-func swiftClosureAuthTypes(_ type: Any.Type) throws -> [String] {
+func swiftClosureAuthTypes(_ type: Any.Type, position: SwiftValuePosition) throws -> [String] {
     if let convention = type as? any SwiftConventionArgument.Type {
         if convention.convention == .inoutValue { return ["-indirect"] }
-        return try swiftClosureAuthTypes(convention.wrappedType)
+        return try swiftClosureAuthTypes(convention.wrappedType, position: position)
     }
     if let tuple = SwiftTupleMetadata(type) {
-        return try tuple.elements.flatMap { try swiftClosureAuthTypes($0.type) }
+        return try tuple.elements.flatMap {
+            try swiftClosureAuthTypes($0.type, position: position.tupleElement)
+        }
     }
-    return [try swiftClosureAuthType(type)]
+    return [try swiftClosureAuthType(type, position: position)]
 }
 
 // ABI-stable SipHash-2-4, with LLVM's fixed ptrauth key and nonzero 16-bit range.

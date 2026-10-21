@@ -11,6 +11,8 @@ import Synchronization
 /// convention either way. Elsewhere, loadable and address-only values differ.
 enum SwiftValuePosition: Sendable, Equatable {
     case parameter, result
+    /// `self`, which `receiverABI` describes instead of `valueABIs`.
+    case receiver
     /// An Optional or enum payload, a stored field, or a tuple result element.
     case nested
 
@@ -62,7 +64,7 @@ enum SwiftInferredValue {
         let convention: Convention
         do { convention = try self.convention(of: metadata) } catch let failure as InferenceFailure
         {
-            let message = Self.message(for: metadata, failure.detail)
+            let message = Self.message(for: metadata, failure.detail, at: position)
             throw failure.unsupported
                 ? ABIResolutionError.unsupportedDeclaration(message)
                 : ABIResolutionError.metadataUnavailable(message)
@@ -79,7 +81,9 @@ enum SwiftInferredValue {
             {
                 return try SwiftValueSchema.storage(of: metadata)
             }
-            throw ABIResolutionError.metadataUnavailable(Self.message(for: metadata, missing))
+            throw ABIResolutionError.metadataUnavailable(
+                Self.message(for: metadata, missing, at: position)
+            )
         }
     }
 
@@ -96,12 +100,20 @@ enum SwiftInferredValue {
         return _openExistential(type, do: infers)
     }
 
-    private static func message(for type: Any.Type, _ detail: String) -> String {
+    private static func message(
+        for type: Any.Type,
+        _ detail: String,
+        at position: SwiftValuePosition
+    ) -> String {
         let module =
             ABISwiftTypeModuleName(unsafeBitCast(type, to: UnsafeRawPointer.self))
             .map { " in module " + String(cString: $0) } ?? ""
+        let remedy =
+            position == .receiver
+            ? "Describe self with receiverABI or an ABIBridgeSwiftValue conformance."
+            : "Describe the type with valueABIs or an ABIBridgeSwiftValue conformance."
         return "Cannot infer the Swift calling convention of \(String(reflecting: type))\(module): "
-            + detail + ". Describe the type with valueABIs or an ABIBridgeSwiftValue conformance."
+            + detail + ". " + remedy
     }
 
     // MARK: Classification

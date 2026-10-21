@@ -48,10 +48,14 @@ struct SwiftArgumentCodec<Value>: Sendable {
     }
     private let encoding: Encoding
 
+    /// - Parameter position: `.parameter` for a whole parameter, or the
+    ///   position of a tuple element; it decides how an undecided inferred
+    ///   host value is passed.
     init(
         defaultConsuming: Bool,
         generic: SwiftGenericArgument = .concrete,
-        asynchronous: Bool = false
+        asynchronous: Bool = false,
+        position: SwiftValuePosition = .parameter
     ) throws {
         switch generic {
         case .convention(let codec):
@@ -87,11 +91,14 @@ struct SwiftArgumentCodec<Value>: Sendable {
                 let codec = try argument.makeArgumentCodec(generic: nested)
                 type = codec.type; consumes = codec.consumes
                 encoding = .explicit(codec)
-            } else if let tuple = try SwiftGenericCallPlan.concreteTuple(Value.self) {
+            } else if let tuple = try SwiftGenericCallPlan.concreteTuple(
+                Value.self,
+                position: position
+            ) {
                 type = tuple.type; consumes = defaultConsuming
                 encoding = .tuple(tuple, asynchronous: asynchronous)
             } else {
-                let codec = try SwiftValueCodec<Value>()
+                let codec = try SwiftValueCodec<Value>(position: position)
                 type = codec.type; consumes = defaultConsuming
                 if asynchronous, let closure = Value.self as? any SwiftClosureValue.Type {
                     encoding = .genericClosure(

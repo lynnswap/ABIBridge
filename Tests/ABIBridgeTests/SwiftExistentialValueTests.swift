@@ -357,24 +357,24 @@ struct SwiftExistentialValueTests {
         #expect(throws: ABIResolutionError.self) {
             _ = try SwiftValueCodec<(any Error & AnyObject)>()
         }
-        #expect(try swiftClosureAuthType(Any.self) == "-indirect")
-        #expect(try swiftClosureAuthType(ManyObjectProtocols.self) == "-class")
+        #expect(try swiftClosureAuthType(Any.self, position: .parameter) == "-indirect")
+        #expect(try swiftClosureAuthType(ManyObjectProtocols.self, position: .parameter) == "-class")
         #expect(
             swiftClosureDiscriminator(
-                parameters: [try swiftClosureAuthType(Any.self)],
-                result: try swiftClosureAuthType(Any.self)
+                parameters: [try swiftClosureAuthType(Any.self, position: .parameter)],
+                result: try swiftClosureAuthType(Any.self, position: .result)
             ) == 55683
         )
         #expect(
             swiftClosureDiscriminator(
-                parameters: [try swiftClosureAuthType((any ExistentialObjectValue)?.self)],
-                result: try swiftClosureAuthType((any ExistentialObjectValue)?.self)
+                parameters: [try swiftClosureAuthType((any ExistentialObjectValue)?.self, position: .parameter)],
+                result: try swiftClosureAuthType((any ExistentialObjectValue)?.self, position: .result)
             ) == 30130
         )
         #expect(
             swiftClosureDiscriminator(
-                parameters: [try swiftClosureAuthType((any Error)?.self)],
-                result: try swiftClosureAuthType((any Error)?.self)
+                parameters: [try swiftClosureAuthType((any Error)?.self, position: .parameter)],
+                result: try swiftClosureAuthType((any Error)?.self, position: .result)
             ) == 1845
         )
     }

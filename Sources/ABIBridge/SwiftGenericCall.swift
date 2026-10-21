@@ -183,7 +183,7 @@ final class SwiftGenericClosurePlan: Sendable {
                     try convention.makeArgumentCodec(generic: argument(convention.wrappedType))
                 )
             }
-            if let tuple = try SwiftGenericCallPlan.concreteTuple(type) {
+            if let tuple = try SwiftGenericCallPlan.concreteTuple(type, position: .parameter) {
                 return .tuple(tuple, asynchronous: signature.isAsync)
             }
             if let closure = type as? any SwiftClosureValue.Type {
@@ -206,7 +206,7 @@ final class SwiftGenericClosurePlan: Sendable {
             return try _openExistential(type, do: layout)
         }
         let result: SwiftGenericResult
-        if let tuple = try SwiftGenericCallPlan.concreteTuple(signature.result) {
+        if let tuple = try SwiftGenericCallPlan.concreteTuple(signature.result, position: .result) {
             result = .tuple(tuple)
         } else if let closure = signature.result as? any SwiftClosureValue.Type {
             result = .closure(
@@ -214,7 +214,7 @@ final class SwiftGenericClosurePlan: Sendable {
             )
         } else {
             func layout<Value>(_ type: Value.Type) throws -> CValueType {
-                try SwiftValueCodec<Value>().type
+                try SwiftValueCodec<Value>(position: .result).type
             }
             result = .value(try _openExistential(signature.result, do: layout))
         }
@@ -897,7 +897,12 @@ struct SwiftGenericCallPlan: Sendable {
                     let native = try binding.types(value)[0]
                     add(
                         native,
-                        layout: try SwiftValueSchema.layout(value, actual: native, binding: binding),
+                        layout: try SwiftValueSchema.layout(
+                            value,
+                            actual: native,
+                            binding: binding,
+                            position: .parameter
+                        ),
                         at: nativeIndex
                     )
                 }
@@ -1108,7 +1113,8 @@ struct SwiftGenericCallPlan: Sendable {
             guard
                 let tuple = try concreteTuple(
                     actual,
-                    explicitLayout: binding.explicitHostValueType
+                    explicitLayout: binding.explicitHostValueType,
+                    position: position
                 )
             else { return .concrete }
             return .tuple(
@@ -1192,7 +1198,11 @@ struct SwiftGenericCallPlan: Sendable {
             if let explicit = try binding.explicitHostValueType(actual) { return .value(explicit) }
             try binding.validateInferredHostValue(actual, for: formal)
             if try binding.hasExplicitHostField(actual),
-                let tuple = try concreteTuple(actual, explicitLayout: binding.explicitHostValueType)
+                let tuple = try concreteTuple(
+                    actual,
+                    explicitLayout: binding.explicitHostValueType,
+                    position: position
+                )
             {
                 return .tuple(tuple)
             }
@@ -1397,7 +1407,8 @@ struct SwiftGenericCallPlan: Sendable {
                     argument: argument,
                     result: result,
                     tuple: nested,
-                    nativeClosure: nativeClosure
+                    nativeClosure: nativeClosure,
+                    position: position.tupleElement
                 )
             )
             index += 1
@@ -1557,9 +1568,12 @@ struct SwiftGenericCallPlan: Sendable {
     }
 
     /// - Parameter explicitLayout: The `valueABIs` layout of a field's host type, if any.
+    /// - Parameter position: The tuple's own position. Elements of a
+    ///   parameter are whole parameters; elements of a result are nested.
     static func concreteTuple(
         _ actual: Any.Type,
-        explicitLayout: (Any.Type) throws -> CValueType? = { _ in nil }
+        explicitLayout: (Any.Type) throws -> CValueType? = { _ in nil },
+        position: SwiftValuePosition = .nested
     ) throws -> SwiftTupleValuePlan? {
         guard let host = SwiftTupleMetadata(actual) else { return nil }
         let nativeType = try concreteNativeMetadata(actual)
@@ -1568,7 +1582,11 @@ struct SwiftGenericCallPlan: Sendable {
         for (host, native) in zip(host.elements, native.elements) {
             let argument: SwiftGenericArgument
             let result: SwiftGenericResult
-            let tuple = try concreteTuple(host.type, explicitLayout: explicitLayout)
+            let tuple = try concreteTuple(
+                host.type,
+                explicitLayout: explicitLayout,
+                position: position.tupleElement
+            )
             if let tuple {
                 argument = .tuple(tuple); result = .tuple(tuple)
             } else if let closure = host.type as? any SwiftClosureValue.Type {
@@ -1588,7 +1606,8 @@ struct SwiftGenericCallPlan: Sendable {
                     nativeOffset: native.offset,
                     argument: argument,
                     result: result,
-                    tuple: tuple
+                    tuple: tuple,
+                    position: position.tupleElement
                 )
             )
         }
@@ -1832,7 +1851,7 @@ struct SwiftGenericCallPlan: Sendable {
         let resultAuthentication =
             try usesStorageConvention
             ? ["-indirect"]
-            : authTypes(result, actual: nativeResult, binding: binding, isResult: true)
+            : authTypes(result, actual: nativeResult, binding: binding, position: .result)
         let nativeArgumentClosures = zip(parameterPlan.arguments, nativeParameters).map {
             argument,
             metadata -> SwiftGenericClosurePlan? in
@@ -1872,16 +1891,16 @@ struct SwiftGenericCallPlan: Sendable {
         _ formal: SwiftFormalType,
         actual: Any.Type,
         binding: SwiftGenericBinding,
-        isResult: Bool = false
+        position: SwiftValuePosition = .parameter
     ) throws -> [String] {
         let canonical = try binding.canonicalType(of: formal)
         if canonical != formal {
-            return try authTypes(canonical, actual: actual, binding: binding, isResult: isResult)
+            return try authTypes(canonical, actual: actual, binding: binding, position: position)
         }
         if runtimeHandle(actual) != nil {
             let native = try binding.types(formal)[0]
             if native != actual {
-                return try authTypes(formal, actual: native, binding: binding, isResult: isResult)
+                return try authTypes(formal, actual: native, binding: binding, position: position)
             }
         }
         if case .tuple(let fields, _) = formal {
@@ -1890,14 +1909,14 @@ struct SwiftGenericCallPlan: Sendable {
             return try fields.flatMap { field -> [String] in
                 if case .pack(let pattern, let shape) = field {
                     index += try binding.packCount(in: shape ?? pattern)
-                    return [isResult ? "-indirect" : "-"]
+                    return [position == .parameter ? "-" : "-indirect"]
                 }
                 defer { index += 1 }
                 return try authTypes(
                     field,
                     actual: elements[index].type,
                     binding: binding,
-                    isResult: isResult
+                    position: position.tupleElement
                 )
             }
         }
@@ -1927,7 +1946,7 @@ struct SwiftGenericCallPlan: Sendable {
                 result,
                 actual: binding.types(result)[0],
                 binding: binding,
-                isResult: true
+                position: .result
             )
             return ["(" + swiftClosureAuthDescription(parameters: inputs, results: outputs) + ")"]
         }
@@ -1941,14 +1960,14 @@ struct SwiftGenericCallPlan: Sendable {
             if explicit == nil {
                 // Concrete class existentials and metatypes keep their formal
                 // identity even when their physical storage is indirect.
-                return [try swiftClosureAuthType(actual)]
+                return [try swiftClosureAuthType(actual, position: position)]
             }
         }
         let layout = try SwiftValueSchema.layout(
             formal,
             actual: actual,
             binding: binding,
-            position: isResult ? .result : .parameter
+            position: position
         )
         if ABISwiftValueIsIndirect(layout.handle) { return ["-indirect"] }
         return [try swiftClosureTypeHash(actual)]

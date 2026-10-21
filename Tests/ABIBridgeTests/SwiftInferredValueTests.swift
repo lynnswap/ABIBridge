@@ -547,5 +547,37 @@ struct SwiftInferredValueTests {
             return message.contains("is an adapter")
         }
     }
+
+    /// valueABIs do not describe self, so a failed inference of self names
+    /// receiverABI instead.
+    @Test func undecidedSelfNamesReceiverABI() async throws {
+        let (library, module) = try provider(
+            """
+            public struct Label {
+                public var text: String
+                public var n: Int64
+                public init(text: String, n: Int64) { self.text = text; self.n = n }
+                @inline(never) public func count() -> Int64 { Int64(text.count) + n }
+            }
+            """,
+            arguments: ["-enable-library-evolution"]
+        )
+        defer { library.cleanup() }
+        let label = try await runtime.resolveSwiftType(
+            named: module + ".Label",
+            in: .path(library.libraryURL)
+        )
+        await #expect {
+            _ = try await label.resolveMethod(named: "count()", as: (() -> Int64).self)
+        } throws: { error in
+            guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                return false
+            }
+            return message.contains("its field `text: Swift.String` explains")
+                && message.hasSuffix(
+                    "Describe self with receiverABI or an ABIBridgeSwiftValue conformance."
+                )
+        }
+    }
 }
 #endif

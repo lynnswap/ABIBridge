@@ -2167,6 +2167,49 @@ struct SwiftImportedFunctionHookTests {
         first.invalidate(); second.invalidate()
         #expect(retainedOwner != nil)
     }
+
+    /// A Range field leaves the bound value's convention undecided, but its
+    /// six-register frozen lowering passes a whole parameter by address in
+    /// both the call and the hook.
+    @Test func hooksLowerGenericParametersAtTheirWholePosition() async throws {
+        let fixture = try CompiledSwiftReplacementFixture(
+            providerExtra: """
+                public struct HookRanged<Tag> {
+                    public var range: Range<Int64>
+                    public var a: Int64, b: Int64, c: Int64, d: Int64
+                    public init(_ base: Int64) { range = base..<base + 1; a = base; b = base; c = base; d = base }
+                }
+                @inline(never) public func hookRangedTotal<Tag>(_ value: HookRanged<Tag>) -> Int64 {
+                    value.range.upperBound + value.a + value.b + value.c + value.d
+                }
+                """,
+            callerExtra: """
+                @inline(never) public func importedRangedTotal(_ base: Int64) -> Int64 {
+                    hookRangedTotal(HookRanged<Int64>(base))
+                }
+                """
+        )
+        defer { fixture.cleanup() }
+        let total = try await fixture.runtime.resolveSwiftFunction(
+            named: fixture.module + ".hookRangedTotal(_:)",
+            as: ((NativeSwiftValue) -> Int64).self,
+            genericArguments: [.type(Int64.self)],
+            in: fixture.providerScope
+        )
+        let caller = try await fixture.runtime.resolveSwiftFunction(
+            named: fixture.callerModule + ".importedRangedTotal(_:)",
+            as: ((Int64) -> Int64).self,
+            in: fixture.callerScope
+        )
+        #expect(try unsafe caller.unsafeInvoke(2) == 11)
+        let hook = try unsafe await total.hookImportedCalls(
+            in: fixture.callerScope,
+            using: fixture.runtime,
+            onFailure: { Issue.record($0) }
+        ) { call, value in try call.proceed(value) + 100 }
+        defer { hook.invalidate() }
+        #expect(try unsafe caller.unsafeInvoke(2) == 111)
+    }
 }
 
 private struct SwiftHookDistinctABIValue: ABIBridgeValue {

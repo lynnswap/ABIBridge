@@ -290,7 +290,7 @@ struct SwiftHookValueOperations: Sendable {
             switch result {
             case .value: codec = SwiftValueCodec(nativeStorage: type)
             case .closure(let closure): codec = SwiftValueCodec(closure: closure)
-            default: codec = try SwiftValueCodec()
+            default: codec = try SwiftValueCodec(position: .result)
             }
             self.init(
                 copy: { try codec.copyNativeStorage($0) },
