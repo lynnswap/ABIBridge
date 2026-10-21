@@ -92,24 +92,6 @@ struct SwiftFunctionSignature: Sendable {
         return try SwiftErrorPlan.make(error, genericType: genericType)
     }
 
-    var requiresValueDeclaration: Bool {
-        func needsDeclaration(_ type: Any.Type) -> Bool {
-            if type is any SwiftClosureValue.Type || type == NativeSwiftValue.self
-                || type == NativeSwiftBorrowedValue.self
-            {
-                return true
-            }
-            if let convention = type as? any SwiftConventionArgument.Type {
-                return needsDeclaration(convention.wrappedType)
-            }
-            if let tuple = SwiftTupleMetadata(type) {
-                return tuple.elements.contains { needsDeclaration($0.type) }
-            }
-            return false
-        }
-        return (parameters + [result]).contains(where: needsDeclaration)
-    }
-
     func closureDiscriminator() throws -> UInt16 {
         let (parameters, results) = try closureAuthTypes()
         return swiftClosureDiscriminator(parameters: parameters, results: results)

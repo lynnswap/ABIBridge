@@ -215,6 +215,26 @@ struct SwiftSignatureCompatibilityTests {
         #expect(try unsafe doubled.unsafeInvoke(on: count).value == 42)
     }
 
+    @Test func completeDeclarationsKeepHostRepresentationsInTuples() async throws {
+        let count = "ManagedSwiftFixtures.CompatibilityCount"
+        let pair = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.compatibilityCountPair((\(count), Swift.Int64)) -> (\(count), Swift.Int64)",
+            as: (((HostStoredCount, Int64)) -> (HostStoredCount, Int64)).self
+        )
+        let result = try unsafe pair.unsafeInvoke((HostStoredCount(value: 40), 2))
+        #expect(result.0.value == 42 && result.1 == 2)
+    }
+
+    @Test func completeDeclarationsLowerLocalTypesThroughHostRepresentations() async throws {
+        let outer = "ManagedSwiftFixtures.compatibilityLocalCount(Swift.Int64) -> Swift.Int64"
+        let count = "Count #1 in " + outer
+        let bump = try await runtime.resolveSwiftFunction(
+            named: "bump #1 (\(count)) -> \(count) in \(outer)",
+            as: ((HostCount) -> HostCount).self
+        )
+        #expect(try unsafe bump.unsafeInvoke(HostCount(value: 41)).value == 42)
+    }
+
     @Test func labelOnlyNamesReturnOpaqueResultsAsTheirUnderlyingType() async throws {
         let function = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.compatibilityOpaqueCount()",
@@ -247,10 +267,17 @@ struct SwiftSignatureCompatibilityTests {
 private struct HostCount: ABIBridgeValue {
     let value: Int64
     static var abiType: NativeType { .int64 }
+    init(value: Int64) { self.value = value }
     init(nativeValue: NativeValue) throws { value = try unsafe nativeValue.read(as: Int64.self) }
     static func nativeValue(from value: HostCount) throws -> NativeValue {
         try NativeValue(copying: value.value, as: .int64)
     }
+}
+
+/// A host value with `CompatibilityCount`'s Swift storage.
+private struct HostStoredCount: ABIBridgeSwiftValue {
+    let value: Int64
+    static var swiftABIType: NativeType { .int64 }
 }
 
 /// A subclass of the native parameter type that marshals as an integer.
