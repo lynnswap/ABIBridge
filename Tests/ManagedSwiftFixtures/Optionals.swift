@@ -72,3 +72,43 @@
 }
 
 @inline(never) public func applyEscapingClosure(_ body: @escaping (Int64) -> Int64) -> Int64 { body(1) }
+
+// Runtime-only values: tests reach these types only through NativeSwiftValue.
+public struct OptionalRuntimeRecord {
+    public var name: String
+    public var count: Int64
+    public init(name: String, count: Int64) { self.name = name; self.count = count }
+}
+
+@frozen public struct OptionalFrozenRecord {
+    public var name: String
+    public var count: Int64
+    public init(name: String, count: Int64) { self.name = name; self.count = count }
+}
+
+@inline(never) public func makeOptionalRuntimeRecord(_ count: Int64) -> OptionalRuntimeRecord? {
+    count < 0 ? nil : OptionalRuntimeRecord(name: "record", count: count)
+}
+
+@inline(never) public func describeOptionalRuntimeRecord(_ record: OptionalRuntimeRecord?) -> String {
+    record.map { "\($0.name)#\($0.count)" } ?? "nil"
+}
+
+@inline(never) public func bumpOptionalRuntimeRecord(_ record: consuming OptionalRuntimeRecord?) -> OptionalRuntimeRecord? {
+    record.map { OptionalRuntimeRecord(name: $0.name, count: $0.count + 1) }
+}
+
+@inline(never) public func visitOptionalRuntimeRecords(
+    _ body: (OptionalRuntimeRecord?) throws -> OptionalRuntimeRecord?
+) rethrows -> String {
+    try [body(nil), body(OptionalRuntimeRecord(name: "visit", count: 1))]
+        .map(describeOptionalRuntimeRecord).joined(separator: ",")
+}
+
+@inline(never) public func makeOptionalFrozenRecord(_ count: Int64) -> OptionalFrozenRecord? {
+    count < 0 ? nil : OptionalFrozenRecord(name: "frozen", count: count)
+}
+
+@inline(never) public func describeOptionalFrozenRecord(_ record: OptionalFrozenRecord?) -> String {
+    record.map { "\($0.name)#\($0.count)" } ?? "nil"
+}

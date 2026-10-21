@@ -81,10 +81,11 @@ Invocation can throw bridge errors even when the native signature is nonthrowing
 | ABIBridgeSwiftValue | Actual Swift values with explicit fixed or formally indirect conventions and compiler-owned copying/destruction |
 | ABIBridgeValue | Explicit trivial native layouts representable by NativeType's scalar/structure descriptions |
 | NativeSwiftValue | Owned runtime values whose native type comes from the declaration or generic binding, including supported opaque results; see <doc:SwiftOpaqueResults> |
+| `NativeSwiftValue?` and `NativeSwiftBorrowedValue?` | An Optional of a runtime-only value: nil is the empty case, and a value of the wrapped type is copied into the payload; a result's payload is taken into an owned value. Inout Optionals and Optionals of closures in runtime values are rejected |
 | Ordinary tuples | Labeled or nested fields with their native Swift layouts, runtime value handles, or closure handles; see <doc:SwiftClosureValues> |
 | Ordinary and existential metatypes, including parameterized protocols | Preserve thin values, runtime type metadata, and required witnesses |
 | Void | An empty result or explicit empty-tuple argument |
-| Optionals of representations that keep their Swift storage, including nested Optionals, and `NativeSwiftClosure<Signature>?` in nongeneric positions | Swift enum storage: the payload and tag pass as integer data, and a nil closure has a null function. `NativeSwiftValue?`, nonpointer `ABIBridgeValue?`, Optionals of thin metatypes, nested Optional closures, and generic Optional closures are rejected |
+| Optionals of representations that keep their Swift storage, including nested Optionals, and `NativeSwiftClosure<Signature>?` in nongeneric positions | Swift enum storage: the payload and tag pass as integer data, and a nil closure has a null function. Nonpointer `ABIBridgeValue?`, Optionals of thin metatypes, nested Optional closures, and generic Optional closures are rejected |
 
 The call interface uses Swift register and stack conventions, including direct and indirect results. There is no fixed argument-count limit.
 

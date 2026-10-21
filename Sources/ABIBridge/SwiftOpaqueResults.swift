@@ -356,7 +356,7 @@ struct SwiftResultCodec<Value>: Sendable {
                 as: Value.self
             )
         }
-        if let runtimeValue { return try runtimeValue.decode(storage) as! Value }
+        if let runtimeValue { return try runtimeValue.hostValue(runtimeValue.decode(storage)) as! Value }
         if let closure {
             let value = storage.address.load(as: ABISwiftClosureValue.self)
             storage.relinquishValue()

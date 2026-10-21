@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeRuntime
 import Foundation
 
 /// A failure creating, inspecting, copying, or accessing a runtime Swift value.
@@ -247,12 +248,31 @@ private final class SwiftRuntimeValueAccess {
     deinit { if active { releaseAccess() } }
 }
 
+/// Gives up a source handle's value once, when native code or a forwarding
+/// hook takes the Optional that holds a copy of it.
+final class SwiftOptionalSourceTransfer {
+    private let lock = NSLock()
+    private var pending: (() -> Void)?
+    init(_ giveUp: @escaping () -> Void) { pending = giveUp }
+    func complete() {
+        lock.lock()
+        let giveUp = pending
+        pending = nil
+        lock.unlock()
+        giveUp?()
+    }
+}
+
 /// Native metadata owns value operations; the formal declaration owns ABI placement.
 struct SwiftRuntimeValuePlan: Sendable {
     let valueType: NativeSwiftType
     let type: CValueType
     let nativeTuple: SwiftTupleValuePlan?
     let nativeClosure: SwiftGenericClosurePlan?
+    /// The wrapped type when the host represents this Optional as
+    /// `NativeSwiftValue?` or `NativeSwiftBorrowedValue?`: nil is the empty
+    /// case, and a value of this type is the payload.
+    private(set) var optionalPayload: NativeSwiftType?
     private let closureConversions: SwiftRuntimeClosureConversions
     var hasClosureConversions: Bool { !closureConversions.isEmpty }
     private let size: Int
@@ -289,9 +309,130 @@ struct SwiftRuntimeValuePlan: Sendable {
             genericMetadata: try SwiftGenericTypeMetadata(metadata: metadata, retaining: images))
     }
 
-    func makeStorage() -> NativeValueStorage {
+    func makeStorage(didRelinquish: (() -> Void)? = nil) -> NativeValueStorage {
         NativeValueStorage(size: size, alignment: alignment, owner: valueType,
-                           codeLifetime: SwiftValueCodeLifetime(valueType.codeImages))
+                           codeLifetime: SwiftValueCodeLifetime(valueType.codeImages), didRelinquish: didRelinquish)
+    }
+
+    /// This plan with the host passing the Optional as `NativeSwiftValue?` or
+    /// `NativeSwiftBorrowedValue?`.
+    func projectingOptional() throws -> SwiftRuntimeValuePlan {
+        guard runtimeMetadataKind(valueType.metadata) == .optional else {
+            throw ABIResolutionError.signatureMismatch(
+                .init(expected: "An Optional native type for an Optional runtime value", found: [valueType.name])
+            )
+        }
+        let metadata = unsafeBitCast(valueType.metadata, to: UnsafeRawPointer.self)
+        guard let payload = ABISwiftEnumCasePayloadMetadata(metadata, 0) else {
+            throw ABIResolutionError.metadataUnavailable("The Optional has no payload metadata.")
+        }
+        let payloadType = unsafeBitCast(payload, to: Any.Type.self)
+        // A value passed to native code is copied into the Optional.
+        guard SwiftCopyability.accepts(payloadType) else { throw NativeSwiftValueError.noncopyableType }
+        var plan = self
+        plan.optionalPayload = try swiftRuntimeValueType(metadata: payloadType, retaining: [valueType])
+        return plan
+    }
+
+    /// Builds the Optional from the host's `NativeSwiftValue?` or
+    /// `NativeSwiftBorrowedValue?`. A value is copied into the payload; a
+    /// consumed handle gives up its value when native code takes the Optional.
+    private func wrapOptional(_ value: Any, payload: NativeSwiftType, convention: SwiftArgumentConvention,
+                              asynchronous: Bool) throws -> (value: NativeSwiftValue, transfer: SwiftOptionalSourceTransfer?) {
+        guard convention != .inoutValue else {
+            throw ABIResolutionError.unsupportedDeclaration("An inout Optional runtime value is unsupported.")
+        }
+        let metadata = unsafeBitCast(valueType.metadata, to: UnsafeRawPointer.self)
+        let source: (type: NativeSwiftType, access: NativeValueStorage)?
+        if let owned = value as? NativeSwiftValue {
+            source = (owned.type, try owned.access(convention))
+        } else if let borrowed = value as? NativeSwiftBorrowedValue {
+            source = (borrowed.type, try borrowed.borrow.access(
+                asynchronous: asynchronous, type: borrowed.type, convention: convention))
+        } else {
+            source = nil
+        }
+        guard let source else {
+            let storage = makeStorage()
+            ABISwiftInitializeEmptyEnumCase(metadata, storage.address, 1)
+            storage.assumeInitialized { ABISwiftDestroyValue(metadata, $0) }
+            return (NativeSwiftValue(storage: storage, type: valueType), nil)
+        }
+        guard Self.accepts(source.type, as: payload, convention: convention) else {
+            throw ABIInvocationError.incompatibleValue(expected: payload.name, actual: source.type.name)
+        }
+        let payloadMetadata = unsafeBitCast(payload.metadata, to: UnsafeRawPointer.self)
+        let layout = ABISwiftGetValueLayout(payloadMetadata)
+        let copy = NativeValueStorage(size: layout.stride, alignment: layout.alignment)
+        ABISwiftCopyValue(payloadMetadata, copy.address, source.access.address)
+        let transfer = convention == .consuming ? SwiftOptionalSourceTransfer {
+            ABISwiftDestroyValue(payloadMetadata, source.access.address)
+            source.access.relinquishValue()
+        } : nil
+        let storage = makeStorage(didRelinquish: transfer.map { transfer in { transfer.complete() } })
+        // The Optional also needs the code the payload's value needs.
+        if let lifetime = storage.codeLifetime, let payloadLifetime = source.access.codeLifetime {
+            _ = SwiftValueCodeLifetime.connect([lifetime, payloadLifetime], retaining: [])
+        }
+        ABISwiftInitializeEnumCase(metadata, storage.address, 0, payloadMetadata, false, copy.address)
+        storage.assumeInitialized { ABISwiftDestroyValue(metadata, $0) }
+        storage.retainResource(source.access)
+        return (NativeSwiftValue(storage: storage, type: valueType), transfer)
+    }
+
+    /// Projects a native Optional for the host: nil, or its payload as an
+    /// independently owned value. This consumes `value`.
+    func unwrapOptional(_ value: NativeSwiftValue) throws -> NativeSwiftValue? {
+        guard optionalPayload != nil else { return value }
+        return projectOptional(try value.valueOwner.transferStorage())
+    }
+
+    /// Projects Optional storage the caller owns: nil, or its payload, which
+    /// the projection takes out of `storage`.
+    func projectOptional(_ storage: NativeValueStorage) -> NativeSwiftValue? {
+        guard let payload = optionalPayload, !isEmptyOptional(at: storage.address) else { return nil }
+        let metadata = unsafeBitCast(valueType.metadata, to: UnsafeRawPointer.self)
+        let payloadMetadata = unsafeBitCast(payload.metadata, to: UnsafeRawPointer.self)
+        let layout = ABISwiftGetValueLayout(payloadMetadata)
+        // The payload keeps the code lifetime the Optional's result retained.
+        let type = storage.codeLifetime.map { payload.retainingCode($0) } ?? payload
+        let projected = NativeValueStorage(size: layout.stride, alignment: layout.alignment, owner: type,
+                                           codeLifetime: storage.codeLifetime ?? type.codeLifetime)
+        ABISwiftTakeEnumPayload(metadata, storage.address, payloadMetadata, false, projected.address)
+        storage.relinquishValue()
+        projected.assumeInitialized { ABISwiftDestroyValue(payloadMetadata, $0) }
+        return NativeSwiftValue(storage: projected, type: type)
+    }
+
+    /// Projects a borrowed native Optional for the host: nil, or a borrow of
+    /// its payload, which a single-payload enum stores at the same address.
+    func unwrapOptional(_ value: NativeSwiftBorrowedValue) throws -> NativeSwiftBorrowedValue? {
+        guard let payload = optionalPayload else { return value }
+        guard try !value.borrow.withAddress(isEmptyOptional(at:)) else { return nil }
+        return NativeSwiftBorrowedValue(type: payload, borrow: value.borrow)
+    }
+
+    /// A borrow of the native Optional at `address` for the host.
+    func borrowOptional(at address: UnsafeRawPointer, borrow: SwiftValueBorrow,
+                        lifetime: SwiftValueCodeLifetime) -> NativeSwiftBorrowedValue? {
+        guard let payload = optionalPayload, !isEmptyOptional(at: address) else { return nil }
+        return NativeSwiftBorrowedValue(type: payload.retainingCode(lifetime), borrow: borrow)
+    }
+
+    private func isEmptyOptional(at address: UnsafeRawPointer) -> Bool {
+        var tag: UInt32 = 0
+        _ = ABISwiftGetEnumTag(unsafeBitCast(valueType.metadata, to: UnsafeRawPointer.self), address, &tag)
+        return tag != 0
+    }
+
+    /// The host value for a native result or callback input: the value itself,
+    /// or for an Optional the host passes as `NativeSwiftValue?`, its projection.
+    func hostValue(_ value: NativeSwiftValue) throws -> Any {
+        optionalPayload == nil ? value : try unwrapOptional(value) as Any
+    }
+
+    func hostValue(_ value: NativeSwiftBorrowedValue) throws -> Any {
+        optionalPayload == nil ? value : try unwrapOptional(value) as Any
     }
 
     func restoredCallbackArgument(from address: UnsafeRawPointer) -> NativeValueStorage? {
@@ -357,7 +498,7 @@ struct SwiftRuntimeValuePlan: Sendable {
     }
 
     func requireOwnedValue(as representation: Any.Type = NativeSwiftValue.self) throws {
-        guard representation != NativeSwiftBorrowedValue.self else {
+        guard SwiftGenericCallPlan.runtimeHandle(representation)?.type != NativeSwiftBorrowedValue.self else {
             throw ABIResolutionError.unsupportedDeclaration("A borrowed runtime result requires a scoped result lifetime.")
         }
         guard SwiftEscapability.accepts(valueType.metadata) else {
@@ -399,22 +540,38 @@ struct SwiftRuntimeValuePlan: Sendable {
         return try await body(NativeSwiftBorrowedValue(type: type, borrow: borrow))
     }
 
+    private static func accepts(_ actual: NativeSwiftType, as expected: NativeSwiftType,
+                                convention: SwiftArgumentConvention) -> Bool {
+        if actual.metadata == expected.metadata { return true }
+        // An inout Base may replace a Derived reference with another Base.
+        // Borrowing and consuming preserve the value's dynamic class.
+        guard convention != .inoutValue, let actualClass = actual.metadata as? AnyClass else { return false }
+        return expected.metadata == AnyObject.self
+            || (expected.metadata as? AnyClass).map { SwiftObjectType(actualClass)?.isSubclass(of: $0) == true } == true
+    }
+
     func encode(_ value: Any, convention: SwiftArgumentConvention, asynchronous: Bool) throws -> NativeValueStorage {
+        if let optionalPayload {
+            let wrapped = try wrapOptional(value, payload: optionalPayload, convention: convention,
+                                           asynchronous: asynchronous)
+            var plan = self
+            plan.optionalPayload = nil
+            let access = try plan.encode(wrapped.value, convention: convention, asynchronous: asynchronous)
+            // A hook forwarding the Optional takes it without native code
+            // consuming it, so the transfer also gives up the source's value.
+            if let transfer = wrapped.transfer, let forward = access.transferHookOwnership {
+                access.transferHookOwnership = {
+                    let storage = try forward()
+                    transfer.complete()
+                    return storage
+                }
+            }
+            return access
+        }
         let actual: NativeSwiftType
         if let owned = value as? NativeSwiftValue { actual = owned.type }
         else { actual = (value as! NativeSwiftBorrowedValue).type }
-        let compatible: Bool
-        if actual.metadata == valueType.metadata {
-            compatible = true
-        } else if convention != .inoutValue, let actualClass = actual.metadata as? AnyClass {
-            // An inout Base may replace a Derived reference with another Base.
-            // Borrowing and consuming preserve the value's dynamic class.
-            compatible = valueType.metadata == AnyObject.self
-                || (valueType.metadata as? AnyClass).map { SwiftObjectType(actualClass)?.isSubclass(of: $0) == true } == true
-        } else {
-            compatible = false
-        }
-        guard compatible else {
+        guard Self.accepts(actual, as: valueType, convention: convention) else {
             throw ABIInvocationError.incompatibleValue(expected: valueType.name, actual: actual.name)
         }
         let access: NativeValueStorage

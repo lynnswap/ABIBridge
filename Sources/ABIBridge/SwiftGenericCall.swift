@@ -407,7 +407,8 @@ final class SwiftGenericClosurePlan: Sendable {
             resultConstants.initialize(at: output)
             return false
         }
-        let value = storage.take(as: NativeSwiftValue.self)
+        let value: Any = plan.optionalPayload == nil
+            ? storage.take(as: NativeSwiftValue.self) : storage.take(as: NativeSwiftValue?.self) as Any
         do {
             let source = try plan.encode(value, convention: .consuming, asynchronous: false)
             SwiftValueCodeLifetime.connect(
@@ -604,14 +605,22 @@ final class SwiftGenericClosurePlan: Sendable {
                     alignment: MemoryLayout<NativeSwiftBorrowedValue>.alignment,
                     codeLifetime: lifetime
                 )
-                value.initialize(NativeSwiftBorrowedValue(type: type, borrow: borrow))
+                if plan.optionalPayload == nil {
+                    value.initialize(NativeSwiftBorrowedValue(type: type, borrow: borrow))
+                } else {
+                    value.initialize(plan.borrowOptional(at: addresses[index]!, borrow: borrow, lifetime: lifetime))
+                }
             } else {
                 value = NativeValueStorage(
                     size: MemoryLayout<NativeSwiftValue>.stride,
                     alignment: MemoryLayout<NativeSwiftValue>.alignment,
                     codeLifetime: lifetime
                 )
-                value.initialize(plan.copyCallbackArgument(from: addresses[index]!, type: type))
+                if plan.optionalPayload == nil {
+                    value.initialize(plan.copyCallbackArgument(from: addresses[index]!, type: type))
+                } else {
+                    value.initialize(plan.projectOptional(plan.copyCallbackStorage(from: addresses[index]!, type: type)))
+                }
             }
             addresses[index] = value.address
             storage.append(value)
@@ -737,10 +746,9 @@ struct SwiftGenericCallPlan: Sendable {
             binding: binding,
             defaultConsuming: declaration.consumesArguments
         )
-        if let opaque,
-            signature.result != NativeSwiftValue.self
-                && signature.result != NativeSwiftBorrowedValue.self
-        {
+        // A runtime value handle, Optional or not, takes the opaque result's
+        // underlying type from the declaration.
+        if let opaque, Self.runtimeHandle(signature.result) == nil {
             _ = try binding.resultType(signature.result, for: declaration.result)
             result = .value(opaque.type)
         } else {
@@ -1054,10 +1062,11 @@ struct SwiftGenericCallPlan: Sendable {
             )
             return .convention(try argument.wrapper.makeArgumentCodec(generic: value))
         }
-        if actual == NativeSwiftValue.self || actual == NativeSwiftBorrowedValue.self {
+        if let handle = runtimeHandle(actual) {
             let metadata = try binding.types(formal)[0]
+            // A generic parameter can bind the handle type itself.
             if metadata != actual {
-                guard actual != NativeSwiftBorrowedValue.self || !defaultConsuming else {
+                guard handle.type != NativeSwiftBorrowedValue.self || !defaultConsuming else {
                     throw ABIResolutionError.unsupportedDeclaration(
                         "A borrowed runtime value cannot be consumed."
                     )
@@ -1067,7 +1076,8 @@ struct SwiftGenericCallPlan: Sendable {
                         formal,
                         metadata: metadata,
                         binding: binding,
-                        asynchronous: asynchronous ?? binding.declaration.isAsync
+                        asynchronous: asynchronous ?? binding.declaration.isAsync,
+                        projectingOptional: handle.isOptional
                     ),
                     convention: defaultConsuming ? .consuming : .borrowing,
                     asynchronous: asynchronous ?? binding.declaration.isAsync
@@ -1130,9 +1140,7 @@ struct SwiftGenericCallPlan: Sendable {
         binding: SwiftGenericBinding
     ) -> Bool {
         func needsDeclaration(_ type: Any.Type) -> Bool {
-            if type is any SwiftClosureValue.Type || type == NativeSwiftValue.self
-                || type == NativeSwiftBorrowedValue.self
-            {
+            if type is any SwiftClosureValue.Type || runtimeHandle(type) != nil {
                 return true
             }
             if let convention = type as? any SwiftConventionArgument.Type {
@@ -1152,10 +1160,11 @@ struct SwiftGenericCallPlan: Sendable {
         actual: Any.Type,
         binding: SwiftGenericBinding
     ) throws -> SwiftGenericResult {
-        if actual == NativeSwiftValue.self || actual == NativeSwiftBorrowedValue.self {
+        if let handle = runtimeHandle(actual) {
             let metadata = try binding.types(formal)[0]
             if metadata != actual {
-                return .runtimeValue(try runtimeValue(formal, metadata: metadata, binding: binding))
+                return .runtimeValue(try runtimeValue(formal, metadata: metadata, binding: binding,
+                                                      projectingOptional: handle.isOptional))
             }
         }
         if representsClosedValue(formal, actual: actual, binding: binding) {
@@ -1186,11 +1195,22 @@ struct SwiftGenericCallPlan: Sendable {
         return .concrete
     }
 
+    /// The runtime value handle a host type stands for. `NativeSwiftValue?`
+    /// and `NativeSwiftBorrowedValue?` stand for a native Optional, with nil
+    /// as its empty case.
+    static func runtimeHandle(_ actual: Any.Type) -> (type: Any.Type, isOptional: Bool)? {
+        if actual == NativeSwiftValue.self || actual == NativeSwiftBorrowedValue.self { return (actual, false) }
+        if actual == NativeSwiftValue?.self { return (NativeSwiftValue.self, true) }
+        if actual == NativeSwiftBorrowedValue?.self { return (NativeSwiftBorrowedValue.self, true) }
+        return nil
+    }
+
     private static func runtimeValue(
         _ formal: SwiftFormalType,
         metadata: Any.Type,
         binding: SwiftGenericBinding,
-        asynchronous: Bool = false
+        asynchronous: Bool = false,
+        projectingOptional: Bool = false
     ) throws -> SwiftRuntimeValuePlan {
         let canonical = try binding.canonicalType(of: formal)
         // A stored closure needs its closure plan, which runtime values do not
@@ -1220,12 +1240,13 @@ struct SwiftGenericCallPlan: Sendable {
         } else {
             nativeClosure = nil
         }
-        return try binding.runtimeValuePlan(
+        let plan = try binding.runtimeValuePlan(
             metadata: metadata,
             type: SwiftValueSchema.layout(formal, actual: metadata, binding: binding),
             nativeTuple: nativeTuple,
             nativeClosure: nativeClosure
         )
+        return projectingOptional ? try plan.projectingOptional() : plan
     }
 
     static func nativeClosurePlan(
@@ -1615,7 +1636,7 @@ struct SwiftGenericCallPlan: Sendable {
         let runtimeArguments: [SwiftCallbackRuntimeArgument?] = parameterPlan.arguments.enumerated()
             .map { index, argument in
                 guard case .runtimeValue(let plan, let convention, _) = argument else { return nil }
-                let borrowed = signature.parameters[index] == NativeSwiftBorrowedValue.self
+                let borrowed = Self.runtimeHandle(signature.parameters[index])?.type == NativeSwiftBorrowedValue.self
                 return SwiftCallbackRuntimeArgument(
                     plan: plan,
                     borrowed: borrowed,
@@ -1791,7 +1812,7 @@ struct SwiftGenericCallPlan: Sendable {
         if canonical != formal {
             return try authTypes(canonical, actual: actual, binding: binding, isResult: isResult)
         }
-        if actual == NativeSwiftValue.self || actual == NativeSwiftBorrowedValue.self {
+        if runtimeHandle(actual) != nil {
             let native = try binding.types(formal)[0]
             if native != actual {
                 return try authTypes(formal, actual: native, binding: binding, isResult: isResult)
@@ -1844,7 +1865,9 @@ struct SwiftGenericCallPlan: Sendable {
             )
             return ["(" + swiftClosureAuthDescription(parameters: inputs, results: outputs) + ")"]
         }
-        if !binding.dependsOnParameters(formal), formal.opaqueIndices.isEmpty {
+        // An Optional's payload can have a declared ABI, so its passing
+        // convention comes from the declaration's layout.
+        if !binding.dependsOnParameters(formal), formal.opaqueIndices.isEmpty, formal.optionalWrapped == nil {
             let explicit =
                 formal.nominalDeclaration == nil ? nil : try binding.explicitValueType(actual)
             if explicit == nil {
@@ -1855,7 +1878,7 @@ struct SwiftGenericCallPlan: Sendable {
         }
         let layout = try SwiftValueSchema.layout(formal, actual: actual, binding: binding)
         if ABISwiftValueIsIndirect(layout.handle) { return ["-indirect"] }
-        return [try swiftClosureAuthType(actual)]
+        return [try swiftClosureTypeHash(actual)]
     }
 
     static func tupleElements(

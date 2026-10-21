@@ -127,11 +127,10 @@ extension SwiftGenericClosurePlan {
                 return .convention(try wrapper.makeArgumentCodec(generic: nested))
             }
             guard convention == .borrowing || wrapped else { throw mismatch(nativeType, hostType) }
-            if representation == NativeSwiftValue.self
-                || representation == NativeSwiftBorrowedValue.self
-            {
+            if let handle = SwiftGenericCallPlan.runtimeHandle(representation) {
+                let plan = try runtimePlan(metadata)
                 return .runtimeValue(
-                    try runtimePlan(metadata),
+                    handle.isOptional ? try plan.projectingOptional() : plan,
                     convention: convention,
                     asynchronous: native.isAsync
                 )
@@ -163,8 +162,9 @@ extension SwiftGenericClosurePlan {
             )
         }
         let result: SwiftGenericResult
-        if host.result == NativeSwiftValue.self || host.result == NativeSwiftBorrowedValue.self {
-            result = .runtimeValue(try runtimePlan(native.result))
+        if let handle = SwiftGenericCallPlan.runtimeHandle(host.result) {
+            let plan = try runtimePlan(native.result)
+            result = .runtimeValue(handle.isOptional ? try plan.projectingOptional() : plan)
         } else if let closure = host.result as? any SwiftClosureValue.Type {
             let nested = try storedValue(
                 native.result,
