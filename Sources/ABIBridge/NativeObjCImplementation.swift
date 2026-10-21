@@ -8,13 +8,13 @@ import Foundation
 /// Caller-created classes must remain registered, and generated IMPs must remain callable while any handle exists. A retained block does not prevent another owner from invalidating its IMP with `imp_removeBlock`. See <doc:ObjectiveCInvocation> for dispatch and lifetime rules.
 public struct NativeObjCImplementation<Result, each Argument> {
     private let binding: ObjCInvocationBinding
-    private let signature: ObjCMethodSignature<Result, repeat each Argument>
+    private let signature: ObjCCallSignature<Result, repeat each Argument>
     private let interface: CCallInterface
     private let codeOwner: Any?
 
     init(
         binding: ObjCInvocationBinding,
-        signature: ObjCMethodSignature<Result, repeat each Argument>,
+        signature: ObjCCallSignature<Result, repeat each Argument>,
         interface: CCallInterface,
         retaining owner: Any?
     ) {
@@ -26,7 +26,7 @@ public struct NativeObjCImplementation<Result, each Argument> {
 
     /// Calls the captured IMP with a compatible receiver.
     ///
-    /// Instance captures accept instances of the requested class or subclasses. Class-method captures accept that class or subclass class objects. Overrides are not selected. The caller honors isolation, pointer/code lifetimes, ownership annotations, and block signatures. Foreign exceptions must not cross this boundary.
+    /// Instance captures accept instances of the requested class or subclasses. Class-method captures accept that class or subclass class objects. Overrides are not selected. The caller honors isolation, pointer/code lifetimes, ownership annotations, and block signatures. An Objective-C exception is thrown as ``NativeObjCException``; an implementation prepared with a `throws` signature throws the `NSError` it reports.
     ///
     /// - Parameters:
     ///   - receiver: The live instance or class object for this call.
@@ -84,14 +84,43 @@ extension ABIRuntime {
         retaining owner: Any? = nil
     ) throws -> NativeObjCImplementation<Result, repeat each Argument> {
         let prepared:
-            (ObjCInvocationPlan, ObjCMethodSignature<Result, repeat each Argument>, CCallInterface) =
+            (ObjCInvocationPlan, ObjCCallSignature<Result, repeat each Argument>, CCallInterface) =
                 try prepareObjCImplementation(
                     on: type,
                     selector: selector,
-                    as: signature,
                     variadicFrom: variadicFrom,
                     classMethod: classMethod,
-                    options: options
+                    options: options,
+                    reportsErrors: false
+                )
+        return NativeObjCImplementation(
+            binding: ObjCInvocationBinding(plan: prepared.0),
+            signature: prepared.1,
+            interface: prepared.2,
+            retaining: owner
+        )
+    }
+
+    /// Captures a concrete Objective-C implementation that reports failure through a trailing `NSError **` parameter.
+    ///
+    /// The signature omits that parameter and declares `throws`. A `Void` result corresponds to a `BOOL` method that fails with `NO`; another result corresponds to an object method that fails with `nil`. Invocation supplies the error slot and throws the method's `NSError`, or ``NativeObjCUnreportedFailure`` when it failed without one.
+    public nonisolated func resolveObjCImplementationAndWait<Result, each Argument>(
+        on type: AnyClass,
+        selector: String,
+        as signature: ((repeat each Argument) throws -> Result).Type,
+        classMethod: Bool = false,
+        options: NativeMethodOptions = .init(),
+        retaining owner: Any? = nil
+    ) throws -> NativeObjCImplementation<Result, repeat each Argument> {
+        let prepared:
+            (ObjCInvocationPlan, ObjCCallSignature<Result, repeat each Argument>, CCallInterface) =
+                try prepareObjCImplementation(
+                    on: type,
+                    selector: selector,
+                    variadicFrom: nil,
+                    classMethod: classMethod,
+                    options: options,
+                    reportsErrors: true
                 )
         return NativeObjCImplementation(
             binding: ObjCInvocationBinding(plan: prepared.0),
@@ -113,16 +142,47 @@ extension ABIRuntime {
         options: NativeMethodOptions = .init(),
         retaining owner: Any? = nil
     ) async throws -> NativeObjCImplementation<Result, repeat each Argument> {
-        let prepared = try await NativePreparation.run {
-            try self.prepareObjCImplementation(
-                on: type,
-                selector: selector,
-                as: signature,
-                variadicFrom: variadicFrom,
-                classMethod: classMethod,
-                options: options
-            )
-        }
+        let prepared:
+            (ObjCInvocationPlan, ObjCCallSignature<Result, repeat each Argument>, CCallInterface) =
+                try await NativePreparation.run {
+                    try self.prepareObjCImplementation(
+                        on: type,
+                        selector: selector,
+                        variadicFrom: variadicFrom,
+                        classMethod: classMethod,
+                        options: options,
+                        reportsErrors: false
+                    )
+                }
+        return NativeObjCImplementation(
+            binding: ObjCInvocationBinding(plan: prepared.0),
+            signature: prepared.1,
+            interface: prepared.2,
+            retaining: owner
+        )
+    }
+
+    /// Captures an Objective-C implementation that reports failure through a trailing `NSError **` parameter, without blocking the caller's executor.
+    public nonisolated(nonsending) func resolveObjCImplementation<Result, each Argument>(
+        on type: AnyClass,
+        selector: String,
+        as signature: ((repeat each Argument) throws -> Result).Type,
+        classMethod: Bool = false,
+        options: NativeMethodOptions = .init(),
+        retaining owner: Any? = nil
+    ) async throws -> NativeObjCImplementation<Result, repeat each Argument> {
+        let prepared:
+            (ObjCInvocationPlan, ObjCCallSignature<Result, repeat each Argument>, CCallInterface) =
+                try await NativePreparation.run {
+                    try self.prepareObjCImplementation(
+                        on: type,
+                        selector: selector,
+                        variadicFrom: nil,
+                        classMethod: classMethod,
+                        options: options,
+                        reportsErrors: true
+                    )
+                }
         return NativeObjCImplementation(
             binding: ObjCInvocationBinding(plan: prepared.0),
             signature: prepared.1,
@@ -134,12 +194,12 @@ extension ABIRuntime {
     private nonisolated func prepareObjCImplementation<Result, each Argument>(
         on type: AnyClass,
         selector: String,
-        as signature: ((repeat each Argument) -> Result).Type,
         variadicFrom: Int?,
         classMethod: Bool,
-        options: NativeMethodOptions
+        options: NativeMethodOptions,
+        reportsErrors: Bool
     ) throws -> (
-        ObjCInvocationPlan, ObjCMethodSignature<Result, repeat each Argument>, CCallInterface
+        ObjCInvocationPlan, ObjCCallSignature<Result, repeat each Argument>, CCallInterface
     ) {
         let declaration = objcMethodDeclaration(
             on: type,
@@ -163,10 +223,11 @@ extension ABIRuntime {
             throw objcResolutionError(error, declaration: declaration)
         }
         let plan = ObjCInvocationPlan(handle, declaration: declaration)
-        let prepared = try ObjCMethodSignature<Result, repeat each Argument>(
+        let prepared = try ObjCCallSignature<Result, repeat each Argument>(
             handle: handle,
             declaration: declaration,
-            variadicFrom: variadicFrom
+            variadicFrom: variadicFrom,
+            reportsErrors: reportsErrors
         )
         return (plan, prepared, try prepared.callInterface())
     }
