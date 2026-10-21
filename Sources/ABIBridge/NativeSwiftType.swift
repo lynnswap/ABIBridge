@@ -419,26 +419,6 @@ public actor NativeSwiftType: Hashable {
                 )
             )
         }
-        guard !candidate.record.isStatic else {
-            // Class-method entries are not selected (#413), but whether the
-            // member applies still depends on its descriptor's effect.
-            if asynchronous != nil {
-                let descriptor = try resolver.resolve(
-                    NativeDeclaration(
-                        machOName: "_" + candidate.record.identity + "Tq",
-                        language: .swift,
-                        kind: .data
-                    ),
-                    in: candidate.symbol.image,
-                    loading: .loadedOnly
-                )
-                let flags = unsafe descriptor.withUnsafeAddress { $0.load(as: UInt32.self) }
-                try requireEffect(flags & 0x40 != 0)
-            }
-            throw ABIResolutionError.unsupportedDeclaration(
-                "\(candidate.declaration.name) is exported only through its dispatch thunk; class-method virtual-table entries are not selected."
-            )
-        }
         let dispatch = try SwiftClassDispatch(
             metadata: metadata,
             declaration: candidate.declaration,

@@ -518,6 +518,7 @@ struct SwiftMemberInvocationTests {
                 }
                 open class Derived: Base {
                     @inline(never) public override func value(_ input: Int64) -> Int64 { input + 2 }
+                    @inline(never) public override class func kind() -> Int64 { 6 }
                     @inline(never) public override func replacement(_ input: Int64) -> Int64 { input + 200 }
                 }
                 public func makeBase() -> Base { Base() }
@@ -627,20 +628,20 @@ struct SwiftMemberInvocationTests {
             as: (() async -> Int64).self
         )
         #expect(try await unsafe asyncCount.unsafeInvoke(on: baseObject) == 7)
-        // Class-method entries are not selected; the failure says why, and
-        // the class's method still hides the extension's.
+        // Class members also use the lookup type's slot, and the class's
+        // method hides the extension's.
         for declared in [nil, "() -> Swift.Int64"] {
-            do {
-                _ = try await base.resolveStaticMethod(
-                    named: "kind()",
-                    as: (() -> Int64).self,
-                    declaredAs: declared
-                )
-                Issue.record("A thunk-only class method resolved")
-            } catch ABIResolutionError.unsupportedDeclaration(let reason) {
-                #expect(reason.contains("dispatch thunk"))
-            }
+            let kind = try await base.resolveStaticMethod(
+                named: "kind()",
+                as: (() -> Int64).self,
+                declaredAs: declared
+            )
+            #expect(try unsafe kind.unsafeInvoke() == 5)
         }
+        let derivedKind = try await derived.resolveStaticMethod(named: "kind()", as: (() -> Int64).self)
+        #expect(try unsafe derivedKind.unsafeInvoke() == 6)
+        let kindValue = try await base.resolveStaticGetter(named: "kindValue", as: (() -> Int64).self)
+        #expect(try unsafe kindValue.unsafeInvoke() == 5)
         // A class getter's descriptor says it is synchronous, so it does not
         // hide an async extension getter requested with its declaration.
         let extensionKind = try await base.resolveStaticGetter(
