@@ -313,6 +313,33 @@ struct SwiftInferredValueTests {
         )
     }
 
+    /// Static metadata places empty fields at offset 0 after other fields.
+    @Test func emptyFieldsFollowingOtherFieldsAreInferred() async throws {
+        let (library, module) = try provider(
+            """
+            public struct Empty { public init() {} }
+            @frozen public struct WithEmpty {
+                public var e: Empty
+                public var f: Float
+                public var g: Empty
+                public var unit: ()
+                public var h: Int8
+                public init() { e = Empty(); f = 1.5; g = Empty(); unit = (); h = 7 }
+            }
+            @inline(never) public func makeWithEmpty() -> WithEmpty { WithEmpty() }
+            @inline(never) public func describeWithEmpty(_ v: WithEmpty) -> String { "\\(v.f),\\(v.h)" }
+            """
+        )
+        defer { library.cleanup() }
+        #expect(
+            try await describeMade(
+                module + ".makeWithEmpty()",
+                module + ".describeWithEmpty(_:)",
+                in: library
+            ) == "1.5,7"
+        )
+    }
+
     /// A module's symbols spell a word that repeats in its name as a
     /// substitution, which its evidence lookup must reproduce.
     @Test(arguments: [false, true])

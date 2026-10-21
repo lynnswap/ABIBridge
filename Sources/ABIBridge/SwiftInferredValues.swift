@@ -464,7 +464,10 @@ enum SwiftInferredValue {
         alignment: Int,
         of type: Any.Type
     ) throws(InferenceFailure) -> CValueType {
-        let present = zip(fields, offsets).compactMap { field, offset in field.map { ($0, offset) }
+        // Fields without bytes say nothing about the layout; static metadata
+        // places empty fields at offset 0, after the fields before them.
+        let present = zip(fields, offsets).compactMap { field, offset in
+            field.flatMap { $0.size == 0 ? nil : ($0, offset) }
         }
         do {
             return try CValueType(
