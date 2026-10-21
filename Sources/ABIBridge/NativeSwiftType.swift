@@ -594,8 +594,13 @@ public actor NativeSwiftType: Hashable {
                     return (entry, isProtocolMember ? metadata : owner, selected.plan)
                 }
                 // A member that applies but has no selectable code still hides
-                // extension and superclass members.
+                // extension and superclass members. A protocol extension
+                // member is not the requirement, so it cannot stand in for one
+                // that fails.
                 if let unavailable = selection.unavailable { throw unavailable }
+                if isProtocolMember && !extensionsOnly, let failure = selection.failure {
+                    throw failure
+                }
                 if let failure = selection.failure ?? selection.mismatch {
                     preparationFailure = failure
                 }

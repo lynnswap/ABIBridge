@@ -63,3 +63,17 @@ extension CompatibilityBase: CompatibilityNamed {
     @inline(never) public init(_ value: Int64) { self.value = value }
     public var doubled: CompatibilityCount { CompatibilityCount(value * 2) }
 }
+
+public protocol CompatibilityLabeled: AnyObject { var compatibilityTag: String { get set } }
+
+extension CompatibilityLabeled {
+    public var compatibilityTag: String {
+        get { "default" }
+        set {}
+    }
+}
+
+public final class CompatibilityTagged: CompatibilityLabeled {
+    public var compatibilityTag = "initial"
+    public init() {}
+}

@@ -601,16 +601,17 @@ extension ConformanceCase {
             oracle: "var s: any CMArea = cmMakeSquare(); s.label = \"renamed\"; return s.label",
             invoke: { f in
                 let square = try await f.type("CMSquare")
-                let object = try f.make("cmMakeSquare", returning: "CMSquare")
+                var object = try f.make("cmMakeSquare", returning: "CMSquare")
                 let set = try await square.resolveSetter(
                     named: f.module + ".CMArea.label.setter : Swift.String",
                     as: String.self
                 )
-                try unsafe set.unsafeInvoke(on: object, "renamed")
+                // The requirement's setter is mutating: CMArea is not class-bound.
+                try unsafe set.unsafeInvoke(on: &object, "renamed")
                 let get = try await square.resolveGetter(named: "label", as: (() -> String).self)
                 return try unsafe get.unsafeInvoke(on: object)
             },
-            knownIssue: { _ in "Protocol setter requirements are not resolved (#407)" }
+            knownIssue: witnessDispatch
         ),
         ConformanceCase(
             id: "protocol.extension",

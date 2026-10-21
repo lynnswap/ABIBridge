@@ -19,11 +19,11 @@ extension SwiftGenericDeclaration {
         }
         var protocolRequirement: SwiftSyntax.Node?
         if entry.kind == "DispatchThunk",
-            let getter = entry.child(kind: "Getter"),
-            let owner = getter.child(kind: "Variable")?.child(kind: "Protocol")
+            let accessor = entry.child(kind: "Getter") ?? entry.child(kind: "Setter"),
+            let owner = accessor.child(kind: "Variable")?.child(kind: "Protocol")
         {
             protocolRequirement = owner
-            entry = getter
+            entry = accessor
         }
         if ["Getter", "Setter"].contains(entry.kind) {
             return (try entry.requiredChild(), entry.kind, protocolRequirement)

@@ -192,6 +192,17 @@ struct SwiftSignatureCompatibilityTests {
         #expect(try unsafe greeting.unsafeInvoke(on: CompatibilityBase()) == "hello base")
     }
 
+    @Test func protocolRequirementsPrecedeTheirDefaultImplementations() async throws {
+        let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityTagged")
+        let set = try await type.resolveSetter(
+            named: "ManagedSwiftFixtures.CompatibilityLabeled.compatibilityTag",
+            as: String.self
+        )
+        let tagged = CompatibilityTagged()
+        try unsafe set.unsafeInvoke(on: tagged, "renamed")
+        #expect(tagged.compatibilityTag == "renamed")
+    }
+
     @Test func labelOnlyMembersAcceptTheOwnersRepresentation() async throws {
         let type = try await runtime.resolveSwiftType(
             named: "ManagedSwiftFixtures.CompatibilityCount",
