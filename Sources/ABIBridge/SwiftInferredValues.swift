@@ -504,18 +504,13 @@ enum SwiftInferredValue {
         guard info.declaredFields == 1, info.payloadCases == 1 else {
             return try failing { try SwiftValueSchema.enumStorage(of: metadata) }
         }
-        guard let payload = parts[0] else {
-            return try aggregate(
-                [],
-                offsets: [],
-                size: layout.size,
-                alignment: layout.alignment,
-                of: metadata
-            )
-        }
-        return try failing {
-            try CValueType(swiftComponents: payload, size: layout.size, alignment: layout.alignment)
-        }
+        return try aggregate(
+            [parts[0]],
+            offsets: [0],
+            size: layout.size,
+            alignment: layout.alignment,
+            of: metadata
+        )
     }
 
     // MARK: Resilience
