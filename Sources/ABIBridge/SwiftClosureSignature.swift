@@ -32,7 +32,8 @@ func swiftClosureAuthType(_ type: Any.Type) throws -> String {
 }
 
 /// Swift's `hashStringForType`, which hashes a value type within any Optionals.
-private func swiftClosureTypeHash(_ type: Any.Type) throws -> String {
+/// The caller has established that the value is passed directly.
+func swiftClosureTypeHash(_ type: Any.Type) throws -> String {
     if let closure = type as? any SwiftClosureValue.Type, !closure.isOptional {
         return "("
             + (try SwiftFunctionSignature(closure.swiftFunctionType).closureAuthDescription()) + ")"

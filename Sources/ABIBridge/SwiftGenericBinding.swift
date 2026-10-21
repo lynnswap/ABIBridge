@@ -1520,7 +1520,7 @@ struct SwiftGenericBinding: Sendable {
     }
 
     func resultType(_ actual: Any.Type, for formal: SwiftFormalType) throws -> Any.Type {
-        if actual == NativeSwiftValue.self || actual == NativeSwiftBorrowedValue.self {
+        if SwiftGenericCallPlan.runtimeHandle(actual) != nil {
             return try types(formal)[0]
         }
         let canonical = try canonicalType(of: formal)
@@ -1661,7 +1661,7 @@ struct SwiftGenericBinding: Sendable {
                 signature: SwiftFunctionSignature(closure.swiftFunctionType),
                 binding: self
             )
-        } else if actual == NativeSwiftValue.self || actual == NativeSwiftBorrowedValue.self {
+        } else if SwiftGenericCallPlan.runtimeHandle(actual) != nil {
             _ = try types(formal)
         } else {
             let canonical = try canonicalType(of: formal)

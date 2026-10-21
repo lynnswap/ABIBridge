@@ -413,19 +413,18 @@ struct SwiftCallbackValues: Sendable {
             if case .tuple(let tuple, _, _) = argument {
                 return try tuple.callbackDecoder(consuming: consuming[index])
             }
-            if case .runtimeValue = argument {
-                if type == NativeSwiftBorrowedValue.self {
-                    return try Self.decoder(
-                        for: NativeSwiftBorrowedValue.self,
-                        generic: argument,
-                        consuming: false
-                    )
+            if case .runtimeValue(let plan, _, _) = argument {
+                let decode =
+                    SwiftGenericCallPlan.runtimeHandle(type)?.type == NativeSwiftBorrowedValue.self
+                    ? try Self.decoder(for: NativeSwiftBorrowedValue.self, generic: argument, consuming: false)
+                    : try Self.decoder(for: NativeSwiftValue.self, generic: argument, consuming: consuming[index])
+                guard plan.optionalPayload != nil else { return decode }
+                // The host receives `NativeSwiftValue?`: nil or the payload.
+                return { address, scope in
+                    let value = try decode(address, scope)
+                    if let owned = value as? NativeSwiftValue { return try plan.hostValue(owned) }
+                    return try plan.hostValue(value as! NativeSwiftBorrowedValue)
                 }
-                return try Self.decoder(
-                    for: NativeSwiftValue.self,
-                    generic: argument,
-                    consuming: consuming[index]
-                )
             }
             if let convention = type as? any SwiftConventionArgument.Type {
                 let codec: SwiftConventionCodec

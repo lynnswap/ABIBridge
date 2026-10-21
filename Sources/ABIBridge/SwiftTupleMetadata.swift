@@ -285,12 +285,13 @@ struct SwiftTupleValuePlan: Sendable {
                     { storage, owner, codeOwner, output in
                         let value: Value
                         if let outputRuntime {
-                            guard Value.self != NativeSwiftBorrowedValue.self else {
+                            guard SwiftGenericCallPlan.runtimeHandle(Value.self)?.type != NativeSwiftBorrowedValue.self
+                            else {
                                 throw ABIResolutionError.unsupportedDeclaration(
                                     "A scoped runtime tuple field requires its callback borrow scope."
                                 )
                             }
-                            value = try outputRuntime.decode(storage) as! Value
+                            value = try outputRuntime.hostValue(outputRuntime.decode(storage)) as! Value
                         } else if let outputClosure {
                             // Closure adoption consumes its +1 even when entry preparation fails.
                             storage.relinquishValue()
