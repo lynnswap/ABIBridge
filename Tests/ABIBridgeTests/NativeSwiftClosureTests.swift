@@ -762,84 +762,95 @@ struct NativeSwiftClosureTests {
             ([[String?]].self, "[[String?]]"), ([String]?.self, "[String]?"),
             (String?.self, "String?"),
         ]
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString
-        )
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer {
-            do { try FileManager.default.removeItem(at: directory) } catch { Issue.record(error) }
-        }
-        let source = directory.appendingPathComponent("Closures.swift")
-        let ir = directory.appendingPathComponent("Closures.ll")
         let declarations = cases.enumerated().map { index, entry in
             "@inline(never) public func closureProbe\(index)(_ callback: (\(entry.1)) -> \(entry.1), _ value: \(entry.1)) -> \(entry.1) { callback(value) }"
         }.joined(separator: "\n")
-        try ("import Foundation\nimport CoreGraphics\n" + declarations).write(
-            to: source,
-            atomically: true,
-            encoding: .utf8
+        let found = try arm64eClosureCallDiscriminators(
+            source: "import Foundation\nimport CoreGraphics\n" + declarations,
+            functions: cases.indices.map { "closureProbe\($0)" }
         )
-        func run(_ arguments: [String]) throws -> String {
-            let process = Process(), output = Pipe()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-            process.arguments = arguments
-            // The test runner's injected Xcode frameworks belong to its process,
-            // not to the xcrun-selected compiler and SDK tools.
-            process.environment = FixtureLibrary.toolEnvironment.filter { $0.key != "SDKROOT" }
-            process.standardOutput = output; process.standardError = output
-            try process.run()
-            let text = String(
-                decoding: output.fileHandleForReading.readDataToEndOfFile(),
-                as: UTF8.self
-            )
-            process.waitUntilExit()
-            guard process.terminationStatus == 0 else {
-                throw NSError(
-                    domain: "ClosureCompilerProbe",
-                    code: Int(process.terminationStatus),
-                    userInfo: [NSLocalizedDescriptionKey: text]
-                )
-            }
-            return text
-        }
-        let sdk = try run(["--sdk", "iphoneos", "--show-sdk-path"]).trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-        _ = try run([
-            "swiftc", "-swift-version", "6", "-parse-as-library", "-Onone",
-            "-target", "arm64e-apple-ios18.4", "-sdk", sdk, "-emit-ir",
-            source.path, "-o", ir.path,
-        ])
-        let text = try String(contentsOf: ir, encoding: .utf8)
-        for (index, entry) in cases.enumerated() {
-            let pattern =
-                #"(?ms)^define[^\n]*closureProbe"# + String(index) + #"[y_][^\n]*\{(.*?)^\}"#
-            let expression = try NSRegularExpression(pattern: pattern)
-            let match = try #require(
-                expression.firstMatch(in: text, range: NSRange(text.startIndex..., in: text))
-            )
-            let range = try #require(Range(match.range(at: 1), in: text))
-            let body = String(text[range])
-            let call = try #require(
-                body.split(separator: "\n").first {
-                    $0.contains("call swiftcc") && $0.contains("swiftself")
-                        && $0.contains(#""ptrauth""#)
-                }
-            )
-            let discriminator = try NSRegularExpression(
-                pattern: #""ptrauth"\(i32 0, i64 ([0-9]+)\)"#
-            )
-            let line = String(call)
-            let auth = try #require(
-                discriminator.firstMatch(in: line, range: NSRange(line.startIndex..., in: line))
-            )
-            let digits = try #require(Range(auth.range(at: 1), in: line))
-            let expected = try #require(UInt16(line[digits]))
+        for (entry, expected) in zip(cases, found) {
             let name = try swiftClosureAuthType(entry.0, position: .parameter)
             #expect(
                 swiftClosureDiscriminator(parameters: [name], result: name) == expected,
                 "\(entry.1)"
             )
+        }
+    }
+
+    /// An inferred struct hashes as `-indirect` when it passes by address,
+    /// and otherwise as its declaration without generic arguments, both for
+    /// a host value of its own type and for a declaration's closure plan.
+    @Test(arguments: [false, true])
+    func inferredAuthenticationMatchesNativeCompilerCalls(evolution: Bool) async throws {
+        // Library evolution does not record whether a generic struct is frozen.
+        let types =
+            ["AuthPoint", "AuthWide", "AuthOpen"]
+            + (evolution ? [] : ["AuthPair<Double>", "AuthPair<Int8>"])
+        let module = "ClosureAuth_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let source =
+            """
+            @frozen public struct AuthPoint {
+                public var x: Double, y: Double
+                public init() { x = 1; y = 2 }
+            }
+            @frozen public struct AuthWide {
+                public var a: Int64, b: Int64, c: Int64, d: Int64, e: Int64
+                public init() { a = 1; b = 2; c = 3; d = 4; e = 5 }
+            }
+            public struct AuthOpen {
+                public var x: Double, y: Double
+                public init() { x = 1; y = 2 }
+            }
+            @frozen public struct AuthPair<T> {
+                public var a: T, b: T
+            }
+            public func closureProbeType(_ index: Int64) -> Any.Type {
+                let types: [Any.Type] = [\(types.map { $0 + ".self" }.joined(separator: ", "))]
+                return types[Int(index)]
+            }
+
+            """
+            + types.enumerated().map { index, type in
+                "@inline(never) public func closureProbe\(index)(_ callback: (\(type)) -> \(type), _ value: \(type)) -> \(type) { callback(value) }"
+            }.joined(separator: "\n")
+        let flags = evolution ? ["-enable-library-evolution"] : []
+        let library = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: source,
+            linkArguments: ["-parse-as-library", "-swift-version", "6"] + flags
+        )
+        defer { library.cleanup() }
+        let found = try arm64eClosureCallDiscriminators(
+            source: source,
+            arguments: ["-module-name", module] + flags,
+            functions: types.indices.map { "closureProbe\($0)" }
+        )
+        let runtime = ABIRuntime()
+        let typeAt = try await runtime.resolveSwiftFunction(
+            named: module + ".closureProbeType(_:)",
+            as: ((Int64) -> Any.Type).self,
+            in: .path(library.libraryURL)
+        )
+        for (index, (name, expected)) in zip(types, found).enumerated() {
+            let type = try unsafe typeAt.unsafeInvoke(Int64(index))
+            let host = swiftClosureDiscriminator(
+                parameters: [try swiftClosureAuthType(type, position: .parameter)],
+                result: try swiftClosureAuthType(type, position: .result)
+            )
+            #expect(host == expected, "\(name)")
+            let probe = try await runtime.resolveSwiftFunction(
+                named: module + ".closureProbe\(index)(_:_:)",
+                as: ((NativeSwiftClosure<(NativeSwiftValue) -> NativeSwiftValue>, NativeSwiftValue) ->
+                    NativeSwiftValue).self,
+                in: .path(library.libraryURL)
+            )
+            guard case .closure(let plan, _) = try #require(probe.call.generic).parameters.arguments[0]
+            else {
+                Issue.record("\(name) has no closure plan")
+                continue
+            }
+            #expect(plan.discriminator == expected, "\(name)")
         }
     }
     #endif
@@ -1293,3 +1304,81 @@ struct NativeSwiftClosureTests {
 private final class SavedIncomingIntegerClosure: @unchecked Sendable {
     var value: NativeSwiftClosure<(Int64) -> Int64>?
 }
+
+#if DEBUG && os(macOS)
+/// Compiles `source` for arm64e and returns the pointer-authentication
+/// discriminator of the closure call in each of `functions`.
+private func arm64eClosureCallDiscriminators(
+    source: String,
+    arguments: [String] = [],
+    functions: [String]
+) throws -> [UInt16] {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+        UUID().uuidString
+    )
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer {
+        do { try FileManager.default.removeItem(at: directory) } catch { Issue.record(error) }
+    }
+    let sourceURL = directory.appendingPathComponent("Closures.swift")
+    let ir = directory.appendingPathComponent("Closures.ll")
+    try source.write(to: sourceURL, atomically: true, encoding: .utf8)
+    func run(_ arguments: [String]) throws -> String {
+        let process = Process(), output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        process.arguments = arguments
+        // The test runner's injected Xcode frameworks belong to its process,
+        // not to the xcrun-selected compiler and SDK tools.
+        process.environment = FixtureLibrary.toolEnvironment.filter { $0.key != "SDKROOT" }
+        process.standardOutput = output; process.standardError = output
+        try process.run()
+        let text = String(
+            decoding: output.fileHandleForReading.readDataToEndOfFile(),
+            as: UTF8.self
+        )
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw NSError(
+                domain: "ClosureCompilerProbe",
+                code: Int(process.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: text]
+            )
+        }
+        return text
+    }
+    let sdk = try run(["--sdk", "iphoneos", "--show-sdk-path"]).trimmingCharacters(
+        in: .whitespacesAndNewlines
+    )
+    _ = try run(
+        [
+            "swiftc", "-swift-version", "6", "-parse-as-library", "-Onone",
+            "-target", "arm64e-apple-ios18.4", "-sdk", sdk, "-emit-ir",
+        ] + arguments + [sourceURL.path, "-o", ir.path]
+    )
+    let text = try String(contentsOf: ir, encoding: .utf8)
+    return try functions.map { function in
+        let pattern = #"(?ms)^define[^\n]*"# + function + #"[y_][^\n]*\{(.*?)^\}"#
+        let expression = try NSRegularExpression(pattern: pattern)
+        let match = try #require(
+            expression.firstMatch(in: text, range: NSRange(text.startIndex..., in: text))
+        )
+        let range = try #require(Range(match.range(at: 1), in: text))
+        let body = String(text[range])
+        let call = try #require(
+            body.split(separator: "\n").first {
+                $0.contains("call swiftcc") && $0.contains("swiftself")
+                    && $0.contains(#""ptrauth""#)
+            }
+        )
+        let discriminator = try NSRegularExpression(
+            pattern: #""ptrauth"\(i32 0, i64 ([0-9]+)\)"#
+        )
+        let line = String(call)
+        let auth = try #require(
+            discriminator.firstMatch(in: line, range: NSRange(line.startIndex..., in: line))
+        )
+        let digits = try #require(Range(auth.range(at: 1), in: line))
+        return try #require(UInt16(line[digits]))
+    }
+}
+#endif

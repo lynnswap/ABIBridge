@@ -176,6 +176,38 @@ extension ConformanceCase {
             }
             return parts.joined(separator: ";")
         },
+        // A String payload explains the addressable bit, so only enum case
+        // symbols show which of these enums is resilient.
+        ConformanceCase(
+            id: "value.stringPayloadEnum.inferred",
+            provider: """
+                public enum CMTagged { case text(String), none }
+                @frozen public enum CMFrozenTagged { case text(String), none }
+                @inline(never) public func cmMakeTagged(_ k: Int64) -> CMTagged { k == 0 ? .none : .text("t\\(k)") }
+                @inline(never) public func cmDescribeTagged(_ v: CMTagged) -> String { "\\(v)" }
+                @inline(never) public func cmMakeFrozenTagged(_ k: Int64) -> CMFrozenTagged {
+                    k == 0 ? .none : .text("f\\(k)")
+                }
+                @inline(never) public func cmDescribeFrozenTagged(_ v: CMFrozenTagged) -> String { "\\(v)" }
+                """,
+            oracle: """
+                let kinds: [Int64] = [0, 7]
+                return [
+                    kinds.map { cmDescribeTagged(cmMakeTagged($0)) },
+                    kinds.map { cmDescribeFrozenTagged(cmMakeFrozenTagged($0)) },
+                ].map { $0.joined(separator: "|") }.joined(separator: ";")
+                """
+        ) { f in
+            [
+                try await describeKinds(f, "cmMakeTagged(_:)", "cmDescribeTagged(_:)", kinds: [0, 7]),
+                try await describeKinds(
+                    f,
+                    "cmMakeFrozenTagged(_:)",
+                    "cmDescribeFrozenTagged(_:)",
+                    kinds: [0, 7]
+                ),
+            ].joined(separator: ";")
+        },
         ConformanceCase(
             id: "value.nestedFrozen.inferred",
             provider: """
