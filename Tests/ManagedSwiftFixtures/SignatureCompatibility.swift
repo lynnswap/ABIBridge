@@ -4,6 +4,7 @@ open class CompatibilityBase {
     public init() {}
     open func name() -> String { "base" }
     @inline(never) open func makeDerived() -> CompatibilityDerived { CompatibilityDerived() }
+    open var derived: CompatibilityDerived { CompatibilityDerived() }
 }
 
 public final class CompatibilityDerived: CompatibilityBase {
@@ -41,4 +42,14 @@ public final class CompatibilityDerived: CompatibilityBase {
 
 extension CompatibilityBase {
     @inline(never) public func describe(_ value: CompatibilityBase) -> String { value.name() }
+}
+
+public protocol CompatibilityNamed { func compatibilityLabel() -> String }
+
+extension CompatibilityNamed {
+    @inline(never) public func compatibilityGreeting() -> String { "hello " + compatibilityLabel() }
+}
+
+extension CompatibilityBase: CompatibilityNamed {
+    @inline(never) public func compatibilityLabel() -> String { name() }
 }

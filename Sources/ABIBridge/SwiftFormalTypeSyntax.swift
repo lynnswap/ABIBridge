@@ -129,10 +129,15 @@ extension SwiftGenericDeclaration {
                     }
                     self.failure = failure
                     self.isAsync = attributes.isAsync
-                } else {
-                    if let caller, caller.failure != Never.self {
+                } else if let caller, caller.failure != Never.self {
+                    // Without generic parameters, the error type cannot
+                    // depend on them, so the caller's error type applies.
+                    guard parameters.isEmpty else {
                         throw ABIResolutionError.unsupportedDeclaration("A throwing generic getter requires declaredAs: with its source function type; its symbol does not encode the formal error type.")
                     }
+                    failure = try SwiftFormalType(swiftNativeTypeName(caller.failure))
+                    isAsync = caller.isAsync
+                } else {
                     failure = nil
                     isAsync = caller?.isAsync ?? false
                 }

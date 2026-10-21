@@ -116,7 +116,7 @@ let text = try unsafe summary.unsafeInvoke(on: renderer)
 
 Lookup binds `Self` to the whole concrete type represented by `type`, including a specialization such as `Renderer<String>`, and checks its protocol conformance and extension constraints. Supply `genericArguments:` only for type parameters introduced by the method.
 
-Getters, setters, and static members use the same rule with their corresponding lookup factories and complete extension-qualified declarations.
+Getters, setters, and static members use the same rule with their corresponding lookup factories. A protocol-qualified name without `(extension in Example):` selects the protocol's requirement when it declares one, and otherwise its extension member; the name can also be label-only, such as `Example.Renderable.summary()`.
 
 ## Call an instance protocol requirement
 
@@ -367,7 +367,7 @@ Writeback preserves the originating resource storage and implementation images w
 
 ## Names, scopes, and limits
 
-Label-only method names obtain canonical parameter/result names from their metatypes. Use a complete relative declaration when a wrapper has a different native name, such as `transform(Example.NativeValue) -> Example.NativeValue`. Operator names can omit fixity, such as `>(_:_:)`. If prefix and postfix implementations both match, lookup reports ambiguity; use `~~~ prefix(_:)` or a complete declaration to choose one. An accessor can similarly use `property.getter : Example.NativeValue` or `property.setter : Example.NativeValue`.
+A label-only method name, such as `transform(_:)`, or a property name, such as `payload`, selects the declaration whose native parameter and result types accept the function metatype, including the class conversions described in <doc:SwiftFunctionInvocation>. Use a complete relative declaration when a wrapper has a different native name, such as `transform(Example.NativeValue) -> Example.NativeValue`; an accessor similarly uses `property.getter : Example.NativeValue` or `property.setter : Example.NativeValue`. A complete declaration need not name the module of the extension that declares it. Operator names can omit fixity, such as `>(_:_:)`. If prefix and postfix implementations both match, lookup reports ambiguity; use `~~~ prefix(_:)` or a complete declaration to choose one.
 
 Framework, executable-path, install-name, and retained-image overloads acquire explicit targets by default. Pass `loading: .loadedOnly` to retain inspection behavior; see <doc:ImageLoading>. The method or type handle keeps its implementation alive, and custom wrapper results retain their call's owners. Raw pointers remain borrowed.
 

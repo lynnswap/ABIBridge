@@ -119,7 +119,7 @@ let collect = try runtime.resolveSwiftFunctionAndWait(
 let values = try unsafe collect.unsafeInvoke(["first", "second"])
 ```
 
-An empty array supplies zero variadic elements. Label-only typed lookup derives an ordinary array parameter from `[String]`, so keep `...` in the complete declaration when selecting a variadic overload.
+An empty array supplies zero variadic elements. A label-only name cannot tell a variadic parameter from an array parameter, so keep `...` in the complete declaration when selecting a variadic overload.
 
 The same array representation applies to generic functions and initializers. A ``NativeSwiftValue`` argument must contain the native `Array<T>` value. Ordinary functions borrow it, while allocating initializers consume it under the ownership rules in <doc:SwiftArgumentConventions>. When supplying `declaredAs:`, retain `T...` in the source signature and use `Array<T>` in the callable signature.
 

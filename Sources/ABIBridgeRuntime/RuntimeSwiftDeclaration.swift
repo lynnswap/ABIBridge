@@ -82,7 +82,11 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
         default:
             accessor = nil
         }
-        guard ["Function", "Allocator", "Constructor", "Variable", "Subscript"].contains(node.kind),
+        guard
+            [
+                "Function", "Allocator", "Constructor", "Destructor", "Deallocator", "Variable",
+                "Subscript",
+            ].contains(node.kind),
             let owner = node.child(0)
         else { return nil }
         self.isStatic = isStatic

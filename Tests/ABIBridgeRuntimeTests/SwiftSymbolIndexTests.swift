@@ -321,11 +321,11 @@ struct SwiftSymbolIndexTests {
         }
         let extensionName = "Swift.Int._abiFallbackOrderFixture() -> Swift.Int"
         #expect(
-            try index.resolve(
-                .init(name: extensionName, language: .swift),
+            index.swiftDeclarationCandidates(
+                SymbolQuery(.init(name: extensionName, language: .swift)),
                 source: .image,
                 extensionsOnly: true
-            ) != nil
+            ).count == 1
         )
         #expect(
             try index.resolve(

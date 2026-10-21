@@ -6,7 +6,7 @@ import Testing
 
 struct SymbolIndexStorageTests {
     @Test(arguments: [false, true])
-    func extensionAndOrdinaryIndexesCanBeBuiltInEitherOrder(extensionFirst: Bool) async throws {
+    func memberAndOrdinaryIndexesCanBeBuiltInEitherOrder(extensionFirst: Bool) async throws {
         let module = "IndexOrder_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
         let fixture = try FixtureLibrary(
             swiftModule: module,
@@ -22,20 +22,26 @@ struct SymbolIndexStorageTests {
         let index = SymbolIndex(image: image)
         let ordinary = RuntimeDeclaration(name: module + ".echo() -> Swift.Int", language: .swift)
         let member = RuntimeDeclaration(name: "Swift.Int.café() -> Swift.Int", language: .swift)
-        for extensionsOnly in [extensionFirst, !extensionFirst, extensionFirst] {
-            let symbol = try #require(
-                try index.resolve(
-                    extensionsOnly ? member : ordinary,
-                    source: .image,
-                    extensionsOnly: extensionsOnly
-                )
+        func extensionMembers(_ declaration: RuntimeDeclaration) -> [RuntimeSwiftCandidate] {
+            index.swiftDeclarationCandidates(
+                SymbolQuery(declaration),
+                source: .image,
+                extensionsOnly: true
             )
-            #expect(symbol.image.identity == image.identity)
+        }
+        for extensionsOnly in [extensionFirst, !extensionFirst, extensionFirst] {
+            if extensionsOnly {
+                let candidate = try #require(extensionMembers(member).first)
+                #expect(candidate.symbol.image.identity == image.identity)
+            } else {
+                let symbol = try #require(try index.resolve(ordinary, source: .image))
+                #expect(symbol.image.identity == image.identity)
+            }
             let stringMember = RuntimeDeclaration(
                 name: "Swift.String.café() -> Swift.Int",
                 language: .swift
             )
-            #expect(try index.resolve(stringMember, source: .image, extensionsOnly: true) != nil)
+            #expect(extensionMembers(stringMember).count == 1)
         }
     }
 
