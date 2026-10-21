@@ -910,43 +910,78 @@ struct SwiftGenericCallPlan: Sendable {
             ? SwiftGenericParameters.storageType(enclosingMetadata) : nil
     }
 
-    func matches(_ signature: SwiftFunctionSignature) throws -> Bool {
+    /// Checks that a call with the requested signature can use this
+    /// declaration, reporting the first incompatible argument or the result.
+    ///
+    /// Only the call's own arguments and result convert class references.
+    /// Values reached through `inout` and other conventions, tuples, and
+    /// closures stay exact, because their values can flow the other way.
+    func check(_ signature: SwiftFunctionSignature) throws {
         func validate(
             _ actual: Any.Type,
             for formal: SwiftFormalType,
-            using binding: SwiftGenericBinding
+            using binding: SwiftGenericBinding,
+            at index: Int
         ) throws {
-            if let argument = try binding.conventionArgument(
-                actual,
-                for: formal,
-                defaultConsuming: binding.declaration.consumesArguments
-            ) {
-                try binding.validateArgument(argument.wrapper.wrappedType, for: argument.value)
-            } else {
-                try binding.validateArgument(actual, for: formal)
+            do {
+                if formal.argumentConvention == nil,
+                    !(actual is any SwiftConventionArgument.Type),
+                    binding.convertsReference(actual, for: formal, isResult: false)
+                {
+                    return
+                }
+                if let argument = try binding.conventionArgument(
+                    actual,
+                    for: formal,
+                    defaultConsuming: binding.declaration.consumesArguments
+                ) {
+                    try binding.validateArgument(argument.wrapper.wrappedType, for: argument.value)
+                } else {
+                    try binding.validateArgument(actual, for: formal)
+                }
+            } catch let ABIResolutionError.signatureMismatch(mismatch) {
+                throw ABIResolutionError.signatureMismatch(mismatch.at(.argument(index)))
             }
         }
-        do {
-            for (formal, group) in zip(binding.declaration.arguments, parameters.groups) {
-                switch group {
-                case .value(let index):
-                    try validate(signature.parameters[index], for: formal, using: binding)
-                case .pack(let range, _):
-                    guard case .pack(let pattern, _) = formal else {
-                        preconditionFailure("A pack group has a pack formal type.")
-                    }
-                    for (packIndex, index) in range.enumerated() {
-                        try validate(
-                            signature.parameters[index],
-                            for: pattern,
-                            using: binding.selectingPackElement(at: packIndex)
-                        )
-                    }
+        for (formal, group) in zip(binding.declaration.arguments, parameters.groups) {
+            switch group {
+            case .value(let index):
+                try validate(signature.parameters[index], for: formal, using: binding, at: index)
+            case .pack(let range, _):
+                guard case .pack(let pattern, _) = formal else {
+                    preconditionFailure("A pack group has a pack formal type.")
+                }
+                for (packIndex, index) in range.enumerated() {
+                    try validate(
+                        signature.parameters[index],
+                        for: pattern,
+                        using: binding.selectingPackElement(at: packIndex),
+                        at: index
+                    )
                 }
             }
+        }
+        guard
+            !binding.convertsReference(
+                signature.result,
+                for: binding.declaration.result,
+                isResult: true
+            )
+        else { return }
+        do {
             _ = try binding.resultType(signature.result, for: binding.declaration.result)
-            return true
-        } catch ABIResolutionError.signatureMismatch { return false }
+        } catch let ABIResolutionError.signatureMismatch(mismatch) {
+            throw ABIResolutionError.signatureMismatch(mismatch.at(.result))
+        }
+    }
+
+    /// Whether a call converts a class reference at some position, which a
+    /// hook cannot do in the opposite direction.
+    func convertsReferences(_ signature: SwiftFunctionSignature) -> Bool {
+        zip(binding.declaration.arguments, parameters.groups).contains { formal, group in
+            guard case .value(let index) = group else { return false }
+            return binding.convertsReference(signature.parameters[index], for: formal, isResult: false)
+        } || binding.convertsReference(signature.result, for: binding.declaration.result, isResult: true)
     }
 
     static func argument(

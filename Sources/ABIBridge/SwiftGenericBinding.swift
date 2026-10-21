@@ -1483,6 +1483,38 @@ struct SwiftGenericBinding: Sendable {
         }
     }
 
+    /// Whether a call converts a class reference between the requested type
+    /// and the native type at this position.
+    ///
+    /// A call can pass a subclass instance where the native parameter takes a
+    /// superclass, and wrap a nonoptional reference in Optional; a result
+    /// converts the other way. Class references share one representation, so
+    /// the conversion needs no lowering. Other types must match exactly.
+    func convertsReference(
+        _ actual: Any.Type,
+        for formal: SwiftFormalType,
+        isResult: Bool
+    ) -> Bool {
+        guard let native = try? types(formal).first else { return false }
+        let nativeOptional = native as? any NativeOptionalValue.Type
+        let requestedOptional = actual as? any NativeOptionalValue.Type
+        let requested = requestedOptional?.wrappedType ?? actual
+        // An adapter class marshals through its own representation, not as a
+        // reference to itself.
+        guard let nativeClass = (nativeOptional?.wrappedType ?? native) as? AnyClass,
+            let requestedClass = requested as? AnyClass,
+            !(requested is any ABIBridgeValue.Type),
+            !(requested is any ABIBridgeSwiftValue.Type)
+        else { return false }
+        let (source, target) = isResult ? (nativeClass, requestedClass) : (requestedClass, nativeClass)
+        let sourceIsOptional = (isResult ? nativeOptional : requestedOptional) != nil
+        let targetIsOptional = (isResult ? requestedOptional : nativeOptional) != nil
+        guard !sourceIsOptional || targetIsOptional,
+            SwiftObjectType(source)?.isSubclass(of: target) == true
+        else { return false }
+        return source != target || sourceIsOptional != targetIsOptional
+    }
+
     func resultType(_ actual: Any.Type, for formal: SwiftFormalType) throws -> Any.Type {
         if actual == NativeSwiftValue.self || actual == NativeSwiftBorrowedValue.self {
             return try types(formal)[0]

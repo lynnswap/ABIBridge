@@ -457,6 +457,13 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
         // The hook dispatcher owns error recovery even for a nonthrowing native
         // entry, so every conversion error has a host-side reporting channel.
         let signature = try SwiftFunctionSignature(((repeat each Argument) throws -> Result).self)
+        // A hook receives native arguments and returns a native result, the
+        // opposite of the conversions a call can make.
+        if let generic, generic.convertsReferences(signature) {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "A hook requires the native parameter and result types; a superclass or Optional request converts in the call direction only."
+            )
+        }
         callbackValues = try SwiftCallbackValues(
             signature,
             arguments: parameters.arguments,

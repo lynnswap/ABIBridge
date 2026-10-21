@@ -530,12 +530,13 @@ extension ABIRuntime {
                 declaredSignature: declaredSignature,
                 valueABIs: valueABIs
             )
-            return try plan.matches(description) ? plan : nil
+            try plan.check(description)
+            return plan
         }
         if let (entry, plan) = try selection.selected(for: declaration) {
             return try NativeSwiftFunction(entry: entry, resolver: resolver, generic: plan)
         }
-        if let failure = selection.failure { throw failure }
+        if let failure = selection.failure ?? selection.mismatch { throw failure }
         throw ABIResolutionError.declarationNotFound(declaration)
     }
 

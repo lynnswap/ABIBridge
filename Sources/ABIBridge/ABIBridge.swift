@@ -239,6 +239,10 @@ public enum ABIResolutionError: Error, Sendable, Hashable {
         func inContext(_ declaration: NativeDeclaration, at position: Position) -> Self {
             .init(declaration: declaration, position: position, expected: expected, found: found)
         }
+
+        func at(_ position: Position) -> Self {
+            .init(declaration: declaration, position: position, expected: expected, found: found)
+        }
     }
     /// The operation cannot interpret this kind of declaration.
     case unsupportedDeclaration(String)
