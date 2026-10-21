@@ -187,3 +187,36 @@ static NSInteger workerLookupIncrement(id receiver, SEL selector, NSInteger valu
     return values;
 }
 @end
+
+NSErrorDomain const ABIErrorConventionFixtureDomain = @"ABIErrorConventionFixture";
+
+@implementation ABIErrorConventionFixture
++ (instancetype)fixtureWithValue:(NSInteger)value error:(NSError **)error {
+    if (value < 0) {
+        if (error) *error = [NSError errorWithDomain:ABIErrorConventionFixtureDomain code:value userInfo:nil];
+        return nil;
+    }
+    ABIErrorConventionFixture *fixture = [self new];
+    fixture->_value = value;
+    return fixture;
+}
+- (BOOL)check:(BOOL)succeed error:(NSError **)error {
+    if (!succeed && error) {
+        *error = [NSError errorWithDomain:ABIErrorConventionFixtureDomain code:self.value userInfo:nil];
+    }
+    return succeed;
+}
+- (NSString *)describe:(NSInteger)value error:(NSError **)error {
+    if (value < 0) {
+        if (error) *error = [NSError errorWithDomain:ABIErrorConventionFixtureDomain code:value userInfo:nil];
+        return nil;
+    }
+    return [NSString stringWithFormat:@"%ld", (long)value];
+}
+- (BOOL)failSilently:(NSError **)error { return NO; }
+- (NSInteger)count:(NSError **)error { return NSNotFound; }
+- (NSInteger)raise:(NSString *)reason {
+    [NSException raise:NSInvalidArgumentException format:@"%@", reason];
+    return 0;
+}
+@end

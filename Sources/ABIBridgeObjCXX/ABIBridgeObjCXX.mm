@@ -15,6 +15,10 @@
 #include <vector>
 
 NSErrorDomain const ABIObjCInvocationErrorDomain = @"ABIBridge.ObjCInvocation";
+NSErrorDomain const ABIObjCExceptionErrorDomain = @"ABIBridge.ObjCException";
+NSErrorUserInfoKey const ABIObjCExceptionNameKey = @"ABIBridge.ObjCException.name";
+NSErrorUserInfoKey const ABIObjCExceptionReasonKey = @"ABIBridge.ObjCException.reason";
+NSErrorUserInfoKey const ABIObjCExceptionCallStackKey = @"ABIBridge.ObjCException.callStack";
 
 struct ABIObjCImplementation {
     std::atomic<size_t> references{1};
@@ -78,6 +82,19 @@ bool isForwardingImplementation(IMP implementation) {
 void fail(NSError **error, int code, NSString *message) {
     if (error) *error = [NSError errorWithDomain:ABIObjCInvocationErrorDomain code:code
                                       userInfo:@{NSLocalizedDescriptionKey: message}];
+}
+
+// An exception must not unwind through the Swift frames that called in. The
+// callee may already own transferred arguments, so they are not reclaimed.
+static void failWithException(NSError **error, NSException *exception) {
+    if (!error) return;
+    NSMutableDictionary *info = [NSMutableDictionary dictionary];
+    info[ABIObjCExceptionNameKey] = exception.name ?: @"";
+    if (exception.reason) info[ABIObjCExceptionReasonKey] = exception.reason;
+    info[ABIObjCExceptionCallStackKey] = exception.callStackSymbols ?: @[];
+    info[NSLocalizedDescriptionKey] = [NSString stringWithFormat:@"%@: %@",
+        exception.name, exception.reason ?: @"(no reason)"];
+    *error = [NSError errorWithDomain:ABIObjCExceptionErrorDomain code:0 userInfo:info];
 }
 
 const char* unqualified(const char* type) {
@@ -627,7 +644,12 @@ static BOOL invokeMessage(
         [invocation setArgument:const_cast<void *>(ownership.arguments()[index]) atIndex:index + 2];
     if (plan->ownership.consumed) CFRetain((__bridge CFTypeRef)receiver);
     ownership.transfer();
-    [invocation invokeWithTarget:receiver];
+    @try {
+        [invocation invokeWithTarget:receiver];
+    } @catch (NSException *exception) {
+        failWithException(error, exception);
+        return NO;
+    }
     if (resultSize) {
         if (plan->objectResult) {
             __unsafe_unretained id object = nil;
@@ -693,7 +715,13 @@ static BOOL invokeCImplementation(
     // authentication when converting it to the generic C function-pointer ABI.
     const auto function = reinterpret_cast<ABIUnmanagedFunction>(implementation);
     ownership.transfer();
-    const bool success = ABIUnsafeInvokeCCallInterface(interface, function, result, values.data(), &failure);
+    bool success = false;
+    @try {
+        success = ABIUnsafeInvokeCCallInterface(interface, function, result, values.data(), &failure);
+    } @catch (NSException *exception) {
+        failWithException(error, exception);
+        return NO;
+    }
     if (!success) {
         ownership.reclaim();
         if (plan->ownership.consumed) CFRelease((__bridge CFTypeRef)receiver);

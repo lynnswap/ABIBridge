@@ -12,6 +12,12 @@ typedef struct ABIObjCImplementation ABIObjCImplementation;
 
 /// Errors use the ABIFailure categories declared by ABIBridgeCore.
 FOUNDATION_EXPORT NSErrorDomain const ABIObjCInvocationErrorDomain;
+/// An Objective-C exception raised by an invoked method. The error's user info
+/// holds the exception's name, reason, and call stack under the keys below.
+FOUNDATION_EXPORT NSErrorDomain const ABIObjCExceptionErrorDomain;
+FOUNDATION_EXPORT NSErrorUserInfoKey const ABIObjCExceptionNameKey;
+FOUNDATION_EXPORT NSErrorUserInfoKey const ABIObjCExceptionReasonKey;
+FOUNDATION_EXPORT NSErrorUserInfoKey const ABIObjCExceptionCallStackKey;
 
 /// Binds a selector to a retained receiver and validates its concrete encodings. A successful handle owns its receiver and discoverable implementation images. Forwarded-only selectors cannot be bound to a concrete IMP.
 ///

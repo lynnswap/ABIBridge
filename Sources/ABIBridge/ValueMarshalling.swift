@@ -46,6 +46,14 @@ extension UnsafeMutablePointer: NativePointerValue {
         UnsafeMutableRawPointer(mutating: pointer).assumingMemoryBound(to: Pointee.self)
     }
 }
+extension AutoreleasingUnsafeMutablePointer: NativePointerValue {
+    var rawPointer: UnsafeRawPointer { UnsafeRawPointer(self) }
+    static func fromRawPointer(_ pointer: UnsafeRawPointer) -> Any {
+        AutoreleasingUnsafeMutablePointer(
+            UnsafeMutableRawPointer(mutating: pointer).assumingMemoryBound(to: Pointee.self)
+        )
+    }
+}
 extension OpaquePointer: NativePointerValue {
     var rawPointer: UnsafeRawPointer { UnsafeRawPointer(self) }
     static func fromRawPointer(_ pointer: UnsafeRawPointer) -> Any { OpaquePointer(pointer) }

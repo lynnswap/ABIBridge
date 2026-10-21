@@ -119,6 +119,26 @@ The handle retains discoverable implementation and class images. Caller-created 
 
 Captured calls share the value conversions and ownership options below and preserve function-pointer authentication through the C backend. The consumer manages replacement installation, ordering, and restoration.
 
+## Call methods that report errors
+
+A Cocoa method that reports failure through a trailing `NSError **` parameter can be prepared with a Swift `throws` signature that omits that parameter, as the Swift importer does. A `Void` result corresponds to a `BOOL` method that fails with `NO`; another result corresponds to an object method that fails with `nil`:
+
+```swift
+let open = try object.resolveMethodAndWait(
+    selector: "openDocument:error:",
+    as: ((URL) throws -> NSDocument).self
+)
+do {
+    let document = try unsafe open.unsafeInvoke(url)
+} catch let error as NSError {
+    print(error.domain, error.code)
+}
+```
+
+Invocation passes an autoreleasing error slot and throws the `NSError` the method stores. A method that fails without storing one throws ``NativeObjCUnreportedFailure``. Lookup rejects a `throws` signature when the method has no trailing `NSError **` parameter, when its result is neither `BOOL` (for `Void`) nor an object, and when the requested result is `Optional`, because `nil` then cannot be told apart from failure. Bound and unbound messages, class methods, and captured implementations accept the same signatures; variadic methods do not.
+
+To manage the slot yourself, declare the parameter as `AutoreleasingUnsafeMutablePointer<NSError?>?` and pass storage that does not own its value, such as zeroed raw memory. Read the error through the pointer's `pointee` inside the same autorelease pool; that read retains it.
+
 ## Handle lookup failures
 
 Bound lookup, implementation capture, and hook preparation report known failures as `ABIResolutionError`. Missing selectors throw `declarationNotFound` with the requested class and selector; unsupported encodings throw `unsupportedDeclaration`. Unknown native errors retain their original domains and codes.
@@ -266,4 +286,4 @@ Class-based `resolveObjCMethod` and `resolveObjCImplementation` perform class lo
 
 Ivar reads, binding, invocation, and receiver-specific callbacks remain synchronous. Receiver retention does not establish thread safety or isolation. Swift ABI member lookup follows the same async/`AndWait` naming; see <doc:SwiftMemberInvocation>.
 
-The unsafe call contract includes argument nullability, class constraints, pointer validity, ownership annotations, and any requirements that runtime encodings cannot express. Foundation signature-construction failures are reported as lookup errors. Exceptions from the invoked Objective-C or C++ implementation are not converted to Swift errors. Keep dynamically loaded receiver classes and method implementations available for as long as the object and its handles are used.
+The unsafe call contract includes argument nullability, class constraints, pointer validity, ownership annotations, and any requirements that runtime encodings cannot express. Foundation signature-construction failures are reported as lookup errors. An Objective-C exception raised by the invoked method is caught where ABIBridge calls it and thrown as ``NativeObjCException`` with the exception's name, reason, and call stack; arguments already transferred to the method are not reclaimed. C++ exceptions are not translated. Keep dynamically loaded receiver classes and method implementations available for as long as the object and its handles are used.

@@ -9,6 +9,23 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+FOUNDATION_EXPORT NSErrorDomain const ABIErrorConventionFixtureDomain;
+/// Methods that report failure through a trailing NSError ** parameter or an exception.
+@interface ABIErrorConventionFixture : NSObject
++ (nullable instancetype)fixtureWithValue:(NSInteger)value error:(NSError **)error;
+@property(readonly) NSInteger value;
+/// Fails with NO and an error whose code is value when succeed is NO.
+- (BOOL)check:(BOOL)succeed error:(NSError **)error;
+/// Fails with nil and an error when value is negative.
+- (nullable NSString *)describe:(NSInteger)value error:(NSError **)error;
+/// Fails with NO without storing an error.
+- (BOOL)failSilently:(NSError **)error;
+/// Returns NSNotFound, which is not a failure result.
+- (NSInteger)count:(NSError **)error;
+/// Raises an NSException with the given reason.
+- (NSInteger)raise:(NSString *)reason;
+@end
+
 @interface ABIVariadicFixture : NSObject
 - (NSInteger)sum:(NSInteger)count, ...;
 - (NSInteger)replacementSum:(NSInteger)count, ...;

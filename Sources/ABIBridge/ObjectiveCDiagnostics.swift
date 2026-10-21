@@ -12,6 +12,7 @@ func objcResolutionError(_ error: NSError?, declaration: NativeDeclaration) -> a
     guard let error else {
         return ABIResolutionError.metadataUnavailable("No native lookup diagnostic for " + declaration.name)
     }
+    if error.domain == ABIObjCExceptionErrorDomain { return NativeObjCException(error) }
     guard error.domain == ABIObjCInvocationErrorDomain else { return error }
     switch error.code {
     case Int(ABIFailureImageUnavailable): return ABIResolutionError.imageUnavailable
