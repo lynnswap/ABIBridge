@@ -1,4 +1,5 @@
 import ABIBridge
+import Foundation
 import ManagedSwiftFixtures
 import Testing
 
@@ -94,6 +95,19 @@ struct SwiftOptionalValueTests {
         #expect(released == nil)
     }
 
+    @Test func nilClosureWritebackKeepsTheUnspecifiedContext() async throws {
+        typealias Increment = NativeSwiftClosure<(Int64) -> Int64>
+        let pass = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.passStaleNilClosure(_:_:)",
+            as: ((NativeSwiftClosure<(NativeSwiftInout<Increment?>) throws -> Void>, AnyObject) throws -> Bool).self
+        )
+        let owner = NSObject()
+        let retainCount = CFGetRetainCount(owner)
+        let unchanged = try NativeSwiftClosure<(NativeSwiftInout<Increment?>) throws -> Void> { _ in }
+        #expect(try unsafe pass.unsafeInvoke(unchanged, owner))
+        #expect(CFGetRetainCount(owner) == retainCount)
+    }
+
     @Test func optionalsKeepTheirOwnPassingConvention() async throws {
         let runtime = ABIRuntime.shared
         // The tuple alone needs five registers, but its Optional is three words.
@@ -114,6 +128,14 @@ struct SwiftOptionalValueTests {
             _ = try await runtime.resolveSwiftFunction(
                 named: "ManagedSwiftFixtures.applyNestedOptionalClosure(_:)",
                 as: ((NativeSwiftClosure<(Int64) -> Int64>??) -> Int64).self
+            )
+        }
+        // Generic closure Optionals need reabstraction that keeps nil (#408).
+        await #expect(throws: ABIResolutionError.self) {
+            _ = try await runtime.resolveSwiftFunction(
+                named: "ManagedSwiftFixtures.applyGenericOptionalClosure(_:_:)",
+                as: ((NativeSwiftClosure<(Int64) -> Int64>?, Int64) -> Int64).self,
+                genericArguments: [.type(Int64.self)]
             )
         }
     }

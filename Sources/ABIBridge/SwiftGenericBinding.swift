@@ -1633,6 +1633,13 @@ struct SwiftGenericBinding: Sendable {
             }
             guard let wrapped = try canonicalType(of: formal).optionalWrapped else { return nil }
             function = try canonicalType(of: wrapped)
+            // Reabstraction adapters and generic pointer-auth types do not yet
+            // carry the Optional of a closure (#408).
+            guard !dependsOnParameters(function) else {
+                throw ABIResolutionError.unsupportedDeclaration(
+                    "Optional closures of generic function types are unsupported: \(function.spelling)?."
+                )
+            }
         }
         guard case .function = function else { return nil }
         return (function, closure)

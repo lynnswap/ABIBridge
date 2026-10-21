@@ -39,3 +39,24 @@
 @inline(never) public func makeOptionalClosureFactory() -> () -> (() -> Int64)? {
     { { 7 } }
 }
+
+@inline(never) public func passStaleNilClosure(
+    _ body: (inout ((Int64) -> Int64)?) throws -> Void,
+    _ owner: AnyObject
+) throws -> Bool {
+    var closure: ((Int64) -> Int64)? = nil
+    // Nil is a null function pointer; Swift leaves the context word unspecified.
+    withUnsafeMutableBytes(of: &closure) {
+        $0.storeBytes(
+            of: Unmanaged.passUnretained(owner).toOpaque(),
+            toByteOffset: MemoryLayout<UInt>.size,
+            as: UnsafeMutableRawPointer.self
+        )
+    }
+    try body(&closure)
+    return closure == nil
+}
+
+@inline(never) public func applyGenericOptionalClosure<Value>(_ body: ((Value) -> Value)?, _ value: Value) -> Value {
+    body?(value) ?? value
+}

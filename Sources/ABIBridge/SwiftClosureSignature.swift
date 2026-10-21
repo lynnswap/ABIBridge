@@ -846,7 +846,7 @@ final class SwiftNativeClosureAdapter: Sendable {
                             as: ABISwiftClosureValue.self
                         )
                         replacement.relinquishValue()
-                        ABIReleaseSwiftClosureContext(previous.context)
+                        ABIReleaseSwiftClosureContext(previous.ownedContext)
                     }
                 } else {
                     addresses[argument.index] = encoded.address

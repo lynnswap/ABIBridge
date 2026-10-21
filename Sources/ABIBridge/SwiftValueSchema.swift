@@ -144,8 +144,9 @@ enum SwiftValueSchema {
     ) throws -> CValueType {
         let wrappedType = try (actual as? any NativeOptionalValue.Type)?.wrappedType
             ?? binding.types(wrapped)[0]
-        if try wrappedType is AnyClass || wrappedType == AnyObject.self
-            || binding.isClassBound(wrapped)
+        // A generic payload is a reference only when its constraints say so.
+        if try binding.dependsOnParameters(wrapped)
+            ? binding.isClassBound(wrapped) : wrappedType is AnyClass || wrappedType == AnyObject.self
         {
             return try CValueType(scalar: ABIValuePointer)
         }
