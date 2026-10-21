@@ -92,7 +92,7 @@ struct SwiftMetadataResponse: BitwiseCopyable, ABIBridgeValue {
 ///
 /// Type lookup requests complete metadata without constructing an instance. Generic arguments are validated by the Swift runtime. Member lookups reuse the image's existing symbol index. See <doc:SwiftMemberInvocation> for lookup and invocation conventions.
 ///
-/// Complete protocol-extension declarations, such as `(extension in Module):Module.Protocol.member...`, bind Self to this concrete type for methods, accessors, and static members. genericArguments supplies only the type parameters introduced by the member.
+/// Protocol-qualified names, such as `Module.Protocol.member()` or a complete `(extension in Module):Module.Protocol.member() -> ...` declaration, bind Self to this concrete type for methods, accessors, and static members. genericArguments supplies only the type parameters introduced by the member.
 public actor NativeSwiftType: Hashable {
     /// Type handles compare by their concrete Swift metadata identity.
     public nonisolated static func == (lhs: NativeSwiftType, rhs: NativeSwiftType) -> Bool {
@@ -636,7 +636,7 @@ public actor NativeSwiftType: Hashable {
     ///
     /// The signature excludes self. Mutating value members require an explicit mutating flag because their source-level symbol does not encode it. Consuming members similarly require consuming: true. Typed receivers transfer a copy; NativeSwiftValue transfers its owned value. Borrowed views allow nonconsuming calls within their active scope; only native inout callback borrows permit mutation.
     ///
-    /// A complete instance protocol requirement declaration binds Self to this concrete type and resolves its dispatch thunk. Lookup requires the native conformance and preserves the protocol's formal Self convention.
+    /// A protocol-qualified instance requirement binds Self to this concrete type and resolves its dispatch thunk. Lookup requires the native conformance and preserves the protocol's formal Self convention.
     ///
     /// For runtime-only self, receiverABI supplies established fixed components or an opaque descriptor for formally indirect self. Metadata supplies storage dimensions, not the declaration's passing convention.
     /// - Parameters:
@@ -1371,7 +1371,7 @@ extension NativeSwiftType {
     ///
     /// For a throwing generic getter, declaredAs supplies the source function type, such as "() throws(B) -> A". Getter symbols omit the formal error type; A and B refer to the enclosing declaration's generic parameters. valueABIs supplies formal ABIs for runtime-only closed nominal values. Receiver ownership and writeback follow the ordinary member contract. receiverABI can describe runtime-only fixed components or formally indirect self, as for method lookup.
     ///
-    /// A complete protocol requirement getter declaration binds Self to this concrete type and resolves its dispatch thunk in loaded images. Lookup requires the type's native conformance; invocation uses that conformance's implementation and formal Self convention.
+    /// A protocol-qualified requirement getter binds Self to this concrete type and resolves its dispatch thunk in loaded images. Lookup requires the type's native conformance; invocation uses that conformance's implementation and formal Self convention.
     public nonisolated func resolveGetterAndWait<Signature>(
         named name: String,
         as signature: Signature.Type,
