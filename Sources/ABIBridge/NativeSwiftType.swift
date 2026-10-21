@@ -498,6 +498,9 @@ public actor NativeSwiftType: Hashable {
         let isComplete = SwiftMemberLookup.hasSignature(name)
         // A qualified declaration can spell the requirements of its context.
         let isQualified = SwiftMemberLookup.isQualified(name)
+        // The representation this type was resolved with stands for it.
+        let representations =
+            representation.flatMap { $0 == metadata ? nil : [ObjectIdentifier($0): metadata] } ?? [:]
         var originalRequest: NativeDeclaration?
         var ownerClass: AnyClass? = metadata as? AnyClass
         var ownerImage = image
@@ -564,7 +567,7 @@ public actor NativeSwiftType: Hashable {
                         declaredSignature: declaredSignature,
                         valueABIs: valueABIs
                     )
-                    if !isComplete { try plan.check(description) }
+                    if !isComplete { try plan.check(description, representations: representations) }
                     // A concrete call needs no binding, but a handle that
                     // converts class references keeps its plan so hooks can
                     // reject it.

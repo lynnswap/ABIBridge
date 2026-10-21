@@ -192,6 +192,18 @@ struct SwiftSignatureCompatibilityTests {
         #expect(try unsafe greeting.unsafeInvoke(on: CompatibilityBase()) == "hello base")
     }
 
+    @Test func labelOnlyMembersAcceptTheOwnersRepresentation() async throws {
+        let type = try await runtime.resolveSwiftType(
+            named: "ManagedSwiftFixtures.CompatibilityCount",
+            as: HostCount.self
+        )
+        let make = try await type.resolveInitializer(named: "init(_:)", as: ((Int64) -> HostCount).self)
+        let count = try unsafe make.unsafeInvoke(21)
+        #expect(count.value == 21)
+        let doubled = try await type.resolveGetter(named: "doubled", as: (() -> HostCount).self)
+        #expect(try unsafe doubled.unsafeInvoke(on: count).value == 42)
+    }
+
     @Test func hooksRequireTheNativeTypes() async throws {
         let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityBase")
         let make = try await type.resolveMethod(
@@ -206,6 +218,16 @@ struct SwiftSignatureCompatibilityTests {
                 try call.proceed()
             }
         }
+    }
+}
+
+/// A host representation of `CompatibilityCount`.
+private struct HostCount: ABIBridgeValue {
+    let value: Int64
+    static var abiType: NativeType { .int64 }
+    init(nativeValue: NativeValue) throws { value = try unsafe nativeValue.read(as: Int64.self) }
+    static func nativeValue(from value: HostCount) throws -> NativeValue {
+        try NativeValue(copying: value.value, as: .int64)
     }
 }
 

@@ -916,13 +916,28 @@ struct SwiftGenericCallPlan: Sendable {
     /// Only the call's own arguments and result convert class references.
     /// Values reached through `inout` and other conventions, tuples, and
     /// closures stay exact, because their values can flow the other way.
-    func check(_ signature: SwiftFunctionSignature) throws {
+    ///
+    /// - Parameter representations: Host types that stand for native types,
+    ///   such as the representation a member's owner was resolved with.
+    func check(
+        _ signature: SwiftFunctionSignature,
+        representations: [ObjectIdentifier: Any.Type] = [:]
+    ) throws {
+        func native(_ type: Any.Type) -> Any.Type {
+            if let native = representations[ObjectIdentifier(type)] { return native }
+            guard let optional = type as? any NativeOptionalValue.Type,
+                let native = representations[ObjectIdentifier(optional.wrappedType)]
+            else { return type }
+            func optionalType<Wrapped>(_: Wrapped.Type) -> Any.Type { Wrapped?.self }
+            return optionalType(native)
+        }
         func validate(
-            _ actual: Any.Type,
+            _ requested: Any.Type,
             for formal: SwiftFormalType,
             using binding: SwiftGenericBinding,
             at index: Int
         ) throws {
+            let actual = native(requested)
             do {
                 if formal.argumentConvention == nil,
                     !(actual is any SwiftConventionArgument.Type),
@@ -935,7 +950,10 @@ struct SwiftGenericCallPlan: Sendable {
                     for: formal,
                     defaultConsuming: binding.declaration.consumesArguments
                 ) {
-                    try binding.validateArgument(argument.wrapper.wrappedType, for: argument.value)
+                    try binding.validateArgument(
+                        native(argument.wrapper.wrappedType),
+                        for: argument.value
+                    )
                 } else {
                     try binding.validateArgument(actual, for: formal)
                 }
@@ -961,15 +979,11 @@ struct SwiftGenericCallPlan: Sendable {
                 }
             }
         }
-        guard
-            !binding.convertsReference(
-                signature.result,
-                for: binding.declaration.result,
-                isResult: true
-            )
+        let result = native(signature.result)
+        guard !binding.convertsReference(result, for: binding.declaration.result, isResult: true)
         else { return }
         do {
-            _ = try binding.resultType(signature.result, for: binding.declaration.result)
+            _ = try binding.resultType(result, for: binding.declaration.result)
         } catch let ABIResolutionError.signatureMismatch(mismatch) {
             throw ABIResolutionError.signatureMismatch(mismatch.at(.result))
         }

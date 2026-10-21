@@ -53,3 +53,10 @@ extension CompatibilityNamed {
 extension CompatibilityBase: CompatibilityNamed {
     @inline(never) public func compatibilityLabel() -> String { name() }
 }
+
+// A value type that hosts represent with their own adapter.
+@frozen public struct CompatibilityCount {
+    public var value: Int64
+    @inline(never) public init(_ value: Int64) { self.value = value }
+    public var doubled: CompatibilityCount { CompatibilityCount(value * 2) }
+}
