@@ -89,6 +89,14 @@ struct SwiftSignatureCompatibilityTests {
                     "((ManagedSwiftFixtures.CompatibilityBase) -> ManagedSwiftFixtures.CompatibilityDerived) -> Swift.String"
             )
         }
+        // An adapter subclass is not passed as an object reference.
+        await #expect(throws: ABIResolutionError.self) {
+            _ = try await runtime.resolveSwiftFunction(
+                named: "ManagedSwiftFixtures.compatibilityName(_:)",
+                as: ((IntegerAdaptedSubclass) -> String).self,
+                declaredAs: "(ManagedSwiftFixtures.CompatibilityBase) -> Swift.String"
+            )
+        }
         // Convention wrappers keep the native type, so hooks cannot see a
         // superclass instance as the subclass.
         let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityBase")
@@ -128,5 +136,15 @@ struct SwiftSignatureCompatibilityTests {
                 try call.proceed()
             }
         }
+    }
+}
+
+/// A subclass of the native parameter type that marshals as an integer.
+private final class IntegerAdaptedSubclass: CompatibilityBase, ABIBridgeValue, @unchecked Sendable {
+    static var abiType: NativeType { .int64 }
+    override init() { super.init() }
+    init(nativeValue: NativeValue) throws { super.init() }
+    static func nativeValue(from value: IntegerAdaptedSubclass) throws -> NativeValue {
+        try NativeValue(copying: Int64(42), as: .int64)
     }
 }

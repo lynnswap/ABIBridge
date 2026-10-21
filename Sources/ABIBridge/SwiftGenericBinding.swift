@@ -1498,8 +1498,13 @@ struct SwiftGenericBinding: Sendable {
         guard let native = try? types(formal).first else { return false }
         let nativeOptional = native as? any NativeOptionalValue.Type
         let requestedOptional = actual as? any NativeOptionalValue.Type
+        let requested = requestedOptional?.wrappedType ?? actual
+        // An adapter class marshals through its own representation, not as a
+        // reference to itself.
         guard let nativeClass = (nativeOptional?.wrappedType ?? native) as? AnyClass,
-            let requestedClass = (requestedOptional?.wrappedType ?? actual) as? AnyClass
+            let requestedClass = requested as? AnyClass,
+            !(requested is any ABIBridgeValue.Type),
+            !(requested is any ABIBridgeSwiftValue.Type)
         else { return false }
         let (source, target) = isResult ? (nativeClass, requestedClass) : (requestedClass, nativeClass)
         let sourceIsOptional = (isResult ? nativeOptional : requestedOptional) != nil
