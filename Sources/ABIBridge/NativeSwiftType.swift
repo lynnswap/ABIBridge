@@ -661,10 +661,9 @@ public actor NativeSwiftType: Hashable {
                                     arguments: genericArguments,
                                     declaredSignature: declaredSignature,
                                     valueABIs: valueABIs
-                                ),
-                                try explicitSignature
-                                    || plan.matches(SwiftFunctionSignature(signature))
+                                )
                             else { return nil }
+                            if !explicitSignature { try plan.check(SwiftFunctionSignature(signature)) }
                             return plan
                         }
                         if let (entry, plan) = try selection.selected(for: request) {
@@ -674,7 +673,9 @@ public actor NativeSwiftType: Hashable {
                             shadowing = unavailable
                             break
                         }
-                        if let failure = selection.failure { preparationFailure = failure }
+                        if let failure = selection.failure ?? selection.mismatch {
+                            preparationFailure = failure
+                        }
                     }
                 } catch ABIResolutionError.imageUnavailable {
                     hasUnavailableExtensions = true

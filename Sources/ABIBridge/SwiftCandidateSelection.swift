@@ -8,6 +8,7 @@ import ABIBridgeRuntime
 struct SwiftCandidateSelection<Value> {
     private(set) var accepted: [(entry: SwiftEntry, value: Value)] = []
     private var rejections: [(declaration: NativeDeclaration, error: any Error)] = []
+    private var mismatches: [(declaration: NativeDeclaration, mismatch: ABIResolutionError.SignatureMismatch)] = []
     /// Why a declaration that applies to the request has no selectable code.
     /// Such a declaration still takes precedence over later lookup tiers.
     private(set) var unavailable: (any Error)?
@@ -28,7 +29,8 @@ struct SwiftCandidateSelection<Value> {
             do {
                 guard let applicable = try accept(candidate, candidate.entry) else { continue }
                 value = applicable
-            } catch ABIResolutionError.signatureMismatch {
+            } catch let ABIResolutionError.signatureMismatch(mismatch) {
+                mismatches.append((candidate.declaration, mismatch))
                 continue
             } catch {
                 rejections.append((candidate.declaration, error))
@@ -63,6 +65,27 @@ struct SwiftCandidateSelection<Value> {
             )
         }
         return accepted.first
+    }
+
+    /// How the request is incompatible with the candidates that did not apply.
+    ///
+    /// One candidate reports its failing position and types; several list
+    /// each declaration with its failing position.
+    var mismatch: (any Error)? {
+        guard mismatches.count > 1 else {
+            return mismatches.first.map {
+                ABIResolutionError.signatureMismatch($0.mismatch.inContext($0.declaration, at: $0.mismatch.position))
+            }
+        }
+        return ABIResolutionError.signatureMismatch(
+            .init(
+                position: .signature,
+                expected: "A declaration compatible with the requested signature",
+                found: mismatches.map {
+                    "\($0.declaration.name): \($0.mismatch.position) expected \($0.mismatch.expected), found \($0.mismatch.found.joined(separator: ", "))"
+                }
+            )
+        )
     }
 
     /// Why no candidate applied, when one could not be prepared. Several
