@@ -568,11 +568,8 @@ public actor NativeSwiftType: Hashable {
                         valueABIs: valueABIs
                     )
                     if !isComplete { try plan.check(description, representations: representations) }
-                    // A concrete call needs no binding, but a handle that
-                    // converts class references keeps its plan so hooks can
-                    // reject it.
                     return SelectedMemberPlan(
-                        plan: usesBinding || plan.convertsReferences(description) ? plan : nil
+                        plan: usesBinding || plan.isRequired(for: description) ? plan : nil
                     )
                 }
             }

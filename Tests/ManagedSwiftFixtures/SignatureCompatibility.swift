@@ -5,6 +5,7 @@ open class CompatibilityBase {
     open func name() -> String { "base" }
     @inline(never) open func makeDerived() -> CompatibilityDerived { CompatibilityDerived() }
     open var derived: CompatibilityDerived { CompatibilityDerived() }
+    @inline(never) public final func opaqueCount() -> some Equatable { Int64(42) }
 }
 
 public final class CompatibilityDerived: CompatibilityBase {
@@ -13,6 +14,8 @@ public final class CompatibilityDerived: CompatibilityBase {
 }
 
 @inline(never) public func compatibilityMakeDerived() -> CompatibilityDerived { CompatibilityDerived() }
+
+@inline(never) public func compatibilityOpaqueCount() -> some Equatable { Int64(41) }
 
 @inline(never) public func compatibilityMakeOptional(_ present: Bool) -> CompatibilityDerived? {
     present ? CompatibilityDerived() : nil

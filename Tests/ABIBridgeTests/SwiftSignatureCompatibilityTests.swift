@@ -204,6 +204,17 @@ struct SwiftSignatureCompatibilityTests {
         #expect(try unsafe doubled.unsafeInvoke(on: count).value == 42)
     }
 
+    @Test func labelOnlyNamesReturnOpaqueResultsAsTheirUnderlyingType() async throws {
+        let function = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.compatibilityOpaqueCount()",
+            as: (() -> Int64).self
+        )
+        #expect(try unsafe function.unsafeInvoke() == 41)
+        let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityBase")
+        let method = try await type.resolveMethod(named: "opaqueCount()", as: (() -> Int64).self)
+        #expect(try unsafe method.unsafeInvoke(on: CompatibilityBase()) == 42)
+    }
+
     @Test func hooksRequireTheNativeTypes() async throws {
         let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityBase")
         let make = try await type.resolveMethod(
