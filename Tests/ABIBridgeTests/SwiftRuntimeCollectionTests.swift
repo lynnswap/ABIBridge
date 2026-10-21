@@ -74,7 +74,7 @@ struct SwiftRuntimeCollectionTests {
             as: (([String: NativeSwiftValue]) -> String).self)
         #expect(try unsafe describeByName.unsafeInvoke(["x": records[1]]) == "x=r1#1")
 
-        // A runtime-only key uses key-value pairs; a later pair replaces an earlier equal key.
+        // A runtime-only key uses key-value pairs; a later pair's value replaces an equal key's.
         let makeCounts = try await runtime.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.makeCollectionRecordCounts(_:)",
             as: ((Int64) -> [(key: NativeSwiftValue, value: Int64)]).self)
@@ -85,6 +85,20 @@ struct SwiftRuntimeCollectionTests {
             as: (([(key: NativeSwiftValue, value: Int64)]) -> String).self)
         let pairs: [(key: NativeSwiftValue, value: Int64)] = [(records[0], 1), (records[1], 2), (records[0], 3)]
         #expect(try unsafe describeCounts.unsafeInvoke(pairs) == "r0#0=3,r1#1=2")
+
+        // Like Set(_:) and Dictionary(_:uniquingKeysWith:), the first of equal
+        // members or keys stays, with the last pair's value.
+        let makeTagged = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeCollectionTaggedRecords()", as: (() -> [NativeSwiftValue]).self)
+        let tagged = try unsafe makeTagged.unsafeInvoke()
+        let describeTaggedSet = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.describeCollectionTaggedSet(_:)", as: (([NativeSwiftValue]) -> String).self)
+        #expect(try unsafe describeTaggedSet.unsafeInvoke(tagged) == "1/first,2/other")
+        let describeTaggedCounts = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.describeCollectionTaggedCounts(_:)",
+            as: (([(key: NativeSwiftValue, value: Int64)]) -> String).self)
+        let taggedPairs: [(key: NativeSwiftValue, value: Int64)] = [(tagged[0], 1), (tagged[1], 2)]
+        #expect(try unsafe describeTaggedCounts.unsafeInvoke(taggedPairs) == "1/first=2")
     }
 
     @Test func conversionsReleaseEveryElementTheyCopy() async throws {

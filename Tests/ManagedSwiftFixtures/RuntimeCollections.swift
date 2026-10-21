@@ -104,3 +104,27 @@ public final class CollectionRuntimeProbe: Hashable {
 @inline(never) public func countCollectionProbeTable(_ table: [CollectionRuntimeProbe: CollectionRuntimeProbe]) -> Int {
     table.count
 }
+
+/// Equal by `id` only, so a test can tell which of two equal values a
+/// collection kept.
+public struct CollectionTaggedRecord: Hashable {
+    public let id: Int64
+    public let tag: String
+    init(id: Int64, tag: String) { self.id = id; self.tag = tag }
+    public static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
+    public func hash(into hasher: inout Hasher) { hasher.combine(id) }
+    var summary: String { "\(id)/\(tag)" }
+}
+
+@inline(never) public func makeCollectionTaggedRecords() -> [CollectionTaggedRecord] {
+    [CollectionTaggedRecord(id: 1, tag: "first"), CollectionTaggedRecord(id: 1, tag: "last"),
+     CollectionTaggedRecord(id: 2, tag: "other")]
+}
+
+@inline(never) public func describeCollectionTaggedSet(_ records: Set<CollectionTaggedRecord>) -> String {
+    records.sorted { $0.id < $1.id }.map(\.summary).joined(separator: ",")
+}
+
+@inline(never) public func describeCollectionTaggedCounts(_ counts: [CollectionTaggedRecord: Int64]) -> String {
+    counts.sorted { $0.key.id < $1.key.id }.map { "\($0.key.summary)=\($0.value)" }.joined(separator: ",")
+}
