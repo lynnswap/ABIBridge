@@ -416,29 +416,28 @@ public actor NativeSwiftType: Hashable {
             DeclarationKey.make(candidate.declaration.name, language: .swift) == key ? () : nil
         }
         if let (entry, _) = try dispatched.selected(for: declaration) { return entry }
-        do {
-            guard exact else {
-                return SwiftEntry(
-                    symbol: try resolver.resolveSwiftExtension(
-                        declaration,
-                        genericContext: genericContext()
-                    )
+        // A matching member of the defining type hides extension members even
+        // when its code cannot be selected.
+        if let unavailable = dispatched.unavailable { throw unavailable }
+        guard exact else {
+            return SwiftEntry(
+                symbol: try resolver.resolveSwiftExtension(
+                    declaration,
+                    genericContext: genericContext()
                 )
-            }
-            let selection = try SwiftCandidateSelection(
-                resolver.swiftDeclarationCandidates(declaration, in: nil, extensionsOnly: true)
-            ) { candidate, _ -> Void? in
-                [candidate.declaration.name, candidate.memberName].contains {
-                    DeclarationKey.make($0, language: .swift) == key
-                } ? () : nil
-            }
-            guard let (entry, _) = try selection.selected(for: declaration) else {
-                throw selection.failure ?? ABIResolutionError.declarationNotFound(declaration)
-            }
-            return entry
-        } catch ABIResolutionError.declarationNotFound where dispatched.failure != nil {
-            throw dispatched.failure!
+            )
         }
+        let selection = try SwiftCandidateSelection(
+            resolver.swiftDeclarationCandidates(declaration, in: nil, extensionsOnly: true)
+        ) { candidate, _ -> Void? in
+            [candidate.declaration.name, candidate.memberName].contains {
+                DeclarationKey.make($0, language: .swift) == key
+            } ? () : nil
+        }
+        guard let (entry, _) = try selection.selected(for: declaration) else {
+            throw selection.failure ?? ABIResolutionError.declarationNotFound(declaration)
+        }
+        return entry
     }
 
     // A library-evolution class can export only the dispatch thunk and method
@@ -614,6 +613,9 @@ public actor NativeSwiftType: Hashable {
                 }
             }
             if belongs && usesBinding && !exact, let signature {
+                // A member that applies but has no selectable code still hides
+                // extension and superclass members.
+                var shadowing: (any Error)?
                 do {
                     // The defining type's members take precedence over extension members.
                     for extensionsOnly in [false, true] {
@@ -651,6 +653,10 @@ public actor NativeSwiftType: Hashable {
                         if let (entry, plan) = try selection.selected(for: request) {
                             return (entry, owner, plan)
                         }
+                        if let unavailable = selection.unavailable {
+                            shadowing = unavailable
+                            break
+                        }
                         if let failure = selection.failure { preparationFailure = failure }
                     }
                 } catch ABIResolutionError.imageUnavailable {
@@ -658,6 +664,7 @@ public actor NativeSwiftType: Hashable {
                 } catch ABIResolutionError.unsupportedDeclaration(let reason) {
                     preparationFailure = ABIResolutionError.unsupportedDeclaration(reason)
                 }
+                if let shadowing { throw shadowing }
             }
             guard inherited, let current = ownerClass, let parent = class_getSuperclass(current)
             else {

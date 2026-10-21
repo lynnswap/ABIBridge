@@ -541,6 +541,7 @@ struct SwiftMemberInvocationTests {
                 extension Base {
                     @inline(never) public func value(_ input: Int64) -> Int64 { input + 50 }
                     public var count: Int64 { get async { 99 } }
+                    public static func kind() -> Int64 { 77 }
                 }
                 """,
             linkArguments: ["-I", library.directory.path, library.libraryURL.path]
@@ -624,12 +625,19 @@ struct SwiftMemberInvocationTests {
             as: (() async -> Int64).self
         )
         #expect(try await unsafe asyncCount.unsafeInvoke(on: baseObject) == 7)
-        // Class-method entries are not selected; the failure says why.
-        do {
-            _ = try await base.resolveStaticMethod(named: "kind()", as: (() -> Int64).self)
-            Issue.record("A thunk-only class method resolved")
-        } catch ABIResolutionError.unsupportedDeclaration(let reason) {
-            #expect(reason.contains("dispatch thunk"))
+        // Class-method entries are not selected; the failure says why, and
+        // the class's method still hides the extension's.
+        for declared in [nil, "() -> Swift.Int64"] {
+            do {
+                _ = try await base.resolveStaticMethod(
+                    named: "kind()",
+                    as: (() -> Int64).self,
+                    declaredAs: declared
+                )
+                Issue.record("A thunk-only class method resolved")
+            } catch ABIResolutionError.unsupportedDeclaration(let reason) {
+                #expect(reason.contains("dispatch thunk"))
+            }
         }
         // The opaque result descriptor is named by the member, not its thunk.
         let opaque = try await base.resolveMethod(
