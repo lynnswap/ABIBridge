@@ -515,7 +515,7 @@ struct SwiftCallbackValues: Sendable {
             nativeClosure = argument.closure != nil || host is any SwiftClosureValue.Type
         }
         if nativeClosure {
-            return { ABIReleaseSwiftClosureContext($0.load(as: ABISwiftClosureValue.self).context) }
+            return { ABIReleaseSwiftClosureContext($0.load(as: ABISwiftClosureValue.self).ownedContext) }
         }
         let metadata = argument.runtimeValue?.valueType.metadata ?? host
         let constants = SwiftValueConstants(metadata)

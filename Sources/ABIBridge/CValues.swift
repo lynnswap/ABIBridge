@@ -141,6 +141,12 @@ struct CValueCodec<Value>: Sendable {
         }
     }
 
+    /// Whether values go through a foreign representation instead of their Swift storage.
+    var convertsValue: Bool {
+        if case .foreign = kind { return true }
+        return false
+    }
+
     func encode(_ value: Value) throws -> NativeValueStorage {
         let storage = NativeValueStorage(size: type.size, alignment: type.alignment)
         storage.retainOwner(try encode(value, into: storage.address))

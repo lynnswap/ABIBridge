@@ -1529,7 +1529,7 @@ struct SwiftGenericBinding: Sendable {
             try plan.validateOwnedResult()
             return plan.nativeMetadata
         }
-        if case .function = canonical, actual is any SwiftClosureValue.Type {
+        if try closureFunction(canonical, for: actual) != nil {
             try validateArgument(actual, for: canonical)
             return try types(canonical)[0]
         }
@@ -1616,10 +1616,26 @@ struct SwiftGenericBinding: Sendable {
         )
     }
 
+    /// The function type that a host closure lowers, unwrapping the formal
+    /// Optional of an Optional closure.
+    func closureFunction(
+        _ formal: SwiftFormalType,
+        for actual: Any.Type
+    ) throws -> (function: SwiftFormalType, closure: any SwiftClosureValue.Type)? {
+        guard let closure = actual as? any SwiftClosureValue.Type else { return nil }
+        var function = formal
+        if closure.isOptional {
+            guard let wrapped = try canonicalType(of: formal).optionalWrapped else { return nil }
+            function = try canonicalType(of: wrapped)
+        }
+        guard case .function = function else { return nil }
+        return (function, closure)
+    }
+
     func validateArgument(_ actual: Any.Type, for formal: SwiftFormalType) throws {
-        if case .function = formal, let closure = actual as? any SwiftClosureValue.Type {
+        if let (function, closure) = try closureFunction(formal, for: actual) {
             _ = try SwiftGenericCallPlan.closure(
-                formal,
+                function,
                 signature: SwiftFunctionSignature(closure.swiftFunctionType),
                 binding: self
             )

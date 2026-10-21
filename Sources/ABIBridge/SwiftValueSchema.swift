@@ -212,6 +212,20 @@ enum SwiftValueSchema {
         return try !(binding.types(type)[0] is AnyClass)
     }
 
+    /// The storage of an enum with payload cases, such as an Optional. Swift
+    /// passes the whole value as integer data, whatever its payload types,
+    /// and coalesces the bytes into pointer-sized chunks.
+    /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/IRGen/EnumPayload.cpp
+    static func enumStorage(of metadata: Any.Type) throws -> CValueType {
+        let layout = ABISwiftGetValueLayout(unsafeBitCast(metadata, to: UnsafeRawPointer.self))
+        let byte = try CValueType(scalar: ABIValueUInt8)
+        return try CValueType(
+            swiftComponents: CValueType(fields: Array(repeating: byte, count: layout.size)),
+            size: layout.size,
+            alignment: layout.alignment
+        )
+    }
+
     /// Indirect storage for a value of `type`, which native code addresses through its metadata.
     static func storage(of type: Any.Type) throws -> CValueType {
         let layout = ABISwiftGetValueLayout(unsafeBitCast(type, to: UnsafeRawPointer.self))

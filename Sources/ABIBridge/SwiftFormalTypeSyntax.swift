@@ -380,6 +380,17 @@ extension SwiftFormalType {
         return (try Self(value), flags)
     }
 
+    /// The wrapped type of `Swift.Optional<Wrapped>`.
+    var optionalWrapped: Self? {
+        if case .named("Swift.Optional", let arguments) = self, arguments.count == 1 {
+            return arguments[0]
+        }
+        guard let (name, arguments) = nominalDeclaration, name == "Swift.Optional",
+            arguments.count == 1
+        else { return nil }
+        return arguments[0]
+    }
+
     var nominalDeclaration: (name: String, arguments: [Self])? {
         switch self {
         case .nominal(let name, let arguments): return (name, arguments)

@@ -1074,10 +1074,10 @@ struct SwiftGenericCallPlan: Sendable {
                 )
             }
         }
-        if case .function = formal, let closure = actual as? any SwiftClosureValue.Type {
+        if let (function, closure) = try binding.closureFunction(formal, for: actual) {
             return .closure(
                 try Self.closure(
-                    formal,
+                    function,
                     signature: SwiftFunctionSignature(closure.swiftFunctionType),
                     binding: binding
                 ),
@@ -1171,9 +1171,9 @@ struct SwiftGenericCallPlan: Sendable {
         if case .tuple = canonical {
             return .tuple(try tuple(canonical, actual: actual, binding: binding))
         }
-        if case .function = canonical, let closure = actual as? any SwiftClosureValue.Type {
+        if let (function, closure) = try binding.closureFunction(canonical, for: actual) {
             let plan = try Self.closure(
-                canonical,
+                function,
                 signature: SwiftFunctionSignature(closure.swiftFunctionType),
                 binding: binding
             )
@@ -1525,6 +1525,13 @@ struct SwiftGenericCallPlan: Sendable {
     }
 
     static func concreteNativeMetadata(_ actual: Any.Type) throws -> Any.Type {
+        if let closure = actual as? any SwiftClosureValue.Type, closure.isOptional {
+            func optional<Wrapped>(_: Wrapped.Type) -> Any.Type { Wrapped?.self }
+            return try _openExistential(
+                concreteNativeMetadata((actual as! any NativeOptionalValue.Type).wrappedType),
+                do: optional
+            )
+        }
         if let closure = actual as? any SwiftClosureValue.Type {
             let function = closure.swiftFunctionType
             let signature = try SwiftFunctionSignature(function)

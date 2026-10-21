@@ -12,8 +12,10 @@ func swiftClosureAuthType(_ type: Any.Type) throws -> String {
         )
     }
     if let closure = type as? any SwiftClosureValue.Type {
-        return "("
-            + (try SwiftFunctionSignature(closure.swiftFunctionType).closureAuthDescription()) + ")"
+        let function =
+            "(" + (try SwiftFunctionSignature(closure.swiftFunctionType).closureAuthDescription())
+            + ")"
+        return closure.isOptional ? "Optional<" + function + ">" : function
     }
     let base = (type as? any NativeOptionalValue.Type)?.wrappedType ?? type
     let managed = type is any ABIBridgeSwiftValue.Type
@@ -96,6 +98,9 @@ func swiftClosureAuthTypes(_ type: Any.Type) throws -> [String] {
 
 protocol SwiftClosureValue: SendableMetatype {
     static var swiftFunctionType: Any.Type { get }
+    /// Whether the host value is an Optional of a closure, whose formal type
+    /// is an Optional of `swiftFunctionType`.
+    static var isOptional: Bool { get }
     static func makeClosureCodec() throws -> SwiftClosureCodec
     static func makeGenericClosureCodec(plan: SwiftGenericClosurePlan) throws -> SwiftClosureCodec
     func encodeGenericClosure(
@@ -110,7 +115,55 @@ protocol SwiftClosureValue: SendableMetatype {
 }
 
 extension SwiftClosureValue {
+    static var isOptional: Bool { false }
     func encodeClosureResult() throws -> NativeValueStorage { try encodeClosure(consuming: false) }
+}
+
+// Swift represents a nil closure with a null function pointer, so an Optional
+// closure has the closure's storage and calling convention, and its other
+// word is unspecified.
+extension Optional: SwiftClosureValue where Wrapped: SwiftClosureValue {
+    static var swiftFunctionType: Any.Type { Wrapped.swiftFunctionType }
+    static var isOptional: Bool { true }
+
+    static func makeClosureCodec() throws -> SwiftClosureCodec {
+        try Wrapped.makeClosureCodec().optional(Self.self)
+    }
+
+    static func makeGenericClosureCodec(plan: SwiftGenericClosurePlan) throws -> SwiftClosureCodec {
+        try Wrapped.makeGenericClosureCodec(plan: plan).optional(Self.self)
+    }
+
+    func encodeGenericClosure(
+        plan: SwiftGenericClosurePlan,
+        retainingCode owner: Any?,
+        asynchronous: Bool,
+        consuming: Bool
+    ) throws -> NativeValueStorage {
+        guard let self else { return SwiftClosureStorage.null() }
+        return try self.encodeGenericClosure(
+            plan: plan,
+            retainingCode: owner,
+            asynchronous: asynchronous,
+            consuming: consuming
+        )
+    }
+
+    func encodeClosure(consuming: Bool) throws -> NativeValueStorage {
+        guard let self else { return SwiftClosureStorage.null() }
+        return try self.encodeClosure(consuming: consuming)
+    }
+
+    func encodeClosureResult() throws -> NativeValueStorage {
+        guard let self else { return SwiftClosureStorage.null() }
+        return try self.encodeClosureResult()
+    }
+
+    func retainingAsynchronousArgument(consuming: Bool) throws -> Any {
+        guard let self else { return Self.none as Any }
+        return Self.some(try self.retainingAsynchronousArgument(consuming: consuming) as! Wrapped)
+            as Any
+    }
 }
 
 // Cold host calls suspend while their ABI is prepared. Acquire callback borrows
@@ -142,6 +195,49 @@ func swiftRetainingAsynchronousClosureArgument<Value>(
         }
     }
     return retained
+}
+
+extension SwiftClosureCodec {
+    /// A codec for an Optional of this codec's closures, which reads a null
+    /// function pointer as nil.
+    func optional<Wrapped>(_: Wrapped?.Type) -> SwiftClosureCodec {
+        @Sendable func none() -> Any { Wrapped?.none as Any }
+        @Sendable func some(_ value: Any) -> Any { Wrapped?.some(value as! Wrapped) as Any }
+        var encoding: (@Sendable (Any, Any?) throws -> NativeValueStorage)?
+        if let encode = encodeValue {
+            encoding = { value, owner in
+                guard let wrapped = value as! Wrapped? else { return SwiftClosureStorage.null() }
+                return try encode(wrapped, owner)
+            }
+        }
+        var borrowing: (@Sendable (SwiftValueBorrow, SwiftValueCodeLifetime?) -> Any)?
+        if let borrow = borrowValue {
+            borrowing = { access, lifetime in
+                // The callback decoder starts this borrow on the current
+                // thread; a failed read leaves the error to the closure's use.
+                let isNull = try? access.withAddress {
+                    $0.load(as: ABISwiftClosureValue.self).function == nil
+                }
+                return isNull == true ? none() : some(borrow(access, lifetime))
+            }
+        }
+        var taking: (@Sendable (ABISwiftClosureValue, SwiftValueCodeLifetime?) -> Any)?
+        if let take = takeValue {
+            taking = { value, lifetime in
+                value.function == nil ? none() : some(take(value, lifetime))
+            }
+        }
+        let makeValue = self.makeValue
+        return SwiftClosureCodec(
+            type: type,
+            nativePlan: nativePlan,
+            encoding: encoding,
+            borrowing: borrowing,
+            taking: taking
+        ) { value, owner, taking, lifetime in
+            value.function == nil ? none() : some(try makeValue(value, owner, taking, lifetime))
+        }
+    }
 }
 
 struct SwiftClosureCodec: Sendable {
@@ -264,13 +360,23 @@ final class SwiftClosureStorage {
             codeLifetime: codeLifetime,
             destroyingWith: destroy
         )
-        ABIRetainSwiftClosureContext(value.context)
+        ABIRetainSwiftClosureContext(value.ownedContext)
         storage.store(value)
         return storage
     }
 
     static func destroy(_ address: UnsafeMutableRawPointer) {
-        ABIReleaseSwiftClosureContext(address.load(as: ABISwiftClosureValue.self).context)
+        ABIReleaseSwiftClosureContext(address.load(as: ABISwiftClosureValue.self).ownedContext)
+    }
+
+    /// The storage of a nil Optional closure.
+    static func null() -> NativeValueStorage {
+        let storage = NativeValueStorage(
+            size: MemoryLayout<ABISwiftClosureValue>.stride,
+            alignment: MemoryLayout<ABISwiftClosureValue>.alignment
+        )
+        storage.store(ABISwiftClosureValue(function: nil, context: nil))
+        return storage
     }
 }
 
@@ -1037,4 +1143,10 @@ private final class SwiftNativeClosureContext {
             if ownsContext { ABIReleaseSwiftClosureContext(value.context) }
         }
     }
+}
+
+extension ABISwiftClosureValue {
+    /// The context this value holds a reference to. A nil Optional closure
+    /// has a null function and an unspecified context.
+    var ownedContext: UnsafeMutableRawPointer? { function == nil ? nil : context }
 }

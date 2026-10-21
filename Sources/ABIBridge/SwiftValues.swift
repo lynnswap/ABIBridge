@@ -54,6 +54,14 @@ struct SwiftValueCodec<Value>: Sendable {
         }
         closure = nil
         let base = (Value.self as? any NativeOptionalValue.Type)?.wrappedType ?? Value.self
+        // These wrappers are host classes; their reference is not the native value.
+        guard Value.self == base
+            || (base != NativeSwiftValue.self && base != NativeSwiftBorrowedValue.self)
+        else {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "An Optional runtime value is unsupported; pass a NativeSwiftValue of the Optional type."
+            )
+        }
         let isObject = base is AnyClass || base == AnyObject.self
         let isAdapter = base is any ABIBridgeValue.Type
         let managed = Value.self as? any ABIBridgeSwiftValue.Type
@@ -105,6 +113,23 @@ struct SwiftValueCodec<Value>: Sendable {
             let word = try CValueType(scalar: MemoryLayout<UInt>.size == 8 ? ABIValueUInt64 : ABIValueUInt32)
             type = try CValueType(fields: Array(repeating: word, count: MemoryLayout<String>.size / MemoryLayout<UInt>.size))
             cValue = nil
+        } else if let optional = Value.self as? any NativeOptionalValue.Type,
+            !(base is any NativePointerValue.Type)
+        {
+            // An Optional of a value with Swift storage is a Swift enum.
+            func wrapped<Wrapped>(_ type: Wrapped.Type) throws -> CValueType {
+                let codec = try SwiftValueCodec<Wrapped>()
+                guard codec.storesSwiftValue else {
+                    throw ABIResolutionError.unsupportedDeclaration(
+                        "An Optional requires its wrapped value's Swift storage: \(String(reflecting: Wrapped.self))."
+                    )
+                }
+                return codec.type
+            }
+            let wrappedType = try _openExistential(optional.wrappedType, do: wrapped)
+            type = try ABISwiftValueIsIndirect(wrappedType.handle)
+                ? SwiftValueSchema.storage(of: Value.self) : SwiftValueSchema.enumStorage(of: Value.self)
+            cValue = nil
         } else {
             let codec = try CValueCodec<Value>()
             cValue = codec
@@ -117,6 +142,11 @@ struct SwiftValueCodec<Value>: Sendable {
                 )
             }
         }
+    }
+
+    /// Whether a value of this type is passed as its own Swift storage, without conversion.
+    var storesSwiftValue: Bool {
+        closure == nil && tuple == nil && cValue?.convertsValue != true
     }
 
     func makeStorage() -> NativeValueStorage {

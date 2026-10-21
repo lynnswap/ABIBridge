@@ -1217,6 +1217,9 @@ struct SwiftGenericBindingTests {
             try SwiftFunctionSignature((([String: Int64]) -> Set<Int64>).self)
                 .closureDiscriminator() == 63592
         )
+        typealias Increment = NativeSwiftClosure<(Int64) -> Int64>
+        #expect(try SwiftFunctionSignature(((Increment?) -> Int64).self).closureDiscriminator() == 16285)
+        #expect(try SwiftFunctionSignature((() -> Increment?).self).closureDiscriminator() == 63771)
     }
 
     @Test func collectionSugarMatchesRuntimeAndToolchainDemanglers() {
