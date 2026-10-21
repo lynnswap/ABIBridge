@@ -79,6 +79,21 @@ struct SwiftOptionalValueTests {
         #expect(try unsafe seven.unsafeInvoke() == 7)
     }
 
+    @Test func reabstractedClosuresPassANilOptionalClosureThrough() async throws {
+        typealias Checker = NativeSwiftClosure<(Int64, NativeSwiftClosure<(Int64) -> Int64>?) -> Int64>
+        let make = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeGenericOptionalChecker(_:)",
+            as: ((Int64.Type) -> Checker).self,
+            genericArguments: [.type(Int64.self)]
+        )
+        let check = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.checkNilOptionalClosure(_:)",
+            as: ((Checker) -> Int64).self
+        )
+        // The generic closure is adapted for the concrete consumer.
+        #expect(try unsafe check.unsafeInvoke(make.unsafeInvoke(Int64.self)) == -1)
+    }
+
     @Test func nilClosureStorageReleasesAClosureStoredThroughInout() async throws {
         let replace = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.replaceOptionalClosure(_:_:)",
@@ -128,6 +143,13 @@ struct SwiftOptionalValueTests {
             _ = try await runtime.resolveSwiftFunction(
                 named: "ManagedSwiftFixtures.applyNestedOptionalClosure(_:)",
                 as: ((NativeSwiftClosure<(Int64) -> Int64>??) -> Int64).self
+            )
+        }
+        // An Optional handle cannot stand for a required closure.
+        await #expect(throws: ABIResolutionError.self) {
+            _ = try await runtime.resolveSwiftFunction(
+                named: "ManagedSwiftFixtures.applyEscapingClosure(_:)",
+                as: ((NativeSwiftClosure<(Int64) -> Int64>?) -> Int64).self
             )
         }
         // Generic closure Optionals need reabstraction that keeps nil (#408).

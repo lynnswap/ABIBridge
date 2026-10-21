@@ -60,3 +60,15 @@
 @inline(never) public func applyGenericOptionalClosure<Value>(_ body: ((Value) -> Value)?, _ value: Value) -> Value {
     body?(value) ?? value
 }
+
+@inline(never) public func makeGenericOptionalChecker<Value>(
+    _: Value.Type
+) -> (Value, ((Int64) -> Int64)?) -> Int64 {
+    { _, body in body == nil ? -1 : 1 }
+}
+
+@inline(never) public func checkNilOptionalClosure(_ checker: (Int64, ((Int64) -> Int64)?) -> Int64) -> Int64 {
+    checker(0, nil)
+}
+
+@inline(never) public func applyEscapingClosure(_ body: @escaping (Int64) -> Int64) -> Int64 { body(1) }

@@ -762,6 +762,8 @@ final class SwiftNativeClosureAdapter: Sendable {
         retainingCode owner: Any?,
         codeLifetime: SwiftValueCodeLifetime?
     ) -> NativeValueStorage {
+        // A null function is a nil Optional closure, which has nothing to adapt.
+        guard value.function != nil else { return SwiftClosureStorage.null() }
         let context = SwiftNativeClosureContext(
             adapter: self,
             value: value,

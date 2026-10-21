@@ -1625,13 +1625,22 @@ struct SwiftGenericBinding: Sendable {
         guard let closure = actual as? any SwiftClosureValue.Type else { return nil }
         var function = formal
         if closure.isOptional {
-            let wrapped = (actual as? any NativeOptionalValue.Type)?.wrappedType
-            guard (wrapped as? any SwiftClosureValue.Type)?.isOptional != true else {
+            let wrappedHost = (actual as? any NativeOptionalValue.Type)?.wrappedType
+            guard (wrappedHost as? any SwiftClosureValue.Type)?.isOptional != true else {
                 throw ABIResolutionError.unsupportedDeclaration(
                     "Nested Optional closures are unsupported: \(String(reflecting: actual))."
                 )
             }
-            guard let wrapped = try canonicalType(of: formal).optionalWrapped else { return nil }
+            let canonical = try canonicalType(of: formal)
+            guard let wrapped = canonical.optionalWrapped else {
+                // An Optional handle could pass nil to a nonoptional closure.
+                if case .function = canonical {
+                    throw ABIResolutionError.signatureMismatch(
+                        .init(expected: canonical.spelling, found: [String(reflecting: actual)])
+                    )
+                }
+                return nil
+            }
             function = try canonicalType(of: wrapped)
             // Reabstraction adapters and generic pointer-auth types do not yet
             // carry the Optional of a closure (#408).
