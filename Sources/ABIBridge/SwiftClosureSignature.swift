@@ -4,54 +4,80 @@ import Synchronization
 
 // The SIL discriminator hashes formal value types, not their register widths.
 // Class identity, isolation, and ownership qualifiers are intentionally erased.
-// https://github.com/swiftlang/swift/blob/main/lib/SIL/IR/SILFunctionType.cpp
+// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/IRGen/GenPointerAuth.cpp
 func swiftClosureAuthType(_ type: Any.Type) throws -> String {
     guard !(type is any SwiftConventionArgument.Type) else {
         throw ABIResolutionError.unsupportedDeclaration(
             "Inout and ownership-qualified callback parameters require a scoped native adapter."
         )
     }
-    if let closure = type as? any SwiftClosureValue.Type {
-        let function =
-            "(" + (try SwiftFunctionSignature(closure.swiftFunctionType).closureAuthDescription())
-            + ")"
-        return closure.isOptional ? "Optional<" + function + ">" : function
-    }
-    let base = (type as? any NativeOptionalValue.Type)?.wrappedType ?? type
-    let managed = type is any ABIBridgeSwiftValue.Type
-    guard (!(base is any ABIBridgeValue.Type) || managed) else {
-        throw ABIResolutionError.unsupportedDeclaration(
-            "Closure signatures require built-in or explicitly described Swift values; foreign conversions are not supported."
-        )
-    }
-    if base is AnyClass || base == AnyObject.self { return "-class" }
-    if let metatype = SwiftMetatypeMetadata(base) {
-        return type is any NativeOptionalValue.Type && metatype.isExistential
-            ? "Optional<-metatype>" : "-metatype"
-    }
-    if let existential = SwiftExistentialRepresentation(base) {
-        return existential.closureAuthType(optional: type is any NativeOptionalValue.Type)
-    }
+    // An indirect parameter or result is hashed opaquely.
     if let value = type as? any ABIBridgeSwiftValue.Type {
         guard let components = value.swiftABIType.cType else { return "-indirect" }
         if withExtendedLifetime(components, { ABISwiftValueIsIndirect(components.handle) }) {
             return "-indirect"
         }
     }
-    guard var name = _mangledTypeName(base) else {
+    // A native Optional function keeps the function pair's storage.
+    var payload = type
+    while let optional = payload as? any NativeOptionalValue.Type { payload = optional.wrappedType }
+    if type is any NativeOptionalValue.Type, !RuntimeFunctionMetadata.isSwiftFunction(payload) {
+        func layout<Value>(_: Value.Type) throws -> CValueType { try SwiftValueCodec<Value>().type }
+        let layout = try _openExistential(type, do: layout)
+        if withExtendedLifetime(layout, { ABISwiftValueIsIndirect(layout.handle) }) {
+            return "-indirect"
+        }
+    }
+    return try swiftClosureTypeHash(type)
+}
+
+/// Swift's `hashStringForType`, which hashes a value type within any Optionals.
+private func swiftClosureTypeHash(_ type: Any.Type) throws -> String {
+    if let closure = type as? any SwiftClosureValue.Type, !closure.isOptional {
+        return "("
+            + (try SwiftFunctionSignature(closure.swiftFunctionType).closureAuthDescription()) + ")"
+    }
+    if RuntimeFunctionMetadata.isSwiftFunction(type) {
+        return "(" + (try SwiftFunctionSignature(type).closureAuthDescription()) + ")"
+    }
+    if let optional = type as? any NativeOptionalValue.Type {
+        let wrapped = optional.wrappedType
+        // An Optional of a class-based value or a metatype hashes as the value.
+        if let existential = SwiftExistentialRepresentation(wrapped) {
+            return existential.closureAuthType(optional: true)
+        }
+        if let metatype = SwiftMetatypeMetadata(wrapped) {
+            return metatype.isExistential ? "Optional<-metatype>" : "-metatype"
+        }
+        if wrapped is AnyClass || wrapped == AnyObject.self { return "-class" }
+        return "Optional<" + (try swiftClosureTypeHash(wrapped)) + ">"
+    }
+    let managed = type is any ABIBridgeSwiftValue.Type
+    guard !(type is any ABIBridgeValue.Type) || managed else {
+        throw ABIResolutionError.unsupportedDeclaration(
+            "Closure signatures require built-in or explicitly described Swift values; foreign conversions are not supported."
+        )
+    }
+    if type is AnyClass || type == AnyObject.self { return "-class" }
+    if SwiftMetatypeMetadata(type) != nil { return "-metatype" }
+    if let existential = SwiftExistentialRepresentation(type) {
+        return existential.closureAuthType(optional: false)
+    }
+    // A tuple within an Optional is hashed opaquely; parameters expand tuples.
+    if SwiftTupleMetadata(type) != nil { return "-" }
+    guard var name = _mangledTypeName(type) else {
         throw ABIResolutionError.metadataUnavailable(
             "No Swift closure type identity for \(String(reflecting: type))."
         )
     }
     // SIL hashes these nominal declarations without their generic substitutions.
-    if let collection = base as? any SwiftCollectionValue.Type {
+    if let collection = type as? any SwiftCollectionValue.Type {
         name = collection.mangledDeclaration
     }
-    if (managed || base is any NativePointerValue.Type), name.hasSuffix("G") {
+    if (managed || type is any NativePointerValue.Type), name.hasSuffix("G") {
         name = try swiftNominalClosureName(name)
     }
-    let nominal = "$s" + name
-    return type is any NativeOptionalValue.Type ? "Optional<" + nominal + ">" : nominal
+    return "$s" + name
 }
 
 // A bound nominal mangling contains its declaration before the generic
@@ -127,11 +153,23 @@ extension Optional: SwiftClosureValue where Wrapped: SwiftClosureValue {
     static var isOptional: Bool { true }
 
     static func makeClosureCodec() throws -> SwiftClosureCodec {
-        try Wrapped.makeClosureCodec().optional(Self.self)
+        try requireSingleLevel()
+        return try Wrapped.makeClosureCodec().optional(Self.self)
     }
 
     static func makeGenericClosureCodec(plan: SwiftGenericClosurePlan) throws -> SwiftClosureCodec {
-        try Wrapped.makeGenericClosureCodec(plan: plan).optional(Self.self)
+        try requireSingleLevel()
+        return try Wrapped.makeGenericClosureCodec(plan: plan).optional(Self.self)
+    }
+
+    // Each Optional level of a closure uses another extra inhabitant of its
+    // function pointer, which only a null pointer represents here.
+    static func requireSingleLevel() throws {
+        guard !Wrapped.isOptional else {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "Nested Optional closures are unsupported: \(String(reflecting: Self.self))."
+            )
+        }
     }
 
     func encodeGenericClosure(
@@ -369,14 +407,14 @@ final class SwiftClosureStorage {
         ABIReleaseSwiftClosureContext(address.load(as: ABISwiftClosureValue.self).ownedContext)
     }
 
-    /// The storage of a nil Optional closure.
+    /// The zeroed storage of a nil Optional closure. An inout callee can
+    /// store an owned closure in it, which its destruction releases.
     static func null() -> NativeValueStorage {
-        let storage = NativeValueStorage(
+        NativeValueStorage(
             size: MemoryLayout<ABISwiftClosureValue>.stride,
-            alignment: MemoryLayout<ABISwiftClosureValue>.alignment
+            alignment: MemoryLayout<ABISwiftClosureValue>.alignment,
+            destroyingWith: destroy
         )
-        storage.store(ABISwiftClosureValue(function: nil, context: nil))
-        return storage
     }
 }
 

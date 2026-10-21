@@ -2,6 +2,8 @@ import ABIBridge
 import ManagedSwiftFixtures
 import Testing
 
+private final class OptionalClosureOwner {}
+
 struct SwiftOptionalValueTests {
     @Test func optionalValuesPassAsTheirEnumStorage() async throws {
         let runtime = ABIRuntime.shared
@@ -66,5 +68,53 @@ struct SwiftOptionalValueTests {
             return (try? unsafe body.unsafeInvoke(4)) ?? -2
         }
         #expect(try unsafe pass.unsafeInvoke(callback) == 740)
+        // A returned closure returns an Optional closure.
+        let factory = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeOptionalClosureFactory()",
+            as: (() -> NativeSwiftClosure<() -> NativeSwiftClosure<() -> Int64>?>).self
+        )
+        let produce = try unsafe factory.unsafeInvoke()
+        let seven = try #require(try unsafe produce.unsafeInvoke())
+        #expect(try unsafe seven.unsafeInvoke() == 7)
+    }
+
+    @Test func nilClosureStorageReleasesAClosureStoredThroughInout() async throws {
+        let replace = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.replaceOptionalClosure(_:_:)",
+            as: ((NativeSwiftInout<NativeSwiftClosure<(Int64) -> Int64>?>, AnyObject) -> Void).self
+        )
+        weak var released: OptionalClosureOwner?
+        do {
+            let owner = OptionalClosureOwner()
+            released = owner
+            let buffer = NativeSwiftInout<NativeSwiftClosure<(Int64) -> Int64>?>(nil)
+            try unsafe replace.unsafeInvoke(buffer, owner)
+            #expect(try unsafe buffer.value?.unsafeInvoke(1) == 2)
+        }
+        #expect(released == nil)
+    }
+
+    @Test func optionalsKeepTheirOwnPassingConvention() async throws {
+        let runtime = ABIRuntime.shared
+        // The tuple alone needs five registers, but its Optional is three words.
+        let first = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.firstOptionalFloat(_:)",
+            as: (((Float, Float, Float, Float, Float)?) -> Float).self
+        )
+        #expect(try unsafe first.unsafeInvoke((1, 2, 3, 4, 5)) == 1)
+        #expect(try unsafe first.unsafeInvoke(nil) == -1)
+        // Thin metatypes and nested closure Optionals have other representations.
+        await #expect(throws: ABIResolutionError.self) {
+            _ = try await runtime.resolveSwiftFunction(
+                named: "ManagedSwiftFixtures.areOptionalMetatypesNil(_:)",
+                as: (((Int.Type, Int.Type)?) -> Bool).self
+            )
+        }
+        await #expect(throws: ABIResolutionError.self) {
+            _ = try await runtime.resolveSwiftFunction(
+                named: "ManagedSwiftFixtures.applyNestedOptionalClosure(_:)",
+                as: ((NativeSwiftClosure<(Int64) -> Int64>??) -> Int64).self
+            )
+        }
     }
 }

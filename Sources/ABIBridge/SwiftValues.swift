@@ -126,9 +126,11 @@ struct SwiftValueCodec<Value>: Sendable {
                 }
                 return codec.type
             }
-            let wrappedType = try _openExistential(optional.wrappedType, do: wrapped)
-            type = try ABISwiftValueIsIndirect(wrappedType.handle)
-                ? SwiftValueSchema.storage(of: Value.self) : SwiftValueSchema.enumStorage(of: Value.self)
+            type = try SwiftValueSchema.optionalStorage(
+                of: Value.self,
+                wrapped: _openExistential(optional.wrappedType, do: wrapped),
+                wrappedType: optional.wrappedType
+            )
             cValue = nil
         } else {
             let codec = try CValueCodec<Value>()

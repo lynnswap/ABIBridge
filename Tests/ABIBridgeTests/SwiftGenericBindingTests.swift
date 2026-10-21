@@ -1220,6 +1220,18 @@ struct SwiftGenericBindingTests {
         typealias Increment = NativeSwiftClosure<(Int64) -> Int64>
         #expect(try SwiftFunctionSignature(((Increment?) -> Int64).self).closureDiscriminator() == 16285)
         #expect(try SwiftFunctionSignature((() -> Increment?).self).closureDiscriminator() == 63771)
+        // Swift 6.3 arm64e IR for callbacks taking each Optional and returning Int64.
+        let optionals: [(Any.Type, UInt16)] = [
+            (((Int64??) -> Int64).self, 33376),
+            (((OptionalAuthenticationObject??) -> Int64).self, 56960),
+            ((((Int64, Double)?) -> Int64).self, 29570),
+            (((Double?) -> Int64).self, 25171),
+            (((String??) -> Int64).self, 23849),
+            ((([Int]??) -> Int64).self, 46095),
+        ]
+        for (type, discriminator) in optionals {
+            #expect(try SwiftFunctionSignature(type).closureDiscriminator() == discriminator, "\(type)")
+        }
     }
 
     @Test func collectionSugarMatchesRuntimeAndToolchainDemanglers() {
@@ -1394,3 +1406,5 @@ struct SwiftGenericBindingTests {
 }
 
 #endif
+
+private final class OptionalAuthenticationObject {}

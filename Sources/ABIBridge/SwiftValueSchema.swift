@@ -42,6 +42,9 @@ enum SwiftValueSchema {
         {
             return explicit
         }
+        if let wrapped = formal.optionalWrapped {
+            return try optionalLayout(wrapped, actual: actual, binding: binding)
+        }
         func prepare<Value>(_ type: Value.Type) throws -> CValueType {
             if !binding.dependsOnParameters(formal), formal.opaqueIndices.isEmpty {
                 return try SwiftValueCodec<Value>().type
@@ -56,32 +59,6 @@ enum SwiftValueSchema {
                 }
                 if ["Swift.Array", "Swift.Dictionary", "Swift.Set"].contains(name) {
                     return try CValueType(scalar: ABIValuePointer)
-                }
-                if name == "Swift.Optional", let wrapped = arguments.first {
-                    if try binding.isClassBound(wrapped) {
-                        return try CValueType(scalar: ABIValuePointer)
-                    }
-                    let wrappedType = try binding.types(wrapped)[0]
-                    if case .metatype(let instance) = wrapped,
-                        let metatype = SwiftMetatypeMetadata(wrappedType)
-                    {
-                        return try !metatype.isExistential
-                            && singletonMetatype(instance, binding: binding)
-                            ? CValueType(swiftOptionalSingleton: ())
-                            : metatype.valueType(for: Value.self, thin: false)
-                    }
-                    let wrappedLayout = try Self.layout(
-                        wrapped,
-                        actual: wrappedType,
-                        binding: binding
-                    )
-                    if withExtendedLifetime(
-                        wrappedLayout,
-                        { ABISwiftValueIsIndirect(wrappedLayout.handle) }
-                    ) {
-                        return try storage(of: actual)
-                    }
-                    return try SwiftValueCodec<Value>().type
                 }
                 let isArchetype: Bool
                 if case .named = formal {
@@ -158,6 +135,38 @@ enum SwiftValueSchema {
         return try _openExistential(actual, do: prepare)
     }
 
+    /// The storage of an Optional at a declaration position, from its
+    /// wrapped formal type and the Optional the caller supplies.
+    private static func optionalLayout(
+        _ wrapped: SwiftFormalType,
+        actual: Any.Type,
+        binding: SwiftGenericBinding
+    ) throws -> CValueType {
+        let wrappedType = try (actual as? any NativeOptionalValue.Type)?.wrappedType
+            ?? binding.types(wrapped)[0]
+        if try wrappedType is AnyClass || wrappedType == AnyObject.self
+            || binding.isClassBound(wrapped)
+        {
+            return try CValueType(scalar: ABIValuePointer)
+        }
+        if case .metatype(let instance) = try binding.canonicalType(of: wrapped),
+            let metatype = SwiftMetatypeMetadata(wrappedType)
+        {
+            if try !metatype.isExistential && singletonMetatype(instance, binding: binding) {
+                return CValueType(swiftOptionalSingleton: ())
+            }
+            func thick<Value>(_ type: Value.Type) throws -> CValueType {
+                try metatype.valueType(for: type, thin: false)
+            }
+            return try _openExistential(actual, do: thick)
+        }
+        return try optionalStorage(
+            of: actual,
+            wrapped: layout(wrapped, actual: wrappedType, binding: binding),
+            wrappedType: wrappedType
+        )
+    }
+
     /// The native tuple layout of `fields`, with packs as address vectors.
     static func tupleLayout(
         _ fields: [SwiftFormalType],
@@ -224,6 +233,38 @@ enum SwiftValueSchema {
             size: layout.size,
             alignment: layout.alignment
         )
+    }
+
+    /// The storage of an Optional of a value with `wrapped` storage. It is
+    /// indirect when the wrapped value is address-only, and otherwise enum
+    /// storage, even when the wrapped value alone is too large for registers.
+    static func optionalStorage(
+        of metadata: Any.Type,
+        wrapped: CValueType,
+        wrappedType: Any.Type
+    ) throws -> CValueType {
+        // A thin metatype occupies a word in memory but no register, so its
+        // Optional would pass a different enum than the memory holds.
+        guard !containsThinMetatype(wrappedType) else {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "An Optional containing a thin metatype is unsupported: \(String(reflecting: metadata))."
+            )
+        }
+        if withExtendedLifetime(wrapped, { ABISwiftValueIsAddressOnly(wrapped.handle) }) {
+            return try storage(of: metadata)
+        }
+        return try enumStorage(of: metadata)
+    }
+
+    private static func containsThinMetatype(_ type: Any.Type) -> Bool {
+        if let metatype = SwiftMetatypeMetadata(type) { return metatype.isSingleton }
+        if let optional = type as? any NativeOptionalValue.Type {
+            return containsThinMetatype(optional.wrappedType)
+        }
+        if let tuple = SwiftTupleMetadata(type) {
+            return tuple.elements.contains { containsThinMetatype($0.type) }
+        }
+        return false
     }
 
     /// Indirect storage for a value of `type`, which native code addresses through its metadata.

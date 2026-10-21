@@ -1625,6 +1625,12 @@ struct SwiftGenericBinding: Sendable {
         guard let closure = actual as? any SwiftClosureValue.Type else { return nil }
         var function = formal
         if closure.isOptional {
+            let wrapped = (actual as? any NativeOptionalValue.Type)?.wrappedType
+            guard (wrapped as? any SwiftClosureValue.Type)?.isOptional != true else {
+                throw ABIResolutionError.unsupportedDeclaration(
+                    "Nested Optional closures are unsupported: \(String(reflecting: actual))."
+                )
+            }
             guard let wrapped = try canonicalType(of: formal).optionalWrapped else { return nil }
             function = try canonicalType(of: wrapped)
         }
