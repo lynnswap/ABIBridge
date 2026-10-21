@@ -1597,7 +1597,7 @@ struct SwiftGenericBinding: Sendable {
     }
 
     func explicitValueType(_ type: Any.Type) throws -> CValueType? {
-        try valueABIs[ObjectIdentifier(type)].map { try explicitSwiftValueType(type, abi: $0) }
+        try valueABIs[ObjectIdentifier(type)].map { try SwiftValueSchema.explicitLayout(of: type, abi: $0) }
     }
 
     func runtimeValuePlan(

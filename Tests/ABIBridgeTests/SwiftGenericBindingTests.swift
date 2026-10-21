@@ -205,7 +205,7 @@ struct SwiftGenericBindingTests {
         } catch ABIResolutionError.unsupportedDeclaration {}
         let plan = try SwiftRuntimeValuePlan(
             metadata: metadata,
-            type: SwiftGenericParameters.storageType(metadata),
+            type: SwiftValueSchema.storage(of: metadata),
             resolver: .shared,
             retaining: [type.image]
         )
@@ -690,14 +690,14 @@ struct SwiftGenericBindingTests {
         )
         #expect(try binding.canonicalType(of: nested) == array)
         #expect(
-            try SwiftGenericValueLayout.isIndirect(
+            try SwiftValueSchema.isIndirect(
                 GenericElementStorage<[Int64]>.self,
                 arguments: [array],
                 binding: binding
             )
         )
         #expect(
-            try !SwiftGenericValueLayout.isIndirect(
+            try !SwiftValueSchema.isIndirect(
                 GenericElementStorage<[[Int64]]>.self,
                 arguments: [.nominal("Swift.Array", [array])],
                 binding: binding
