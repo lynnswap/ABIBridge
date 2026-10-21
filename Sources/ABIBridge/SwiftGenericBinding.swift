@@ -1583,7 +1583,18 @@ struct SwiftGenericBinding: Sendable {
         }
     }
 
-    func hasExplicitABI(_ type: Any.Type) -> Bool { valueABIs[ObjectIdentifier(type)] != nil }
+    /// The `valueABIs` layout of a closed value of a host type. Class
+    /// references keep passing as pointers, with their reference conversions.
+    func explicitHostValueType(_ type: Any.Type) throws -> CValueType? {
+        type is AnyClass ? nil : try explicitValueType(type)
+    }
+
+    func hasExplicitHostField(_ type: Any.Type) throws -> Bool {
+        guard let tuple = SwiftTupleMetadata(type) else { return false }
+        return try tuple.elements.contains {
+            try explicitHostValueType($0.type) != nil || hasExplicitHostField($0.type)
+        }
+    }
 
     func explicitValueType(_ type: Any.Type) throws -> CValueType? {
         try valueABIs[ObjectIdentifier(type)].map { try explicitSwiftValueType(type, abi: $0) }

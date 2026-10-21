@@ -1085,7 +1085,15 @@ struct SwiftGenericCallPlan: Sendable {
             )
         }
         if representsClosedValue(formal, actual: actual, binding: binding) {
-            guard let tuple = try concreteTuple(actual) else { return .concrete }
+            if let explicit = try binding.explicitHostValueType(actual) {
+                return .value(explicit, consuming: false)
+            }
+            guard
+                let tuple = try concreteTuple(
+                    actual,
+                    explicitLayout: binding.explicitHostValueType
+                )
+            else { return .concrete }
             return .tuple(
                 tuple,
                 consuming: defaultConsuming,
@@ -1105,10 +1113,7 @@ struct SwiftGenericCallPlan: Sendable {
                 asynchronous: asynchronous ?? binding.declaration.isAsync
             )
         }
-        guard
-            binding.dependsOnParameters(formal) || !formal.opaqueIndices.isEmpty
-                || binding.hasExplicitABI(actual)
-        else {
+        guard binding.dependsOnParameters(formal) || !formal.opaqueIndices.isEmpty else {
             return .concrete
         }
         try binding.validate(actual, for: formal)
@@ -1118,8 +1123,7 @@ struct SwiftGenericCallPlan: Sendable {
     /// Whether the host type alone lowers a value whose native type has no
     /// generic or opaque part. Such a host type can be an adapter with a
     /// different Swift name, so its codec takes precedence over the formal
-    /// type; closures, runtime values, and types with `valueABIs` still need
-    /// the declaration.
+    /// type; closures and runtime values still need the declaration.
     private static func representsClosedValue(
         _ formal: SwiftFormalType,
         actual: Any.Type,
@@ -1137,7 +1141,7 @@ struct SwiftGenericCallPlan: Sendable {
             if let tuple = SwiftTupleMetadata(type) {
                 return tuple.elements.contains { needsDeclaration($0.type) }
             }
-            return binding.hasExplicitABI(type)
+            return false
         }
         return !binding.dependsOnParameters(formal) && formal.opaqueIndices.isEmpty
             && !needsDeclaration(actual)
@@ -1154,7 +1158,15 @@ struct SwiftGenericCallPlan: Sendable {
                 return .runtimeValue(try runtimeValue(formal, metadata: metadata, binding: binding))
             }
         }
-        if representsClosedValue(formal, actual: actual, binding: binding) { return .concrete }
+        if representsClosedValue(formal, actual: actual, binding: binding) {
+            if let explicit = try binding.explicitHostValueType(actual) { return .value(explicit) }
+            if try binding.hasExplicitHostField(actual),
+                let tuple = try concreteTuple(actual, explicitLayout: binding.explicitHostValueType)
+            {
+                return .tuple(tuple)
+            }
+            return .concrete
+        }
         let canonical = try binding.canonicalType(of: formal)
         if case .tuple = canonical {
             return .tuple(try tuple(canonical, actual: actual, binding: binding))
@@ -1167,9 +1179,7 @@ struct SwiftGenericCallPlan: Sendable {
             )
             return .closure(try closure.makeGenericClosureCodec(plan: plan))
         }
-        if binding.dependsOnParameters(formal) || !formal.opaqueIndices.isEmpty
-            || binding.hasExplicitABI(actual)
-        {
+        if binding.dependsOnParameters(formal) || !formal.opaqueIndices.isEmpty {
             let native = try binding.resultType(actual, for: formal)
             return .value(try layout(formal, actual: native, binding: binding))
         }
@@ -1464,7 +1474,11 @@ struct SwiftGenericCallPlan: Sendable {
         return owned ? NativeSwiftValue.self : NativeSwiftBorrowedValue.self
     }
 
-    static func concreteTuple(_ actual: Any.Type) throws -> SwiftTupleValuePlan? {
+    /// - Parameter explicitLayout: The `valueABIs` layout of a field's host type, if any.
+    static func concreteTuple(
+        _ actual: Any.Type,
+        explicitLayout: (Any.Type) throws -> CValueType? = { _ in nil }
+    ) throws -> SwiftTupleValuePlan? {
         guard let host = SwiftTupleMetadata(actual) else { return nil }
         let nativeType = try concreteNativeMetadata(actual)
         let native = SwiftTupleMetadata(nativeType)!
@@ -1472,13 +1486,15 @@ struct SwiftGenericCallPlan: Sendable {
         for (host, native) in zip(host.elements, native.elements) {
             let argument: SwiftGenericArgument
             let result: SwiftGenericResult
-            let tuple = try concreteTuple(host.type)
+            let tuple = try concreteTuple(host.type, explicitLayout: explicitLayout)
             if let tuple {
                 argument = .tuple(tuple); result = .tuple(tuple)
             } else if let closure = host.type as? any SwiftClosureValue.Type {
                 let plan = try SwiftGenericClosurePlan.concrete(closure.swiftFunctionType)
                 argument = .closure(plan)
                 result = .closure(try closure.makeGenericClosureCodec(plan: plan))
+            } else if let explicit = try explicitLayout(host.type) {
+                argument = .value(explicit, consuming: false); result = .value(explicit)
             } else {
                 argument = .concrete; result = .concrete
             }
