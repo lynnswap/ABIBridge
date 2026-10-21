@@ -11,7 +11,7 @@ A concrete metatype lets Swift code allocate and operate on a value through the 
 | String, Array<Element>, Dictionary<Key, Value>, Set<Element>, their single-level optional forms, and class references | Supported with Swift ownership | Available when another part of the signature needs adaptation |
 | Fixed trivial layouts described by ABIBridgeValue | Supported within the documented Swift subset | Required if the declaration has additional unsupported conventions |
 | A struct or enum containing a reference | An explicit ABIBridgeSwiftValue conformance supports an established fixed ABI | The compiler adapts additional calling conventions |
-| A value Optional, such as Int64? | No general by-value support | The compiler handles both the payload and the nil representation |
+| A value Optional, such as Int64? or a closure Optional | Supported when the wrapped value has a direct representation; an Optional runtime value is unsupported | The compiler handles other payloads and their nil representation |
 | A non-frozen struct from a library-evolution module | An explicit opaque ABIBridgeSwiftValue descriptor selects its declared indirect convention | Available for additional signature adaptation |
 | A type unavailable to the consumer compiler | Runtime value handles and scoped callback borrows with an established declaration ABI; see <doc:SwiftOpaqueResults> and <doc:BorrowedSwiftValues> | Explicit create, inspect, and destroy operations can expose otherwise unsupported interfaces |
 

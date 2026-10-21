@@ -108,11 +108,6 @@ struct SwiftGenericParameters: Sendable {
         constants = zip(actual, arguments).map { Self.constants(for: $0, argument: $1) }
     }
 
-    static func storageType(_ type: Any.Type) throws -> CValueType {
-        let layout = ABISwiftGetValueLayout(unsafeBitCast(type, to: UnsafeRawPointer.self))
-        return try CValueType(indirectSwiftSize: layout.size, alignment: layout.alignment)
-    }
-
     private static func mismatch(_ count: Int) -> ABIResolutionError {
         .signatureMismatch(.init(expected: "The instantiated declaration's argument count", found: ["\(count) arguments"]))
     }

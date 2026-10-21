@@ -260,15 +260,6 @@ struct ManagedSwiftValueTests {
         }
         #expect {
             _ = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
-                named: "ManagedSwiftFixtures.transformOptional(_:)",
-                as: ((Int64?) -> Int64?).self
-            )
-        } throws: { error in
-            if case ABIResolutionError.unsupportedDeclaration = error { return true }
-            return false
-        }
-        #expect {
-            _ = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
                 named: "ManagedSwiftFixtures.transformResilient(_:)",
                 as: ((ResilientRecord) -> ResilientRecord).self
             )

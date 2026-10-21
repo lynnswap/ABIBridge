@@ -102,7 +102,7 @@ extension SwiftGenericClosurePlan {
         func runtimePlan(_ metadata: Any.Type) throws -> SwiftRuntimeValuePlan {
             try SwiftRuntimeValuePlan(
                 metadata: metadata,
-                type: SwiftGenericParameters.storageType(metadata),
+                type: SwiftValueSchema.storage(of: metadata),
                 resolver: resolver,
                 retaining: images,
                 nativeClosure: closureInStoredValue(metadata)
@@ -149,7 +149,7 @@ extension SwiftGenericClosurePlan {
             }
             guard metadata == representation else { throw mismatch(nativeType, hostType) }
             return .value(
-                try SwiftGenericParameters.storageType(metadata),
+                try SwiftValueSchema.storage(of: metadata),
                 consuming: convention == .consuming
             )
         }
@@ -175,7 +175,7 @@ extension SwiftGenericClosurePlan {
             result = .closure(try closure.makeGenericClosureCodec(plan: nested))
         } else {
             guard native.result == host.result else { throw mismatch(nativeType, hostType) }
-            result = .value(try SwiftGenericParameters.storageType(native.result))
+            result = .value(try SwiftValueSchema.storage(of: native.result))
         }
         return SwiftGenericClosurePlan(
             transport: source.transport,

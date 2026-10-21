@@ -177,6 +177,9 @@ ABISwiftCallInterface *ABICreateSwiftThrowingCallInterface(
 void ABIReleaseSwiftCallInterface(ABISwiftCallInterface *interface);
 /// Whether a fixed value uses indirect Swift parameter/result storage.
 bool ABISwiftValueIsIndirect(const ABIValueType *type);
+/// Whether the value or one of its fields is address-only: formally indirect
+/// whatever its size, as resilient values and generic storage are.
+bool ABISwiftValueIsAddressOnly(const ABIValueType *type);
 
 /// Calls a thin Swift implementation using prepared register/stack lowering. The caller retains code and all guaranteed arguments and supplies writable, uninitialized result storage. A successful nontrivial result is owned by the caller. No Swift errors, native exceptions or async suspension may cross this boundary. context is the Swift self register, or null for a free function.
 bool ABIUnsafeInvokeSwiftCallInterface(

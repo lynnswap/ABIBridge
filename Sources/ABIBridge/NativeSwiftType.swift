@@ -367,7 +367,7 @@ public actor NativeSwiftType: Hashable {
         let codec: SwiftReceiverCodec
         let cachedCodec: SwiftReceiverCodec?
         if let receiverABI {
-            let formalType = try explicitSwiftValueType(metadata, abi: receiverABI)
+            let formalType = try SwiftValueSchema.explicitLayout(of: metadata, abi: receiverABI)
             codec = SwiftReceiverCodec(runtimeType: metadata, formalType: formalType)
             cachedCodec = nil
         } else if (representation == nil || representation == metadata || protocolSelf != nil),

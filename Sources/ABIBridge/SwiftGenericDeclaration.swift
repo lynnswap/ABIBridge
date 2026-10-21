@@ -535,3 +535,60 @@ extension SwiftFormalSyntax {
         return nil
     }
 }
+
+extension SwiftFormalType {
+    func qualifyingAssociatedTypes(
+        using conformances: [SwiftGenericBinding.Conformance],
+        requiringKnownProtocols: Bool = true
+    ) throws -> Self {
+        func qualify(_ type: Self) throws -> Self {
+            try type.qualifyingAssociatedTypes(
+                using: conformances,
+                requiringKnownProtocols: requiringKnownProtocols
+            )
+        }
+        switch self {
+        case .objectiveCClass, .opaqueResult: return self
+        case .constrainedExistential(let base, let superclass, let constraints, let shape):
+            return .constrainedExistential(base: base, superclass: try superclass.map(qualify), constraints: try constraints.map {
+                .init(subject: $0.subject, value: try qualify($0.value))
+            }, shape: shape)
+        case .associated(let base, let member, let protocolName):
+            var names: Set<String> = []
+            if let protocolName { names.insert(protocolName) }
+            else {
+                for conformance in conformances where conformance.subject == base {
+                    for descriptor in try conformance.descriptor?.protocolsDeclaring(member) ?? [] {
+                        names.insert(try descriptor.name())
+                    }
+                }
+            }
+            guard names.count == 1 || !requiringKnownProtocols else {
+                throw ABIResolutionError.metadataUnavailable("Cannot identify the declaring protocol for " + spelling + ".")
+            }
+            return .associated(
+                try qualify(base),
+                member,
+                protocolName: names.count == 1 ? names.first : nil
+            )
+        case .named(let name, let values): return .named(name, try values.map(qualify))
+        case .nominal(let name, let values): return .nominal(name, try values.map(qualify))
+        case .reference(let descriptor, let values): return .reference(descriptor, try values.map(qualify))
+        case .nested(let parent, let name, let values): return .nested(try qualify(parent), name, try values.map(qualify))
+        case .tuple(let values, let labels): return .tuple(try values.map(qualify), labels: labels)
+        case .packValue(let values): return .packValue(try values.map(qualify))
+        case .pack(let value, let shape): return .pack(try qualify(value), shape: try shape.map(qualify))
+        case .metatype(let value): return .metatype(try qualify(value))
+        case .existentialMetatype(let value): return .existentialMetatype(try qualify(value))
+        case .borrowing(let value): return .borrowing(try qualify(value))
+        case .consuming(let value): return .consuming(try qualify(value))
+        case .inoutValue(let value): return .inoutValue(try qualify(value))
+        case .function(let values, let result, let failure, let attributes):
+            var attributes = attributes
+            attributes.globalActor = try attributes.globalActor.map(qualify)
+            return .function(try values.map(qualify), try qualify(result), failure: try failure.map(qualify), attributes: attributes)
+        case .foreignFunction(let convention, let values, let result):
+            return .foreignFunction(convention, try values.map(qualify), try qualify(result))
+        }
+    }
+}
