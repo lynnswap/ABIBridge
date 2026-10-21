@@ -1065,7 +1065,8 @@ struct SwiftGenericCallPlan: Sendable {
         }
         if let handle = runtimeHandle(actual) {
             let metadata = try binding.types(formal)[0]
-            if metadata != handle.type {
+            // A generic parameter can bind the handle type itself.
+            if metadata != actual {
                 guard handle.type != NativeSwiftBorrowedValue.self || !defaultConsuming else {
                     throw ABIResolutionError.unsupportedDeclaration(
                         "A borrowed runtime value cannot be consumed."
@@ -1162,7 +1163,7 @@ struct SwiftGenericCallPlan: Sendable {
     ) throws -> SwiftGenericResult {
         if let handle = runtimeHandle(actual) {
             let metadata = try binding.types(formal)[0]
-            if metadata != handle.type {
+            if metadata != actual {
                 return .runtimeValue(try runtimeValue(formal, metadata: metadata, binding: binding,
                                                       projectingOptional: handle.isOptional))
             }
@@ -1812,9 +1813,9 @@ struct SwiftGenericCallPlan: Sendable {
         if canonical != formal {
             return try authTypes(canonical, actual: actual, binding: binding, isResult: isResult)
         }
-        if let handle = runtimeHandle(actual) {
+        if runtimeHandle(actual) != nil {
             let native = try binding.types(formal)[0]
-            if native != handle.type {
+            if native != actual {
                 return try authTypes(formal, actual: native, binding: binding, isResult: isResult)
             }
         }

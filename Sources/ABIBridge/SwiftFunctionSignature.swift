@@ -413,18 +413,12 @@ struct SwiftCallbackValues: Sendable {
             if case .tuple(let tuple, _, _) = argument {
                 return try tuple.callbackDecoder(consuming: consuming[index])
             }
-            if case .runtimeValue(let plan, _, _) = argument {
-                let decode =
-                    SwiftGenericCallPlan.runtimeHandle(type)?.type == NativeSwiftBorrowedValue.self
-                    ? try Self.decoder(for: NativeSwiftBorrowedValue.self, generic: argument, consuming: false)
-                    : try Self.decoder(for: NativeSwiftValue.self, generic: argument, consuming: consuming[index])
-                guard plan.optionalPayload != nil else { return decode }
-                // The host receives `NativeSwiftValue?`: nil or the payload.
-                return { address, scope in
-                    let value = try decode(address, scope)
-                    if let owned = value as? NativeSwiftValue { return try plan.hostValue(owned) }
-                    return try plan.hostValue(value as! NativeSwiftBorrowedValue)
+            if case .runtimeValue = argument {
+                let borrowed = SwiftGenericCallPlan.runtimeHandle(type)?.type == NativeSwiftBorrowedValue.self
+                func prepare<Value>(_ type: Value.Type) throws -> SwiftCallbackDecoder {
+                    try Self.decoder(for: type, generic: argument, consuming: !borrowed && consuming[index])
                 }
+                return try _openExistential(type, do: prepare)
             }
             if let convention = type as? any SwiftConventionArgument.Type {
                 let codec: SwiftConventionCodec
@@ -533,13 +527,16 @@ struct SwiftCallbackValues: Sendable {
             return try tuple.callbackDecoder(consuming: consuming)
         }
         if case .runtimeValue(let plan, let convention, let asynchronous) = generic {
-            if Value.self == NativeSwiftValue.self {
+            // `NativeSwiftValue?` and `NativeSwiftBorrowedValue?` receive the
+            // Optional's payload or nil.
+            let borrowed = SwiftGenericCallPlan.runtimeHandle(Value.self)?.type == NativeSwiftBorrowedValue.self
+            if !borrowed {
                 try plan.requireOwnedValue()
                 if !consuming, !SwiftCopyability.accepts(plan.valueType.metadata) {
                     throw NativeSwiftValueError.noncopyableType
                 }
             }
-            return { address, scope in
+            let decode: SwiftCallbackDecoder = { address, scope in
                 if consuming, let value = scope.runtimeInput(at: address) { return value }
                 let lifetime = SwiftValueCodeLifetime.current ?? plan.valueType.codeLifetime
                 SwiftValueCodeLifetime.connect(
@@ -561,7 +558,7 @@ struct SwiftCallbackValues: Sendable {
                         return value
                     }
                     plan.normalizeCallbackArgument(materialized)
-                    if Value.self == NativeSwiftBorrowedValue.self {
+                    if borrowed {
                         return NativeSwiftBorrowedValue(
                             type: nativeType,
                             borrow: scope.borrow(
@@ -579,7 +576,7 @@ struct SwiftCallbackValues: Sendable {
                 let source =
                     convention == .inoutValue
                     ? address.load(as: UnsafeMutableRawPointer.self) : restored?.address ?? address
-                if Value.self == NativeSwiftBorrowedValue.self {
+                if borrowed {
                     if plan.hasClosureConversions {
                         let canonical = plan.copyCallbackStorage(from: source, type: nativeType)
                         if convention == .inoutValue {
@@ -608,6 +605,12 @@ struct SwiftCallbackValues: Sendable {
                     )
                 }
                 return plan.copyCallbackArgument(from: source, type: nativeType)
+            }
+            guard plan.optionalPayload != nil else { return decode }
+            return { address, scope in
+                let value = try decode(address, scope)
+                if let owned = value as? NativeSwiftValue { return try plan.hostValue(owned) }
+                return try plan.hostValue(value as! NativeSwiftBorrowedValue)
             }
         }
         let usesSwiftStorage = if case .value = generic { true } else { false }

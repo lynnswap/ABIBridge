@@ -138,6 +138,41 @@ struct SwiftOptionalValueTests {
             value == nil ? try unsafe make.unsafeInvoke(9) : nil
         }
         #expect(try unsafe visit.unsafeInvoke(swapped) == "record#9,nil")
+
+        // Ownership wrappers and borrowed inputs receive the payload or nil too.
+        let wrapped = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.visitOptionalRuntimeRecords(_:)",
+            as: ((NativeSwiftClosure<(NativeSwiftBorrowing<NativeSwiftValue?>) throws -> NativeSwiftValue?>) throws
+                -> String).self,
+            valueABIs: abis
+        )
+        let unwrapped = try NativeSwiftClosure<(NativeSwiftBorrowing<NativeSwiftValue?>) throws -> NativeSwiftValue?> {
+            $0.value
+        }
+        #expect(try unsafe wrapped.unsafeInvoke(unwrapped) == "nil,visit#1")
+        let borrowing = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.visitOptionalRuntimeRecords(_:)",
+            as: ((NativeSwiftClosure<(NativeSwiftBorrowedValue?) throws -> NativeSwiftValue?>) throws -> String).self,
+            valueABIs: abis
+        )
+        let copied = try NativeSwiftClosure<(NativeSwiftBorrowedValue?) throws -> NativeSwiftValue?> { try $0?.copy() }
+        #expect(try unsafe borrowing.unsafeInvoke(copied) == "nil,visit#1")
+    }
+
+    @Test func aGenericParameterCanBindTheOptionalHandleItself() async throws {
+        let echo = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.echoGeneric(_:)",
+            as: ((NativeSwiftValue?) -> NativeSwiftValue?).self,
+            genericArguments: [.type(NativeSwiftValue?.self)]
+        )
+        let make = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeOptionalRuntimeRecord(_:)",
+            as: ((Int64) -> NativeSwiftValue?).self,
+            valueABIs: try await Self.recordABIs()
+        )
+        let record = try #require(try unsafe make.unsafeInvoke(2))
+        #expect(try unsafe echo.unsafeInvoke(record) === record)
+        #expect(try unsafe echo.unsafeInvoke(nil) == nil)
     }
 
     @Test func optionalClosuresUseANullFunctionForNil() async throws {
