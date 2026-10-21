@@ -174,6 +174,38 @@ struct SwiftInferredValueTests {
         )
     }
 
+    /// Library evolution also gives unowned, static, and computed properties
+    /// trivial descriptors, so they do not show that a module is built
+    /// without it. Open's addressable bit then leaves its resilience open.
+    @Test func trivialDescriptorsOfOtherPropertiesDoNotProveAFixedLayout() async throws {
+        let (library, module) = try provider(
+            """
+            import Foundation
+            public struct UnownedHolder {
+                public unowned let owner: NSObject
+                public init(owner: NSObject) { self.owner = owner }
+            }
+            public struct Statics {
+                public static let shared = 1
+            }
+            public struct Open {
+                var x: Double
+                public var doubled: Double { x * 2 }
+                public init() { x = 1 }
+            }
+            @inline(never) public func makeOpen() -> Open { Open() }
+            """,
+            arguments: ["-enable-library-evolution"]
+        )
+        defer { library.cleanup() }
+        await expectFailure(
+            module + ".makeOpen()",
+            in: library,
+            as: (() -> NativeSwiftValue).self,
+            naming: "module `\(module)` shows no library-evolution evidence"
+        )
+    }
+
     /// Inference reads the declaration's formal type, not a host type that
     /// merely shares its layout.
     @Test func adapterHostTypesNeedAnExplicitABI() async throws {
