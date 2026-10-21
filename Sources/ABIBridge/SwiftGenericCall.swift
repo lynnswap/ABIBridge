@@ -407,8 +407,7 @@ final class SwiftGenericClosurePlan: Sendable {
             resultConstants.initialize(at: output)
             return false
         }
-        let value: Any = plan.optionalPayload == nil
-            ? storage.take(as: NativeSwiftValue.self) : storage.take(as: NativeSwiftValue?.self) as Any
+        let value = plan.takeHostValue(from: storage)
         do {
             let source = try plan.encode(value, convention: .consuming, asynchronous: false)
             SwiftValueCodeLifetime.connect(
@@ -610,17 +609,16 @@ final class SwiftGenericClosurePlan: Sendable {
                 } else {
                     value.initialize(plan.borrowOptional(at: addresses[index]!, borrow: borrow, lifetime: lifetime))
                 }
-            } else {
+            } else if plan.projection == nil {
                 value = NativeValueStorage(
                     size: MemoryLayout<NativeSwiftValue>.stride,
                     alignment: MemoryLayout<NativeSwiftValue>.alignment,
                     codeLifetime: lifetime
                 )
-                if plan.optionalPayload == nil {
-                    value.initialize(plan.copyCallbackArgument(from: addresses[index]!, type: type))
-                } else {
-                    value.initialize(plan.projectOptional(plan.copyCallbackStorage(from: addresses[index]!, type: type)))
-                }
+                value.initialize(plan.copyCallbackArgument(from: addresses[index]!, type: type))
+            } else {
+                value = plan.hostStorage(plan.project(plan.copyCallbackStorage(from: addresses[index]!, type: type)),
+                                         codeLifetime: lifetime)
             }
             addresses[index] = value.address
             storage.append(value)
@@ -1042,7 +1040,8 @@ struct SwiftGenericCallPlan: Sendable {
                     pointee,
                     metadata: metadata,
                     binding: binding,
-                    asynchronous: asynchronous ?? binding.declaration.isAsync
+                    asynchronous: asynchronous ?? binding.declaration.isAsync,
+                    handle: SwiftRuntimeHandle(type: NativeSwiftBorrowedValue.self, projection: .none)
                 ),
                 convention: .inoutValue,
                 asynchronous: asynchronous ?? binding.declaration.isAsync
@@ -1077,7 +1076,7 @@ struct SwiftGenericCallPlan: Sendable {
                         metadata: metadata,
                         binding: binding,
                         asynchronous: asynchronous ?? binding.declaration.isAsync,
-                        projectingOptional: handle.isOptional
+                        handle: handle
                     ),
                     convention: defaultConsuming ? .consuming : .borrowing,
                     asynchronous: asynchronous ?? binding.declaration.isAsync
@@ -1163,8 +1162,7 @@ struct SwiftGenericCallPlan: Sendable {
         if let handle = runtimeHandle(actual) {
             let metadata = try binding.types(formal)[0]
             if metadata != actual {
-                return .runtimeValue(try runtimeValue(formal, metadata: metadata, binding: binding,
-                                                      projectingOptional: handle.isOptional))
+                return .runtimeValue(try runtimeValue(formal, metadata: metadata, binding: binding, handle: handle))
             }
         }
         if representsClosedValue(formal, actual: actual, binding: binding) {
@@ -1197,11 +1195,19 @@ struct SwiftGenericCallPlan: Sendable {
 
     /// The runtime value handle a host type stands for. `NativeSwiftValue?`
     /// and `NativeSwiftBorrowedValue?` stand for a native Optional, with nil
-    /// as its empty case.
-    static func runtimeHandle(_ actual: Any.Type) -> (type: Any.Type, isOptional: Bool)? {
-        if actual == NativeSwiftValue.self || actual == NativeSwiftBorrowedValue.self { return (actual, false) }
-        if actual == NativeSwiftValue?.self { return (NativeSwiftValue.self, true) }
-        if actual == NativeSwiftBorrowedValue?.self { return (NativeSwiftBorrowedValue.self, true) }
+    /// as its empty case, and a host collection of `NativeSwiftValue` for a
+    /// native Array, Set, or Dictionary.
+    static func runtimeHandle(_ actual: Any.Type) -> SwiftRuntimeHandle? {
+        if actual == NativeSwiftValue.self || actual == NativeSwiftBorrowedValue.self {
+            return SwiftRuntimeHandle(type: actual, projection: .none)
+        }
+        if actual == NativeSwiftValue?.self { return SwiftRuntimeHandle(type: NativeSwiftValue.self, projection: .optional) }
+        if actual == NativeSwiftBorrowedValue?.self {
+            return SwiftRuntimeHandle(type: NativeSwiftBorrowedValue.self, projection: .optional)
+        }
+        if let collection = SwiftHostCollection(actual) {
+            return SwiftRuntimeHandle(type: NativeSwiftValue.self, projection: .collection(collection))
+        }
         return nil
     }
 
@@ -1210,7 +1216,7 @@ struct SwiftGenericCallPlan: Sendable {
         metadata: Any.Type,
         binding: SwiftGenericBinding,
         asynchronous: Bool = false,
-        projectingOptional: Bool = false
+        handle: SwiftRuntimeHandle
     ) throws -> SwiftRuntimeValuePlan {
         let canonical = try binding.canonicalType(of: formal)
         // A stored closure needs its closure plan, which runtime values do not
@@ -1246,7 +1252,7 @@ struct SwiftGenericCallPlan: Sendable {
             nativeTuple: nativeTuple,
             nativeClosure: nativeClosure
         )
-        return projectingOptional ? try plan.projectingOptional() : plan
+        return try handle.apply(to: plan)
     }
 
     static func nativeClosurePlan(

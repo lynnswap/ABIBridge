@@ -130,7 +130,7 @@ extension SwiftGenericClosurePlan {
             if let handle = SwiftGenericCallPlan.runtimeHandle(representation) {
                 let plan = try runtimePlan(metadata)
                 return .runtimeValue(
-                    handle.isOptional ? try plan.projectingOptional() : plan,
+                    try handle.apply(to: plan),
                     convention: convention,
                     asynchronous: native.isAsync
                 )
@@ -164,7 +164,7 @@ extension SwiftGenericClosurePlan {
         let result: SwiftGenericResult
         if let handle = SwiftGenericCallPlan.runtimeHandle(host.result) {
             let plan = try runtimePlan(native.result)
-            result = .runtimeValue(handle.isOptional ? try plan.projectingOptional() : plan)
+            result = .runtimeValue(try handle.apply(to: plan))
         } else if let closure = host.result as? any SwiftClosureValue.Type {
             let nested = try storedValue(
                 native.result,
