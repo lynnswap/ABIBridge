@@ -88,6 +88,36 @@ package final class RuntimeValueType: @unchecked Sendable {
         self.alignment = alignment
     }
 
+    package init(
+        swiftAggregate fields: [RuntimeValueType],
+        offsets: [Int],
+        size: Int,
+        alignment: Int
+    ) throws {
+        let handles: [OpaquePointer?] = fields.map(\.handle)
+        var failure: OpaquePointer?
+        let handle = withExtendedLifetime(fields) {
+            handles.withUnsafeBufferPointer { handles in
+                offsets.withUnsafeBufferPointer { offsets in
+                    ABICreateSwiftAggregateStorageType(
+                        handles.baseAddress,
+                        offsets.baseAddress,
+                        fields.count,
+                        size,
+                        alignment,
+                        &failure
+                    )
+                }
+            }
+        }
+        guard let handle else {
+            throw consumeRuntimeCallFailure(failure, domain: "ABIBridge.SwiftInvocation")
+        }
+        self.handle = handle
+        self.size = size
+        self.alignment = alignment
+    }
+
     package init(swiftOptionalSingleton: Void) {
         handle = ABICreateSwiftOptionalSingletonType()!
         size = MemoryLayout<UInt>.size

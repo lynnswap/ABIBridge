@@ -690,6 +690,51 @@ package final class SymbolIndex {
         return nil
     }
 
+    /// The address of the symbol this image exports under exactly `name`,
+    /// without consulting local symbols, which stripping removes.
+    package func exportedAddress(named name: String) -> UInt64? {
+        exportedOffset(named: Array(name.utf8)).flatMap {
+            imageSymbol(name: name, offset: $0)?.address
+        }
+    }
+
+    /// The symbols this image exports with names starting with `prefix`. The
+    /// walk visits only the trie's subtree for the prefix, such as one Swift
+    /// declaration or module context.
+    package func exportedSymbols(withPrefix prefix: String) -> [IndexedSymbol] {
+        guard let trie = exportTrie else { return [] }
+        let prefix = Array(prefix.utf8)
+        var symbols: [IndexedSymbol] = []
+        var pending: [(name: [UInt8], offset: Int)] = [([], 0)]
+        while let entry = pending.popLast() {
+            var offset = entry.offset
+            guard
+                let node = TrieNode<ExportTrieNodeContent>.readNext(
+                    basePointer: trie.basePointer.assumingMemoryBound(to: UInt8.self),
+                    trieSize: trie.exportSize,
+                    nextOffset: &offset
+                )
+            else { continue }
+            if entry.name.count >= prefix.count, let value = node.content?.symbolOffset,
+                let symbol = imageSymbol(
+                    name: String(decoding: entry.name, as: UTF8.self),
+                    offset: Int(bitPattern: value)
+                )
+            {
+                symbols.append(symbol)
+            }
+            for child in node.children {
+                let name = entry.name + child.label.utf8
+                let shared = min(name.count, prefix.count)
+                guard name[..<shared].elementsEqual(prefix[..<shared]),
+                    let next = Int(exactly: child.offset)
+                else { continue }
+                pending.append((name, next))
+            }
+        }
+        return symbols
+    }
+
     private func symbols(
         for query: SymbolQuery,
         swiftBucket: SwiftBucket?,

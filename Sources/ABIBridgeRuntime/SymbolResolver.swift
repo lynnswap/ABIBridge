@@ -594,6 +594,25 @@ package final class RuntimeSymbolResolver: Sendable {
         }
     }
 
+    /// The address `image` exports under exactly `name`.
+    package func exportedAddress(named name: String, in image: RuntimeImage) -> UInt64? {
+        let index = state.withLock { $0.index(for: image) }
+        return withExtendedLifetime(index) {
+            state.withLock { _ in index.exportedAddress(named: name) }
+        }
+    }
+
+    /// The symbols `image` exports with names starting with `prefix`.
+    package func exportedSymbols(
+        withPrefix prefix: String,
+        in image: RuntimeImage
+    ) -> [IndexedSymbol] {
+        let index = state.withLock { $0.index(for: image) }
+        return withExtendedLifetime(index) {
+            state.withLock { _ in index.exportedSymbols(withPrefix: prefix) }
+        }
+    }
+
     package func swiftNominalTypeName(
         at address: UInt64,
         in image: RuntimeImage,
