@@ -1193,6 +1193,13 @@ struct SwiftGenericCallPlan: Sendable {
         asynchronous: Bool = false
     ) throws -> SwiftRuntimeValuePlan {
         let canonical = try binding.canonicalType(of: formal)
+        // A stored closure needs its closure plan, which runtime values do not
+        // yet derive through an Optional (#427).
+        if let wrapped = canonical.optionalWrapped, case .function = try binding.canonicalType(of: wrapped) {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "A runtime value of an Optional closure is unsupported: \(canonical.spelling)."
+            )
+        }
         let nativeTuple: SwiftTupleValuePlan?
         if case .tuple = canonical {
             nativeTuple = try tuple(

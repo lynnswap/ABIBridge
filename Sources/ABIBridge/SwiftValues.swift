@@ -63,7 +63,8 @@ struct SwiftValueCodec<Value>: Sendable {
             )
         }
         let isObject = base is AnyClass || base == AnyObject.self
-        let isAdapter = base is any ABIBridgeValue.Type
+        // A type with its own Swift ABI keeps it, even in an Optional.
+        let isAdapter = base is any ABIBridgeValue.Type && !(base is any ABIBridgeSwiftValue.Type)
         let managed = Value.self as? any ABIBridgeSwiftValue.Type
         objectResult = isObject && (!isAdapter || managed != nil)
         if let tuple = SwiftTupleMetadata(Value.self) {

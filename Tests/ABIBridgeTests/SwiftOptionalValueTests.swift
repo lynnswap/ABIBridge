@@ -152,6 +152,13 @@ struct SwiftOptionalValueTests {
                 as: ((NativeSwiftClosure<(Int64) -> Int64>?) -> Int64).self
             )
         }
+        // A runtime value of an Optional closure needs a stored closure plan (#427).
+        await #expect(throws: ABIResolutionError.self) {
+            _ = try await runtime.resolveSwiftFunction(
+                named: "ManagedSwiftFixtures.makeOptionalClosure(_:)",
+                as: ((Bool) -> NativeSwiftValue).self
+            )
+        }
         // Generic closure Optionals need reabstraction that keeps nil (#408).
         await #expect(throws: ABIResolutionError.self) {
             _ = try await runtime.resolveSwiftFunction(
