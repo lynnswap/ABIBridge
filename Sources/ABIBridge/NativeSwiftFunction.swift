@@ -546,7 +546,11 @@ extension ABIRuntime {
                     valueABIs: valueABIs
                 )
                 if !complete { try plan.check(description) }
-                return SelectedFunctionPlan(plan: usesBinding ? plan : nil)
+                // A concrete call needs no binding, but a handle that converts
+                // class references keeps its plan so hooks can reject it.
+                return SelectedFunctionPlan(
+                    plan: usesBinding || plan.convertsReferences(description) ? plan : nil
+                )
             }
         }
         var selection = try select(includingSharedCache: false)
