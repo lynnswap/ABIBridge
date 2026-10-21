@@ -225,6 +225,45 @@ struct SwiftSignatureCompatibilityTests {
         #expect(result.0.value == 42 && result.1 == 2)
     }
 
+    @Test func valueABIsLowerClosedValuesOfHostTypes() async throws {
+        let count = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityCount")
+        let valueABIs = [count: try NativeType.structure(named: "CompatibilityCount", fields: [.int64])]
+        let doubled = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.compatibilityCountDoubled(_:)",
+            as: ((CompatibilityCount) -> CompatibilityCount).self,
+            valueABIs: valueABIs
+        )
+        #expect(try unsafe doubled.unsafeInvoke(CompatibilityCount(21)).value == 42)
+        let pair = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.compatibilityCountPair(_:)",
+            as: (((CompatibilityCount, Int64)) -> (CompatibilityCount, Int64)).self,
+            valueABIs: valueABIs
+        )
+        let result = try unsafe pair.unsafeInvoke((CompatibilityCount(40), 2))
+        #expect(result.0.value == 42 && result.1 == 2)
+    }
+
+    @Test func valueABIsKeepOtherHostRepresentations() async throws {
+        let count = "ManagedSwiftFixtures.CompatibilityCount"
+        let int64 = try await runtime.resolveSwiftType(named: "Swift.Int64")
+        let pair = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.compatibilityCountPair((\(count), Swift.Int64)) -> (\(count), Swift.Int64)",
+            as: (((HostStoredCount, Int64)) -> (HostStoredCount, Int64)).self,
+            valueABIs: [int64: .int64]
+        )
+        let result = try unsafe pair.unsafeInvoke((HostStoredCount(value: 40), 2))
+        #expect(result.0.value == 42 && result.1 == 2)
+        // A class reference keeps its subclass conversion.
+        let derived = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityDerived")
+        let name = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.compatibilityName(_:)",
+            as: ((CompatibilityDerived) -> String).self,
+            valueABIs: [derived: .pointer]
+        )
+        let value = CompatibilityDerived()
+        #expect(try unsafe name.unsafeInvoke(value) == value.name())
+    }
+
     @Test func completeDeclarationsLowerLocalTypesThroughHostRepresentations() async throws {
         let outer = "ManagedSwiftFixtures.compatibilityLocalCount(Swift.Int64) -> Swift.Int64"
         let count = "Count #1 in " + outer

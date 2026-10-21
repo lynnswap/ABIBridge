@@ -80,6 +80,8 @@ The example requires a Sendable body safe for the native caller's thread. A conf
 
 ``ABIBridgeSwiftValue`` describes the actual Swift type. ``ABIBridgeValue`` converts between a user wrapper and a possibly different foreign representation; its methods can throw and own foreign-resource adoption. C and C++ calls keep using that conversion contract. If a type adopts both protocols, Swift calls use its explicit Swift layout and compiler-owned value operations.
 
+To describe a Swift type for one lookup without a conformance, pass its ``NativeSwiftType`` and layout in `valueABIs:`. Arguments, results, and tuple fields of that closed type then use the given layout, and the lookup's layout takes precedence over a conformance.
+
 This conformance describes a value representation. Generic bindings, existential containers, tuples, nested closures, and runtime-only noncopyable values follow the separate contracts in <doc:SwiftValues>. Closure preparation fails before publication if the nominal identity cannot be established from the metatype. Metadata size or a matching descriptor extent alone does not establish a callable declaration.
 
 The fixtures verify mixed reference/floating structs, tagged reference-bearing enums, large indirect fixed values, callbacks and returned closures, member ownership, and rejected undersized layouts. Compiler probes cover arm64, x86_64, arm64e, and arm64_32; execution evidence is recorded separately.
