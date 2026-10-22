@@ -29,19 +29,19 @@ extension SwiftValueSchema {
     /// The type that pointer authentication hashes for a value of this
     /// schema at `position` in a closure's signature.
     ///
-    /// A value that passes by address hashes as `-indirect`, except a class
-    /// reference, an existential, or a metatype, which keeps its formal type
-    /// as Swift's type lowering does. Other values hash their native type.
+    /// A value that passes by address hashes as `-indirect`. A scalar, a
+    /// class reference, an existential, and a metatype keep their formal type
+    /// even where their storage passes by address, as Swift's type lowering
+    /// does; a scalar that an adapter represents has no Swift type to hash.
+    /// Other values hash their native type.
     func closureAuthType(at position: SwiftValuePosition) throws -> String {
-        guard let metadata,
-            !(metadata is any ABIBridgeValue.Type) || metadata is any ABIBridgeSwiftValue.Type
-        else {
+        guard let metadata else {
             throw ABIResolutionError.unsupportedDeclaration(
                 "Closure signatures require built-in or explicitly described Swift values; foreign conversions are not supported."
             )
         }
         switch kind {
-        case .reference, .existential, .metatype:
+        case .scalar, .reference, .existential, .metatype:
             break
         default:
             if swiftClosureHashesIndirectly(type, at: position) { return "-indirect" }
