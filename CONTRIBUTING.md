@@ -1,6 +1,6 @@
 # Contributing
 
-Use a Mac with Xcode and Swift 6.3 or later. Create a topic branch and open your pull request against `main`. Run the commands below from the repository root unless a command changes directories.
+Use an Apple silicon Mac with Xcode and Swift 6.3 or later; ABIBridge does not support x86_64. Create a topic branch and open your pull request against `main`. Run the commands below from the repository root unless a command changes directories.
 
 ## Select Xcode
 

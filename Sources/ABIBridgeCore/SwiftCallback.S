@@ -1,6 +1,7 @@
 // Incoming register storage matches CallFrame in SwiftInvocation.cpp. The
 // trampoline only consumes caller-scratch registers, preserving Swift self,
 // indirect results, argument registers and the incoming stack.
+#if defined(__aarch64__)
 #include <mach/machine/vm_param.h>
 .text
 .p2align PAGE_MAX_SHIFT
@@ -8,7 +9,6 @@
 .private_extern _ABISwiftCallbackCodePage
 _ABISwiftCallbackCodePage:
 .rept PAGE_MAX_SIZE / 32
-#if defined(__aarch64__)
     bti c
     // Native slot loads need not be acquire loads. Order configuration reads
     // after the caller's load of the published function pointer.
@@ -23,15 +23,6 @@ _ABISwiftCallbackCodePage:
 #endif
     nop
     nop
-#elif defined(__x86_64__)
-    leaq -PAGE_MAX_SIZE-7(%rip), %r11
-    movq 8(%r11), %r10
-    movq (%r11), %r11
-    jmpq *%r10
-    .fill 15, 1, 0x90
-#else
-#error Unsupported Swift callback architecture
-#endif
 .endr
 
 .globl _ABISwiftCallbackAssembly
@@ -39,7 +30,6 @@ _ABISwiftCallbackCodePage:
 .p2align 4
 _ABISwiftCallbackAssembly:
 .cfi_startproc
-#if defined(__aarch64__)
     bti c
 #if __has_feature(ptrauth_calls)
     pacibsp
@@ -79,46 +69,5 @@ _ABISwiftCallbackAssembly:
 #else
     ret
 #endif
-#elif defined(__x86_64__)
-    pushq %rbp
-    .cfi_def_cfa_offset 16
-    .cfi_offset %rbp, -16
-    movq %rsp, %rbp
-    .cfi_def_cfa_register %rbp
-    subq $240, %rsp
-    movq %rdi, 0(%rsp)
-    movq %rsi, 8(%rsp)
-    movq %rdx, 16(%rsp)
-    movq %rcx, 24(%rsp)
-    movq %r8, 32(%rsp)
-    movq %r9, 40(%rsp)
-    movq %xmm0, 64(%rsp)
-    movq %xmm1, 72(%rsp)
-    movq %xmm2, 80(%rsp)
-    movq %xmm3, 88(%rsp)
-    movq %xmm4, 96(%rsp)
-    movq %xmm5, 104(%rsp)
-    movq %xmm6, 112(%rsp)
-    movq %xmm7, 120(%rsp)
-    movq %rax, 192(%rsp)
-    movq %r13, 200(%rsp)
-    leaq 16(%rbp), %r10
-    movq %r10, 208(%rsp)
-    movq $0, 216(%rsp)
-    movq %r12, 224(%rsp)
-    movq %r11, %rdi
-    movq %rsp, %rsi
-    callq _ABIDispatchSwiftCallback
-    movq 128(%rsp), %rax
-    movq 136(%rsp), %rdx
-    movq 144(%rsp), %rcx
-    movq 152(%rsp), %r8
-    movq 160(%rsp), %xmm0
-    movq 168(%rsp), %xmm1
-    movq 176(%rsp), %xmm2
-    movq 184(%rsp), %xmm3
-    movq 224(%rsp), %r12
-    leave
-    retq
-#endif
 .cfi_endproc
+#endif

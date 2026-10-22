@@ -18,13 +18,8 @@
 // Swift's stable runtime uses preserve_most for reference counting on AArch64.
 // These operations also handle capture contexts, whose metadata need not be
 // ordinary class metadata (https://github.com/swiftlang/swift/blob/main/include/swift/Runtime/HeapObject.h).
-#if defined(__aarch64__)
-#define ABI_SWIFT_REFCOUNT_CC __attribute__((preserve_most))
-#else
-#define ABI_SWIFT_REFCOUNT_CC
-#endif
-extern "C" void *ABI_SWIFT_REFCOUNT_CC swift_retain(void *);
-extern "C" void ABI_SWIFT_REFCOUNT_CC swift_release(void *);
+extern "C" void *__attribute__((preserve_most)) swift_retain(void *);
+extern "C" void __attribute__((preserve_most)) swift_release(void *);
 
 void ABIRetainSwiftClosureContext(void *context) { swift_retain(context); }
 void ABIReleaseSwiftClosureContext(void *context) { swift_release(context); }
@@ -416,14 +411,9 @@ struct SwiftResultStorage {
 
 static ABISwiftCallInterface *createSwiftCallInterface(
     const ABIValueType *result, const ABIValueType *const *parameters,
-    size_t count, const ABIValueType *errorResult, bool typedError, ABIResolutionFailure **error,
-    bool asyncEntry = false)
+    size_t count, const ABIValueType *errorResult, bool typedError, ABIResolutionFailure **error)
 {
     if (error) *error = nullptr;
-#if !defined(__aarch64__) && !defined(__x86_64__)
-    fail(error, ABIFailureUnsupportedDeclaration, "No Swift call implementation for this architecture.");
-    return nullptr;
-#else
     if (!result || (count && !parameters)) {
         fail(error, ABIFailureInvalidRequest, "A result and parameter storage descriptions are required.");
         return nullptr;
@@ -448,29 +438,18 @@ static ABISwiftCallInterface *createSwiftCallInterface(
                 [](const Component &component) { return component.floating; }));
     }
     size_t integers = 0, floating = 0, stack = 0;
-#if defined(__x86_64__)
-    constexpr size_t integerLimit = 6;
-#else
-    constexpr size_t integerLimit = 8;
-#endif
     auto append = [&](ArgumentMove move) {
         const auto &component = move.component;
         if (component.floating && floating < 8) {
             move.bank = Bank::floating;
             move.destination = floating++;
-        } else if (!component.floating && integers < integerLimit) {
+        } else if (!component.floating && integers < 8) {
             move.bank = Bank::integer;
             move.destination = integers++;
         } else {
-#if defined(__x86_64__)
-            stack = aligned(stack, 8);
-            move.destination = stack;
-            stack += 8;
-#else
             stack = aligned(stack, component.size);
             move.destination = stack;
             stack += component.size;
-#endif
         }
         interface->moves.push_back(move);
     };
@@ -500,15 +479,8 @@ static ABISwiftCallInterface *createSwiftCallInterface(
     }
     if (interface->indirectError)
         append({0, {0, sizeof(void *), false}, Bank::stack, 0, false, 0, ArgumentSource::error});
-#if defined(__x86_64__)
-    // swifttailcc reuses the caller's reserved eight-byte slot. Assembly copies
-    // every argument byte, but only whole 16-byte groups change the stack pointer.
-    interface->stackSize = asyncEntry ? stack : aligned(stack, 16);
-#else
     interface->stackSize = aligned(stack, 16);
-#endif
     return interface.release();
-#endif
 }
 
 ABISwiftCallInterface *ABICreateSwiftCallInterface(
@@ -829,7 +801,7 @@ ABISwiftAsyncCallInterface *ABICreateSwiftAsyncCallInterface(
     for (size_t index = 0; index < count; ++index) inputs.push_back(parameters[index]);
     if (completion->indirectError) inputs.push_back(pointer.get());
     auto entry = std::shared_ptr<ABISwiftCallInterface>(
-        createSwiftCallInterface(empty.get(), inputs.data(), inputs.size(), nullptr, false, error, true));
+        createSwiftCallInterface(empty.get(), inputs.data(), inputs.size(), nullptr, false, error));
     if (!entry) return nullptr;
     return new ABISwiftAsyncCallInterface{std::move(entry), std::move(completion), count, inheritsCallerIsolation};
 }

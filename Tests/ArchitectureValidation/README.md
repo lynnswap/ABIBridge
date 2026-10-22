@@ -1,6 +1,6 @@
 # Architecture and replacement validation
 
-This package compares compiler-generated calls with ABIBridge's invocation machinery. Use the [contributor guide](../../CONTRIBUTING.md) to run tests and device probes. The `replacement` mode checks the internal Objective-C callback boundary on a signed device host; public hook APIs have separate probes below.
+This package compares compiler-generated calls with ABIBridge's invocation machinery. ABIBridge supports only arm64, arm64e, and arm64_32, so the probes and recorded runs cover those architectures. Use the [contributor guide](../../CONTRIBUTING.md) to run tests and device probes. The `replacement` mode checks the internal Objective-C callback boundary on a signed device host; public hook APIs have separate probes below.
 
 ## Full iPhone Air validation
 
@@ -33,7 +33,7 @@ Closure packs cover per-element reabstraction, empty packs, wrapper values bound
 
 On October 3, 2026, the new mode passed all 79 checks on iPhone Air / iOS 27.0.1 (24A446), using Xcode 27.0 (27A266a) / Swift 6.4, Release arm64e, CPU subtype `0x80000002`, and `pacCompiled: true`. The same build passed 16 related modes: `swift`, `swift-generic-borrows`, `method-extraction`, `swift-closures`, `swift-throwing-closures`, `swift-async-closures`, `swift-callback`, `swift-errors`, `swift-async`, `swift-arguments`, `swift-existentials`, `swift-opaque`, `swift-function-hooks`, `swift-method-hooks`, `swift-value-hooks`, and `swiftui`. These 17 modes produced 306 successful checks in newly written reports from separate launches.
 
-The architecture package also passed all 30 parameterized macOS cases with Xcode 26.6 / Swift 6.3.3. This is runtime evidence for those configurations; the four-architecture compiler probes remain separate evidence for other targets.
+The architecture package also passed all 30 parameterized macOS cases with Xcode 26.6 / Swift 6.3.3. This is runtime evidence for those configurations; the compiler probes remain separate evidence for other targets.
 
 ## Concrete Swift closure values
 
@@ -126,7 +126,7 @@ The arm64e iPhone Air writable control passed these managed cases, including all
 
 The `swift` mode compares concrete method and getter calls on existing generic class instances with compiler calls. It covers protocol-witness context from self, complete relative declarations, a generic superclass, distinct instantiated metadata, retained calls after cache removal, and final receiver release. These calls use the existing bound Swift member APIs. Same-type constrained methods and getters are compared with compiler calls through a generic superclass, while an additional protocol-witness requirement remains an adapter case.
 
-Run `python3 scripts/check-swift-generic-receiver-codegen.py` from the repository root to compare concrete generic members with nongeneric controls for arm64, x86_64, arm64e, and arm64_32. The probe also records dependent argument/result indirection and the extra metadata argument of an independently generic method. Compilation evidence does not establish runtime behavior on an untested architecture.
+Run `python3 scripts/check-swift-generic-receiver-codegen.py` from the repository root to compare concrete generic members with nongeneric controls for arm64, arm64e, and arm64_32. The probe also records dependent argument/result indirection and the extra metadata argument of an independently generic method. Compilation evidence does not establish runtime behavior on an untested architecture.
 
 ## Compiled Swift replacements
 
@@ -166,7 +166,7 @@ The `swift-callback` mode exercises the internal `ABIBridge/SwiftCallbacks.h` en
 
 Each entry has independent argument and result storage. A successful `proceed` retains the latest native result until it is superseded or returned; assigning a replacement transfers independent native ownership. Lifecycle callbacks destroy discarded nontrivial results and consumed incoming values. Failure after a completed continuation preserves that result instead of invoking the original again. Logical invalidation releases callback captures after in-flight entries finish and leaves the code callable through its retained fallback owner.
 
-`SwiftCallbackTests` uses separately compiled Swift callers to verify class context, scalar and String edits, mixed integer/floating arguments that spill to the stack, four-register and indirect results, imported-function entry, consuming self, continuation failure, reentrant result destruction, concurrent invalidation, wrong-thread access, Swift frame expiry, and expansion/reuse of entry pages. Code-generation checks cover arm64, arm64e and arm64e.x1 page geometry and authenticated dispatch. x86_64 assembly is also compiled; runtime behavior there remains unverified.
+`SwiftCallbackTests` uses separately compiled Swift callers to verify class context, scalar and String edits, mixed integer/floating arguments that spill to the stack, four-register and indirect results, imported-function entry, consuming self, continuation failure, reentrant result destruction, concurrent invalidation, wrong-thread access, Swift frame expiry, and expansion/reuse of entry pages. Code-generation checks cover arm64, arm64e and arm64e.x1 page geometry and authenticated dispatch.
 
 An iPhone Air / iOS 27.0 / arm64e run passed generated scalar and heap-backed String callbacks, repeated continuation and result disposal, logical invalidation, restoration, and a compiler-provided indirect result. Normal link protections were retained. Stack-heavy and four-register result behavior is currently evidenced by macOS arm64 execution; arm64e.x1 runtime execution still requires matching hardware.
 
@@ -228,7 +228,7 @@ All 12 checks passed in a Release arm64e build on iPhone Air (iOS 27, build 24A4
 
 The `swift-async` mode exercises public async functions and members through the native transport. It verifies owned String results, caller-isolation payloads and task-local state, executor restoration, cooperative cancellation, native errors, independent indirect success/error outputs, and stack arguments.
 
-All eight checks passed in a Release arm64e build on iPhone Air (iOS 27, build 24A435), with pointer authentication enabled. The report is `Documents/architecture-swift-async.json`. macOS tests also execute the transport on arm64 and under Rosetta on x86_64; arm64_32 is separately compiled.
+All eight checks passed in a Release arm64e build on iPhone Air (iOS 27, build 24A435), with pointer authentication enabled. The report is `Documents/architecture-swift-async.json`. macOS tests also execute the transport on arm64; arm64_32 is separately compiled.
 
 ## Throwing Swift closure values
 
@@ -242,7 +242,7 @@ The `swiftui` mode compares rendered Text, Image, Color, and AnyView values, an 
 
 The public ABIBridgeSwiftUI product replaces the prototype's retaining wrapper with NativeSwiftView. Its 22-check run adds non-View diagnostics, original-value reuse after failed conversion, copied-view ownership after releasing the original opaque result, and final model release. All 22 checks passed in macOS Debug/Release and in the iOS 27 iPhone Air Simulator. The public wrapper also builds for arm64e devices and watchOS; the initial physical-device evidence above remains the 18-check prototype run. The external consumer exercises the same public API without the provider module; its compile controls enforce MainActor construction/non-Sendable values and its native-only link control excludes SwiftUI.
 
-The host app's **Open SwiftUI demo** button exposes the same three routes for interaction; `--swiftui-demo opaque` opens it directly (`host` and `composed` select the other routes). Increment runs through a native Swift closure and changes both the counter and red/blue panel. All three routes were exercised in the iPhone Air Simulator (iOS 27). The external SwiftUIConsumer separately compiles without the provider's module and renders its private some View result; `scripts/check-swiftui-codegen.py` records arm64, x86_64, arm64e, and arm64_32 compiler evidence. These fixtures do not install SwiftUI conformances in the ABIBridge product.
+The host app's **Open SwiftUI demo** button exposes the same three routes for interaction; `--swiftui-demo opaque` opens it directly (`host` and `composed` select the other routes). Increment runs through a native Swift closure and changes both the counter and red/blue panel. All three routes were exercised in the iPhone Air Simulator (iOS 27). The external SwiftUIConsumer separately compiles without the provider's module and renders its private some View result; `scripts/check-swiftui-codegen.py` records arm64, arm64e, and arm64_32 compiler evidence. These fixtures do not install SwiftUI conformances in the ABIBridge product.
 
 ## Opaque Swift results
 

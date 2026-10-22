@@ -2,6 +2,17 @@
 
 Distinguish the architecture of an inspected image from the ABI used by the calling process.
 
+## Supported architectures
+
+ABIBridge supports only arm64, arm64e, and arm64_32, because its Swift call and callback trampolines implement only the AArch64 Swift calling convention.
+
+Apps that build only for these architectures build in every configuration. Xcode still compiles package targets for x86_64 in Release and Archive builds, even when the app excludes x86_64, so ABIBridge's x86_64 slice compiles without the trampolines. Linking that slice into a binary fails with an undefined symbol that names the supported architectures:
+
+```
+Undefined symbols for architecture x86_64:
+  "_ABIBridge_supports_only_arm64_arm64e_arm64_32", referenced from:
+```
+
 ## Inspect metadata independently of execution
 
 MachOKit can recognize arm64e.x1 metadata without executing that architecture. Finding a symbol in an image or cache does not establish that its address can be invoked by the current process. Preserve the complete CPU subtype, including capability bits, when recording an image's identity.

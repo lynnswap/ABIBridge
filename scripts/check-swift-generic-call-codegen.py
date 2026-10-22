@@ -34,7 +34,6 @@ def main():
     targets = []
     for target, sdk_name in [
         ("arm64-apple-macos15.4", "macosx"),
-        ("x86_64-apple-macos15.4", "macosx"),
         ("arm64e-apple-ios18.4", "iphoneos"),
         ("arm64_32-apple-watchos11.4", "watchos"),
     ]:

@@ -80,7 +80,6 @@ ADDRESSABLE = 0x02000000
 NON_BITWISE_TAKABLE = 0x00100000
 TARGETS = [
     ("arm64-apple-macos15.4", "macosx"),
-    ("x86_64-apple-macos15.4", "macosx"),
     ("arm64e-apple-ios18.4", "iphoneos"),
     ("arm64_32-apple-watchos11.4", "watchos"),
 ]

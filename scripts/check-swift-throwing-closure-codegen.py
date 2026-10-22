@@ -21,7 +21,7 @@ public func indirect(_ body: (ErrorLifetimeToken, Bool) throws(LargeFailure) -> 
 public func foreign(_ body: (UnsafeRawPointer) throws -> Void, _ value: UnsafeRawPointer) throws { try body(value) }
 '''
     reports = []
-    for target, sdk_name in [('arm64-apple-macos15.4','macosx'), ('x86_64-apple-macos15.4','macosx'),
+    for target, sdk_name in [('arm64-apple-macos15.4','macosx'),
                              ('arm64e-apple-ios18.4','iphoneos'), ('arm64_32-apple-watchos11.4','watchos')]:
         directory = output / target
         directory.mkdir(parents=True, exist_ok=True)

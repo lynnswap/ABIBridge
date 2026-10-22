@@ -84,6 +84,6 @@ To describe a Swift type for one lookup without a conformance, pass its ``Native
 
 This conformance describes a value representation. Generic bindings, existential containers, tuples, nested closures, and runtime-only noncopyable values follow the separate contracts in <doc:SwiftValues>. Closure preparation fails before publication if the nominal identity cannot be established from the metatype. Metadata size or a matching descriptor extent alone does not establish a callable declaration.
 
-The fixtures verify mixed reference/floating structs, tagged reference-bearing enums, large indirect fixed values, callbacks and returned closures, member ownership, and rejected undersized layouts. Compiler probes cover arm64, x86_64, arm64e, and arm64_32; execution evidence is recorded separately.
+The fixtures verify mixed reference/floating structs, tagged reference-bearing enums, large indirect fixed values, callbacks and returned closures, member ownership, and rejected undersized layouts. Compiler probes cover arm64, arm64e, and arm64_32; execution evidence is recorded separately.
 
 Use <doc:GenericSwiftValues> for generic declaration conventions and <doc:ManagedSwiftValues> when a compiled adapter is needed.

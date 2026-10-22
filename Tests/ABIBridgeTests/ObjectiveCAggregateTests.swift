@@ -194,14 +194,6 @@ struct ObjectiveCAggregateTests {
 
     @Test func longDoubleFieldsFollowThePlatformABI() throws {
         let runtime = ABIRuntime.shared
-        #if arch(x86_64)
-        #expect(throws: ABIResolutionError.self) {
-            try runtime.object(ABIAggregateFixture()).resolveMethodAndWait(
-                selector: "transformLongDouble:",
-                as: ((ABILongDoubleAggregate) -> ABILongDoubleAggregate).self
-            )
-        }
-        #else
         let receiver = ABIAggregateFixture()
         let input = ABILongDoubleAggregate(value: 2, tag: 3)
         let call = try runtime.object(receiver).resolveMethodAndWait(
@@ -230,7 +222,6 @@ struct ObjectiveCAggregateTests {
         defer { hook.invalidate() }
         let hooked = receiver.transformLongDouble(input)
         #expect(hooked.value == 3.5 && hooked.tag == 15)
-        #endif
     }
 
     @Test func undersizedTypedStorageIsRejectedBeforeDispatch() throws {

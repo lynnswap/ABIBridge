@@ -145,11 +145,7 @@ struct SwiftConsumer {
         )
         let metadata = try await runtime.resolveImageMetadata(in: image)
         precondition(metadata.image == image && metadata.is64Bit)
-        #if arch(arm64)
         precondition(metadata.architecture.cpuType == CPU_TYPE_ARM64)
-        #elseif arch(x86_64)
-        precondition(metadata.architecture.cpuType == CPU_TYPE_X86_64)
-        #endif
         unsafe cAdd.symbol.withUnsafeAddress {
             let functionAddress = UInt64(UInt(bitPattern: $0))
             precondition(metadata.functionStartAddresses?.contains(functionAddress) == true)

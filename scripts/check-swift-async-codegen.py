@@ -27,7 +27,6 @@ def main():
               'asyncBothIndirect': 6, 'asyncFloatingError': 4, 'asyncMany': 21}
     for target, sdk_name, bits in [
         ('arm64-apple-macos15.4', 'macosx', 64),
-        ('x86_64-apple-macos15.4', 'macosx', 64),
         ('arm64e-apple-ios18.4', 'iphoneos', 64),
         ('arm64_32-apple-watchos11.4', 'watchos', 32),
     ]:

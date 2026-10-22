@@ -54,11 +54,7 @@ package final class FixtureLibrary {
                     return *reinterpret_cast<uintptr_t *>(&\(self.namespace)::object) - 2 * sizeof(void *);
                 }
                 """
-        #if arch(arm64)
         let architecture = "arm64"
-        #else
-        let architecture = "x86_64"
-        #endif
         if let swiftModule {
             let target = "\(architecture)-apple-macosx15.4"
             try (swiftSource ?? "public func echo() {}").write(
