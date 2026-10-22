@@ -986,7 +986,6 @@ struct NativeSwiftClosureTests {
             #expect(plan.discriminator == openExpected, "open valueABIs: \(valueABIs.count)")
         }
     }
-    #endif
 
     /// A type declared in an unconstrained extension of another module's
     /// type hashes as its runtime name, which includes the extension and has
@@ -1098,6 +1097,7 @@ struct NativeSwiftClosureTests {
             }
         }
     }
+    #endif
 
     @Test func preservesManagedResultsAndFloatingAggregates() async throws {
         let runtime = ABIRuntime.shared
