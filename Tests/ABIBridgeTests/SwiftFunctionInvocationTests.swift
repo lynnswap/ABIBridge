@@ -1,4 +1,5 @@
 import ABIBridge
+import ABIBridgeTestSupport
 import CoreGraphics
 import Foundation
 import Testing
@@ -161,7 +162,68 @@ private final class ForeignSwiftFour: ABIBridgeValue {
     static func nativeValue(from value: ForeignSwiftFour) -> NativeValue { value.storage }
 }
 
+/// Formally indirect stand-ins for a resilient one-word value and a
+/// five-word value.
+private struct IndirectWord: ABIBridgeSwiftValue {
+    var value: Int64
+    static var swiftABIType: NativeType { try! .opaque(named: "IndirectWord") }
+}
+private struct IndirectBlock: ABIBridgeSwiftValue {
+    var a, b, c, d, e: Int64
+    static var swiftABIType: NativeType { try! .opaque(named: "IndirectBlock") }
+}
+
 struct SwiftFunctionInvocationTests {
+    #if os(macOS)
+    @Test func completeNamesKeepTheRoleOfEachResultAddress() async throws {
+        let module = "ResultRoles_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+        let library = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                public struct Token {
+                    public var value: Int64
+                }
+                @inline(never) public func tokenAndWords() -> (Token, Int64, Int64, Int64, Int64, Int64) {
+                    (Token(value: 7), 1, 2, 3, 4, 5)
+                }
+                """,
+            linkArguments: ["-enable-library-evolution"]
+        )
+        defer { library.cleanup() }
+        let runtime = ABIRuntime()
+        let token = try await runtime.resolveSwiftType(
+            named: module + ".Token",
+            in: .path(library.libraryURL)
+        )
+        let valueABIs: [NativeSwiftType: NativeType] = [token: try .opaque(named: token.name)]
+        let name =
+            "\(module).tokenAndWords() -> (\(module).Token, Swift.Int64, Swift.Int64, Swift.Int64, Swift.Int64, Swift.Int64)"
+        // The token's output passes as an ordinary pointer, and the five words
+        // as the indirect result.
+        let call = try await runtime.resolveSwiftFunction(
+            named: name,
+            as: (() -> (IndirectWord, Int64, Int64, Int64, Int64, Int64)).self,
+            valueABIs: valueABIs,
+            in: .path(library.libraryURL)
+        )
+        let (word, a, b, c, d, e) = try unsafe call.unsafeInvoke()
+        #expect([word.value, a, b, c, d, e] == [7, 1, 2, 3, 4, 5])
+        // Two outputs pass as two ordinary pointers, which leaves the indirect
+        // result unset.
+        do {
+            _ = try await runtime.resolveSwiftFunction(
+                named: name,
+                as: (() -> (IndirectWord, IndirectBlock)).self,
+                valueABIs: valueABIs,
+                in: .path(library.libraryURL)
+            )
+            Issue.record("Two output addresses stood for an output and the indirect result")
+        } catch let ABIResolutionError.signatureMismatch(mismatch) {
+            #expect(mismatch.position == .result)
+        }
+    }
+    #endif
+
     @Test func labelOnlyLookupHandlesMixedNamedAndUnnamedArguments() async throws {
         for name in [
             "swiftABIMixedLabels(_:increment:)", "swiftABIAllNamed(value:increment:)",

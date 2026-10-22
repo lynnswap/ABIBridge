@@ -251,8 +251,9 @@ bool ABISwiftValueIsAddressOnly(const ABIValueType *type);
 /// Whether a value with storage `value` passes as a Swift parameter or result
 /// declared with storage `declared`: the call puts the same sequence of integer
 /// and floating components, at the same offsets, in registers and stack slots,
-/// and an address of indirect storage at least as large and aligned as the
-/// declared value where the declared value has one. A parameter's tuples
+/// and an address in the same role, as an argument, a formal output, or the
+/// indirect result, wherever the declared value has one, for storage at least
+/// as large and aligned as the declared storage. A parameter's tuples
 /// expand into separate values, so a tuple and a struct with the same slots
 /// pass alike. Scalar signedness and Swift types do not take part.
 bool ABISwiftValuePassesAs(const ABIValueType *value, const ABIValueType *declared, bool result);

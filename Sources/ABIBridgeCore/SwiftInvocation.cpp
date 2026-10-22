@@ -537,11 +537,17 @@ static bool isAddressOnly(const TypeStorage &type) {
 bool ABISwiftValueIsAddressOnly(const ABIValueType *type) { return isAddressOnly(*type->storage); }
 
 namespace {
-// A register or stack slot that a value occupies: a component of its bytes,
-// or the address of indirect storage.
+// What a register or stack slot of a value holds. A result's formal indirect
+// outputs pass before the inputs as ordinary pointers, while storage for a
+// direct result too large for registers uses the dedicated indirect-result
+// register, so each address keeps its role.
+enum class SlotRole { component, address, output, indirectResult };
+
 struct LoweredPart {
+    SlotRole role;
+    // A component of the value's bytes, for SlotRole::component.
     Component component;
-    bool indirect;
+    // The storage that an address refers to.
     size_t extent;
     size_t alignment;
 };
@@ -552,43 +558,38 @@ struct LoweredPart {
 // unless its tuple elements need indirect or separate storage.
 std::vector<LoweredPart> loweredParts(const std::shared_ptr<TypeStorage> &type, bool result) {
     std::vector<LoweredPart> parts;
-    auto appendIndirect = [&](TypeStorage &value) {
-        parts.push_back({{0, sizeof(void *), false}, true, value.size(), value.native()->alignment});
+    auto appendAddress = [&](SlotRole role, TypeStorage &value) {
+        parts.push_back({role, {}, value.size(), value.native()->alignment});
+    };
+    auto appendComponents = [&](const Layout &layout, size_t offset) {
+        for (auto component : layout.components) {
+            component.offset += offset;
+            parts.push_back({SlotRole::component, component, 0, 0});
+        }
     };
     if (result) {
         ABISwiftCallInterface interface;
         interface.result = type;
         prepareSwiftResult(interface);
-        for (const auto &field : interface.indirectResults) appendIndirect(*field.type);
-        if (interface.resultLayout.indirect) {
-            appendIndirect(*interface.directResult);
-        } else {
-            for (const auto &component : interface.resultLayout.components)
-                parts.push_back({component, false, 0, 0});
-        }
+        for (const auto &field : interface.indirectResults) appendAddress(SlotRole::output, *field.type);
+        if (interface.resultLayout.indirect) appendAddress(SlotRole::indirectResult, *interface.directResult);
+        else appendComponents(interface.resultLayout, 0);
         return parts;
     }
     std::vector<SwiftField> fields;
     expandTuple(type, 0, fields);
     for (const auto &field : fields) {
         const auto layout = lower(*field.type);
-        if (layout.indirect) {
-            appendIndirect(*field.type);
-            continue;
-        }
-        for (auto component : layout.components) {
-            component.offset += field.offset;
-            parts.push_back({component, false, 0, 0});
-        }
+        if (layout.indirect) appendAddress(SlotRole::address, *field.type);
+        else appendComponents(layout, field.offset);
     }
     return parts;
 }
 
 bool passesAs(const LoweredPart &value, const LoweredPart &declared) {
-    if (value.indirect || declared.indirect) {
-        return value.indirect && declared.indirect && value.extent >= declared.extent
-            && value.alignment >= declared.alignment;
-    }
+    if (value.role != declared.role) return false;
+    if (value.role != SlotRole::component)
+        return value.extent >= declared.extent && value.alignment >= declared.alignment;
     const auto &lhs = value.component, &rhs = declared.component;
     return lhs.offset == rhs.offset && lhs.size == rhs.size && lhs.floating == rhs.floating
         && lhs.optionalSingleton == rhs.optionalSingleton;
@@ -607,14 +608,18 @@ char *ABICopySwiftValueLoweringDescription(const ABIValueType *type, bool result
     std::string text;
     for (const auto &part : loweredParts(type->storage, result)) {
         text += text.empty() ? "in registers (" : ", ";
-        if (part.indirect) {
-            text += "address of " + std::to_string(part.extent) + " bytes aligned to "
-                + std::to_string(part.alignment);
-        } else {
+        switch (part.role) {
+        case SlotRole::component:
             text += std::to_string(part.component.size) + "-byte "
                 + (part.component.floating ? "float" : "integer") + " at "
                 + std::to_string(part.component.offset);
+            continue;
+        case SlotRole::address: text += "address"; break;
+        case SlotRole::output: text += "output address"; break;
+        case SlotRole::indirectResult: text += "indirect-result address"; break;
         }
+        text += " of " + std::to_string(part.extent) + " bytes aligned to "
+            + std::to_string(part.alignment);
     }
     return strdup(text.empty() ? "in no registers" : (text + ")").c_str());
 }
