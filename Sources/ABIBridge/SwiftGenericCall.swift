@@ -1110,10 +1110,13 @@ struct SwiftGenericCallPlan: Sendable {
                 return .value(explicit, consuming: false)
             }
             try binding.validateInferredHostValue(actual, for: formal)
+            if let explicit = try binding.explicitHostOptionalType(actual) {
+                return .value(explicit, consuming: false)
+            }
             guard
                 let tuple = try concreteTuple(
                     actual,
-                    explicitLayout: binding.explicitHostValueType,
+                    explicitLayout: binding.explicitHostLayout,
                     position: position
                 )
             else { return .concrete }
@@ -1197,10 +1200,13 @@ struct SwiftGenericCallPlan: Sendable {
         if representsClosedValue(formal, actual: actual, binding: binding) {
             if let explicit = try binding.explicitHostValueType(actual) { return .value(explicit) }
             try binding.validateInferredHostValue(actual, for: formal)
+            if let explicit = try binding.explicitHostOptionalType(actual) {
+                return .value(explicit)
+            }
             if try binding.hasExplicitHostField(actual),
                 let tuple = try concreteTuple(
                     actual,
-                    explicitLayout: binding.explicitHostValueType,
+                    explicitLayout: binding.explicitHostLayout,
                     position: position
                 )
             {

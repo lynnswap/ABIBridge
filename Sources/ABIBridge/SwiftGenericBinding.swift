@@ -1589,6 +1589,28 @@ struct SwiftGenericBinding: Sendable {
         type is AnyClass ? nil : try explicitValueType(type)
     }
 
+    /// The storage of a closed host Optional whose payload, within any
+    /// Optionals, has a `valueABIs` layout, as runtime values lower such an
+    /// Optional. Call it after `validateInferredHostValue`: an adapter
+    /// payload's Optional need not match the native Optional's layout.
+    func explicitHostOptionalType(_ type: Any.Type) throws -> CValueType? {
+        guard let optional = type as? any NativeOptionalValue.Type else { return nil }
+        let wrapped = optional.wrappedType
+        guard let payload = try explicitHostValueType(wrapped) ?? explicitHostOptionalType(wrapped)
+        else { return nil }
+        return try SwiftValueSchema.optionalStorage(
+            of: type,
+            wrapped: payload,
+            wrappedType: wrapped
+        )
+    }
+
+    /// The `valueABIs` layout of a validated closed host value: its own
+    /// entry, or its Optional payload's.
+    func explicitHostLayout(_ type: Any.Type) throws -> CValueType? {
+        try explicitHostValueType(type) ?? explicitHostOptionalType(type)
+    }
+
     /// Inference reads the metadata it lowers, so it describes a declaration
     /// only through the declaration's own formal type. A closed host value
     /// can be an adapter with another Swift name, which says nothing about the
@@ -1624,7 +1646,7 @@ struct SwiftGenericBinding: Sendable {
     func hasExplicitHostField(_ type: Any.Type) throws -> Bool {
         guard let tuple = SwiftTupleMetadata(type) else { return false }
         return try tuple.elements.contains {
-            try explicitHostValueType($0.type) != nil || hasExplicitHostField($0.type)
+            try explicitHostLayout($0.type) != nil || hasExplicitHostField($0.type)
         }
     }
 

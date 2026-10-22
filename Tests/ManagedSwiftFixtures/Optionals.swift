@@ -112,3 +112,15 @@ public struct OptionalRuntimeRecord {
 @inline(never) public func describeOptionalFrozenRecord(_ record: OptionalFrozenRecord?) -> String {
     record.map { "\($0.name)#\($0.count)" } ?? "nil"
 }
+
+@inline(never) public func makeOptionalFrozenRecordPair(
+    _ count: Int64
+) -> (OptionalFrozenRecord?, Int64) {
+    (makeOptionalFrozenRecord(count), count)
+}
+
+@inline(never) public func describeOptionalFrozenRecordPair(
+    _ pair: (OptionalFrozenRecord?, Int64)
+) -> String {
+    describeOptionalFrozenRecord(pair.0) + "@\(pair.1)"
+}
