@@ -443,6 +443,43 @@ struct SwiftInferredValueTests {
         )
     }
 
+    /// A @sensitive struct is address-only, and only its value witnesses,
+    /// which are not POD although its fields are, show it.
+    @Test func sensitiveStructsAreUndecided() async throws {
+        let (library, module) = try provider(
+            """
+            @sensitive public struct Secret {
+                public var a: Int64
+                public var b: Int64
+                public init() { a = 1; b = 2 }
+            }
+            public struct HoldsSecret {
+                public var secret = Secret()
+                public var n: Int64 = 3
+                public init() {}
+            }
+            // Its String field sets the addressable bit, so the module's
+            // clear bits certify its other types.
+            public struct Label {
+                public var text = "label"
+                public init() {}
+            }
+            @inline(never) public func makeSecret() -> Secret { Secret() }
+            @inline(never) public func makeHoldsSecret() -> HoldsSecret { HoldsSecret() }
+            """,
+            arguments: ["-enable-experimental-feature", "Sensitive"]
+        )
+        defer { library.cleanup() }
+        for (make, name) in [("makeSecret()", "Secret"), ("makeHoldsSecret()", "HoldsSecret")] {
+            await expectFailure(
+                "\(module).\(make)",
+                in: library,
+                as: (() -> NativeSwiftValue).self,
+                naming: "the value witnesses of struct `\(module).\(name)` are not POD"
+            )
+        }
+    }
+
     /// A field record describes a stored property of an opaque type by its
     /// underlying type, but signatures lower the property as an opaque
     /// archetype: address-only unless it is class-bound. Only one that is not

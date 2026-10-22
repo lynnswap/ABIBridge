@@ -47,8 +47,10 @@ enum SwiftValuePosition: Sendable, Equatable {
 ///   imported C structs always set it, so such fields leave a type undecided.
 /// - A nongeneric type whose static value witnesses leave the bit clear is
 ///   loadable once a type of its module sets the bit, which Swift 6.1 and
-///   earlier compilers never do. Its fields, including generic instances, are
-///   decided with it.
+///   earlier compilers never do, and when its fields explain whether its value
+///   witnesses are POD: a `@sensitive` type is address-only, and only its
+///   non-POD value witnesses show it. Its fields, including generic
+///   instances, are decided with it.
 ///
 /// Missing symbols, the form of property descriptors, the runtime-built value
 /// witnesses of a generic instance, and class reference counting are not
@@ -70,7 +72,7 @@ enum SwiftInferredValue {
     static func layout(of metadata: Any.Type, position: SwiftValuePosition) throws -> CValueType {
         let convention: Convention
         do throws(InferenceFailure) {
-            convention = try self.convention(of: metadata)
+            convention = try classification(of: metadata).convention
         } catch {
             let message = Self.message(for: metadata, error.detail, at: position)
             throw error.unsupported
@@ -133,22 +135,32 @@ enum SwiftInferredValue {
         let detail: String
     }
 
-    private static let conventions = Mutex<
-        [ObjectIdentifier: Result<Convention, InferenceFailure>]
+    private struct Classification: Sendable {
+        let convention: Convention
+        /// Whether a value it stores, at any depth, is not POD, as its field
+        /// records show. A `@sensitive` type's own value witnesses are not
+        /// POD even when its fields are.
+        let storesNonPOD: Bool
+    }
+
+    private static let classifications = Mutex<
+        [ObjectIdentifier: Result<Classification, InferenceFailure>]
     >([:])
 
     /// The classification of a struct or enum, cached per metadata. Swift
     /// metadata stays valid because images with Swift metadata are not unloaded.
-    private static func convention(of metadata: Any.Type) throws(InferenceFailure) -> Convention {
+    private static func classification(
+        of metadata: Any.Type
+    ) throws(InferenceFailure) -> Classification {
         let key = ObjectIdentifier(metadata)
-        if let cached = conventions.withLock({ $0[key] }) { return try cached.get() }
+        if let cached = classifications.withLock({ $0[key] }) { return try cached.get() }
         // Fields classify recursively, so classify outside the lock.
-        let result = Result { () throws(InferenceFailure) -> Convention in
+        let result = Result { () throws(InferenceFailure) -> Classification in
             try classify(metadata)
         }
-        return try conventions.withLock { conventions in
-            conventions[key] = conventions[key] ?? result
-            return conventions[key]!
+        return try classifications.withLock { classifications in
+            classifications[key] = classifications[key] ?? result
+            return classifications[key]!
         }.get()
     }
 
@@ -172,17 +184,19 @@ enum SwiftInferredValue {
     /// certify everything it stores is loadable.
     private enum Part {
         case addressOnly
-        /// The field's lowering if every value in it is frozen, or nil for a
-        /// field with no bytes such as a thin metatype.
-        case fixed(CValueType?)
+        /// The field's lowering if every value in it is frozen, nil for a
+        /// field with no bytes such as a thin metatype, and whether a value in
+        /// it is not POD.
+        case fixed(CValueType?, nonPOD: Bool)
     }
 
     // Value-witness flags (MetadataValues.h).
+    private static let nonPOD: UInt32 = 0x0001_0000
     private static let nonBitwiseTakable: UInt32 = 0x0010_0000
     private static let nonCopyable: UInt32 = 0x0080_0000
     private static let addressableForDependencies: UInt32 = 0x0200_0000
 
-    private static func classify(_ metadata: Any.Type) throws(InferenceFailure) -> Convention {
+    private static func classify(_ metadata: Any.Type) throws(InferenceFailure) -> Classification {
         let pointer = unsafeBitCast(metadata, to: UnsafeRawPointer.self)
         var info = ABISwiftValueDescriptorInfo()
         guard ABISwiftGetValueDescriptorInfo(pointer, &info) else {
@@ -200,15 +214,17 @@ enum SwiftInferredValue {
                 detail: "imported C structs and unions are not inferred from their field records"
             )
         }
+        let addressOnly = Classification(convention: .addressOnly, storesNonPOD: true)
         // Runtime initialization lays out a resilient type from another module.
-        if info.metadataInitialization == 1 { return .addressOnly }
+        if info.metadataInitialization == 1 { return addressOnly }
         // Only static value witnesses summarize the concrete fields; a generic
         // instance's come from its pattern.
-        if !info.isGeneric, flags & nonBitwiseTakable != 0 { return .addressOnly }
+        if !info.isGeneric, flags & nonBitwiseTakable != 0 { return addressOnly }
         let module = ModuleContext(metadata)
-        if info.isEnum, module.exportsEnumCases { return .addressOnly }
+        if info.isEnum, module.exportsEnumCases { return addressOnly }
         let fields = try readFields(of: metadata, info: info)
         var parts: [CValueType?] = []
+        var storesNonPOD = false
         for field in fields {
             let part: Part
             do throws(InferenceFailure) {
@@ -219,18 +235,31 @@ enum SwiftInferredValue {
                     detail: "its field \(field.description) cannot be lowered: \(error.detail)"
                 )
             }
-            guard case .fixed(let layout) = part else { return .addressOnly }
-            parts.append(layout)
+            switch part {
+            case .addressOnly: return addressOnly
+            case .fixed(let layout, let nonPOD):
+                parts.append(layout)
+                storesNonPOD = storesNonPOD || nonPOD
+            }
         }
-        switch decide(metadata, info: info, flags: flags, fields: fields, module: module) {
-        case .addressOnly:
-            return .addressOnly
+        let decision = decide(
+            metadata,
+            info: info,
+            flags: flags,
+            fields: fields,
+            storesNonPOD: storesNonPOD,
+            module: module
+        )
+        let convention: Convention
+        switch decision {
+        case .addressOnly: return addressOnly
         case .loadable:
-            return try .loadable(layout(of: metadata, info: info, fields: fields, parts: parts))
+            convention = try .loadable(layout(of: metadata, info: info, fields: fields, parts: parts))
         case .undecided(let missing):
             let frozen = try layout(of: metadata, info: info, fields: fields, parts: parts)
-            return .undecided(frozen: frozen, missing: missing)
+            convention = .undecided(frozen: frozen, missing: missing)
         }
+        return Classification(convention: convention, storesNonPOD: storesNonPOD)
     }
 
     private static func readFields(
@@ -298,12 +327,20 @@ enum SwiftInferredValue {
     // MARK: Field storage
 
     private static func part(of field: Field) throws(InferenceFailure) -> Part {
-        guard let type = field.type else { return try .fixed(pointer()) }
-        if field.reference == ABISwiftReferenceStorageWeak { return .addressOnly }
-        // An unowned reference is loadable when its referent uses native Swift
-        // reference counting. Otherwise it is not bitwise-takable, which the
-        // static value witnesses of a type that stores it show.
-        return try part(of: type, genericDependent: field.genericDependent)
+        guard let type = field.type else { return try .fixed(pointer(), nonPOD: true) }
+        switch field.reference {
+        case ABISwiftReferenceStorageWeak:
+            return .addressOnly
+        case ABISwiftReferenceStorageUnmanaged:
+            // unowned(unsafe) stores its referent's bits without counting them.
+            guard case .fixed(let layout, _) = try part(of: type) else { return .addressOnly }
+            return .fixed(layout, nonPOD: false)
+        default:
+            // An unowned reference is loadable when its referent uses native
+            // Swift reference counting. Otherwise it is not bitwise-takable,
+            // which the static value witnesses of a type that stores it show.
+            return try part(of: type, genericDependent: field.genericDependent)
+        }
     }
 
     private static func part(
@@ -314,11 +351,11 @@ enum SwiftInferredValue {
     {
         switch runtimeMetadataKind(type) {
         case .function:
-            return try .fixed(functionStorage(type))
+            return try .fixed(functionStorage(type), nonPOD: witnessesAreNonPOD(type))
         case .optional:
             let wrapped = (type as! any NativeOptionalValue.Type).wrappedType
             let part = try self.part(of: wrapped, genericDependent: genericDependent)
-            guard case .fixed(let payload) = part else { return .addressOnly }
+            guard case .fixed(let payload, let nonPOD) = part else { return .addressOnly }
             let layout = try failing {
                 try SwiftValueSchema.optionalStorage(
                     of: type,
@@ -327,29 +364,36 @@ enum SwiftInferredValue {
                     wrappedType: wrapped
                 )
             }
-            return .fixed(layout)
+            return .fixed(layout, nonPOD: nonPOD)
         case .tuple:
             return try tuplePart(type)
         case .metatype, .existentialMetatype, .extendedExistential:
             guard let metatype = SwiftMetatypeMetadata(type) else { return try codecPart(type) }
             // A field stores a concrete non-class metatype thin, in no bytes,
             // unless its declared type is generic.
-            if metatype.isSingleton, !genericDependent { return .fixed(nil) }
+            if metatype.isSingleton, !genericDependent { return .fixed(nil, nonPOD: false) }
             func thick<Value>(_: Value.Type) throws -> CValueType {
                 try metatype.valueType(for: Value.self, thin: false)
             }
-            return try .fixed(failing { try _openExistential(type, do: thick) })
+            return try .fixed(failing { try _openExistential(type, do: thick) }, nonPOD: false)
         case .opaque:
-            return try .fixed(builtinStorage(type))
+            return try .fixed(builtinStorage(type), nonPOD: witnessesAreNonPOD(type))
         case .structure, .enumeration:
             guard lowersByInference(type) else { return try codecPart(type) }
-            switch try convention(of: type) {
-            case .addressOnly: return .addressOnly
-            case .loadable(let layout), .undecided(let layout, _): return .fixed(layout)
+            let classification = try self.classification(of: type)
+            switch classification.convention {
+            case .addressOnly:
+                return .addressOnly
+            case .loadable(let layout), .undecided(let layout, _):
+                return .fixed(layout, nonPOD: classification.storesNonPOD)
             }
         default:
             return try codecPart(type)
         }
+    }
+
+    private static func witnessesAreNonPOD(_ type: Any.Type) -> Bool {
+        ABISwiftGetValueWitnessFlags(unsafeBitCast(type, to: UnsafeRawPointer.self)) & nonPOD != 0
     }
 
     private static func failing<Result>(
@@ -388,7 +432,7 @@ enum SwiftInferredValue {
         }
         let layout = try failing { try _openExistential(type, do: storage) }
         return withExtendedLifetime(layout, { ABISwiftValueIsAddressOnly(layout.handle) })
-            ? .addressOnly : .fixed(layout)
+            ? .addressOnly : .fixed(layout, nonPOD: witnessesAreNonPOD(type))
     }
 
     /// Thick Swift functions store an entry point and a context; blocks, thin
@@ -441,9 +485,13 @@ enum SwiftInferredValue {
             )
         }
         var layouts: [CValueType?] = []
+        var storesNonPOD = false
         for element in tuple.elements {
-            guard case .fixed(let layout) = try part(of: element.type) else { return .addressOnly }
+            guard case .fixed(let layout, let nonPOD) = try part(of: element.type) else {
+                return .addressOnly
+            }
             layouts.append(layout)
+            storesNonPOD = storesNonPOD || nonPOD
         }
         let layout = ABISwiftGetValueLayout(unsafeBitCast(type, to: UnsafeRawPointer.self))
         let aggregate = try aggregate(
@@ -453,7 +501,7 @@ enum SwiftInferredValue {
             alignment: layout.alignment,
             of: type
         )
-        return .fixed(aggregate)
+        return .fixed(aggregate, nonPOD: storesNonPOD)
     }
 
     private static func aggregate(
@@ -533,6 +581,7 @@ enum SwiftInferredValue {
         info: ABISwiftValueDescriptorInfo,
         flags: UInt32,
         fields: [Field],
+        storesNonPOD: Bool,
         module: ModuleContext
     ) -> Decision {
         let name = String(reflecting: metadata)
@@ -564,6 +613,13 @@ enum SwiftInferredValue {
         guard module.setsAddressableForDependencies else {
             return .undecided(
                 "\(moduleName) never sets the addressable-for-dependencies value-witness bit, as Swift 6.1 and earlier compilers do not, so the bit does not show whether `\(name)` is resilient"
+            )
+        }
+        // A @sensitive type is address-only, and only its non-POD value
+        // witnesses show it.
+        if flags & nonPOD != 0, !storesNonPOD {
+            return .undecided(
+                "the value witnesses of \(kind) `\(name)` are not POD, although none of its fields needs nontrivial copies or destruction, as for a @sensitive type, which is address-only"
             )
         }
         return .loadable
