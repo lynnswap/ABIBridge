@@ -32,6 +32,10 @@ import Testing
 @inline(never) public func swiftABIAnswer() -> Int32 { 42 }
 @inline(never) public func swiftABINegative(_ value: Int8) -> Int8 { value - 1 }
 @inline(never) public func swiftABINegate(_ value: Bool) -> Bool { !value }
+@inline(never) public func swiftABIPointSum(_ point: (Double, Double)) -> Double {
+    point.0 + point.1
+}
+@inline(never) public func swiftABIPairSum(_ pair: (Int32, Int32)) -> Int32 { pair.0 &+ pair.1 }
 @inline(never) public func swiftABIString(_ value: String) -> String { value + "!" }
 @inline(never) public func swiftABIImportedObject(_ value: NSString) -> NSString { value }
 @inline(never) public func swiftABIOptionalImportedObject(_ value: NSString?) -> NSString? { value }
@@ -271,6 +275,26 @@ struct SwiftFunctionInvocationTests {
             as: (() -> UInt32).self
         )
         #expect(try unsafe unsigned.unsafeInvoke() == 42)
+    }
+
+    @Test func completeNamesCompareTheSlotsOfTupleParameters() throws {
+        // A tuple parameter expands into its elements, which a struct with the
+        // same fields puts in the same registers.
+        let sum = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
+            named: "ABIBridgeTests.swiftABIPointSum((Swift.Double, Swift.Double)) -> Swift.Double",
+            as: ((CGPoint) -> Double).self
+        )
+        #expect(try unsafe sum.unsafeInvoke(CGPoint(x: 1.5, y: 2.5)) == 4)
+        // Each Int32 element takes its own register, which one Int64 does not.
+        do {
+            _ = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
+                named: "ABIBridgeTests.swiftABIPairSum((Swift.Int32, Swift.Int32)) -> Swift.Int32",
+                as: ((Int64) -> Int32).self
+            )
+            Issue.record("An Int64 was accepted for two Int32 elements")
+        } catch let ABIResolutionError.signatureMismatch(mismatch) {
+            #expect(mismatch.position == .argument(0))
+        }
     }
 
     @Test func immutableInterfaceCanBeUsedConcurrently() async throws {

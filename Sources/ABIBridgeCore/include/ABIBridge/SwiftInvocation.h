@@ -248,11 +248,13 @@ bool ABISwiftValueIsIndirect(const ABIValueType *type);
 /// Whether the value or one of its fields is address-only: formally indirect
 /// whatever its size, as resilient values and generic storage are.
 bool ABISwiftValueIsAddressOnly(const ABIValueType *type);
-/// Whether a value with storage `value` passes as a Swift parameter, whose
-/// tuples expand into separate values, or as a result declared with storage
-/// `declared`: in the same integer and floating register components at the
-/// same offsets, or by address with at least the declared size and alignment.
-/// Scalar signedness and Swift types do not take part.
+/// Whether a value with storage `value` passes as a Swift parameter or result
+/// declared with storage `declared`: the call puts the same sequence of integer
+/// and floating components, at the same offsets, in registers and stack slots,
+/// and an address of indirect storage at least as large and aligned as the
+/// declared value where the declared value has one. A parameter's tuples
+/// expand into separate values, so a tuple and a struct with the same slots
+/// pass alike. Scalar signedness and Swift types do not take part.
 bool ABISwiftValuePassesAs(const ABIValueType *value, const ABIValueType *declared, bool result);
 /// Describes how a fixed value passes as a parameter or a result, as
 /// ABISwiftValuePassesAs compares it. Release with ABIFreeString.

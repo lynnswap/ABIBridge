@@ -537,77 +537,86 @@ static bool isAddressOnly(const TypeStorage &type) {
 bool ABISwiftValueIsAddressOnly(const ABIValueType *type) { return isAddressOnly(*type->storage); }
 
 namespace {
-struct LoweredValue {
-    Layout layout;
-    size_t size;
+// A register or stack slot that a value occupies: a component of its bytes,
+// or the address of indirect storage.
+struct LoweredPart {
+    Component component;
+    bool indirect;
+    size_t extent;
     size_t alignment;
 };
 
-// A parameter expands its tuples into separate values. A result lowers as one
-// value, unless its tuple elements need indirect or separate storage.
-std::vector<LoweredValue> loweredValues(const std::shared_ptr<TypeStorage> &type, bool result) {
-    std::vector<LoweredValue> values;
+// The slots in call order. A parameter expands its tuples into separate
+// values, so only the sequence of slots, not the grouping of components into
+// values, decides where the call puts each byte. A result lowers as one value,
+// unless its tuple elements need indirect or separate storage.
+std::vector<LoweredPart> loweredParts(const std::shared_ptr<TypeStorage> &type, bool result) {
+    std::vector<LoweredPart> parts;
+    auto appendIndirect = [&](TypeStorage &value) {
+        parts.push_back({{0, sizeof(void *), false}, true, value.size(), value.native()->alignment});
+    };
     if (result) {
         ABISwiftCallInterface interface;
         interface.result = type;
         prepareSwiftResult(interface);
-        for (const auto &field : interface.indirectResults)
-            values.push_back({Layout{{}, true}, field.type->size(), field.type->native()->alignment});
-        values.push_back({interface.resultLayout, interface.directResult->size(),
-                          interface.directResult->native()->alignment});
-        return values;
+        for (const auto &field : interface.indirectResults) appendIndirect(*field.type);
+        if (interface.resultLayout.indirect) {
+            appendIndirect(*interface.directResult);
+        } else {
+            for (const auto &component : interface.resultLayout.components)
+                parts.push_back({component, false, 0, 0});
+        }
+        return parts;
     }
     std::vector<SwiftField> fields;
     expandTuple(type, 0, fields);
-    for (const auto &field : fields)
-        values.push_back({lower(*field.type), field.type->size(), field.type->native()->alignment});
-    return values;
+    for (const auto &field : fields) {
+        const auto layout = lower(*field.type);
+        if (layout.indirect) {
+            appendIndirect(*field.type);
+            continue;
+        }
+        for (auto component : layout.components) {
+            component.offset += field.offset;
+            parts.push_back({component, false, 0, 0});
+        }
+    }
+    return parts;
 }
 
-bool passesAs(const LoweredValue &value, const LoweredValue &declared) {
-    if (value.layout.indirect || declared.layout.indirect) {
-        return value.layout.indirect && declared.layout.indirect
-            && value.size >= declared.size && value.alignment >= declared.alignment;
+bool passesAs(const LoweredPart &value, const LoweredPart &declared) {
+    if (value.indirect || declared.indirect) {
+        return value.indirect && declared.indirect && value.extent >= declared.extent
+            && value.alignment >= declared.alignment;
     }
-    return std::equal(value.layout.components.begin(), value.layout.components.end(),
-                      declared.layout.components.begin(), declared.layout.components.end(),
-                      [](const Component &lhs, const Component &rhs) {
-        return lhs.offset == rhs.offset && lhs.size == rhs.size && lhs.floating == rhs.floating
-            && lhs.optionalSingleton == rhs.optionalSingleton;
-    });
+    const auto &lhs = value.component, &rhs = declared.component;
+    return lhs.offset == rhs.offset && lhs.size == rhs.size && lhs.floating == rhs.floating
+        && lhs.optionalSingleton == rhs.optionalSingleton;
 }
 }
 
 bool ABISwiftValuePassesAs(const ABIValueType *value, const ABIValueType *declared, bool result) {
     if (!value || !declared) return false;
-    const auto values = loweredValues(value->storage, result);
-    const auto declaredValues = loweredValues(declared->storage, result);
-    return std::equal(values.begin(), values.end(), declaredValues.begin(), declaredValues.end(), passesAs);
+    const auto parts = loweredParts(value->storage, result);
+    const auto declaredParts = loweredParts(declared->storage, result);
+    return std::equal(parts.begin(), parts.end(), declaredParts.begin(), declaredParts.end(), passesAs);
 }
 
 char *ABICopySwiftValueLoweringDescription(const ABIValueType *type, bool result) {
     if (!type) return nullptr;
     std::string text;
-    for (const auto &value : loweredValues(type->storage, result)) {
-        if (!text.empty()) text += "; ";
-        if (value.layout.indirect) {
-            text += "by address (" + std::to_string(value.size) + " bytes, alignment "
-                + std::to_string(value.alignment) + ")";
-        } else if (value.layout.components.empty()) {
-            text += "in no registers";
+    for (const auto &part : loweredParts(type->storage, result)) {
+        text += text.empty() ? "in registers (" : ", ";
+        if (part.indirect) {
+            text += "address of " + std::to_string(part.extent) + " bytes aligned to "
+                + std::to_string(part.alignment);
         } else {
-            text += "in registers (";
-            for (size_t index = 0; index < value.layout.components.size(); ++index) {
-                const auto &component = value.layout.components[index];
-                if (index) text += ", ";
-                text += std::to_string(component.size) + "-byte "
-                    + (component.floating ? "float" : "integer") + " at "
-                    + std::to_string(component.offset);
-            }
-            text += ")";
+            text += std::to_string(part.component.size) + "-byte "
+                + (part.component.floating ? "float" : "integer") + " at "
+                + std::to_string(part.component.offset);
         }
     }
-    return strdup(text.c_str());
+    return strdup(text.empty() ? "in no registers" : (text + ")").c_str());
 }
 
 static void marshalSwiftArguments(
