@@ -1197,17 +1197,17 @@ struct SwiftGenericBindingTests {
         #expect(
             try swiftClosureDiscriminator(
                 parameters: ["-indirect"],
-                results: swiftClosureAuthTypes((Int64, Int64).self)
+                results: swiftClosureAuthTypes((Int64, Int64).self, position: .result)
             ) == 42045
         )
         let metatypes: [Any.Type] = [
             Int64.Type.self, Int64.Type?.self, (any CustomStringConvertible.Type).self,
         ]
         for type in metatypes {
-            let auth = try swiftClosureAuthType(type)
+            let auth = try swiftClosureAuthType(type, position: .parameter)
             #expect(swiftClosureDiscriminator(parameters: [auth], results: [auth]) == 30738)
         }
-        let optional = try swiftClosureAuthType((any CustomStringConvertible.Type)?.self)
+        let optional = try swiftClosureAuthType((any CustomStringConvertible.Type)?.self, position: .parameter)
         #expect(swiftClosureDiscriminator(parameters: [optional], results: [optional]) == 53055)
         #expect(
             try SwiftFunctionSignature(((LargeManagedValue) -> LargeManagedValue).self)

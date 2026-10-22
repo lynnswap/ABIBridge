@@ -50,14 +50,17 @@ struct SwiftGenericParameters: Sendable {
         try signature.parameters.map { type in
             if let convention = type as? any SwiftConventionArgument.Type {
                 let nested: SwiftGenericArgument
-                if let tuple = try SwiftGenericCallPlan.concreteTuple(convention.wrappedType) {
+                if let tuple = try SwiftGenericCallPlan.concreteTuple(
+                    convention.wrappedType,
+                    position: .parameter
+                ) {
                     nested = .tuple(tuple, consuming: convention.convention == .consuming, asynchronous: signature.isAsync)
                 } else if signature.isAsync, let closure = convention.wrappedType as? any SwiftClosureValue.Type {
                     nested = .closure(try SwiftGenericClosurePlan.concrete(closure.swiftFunctionType), asynchronous: true)
                 } else { nested = .concrete }
                 return .convention(try convention.makeArgumentCodec(generic: nested))
             }
-            if let tuple = try SwiftGenericCallPlan.concreteTuple(type) {
+            if let tuple = try SwiftGenericCallPlan.concreteTuple(type, position: .parameter) {
                 return .tuple(tuple, consuming: defaultConsuming, asynchronous: signature.isAsync)
             }
             return .concrete

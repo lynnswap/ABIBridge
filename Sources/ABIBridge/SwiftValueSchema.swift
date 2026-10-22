@@ -5,24 +5,30 @@ import ABIBridgeCore
 /// A declaration position derives its storage from its formal type: generic
 /// parameters and unbound fields are stored indirectly, `valueABIs` layouts
 /// apply to closed nominal types, and other closed values use their own Swift
-/// metadata.
+/// metadata, inferring the convention of structs and enums without one.
 enum SwiftValueSchema {
     /// The storage of a value at a declaration position with the formal type
     /// `formal`, where the caller supplies `actual`.
+    ///
+    /// - Parameter position: Where the value occurs; it decides how a value
+    ///   whose inferred convention is undecided is passed.
     static func layout(
         _ formal: SwiftFormalType,
         actual: Any.Type,
-        binding: SwiftGenericBinding
+        binding: SwiftGenericBinding,
+        position: SwiftValuePosition = .nested
     ) throws -> CValueType {
         let canonical = try binding.canonicalType(of: formal)
-        if canonical != formal { return try layout(canonical, actual: actual, binding: binding) }
+        if canonical != formal {
+            return try layout(canonical, actual: actual, binding: binding, position: position)
+        }
         if binding.isArchetype(formal) {
             return try binding.isClassBound(formal)
                 ? CValueType(scalar: ABIValuePointer)
                 : storage(of: actual)
         }
         if case .tuple(let fields, _) = formal {
-            return try tupleLayout(fields, actual: actual, binding: binding)
+            return try tupleLayout(fields, actual: actual, binding: binding, position: position)
         }
         if case .function = formal {
             let pointer = try CValueType(scalar: ABIValuePointer)
@@ -47,7 +53,7 @@ enum SwiftValueSchema {
         }
         func prepare<Value>(_ type: Value.Type) throws -> CValueType {
             if !binding.dependsOnParameters(formal), formal.opaqueIndices.isEmpty {
-                return try SwiftValueCodec<Value>().type
+                return try SwiftValueCodec<Value>(position: position).type
             }
             if try binding.isClassBound(formal) { return try CValueType(scalar: ABIValuePointer) }
             switch formal {
@@ -108,7 +114,7 @@ enum SwiftValueSchema {
             case .existentialMetatype, .constrainedExistential:
                 return try SwiftValueCodec<Value>().type
             case .tuple(let fields, _):
-                return try tupleLayout(fields, actual: actual, binding: binding)
+                return try tupleLayout(fields, actual: actual, binding: binding, position: position)
             case .opaqueResult:
                 throw ABIResolutionError.metadataUnavailable(
                     "The opaque result ABI has not been resolved."
@@ -130,7 +136,7 @@ enum SwiftValueSchema {
             {
                 return explicit
             }
-            return try SwiftValueCodec<Value>().type
+            return try SwiftValueCodec<Value>(position: position).type
         }
         return try _openExistential(actual, do: prepare)
     }
@@ -175,7 +181,8 @@ enum SwiftValueSchema {
     static func tupleLayout(
         _ fields: [SwiftFormalType],
         actual: Any.Type,
-        binding: SwiftGenericBinding
+        binding: SwiftGenericBinding,
+        position: SwiftValuePosition = .nested
     ) throws -> CValueType {
         let elements = try SwiftGenericCallPlan.tupleElements(fields, actual: actual, binding: binding)
         let native = ABISwiftGetValueLayout(unsafeBitCast(actual, to: UnsafeRawPointer.self))
@@ -201,7 +208,14 @@ enum SwiftValueSchema {
                 )
                 index += count
             } else {
-                types.append(try layout(field, actual: elements[index].type, binding: binding))
+                types.append(
+                    try layout(
+                        field,
+                        actual: elements[index].type,
+                        binding: binding,
+                        position: position.tupleElement
+                    )
+                )
                 index += 1
             }
         }
@@ -289,7 +303,7 @@ enum SwiftValueSchema {
         return try CValueType(indirectSwiftSize: layout.size, alignment: layout.alignment)
     }
 
-    /// An inline field whose size remains an unbound archetype makes the containing value formally indirect, independently of the nominal type's resilience. Other values keep the existing explicit ABI contract: reflection metadata does not record whether a public value declaration is frozen.
+    /// An inline field whose size remains an unbound archetype makes the containing value formally indirect, independently of the nominal type's resilience. Other values follow their bound type's explicit or inferred convention.
     static func isIndirect(_ metadata: Any.Type, arguments: [SwiftFormalType],
                            binding: SwiftGenericBinding) throws -> Bool {
         let context = try SwiftGenericTypeContext(metadata: metadata)

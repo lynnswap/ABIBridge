@@ -86,7 +86,7 @@ extension SwiftCallInterface {
 ///
 /// Calls use the platform Swift convention. Async signatures preserve the native task across suspension; throwing signatures surface native errors as `NativeSwiftError`. Use `NativeSwiftClosure` for callbacks and `NativeSwiftInout`, `NativeSwiftBorrowing`, or `NativeSwiftConsuming` for explicit argument conventions.
 ///
-/// See <doc:SwiftFunctionInvocation> for supported value representations and <doc:GenericSwiftValues> for generic calls. Undescribed resilient values and ordinary unwrapped closures need separate representations.
+/// See <doc:SwiftFunctionInvocation> for supported value representations, including struct and enum conventions inferred from metadata, and <doc:GenericSwiftValues> for generic calls. Values whose conventions cannot be inferred and ordinary unwrapped closures need separate representations.
 public struct NativeSwiftFunction<Signature>: Sendable {
     /// The exported symbol that names this function's declaration.
     public var symbol: ResolvedSymbol { entry.symbol }
@@ -440,7 +440,7 @@ extension ABIRuntime {
     ///   - signature: The complete Swift function type, including native error and async isolation conventions.
     ///   - scope: Images to search; automatic scope considers only loaded images.
     ///   - genericArguments: Scalar types and packs in declaration parameter order.
-    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types without another representation.
+    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types, such as structs and enums whose conventions ABIBridge cannot infer from their metadata. They take precedence over conformances and inferred conventions where the signature names their types, but inference does not consult them for the fields of a value it lowers. Inside an Optional, an entry describes only the declaration's own type, not an adapter host type, whose Optional can have another layout.
     ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
     ///   - loading: Whether an explicit image may be acquired and initialized.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
@@ -508,7 +508,7 @@ extension ABIRuntime {
     ///   - signature: The complete Swift function type, including native error and async isolation conventions.
     ///   - image: An image whose symbol index is reused.
     ///   - genericArguments: Scalar types and packs in declaration parameter order.
-    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types without another representation.
+    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types, such as structs and enums whose conventions ABIBridge cannot infer from their metadata. They take precedence over conformances and inferred conventions where the signature names their types, but inference does not consult them for the fields of a value it lowers. Inside an Optional, an entry describes only the declaration's own type, not an adapter host type, whose Optional can have another layout.
     ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable handle retaining its image and prepared Swift ABI.

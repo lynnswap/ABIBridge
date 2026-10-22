@@ -17,6 +17,9 @@ typedef struct ABISwiftValueLayout {
     size_t alignment;
 } ABISwiftValueLayout;
 ABISwiftValueLayout ABISwiftGetValueLayout(const void *metadata);
+/// The value-witness flags word: alignment mask, POD, inline, bitwise-takable, copyable, and addressable-for-dependencies bits.
+/// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/ABI/MetadataValues.h
+uint32_t ABISwiftGetValueWitnessFlags(const void *metadata);
 /// Initializes destination by copying source. The caller establishes Copyable conformance before invoking the native witness.
 void ABISwiftCopyValue(const void *metadata, void *destination, const void *source);
 /// Initializes destination by taking source, which is left uninitialized.
@@ -123,6 +126,45 @@ const void *ABISwiftTypeDescriptor(const void *metadata);
 /// Reflection fields whose storage is inline in a struct or enum. Syntax trees preserve generic parameters and symbolic descriptor identities.
 size_t ABISwiftTypeFieldCount(const void *metadata);
 ABISwiftSyntax *ABICopySwiftTypeFieldSyntax(const void *metadata, size_t index);
+
+/// What a struct or enum's nominal descriptor and reflection records state about its layout.
+typedef struct ABISwiftValueDescriptorInfo {
+    bool isEnum;
+    bool isGeneric;
+    /// 0 for static metadata, 1 for singleton initialization at run time, 2 for an imported foreign type.
+    uint8_t metadataInitialization;
+    /// A struct's stored properties, or an enum's payload and empty cases.
+    uint32_t declaredFields;
+    uint32_t payloadCases;
+    /// Whether the descriptor references a reflection field descriptor, and its record count.
+    bool hasFieldRecords;
+    uint32_t fieldRecords;
+} ABISwiftValueDescriptorInfo;
+/// Returns false for metadata that is not a struct or enum.
+bool ABISwiftGetValueDescriptorInfo(const void *metadata, ABISwiftValueDescriptorInfo *info);
+/// The name in a struct field or enum case record, borrowing compiler metadata.
+const char *ABISwiftTypeFieldName(const void *metadata, size_t index);
+/// Metadata of a stored field or of a direct enum payload, resolved with the instance's generic arguments. Null when the record has no inline type or its type cannot be resolved. A weak field resolves to its Optional referent.
+const void *ABISwiftTypeFieldMetadata(const void *metadata, size_t index);
+/// A struct field's byte offset, read from the metadata's field offset vector.
+bool ABISwiftStructFieldOffset(const void *metadata, size_t index, size_t *offset);
+typedef enum ABISwiftReferenceStorage {
+    ABISwiftReferenceStorageUnknown = -1,
+    ABISwiftReferenceStorageNone = 0,
+    ABISwiftReferenceStorageWeak = 1,
+    ABISwiftReferenceStorageUnowned = 2,
+    ABISwiftReferenceStorageUnmanaged = 3,
+} ABISwiftReferenceStorage;
+/// The reference ownership written in a field record's type: none, weak, unowned, or unowned(unsafe). Unknown when the record cannot be decoded.
+ABISwiftReferenceStorage ABISwiftTypeFieldReferenceStorage(const void *metadata, size_t index);
+/// Whether a field record's declared type mentions a generic parameter of its enclosing type.
+bool ABISwiftTypeFieldIsGenericDependent(const void *metadata, size_t index);
+/// The module that declares the nominal type, borrowing its descriptor's name.
+const char *ABISwiftTypeModuleName(const void *metadata);
+/// Whether the nominal type is declared in an extension whose generic signature adds requirements to its extended type's, directly or within another type declared in one. True when an extension's requirements cannot be compared.
+bool ABISwiftTypeIsDeclaredInConstrainedExtension(const void *metadata);
+/// Whether the image declaring the type has a nongeneric, statically initialized struct or enum of the same module whose value witnesses set the addressable-for-dependencies bit. Swift 6.1 and earlier never set it.
+bool ABISwiftModuleSetsAddressableForDependencies(const void *metadata);
 /// The shape's generalized type expression, preserving symbolic references.
 ABISwiftSyntax *ABICopySwiftExtendedExistentialTypeSyntax(const void *metadata);
 ABISwiftSyntax *ABICopySwiftAssociatedTypeSyntax(const void *metadata, const void *protocol, const char *name);
@@ -181,6 +223,10 @@ ABIValueType *ABICreateSwiftIndirectStorageType(
 
 /// A formal tuple expands into independent SIL parameters/results. Offsets describe its concrete Swift storage, including nested tuple elements.
 ABIValueType *ABICreateSwiftTupleStorageType(
+    const ABIValueType *const *fields, const size_t *offsets, size_t count,
+    size_t size, size_t alignment, ABIResolutionFailure **error);
+/// A struct or enum lowered from its fields at their Swift offsets. Unlike a tuple, it is one formal value and is never split into separate parameters or results. Fields must be loadable: an address-only field makes the whole value indirect. Fails unless each field stays within its declared interval, leaf components do not overlap, and the fields rebuild size and alignment.
+ABIValueType *ABICreateSwiftAggregateStorageType(
     const ABIValueType *const *fields, const size_t *offsets, size_t count,
     size_t size, size_t alignment, ABIResolutionFailure **error);
 /// A formal pack passes an address vector for these concrete elements.

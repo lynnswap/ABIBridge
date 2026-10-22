@@ -690,6 +690,65 @@ package final class SymbolIndex {
         return nil
     }
 
+    /// The symbols this image exports with names starting with `prefix`. The
+    /// walk visits only the trie's subtree for the prefix, such as one Swift
+    /// declaration or module context.
+    package func exportedSymbols(withPrefix prefix: String) -> [IndexedSymbol] {
+        guard let trie = exportTrie else { return [] }
+        let prefix = Array(prefix.utf8)
+        var symbols: [IndexedSymbol] = []
+        var pending: [(name: [UInt8], offset: Int)] = [([], 0)]
+        while let entry = pending.popLast() {
+            var offset = entry.offset
+            guard
+                let node = TrieNode<ExportTrieNodeContent>.readNext(
+                    basePointer: trie.basePointer.assumingMemoryBound(to: UInt8.self),
+                    trieSize: trie.exportSize,
+                    nextOffset: &offset
+                )
+            else { continue }
+            if entry.name.count >= prefix.count, let value = node.content?.symbolOffset,
+                let symbol = imageSymbol(
+                    name: String(decoding: entry.name, as: UTF8.self),
+                    offset: Int(bitPattern: value)
+                )
+            {
+                symbols.append(symbol)
+            }
+            for child in node.children {
+                let name = entry.name + child.label.utf8
+                let shared = min(name.count, prefix.count)
+                guard name[..<shared].elementsEqual(prefix[..<shared]),
+                    let next = Int(exactly: child.offset)
+                else { continue }
+                pending.append((name, next))
+            }
+        }
+        return symbols
+    }
+
+    /// The declaration, such as `8ProbeLib5PointV`, under which this image
+    /// exports the Swift nominal type descriptor at `address`. Nil when the
+    /// image exports no such descriptor, or exports it under two names.
+    package func exportedSwiftTypeDeclaration(at address: UInt64) -> String? {
+        exportedTypeDeclarations[address]
+    }
+
+    private lazy var exportedTypeDeclarations: [UInt64: String] = {
+        var declarations: [UInt64: String] = [:]
+        var ambiguous: Set<UInt64> = []
+        for symbol in exportedSymbols(withPrefix: "_$s") where symbol.name.hasSuffix("Mn") {
+            let declaration = String(symbol.name.dropFirst(3).dropLast(2))
+            if let other = declarations.updateValue(declaration, forKey: symbol.address),
+                other != declaration
+            {
+                ambiguous.insert(symbol.address)
+            }
+        }
+        for address in ambiguous { declarations[address] = nil }
+        return declarations
+    }()
+
     private func symbols(
         for query: SymbolQuery,
         swiftBucket: SwiftBucket?,

@@ -1,6 +1,6 @@
 # Declaring a managed Swift value layout
 
-Adopt ``ABIBridgeSwiftValue`` when an importable Swift struct or enum has an established calling convention. Describe its fixed or formally indirect ABI once; the compiler handles copying, transfer, and destruction.
+Adopt ``ABIBridgeSwiftValue`` when an importable Swift struct or enum has an established calling convention that ABIBridge cannot infer from its metadata, or to state that convention explicitly. Describe its fixed or formally indirect ABI once; the compiler handles copying, transfer, and destruction.
 
 ## Declare and call a managed struct
 
@@ -20,7 +20,7 @@ let transform = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
 let result = try unsafe transform.unsafeInvoke(input)
 ```
 
-The target declaration and actual Swift value must share this layout and calling convention. Verify that fact from the module's ABI contract and compiler-generated calls. The descriptor does not infer field types from a metatype, and `@frozen` alone does not imply C layout.
+The target declaration and actual Swift value must share this layout and calling convention. Verify that fact from the module's ABI contract and compiler-generated calls. A conformance takes precedence over the convention ABIBridge infers from metadata, which fails when binary evidence does not decide a value's convention; see <doc:SwiftFunctionInvocation#Infer-struct-and-enum-conventions>. `@frozen` alone does not imply C layout.
 
 The frontend passes the described components in Swift registers and stack storage. Large fixed values use indirect transport when their components exceed the platform limit. Compiler-owned temporary storage handles reference payloads without handwritten retain/release operations.
 

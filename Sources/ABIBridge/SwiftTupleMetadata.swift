@@ -90,6 +90,8 @@ struct SwiftTupleValuePlan: Sendable {
         fileprivate let leaves: [Leaf]
         var type: CValueType { tuple?.type ?? leaves[0].type }
 
+        /// - Parameter position: The element's position, which decides how
+        ///   an undecided inferred host value is passed.
         init(
             hostType: Any.Type,
             nativeType: Any.Type,
@@ -98,7 +100,8 @@ struct SwiftTupleValuePlan: Sendable {
             argument: SwiftGenericArgument,
             result: SwiftGenericResult,
             tuple: SwiftTupleValuePlan? = nil,
-            nativeClosure: SwiftGenericClosurePlan? = nil
+            nativeClosure: SwiftGenericClosurePlan? = nil,
+            position: SwiftValuePosition = .nested
         ) throws {
             self.hostType = hostType; self.nativeType = nativeType
             self.hostOffset = hostOffset; self.nativeOffset = nativeOffset
@@ -115,7 +118,8 @@ struct SwiftTupleValuePlan: Sendable {
                         nativeOffset: nativeOffset,
                         argument: argument,
                         result: result,
-                        nativeClosure: nativeClosure
+                        nativeClosure: nativeClosure,
+                        position: position
                     )
                 }
                 leaves = [try _openExistential(hostType, do: prepare)]
@@ -163,7 +167,8 @@ struct SwiftTupleValuePlan: Sendable {
             nativeOffset: Int,
             argument: SwiftGenericArgument,
             result: SwiftGenericResult,
-            nativeClosure: SwiftGenericClosurePlan?
+            nativeClosure: SwiftGenericClosurePlan?,
+            position: SwiftValuePosition
         ) throws {
             if case .concrete = argument {
                 let base = (Value.self as? any NativeOptionalValue.Type)?.wrappedType ?? Value.self
@@ -191,8 +196,16 @@ struct SwiftTupleValuePlan: Sendable {
                 outputRuntime?.valueType.codeLifetime ?? inputRuntime?.valueType.codeLifetime
             codeLifetime = fieldLifetime
 
-            let borrowed = try SwiftArgumentCodec<Value>(defaultConsuming: false, generic: argument)
-            let consumed = try SwiftArgumentCodec<Value>(defaultConsuming: true, generic: argument)
+            let borrowed = try SwiftArgumentCodec<Value>(
+                defaultConsuming: false,
+                generic: argument,
+                position: position
+            )
+            let consumed = try SwiftArgumentCodec<Value>(
+                defaultConsuming: true,
+                generic: argument,
+                position: position
+            )
             type = borrowed.type
             constants = SwiftValueConstants(
                 ABISwiftValueIsIndirect(borrowed.type.handle) ? Void.self : nativeType
@@ -231,7 +244,7 @@ struct SwiftTupleValuePlan: Sendable {
             }
             let ordinary: SwiftValueCodec<Value>?
             if case .concrete = result, outputClosure == nil {
-                ordinary = try SwiftValueCodec<Value>()
+                ordinary = try SwiftValueCodec<Value>(position: position)
             } else {
                 ordinary = nil
             }

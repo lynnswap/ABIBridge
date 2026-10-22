@@ -5,7 +5,9 @@ import Synchronization
 // The SIL discriminator hashes formal value types, not their register widths.
 // Class identity, isolation, and ownership qualifiers are intentionally erased.
 // https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/IRGen/GenPointerAuth.cpp
-func swiftClosureAuthType(_ type: Any.Type) throws -> String {
+/// - Parameter position: Where the value occurs in the closure's signature,
+///   which decides how an undecided inferred value is passed.
+func swiftClosureAuthType(_ type: Any.Type, position: SwiftValuePosition) throws -> String {
     guard !(type is any SwiftConventionArgument.Type) else {
         throw ABIResolutionError.unsupportedDeclaration(
             "Inout and ownership-qualified callback parameters require a scoped native adapter."
@@ -14,7 +16,13 @@ func swiftClosureAuthType(_ type: Any.Type) throws -> String {
     // An indirect parameter or result is hashed opaquely.
     if let value = type as? any ABIBridgeSwiftValue.Type {
         guard let components = value.swiftABIType.cType else { return "-indirect" }
-        if withExtendedLifetime(components, { ABISwiftValueIsIndirect(components.handle) }) {
+        if swiftClosureHashesIndirectly(components, at: position) { return "-indirect" }
+    }
+    if SwiftInferredValue.lowersByInference(type), !(type is any NativeOptionalValue.Type) {
+        func layout<Value>(_: Value.Type) throws -> CValueType {
+            try SwiftValueCodec<Value>(position: position).type
+        }
+        if swiftClosureHashesIndirectly(try _openExistential(type, do: layout), at: position) {
             return "-indirect"
         }
     }
@@ -23,12 +31,24 @@ func swiftClosureAuthType(_ type: Any.Type) throws -> String {
     while let optional = payload as? any NativeOptionalValue.Type { payload = optional.wrappedType }
     if type is any NativeOptionalValue.Type, !RuntimeFunctionMetadata.isSwiftFunction(payload) {
         func layout<Value>(_: Value.Type) throws -> CValueType { try SwiftValueCodec<Value>().type }
-        let layout = try _openExistential(type, do: layout)
-        if withExtendedLifetime(layout, { ABISwiftValueIsIndirect(layout.handle) }) {
+        if swiftClosureHashesIndirectly(try _openExistential(type, do: layout), at: position) {
             return "-indirect"
         }
     }
     return try swiftClosureTypeHash(type)
+}
+
+/// Whether a value with `layout` is hashed as `-indirect` at `position`.
+///
+/// Swift passes a whole parameter or result above four registers by address
+/// and hashes it so. A tuple result keeps its elements as separate SIL
+/// results, which share one return buffer when they are that large, so an
+/// element is hashed by its type unless it is formally indirect.
+func swiftClosureHashesIndirectly(_ layout: CValueType, at position: SwiftValuePosition) -> Bool {
+    withExtendedLifetime(layout) {
+        position == .nested
+            ? ABISwiftValueIsAddressOnly(layout.handle) : ABISwiftValueIsIndirect(layout.handle)
+    }
 }
 
 /// Swift's `hashStringForType`, which hashes a value type within any Optionals.
@@ -71,20 +91,43 @@ func swiftClosureTypeHash(_ type: Any.Type) throws -> String {
             "No Swift closure type identity for \(String(reflecting: type))."
         )
     }
-    // SIL hashes these nominal declarations without their generic substitutions.
+    // SIL hashes nominal declarations without their generic substitutions.
     if let collection = type as? any SwiftCollectionValue.Type {
         name = collection.mangledDeclaration
     }
-    if (managed || type is any NativePointerValue.Type), name.hasSuffix("G") {
-        name = try swiftNominalClosureName(name)
+    let kind = runtimeMetadataKind(type)
+    if kind == .structure || kind == .enumeration {
+        name = try swiftNominalClosureDeclaration(type, runtimeName: name)
     }
     return "$s" + name
+}
+
+/// A struct or enum's declaration as the compiler mangles it in a
+/// discriminator. A runtime type name omits the generic signature of a
+/// constrained extension, so a type declared in one takes the name of its
+/// exported descriptor. An unconstrained extension has no signature to omit.
+private func swiftNominalClosureDeclaration(
+    _ type: Any.Type,
+    runtimeName: String
+) throws -> String {
+    let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
+    guard ABISwiftTypeIsDeclaredInConstrainedExtension(metadata) else {
+        return runtimeName.hasSuffix("G") ? try swiftNominalClosureName(runtimeName) : runtimeName
+    }
+    guard let declaration = swiftExportedTypeDeclaration(type) else {
+        throw ABIResolutionError.metadataUnavailable(
+            "No Swift closure type identity for \(String(reflecting: type)): it is declared in a "
+                + "constrained extension, whose generic signature its runtime name omits, and its "
+                + "image does not export its nominal type descriptor, whose name includes it."
+        )
+    }
+    return declaration
 }
 
 // A bound nominal mangling contains its declaration before the generic
 // argument list. Let Swift's demangler validate candidate prefixes rather than
 // interpreting identifier lengths, word substitutions, or nested contexts here.
-private func swiftNominalClosureName(_ mangled: String) throws -> String {
+func swiftNominalClosureName(_ mangled: String) throws -> String {
     guard let fullName = DeclarationKey.demangle("$s" + mangled, language: .swift) else {
         throw ABIResolutionError.metadataUnavailable("No generic Swift value identity.")
     }
@@ -109,15 +152,17 @@ private func swiftNominalClosureName(_ mangled: String) throws -> String {
     )
 }
 
-func swiftClosureAuthTypes(_ type: Any.Type) throws -> [String] {
+func swiftClosureAuthTypes(_ type: Any.Type, position: SwiftValuePosition) throws -> [String] {
     if let convention = type as? any SwiftConventionArgument.Type {
         if convention.convention == .inoutValue { return ["-indirect"] }
-        return try swiftClosureAuthTypes(convention.wrappedType)
+        return try swiftClosureAuthTypes(convention.wrappedType, position: position)
     }
     if let tuple = SwiftTupleMetadata(type) {
-        return try tuple.elements.flatMap { try swiftClosureAuthTypes($0.type) }
+        return try tuple.elements.flatMap {
+            try swiftClosureAuthTypes($0.type, position: position.tupleElement)
+        }
     }
-    return [try swiftClosureAuthType(type)]
+    return [try swiftClosureAuthType(type, position: position)]
 }
 
 // ABI-stable SipHash-2-4, with LLVM's fixed ptrauth key and nonzero 16-bit range.

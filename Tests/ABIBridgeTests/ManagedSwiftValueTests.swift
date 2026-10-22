@@ -248,24 +248,76 @@ struct ManagedSwiftValueTests {
         #expect(destroyed == 1)
     }
 
-    @Test func metatypesDoNotEnableUnsupportedDirectCalls() async {
-        #expect {
-            _ = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
-                named: "ManagedSwiftFixtures.transformManaged(_:)",
-                as: ((ManagedRecord) -> ManagedRecord).self
+    /// ManagedRecord is frozen in this library-evolution module, so it passes
+    /// directly; ResilientRecord is resilient and passes indirectly.
+    @Test func declarationTypesInferTheirConventions() async throws {
+        let managed = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
+            named: "ManagedSwiftFixtures.transformManaged(_:)",
+            as: ((ManagedRecord) -> ManagedRecord).self
+        )
+        let resilient = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
+            named: "ManagedSwiftFixtures.transformResilient(_:)",
+            as: ((ResilientRecord) -> ResilientRecord).self
+        )
+        weak var weakToken: LifetimeToken?
+        var destroyed = 0
+        do {
+            let token = LifetimeToken { destroyed += 1 }
+            weakToken = token
+            let record = try unsafe managed.unsafeInvoke(ManagedRecord(token: token, number: 41))
+            #expect(record.number == 42)
+            #expect(record.token === token)
+            let wrapped = try unsafe resilient.unsafeInvoke(
+                ResilientRecord(token: token, number: 7)
             )
-        } throws: { error in
-            if case ABIResolutionError.unsupportedDeclaration = error { return true }
-            return false
+            #expect(wrapped.number == 8)
+            #expect(wrapped.token === token)
         }
-        #expect {
-            _ = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
-                named: "ManagedSwiftFixtures.transformResilient(_:)",
-                as: ((ResilientRecord) -> ResilientRecord).self
+        #expect(weakToken == nil)
+        #expect(destroyed == 1)
+    }
+
+    /// WideLabel's convention is undecided, but its five-register frozen
+    /// lowering passes by address at whole positions either way, including
+    /// for host values of the declaration's own type.
+    @Test func undecidedHostValuesPassByAddressAtWholePositions() async throws {
+        let runtime = ABIRuntime.shared
+        let describe = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.describeWideLabel(_:)",
+            as: ((WideLabel) -> String).self
+        )
+        #expect(try unsafe describe.unsafeInvoke(WideLabel(name: "host", a: 4)) == "host:4,5,6")
+        let make = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeWideLabel(_:)",
+            as: ((String) -> WideLabel).self
+        )
+        let made = try unsafe make.unsafeInvoke("made")
+        #expect(made.name == "made" && made.a == 1 && made.c == 3)
+        let apply = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.applyWideLabel(_:_:)",
+            as: ((NativeSwiftClosure<(WideLabel) -> WideLabel>, WideLabel) -> String).self
+        )
+        let callback = try NativeSwiftClosure { (value: WideLabel) in
+            WideLabel(name: value.name + "!", a: value.c)
+        }
+        #expect(try unsafe apply.unsafeInvoke(callback, WideLabel(name: "cb", a: 1)) == "cb!:3,4,5")
+        // A tuple parameter's elements are whole parameters.
+        let pair = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.describeWideLabelPair(_:)",
+            as: (((WideLabel, Int64)) -> String).self
+        )
+        #expect(try unsafe pair.unsafeInvoke((WideLabel(name: "pair", a: 1), 7)) == "pair:1,2,3#7")
+        // A tuple result's elements are nested, where the conventions differ.
+        await #expect {
+            _ = try await runtime.resolveSwiftFunction(
+                named: "ManagedSwiftFixtures.makeWideLabelPair(_:)",
+                as: ((String) -> (WideLabel, Int64)).self
             )
         } throws: { error in
-            if case ABIResolutionError.unsupportedDeclaration = error { return true }
-            return false
+            guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                return false
+            }
+            return message.contains("its field `name: Swift.String` explains")
         }
     }
 }

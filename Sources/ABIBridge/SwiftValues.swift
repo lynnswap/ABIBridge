@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeRuntime
 
 // Array, Dictionary, and Set each hold one storage reference regardless of
 // their element types, so they are passed as one pointer.
@@ -37,11 +38,14 @@ struct SwiftValueCodec<Value>: Sendable {
         return swiftResultInitializer(nativeMetadata: Value.self, tuple: tuple)
     }
 
-    init() throws {
+    /// - Parameter position: Where the value occurs, which decides how an
+    ///   undecided inferred value is passed. Optional payloads are nested;
+    ///   tuple elements take the tuple's element position.
+    init(position: SwiftValuePosition = .nested) throws {
         guard !(Value.self is any SwiftConventionArgument.Type) else {
             throw ABIResolutionError.unsupportedDeclaration("Swift argument convention markers require the invocation argument path; results and managed callbacks cannot use them.")
         }
-        let preparedTuple = try SwiftGenericCallPlan.concreteTuple(Value.self)
+        let preparedTuple = try SwiftGenericCallPlan.concreteTuple(Value.self, position: position)
         tuple = preparedTuple?.needsConversion == true ? preparedTuple : nil
         if let tuple {
             type = tuple.type; closure = nil; cValue = nil; objectResult = false
@@ -73,7 +77,7 @@ struct SwiftValueCodec<Value>: Sendable {
                       !(type is any SwiftClosureValue.Type) else {
                     throw ABIResolutionError.unsupportedDeclaration("Tuple elements require their native Swift storage representation.")
                 }
-                return try SwiftValueCodec<Element>().type
+                return try SwiftValueCodec<Element>(position: position.tupleElement).type
             }
             type = try tuple.layout(for: Value.self, fields: tuple.elements.map {
                 try _openExistential($0.type, do: field)
@@ -133,6 +137,10 @@ struct SwiftValueCodec<Value>: Sendable {
                 wrappedType: optional.wrappedType
             )
             cValue = nil
+        } else if Self.infersLayout {
+            // Explicit ABIs and built-in codecs take precedence over inference.
+            type = try SwiftInferredValue.layout(of: Value.self, position: position)
+            cValue = nil
         } else {
             let codec = try CValueCodec<Value>()
             cValue = codec
@@ -145,6 +153,17 @@ struct SwiftValueCodec<Value>: Sendable {
                 )
             }
         }
+    }
+
+    /// Whether `init` lowers Value from its metadata: a struct or enum with no
+    /// Swift ABI conformance, adapter, built-in codec, or C representation.
+    static var infersLayout: Bool {
+        let kind = runtimeMetadataKind(Value.self)
+        guard kind == .structure || kind == .enumeration else { return false }
+        return !(Value.self is any ABIBridgeSwiftValue.Type)
+            && !(Value.self is any ABIBridgeValue.Type)
+            && !(Value.self is any SwiftCollectionValue.Type) && Value.self != String.self
+            && !CValueCodec<Value>.hasRepresentation
     }
 
     /// Whether a value of this type is passed as its own Swift storage, without conversion.

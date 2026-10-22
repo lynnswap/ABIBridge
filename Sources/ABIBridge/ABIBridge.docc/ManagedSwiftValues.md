@@ -4,15 +4,15 @@ Use a compiled adapter for managed Swift values whose calling convention is not 
 
 ## Choose the invocation boundary
 
-A concrete metatype lets Swift code allocate and operate on a value through the compiler's metadata and value-witness machinery. It does not tell ABIBridge how an arbitrary declaration passes that value in registers or through indirect arguments and results.
+A concrete metatype lets Swift code allocate and operate on a value through the compiler's metadata and value-witness machinery. ABIBridge infers how a declaration passes a struct or enum only when binary evidence shows whether it is resilient; see <doc:SwiftFunctionInvocation#Infer-struct-and-enum-conventions>.
 
 | Value | Direct Swift frontend | Compiled adapter |
 | --- | --- | --- |
 | String, Array<Element>, Dictionary<Key, Value>, Set<Element>, their single-level optional forms, and class references | Supported with Swift ownership; a collection of runtime-only elements passes as a collection of `NativeSwiftValue`, see <doc:SwiftFunctionInvocation> | Available when another part of the signature needs adaptation |
 | Fixed trivial layouts described by ABIBridgeValue | Supported within the documented Swift subset | Required if the declaration has additional unsupported conventions |
-| A struct or enum containing a reference | An explicit ABIBridgeSwiftValue conformance supports an established fixed ABI | The compiler adapts additional calling conventions |
+| A struct or enum containing a reference | Inferred from its metadata when the evidence decides its convention; otherwise an explicit ABIBridgeSwiftValue conformance supports an established fixed ABI | The compiler adapts additional calling conventions |
 | A value Optional, such as Int64? or a closure Optional | Supported when the wrapped value has a direct representation; an Optional of a runtime-only value passes as `NativeSwiftValue?` | The compiler handles other payloads and their nil representation |
-| A non-frozen struct from a library-evolution module | An explicit opaque ABIBridgeSwiftValue descriptor selects its declared indirect convention | Available for additional signature adaptation |
+| A non-frozen struct from a library-evolution module | Inferred as indirect when its value witnesses and its module's library-evolution symbols show that it is resilient; otherwise an explicit opaque ABIBridgeSwiftValue descriptor selects its declared indirect convention | Available for additional signature adaptation |
 | A type unavailable to the consumer compiler | Runtime value handles and scoped callback borrows with an established declaration ABI; see <doc:SwiftOpaqueResults> and <doc:BorrowedSwiftValues> | Explicit create, inspect, and destroy operations can expose otherwise unsupported interfaces |
 
 Use a compiled adapter when the signature falls outside the direct frontend's supported representations. Metadata and storage size alone do not establish a calling convention. Generic, existential, opaque-result, closure, and ownership support is described in <doc:SwiftValues>.

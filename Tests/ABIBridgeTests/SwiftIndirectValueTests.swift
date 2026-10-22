@@ -149,9 +149,9 @@ struct SwiftIndirectValueTests {
     }
 
     @Test func genericDiscriminatorsIgnoreSubstitutions() throws {
-        #expect(try swiftClosureAuthType(ExplicitBox<Int64>.self) == swiftClosureAuthType(ExplicitBox<Double>.self))
-        #expect(try swiftClosureAuthType(ExplicitBox<Int64>.self) == swiftClosureAuthType(ExplicitBox<String>.self))
-        #expect(try swiftClosureAuthType(IndirectRecord.self) == "-indirect")
+        #expect(try swiftClosureAuthType(ExplicitBox<Int64>.self, position: .parameter) == swiftClosureAuthType(ExplicitBox<Double>.self, position: .parameter))
+        #expect(try swiftClosureAuthType(ExplicitBox<Int64>.self, position: .parameter) == swiftClosureAuthType(ExplicitBox<String>.self, position: .parameter))
+        #expect(try swiftClosureAuthType(IndirectRecord.self, position: .parameter) == "-indirect")
     }
 #endif
 }

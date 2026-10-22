@@ -762,84 +762,339 @@ struct NativeSwiftClosureTests {
             ([[String?]].self, "[[String?]]"), ([String]?.self, "[String]?"),
             (String?.self, "String?"),
         ]
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString
-        )
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer {
-            do { try FileManager.default.removeItem(at: directory) } catch { Issue.record(error) }
-        }
-        let source = directory.appendingPathComponent("Closures.swift")
-        let ir = directory.appendingPathComponent("Closures.ll")
         let declarations = cases.enumerated().map { index, entry in
             "@inline(never) public func closureProbe\(index)(_ callback: (\(entry.1)) -> \(entry.1), _ value: \(entry.1)) -> \(entry.1) { callback(value) }"
         }.joined(separator: "\n")
-        try ("import Foundation\nimport CoreGraphics\n" + declarations).write(
-            to: source,
-            atomically: true,
-            encoding: .utf8
+        let found = try arm64eClosureCallDiscriminators(
+            source: "import Foundation\nimport CoreGraphics\n" + declarations,
+            functions: cases.indices.map { "closureProbe\($0)" }
         )
-        func run(_ arguments: [String]) throws -> String {
-            let process = Process(), output = Pipe()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-            process.arguments = arguments
-            // The test runner's injected Xcode frameworks belong to its process,
-            // not to the xcrun-selected compiler and SDK tools.
-            process.environment = FixtureLibrary.toolEnvironment.filter { $0.key != "SDKROOT" }
-            process.standardOutput = output; process.standardError = output
-            try process.run()
-            let text = String(
-                decoding: output.fileHandleForReading.readDataToEndOfFile(),
-                as: UTF8.self
-            )
-            process.waitUntilExit()
-            guard process.terminationStatus == 0 else {
-                throw NSError(
-                    domain: "ClosureCompilerProbe",
-                    code: Int(process.terminationStatus),
-                    userInfo: [NSLocalizedDescriptionKey: text]
-                )
-            }
-            return text
-        }
-        let sdk = try run(["--sdk", "iphoneos", "--show-sdk-path"]).trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-        _ = try run([
-            "swiftc", "-swift-version", "6", "-parse-as-library", "-Onone",
-            "-target", "arm64e-apple-ios18.4", "-sdk", sdk, "-emit-ir",
-            source.path, "-o", ir.path,
-        ])
-        let text = try String(contentsOf: ir, encoding: .utf8)
-        for (index, entry) in cases.enumerated() {
-            let pattern =
-                #"(?ms)^define[^\n]*closureProbe"# + String(index) + #"[y_][^\n]*\{(.*?)^\}"#
-            let expression = try NSRegularExpression(pattern: pattern)
-            let match = try #require(
-                expression.firstMatch(in: text, range: NSRange(text.startIndex..., in: text))
-            )
-            let range = try #require(Range(match.range(at: 1), in: text))
-            let body = String(text[range])
-            let call = try #require(
-                body.split(separator: "\n").first {
-                    $0.contains("call swiftcc") && $0.contains("swiftself")
-                        && $0.contains(#""ptrauth""#)
-                }
-            )
-            let discriminator = try NSRegularExpression(
-                pattern: #""ptrauth"\(i32 0, i64 ([0-9]+)\)"#
-            )
-            let line = String(call)
-            let auth = try #require(
-                discriminator.firstMatch(in: line, range: NSRange(line.startIndex..., in: line))
-            )
-            let digits = try #require(Range(auth.range(at: 1), in: line))
-            let expected = try #require(UInt16(line[digits]))
-            let name = try swiftClosureAuthType(entry.0)
+        for (entry, expected) in zip(cases, found) {
+            let name = try swiftClosureAuthType(entry.0, position: .parameter)
             #expect(
                 swiftClosureDiscriminator(parameters: [name], result: name) == expected,
                 "\(entry.1)"
             )
+        }
+    }
+
+    /// An inferred struct hashes as `-indirect` when it passes by address,
+    /// and otherwise as its declaration, both for a host value of its own
+    /// type and for a declaration's closure plan. A declaration hashes
+    /// without generic arguments, and one in a constrained extension includes
+    /// the extension's generic signature, which runtime type names omit;
+    /// inference leaves such generic instances undecided, so only their names
+    /// are checked. A tuple result's element is hashed by its type unless it
+    /// is formally indirect.
+    @Test(arguments: [false, true])
+    func inferredAuthenticationMatchesNativeCompilerCalls(evolution: Bool) async throws {
+        let inferred = ["AuthPoint", "AuthWide", "AuthOpen"]
+        // These pass directly. With library evolution, the compiler passes
+        // the resilient ones by address, which their names do not show.
+        let named =
+            ["ClosedRange<Int>.Index"]
+            + (evolution
+                ? []
+                : [
+                    "AuthPair<Double>", "AuthPair<Int8>", "AuthBox<Int>.Inner",
+                    "AuthBox<Int>.Inner.Deep", "AuthBox<Int>.Kind", "AuthBox<Int>.Same",
+                ])
+        let types = inferred + named
+        let module = "ClosureAuth_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let source =
+            """
+            // Its String field sets the addressable bit, so the module's clear
+            // bits certify its other types.
+            public struct AuthLabel {
+                public var text: String
+                public init() { text = "label" }
+            }
+            @frozen public struct AuthPoint {
+                public var x: Double, y: Double
+                public init() { x = 1; y = 2 }
+            }
+            @frozen public struct AuthWide {
+                public var a: Int64, b: Int64, c: Int64, d: Int64, e: Int64
+                public init() { a = 1; b = 2; c = 3; d = 4; e = 5 }
+            }
+            public struct AuthOpen {
+                public var x: Double, y: Double
+                public init() { x = 1; y = 2 }
+            }
+            @frozen public struct AuthPair<T> {
+                public var a: T, b: T
+            }
+            public struct AuthBox<T> {}
+            extension AuthBox where T: Equatable {
+                public struct Inner {
+                    public var x: Double, y: Double
+                    public struct Deep { public var x: Double, y: Double }
+                }
+                public enum Kind { case real(Double), none }
+            }
+            extension AuthBox where T == Int {
+                public struct Same { public var x: Double, y: Double }
+            }
+            public func closureProbeType(_ index: Int64) -> Any.Type {
+                let types: [Any.Type] = [\(types.map { $0 + ".self" }.joined(separator: ", "))]
+                return types[Int(index)]
+            }
+            public func closureProbeTupleType() -> Any.Type { (AuthWide, Int64).self }
+            @inline(never) public func closureProbeTuple(_ callback: () -> (AuthWide, Int64)) -> Int64 { callback().1 }
+            public func closureProbeOpenTupleType() -> Any.Type { (AuthOpen, Int64).self }
+            @inline(never) public func closureProbeOpenTuple(_ callback: () -> (AuthOpen, Int64)) -> Int64 { callback().1 }
+
+            """
+            + types.enumerated().map { index, type in
+                "@inline(never) public func closureProbe\(index)(_ callback: (\(type)) -> \(type), _ value: \(type)) -> \(type) { callback(value) }"
+            }.joined(separator: "\n")
+        let flags = evolution ? ["-enable-library-evolution"] : []
+        let library = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: source,
+            linkArguments: ["-parse-as-library", "-swift-version", "6"] + flags
+        )
+        defer { library.cleanup() }
+        let found = try arm64eClosureCallDiscriminators(
+            source: source,
+            arguments: ["-module-name", module] + flags,
+            functions: types.indices.map { "closureProbe\($0)" } + [
+                "closureProbeTuple", "closureProbeOpenTuple",
+            ]
+        )
+        let runtime = ABIRuntime()
+        let typeAt = try await runtime.resolveSwiftFunction(
+            named: module + ".closureProbeType(_:)",
+            as: ((Int64) -> Any.Type).self,
+            in: .path(library.libraryURL)
+        )
+        // A relative name does not find every declaration whose signature
+        // names a type of a constrained extension, such as
+        // `ClosedRange<Int>.Index`.
+        let exports = try library.exportedSymbols()
+        func completeName(_ function: String) throws -> String {
+            let symbol = try #require(
+                exports.first { $0.contains("\(function.utf8.count)\(function)y") }
+            )
+            return try #require(
+                DeclarationKey.demangle(String(symbol.dropFirst()), language: .swift)
+            )
+        }
+        for (index, (name, expected)) in zip(types, found).enumerated() {
+            let type = try unsafe typeAt.unsafeInvoke(Int64(index))
+            guard index < inferred.count else {
+                let hash = try swiftClosureTypeHash(type)
+                #expect(
+                    swiftClosureDiscriminator(parameters: [hash], result: hash) == expected,
+                    "\(name)"
+                )
+                continue
+            }
+            let host = swiftClosureDiscriminator(
+                parameters: [try swiftClosureAuthType(type, position: .parameter)],
+                result: try swiftClosureAuthType(type, position: .result)
+            )
+            #expect(host == expected, "\(name)")
+            let probe = try await runtime.resolveSwiftFunction(
+                named: try completeName("closureProbe\(index)"),
+                as: ((NativeSwiftClosure<(NativeSwiftValue) -> NativeSwiftValue>, NativeSwiftValue) ->
+                    NativeSwiftValue).self,
+                in: .path(library.libraryURL)
+            )
+            guard case .closure(let plan, _) = try #require(probe.call.generic).parameters.arguments[0]
+            else {
+                Issue.record("\(name) has no closure plan")
+                continue
+            }
+            #expect(plan.discriminator == expected, "\(name)")
+        }
+        // AuthWide passes by address as a whole result, but a tuple result
+        // keeps it as a direct SIL result that shares one return buffer.
+        let tupleType = try await runtime.resolveSwiftFunction(
+            named: module + ".closureProbeTupleType()",
+            as: (() -> Any.Type).self,
+            in: .path(library.libraryURL)
+        )
+        let expected = found[types.count]
+        #expect(
+            swiftClosureDiscriminator(
+                parameters: [],
+                results: try swiftClosureAuthTypes(
+                    unsafe tupleType.unsafeInvoke(),
+                    position: .result
+                )
+            ) == expected
+        )
+        // An explicit layout of the element follows the same rule.
+        let wide = try await runtime.resolveSwiftType(
+            named: module + ".AuthWide",
+            in: .path(library.libraryURL)
+        )
+        let wideABI = try NativeType.structure(
+            named: "AuthWide",
+            fields: Array(repeating: .int64, count: 5)
+        )
+        for valueABIs: [NativeSwiftType: NativeType] in [[:], [wide: wideABI]] {
+            let probe = try await runtime.resolveSwiftFunction(
+                named: module + ".closureProbeTuple(_:)",
+                as: ((NativeSwiftClosure<() -> NativeSwiftValue>) -> Int64).self,
+                valueABIs: valueABIs,
+                in: .path(library.libraryURL)
+            )
+            let arguments = try #require(probe.call.generic).parameters.arguments
+            guard case .closure(let plan, _) = arguments[0] else {
+                Issue.record("closureProbeTuple has no closure plan")
+                continue
+            }
+            #expect(plan.discriminator == expected, "valueABIs: \(valueABIs.count)")
+        }
+        // A resilient element is formally indirect, so it hashes as
+        // `-indirect`, as does an opaque layout of it.
+        let openTupleType = try await runtime.resolveSwiftFunction(
+            named: module + ".closureProbeOpenTupleType()",
+            as: (() -> Any.Type).self,
+            in: .path(library.libraryURL)
+        )
+        let openExpected = found[types.count + 1]
+        #expect(
+            swiftClosureDiscriminator(
+                parameters: [],
+                results: try swiftClosureAuthTypes(
+                    unsafe openTupleType.unsafeInvoke(),
+                    position: .result
+                )
+            ) == openExpected
+        )
+        let open = try await runtime.resolveSwiftType(
+            named: module + ".AuthOpen",
+            in: .path(library.libraryURL)
+        )
+        let openABIs: [[NativeSwiftType: NativeType]] =
+            evolution ? [[:], [open: try .opaque(named: "AuthOpen")]] : [[:]]
+        for valueABIs in openABIs {
+            let probe = try await runtime.resolveSwiftFunction(
+                named: module + ".closureProbeOpenTuple(_:)",
+                as: ((NativeSwiftClosure<() -> NativeSwiftValue>) -> Int64).self,
+                valueABIs: valueABIs,
+                in: .path(library.libraryURL)
+            )
+            let arguments = try #require(probe.call.generic).parameters.arguments
+            guard case .closure(let plan, _) = arguments[0] else {
+                Issue.record("closureProbeOpenTuple has no closure plan")
+                continue
+            }
+            #expect(plan.discriminator == openExpected, "open valueABIs: \(valueABIs.count)")
+        }
+    }
+
+    /// A type declared in an unconstrained extension of another module's
+    /// type hashes as its runtime name, which includes the extension and has
+    /// no generic signature to omit, whether or not its image exports its
+    /// descriptor. One in a constrained extension needs that descriptor.
+    @Test func unexportedTypesInExtensionsHashByTheirRuntimeNames() async throws {
+        let module = "ClosureExtension_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let source = """
+            // A String field sets the addressable bit, which Helper leaves clear.
+            public struct Label { public var text: String = "" }
+            extension Int {
+                struct Helper { var x: Double, y: Double }
+            }
+            extension Array {
+                struct Foreign { var a: Int64, b: Int64 }
+            }
+            // Repeats Dictionary's own requirement on Key.
+            extension Dictionary {
+                struct Entry { var a: Int64, b: Int64 }
+            }
+            public struct Box<T> {}
+            extension Box where T: Equatable {
+                struct Hidden { var x: Double, y: Double }
+            }
+            public protocol Base {}
+            public protocol Refined: Base {}
+            extension Int: Refined {}
+            public struct Bounded<T: Base> {}
+            // As many requirements as Bounded, but a different one.
+            extension Bounded where T: Refined {
+                struct Narrow { var x: Double, y: Double }
+            }
+            func closureProbeType(_ index: Int64) -> Any.Type {
+                [Int.Helper.self, Box<Int>.Hidden.self, Bounded<Int>.Narrow.self][Int(index)]
+            }
+            @inline(never) func closureProbeHelper(_ callback: (Int.Helper) -> Double) -> Double {
+                callback(.init(x: 1, y: 2))
+            }
+            @inline(never) func closureProbeForeign(_ callback: ([Int].Foreign) -> Int64) -> Int64 {
+                callback(.init(a: 3, b: 4))
+            }
+            @inline(never) func closureProbeEntry(_ callback: ([Int: Int].Entry) -> Int64) -> Int64 {
+                callback(.init(a: 5, b: 6))
+            }
+            """
+        let library = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: source,
+            linkArguments: ["-parse-as-library", "-swift-version", "6"]
+        )
+        defer { library.cleanup() }
+        let found = try arm64eClosureCallDiscriminators(
+            source: source,
+            arguments: ["-module-name", module],
+            functions: ["closureProbeHelper", "closureProbeForeign", "closureProbeEntry"]
+        )
+        let runtime = ABIRuntime()
+        let typeAt = try await runtime.resolveSwiftFunction(
+            named: module + ".closureProbeType(_:)",
+            as: ((Int64) -> Any.Type).self,
+            in: .path(library.libraryURL)
+        )
+        let helper = try swiftClosureAuthType(unsafe typeAt.unsafeInvoke(0), position: .parameter)
+        #expect(swiftClosureDiscriminator(parameters: [helper], result: "$sSd") == found[0])
+        let inferred = try await runtime.resolveSwiftFunction(
+            named: module + ".closureProbeHelper(_:)",
+            as: ((NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Double>) -> Double).self,
+            in: .path(library.libraryURL)
+        )
+        // Inference leaves generic structs that are not public undecided, so
+        // they take explicit layouts.
+        let pair = try NativeType.structure(named: "Pair", fields: [.int64, .int64])
+        var calls = [inferred.call]
+        for (name, function, arguments) in [
+            ("Array.Foreign", "closureProbeForeign(_:)", [NativeSwiftGenericArgument.type(Int.self)]),
+            ("Dictionary.Entry", "closureProbeEntry(_:)", [.type(Int.self), .type(Int.self)]),
+        ] {
+            let type = try await runtime.resolveSwiftType(
+                named: "(extension in \(module)):Swift.\(name)",
+                in: .path(library.libraryURL),
+                genericArguments: arguments
+            )
+            calls.append(
+                try await runtime.resolveSwiftFunction(
+                    named: "\(module).\(function)",
+                    as: ((NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Int64>) -> Int64).self,
+                    valueABIs: [type: pair],
+                    in: .path(library.libraryURL)
+                ).call
+            )
+        }
+        for (index, call) in calls.enumerated() {
+            guard case .closure(let plan, _) = try #require(call.generic).parameters.arguments[0]
+            else {
+                Issue.record("probe \(index) has no closure plan")
+                continue
+            }
+            #expect(plan.discriminator == found[index], "probe \(index)")
+        }
+        // Their conventions are undecided, so only their names are hashed.
+        for index: Int64 in [1, 2] {
+            #expect {
+                _ = try swiftClosureTypeHash(unsafe typeAt.unsafeInvoke(index))
+            } throws: { error in
+                guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                    return false
+                }
+                return message.contains("it is declared in a constrained extension")
+            }
         }
     }
     #endif
@@ -1258,18 +1513,18 @@ struct NativeSwiftClosureTests {
     @Test func closureDiscriminatorsMatchCompilerEvidence() throws {
         #expect(
             swiftClosureDiscriminator(
-                parameters: [try swiftClosureAuthType(Int64.self)],
-                result: try swiftClosureAuthType(Int64.self)
+                parameters: [try swiftClosureAuthType(Int64.self, position: .parameter)],
+                result: try swiftClosureAuthType(Int64.self, position: .result)
             ) == 21761
         )
         #expect(swiftClosureDiscriminator(parameters: ["-indirect"], result: "-indirect") == 55683)
         #expect(
-            try swiftClosureAuthType(LifetimeToken.self)
-                == swiftClosureAuthType(LifetimeToken?.self)
+            try swiftClosureAuthType(LifetimeToken.self, position: .parameter)
+                == swiftClosureAuthType(LifetimeToken?.self, position: .parameter)
         )
         #expect(
-            try swiftClosureAuthType(UnsafePointer<Int64>.self)
-                == swiftClosureAuthType(UnsafePointer<UInt8>.self)
+            try swiftClosureAuthType(UnsafePointer<Int64>.self, position: .parameter)
+                == swiftClosureAuthType(UnsafePointer<UInt8>.self, position: .parameter)
         )
     }
 
@@ -1293,3 +1548,81 @@ struct NativeSwiftClosureTests {
 private final class SavedIncomingIntegerClosure: @unchecked Sendable {
     var value: NativeSwiftClosure<(Int64) -> Int64>?
 }
+
+#if DEBUG && os(macOS)
+/// Compiles `source` for arm64e and returns the pointer-authentication
+/// discriminator of the closure call in each of `functions`.
+private func arm64eClosureCallDiscriminators(
+    source: String,
+    arguments: [String] = [],
+    functions: [String]
+) throws -> [UInt16] {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+        UUID().uuidString
+    )
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer {
+        do { try FileManager.default.removeItem(at: directory) } catch { Issue.record(error) }
+    }
+    let sourceURL = directory.appendingPathComponent("Closures.swift")
+    let ir = directory.appendingPathComponent("Closures.ll")
+    try source.write(to: sourceURL, atomically: true, encoding: .utf8)
+    func run(_ arguments: [String]) throws -> String {
+        let process = Process(), output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        process.arguments = arguments
+        // The test runner's injected Xcode frameworks belong to its process,
+        // not to the xcrun-selected compiler and SDK tools.
+        process.environment = FixtureLibrary.toolEnvironment.filter { $0.key != "SDKROOT" }
+        process.standardOutput = output; process.standardError = output
+        try process.run()
+        let text = String(
+            decoding: output.fileHandleForReading.readDataToEndOfFile(),
+            as: UTF8.self
+        )
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw NSError(
+                domain: "ClosureCompilerProbe",
+                code: Int(process.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: text]
+            )
+        }
+        return text
+    }
+    let sdk = try run(["--sdk", "iphoneos", "--show-sdk-path"]).trimmingCharacters(
+        in: .whitespacesAndNewlines
+    )
+    _ = try run(
+        [
+            "swiftc", "-swift-version", "6", "-parse-as-library", "-Onone",
+            "-target", "arm64e-apple-ios18.4", "-sdk", sdk, "-emit-ir",
+        ] + arguments + [sourceURL.path, "-o", ir.path]
+    )
+    let text = try String(contentsOf: ir, encoding: .utf8)
+    return try functions.map { function in
+        let pattern = #"(?ms)^define[^\n]*"# + function + #"[y_][^\n]*\{(.*?)^\}"#
+        let expression = try NSRegularExpression(pattern: pattern)
+        let match = try #require(
+            expression.firstMatch(in: text, range: NSRange(text.startIndex..., in: text))
+        )
+        let range = try #require(Range(match.range(at: 1), in: text))
+        let body = String(text[range])
+        let call = try #require(
+            body.split(separator: "\n").first {
+                $0.contains("call swiftcc") && $0.contains("swiftself")
+                    && $0.contains(#""ptrauth""#)
+            }
+        )
+        let discriminator = try NSRegularExpression(
+            pattern: #""ptrauth"\(i32 0, i64 ([0-9]+)\)"#
+        )
+        let line = String(call)
+        let auth = try #require(
+            discriminator.firstMatch(in: line, range: NSRange(line.startIndex..., in: line))
+        )
+        let digits = try #require(Range(auth.range(at: 1), in: line))
+        return try #require(UInt16(line[digits]))
+    }
+}
+#endif

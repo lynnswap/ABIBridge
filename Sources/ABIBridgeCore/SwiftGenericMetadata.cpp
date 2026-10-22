@@ -612,6 +612,148 @@ ABISwiftSyntax *ABICopySwiftTypeFieldSyntax(const void *metadata, size_t index) 
     return reference ? ABICopySwiftTypeSyntax(reference, symbolicNameLength(reference)) : nullptr;
 }
 
+// Nominal descriptor, field descriptor, and type metadata record layouts:
+// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/ABI/Metadata.h
+// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/RemoteInspection/Records.h
+namespace {
+using SyntaxOwner = std::unique_ptr<ABISwiftSyntax, decltype(&ABIReleaseSwiftSyntax)>;
+
+const char *fieldRecord(const char *fields, size_t index) {
+    return fields + 16 + index * read<uint16_t>(fields + 10);
+}
+
+const ABISwiftSyntaxNode *unwrappedType(const ABISwiftSyntaxNode *node) {
+    while (!std::strcmp(ABISwiftSyntaxNodeKind(node), "Type") && ABISwiftSyntaxNodeChildCount(node))
+        node = ABISwiftSyntaxNodeChild(node, 0);
+    return node;
+}
+
+ABISwiftReferenceStorage referenceStorage(const char *reference) {
+    if (!reference) return ABISwiftReferenceStorageUnknown;
+    SyntaxOwner syntax(ABICopySwiftTypeSyntax(reference, symbolicNameLength(reference)), ABIReleaseSwiftSyntax);
+    if (!syntax) return ABISwiftReferenceStorageUnknown;
+    const char *kind = ABISwiftSyntaxNodeKind(unwrappedType(ABISwiftSyntaxRoot(syntax.get())));
+    if (!std::strcmp(kind, "Weak")) return ABISwiftReferenceStorageWeak;
+    if (!std::strcmp(kind, "Unowned")) return ABISwiftReferenceStorageUnowned;
+    if (!std::strcmp(kind, "Unmanaged")) return ABISwiftReferenceStorageUnmanaged;
+    return ABISwiftReferenceStorageNone;
+}
+
+bool mentionsGenericParameter(const ABISwiftSyntaxNode *node) {
+    const char *kind = ABISwiftSyntaxNodeKind(node);
+    if (!std::strcmp(kind, "DependentGenericParamType") || !std::strcmp(kind, "DependentMemberType"))
+        return true;
+    for (size_t index = 0; index < ABISwiftSyntaxNodeChildCount(node); ++index)
+        if (mentionsGenericParameter(ABISwiftSyntaxNodeChild(node, index))) return true;
+    return false;
+}
+
+const char *declaringModule(const char *descriptor) {
+    while (descriptor && (read<uint32_t>(descriptor) & 0x1f) != 0) descriptor = parentContext(descriptor);
+    return descriptor ? relative(descriptor + 8) : nullptr;
+}
+
+bool setsAddressableForDependencies(const char *descriptor) {
+    std::unique_ptr<ABISwiftTypeMetadata, decltype(&ABIReleaseSwiftTypeMetadata)> metadata(
+        ABICreateSwiftTypeMetadata(descriptor, nullptr, 0, nullptr), ABIReleaseSwiftTypeMetadata);
+    return metadata && (ABISwiftGetValueWitnessFlags(metadata->value) & 0x02000000);
+}
+}
+
+bool ABISwiftGetValueDescriptorInfo(const void *metadata, ABISwiftValueDescriptorInfo *info) {
+    const char *descriptor = typeContextDescriptor(metadata);
+    if (!descriptor) return false;
+    const auto flags = read<uint32_t>(descriptor);
+    const auto kind = flags & 0x1f;
+    if (kind != 17 && kind != 18) return false;
+    *info = {};
+    info->isEnum = kind == 18;
+    info->isGeneric = flags & 0x80;
+    info->metadataInitialization = (flags >> 16) & 3;
+    if (info->isEnum) {
+        info->payloadCases = read<uint32_t>(descriptor + 20) & 0x00ffffff;
+        info->declaredFields = info->payloadCases + read<uint32_t>(descriptor + 24);
+    } else {
+        info->declaredFields = read<uint32_t>(descriptor + 20);
+    }
+    const char *fields = relative(descriptor + 16);
+    info->hasFieldRecords = fields != nullptr;
+    info->fieldRecords = fields ? read<uint32_t>(fields + 12) : 0;
+    return true;
+}
+
+const char *ABISwiftTypeFieldName(const void *metadata, size_t index) {
+    const char *fields = valueFields(metadata);
+    if (!fields || index >= read<uint32_t>(fields + 12)) return nullptr;
+    return relative(fieldRecord(fields, index) + 8);
+}
+
+const void *ABISwiftTypeFieldMetadata(const void *metadata, size_t index) {
+    const char *reference = inlineFieldReference(metadata, index);
+    if (!reference) return nullptr;
+    const char *descriptor = typeContextDescriptor(metadata);
+    return swift_getTypeByMangledNameInContext(reference, symbolicNameLength(reference),
+        descriptor, genericArguments(metadata, descriptor));
+}
+
+bool ABISwiftStructFieldOffset(const void *metadata, size_t index, size_t *offset) {
+    const char *descriptor = typeContextDescriptor(metadata);
+    if (!descriptor || (read<uint32_t>(descriptor) & 0x1f) != 17) return false;
+    const auto vector = read<uint32_t>(descriptor + 24);
+    if (!vector || index >= read<uint32_t>(descriptor + 20)) return false;
+    // Struct field offsets are 32-bit, after a vector offset counted in words.
+    *offset = read<uint32_t>(static_cast<const char *>(metadata) + vector * sizeof(void *) + index * 4);
+    return true;
+}
+
+ABISwiftReferenceStorage ABISwiftTypeFieldReferenceStorage(const void *metadata, size_t index) {
+    return referenceStorage(inlineFieldReference(metadata, index));
+}
+
+bool ABISwiftTypeFieldIsGenericDependent(const void *metadata, size_t index) {
+    const char *reference = inlineFieldReference(metadata, index);
+    if (!reference) return false;
+    SyntaxOwner syntax(ABICopySwiftTypeSyntax(reference, symbolicNameLength(reference)), ABIReleaseSwiftSyntax);
+    return syntax && mentionsGenericParameter(ABISwiftSyntaxRoot(syntax.get()));
+}
+
+const char *ABISwiftTypeModuleName(const void *metadata) {
+    const char *descriptor = typeContextDescriptor(metadata);
+    return descriptor ? declaringModule(descriptor) : nullptr;
+}
+
+bool ABISwiftModuleSetsAddressableForDependencies(const void *metadata) {
+    const char *descriptor = typeContextDescriptor(metadata);
+    const char *module = descriptor ? declaringModule(descriptor) : nullptr;
+    Dl_info image{};
+    if (!module || !dladdr(descriptor, &image)) return false;
+#if __LP64__
+    auto header = static_cast<const mach_header_64 *>(image.dli_fbase);
+#else
+    auto header = static_cast<const mach_header *>(image.dli_fbase);
+#endif
+    // Noncopyable types are recorded separately from older runtimes' view.
+    for (const char *name : {"__swift5_types", "__swift5_types2"}) {
+        unsigned long size = 0;
+        auto section = reinterpret_cast<const char *>(getsectiondata(header, "__TEXT", name, &size));
+        for (unsigned long offset = 0; section && offset + 4 <= size; offset += 4) {
+            const char *record = section + offset;
+            const auto reference = read<int32_t>(record);
+            // Only direct type descriptor references; the low bits select the kind.
+            if (!reference || (reference & 3)) continue;
+            const char *candidate = record + reference;
+            const auto flags = read<uint32_t>(candidate);
+            const auto kind = flags & 0x1f;
+            // Generic and runtime-initialized metadata do not carry the bit reliably.
+            if ((kind != 17 && kind != 18) || (flags & 0x80) || ((flags >> 16) & 3)) continue;
+            const char *candidateModule = declaringModule(candidate);
+            if (!candidateModule || std::strcmp(candidateModule, module)) continue;
+            if (setsAddressableForDependencies(candidate)) return true;
+        }
+    }
+    return false;
+}
+
 namespace {
 bool sameTypeSyntax(const ABISwiftSyntaxNode *lhs, const ABISwiftSyntaxNode *rhs) {
     if (std::strcmp(ABISwiftSyntaxNodeKind(lhs), ABISwiftSyntaxNodeKind(rhs))) return false;
@@ -641,6 +783,68 @@ bool matchesNominalReference(const char *reference, const char *descriptor) {
     Syntax expected(ABICopySwiftTypeSyntax(nominal, symbolicNameLength(nominal)), ABIReleaseSwiftSyntax);
     return expected && sameTypeSyntax(ABISwiftSyntaxRoot(candidate.get()), ABISwiftSyntaxRoot(expected.get()));
 }
+
+bool sameMangledType(const char *lhs, const char *rhs) {
+    SyntaxOwner left(ABICopySwiftTypeSyntax(lhs, symbolicNameLength(lhs)), ABIReleaseSwiftSyntax);
+    SyntaxOwner right(ABICopySwiftTypeSyntax(rhs, symbolicNameLength(rhs)), ABIReleaseSwiftSyntax);
+    return left && right && sameTypeSyntax(ABISwiftSyntaxRoot(left.get()), ABISwiftSyntaxRoot(right.get()));
+}
+
+// Equal generic signatures emit the same canonical requirements. Anything
+// this cannot compare counts as different.
+bool sameRequirement(const char *lhs, const char *rhs) {
+    const auto flags = read<uint32_t>(lhs);
+    const char *leftSubject = relative(lhs + 4), *rightSubject = relative(rhs + 4);
+    if (flags != read<uint32_t>(rhs) || !leftSubject || !rightSubject || !sameMangledType(leftSubject, rightSubject))
+        return false;
+    switch (flags & 0x1f) {
+    case 0: {
+        const void *objectiveC = ABISwiftProtocolRequirementObjectiveCProtocol(lhs + 8);
+        if (objectiveC || ABISwiftProtocolRequirementObjectiveCProtocol(rhs + 8))
+            return objectiveC == ABISwiftProtocolRequirementObjectiveCProtocol(rhs + 8);
+        return ABISwiftProtocolRequirementDescriptor(lhs + 8) == ABISwiftProtocolRequirementDescriptor(rhs + 8);
+    }
+    case 1: case 2: case 4: {
+        const char *left = relative(lhs + 8), *right = relative(rhs + 8);
+        return left && right && sameMangledType(left, right);
+    }
+    case 5: case 0x1f: return read<uint32_t>(lhs + 8) == read<uint32_t>(rhs + 8);
+    default: return false;
+    }
+}
+
+// The nominal descriptor that an extension extends, resolved in the generic
+// environment of a type declared in the extension.
+const char *extendedNominal(const char *extension, const void *metadata, const char *descriptor) {
+    const char *extended = relative(extension + 8);
+    if (!extended) return nullptr;
+    if (extended[0] == 1 || extended[0] == 2) {
+        const char *target = extended + 1 + read<int32_t>(extended + 1);
+        return extended[0] == 2 ? contextPointer(target) : target;
+    }
+    const void *type = swift_getTypeByMangledNameInContext(extended, symbolicNameLength(extended), descriptor,
+        (read<uint32_t>(descriptor) & 0x80) ? genericArguments(metadata, descriptor) : nullptr);
+    return type ? typeContextDescriptor(type) : nullptr;
+}
+}
+
+bool ABISwiftTypeIsDeclaredInConstrainedExtension(const void *metadata) {
+    const char *descriptor = typeContextDescriptor(metadata);
+    for (const char *context = descriptor; context; context = parentContext(context)) {
+        const auto flags = read<uint32_t>(context);
+        // An extension of a nongeneric type has no generic context to constrain.
+        if ((flags & 0x1f) != 1 || !(flags & 0x80)) continue;
+        const char *header = context + 12;
+        const char *nominal = extendedNominal(context, metadata, descriptor);
+        const char *nominalHeader = nominal ? nominalGenericHeader(nominal) : nullptr;
+        if (!nominalHeader || read<uint16_t>(header) != read<uint16_t>(nominalHeader)) return true;
+        const auto count = read<uint16_t>(header + 2);
+        if (count != read<uint16_t>(nominalHeader + 2)) return true;
+        const char *requirements = genericRequirements(header), *expected = genericRequirements(nominalHeader);
+        for (size_t index = 0; index < count; ++index)
+            if (!sameRequirement(requirements + index * 12, expected + index * 12)) return true;
+    }
+    return false;
 }
 
 ABISwiftSyntax *ABICopySwiftAssociatedTypeSyntax(const void *metadata, const void *protocol, const char *name) {

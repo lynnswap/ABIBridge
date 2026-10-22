@@ -316,7 +316,7 @@ struct SwiftResultCodec<Value>: Sendable {
             ordinary = nil
             type = opaque.type
         } else {
-            let codec = try SwiftValueCodec<Value>()
+            let codec = try SwiftValueCodec<Value>(position: .result)
             ordinary = codec
             self.opaque = nil
             type = codec.type

@@ -258,6 +258,56 @@ ABIValueType *ABICreateSwiftTupleStorageType(
     return new ABIValueType{std::move(storage)};
 }
 
+ABIValueType *ABICreateSwiftAggregateStorageType(
+    const ABIValueType *const *fields, const size_t *offsets, size_t count,
+    size_t size, size_t alignment, ABIResolutionFailure **error) {
+    if (error) *error = nullptr;
+    if ((count && (!fields || !offsets)) || !alignment || (alignment & (alignment - 1)) ||
+        alignment > std::numeric_limits<unsigned short>::max()) {
+        fail(error, ABIFailureInvalidRequest, "A Swift aggregate requires field offsets and valid storage alignment.");
+        return nullptr;
+    }
+    auto storage = std::make_shared<TypeStorage>();
+    size_t end = 0, rebuiltAlignment = 1;
+    for (size_t index = 0; index < count; ++index) {
+        const auto field = fields[index] ? fields[index]->storage : nullptr;
+        // flatten would read an indirect field's bytes as if they were its value.
+        if (!field || field->swiftIndirect || field->swiftPack) {
+            fail(error, ABIFailureInvalidRequest, "Swift aggregate fields must be loadable storage.");
+            return nullptr;
+        }
+        // Swift lays out stored fields in declaration order, so each one ends
+        // before the next begins and the last one ends within the value.
+        if (offsets[index] < end || offsets[index] > size || field->size() > size - offsets[index]) {
+            fail(error, ABIFailureInvalidRequest, "Swift aggregate fields exceed their offset intervals.");
+            return nullptr;
+        }
+        end = offsets[index] + field->size();
+        rebuiltAlignment = std::max(rebuiltAlignment, size_t(field->native()->alignment));
+        storage->fields.push_back(field);
+        storage->offsets.push_back(offsets[index]);
+        storage->elements.push_back(field->native());
+    }
+    if (end != size || rebuiltAlignment != alignment) {
+        fail(error, ABIFailureInvalidRequest, "Swift aggregate fields do not rebuild the value's size and alignment.");
+        return nullptr;
+    }
+    storage->elements.push_back(nullptr);
+    storage->aggregate = {size, static_cast<unsigned short>(alignment), FFI_TYPE_STRUCT, storage->elements.data()};
+    std::vector<Component> leaves;
+    flatten(*storage, 0, leaves);
+    std::sort(leaves.begin(), leaves.end(), [](const Component &lhs, const Component &rhs) {
+        return lhs.offset < rhs.offset;
+    });
+    for (size_t index = 1; index < leaves.size(); ++index) {
+        if (leaves[index - 1].offset + leaves[index - 1].size > leaves[index].offset) {
+            fail(error, ABIFailureInvalidRequest, "Swift aggregate leaf components overlap.");
+            return nullptr;
+        }
+    }
+    return new ABIValueType{std::move(storage)};
+}
+
 ABIValueType *ABICreateSwiftPackStorageType(
     const ABIValueType *const *fields, const size_t *offsets, size_t count,
     size_t size, size_t alignment, ABIResolutionFailure **error) {

@@ -54,6 +54,8 @@ ABISwiftValueLayout ABISwiftGetValueLayout(const void *metadata) {
     return {table->size, table->stride, (table->flags & 0xff) + size_t(1)};
 }
 
+uint32_t ABISwiftGetValueWitnessFlags(const void *metadata) { return valueWitnesses(metadata)->flags; }
+
 void ABISwiftCopyValue(const void *metadata, void *destination, const void *source) {
     valueWitnesses(metadata)->initializeWithCopy(destination, source, metadata);
 }

@@ -37,8 +37,9 @@ struct SwiftOptionalValueTests {
         #expect(try unsafe pair.unsafeInvoke(nil) == nil)
     }
 
-    /// Runtime-only records and the ABIs their declarations use until layouts
-    /// are inferred (#430).
+    /// Runtime-only records and the ABIs their declarations use. Library
+    /// evolution hides whether these String-holding records are frozen, and
+    /// Optional payloads need that answer, so they keep explicit ABIs.
     private static func recordABIs() async throws -> [NativeSwiftType: NativeType] {
         let runtime = ABIRuntime.shared
         let record = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.OptionalRuntimeRecord")
@@ -118,6 +119,75 @@ struct SwiftOptionalValueTests {
                 valueABIs: abis
             )
         }
+    }
+
+    /// A host Optional takes its payload's valueABIs entry, as a runtime
+    /// Optional does, also as a tuple element.
+    @Test func hostOptionalsUseTheirPayloadValueABIs() async throws {
+        let runtime = ABIRuntime.shared
+        let abis = try await Self.recordABIs()
+        let make = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeOptionalFrozenRecord(_:)",
+            as: ((Int64) -> OptionalFrozenRecord?).self,
+            valueABIs: abis
+        )
+        let describe = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.describeOptionalFrozenRecord(_:)",
+            as: ((OptionalFrozenRecord?) -> String).self,
+            valueABIs: abis
+        )
+        #expect(try unsafe make.unsafeInvoke(-1) == nil)
+        let frozen = try #require(try unsafe make.unsafeInvoke(5))
+        #expect(frozen.name == "frozen" && frozen.count == 5)
+        #expect(try unsafe describe.unsafeInvoke(frozen) == "frozen#5")
+        #expect(try unsafe describe.unsafeInvoke(nil) == "nil")
+
+        // The opaque ABI of the resilient record passes its Optional by address.
+        let makeRecord = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeOptionalRuntimeRecord(_:)",
+            as: ((Int64) -> OptionalRuntimeRecord?).self,
+            valueABIs: abis
+        )
+        let describeRecord = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.describeOptionalRuntimeRecord(_:)",
+            as: ((OptionalRuntimeRecord?) -> String).self,
+            valueABIs: abis
+        )
+        #expect(try unsafe makeRecord.unsafeInvoke(-1) == nil)
+        #expect(try unsafe describeRecord.unsafeInvoke(makeRecord.unsafeInvoke(3)) == "record#3")
+        #expect(try unsafe describeRecord.unsafeInvoke(nil) == "nil")
+
+        let makePair = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeOptionalFrozenRecordPair(_:)",
+            as: ((Int64) -> (OptionalFrozenRecord?, Int64)).self,
+            valueABIs: abis
+        )
+        let describePair = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.describeOptionalFrozenRecordPair(_:)",
+            as: (((OptionalFrozenRecord?, Int64)) -> String).self,
+            valueABIs: abis
+        )
+        let pair = try unsafe makePair.unsafeInvoke(6)
+        #expect(pair.0?.count == 6 && pair.1 == 6)
+        #expect(try unsafe describePair.unsafeInvoke(pair) == "frozen#6@6")
+        #expect(try unsafe describePair.unsafeInvoke((nil, 2)) == "nil@2")
+
+        // A tuple payload's element takes its entry too.
+        let makeTuple = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeOptionalRuntimeRecordTuple(_:)",
+            as: ((Int64) -> (OptionalRuntimeRecord, Int64)?).self,
+            valueABIs: abis
+        )
+        let describeTuple = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.describeOptionalRuntimeRecordTuple(_:)",
+            as: (((OptionalRuntimeRecord, Int64)?) -> String).self,
+            valueABIs: abis
+        )
+        #expect(try unsafe makeTuple.unsafeInvoke(-1) == nil)
+        let tuple = try #require(try unsafe makeTuple.unsafeInvoke(4))
+        #expect(tuple.0.name == "record" && tuple.0.count == 4 && tuple.1 == 5)
+        #expect(try unsafe describeTuple.unsafeInvoke(tuple) == "record#4@5")
+        #expect(try unsafe describeTuple.unsafeInvoke(nil) == "nil")
     }
 
     @Test func callbacksExchangeOptionalRuntimeValues() async throws {

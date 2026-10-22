@@ -1589,10 +1589,92 @@ struct SwiftGenericBinding: Sendable {
         type is AnyClass ? nil : try explicitValueType(type)
     }
 
+    /// The storage of a closed host Optional whose payload, within any
+    /// Optionals, has a `valueABIs` layout or is a tuple with an element that
+    /// has one, as runtime values lower such an Optional. Call it after
+    /// `validateInferredHostValue`: an adapter payload's Optional need not
+    /// match the native Optional's layout.
+    func explicitHostOptionalType(_ type: Any.Type) throws -> CValueType? {
+        guard let optional = type as? any NativeOptionalValue.Type else { return nil }
+        let wrapped = optional.wrappedType
+        guard let payload = try explicitHostLayout(wrapped) ?? explicitHostTupleType(wrapped)
+        else { return nil }
+        return try SwiftValueSchema.optionalStorage(
+            of: type,
+            wrapped: payload,
+            wrappedType: wrapped
+        )
+    }
+
+    /// The storage of a closed host tuple with an element that has a
+    /// `valueABIs` layout, as an Optional payload stores it: the tuple's
+    /// other elements keep their own Swift storage.
+    private func explicitHostTupleType(_ type: Any.Type) throws -> CValueType? {
+        guard let tuple = SwiftTupleMetadata(type), try hasExplicitHostField(type) else {
+            return nil
+        }
+        func field<Element>(_ element: Element.Type) throws -> CValueType {
+            if let explicit = try explicitHostLayout(element) ?? explicitHostTupleType(element) {
+                return explicit
+            }
+            guard !(element is any ABIBridgeValue.Type) || element is any ABIBridgeSwiftValue.Type,
+                !(element is any SwiftClosureValue.Type)
+            else {
+                throw ABIResolutionError.unsupportedDeclaration(
+                    "Tuple elements require their native Swift storage representation."
+                )
+            }
+            return try SwiftValueCodec<Element>().type
+        }
+        let fields = try tuple.elements.map { try _openExistential($0.type, do: field) }
+        func layout<Value>(_ value: Value.Type) throws -> CValueType {
+            try tuple.layout(for: value, fields: fields)
+        }
+        return try _openExistential(type, do: layout)
+    }
+
+    /// The `valueABIs` layout of a validated closed host value: its own
+    /// entry, or its Optional payload's.
+    func explicitHostLayout(_ type: Any.Type) throws -> CValueType? {
+        try explicitHostValueType(type) ?? explicitHostOptionalType(type)
+    }
+
+    /// Inference reads the metadata it lowers, so it describes a declaration
+    /// only through the declaration's own formal type. A closed host value
+    /// can be an adapter with another Swift name, which says nothing about the
+    /// declaration's convention. A tuple element's `valueABIs` layout
+    /// describes it; an Optional payload lowers through its type's own codec.
+    func validateInferredHostValue(_ type: Any.Type, for formal: SwiftFormalType) throws {
+        guard SwiftInferredValue.lowersByInference(type) else { return }
+        func validate(_ host: Any.Type, _ native: Any.Type, inOptional: Bool) throws {
+            if host == native { return }
+            if let host = SwiftTupleMetadata(host), let native = SwiftTupleMetadata(native),
+                host.elements.count == native.elements.count
+            {
+                for (host, native) in zip(host.elements, native.elements) {
+                    try validate(host.type, native.type, inOptional: inOptional)
+                }
+                return
+            }
+            if let host = host as? any NativeOptionalValue.Type,
+                let native = native as? any NativeOptionalValue.Type
+            {
+                return try validate(host.wrappedType, native.wrappedType, inOptional: true)
+            }
+            guard SwiftInferredValue.lowersByInference(host),
+                try inOptional || explicitHostValueType(host) == nil
+            else { return }
+            throw ABIResolutionError.metadataUnavailable(
+                "ABIBridge infers the Swift calling convention of a value only from its declaration's formal type, \(String(reflecting: native)); the host type \(String(reflecting: host)) is an adapter. Describe it with \(inOptional ? "" : "valueABIs or ")an ABIBridgeSwiftValue conformance."
+            )
+        }
+        try validate(type, types(formal)[0], inOptional: false)
+    }
+
     func hasExplicitHostField(_ type: Any.Type) throws -> Bool {
         guard let tuple = SwiftTupleMetadata(type) else { return false }
         return try tuple.elements.contains {
-            try explicitHostValueType($0.type) != nil || hasExplicitHostField($0.type)
+            try explicitHostLayout($0.type) != nil || hasExplicitHostField($0.type)
         }
     }
 
@@ -1654,7 +1736,13 @@ struct SwiftGenericBinding: Sendable {
         return (function, closure)
     }
 
-    func validateArgument(_ actual: Any.Type, for formal: SwiftFormalType) throws {
+    /// - Parameter position: `.parameter` for a whole argument, or the
+    ///   position of a tuple element.
+    func validateArgument(
+        _ actual: Any.Type,
+        for formal: SwiftFormalType,
+        position: SwiftValuePosition = .parameter
+    ) throws {
         if let (function, closure) = try closureFunction(formal, for: actual) {
             _ = try SwiftGenericCallPlan.closure(
                 function,
@@ -1666,7 +1754,12 @@ struct SwiftGenericBinding: Sendable {
         } else {
             let canonical = try canonicalType(of: formal)
             if case .tuple = canonical {
-                _ = try SwiftGenericCallPlan.tuple(canonical, actual: actual, binding: self)
+                _ = try SwiftGenericCallPlan.tuple(
+                    canonical,
+                    actual: actual,
+                    binding: self,
+                    position: position
+                )
                 return
             }
             try validate(actual, for: formal)

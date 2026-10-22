@@ -77,6 +77,7 @@ Invocation can throw bridge errors even when the native signature is nonthrowing
 | `NativeSwiftClosure<Signature>` | Owned callbacks and returned closures; the function signature carries native errors, async effects, and the caller-isolated or concurrent convention |
 | Unsafe pointers, OpaquePointer, Selector, and optional pointers | Borrowed pointer values |
 | CGPoint, CGSize, CGRect, NSRange | Known fixed value layouts lowered with the Swift ABI |
+| Other structs and enums | Conventions inferred from their metadata when binary evidence decides them; see <doc:SwiftFunctionInvocation#Infer-struct-and-enum-conventions> |
 | Any, simple and parameterized protocol existentials, and their single-level optional forms | Compiler-managed containers with the native existential calling convention; see <doc:SwiftExistentialValues> |
 | ABIBridgeSwiftValue | Actual Swift values with explicit fixed or formally indirect conventions and compiler-owned copying/destruction |
 | ABIBridgeValue | Explicit trivial native layouts representable by NativeType's scalar/structure descriptions |
@@ -93,6 +94,31 @@ The call interface uses Swift register and stack conventions, including direct a
 Use ``ABIBridgeSwiftValue`` for an imported struct or enum with an established fixed or formally indirect ABI; see <doc:ExplicitSwiftValues>. Its layout must match the declaration's field offsets, padding, and passing convention. A C-compatible storage description cannot describe every Swift value.
 
 Signatures outside these representations require a compiled adapter. <doc:ManagedSwiftValues> shows a C-compatible storage bridge for managed structs and imported resilient values. Closure, existential, and generic support has its own boundaries in the linked guides.
+
+## Infer struct and enum conventions
+
+A struct or enum without a built-in representation, an ``ABIBridgeSwiftValue`` conformance, or a `valueABIs:` entry is lowered from its runtime metadata. Inference covers `NativeSwiftValue` arguments and results, Optional payloads, tuple elements, closure parameters and results, and `self`. A host type is inferred only where it is the declaration's own type: an adapter with a different Swift name needs an explicit ABI, and inside an Optional an ``ABIBridgeSwiftValue`` conformance, because the adapter's Optional can have a different layout from the native one.
+
+A value is loadable unless it is resilient to clients or stores an address-only field: a resilient value, a `weak` or non-native `unowned` reference, an opaque existential, or a stored property of an opaque type (`some P`) that is not class-bound. Loadable values use the same register expansion as explicit layouts and pass indirectly above four registers; address-only values always pass by address. Fields come from reflection records at the offsets in the value's metadata, and preparation checks that they rebuild the value's size and alignment.
+
+Metadata does not record `@frozen`. ABIBridge decides a convention only from summaries the compiler wrote into the type's own static metadata and from symbols that show resilience:
+
+- A nongeneric value is loadable when its static value witnesses leave the addressable-for-dependencies bit clear: it then stores nothing resilient and no opaque type that is not class-bound. The clear bit counts only when a type of the same module sets the bit, because Swift 6.1 and earlier compilers never set it, and only when the value's fields explain whether its value witnesses are POD. The fields of such a value, including generic instances, are decided with it.
+- A value is address-only when its metadata is initialized at run time, as for a nongeneric type that stores a resilient type from another module, or when its static value witnesses are not bitwise-takable. An enum is also address-only when its image exports its enum case symbols, which only a resilient enum has.
+- A value whose addressable-for-dependencies bit no field explains is resilient, and passed by address, when its module exports symbols that only library evolution emits: enum case symbols, dispatch thunks, class metadata base offsets, method lookup functions, or descriptors of stored properties.
+
+Missing symbols are not evidence, and neither are the value witnesses that the runtime builds for a generic instance. Every other value is undecided. Typical cases are a struct with a `String`, `Data`, or imported C struct field, which sets the bit itself; a generic instance such as `Range<Int>` that no nongeneric value stores; a value of a module built without library evolution whose bit no field explains; and any value of a module compiled by Swift 6.1 or earlier. [#434](https://github.com/lynnswap/ABIBridge/issues/434) tracks inferring values of modules built without library evolution and generic instances.
+
+When the evidence leaves the question open, a parameter, a result, or `self` still passes by address if the value's frozen lowering already exceeds four registers, because both conventions then agree. An element of a tuple parameter counts as a parameter; an element of a tuple result does not. Otherwise preparation throws ``ABIResolutionError/metadataUnavailable(_:)``, naming the type, its module, the missing evidence, and the explicit ABI to supply.
+
+Types that use two experimental compiler features can be lowered with the wrong convention. Describe them with `valueABIs:` or an ``ABIBridgeSwiftValue`` conformance:
+
+- A `@frozen @_addressableForDependencies` type outside the SDK, which the `AddressableTypes` feature allows, sets the addressable-for-dependencies bit itself. In a library-evolution module, ABIBridge reads it as resilient and passes it by address, while the compiler passes it directly.
+- A `@sensitive` type, which the `Sensitive` feature allows, is address-only. ABIBridge detects one only when none of its fields needs nontrivial copies; one that stores a reference can be passed directly.
+
+Preparing a closure over a struct or enum declared in a constrained extension needs the image to export the type's descriptor, on every architecture: the closure's pointer-authentication discriminator includes the extension's generic signature, which only that symbol spells. [#435](https://github.com/lynnswap/ABIBridge/issues/435) tracks computing discriminators only where pointer authentication applies.
+
+Imported C structs and unions, tuple fields containing metatypes, SIMD vectors, `Float16`, `Int128`, and noncopyable values are not inferred; preparation throws ``ABIResolutionError/unsupportedDeclaration(_:)``. Describe such values with `valueABIs:` or an ``ABIBridgeSwiftValue`` conformance. Both take precedence over inference. A `valueABIs:` entry describes a value where the declaration's signature names its type, including the payload of an Optional and an element of a tuple in the signature, but not a field or enum payload of a value that ABIBridge infers, so when inference fails on a field, describe the containing type. Inside an Optional, the entry applies only to the declaration's own type, not to an adapter host type. A conformance applies wherever its type occurs, including fields.
 
 ## Ownership and isolation
 

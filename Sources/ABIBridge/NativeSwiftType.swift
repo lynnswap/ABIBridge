@@ -364,6 +364,15 @@ public actor NativeSwiftType: Hashable {
         let protocolSelf = try generic.flatMap { plan in
             try plan.binding.declaration.protocolSelf.map { try plan.binding.canonicalType(of: $0) }
         }
+        // A representation that is not the type itself is an adapter, whose
+        // own inferred layout says nothing about the declaration's self.
+        if receiverABI == nil, let representation, representation != metadata,
+            SwiftInferredValue.lowersByInference(representation)
+        {
+            throw ABIResolutionError.metadataUnavailable(
+                "ABIBridge infers the Swift calling convention of self only from \(name); its representation \(String(reflecting: representation)) is an adapter. Describe it with receiverABI or an ABIBridgeSwiftValue conformance."
+            )
+        }
         let codec: SwiftReceiverCodec
         let cachedCodec: SwiftReceiverCodec?
         if let receiverABI {
@@ -635,12 +644,12 @@ public actor NativeSwiftType: Hashable {
     ///
     /// A protocol-qualified instance requirement binds Self to this concrete type and resolves its dispatch thunk. Lookup requires the native conformance and preserves the protocol's formal Self convention.
     ///
-    /// For runtime-only self, receiverABI supplies established fixed components or an opaque descriptor for formally indirect self. Metadata supplies storage dimensions, not the declaration's passing convention.
+    /// For runtime-only self, receiverABI supplies established fixed components or an opaque descriptor for formally indirect self. Without it, a struct or enum self uses the convention inferred from its metadata, and preparation fails when the evidence cannot decide it; see <doc:SwiftFunctionInvocation#Infer-struct-and-enum-conventions>.
     /// - Parameters:
     ///   - name: A relative member name or a complete qualified declaration.
     ///   - signature: Explicit arguments and result.
     ///   - genericArguments: Type arguments introduced by the member.
-    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types without another representation.
+    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types, such as structs and enums whose conventions ABIBridge cannot infer from their metadata. They take precedence over conformances and inferred conventions where the signature names their types, but inference does not consult them for the fields of a value it lowers. Inside an Optional, an entry describes only the declaration's own type, not an adapter host type, whose Optional can have another layout.
     ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
     ///   - receiverABI: Explicit self ABI; nil uses the type representation or generic declaration.
     ///   - isMutating: Whether a value receiver is passed inout.
@@ -749,7 +758,7 @@ public actor NativeSwiftType: Hashable {
     ///   - name: The relative initializer name, such as init(text:).
     ///   - signature: Explicit arguments and constructed result.
     ///   - genericArguments: Type arguments introduced by the initializer.
-    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types without another representation.
+    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types, such as structs and enums whose conventions ABIBridge cannot infer from their metadata. They take precedence over conformances and inferred conventions where the signature names their types, but inference does not consult them for the fields of a value it lowers. Inside an Optional, an entry describes only the declaration's own type, not an adapter host type, whose Optional can have another layout.
     ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
     /// - Returns: A reusable initializer retaining its type and implementation.
     /// - Throws: A lookup, representation, or preparation error.
@@ -815,7 +824,7 @@ public actor NativeSwiftType: Hashable {
     ///   - name: A relative member name or a complete qualified declaration.
     ///   - signature: Explicit arguments and result.
     ///   - genericArguments: Type arguments introduced by the member.
-    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types without another representation.
+    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types, such as structs and enums whose conventions ABIBridge cannot infer from their metadata. They take precedence over conformances and inferred conventions where the signature names their types, but inference does not consult them for the fields of a value it lowers. Inside an Optional, an entry describes only the declaration's own type, not an adapter host type, whose Optional can have another layout.
     ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
     /// - Returns: A reusable function retaining its type and implementation.
     /// - Throws: A lookup, representation, or preparation error.
@@ -887,7 +896,7 @@ public actor NativeSwiftType: Hashable {
     /// - Parameters:
     ///   - name: A property name or complete relative setter declaration.
     ///   - valueType: The incoming value representation.
-    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types without another representation.
+    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types, such as structs and enums whose conventions ABIBridge cannot infer from their metadata. They take precedence over conformances and inferred conventions where the signature names their types, but inference does not consult them for the fields of a value it lowers. Inside an Optional, an entry describes only the declaration's own type, not an adapter host type, whose Optional can have another layout.
     ///   - declaredSignature: The formal setter type and optional canonical generic signature.
     ///   - receiverABI: Explicit self ABI; nil uses the type representation or generic declaration.
     ///   - isMutating: An inout override. Nil follows the declaration's default self convention unless consuming is true.
@@ -960,7 +969,7 @@ public actor NativeSwiftType: Hashable {
     /// - Parameters:
     ///   - name: A property name or complete relative setter declaration.
     ///   - valueType: The incoming value representation.
-    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types without another representation.
+    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types, such as structs and enums whose conventions ABIBridge cannot infer from their metadata. They take precedence over conformances and inferred conventions where the signature names their types, but inference does not consult them for the fields of a value it lowers. Inside an Optional, an entry describes only the declaration's own type, not an adapter host type, whose Optional can have another layout.
     ///   - declaredSignature: The formal setter type and optional canonical generic signature.
     /// - Returns: A one-argument function with bound type metadata.
     /// - Throws: A lookup or unsupported-representation error.

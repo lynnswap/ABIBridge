@@ -105,9 +105,9 @@ struct SwiftFunctionSignature: Sendable {
     private func closureAuthTypes() throws -> ([String], [String]) {
         var parameters = isAsync && inheritsCallerIsolation ? ["-class"] : []
         for type in self.parameters {
-            parameters.append(contentsOf: try swiftClosureAuthTypes(type))
+            parameters.append(contentsOf: try swiftClosureAuthTypes(type, position: .parameter))
         }
-        return (parameters, try swiftClosureAuthTypes(result))
+        return (parameters, try swiftClosureAuthTypes(result, position: .result))
     }
 }
 
@@ -702,7 +702,7 @@ struct SwiftCallbackResult<Value>: Sendable {
         if case .tuple(let tuple) = generic {
             self.tuple = tuple
         } else if case .concrete = generic {
-            tuple = try SwiftGenericCallPlan.concreteTuple(Value.self)
+            tuple = try SwiftGenericCallPlan.concreteTuple(Value.self, position: .result)
         } else {
             tuple = nil
         }
@@ -710,7 +710,7 @@ struct SwiftCallbackResult<Value>: Sendable {
         if case .concrete = generic, tuple?.needsConversion != true,
             !(Value.self is any SwiftClosureValue.Type)
         {
-            ordinary = try SwiftValueCodec<Value>()
+            ordinary = try SwiftValueCodec<Value>(position: .result)
         } else {
             ordinary = nil
         }
