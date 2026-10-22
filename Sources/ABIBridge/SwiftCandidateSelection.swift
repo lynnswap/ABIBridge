@@ -57,14 +57,16 @@ struct SwiftCandidateSelection<Value> {
                     entry = try dispatch(candidate)
                 } else {
                     throw ABIResolutionError.unsupportedDeclaration(
-                        "\(candidate.declaration.name) is exported only through its dispatch thunk."
+                        "Its code is exported only through its dispatch thunk."
                     )
                 }
                 accepted.append((entry, value))
             } catch ABIResolutionError.signatureMismatch {
             } catch {
                 rejections.append((candidate.declaration, error))
-                if unavailable == nil { unavailable = error }
+                if unavailable == nil {
+                    unavailable = Self.naming(candidate.declaration, in: error)
+                }
             }
         }
     }
@@ -95,24 +97,42 @@ struct SwiftCandidateSelection<Value> {
                 position: .signature,
                 expected: "A declaration compatible with the requested signature",
                 found: mismatches.map {
-                    "\($0.declaration.name): \($0.mismatch.position) expected \($0.mismatch.expected), found \($0.mismatch.found.joined(separator: ", "))"
+                    $0.mismatch.inContext($0.declaration, at: $0.mismatch.position)
+                        .runtimeValue.summary
                 }
             )
         )
     }
 
-    /// Why no candidate applied, when one could not be prepared. Several
-    /// unsupported candidates report each declaration's reason.
+    /// Why no candidate applied, when one could not be prepared, naming the
+    /// candidate. Several unsupported candidates report each declaration's
+    /// reason.
     var failure: (any Error)? {
         let reasons = rejections.compactMap { rejection -> String? in
             guard case ABIResolutionError.unsupportedDeclaration(let reason) = rejection.error
             else { return nil }
-            return rejection.declaration.name + ": " + reason
+            return Self.reason(reason, of: rejection.declaration)
         }
         guard rejections.count > 1, reasons.count == rejections.count else {
-            return rejections.last?.error
+            return rejections.last.map { Self.naming($0.declaration, in: $0.error) }
         }
         return ABIResolutionError.unsupportedDeclaration(reasons.joined(separator: "\n"))
+    }
+
+    /// The error with the rejected candidate's name before its reason. The
+    /// other cases identify their declaration, or concern no single one.
+    private static func naming(_ declaration: NativeDeclaration, in error: any Error) -> any Error {
+        switch error {
+        case ABIResolutionError.unsupportedDeclaration(let reason):
+            ABIResolutionError.unsupportedDeclaration(Self.reason(reason, of: declaration))
+        case ABIResolutionError.metadataUnavailable(let reason):
+            ABIResolutionError.metadataUnavailable(Self.reason(reason, of: declaration))
+        default: error
+        }
+    }
+
+    private static func reason(_ reason: String, of declaration: NativeDeclaration) -> String {
+        declaration.name + ": " + reason
     }
 
     // A declaration's code and its dispatch thunk in one image share an identity.

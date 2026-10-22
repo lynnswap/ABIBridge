@@ -277,7 +277,7 @@ struct SwiftOptionalValueTests {
         guard case ABIResolutionError.unsupportedDeclaration(let message) = error else {
             return false
         }
-        return message.hasPrefix(source + " for Swift.Optional<")
+        return message.contains(source + " for Swift.Optional<")
     }
 
     /// Runtime-only records and the ABIs their declarations use. Library
