@@ -182,6 +182,8 @@ public struct OptionalRuntimeRecord {
     { describeOptionalScalars($0, $1, $2, $3, $4) }
 }
 
+/// ABIBridgeTests gives `OptionalScreenNumber?` a wrong ABIBridgeSwiftValue
+/// conformance, which applies to every use of that Optional in the tests.
 @frozen public struct OptionalScreenNumber {
     public var rawValue: UInt32
     public init(rawValue: UInt32) { self.rawValue = rawValue }
