@@ -1679,7 +1679,15 @@ struct SwiftGenericBinding: Sendable {
     }
 
     func explicitValueType(_ type: Any.Type) throws -> CValueType? {
-        try valueABIs[ObjectIdentifier(type)].map { try SwiftValueSchema.explicitLayout(of: type, abi: $0) }
+        guard let abi = valueABIs[ObjectIdentifier(type)] else { return nil }
+        // Without this entry, an Optional's storage follows its payload's.
+        let wrapped = (type as? any NativeOptionalValue.Type)?.wrappedType
+        return try SwiftValueSchema.explicitLayout(
+            of: type,
+            abi: abi,
+            source: "The valueABIs entry",
+            payload: wrapped.flatMap { try explicitHostLayout($0) ?? explicitHostTupleType($0) }
+        )
     }
 
     func runtimeValuePlan(

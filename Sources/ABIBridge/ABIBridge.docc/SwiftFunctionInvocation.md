@@ -102,7 +102,7 @@ Invocation can throw bridge errors even when the native signature is nonthrowing
 | Ordinary tuples | Labeled or nested fields with their native Swift layouts, runtime value handles, or closure handles; see <doc:SwiftClosureValues> |
 | Ordinary and existential metatypes, including parameterized protocols | Preserve thin values, runtime type metadata, and required witnesses |
 | Void | An empty result or explicit empty-tuple argument |
-| Optionals of representations that keep their Swift storage, including nested Optionals, and `NativeSwiftClosure<Signature>?` in nongeneric positions | Swift enum storage: the payload and tag pass as integer data, and a nil closure has a null function. Nonpointer `ABIBridgeValue?`, Optionals of thin metatypes, nested Optional closures, and generic Optional closures are rejected |
+| Optionals of representations that keep their Swift storage, such as `UInt32?` and `Double?`, including nested Optionals, and `NativeSwiftClosure<Signature>?` in nongeneric positions | Swift enum storage: the payload and tag pass as integer data, so `UInt32?` takes one integer register and `Double?` two, and nil takes a value the payload does not use where it has one, as in `Bool?`. A nil closure has a null function. An explicit ABI for such an Optional must describe this convention; see <doc:ExplicitSwiftValues#Describe-Optionals>. Nonpointer `ABIBridgeValue?`, Optionals of thin metatypes, nested Optional closures, and generic Optional closures are rejected |
 
 The call interface uses Swift register and stack conventions, including direct and indirect results. There is no fixed argument-count limit.
 

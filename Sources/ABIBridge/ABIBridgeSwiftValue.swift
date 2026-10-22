@@ -8,6 +8,6 @@ public protocol ABIBridgeSwiftValue: SendableMetatype {
     ///
     /// Keep this description stable for prepared handles. Storage size, stride, and alignment come from `Self`; the component aggregate may have different trailing padding and alignment. Its extent must cover `Self`'s size without exceeding its stride, and scalar fields must fit within its size.
     ///
-    /// The descriptor does not validate field identity or the target declaration's ABI. An opaque descriptor selects indirection; its optional storage dimensions are unused because `Self` supplies them.
+    /// The descriptor does not validate field identity or the target declaration's ABI. An opaque descriptor selects indirection; its optional storage dimensions are unused because `Self` supplies them. For an Optional whose payload's convention ABIBridge establishes, the descriptor must pass as Swift passes that Optional; see <doc:ExplicitSwiftValues#Describe-Optionals>.
     static var swiftABIType: NativeType { get }
 }

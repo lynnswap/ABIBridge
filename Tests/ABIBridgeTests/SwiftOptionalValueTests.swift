@@ -6,6 +6,14 @@ import Testing
 
 private final class OptionalClosureOwner {}
 
+/// A conformance stating that `OptionalScreenNumber?` passes by address,
+/// where Swift passes it in a register.
+extension Optional: ABIBridgeSwiftValue where Wrapped == OptionalScreenNumber {
+    public static var swiftABIType: NativeType {
+        try! .opaque(named: "Optional<OptionalScreenNumber>")
+    }
+}
+
 struct SwiftOptionalValueTests {
     @Test func optionalValuesPassAsTheirEnumStorage() async throws {
         let runtime = ABIRuntime.shared
@@ -35,6 +43,160 @@ struct SwiftOptionalValueTests {
         let swapped = try unsafe pair.unsafeInvoke((7, 0.5))
         #expect(swapped?.0 == 0.5 && swapped?.1 == 7)
         #expect(try unsafe pair.unsafeInvoke(nil) == nil)
+    }
+
+    /// Swift passes these Optionals as their enum storage in integer
+    /// registers: `UInt32?` in one, `Int64?` and `Double?` as a payload and a
+    /// tag byte, `Bool?` in one byte, and a pointer with nil as null.
+    @Test func optionalScalarsAndPointersPassByValue() async throws {
+        let runtime = ABIRuntime.shared
+        let increment = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.incrementedOptionalUInt32(_:)",
+            as: ((UInt32?) -> UInt32?).self
+        )
+        #expect(try unsafe increment.unsafeInvoke(41) == 42)
+        #expect(try unsafe increment.unsafeInvoke(.max) == 0)
+        #expect(try unsafe increment.unsafeInvoke(nil) == nil)
+        let negate = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.negatedOptionalInt64(Swift.Optional<Swift.Int64>)"
+                + " -> Swift.Optional<Swift.Int64>",
+            as: ((Int64?) -> Int64?).self
+        )
+        #expect(try unsafe negate.unsafeInvoke(42) == -42)
+        #expect(try unsafe negate.unsafeInvoke(nil) == nil)
+        let advance = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.advancedOptionalPointer(_:)",
+            as: ((UnsafePointer<Int64>?) -> UnsafePointer<Int64>?).self
+        )
+        let values: [Int64] = [1, 2]
+        let next = try values.withUnsafeBufferPointer { buffer in
+            try unsafe advance.unsafeInvoke(buffer.baseAddress)?.pointee
+        }
+        #expect(next == 2)
+        #expect(try unsafe advance.unsafeInvoke(nil) == nil)
+        let describe = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.describeOptionalScalars(_:_:_:_:_:)",
+            as: ((UInt32?, Int64?, Double?, Bool?, UnsafeRawPointer?) -> String).self
+        )
+        #expect(try unsafe describe.unsafeInvoke(nil, nil, nil, nil, nil) == "nil,nil,nil,nil,nil")
+        let described = try withUnsafePointer(to: Int64(9)) {
+            try unsafe describe.unsafeInvoke(7, -1, 2.5, true, UnsafeRawPointer($0))
+        }
+        #expect(described == "7,-1,2.5,true,9")
+    }
+
+    @Test func callbacksExchangeOptionalScalarsAndPointers() async throws {
+        typealias Describe = NativeSwiftClosure<
+            (UInt32?, Int64?, Double?, Bool?, UnsafeRawPointer?) -> String
+        >
+        let visit = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.visitOptionalScalars(_:)",
+            as: ((Describe) -> String).self
+        )
+        let describe = try Describe { id, count, scale, flag, pointer in
+            let values = [
+                id.map { "\($0)" }, count.map { "\($0)" }, scale.map { "\($0)" },
+                flag.map { "\($0)" }, pointer.map { "\($0.load(as: Int64.self))" },
+            ]
+            return values.map { $0 ?? "nil" }.joined(separator: ",")
+        }
+        let visited = try unsafe visit.unsafeInvoke(describe)
+        #expect(visited == "nil,nil,nil,nil,nil|4000000000,-5,0.5,false,7")
+        let make = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeOptionalScalarDescriber()",
+            as: (() -> Describe).self
+        )
+        let native = try unsafe make.unsafeInvoke()
+        #expect(try unsafe native.unsafeInvoke(nil, nil, nil, nil, nil) == "nil,nil,nil,nil,nil")
+        let described = try withUnsafePointer(to: Int64(3)) {
+            try unsafe native.unsafeInvoke(1, 2, 0.25, true, UnsafeRawPointer($0))
+        }
+        #expect(described == "1,2,0.25,true,3")
+    }
+
+    /// The shape of SimulatorKit's `register(screenID:queue:handler:)`, where
+    /// nil selects every screen.
+    @Test func methodsTakeAnOptionalScalarBeforeOtherArguments() async throws {
+        typealias Handler = NativeSwiftClosure<(UInt32?) -> Void>
+        let type = try await ABIRuntime.shared.resolveSwiftType(
+            named: "ManagedSwiftFixtures.OptionalScreenAdapter",
+            as: OptionalScreenAdapter.self
+        )
+        let register = try await type.resolveMethod(
+            named: "register(screenID:queue:handler:)",
+            as: ((UInt32?, DispatchQueue, Handler) -> OptionalScreenAdapter.Registration).self
+        )
+        let adapter = OptionalScreenAdapter(screens: [1, 2])
+        let queue = DispatchQueue(label: "OptionalScreenAdapter")
+        let screens = Mutex<[UInt32?]>([])
+        let handler = try Handler { screen in screens.withLock { $0.append(screen) } }
+        let all = try unsafe register.unsafeInvoke(on: adapter, nil, queue, handler)
+        #expect(all.screenID == nil)
+        let second = try unsafe register.unsafeInvoke(on: adapter, 2, queue, handler)
+        #expect(second.screenID == 2)
+        #expect(screens.withLock { $0 } == [1, 2, 2])
+    }
+
+    /// Swift passes an Optional as its enum storage whatever ABI describes it,
+    /// so an explicit ABI must pass the same way.
+    @Test func explicitOptionalABIsMustPassAsTheOptional() async throws {
+        let runtime = ABIRuntime.shared
+        let optional = try await runtime.resolveSwiftType(
+            named: "Swift.Optional",
+            genericArguments: [.type(UInt32.self)]
+        )
+        let name = "ManagedSwiftFixtures.incrementedOptionalUInt32(_:)"
+        let increment = try await runtime.resolveSwiftFunction(
+            named: name,
+            as: ((UInt32?) -> UInt32?).self,
+            valueABIs: [
+                optional: try .structure(named: "Optional<UInt32>", fields: [.uint32, .uint8])
+            ]
+        )
+        #expect(try unsafe increment.unsafeInvoke(41) == 42)
+        #expect(try unsafe increment.unsafeInvoke(nil) == nil)
+        // By address or in a floating-point register, the callee would read
+        // another value from x0.
+        for abi in [
+            try NativeType.opaque(named: "Optional<UInt32>"),
+            try .structure(named: "Optional<UInt32>", fields: [.float, .uint8]),
+        ] {
+            await #expect {
+                _ = try await runtime.resolveSwiftFunction(
+                    named: name,
+                    as: ((UInt32?) -> UInt32?).self,
+                    valueABIs: [optional: abi]
+                )
+            } throws: { Self.rejectsExplicitABI($0, statedBy: "The valueABIs entry") }
+        }
+        // The payload's entry decides the Optional's own storage.
+        var abis = try await Self.recordABIs()
+        let frozenOptional = try await runtime.resolveSwiftType(
+            named: "Swift.Optional",
+            genericArguments: [.type(OptionalFrozenRecord.self)]
+        )
+        abis[frozenOptional] = try .opaque(named: "Optional<OptionalFrozenRecord>")
+        await #expect {
+            _ = try await runtime.resolveSwiftFunction(
+                named: "ManagedSwiftFixtures.describeOptionalFrozenRecord(_:)",
+                as: ((OptionalFrozenRecord?) -> String).self,
+                valueABIs: abis
+            )
+        } throws: { Self.rejectsExplicitABI($0, statedBy: "The valueABIs entry") }
+        // A conformance is checked the same way.
+        await #expect {
+            _ = try await runtime.resolveSwiftFunction(
+                named: "ManagedSwiftFixtures.nextOptionalScreenNumber(_:)",
+                as: ((OptionalScreenNumber?) -> OptionalScreenNumber?).self
+            )
+        } throws: { Self.rejectsExplicitABI($0, statedBy: "The ABIBridgeSwiftValue conformance") }
+    }
+
+    private static func rejectsExplicitABI(_ error: any Error, statedBy source: String) -> Bool {
+        guard case ABIResolutionError.unsupportedDeclaration(let message) = error else {
+            return false
+        }
+        return message.hasPrefix(source + " for Swift.Optional<")
     }
 
     /// Runtime-only records and the ABIs their declarations use. Library

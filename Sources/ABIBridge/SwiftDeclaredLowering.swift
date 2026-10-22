@@ -6,7 +6,8 @@ import ABIBridgeCore
 /// A complete declaration name, or a type's receiver representation, lets a
 /// host type with another Swift name stand for a declared type. Such an
 /// adapter is accepted when both pass in the same register components, or
-/// both by address with enough storage for the declared value.
+/// both by address with enough storage for the declared value. An explicit
+/// ABI for an Optional is compared the same way with the Optional's storage.
 enum SwiftDeclaredLowering {
     /// Throws `signatureMismatch` without a position when a value of `host`,
     /// stored as `layout`, does not pass as the declared `type` does.
@@ -31,6 +32,27 @@ enum SwiftDeclaredLowering {
                 )
             )
         }
+    }
+
+    /// Throws `unsupportedDeclaration` when `explicit`, the storage that
+    /// `source` states for the Optional `type`, does not pass as `own`, the
+    /// storage that Swift gives it. The ABI is wrong for any declaration, so
+    /// the failure is not a mismatch with one candidate.
+    static func checkExplicit(
+        _ explicit: CValueType,
+        statedBy source: String,
+        forOptional type: Any.Type,
+        own: CValueType
+    ) throws {
+        let passes = withExtendedLifetime((explicit, own)) {
+            ABISwiftValuePassesAs(explicit.handle, own.handle, false)
+        }
+        guard !passes else { return }
+        throw ABIResolutionError.unsupportedDeclaration(
+            "\(source) for \(String(reflecting: type)) passes it "
+                + "\(description(of: explicit, false)), but Swift passes this Optional "
+                + "\(description(of: own, false)), as its payload's storage decides."
+        )
     }
 
     /// The failure to establish how the declaration passes its type, naming
