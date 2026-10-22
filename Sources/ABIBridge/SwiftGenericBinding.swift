@@ -1685,9 +1685,10 @@ struct SwiftGenericBinding: Sendable {
         return try SwiftValueSchema.explicitValueLayout(
             of: type,
             abi: abi,
-            source: "The valueABIs entry",
-            payload: wrapped.flatMap { try explicitHostLayout($0) ?? explicitHostTupleType($0) }
-        )
+            source: "The valueABIs entry"
+        ) {
+            try wrapped.flatMap { try explicitHostLayout($0) ?? explicitHostTupleType($0) }
+        }
     }
 
     func runtimeValuePlan(

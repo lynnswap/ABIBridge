@@ -241,3 +241,17 @@ extension Optional where Wrapped == UInt32 {
         @inline(never) set { self = newValue < 0 ? nil : UInt32(newValue) }
     }
 }
+
+/// A generic instance whose convention inference leaves undecided, because
+/// no nongeneric value stores it.
+@frozen public struct OptionalScreenBox<Value> {
+    public var value: Value
+    public init(_ value: Value) { self.value = value }
+}
+
+/// An Optional of this tuple needs an explicit ABI.
+@inline(never) public func describeOptionalScreenBox(
+    _ value: (UInt32, OptionalScreenBox<Int64>)?
+) -> String {
+    value.map { "\($0.0):\($0.1.value)" } ?? "nil"
+}

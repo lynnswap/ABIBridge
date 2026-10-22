@@ -308,20 +308,22 @@ enum SwiftValueSchema {
     }
 
     /// The storage Swift gives a value of the Optional `metadata` from its
-    /// payload's storage, `payload` or the payload type's own.
+    /// payload's storage: what `payload` states, or the payload type's own.
     ///
     /// Nil when `metadata` is not an Optional or ABIBridge cannot establish
-    /// the payload's convention, such as an undecided inferred one.
+    /// the payload's convention. Any failure to establish it, such as missing
+    /// metadata, an undecided inferred convention, or an unsupported element,
+    /// means the convention is not established, so it does not throw.
     static func establishedOptionalStorage(
         of metadata: Any.Type,
-        payload: CValueType? = nil
+        payload: () throws -> CValueType? = { nil }
     ) -> CValueType? {
         guard let wrapped = (metadata as? any NativeOptionalValue.Type)?.wrappedType else {
             return nil
         }
         return try? optionalStorage(
             of: metadata,
-            wrapped: payload ?? optionalPayloadStorage(wrapped),
+            wrapped: payload() ?? optionalPayloadStorage(wrapped),
             wrappedType: wrapped
         )
     }
@@ -352,20 +354,20 @@ enum SwiftValueSchema {
     /// is address-only, whatever ABI describes it. When ABIBridge establishes
     /// that storage from the payload's, `abi` must pass the same way, so a
     /// different convention fails here instead of passing the value wrongly.
+    /// Otherwise `abi` states the Optional's convention unchecked.
     ///
     /// - Parameters:
     ///   - source: What states `abi`, such as "The valueABIs entry".
     ///   - payload: The storage the caller states for an Optional's payload,
-    ///     or nil to use the payload's own.
+    ///     or nil to use the payload's own. A failure counts as a payload
+    ///     whose convention is not established.
     static func explicitValueLayout(
         of metadata: Any.Type,
         abi: NativeType,
         source: String,
-        payload: CValueType? = nil
+        payload: () throws -> CValueType? = { nil }
     ) throws -> CValueType {
         let explicit = try explicitLayout(of: metadata, abi: abi)
-        // Without an established storage, such as for an undecided inferred
-        // payload, `abi` states the Optional's convention.
         if let own = establishedOptionalStorage(of: metadata, payload: payload) {
             try SwiftDeclaredLowering.checkExplicit(
                 explicit,

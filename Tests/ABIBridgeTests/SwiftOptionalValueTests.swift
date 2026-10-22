@@ -192,6 +192,33 @@ struct SwiftOptionalValueTests {
         } throws: { Self.rejectsExplicitABI($0, statedBy: "The ABIBridgeSwiftValue conformance") }
     }
 
+    /// Without an established payload convention, an Optional's explicit ABI
+    /// states its convention unchecked, also when an entry describes part of
+    /// the payload.
+    @Test func explicitABIsStateOptionalsWithUndecidedPayloads() async throws {
+        let runtime = ABIRuntime.shared
+        typealias Payload = (UInt32, OptionalScreenBox<Int64>)
+        let optional = try await runtime.resolveSwiftType(
+            named: "Swift.Optional",
+            genericArguments: [.type(Payload.self)]
+        )
+        let uint32 = try await runtime.resolveSwiftType(named: "Swift.UInt32")
+        let abi = try NativeType.structure(
+            named: "Optional<Payload>",
+            fields: [.uint64, .int64, .uint8]
+        )
+        // The UInt32 entry makes ABIBridge read the tuple's other element.
+        for entries: [NativeSwiftType: NativeType] in [[:], [uint32: .uint32]] {
+            let describe = try await runtime.resolveSwiftFunction(
+                named: "ManagedSwiftFixtures.describeOptionalScreenBox(_:)",
+                as: ((Payload?) -> String).self,
+                valueABIs: entries.merging([optional: abi]) { $1 }
+            )
+            #expect(try unsafe describe.unsafeInvoke((7, OptionalScreenBox(5))) == "7:5")
+            #expect(try unsafe describe.unsafeInvoke(nil) == "nil")
+        }
+    }
+
     /// receiverABI for an Optional self must pass as the declaration passes
     /// self, which can differ from the Optional's own storage.
     @Test func optionalReceiverABIsFollowTheDeclaredSelf() async throws {
