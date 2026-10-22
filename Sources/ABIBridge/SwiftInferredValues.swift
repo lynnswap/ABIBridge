@@ -557,6 +557,8 @@ enum SwiftInferredValue {
         }
         let isStatic = !info.isGeneric && info.metadataInitialization == 0
         var explanation: String?
+        // Only a resilient type, which is public, sets the bit for itself.
+        var setsOwnBit = false
         if isStatic, module.setsAddressableForDependencies, flags & addressableForDependencies != 0
         {
             if isSelfAddressable(metadata) {
@@ -574,6 +576,8 @@ enum SwiftInferredValue {
                         "its field \(field.0.description) has runtime-built metadata, which may explain"
                 } else if evidence?.libraryEvolution == .enabled {
                     return .resilient
+                } else {
+                    setsOwnBit = true
                 }
             }
         }
@@ -583,8 +587,11 @@ enum SwiftInferredValue {
             // An exported enum without case symbols is frozen.
             if info.isEnum, exported { return .fixed }
             // A declaration a library does not export is not public, so it is
-            // not resilient.
-            if !exported, evidence.isLibrary, evidence.exportsSymbols { return .fixed }
+            // not resilient. A type that sets its own bit is public, so a link
+            // that hides the module's symbols left it out.
+            if !exported, !setsOwnBit, evidence.isLibrary, evidence.exportsTypeDescriptors {
+                return .fixed
+            }
         }
         let moduleName = module.name.map { "module `\($0)`" } ?? "its module"
         let unreadable = "ABIBridge cannot read the exports of \(moduleName)"
@@ -724,7 +731,7 @@ private struct ModuleContext {
             return
         }
         evidence = _mangledTypeName(metadata).flatMap { Self.mangling(ofModule: name, in: $0) }
-            .map { RuntimeSwiftModuleEvidence.evidence(forModule: $0, in: image) }
+            .map { RuntimeSwiftModuleEvidence.evidence(forModule: $0, named: name, in: image) }
         declaration = RuntimeSymbolResolver.shared.exportedSwiftTypeDeclaration(
             at: UInt64(UInt(bitPattern: descriptor)),
             in: image

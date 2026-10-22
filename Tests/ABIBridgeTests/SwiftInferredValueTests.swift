@@ -385,6 +385,103 @@ struct SwiftInferredValueTests {
         )
     }
 
+    /// Another module's extension of a library-evolution module's types
+    /// exports symbols in that module's context, and a link can hide the
+    /// module's own symbols. Neither shows how the module was built or which
+    /// of its types are public.
+    @Test(arguments: ["extended", "hidden", "hiddenDescriptor"])
+    func staticallyLinkedModulesKeepTheirOwnEvidence(link: String) async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString
+        )
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        // Lowercase keeps the module's mangling free of word substitutions.
+        let base =
+            "inferredbase_"
+            + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        let baseSource = directory.appendingPathComponent("Base.swift")
+        // Base shows no library-evolution evidence of its own: it has no
+        // public stored property, enum, class, or protocol.
+        try """
+        public struct Point {
+            var x: Double
+            var y: Double
+            public init(x: Double, y: Double) { self.x = x; self.y = y }
+            public var sum: Double { x + y }
+        }
+        public struct Label {
+            var name: String
+            var n: Int64
+            public init(name: String, n: Int64) { self.name = name; self.n = n }
+            public var count: Int64 { Int64(name.count) + n }
+        }
+        """.write(to: baseSource, atomically: true, encoding: .utf8)
+        #if arch(arm64)
+        let architecture = "arm64"
+        #else
+        let architecture = "x86_64"
+        #endif
+        try FixtureLibrary.run([
+            "--sdk", "macosx", "swiftc", "-module-name", base,
+            "-target", "\(architecture)-apple-macosx15.4", "-parse-as-library", "-swift-version",
+            "6", "-enable-library-evolution", "-emit-library", "-static", "-emit-module",
+            "-emit-module-path", directory.appendingPathComponent(base + ".swiftmodule").path,
+            baseSource.path, "-o", directory.appendingPathComponent("lib\(base).a").path,
+        ])
+        let (extensions, linkArguments): (String, [String]) =
+            switch link {
+            // A stored property of a struct nested in this extension has a
+            // trivial descriptor, which another module would only have
+            // without library evolution.
+            case "extended":
+                (
+                    """
+                    extension Point {
+                        public struct Builder {
+                            public var scale: Int
+                            public init(scale: Int) { self.scale = scale }
+                        }
+                    }
+                    """,
+                    ["-l" + base]
+                )
+            case "hidden":
+                (
+                    "extension Label { public var twice: Int64 { count * 2 } }",
+                    ["-Xlinker", "-hidden-l" + base]
+                )
+            // Only a public type sets the bit for itself, so a missing
+            // descriptor of such a type does not show that it is internal.
+            default:
+                (
+                    "",
+                    [
+                        "-l" + base, "-Xlinker", "-unexported_symbol", "-Xlinker",
+                        "_$s\(base.utf8.count)\(base)5PointVMn",
+                    ]
+                )
+            }
+        let (library, module) = try provider(
+            """
+            import \(base)
+            \(extensions)
+            @inline(never) public func makePoint() -> Point { Point(x: 3, y: 4) }
+            @inline(never) public func makeLabel() -> Label { Label(name: "abc", n: 4) }
+            """,
+            arguments: ["-I", directory.path, "-L", directory.path] + linkArguments
+        )
+        defer { library.cleanup() }
+        for make in ["makePoint()", "makeLabel()"] {
+            await expectFailure(
+                "\(module).\(make)",
+                in: library,
+                as: (() -> NativeSwiftValue).self,
+                naming: "module `\(base)` does not show whether it is built with library evolution"
+            )
+        }
+    }
+
     /// A runtime type name omits a constrained extension's generic
     /// signature, which the type's exported symbols spell.
     @Test func typesInConstrainedExtensionsKeepTheirExportEvidence() async throws {

@@ -17,8 +17,11 @@ import Synchronization
 /// a key path stores directly counts as evidence against library evolution.
 /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/SILGen/SILGen.cpp
 ///
-/// Absent symbols are evidence only through the export trie, never through
-/// local symbols or `dladdr`, which stripping removes.
+/// Symbols of another module's extension of the module's types share the
+/// module's context, but they show how that other module was built, so only
+/// the module's own declarations count. Absent symbols are evidence only
+/// through the export trie, never through local symbols or `dladdr`, which
+/// stripping removes.
 package struct RuntimeSwiftModuleEvidence: Sendable {
     package enum LibraryEvolution: Sendable {
         case enabled, disabled
@@ -27,9 +30,10 @@ package struct RuntimeSwiftModuleEvidence: Sendable {
     }
 
     package let libraryEvolution: LibraryEvolution
-    /// Whether the image exports any symbol in the module's context, so the
-    /// absence of a public declaration's descriptor is meaningful.
-    package let exportsSymbols: Bool
+    /// Whether the image exports the descriptor of a type that the module
+    /// declares, so the absence of another public type's descriptor is
+    /// meaningful. A link that hides the module's symbols exports none.
+    package let exportsTypeDescriptors: Bool
     /// Whether the image is a dylib or bundle. An executable need not export
     /// the public declarations of the modules linked into it.
     package let isLibrary: Bool
@@ -40,16 +44,19 @@ package struct RuntimeSwiftModuleEvidence: Sendable {
     }
     private static let cache = Mutex<[Key: Self]>([:])
 
-    /// - Parameter module: The module's mangled context, such as `8ProbeLib`
-    ///   or `s` for the standard library.
+    /// - Parameters:
+    ///   - module: The module's mangled context, such as `8ProbeLib` or `s`
+    ///     for the standard library.
+    ///   - name: The module's name, such as `ProbeLib` or `Swift`.
     package static func evidence(
         forModule module: String,
+        named name: String,
         in image: RuntimeImage,
         resolver: RuntimeSymbolResolver = .shared
     ) -> Self {
         let key = Key(image: image.identity, module: module)
         if let cached = cache.withLock({ $0[key] }) { return cached }
-        let evidence = Self(module: module, image: image, resolver: resolver)
+        let evidence = Self(module: module, name: name, image: image, resolver: resolver)
         return cache.withLock { cache in
             if let cached = cache[key] { return cached }
             cache[key] = evidence
@@ -57,21 +64,39 @@ package struct RuntimeSwiftModuleEvidence: Sendable {
         }
     }
 
-    private init(module: String, image: RuntimeImage, resolver: RuntimeSymbolResolver) {
+    private init(
+        module: String,
+        name moduleName: String,
+        image: RuntimeImage,
+        resolver: RuntimeSymbolResolver
+    ) {
         let header = UnsafeRawPointer(bitPattern: UInt(image.identity.headerAddress))
         let fileType = header?.load(fromByteOffset: 12, as: UInt32.self)
         isLibrary = fileType == UInt32(MH_DYLIB) || fileType == UInt32(MH_BUNDLE)
         let symbols = resolver.exportedSymbols(withPrefix: "_$s" + module, in: image)
-        exportsSymbols = !symbols.isEmpty
+        var exportsTypeDescriptors = false
         var resilient = false
         var fixed = false
         var structures: [String: UInt64]?
+        // A symbol that cannot be demangled still counts as evidence of
+        // library evolution, which only leaves the build undecided.
+        func declaredByModule(_ symbol: String) -> Bool? {
+            DeclarationKey.demangle(symbol, language: .swift).flatMap {
+                Self.isDeclared(byModule: moduleName, $0)
+            }
+        }
         for symbol in symbols {
             let name = symbol.name
+            if name.hasSuffix("Mn") {
+                if !exportsTypeDescriptors {
+                    exportsTypeDescriptors = declaredByModule(name) == true
+                }
+                continue
+            }
             if name.hasSuffix("WC") || name.hasSuffix("Tj") || name.hasSuffix("Mo")
                 || name.hasSuffix("Mu")
             {
-                resilient = true
+                if !resilient { resilient = declaredByModule(name) != false }
                 continue
             }
             guard name.hasSuffix("vpMV"), !name.hasSuffix("vpZMV"),
@@ -80,18 +105,42 @@ package struct RuntimeSwiftModuleEvidence: Sendable {
             let component = descriptor.loadUnaligned(as: UInt32.self)
             switch (component & 0x7f00_0000) >> 24 {
             case 1, 3:
-                resilient = true
+                if !resilient { resilient = declaredByModule(name) != false }
             case 0 where component == 0 && !fixed:
                 if structures == nil {
                     structures = Self.structureDescriptors(in: symbols)
                 }
-                fixed = Self.describesStoredField(name, structures: structures!)
+                fixed = Self.describesStoredField(
+                    name,
+                    ofModule: moduleName,
+                    structures: structures!
+                )
             default:
                 break
             }
         }
         libraryEvolution =
             resilient == fixed ? .unknown : resilient ? .enabled : .disabled
+        self.exportsTypeDescriptors = exportsTypeDescriptors
+    }
+
+    /// The demangled kinds of the symbols the evidence reads, each followed
+    /// by the declaration the symbol belongs to.
+    private static let symbolKinds = [
+        "nominal type descriptor for ", "property descriptor for ", "enum case for ",
+        "dispatch thunk of ", "class metadata base offset for ", "method lookup function for ",
+    ]
+
+    /// Whether a demangled symbol belongs to a declaration of the module, not
+    /// to another module's extension, which demangles as `(extension in
+    /// Other):`. Nil for another kind of symbol.
+    private static func isDeclared(byModule module: String, _ symbol: String) -> Bool? {
+        guard let kind = symbolKinds.first(where: { symbol.hasPrefix($0) }) else { return nil }
+        var declaration = symbol.dropFirst(kind.count)
+        if declaration.hasPrefix("static ") { declaration = declaration.dropFirst(7) }
+        let marker = "(extension in "
+        guard declaration.hasPrefix(marker) else { return true }
+        return declaration.dropFirst(marker.count).hasPrefix(module + "):")
     }
 
     private static func structureDescriptors(in symbols: [IndexedSymbol]) -> [String: UInt64] {
@@ -110,11 +159,12 @@ package struct RuntimeSwiftModuleEvidence: Sendable {
     // parameters; the owner's nominal descriptor names it without them.
     private static func describesStoredField(
         _ symbol: String,
+        ofModule module: String,
         structures: [String: UInt64]
     ) -> Bool {
         let marker = "property descriptor for "
         guard let name = DeclarationKey.demangle(symbol, language: .swift),
-            name.hasPrefix(marker),
+            name.hasPrefix(marker), isDeclared(byModule: module, name) == true,
             let typeMarker = name.range(of: " : ")
         else { return false }
         var declaration = String(
