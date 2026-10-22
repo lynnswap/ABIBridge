@@ -1,5 +1,4 @@
 import ABIBridgeCore
-import Darwin
 import Synchronization
 
 /// What one image's export trie shows about how one of its Swift modules was
@@ -30,13 +29,6 @@ package struct RuntimeSwiftModuleEvidence: Sendable {
     }
 
     package let libraryEvolution: LibraryEvolution
-    /// Whether the image exports the descriptor of a type that the module
-    /// declares, so the absence of another public type's descriptor is
-    /// meaningful. A link that hides the module's symbols exports none.
-    package let exportsTypeDescriptors: Bool
-    /// Whether the image is a dylib or bundle. An executable need not export
-    /// the public declarations of the modules linked into it.
-    package let isLibrary: Bool
 
     private struct Key: Hashable {
         let image: RuntimeImageIdentity
@@ -70,11 +62,7 @@ package struct RuntimeSwiftModuleEvidence: Sendable {
         image: RuntimeImage,
         resolver: RuntimeSymbolResolver
     ) {
-        let header = UnsafeRawPointer(bitPattern: UInt(image.identity.headerAddress))
-        let fileType = header?.load(fromByteOffset: 12, as: UInt32.self)
-        isLibrary = fileType == UInt32(MH_DYLIB) || fileType == UInt32(MH_BUNDLE)
         let symbols = resolver.exportedSymbols(withPrefix: "_$s" + module, in: image)
-        var exportsTypeDescriptors = false
         var resilient = false
         var fixed = false
         var structures: [String: UInt64]?
@@ -87,12 +75,6 @@ package struct RuntimeSwiftModuleEvidence: Sendable {
         }
         for symbol in symbols {
             let name = symbol.name
-            if name.hasSuffix("Mn") {
-                if !exportsTypeDescriptors {
-                    exportsTypeDescriptors = declaredByModule(name) == true
-                }
-                continue
-            }
             if name.hasSuffix("WC") || name.hasSuffix("Tj") || name.hasSuffix("Mo")
                 || name.hasSuffix("Mu")
             {
@@ -121,7 +103,6 @@ package struct RuntimeSwiftModuleEvidence: Sendable {
         }
         libraryEvolution =
             resilient == fixed ? .unknown : resilient ? .enabled : .disabled
-        self.exportsTypeDescriptors = exportsTypeDescriptors
     }
 
     /// The demangled kinds of the symbols the evidence reads, each followed
@@ -155,33 +136,46 @@ package struct RuntimeSwiftModuleEvidence: Sendable {
         return result
     }
 
-    // A property descriptor names its owner with the owner's generic
-    // parameters; the owner's nominal descriptor names it without them.
     private static func describesStoredField(
         _ symbol: String,
         ofModule module: String,
         structures: [String: UInt64]
     ) -> Bool {
-        let marker = "property descriptor for "
         guard let name = DeclarationKey.demangle(symbol, language: .swift),
-            name.hasPrefix(marker), isDeclared(byModule: module, name) == true,
-            let typeMarker = name.range(of: " : ")
+            isDeclared(byModule: module, name) == true,
+            let property = PropertyDescriptor(demangled: name),
+            let owner = structures[property.owner],
+            let descriptor = UnsafeRawPointer(bitPattern: UInt(owner))
         else { return false }
-        var declaration = String(
-            name[name.index(name.startIndex, offsetBy: marker.count)..<typeMarker.lowerBound]
-        )
-        guard !declaration.hasPrefix("static "), let dot = declaration.lastIndex(of: ".") else {
-            return false
+        return ABISwiftStructDescriptorFieldHasStoredKeyPathComponent(descriptor, property.name)
+    }
+}
+
+/// A demangled instance property descriptor, such as `property descriptor
+/// for ProbeLib.Pair<A>.first : A`.
+private struct PropertyDescriptor {
+    /// The declaration that owns the property, without generic arguments,
+    /// as the owner's nominal type descriptor names it.
+    let owner: String
+    let name: String
+    let type: Substring
+
+    init?(demangled symbol: String) {
+        let marker = "property descriptor for "
+        guard symbol.hasPrefix(marker), let typeMarker = symbol.range(of: " : ") else {
+            return nil
         }
-        let property = String(declaration[declaration.index(after: dot)...])
-        declaration = String(declaration[..<dot])
+        var declaration = String(
+            symbol[symbol.index(symbol.startIndex, offsetBy: marker.count)..<typeMarker.lowerBound]
+        )
+        guard !declaration.hasPrefix("static ") else { return nil }
         for group in SwiftGenericSyntax.groups(in: declaration).reversed() {
             declaration.removeSubrange(group.range)
         }
-        guard let owner = structures[declaration],
-            let descriptor = UnsafeRawPointer(bitPattern: UInt(owner))
-        else { return false }
-        return ABISwiftStructDescriptorFieldHasStoredKeyPathComponent(descriptor, property)
+        guard let dot = declaration.lastIndex(of: ".") else { return nil }
+        owner = String(declaration[..<dot])
+        name = String(declaration[declaration.index(after: dot)...])
+        type = symbol[typeMarker.upperBound...]
     }
 }
 
@@ -206,5 +200,36 @@ extension RuntimeSymbolResolver {
             let remainder = name.dropFirst(prefix.count)
             return !remainder.prefix { $0 != "(" && $0 != "<" }.contains(".")
         }
+    }
+
+    /// The declared types of a Swift type's instance properties whose
+    /// descriptors `image` exports, by property name, with each descriptor's
+    /// symbol. Only a public property has an exported descriptor. The types
+    /// are demangled, so the property's own opaque type reads `some`.
+    ///
+    /// - Parameter declaration: The type's mangled declaration as its
+    ///   exported descriptor spells it.
+    package func exportedSwiftPropertyTypes(
+        declaration: String,
+        in image: RuntimeImage
+    ) -> [String: (type: String, symbol: String)] {
+        let marker = "nominal type descriptor for "
+        guard let descriptor = DeclarationKey.demangle("$s" + declaration + "Mn", language: .swift),
+            descriptor.hasPrefix(marker)
+        else { return [:] }
+        var owner = String(descriptor.dropFirst(marker.count))
+        for group in SwiftGenericSyntax.groups(in: owner).reversed() {
+            owner.removeSubrange(group.range)
+        }
+        var types: [String: (type: String, symbol: String)] = [:]
+        for symbol in exportedSymbols(withPrefix: "_$s" + declaration, in: image)
+        where symbol.name.hasSuffix("vpMV") {
+            // A nested type's property has another owner.
+            guard let name = DeclarationKey.demangle(symbol.name, language: .swift),
+                let property = PropertyDescriptor(demangled: name), property.owner == owner
+            else { continue }
+            types[property.name] = (String(property.type), symbol.name)
+        }
+        return types
     }
 }

@@ -458,31 +458,133 @@ struct SwiftInferredValueTests {
         }
     }
 
-    /// A library that exports its public types' descriptors but not a type's
-    /// shows that the type is not public, so it is not resilient.
-    @Test func unexportedTypesOfLibrariesAreNotResilient() async throws {
+    /// A field record describes a stored property of an opaque type by its
+    /// underlying type, but signatures lower the property as an opaque
+    /// archetype: address-only unless it is class-bound. A public
+    /// property's exported descriptor shows its declared type.
+    @Test func opaqueStoredPropertiesPassAsArchetypes() async throws {
         let (library, module) = try provider(
             """
-            public struct Visible {
-                public var x: Int64
-                public init() { x = 1 }
+            public protocol Shape { var sides: Int64 { get } }
+            public protocol Owned: AnyObject { var sides: Int64 { get } }
+            public struct Square: Shape { public var sides: Int64 { 4 } }
+            public final class Owner: Shape, Owned { public var sides: Int64 { 3 } }
+            public struct Shaped {
+                public var shape: some Shape = Square()
+                public var n: Int64 = 2
+                public init() {}
             }
-            struct Hidden {
-                var text: String
-                var n: Int64
+            public struct ClassShaped {
+                public var shape: some Shape = Owner()
+                public var n: Double = 1.5
+                public init() {}
             }
-            @inline(never) func makeHidden() -> Hidden { Hidden(text: "h", n: 9) }
-            @inline(never) func describeHidden(_ h: Hidden) -> String { "\\(h.text),\\(h.n)" }
-            """,
-            arguments: ["-enable-library-evolution"]
+            public struct OwnerLabel {
+                public var owner: some Owned = Owner()
+                public var text: String = "o"
+                public init() {}
+            }
+            public struct HoldsShaped {
+                public var shaped = Shaped()
+                public var z: Int64 = 3
+                public init() {}
+            }
+            public struct GenericShaped<T> {
+                public var shape: some Shape = Square()
+                public var t: T
+                public init(t: T) { self.t = t }
+            }
+            @inline(never) public func makeShaped() -> Shaped { Shaped() }
+            @inline(never) public func describeShaped(_ v: Shaped) -> String { "\\(v.shape.sides),\\(v.n)" }
+            @inline(never) public func makeClassShaped() -> ClassShaped { ClassShaped() }
+            @inline(never) public func describeClassShaped(_ v: ClassShaped) -> String { "\\(v.shape.sides),\\(v.n)" }
+            @inline(never) public func makeOwnerLabel() -> OwnerLabel { OwnerLabel() }
+            @inline(never) public func describeOwnerLabel(_ v: OwnerLabel) -> String { "\\(v.owner.sides),\\(v.text)" }
+            @inline(never) public func makeHoldsShaped() -> HoldsShaped { HoldsShaped() }
+            @inline(never) public func describeHoldsShaped(_ v: HoldsShaped) -> String { "\\(v.shaped.n),\\(v.z)" }
+            @inline(never) public func makeGenericShaped() -> GenericShaped<Double> { GenericShaped(t: 0.5) }
+            @inline(never) public func describeGenericShaped(_ v: GenericShaped<Double>) -> String {
+                "\\(v.shape.sides),\\(v.t)"
+            }
+            """
         )
         defer { library.cleanup() }
-        #expect(
-            try await describeMade(
-                module + ".makeHidden()",
-                module + ".describeHidden(_:)",
-                in: library
-            ) == "h,9"
+        for (name, expected) in [
+            ("Shaped", "4,2"), ("ClassShaped", "3,1.5"), ("OwnerLabel", "3,o"),
+            ("HoldsShaped", "2,3"), ("GenericShaped", "4,0.5"),
+        ] {
+            #expect(
+                try await describeMade(
+                    "\(module).make\(name)()",
+                    "\(module).describe\(name)(_:)",
+                    in: library
+                ) == expected,
+                "\(name)"
+            )
+        }
+    }
+
+    /// Where neither the addressable bit nor the exports rule out a stored
+    /// property of an opaque type, the value is undecided. Without library
+    /// evolution, a bit that no field explains is such a property's.
+    @Test func opaqueStoredPropertiesThatExportsDoNotShowAreUndecided() async throws {
+        let (library, module) = try provider(
+            """
+            public protocol Shape {}
+            public struct Square: Shape { var n: Int64 = 4 }
+            public struct Optionally {
+                public var shape: (some Shape)? = Square()
+                public var n: Double = 1
+                public init() {}
+            }
+            public struct HiddenShape {
+                var shape: some Shape = Square()
+                public var text: String = "t"
+                public init() {}
+            }
+            public struct HiddenBit {
+                var shape: some Shape = Square()
+                public var n: Double = 1
+                public init() {}
+            }
+            struct Internal {
+                var shape: some Shape = Square()
+                var text: String = "t"
+            }
+            @inline(never) public func makeOptionally() -> Optionally { Optionally() }
+            @inline(never) public func makeHiddenShape() -> HiddenShape { HiddenShape() }
+            @inline(never) public func makeHiddenBit() -> HiddenBit { HiddenBit() }
+            @inline(never) func makeInternal() -> Internal { Internal() }
+            """
+        )
+        defer { library.cleanup() }
+        await expectFailure(
+            module + ".makeOptionally()",
+            in: library,
+            as: (() -> NativeSwiftValue).self,
+            unsupported: true,
+            naming:
+                "its stored property `shape: Swift.Optional<some>` has a type that contains an opaque type"
+        )
+        await expectFailure(
+            module + ".makeHiddenShape()",
+            in: library,
+            as: (() -> NativeSwiftValue).self,
+            naming:
+                "its stored property `shape` has no exported descriptor, and only exported property descriptors show whether a stored property has an opaque (`some`) type"
+        )
+        await expectFailure(
+            module + ".makeHiddenBit()",
+            in: library,
+            as: (() -> NativeSwiftValue).self,
+            naming:
+                "struct `\(module).HiddenBit` sets its addressable-for-dependencies value-witness bit, which none of its fields explains; module `\(module)` is built without library evolution"
+        )
+        await expectFailure(
+            module + ".makeInternal()",
+            in: library,
+            as: (() -> NativeSwiftValue).self,
+            naming: "its image does not export its type descriptor"
         )
     }
 
@@ -490,7 +592,10 @@ struct SwiftInferredValueTests {
     /// exports symbols in that module's context, and a link can hide the
     /// module's own symbols. Neither shows how the module was built or which
     /// of its types are public.
-    @Test(arguments: ["extended", "hidden", "hiddenDescriptor"])
+    @Test(arguments: [
+        "extended", "hidden", "hiddenWithNestedType", "hiddenPointDescriptor",
+        "hiddenLabelDescriptor",
+    ])
     func staticallyLinkedModulesKeepTheirOwnEvidence(link: String) async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
             UUID().uuidString
@@ -552,14 +657,27 @@ struct SwiftInferredValueTests {
                     "extension Label { public var twice: Int64 { count * 2 } }",
                     ["-Xlinker", "-hidden-l" + base]
                 )
-            // Only a public type sets the bit for itself, so a missing
-            // descriptor of such a type does not show that it is internal.
+            // The nested type's descriptor is in the hidden module's context.
+            case "hiddenWithNestedType":
+                (
+                    """
+                    extension Point {
+                        public struct Builder {
+                            public var scale: Int
+                            public init(scale: Int) { self.scale = scale }
+                        }
+                    }
+                    """,
+                    ["-Xlinker", "-hidden-l" + base]
+                )
+            // A missing descriptor of a type does not show that it is
+            // internal, whatever explains its addressable bit.
             default:
                 (
                     "",
                     [
                         "-l" + base, "-Xlinker", "-unexported_symbol", "-Xlinker",
-                        "_$s\(base.utf8.count)\(base)5PointVMn",
+                        "_$s\(base.utf8.count)\(base)\(link == "hiddenPointDescriptor" ? "5Point" : "5Label")VMn",
                     ]
                 )
             }

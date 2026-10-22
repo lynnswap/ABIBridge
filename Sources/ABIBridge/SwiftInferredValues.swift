@@ -36,16 +36,21 @@ enum SwiftValuePosition: Sendable, Equatable {
 ///   another module; a value that is not bitwise-takable stores a weak or
 ///   non-native unowned reference. Both are address-only.
 /// - The value-witness addressable-for-dependencies bit is set for a resilient
-///   type and for any value that stores one. Static metadata without it
-///   certifies that nothing in the value is resilient, once its module has
-///   shown that it sets the bit (Swift 6.2 and later) or is built without
-///   library evolution.
+///   type, for an opaque type (`some P`) that is not class-bound, and for any
+///   value that stores either. Static metadata without it certifies that
+///   nothing in the value is resilient or opaque, once its module has shown
+///   that it sets the bit (Swift 6.2 and later).
 /// - A set bit that no field explains marks the type itself resilient in a
 ///   library-evolution module. `String`, `Data`, and imported C structs
 ///   always set it, so such fields leave a public struct undecided.
 /// - A resilient enum exports enum case symbols; a module built without
 ///   library evolution has trivial descriptors for its stored properties.
 ///   Missing exports count only after the bit leaves the question open.
+/// - A field record describes a stored property of an opaque type by its
+///   underlying type, but clients lower the property as an opaque archetype.
+///   Only a public property's exported descriptor shows its declared type, so
+///   unless the bit rules opaque properties out, a struct with a property
+///   that is not public stays undecided.
 ///
 /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/SIL/IR/TypeLowering.cpp
 /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/IRGen/GenValueWitness.cpp
@@ -216,18 +221,22 @@ enum SwiftInferredValue {
         let frozen = try layout(of: metadata, info: info, fields: fields, parts: parts)
         let module = ModuleContext(metadata)
         let isStatic = !info.isGeneric && info.metadataInitialization == 0
-        // Nothing in a value whose bit stays clear is resilient.
-        if isStatic, flags & addressableForDependencies == 0,
-            module.setsAddressableForDependencies || module.evidence?.libraryEvolution == .disabled
-        {
+        // Nothing in a value whose bit stays clear is resilient or an opaque
+        // archetype that is not class-bound, which would be address-only.
+        if isStatic, flags & addressableForDependencies == 0, module.setsAddressableForDependencies {
             return .loadable(frozen)
         }
+        let opaque = try opaqueProperties(of: metadata, info: info, fields: fields, module: module)
+        if case .addressOnly = opaque { return .addressOnly }
         switch resilience(of: metadata, info: info, flags: flags, fields: fields, module: module) {
         case .resilient:
             return .addressOnly
         case .fixed:
-            return undecidedField.map { .undecided(frozen: frozen, missing: $0) }
-                ?? .loadable(frozen)
+            if let undecidedField { return .undecided(frozen: frozen, missing: undecidedField) }
+            if case .unknown(let missing) = opaque {
+                return .undecided(frozen: frozen, missing: missing)
+            }
+            return .loadable(frozen)
         case .unknown(let missing):
             return .undecided(frozen: frozen, missing: missing)
         }
@@ -528,6 +537,126 @@ enum SwiftInferredValue {
         )
     }
 
+    // MARK: Opaque properties
+
+    /// What a struct's exported property descriptors show about its stored
+    /// properties of opaque types.
+    private enum OpaqueProperties {
+        case none
+        /// A stored property's own opaque type is not class-bound.
+        case addressOnly
+        /// The exports do not rule out a stored property of an opaque type.
+        case unknown(String)
+    }
+
+    /// A stored property `var x: some P` lowers as an opaque archetype in
+    /// every signature, including its own module's, while its field record
+    /// and value witnesses describe its underlying type. The archetype is
+    /// address-only unless it is class-bound, when it is a reference like its
+    /// underlying class. Enum payloads cannot have opaque types.
+    /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/SIL/IR/TypeLowering.cpp
+    private static func opaqueProperties(
+        of metadata: Any.Type,
+        info: ABISwiftValueDescriptorInfo,
+        fields: [Field],
+        module: ModuleContext
+    ) throws(InferenceFailure) -> OpaqueProperties {
+        guard !info.isEnum, !fields.isEmpty else { return .none }
+        let opaque =
+            "only exported property descriptors show whether a stored property has an opaque (`some`) type, which its field record describes by its underlying type"
+        // Optimized builds emit the opaque type descriptor of a property
+        // that is not public only where code uses it, so only exports count.
+        guard let image = module.image, let declaration = module.declaration else {
+            let reason =
+                module.image == nil
+                ? "ABIBridge cannot read the exports of \(module.name.map { "module `\($0)`" } ?? "its module")"
+                : "its image does not export its type descriptor"
+            return .unknown("\(reason), and \(opaque)")
+        }
+        let properties = RuntimeSymbolResolver.shared.exportedSwiftPropertyTypes(
+            declaration: declaration,
+            in: image
+        )
+        var addressOnly = false
+        var unsupported: String?
+        var missing: String?
+        for field in fields {
+            guard let property = properties[field.name] else {
+                missing =
+                    missing ?? "its stored property `\(field.name)` has no exported descriptor, and \(opaque)"
+                continue
+            }
+            guard mentionsOpaqueType(property.type) else { continue }
+            guard property.type == "some", let type = field.type else {
+                unsupported =
+                    unsupported
+                    ?? "its stored property `\(field.name): \(property.type)` has a type that contains an opaque type, which its field record describes by its underlying type; only a property whose whole type is opaque is inferred"
+                continue
+            }
+            // Only a class or a class-bound existential satisfies a class bound.
+            guard type is AnyClass || type == AnyObject.self
+                || runtimeMetadataKind(type) == .existential
+            else {
+                addressOnly = true
+                continue
+            }
+            // Requirements name a nongeneric context's opaque parameter `x`.
+            let symbol = property.symbol.dropLast(2) + "QOMQ"
+            guard !info.isGeneric,
+                let address = RuntimeSymbolResolver.shared.exportedAddress(
+                    named: String(symbol),
+                    in: image
+                ),
+                let descriptor = UnsafeRawPointer(bitPattern: UInt(address))
+            else {
+                missing =
+                    missing
+                    ?? "its stored property `\(field.name)` has an opaque (`some`) type whose underlying type is a reference, and ABIBridge cannot read whether that opaque type is class-bound"
+                continue
+            }
+            if !opaqueTypeIsClassBound(descriptor) { addressOnly = true }
+        }
+        if addressOnly { return .addressOnly }
+        if let unsupported { throw InferenceFailure(unsupported: true, detail: unsupported) }
+        return missing.map { .unknown($0) } ?? .none
+    }
+
+    /// Whether a demangled type mentions an opaque type: the property's own
+    /// as `some`, another declaration's as `<<opaque return type of …>>`.
+    private static func mentionsOpaqueType(_ type: String) -> Bool {
+        if type.contains("<<opaque return type of ") { return true }
+        let characters = Array(type.utf8)
+        func isIdentifier(_ byte: UInt8) -> Bool {
+            (48...57).contains(byte) || (65...90).contains(byte) || (97...122).contains(byte)
+                || byte == 95 || byte >= 0x80
+        }
+        // A type named `some` reads as a qualified name, such as `M.some`.
+        return characters.indices.contains { index in
+            characters[index...].starts(with: "some".utf8)
+                && (index == 0 || !isIdentifier(characters[index - 1]) && characters[index - 1] != 46)
+                && (index + 4 == characters.count || !isIdentifier(characters[index + 4]))
+        }
+    }
+
+    /// Whether the opaque parameter `x` of an opaque type descriptor has a
+    /// class, superclass, or class-bound protocol requirement.
+    /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/ABI/GenericContext.h
+    private static func opaqueTypeIsClassBound(_ descriptor: UnsafeRawPointer) -> Bool {
+        let parameters = Int(descriptor.loadUnaligned(fromByteOffset: 8, as: UInt16.self))
+        let count = Int(descriptor.loadUnaligned(fromByteOffset: 10, as: UInt16.self))
+        let requirements = descriptor.advanced(by: (16 + parameters + 3) & ~3)
+        return (0..<count).contains { index in
+            let requirement = RuntimeGenericRequirement(requirements.advanced(by: index * 12))
+            guard requirement.constrainsFirstParameter else { return false }
+            switch requirement.kind {
+            case 0: return requirement.isClassBoundProtocol
+            case 2: return true
+            case 0x1f: return requirement.isClassLayout
+            default: return false
+            }
+        }
+    }
+
     // MARK: Resilience
 
     private enum Resilience {
@@ -549,7 +678,6 @@ enum SwiftInferredValue {
         let name = String(reflecting: metadata)
         let kind = info.isEnum ? "enum" : "struct"
         let evidence = module.evidence
-        if evidence?.libraryEvolution == .disabled { return .fixed }
         if info.isEnum, let image = module.image, let declaration = module.declaration,
             RuntimeSymbolResolver.shared.exportsSwiftEnumCases(declaration: declaration, in: image)
         {
@@ -557,8 +685,7 @@ enum SwiftInferredValue {
         }
         let isStatic = !info.isGeneric && info.metadataInitialization == 0
         var explanation: String?
-        // Only a resilient type, which is public, sets the bit for itself.
-        var setsOwnBit = false
+        var unexplained = false
         if isStatic, module.setsAddressableForDependencies, flags & addressableForDependencies != 0
         {
             if isSelfAddressable(metadata) {
@@ -577,23 +704,22 @@ enum SwiftInferredValue {
                 } else if evidence?.libraryEvolution == .enabled {
                     return .resilient
                 } else {
-                    setsOwnBit = true
+                    unexplained = true
                 }
             }
         }
-        // Missing exports decide only what the value witnesses left open.
-        if module.image != nil, let evidence {
-            let exported = module.declaration != nil
-            // An exported enum without case symbols is frozen.
-            if info.isEnum, exported { return .fixed }
-            // A declaration a library does not export is not public, so it is
-            // not resilient. A type that sets its own bit is public, so a link
-            // that hides the module's symbols left it out.
-            if !exported, !setsOwnBit, evidence.isLibrary, evidence.exportsTypeDescriptors {
-                return .fixed
-            }
-        }
         let moduleName = module.name.map { "module `\($0)`" } ?? "its module"
+        if evidence?.libraryEvolution == .disabled {
+            guard unexplained else { return .fixed }
+            return .unknown(
+                "\(kind) `\(name)` sets its addressable-for-dependencies value-witness bit, which none of its fields explains; \(moduleName) is built without library evolution, where a stored property of an opaque (`some`) type, which its field record describes by its underlying type, can set it"
+            )
+        }
+        // Missing exports decide only what the value witnesses left open. An
+        // exported enum without case symbols is frozen.
+        if info.isEnum, module.image != nil, evidence != nil, module.declaration != nil {
+            return .fixed
+        }
         let unreadable = "ABIBridge cannot read the exports of \(moduleName)"
         let undecidedModule = "\(moduleName) does not show whether it is built with library evolution"
         if let explanation {

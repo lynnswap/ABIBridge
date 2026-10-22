@@ -451,6 +451,59 @@ extension ConformanceCase {
                     "cmDescribeUnownedHolder(_:)"
                 )
         },
+        // A stored property of an opaque type is an opaque archetype in
+        // signatures, which is address-only unless it is class-bound, while
+        // its field record describes its underlying type.
+        ConformanceCase(
+            id: "value.opaqueField.inferred",
+            provider: """
+                public protocol CMSided { var sides: Int64 { get } }
+                public protocol CMOwnedSided: AnyObject { var sides: Int64 { get } }
+                public struct CMQuad: CMSided { public var sides: Int64 { 4 } }
+                public final class CMTriangle: CMOwnedSided { public var sides: Int64 { 3 } }
+                public struct CMSidedBox {
+                    public var shape: some CMSided = CMQuad()
+                    public var n: Int64
+                    public init(n: Int64) { self.n = n }
+                }
+                public struct CMOwnedBox {
+                    public var shape: some CMOwnedSided = CMTriangle()
+                    public var n: Double
+                    public init(n: Double) { self.n = n }
+                }
+                @inline(never) public func cmMakeSidedBox() -> CMSidedBox { CMSidedBox(n: 1) }
+                @inline(never) public func cmBumpSidedBox(_ b: CMSidedBox, _ n: Int64) -> CMSidedBox {
+                    var b = b
+                    b.n += n
+                    return b
+                }
+                @inline(never) public func cmDescribeSidedBox(_ b: CMSidedBox) -> String { "\\(b.shape.sides),\\(b.n)" }
+                @inline(never) public func cmMakeOwnedBox() -> CMOwnedBox { CMOwnedBox(n: 1.5) }
+                @inline(never) public func cmBumpOwnedBox(_ b: CMOwnedBox, _ n: Int64) -> CMOwnedBox {
+                    var b = b
+                    b.n += Double(n)
+                    return b
+                }
+                @inline(never) public func cmDescribeOwnedBox(_ b: CMOwnedBox) -> String { "\\(b.shape.sides),\\(b.n)" }
+                """,
+            oracle: """
+                return cmDescribeSidedBox(cmBumpSidedBox(cmMakeSidedBox(), 3)) + "|"
+                    + cmDescribeOwnedBox(cmBumpOwnedBox(cmMakeOwnedBox(), 3))
+                """
+        ) { f in
+            try await describeTransformed(
+                f,
+                "cmMakeSidedBox()",
+                "cmBumpSidedBox(_:_:)",
+                "cmDescribeSidedBox(_:)"
+            ) + "|"
+                + describeTransformed(
+                    f,
+                    "cmMakeOwnedBox()",
+                    "cmBumpOwnedBox(_:_:)",
+                    "cmDescribeOwnedBox(_:)"
+                )
+        },
         ConformanceCase(
             id: "value.optional.inferred",
             provider: """

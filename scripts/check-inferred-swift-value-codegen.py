@@ -13,6 +13,10 @@ new compiler fails CI instead of mislowering values:
 - a stored property's descriptor has a stored component with library
   evolution and is trivial without it, while an unowned one, and a `let` of a
   function or metatype, which key paths reabstract, are always trivial;
+- a stored property of an opaque type that is not class-bound sets the
+  addressable-for-dependencies bit and makes its struct pass by address,
+  while a class-bound one does neither, and the property's descriptor and
+  opaque type descriptor name its opaque type;
 - on arm64e, a closure parameter that is passed indirectly hashes as
   `-indirect`, and generic arguments do not change a nominal type's hash;
 - on arm64e, an element of a closure's tuple result hashes as `-indirect`
@@ -39,6 +43,15 @@ public struct UnownedHolder { public unowned let owner: Box; public var x: Doubl
 public struct Reabstracted { public let call: () -> Void; public let type: Int.Type }
 @frozen public struct Wide { public var a: Int64, b: Int64, c: Int64, d: Int64, e: Int64 }
 @frozen public struct Pair<T> { public var a: T; public var b: T }
+public protocol Shape {}
+public protocol OwnedShape: AnyObject {}
+public final class ShapeReference: Shape, OwnedShape { public init() {} }
+public struct Square: Shape { public var sides: Int64 = 4; public init() {} }
+public struct OpaqueBox { public var shape: some Shape = Square(); public var n: Double = 1 }
+public struct OwnedBox { public var shape: some OwnedShape = ShapeReference(); public var n: Double = 1 }
+
+@inline(never) public func takeOpaqueBox(_ box: OpaqueBox) {}
+@inline(never) public func takeOwnedBox(_ box: OwnedBox) {}
 
 @inline(never) public func applyFrozen(_ f: (FrozenPoint) -> Double) -> Double {
     f(FrozenPoint(x: 1, y: 2))
@@ -111,6 +124,19 @@ def property_header(ir, target, name):
     return int(header[1])
 
 
+def parameter_types(ir, target, function):
+    """The IR types of a function's parameters, such as ["ptr", "double"]."""
+    start = re.search(r'^define swiftcc [^\n]*@"[^"]*' + function + r'[^"]*"\(', ir, re.M)
+    if start is None:
+        raise RuntimeError(f"{target}: missing {function}")
+    depth, end = 1, start.end()
+    while depth:
+        depth += {"(": 1, ")": -1}.get(ir[end], 0)
+        end += 1
+    parameters = ir[start.end():end - 1]
+    return [parameter.split()[0] for parameter in parameters.split(", ") if parameter]
+
+
 def discriminator(ir, target, function):
     body = re.search(r'^define swiftcc[^\n]*' + function + r'[^\n]*\{.*?^}', ir, re.M | re.S)
     if body is None:
@@ -128,7 +154,7 @@ def check(ir, target, evolution):
 
     flags = {name: witness_flags(ir, target, name, kind) for name, kind in [
         ("FrozenPoint", "V"), ("OpenPoint", "V"), ("FrozenLabel", "V"), ("OpenLabel", "V"),
-        ("FrozenShape", "O"), ("OpenShape", "O"),
+        ("FrozenShape", "O"), ("OpenShape", "O"), ("OpaqueBox", "V"), ("OwnedBox", "V"),
     ]}
     addressable = {name: bool(value & ADDRESSABLE) for name, value in flags.items()}
     require(not addressable["FrozenPoint"] and not addressable["FrozenShape"],
@@ -137,6 +163,18 @@ def check(ir, target, evolution):
             "resilient values, and only those, must set the addressable bit")
     require(addressable["FrozenLabel"] and addressable["OpenLabel"],
             "a String field must set the addressable bit")
+    require(addressable["OpaqueBox"] and addressable["OwnedBox"] == evolution,
+            "an opaque field that is not class-bound, and only that, must set the addressable bit")
+    for suffix in ["vpMV", "vpQOMQ"]:
+        name = mangled("OpaqueBox") + "V5shapeQr" + suffix
+        require(re.search(r'^@"' + re.escape(name) + r'" =', ir, re.M) is not None,
+                f"an opaque stored property must name its opaque type in {name}")
+    if not evolution:
+        boxes = {name: parameter_types(ir, target, name) for name in ["takeOpaqueBox", "takeOwnedBox"]}
+        require(boxes["takeOpaqueBox"] == ["ptr"],
+                f"an opaque field that is not class-bound must pass its struct by address: {boxes}")
+        require(boxes["takeOwnedBox"] != ["ptr"],
+                f"a class-bound opaque field must leave its struct loadable: {boxes}")
 
     cases = {name: re.search(r'^@"' + re.escape(mangled(name)) + r'O[^"]*WC" =', ir, re.M) is not None
              for name in ["FrozenShape", "OpenShape"]}
