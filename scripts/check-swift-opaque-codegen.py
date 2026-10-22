@@ -13,6 +13,9 @@ def run(*args):
 def main():
     root = Path(__file__).resolve().parent.parent
     output = root / '.build/swift-opaque-codegen'
+    # Opaque result fixtures use declarations from other fixture files, so build the
+    # whole target directory as Package.swift does.
+    fixtures = sorted(str(path) for path in (root / 'Tests/ManagedSwiftFixtures').glob('*.swift'))
     reports = []
     for target, sdk_name in [('arm64-apple-macos15.4', 'macosx'),
                              ('arm64e-apple-ios18.4', 'iphoneos'), ('arm64_32-apple-watchos11.4', 'watchos')]:
@@ -22,7 +25,7 @@ def main():
         common = ['xcrun', 'swiftc', '-swift-version', '6', '-enable-experimental-feature', 'Lifetimes',
                   '-parse-as-library', '-Onone', '-target', target, '-sdk', sdk]
         provider = [*common, '-whole-module-optimization', '-enable-library-evolution', '-module-name', 'ManagedSwiftFixtures',
-                    *[str(root / 'Tests/ManagedSwiftFixtures' / name) for name in ['Errors.swift', 'Async.swift', 'Existentials.swift', 'ParameterConventions.swift', 'RuntimeValues.swift', 'OpaqueResults.swift']]]
+                    *fixtures]
         run(*provider, '-emit-module', '-emit-module-path', str(directory / 'ManagedSwiftFixtures.swiftmodule'))
         run(*provider, '-emit-ir', '-o', str(directory / 'provider.ll'))
         run(*common, '-module-name', 'OpaqueAdapterProbe', '-I', str(directory), '-emit-ir',
