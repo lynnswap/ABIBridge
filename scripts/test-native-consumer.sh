@@ -60,29 +60,9 @@ xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_build" SwiftFunctionConsumer "$task_fixture/libSwiftFixture.dylib" "$task_fixture/libSwiftExtensionFixture.dylib"
 
-# Inferred struct and enum conventions read compiler facts that a new
-# toolchain can change, so CI checks them with each Xcode.
-python3 "$task_root/scripts/check-inferred-swift-value-codegen.py"
-
 if [[ "$task_mode" == focused ]]; then exit; fi
 
-python3 "$task_root/scripts/check-managed-swift-codegen.py"
-python3 "$task_root/scripts/check-swift-closure-codegen.py"
-python3 "$task_root/scripts/check-swift-optional-codegen.py"
-python3 "$task_root/scripts/check-swift-collection-codegen.py"
-python3 "$task_root/scripts/check-swift-generic-codegen.py"
-python3 "$task_root/scripts/check-swift-generic-call-codegen.py"
-python3 "$task_root/scripts/check-swift-generic-receiver-codegen.py"
-python3 "$task_root/scripts/check-explicit-swift-value-codegen.py"
-python3 "$task_root/scripts/check-indirect-swift-value-codegen.py"
-python3 "$task_root/scripts/check-swift-error-codegen.py"
-python3 "$task_root/scripts/check-swift-async-codegen.py"
-python3 "$task_root/scripts/check-swift-throwing-closure-codegen.py"
-python3 "$task_root/scripts/check-swift-async-closure-codegen.py"
-python3 "$task_root/scripts/check-swift-argument-codegen.py"
-python3 "$task_root/scripts/check-swift-existential-codegen.py"
-python3 "$task_root/scripts/check-swift-opaque-codegen.py"
-python3 "$task_root/scripts/check-swiftui-codegen.py"
+bash "$task_root/scripts/test-codegen.sh"
 
 # Build the fixture and adapter targets whole, as Package.swift does.
 xcrun swiftc -parse-as-library -emit-library -emit-module -enable-library-evolution -enable-experimental-feature Lifetimes \

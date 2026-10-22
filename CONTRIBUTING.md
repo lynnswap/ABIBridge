@@ -88,7 +88,7 @@ When changing native headers, symbol lookup, call marshalling, or hooks, run the
 bash scripts/test-native-consumer.sh
 ```
 
-This builds C, C++, Objective-C++, and Swift clients of the public product. It also runs the Swift compiler probes, which inspect generated code for argument passing, results, ownership, and pointer authentication across architectures.
+This builds C, C++, Objective-C++, and Swift clients of the public product. It also runs the Swift compiler probes, which inspect generated code for argument passing, results, ownership, and pointer authentication across architectures. To run only the probes, use `bash scripts/test-codegen.sh`; it runs all of them and then lists the ones that failed.
 
 Inferred struct and enum conventions depend on a checked-in list of the SDK's `@frozen @_addressableForDependencies` declarations. When a new SDK adds one, `scripts/check-inferred-swift-value-codegen.py` fails until you regenerate the list with each supported Xcode:
 
@@ -98,7 +98,7 @@ python3 scripts/generate-swift-self-addressable-types.py \
   --developer-dir /Applications/Xcode_27.app/Contents/Developer
 ```
 
-For the subset used by CI, run `bash scripts/test-native-consumer.sh focused`. It checks external headers, optimized C linkage, compiler-sensitive Swift entry points, and the compiler facts that inferred struct and enum conventions read. `bash scripts/test-native-consumer.sh swiftui` runs the public SwiftUI consumer and its contract check. Set `ABI_CONSUMER_BUILD_DIR` to choose a separate build directory for another toolchain.
+For the subset used by CI, run `bash scripts/test-native-consumer.sh focused` and `bash scripts/test-codegen.sh`. The focused mode checks external headers, optimized C linkage, and compiler-sensitive Swift entry points. CI runs both with each supported Xcode. `bash scripts/test-native-consumer.sh swiftui` runs the public SwiftUI consumer and its contract check. Set `ABI_CONSUMER_BUILD_DIR` to choose a separate build directory for another toolchain.
 
 Run the architecture fixtures and the trampoline comparison when changing ABI handling:
 
