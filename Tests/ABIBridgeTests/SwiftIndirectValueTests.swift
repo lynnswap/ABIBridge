@@ -29,6 +29,35 @@ extension 箱: ABIBridgeSwiftValue where Value: BoxPayloadABI {
     public static var swiftABIType: NativeType { Value.boxABI }
 }
 
+/// Two indirect elements and a direct part too large for registers.
+private typealias RecordsAndWords = (
+    IndirectRecord, Int64, IndirectRecord, Int64, Int64, Int64, Int64
+)
+
+/// Calls `body` with two records holding fresh tokens, and checks that every
+/// element of its result arrives and that the tokens are released afterward.
+private func expectRecordsAndWords(
+    numbers: (Int64, Int64),
+    words: [Int64],
+    _ body: (IndirectRecord, IndirectRecord) async throws -> RecordsAndWords
+) async throws {
+    weak var observedFirst: LifetimeToken?
+    weak var observedSecond: LifetimeToken?
+    do {
+        let first = LifetimeToken(), second = LifetimeToken()
+        observedFirst = first
+        observedSecond = second
+        let result = try await body(
+            IndirectRecord(token: first, number: 1),
+            IndirectRecord(token: second, number: 2)
+        )
+        #expect(result.0.token === first && result.2.token === second)
+        #expect(result.0.number == numbers.0 && result.2.number == numbers.1)
+        #expect([result.1, result.3, result.4, result.5, result.6] == words)
+    }
+    #expect(observedFirst == nil && observedSecond == nil)
+}
+
 struct SwiftIndirectValueTests {
     @Test func smallResilientValuesUseDeclaredIndirection() async throws {
         let echo = try await ABIRuntime.shared.resolveSwiftFunction(
@@ -133,6 +162,68 @@ struct SwiftIndirectValueTests {
         )
         let unicodeBody = try NativeSwiftClosure { (value: 箱<Int64>) in 箱(value.value + 7) }
         #expect(try unsafe unicode.unsafeInvoke(unicodeBody, 箱(35)).value == 42)
+    }
+
+    // With several indirect elements, the compiler passes the direct part's
+    // address as the first ordinary argument rather than in the
+    // indirect-result register.
+    @Test func severalIndirectTupleElementsPassTheDirectPartFirst() async throws {
+        typealias Body = NativeSwiftClosure<(IndirectRecord, IndirectRecord) -> RecordsAndWords>
+        let runtime = ABIRuntime.shared
+        let call = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.indirectRecordsAndWords(_:_:)",
+            as: ((IndirectRecord, IndirectRecord) -> RecordsAndWords).self
+        )
+        try await expectRecordsAndWords(numbers: (2, 4), words: [10, 20, 30, 40, 50]) {
+            try unsafe call.unsafeInvoke($0, $1)
+        }
+        let make = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeIndirectRecordsAndWordsClosure(_:)",
+            as: ((Int64) -> Body).self
+        )
+        let closure = try unsafe make.unsafeInvoke(5)
+        try await expectRecordsAndWords(numbers: (6, 12), words: [5, 6, 7, 8, 9]) {
+            try unsafe closure.unsafeInvoke($0, $1)
+        }
+        let apply = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.applyIndirectRecordsAndWords(_:_:_:)",
+            as: ((Body, IndirectRecord, IndirectRecord) -> RecordsAndWords).self
+        )
+        let body = try Body { first, second in
+            (first.advanced(3), 11, second.advanced(4), 21, 31, 41, 51)
+        }
+        try await expectRecordsAndWords(numbers: (104, 106), words: [12, 22, 32, 42, 52]) {
+            try unsafe apply.unsafeInvoke(body, $0, $1)
+        }
+    }
+
+    // Async entries never use the indirect-result register.
+    @Test func asyncResultsWithSeveralIndirectTupleElementsPassTheDirectPartFirst() async throws {
+        typealias Body = NativeSwiftClosure<
+            @Sendable @concurrent (IndirectRecord, IndirectRecord) async -> RecordsAndWords
+        >
+        let runtime = ABIRuntime.shared
+        let call = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.asyncIndirectRecordsAndWords(_:_:)",
+            as: (@concurrent (IndirectRecord, IndirectRecord) async -> RecordsAndWords).self
+        )
+        try await expectRecordsAndWords(numbers: (2, 4), words: [10, 20, 30, 40, 50]) {
+            try unsafe await call.unsafeInvoke($0, $1)
+        }
+        let apply = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.applyAsyncIndirectRecordsAndWords(_:_:_:)",
+            as: (@concurrent (Body, IndirectRecord, IndirectRecord) async -> RecordsAndWords).self
+        )
+        let advance: @Sendable (IndirectRecord, IndirectRecord) async -> RecordsAndWords = {
+            first,
+            second in
+            await Task.yield()
+            return (first.advanced(3), 11, second.advanced(4), 21, 31, 41, 51)
+        }
+        let body = try Body(advance)
+        try await expectRecordsAndWords(numbers: (104, 106), words: [12, 22, 32, 42, 52]) {
+            try unsafe await apply.unsafeInvoke(body, $0, $1)
+        }
     }
 
 #if DEBUG

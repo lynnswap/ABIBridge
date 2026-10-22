@@ -356,6 +356,68 @@ struct SwiftValueHookTests {
         object = nil
         #expect(observed == nil)
     }
+
+    // With two indirect elements, the direct part's address is the caller's
+    // first ordinary argument, both into the hook and out of proceed.
+    @Test func hooksPlaceSeveralIndirectTupleElementsAsTheCallerDoes() async throws {
+        let fixture = try CompiledSwiftReplacementFixture(
+            libraryEvolution: true,
+            providerExtra: """
+                public struct HookToken {
+                    public var value: Int64
+                    public init(_ value: Int64) { self.value = value }
+                }
+                @inline(never) public func tokensAndWords(
+                    _ seed: Int64
+                ) -> (HookToken, Int64, HookToken, Int64, Int64, Int64, Int64) {
+                    (HookToken(seed), seed + 1, HookToken(seed + 2), seed + 3, seed + 4, seed + 5, seed + 6)
+                }
+                """,
+            callerExtra: """
+                @inline(never) public func importedTokensAndWords(_ seed: Int64) -> [Int64] {
+                    let (a, b, c, d, e, f, g) = tokensAndWords(seed)
+                    return [a.value, b, c.value, d, e, f, g]
+                }
+                """
+        )
+        defer { fixture.cleanup() }
+        let token = try await fixture.runtime.resolveSwiftType(
+            named: fixture.module + ".HookToken",
+            in: fixture.providerScope
+        )
+        let function = try await fixture.runtime.resolveSwiftFunction(
+            named: "\(fixture.module).tokensAndWords(Swift.Int64) -> (\(token.name), Swift.Int64, "
+                + "\(token.name), Swift.Int64, Swift.Int64, Swift.Int64, Swift.Int64)",
+            as: ((Int64) -> (HookWord, Int64, HookWord, Int64, Int64, Int64, Int64)).self,
+            valueABIs: [token: try .opaque(named: token.name)],
+            in: fixture.providerScope
+        )
+        let oracle = try await fixture.runtime.resolveSwiftFunction(
+            named: fixture.callerModule + ".importedTokensAndWords(_:)",
+            as: ((Int64) -> [Int64]).self,
+            in: fixture.callerScope
+        )
+        #expect(try unsafe oracle.unsafeInvoke(1) == [1, 2, 3, 4, 5, 6, 7])
+        let hook = try unsafe await function.hookImportedCalls(
+            in: fixture.callerScope,
+            using: fixture.runtime,
+            onFailure: { Issue.record($0) }
+        ) { call, seed in
+            let (a, b, c, d, e, f, g) = try call.proceed(seed + 100)
+            return (
+                HookWord(value: a.value + 1000), b + 1, HookWord(value: c.value + 2000), d + 1,
+                e + 1, f + 1, g + 1
+            )
+        }
+        #expect(try unsafe oracle.unsafeInvoke(1) == [1101, 103, 2103, 105, 106, 107, 108])
+        hook.invalidate()
+        #expect(try unsafe oracle.unsafeInvoke(1) == [1, 2, 3, 4, 5, 6, 7])
+    }
+}
+/// A formally indirect stand-in for a resilient one-word value.
+private struct HookWord: ABIBridgeSwiftValue {
+    var value: Int64
+    static var swiftABIType: NativeType { try! .opaque(named: "HookWord") }
 }
 private enum SwiftValueHookFailure: Error { case afterProceed }
 private final class SavedValueInvocation: @unchecked Sendable {
