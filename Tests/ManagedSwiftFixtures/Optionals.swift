@@ -1,3 +1,5 @@
+import Dispatch
+
 @inline(never) public func doubledOptional(_ value: Double?) -> Double? { value.map { $0 * 2 } }
 
 @inline(never) public func invertedOptional(_ value: Bool?) -> Bool? { value.map { !$0 } }
@@ -135,4 +137,121 @@ public struct OptionalRuntimeRecord {
     _ pair: (OptionalRuntimeRecord, Int64)?
 ) -> String {
     pair.map { "\($0.0.name)#\($0.0.count)@\($0.1)" } ?? "nil"
+}
+
+// Optionals of scalars and pointers pass as their enum storage: `UInt32?` as
+// one integer, `Int64?` and `Double?` as a payload and a tag byte, `Bool?` in
+// its payload's spare bits, and a pointer with nil as the null pointer.
+@inline(never) public func incrementedOptionalUInt32(_ value: UInt32?) -> UInt32? {
+    value.map { $0 &+ 1 }
+}
+
+@inline(never) public func negatedOptionalInt64(_ value: Int64?) -> Int64? { value.map { -$0 } }
+
+@inline(never) public func advancedOptionalPointer(
+    _ pointer: UnsafePointer<Int64>?
+) -> UnsafePointer<Int64>? {
+    pointer.map { $0 + 1 }
+}
+
+@inline(never) public func describeOptionalScalars(
+    _ id: UInt32?,
+    _ count: Int64?,
+    _ scale: Double?,
+    _ flag: Bool?,
+    _ pointer: UnsafeRawPointer?
+) -> String {
+    [
+        id.map { "\($0)" }, count.map { "\($0)" }, scale.map { "\($0)" }, flag.map { "\($0)" },
+        pointer.map { "\($0.load(as: Int64.self))" },
+    ].map { $0 ?? "nil" }.joined(separator: ",")
+}
+
+@inline(never) public func visitOptionalScalars(
+    _ body: (UInt32?, Int64?, Double?, Bool?, UnsafeRawPointer?) -> String
+) -> String {
+    let some = withUnsafePointer(to: Int64(7)) {
+        body(4_000_000_000, -5, 0.5, false, UnsafeRawPointer($0))
+    }
+    return body(nil, nil, nil, nil, nil) + "|" + some
+}
+
+@inline(never) public func makeOptionalScalarDescriber()
+    -> (UInt32?, Int64?, Double?, Bool?, UnsafeRawPointer?) -> String
+{
+    { describeOptionalScalars($0, $1, $2, $3, $4) }
+}
+
+/// ABIBridgeTests gives `OptionalScreenNumber?` a wrong ABIBridgeSwiftValue
+/// conformance, which applies to every use of that Optional in the tests.
+@frozen public struct OptionalScreenNumber {
+    public var rawValue: UInt32
+    public init(rawValue: UInt32) { self.rawValue = rawValue }
+}
+
+@inline(never) public func nextOptionalScreenNumber(
+    _ number: OptionalScreenNumber?
+) -> OptionalScreenNumber? {
+    number.map { OptionalScreenNumber(rawValue: $0.rawValue + 1) }
+}
+
+/// The shape of SimulatorKit's `SimDeviceScreenAdapter.register(screenID:queue:handler:)`.
+public final class OptionalScreenAdapter {
+    public final class Registration {
+        public let screenID: UInt32?
+        init(screenID: UInt32?) { self.screenID = screenID }
+    }
+
+    public let screens: [UInt32]
+    public init(screens: [UInt32]) { self.screens = screens }
+
+    /// Calls `handler` on `queue` with each screen that `screenID` selects; nil selects every screen.
+    @inline(never) public func register(
+        screenID: UInt32?,
+        queue: DispatchQueue,
+        handler: @escaping (UInt32?) -> Void
+    ) -> Registration {
+        let selected = screens.filter { screenID == nil || $0 == screenID }
+        queue.sync { selected.forEach { handler($0) } }
+        return Registration(screenID: screenID)
+    }
+}
+
+extension Optional {
+    /// The payload's size, or -1 for nil. A generic extension's method takes
+    /// `self` by address, even when the Optional fits a register.
+    @inline(never) public func optionalPayloadSize() -> Int64 {
+        switch self {
+        case .none: -1
+        case .some: Int64(MemoryLayout<Wrapped>.size)
+        }
+    }
+}
+
+extension Optional where Wrapped == UInt32 {
+    /// The screen ID, or -1 for nil. A concrete `self` passes as its enum storage.
+    @inline(never) public func screenIDOrMinusOne() -> Int64 { map { Int64($0) } ?? -1 }
+
+    /// A mutating `self` passes by address.
+    @inline(never) public mutating func advanceScreenID() { self = map { $0 &+ 1 } }
+
+    /// The screen ID, or -1 for nil; its setter takes `self` by address.
+    public var screenIDValue: Int64 {
+        @inline(never) get { screenIDOrMinusOne() }
+        @inline(never) set { self = newValue < 0 ? nil : UInt32(newValue) }
+    }
+}
+
+/// A generic instance whose convention inference leaves undecided, because
+/// no nongeneric value stores it.
+@frozen public struct OptionalScreenBox<Value> {
+    public var value: Value
+    public init(_ value: Value) { self.value = value }
+}
+
+/// An Optional of this tuple needs an explicit ABI.
+@inline(never) public func describeOptionalScreenBox(
+    _ value: (UInt32, OptionalScreenBox<Int64>)?
+) -> String {
+    value.map { "\($0.0):\($0.1.value)" } ?? "nil"
 }

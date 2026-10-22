@@ -88,18 +88,11 @@ struct SwiftValueCodec<Value>: Sendable {
                 ? CValueType(swiftOptionalSingleton: ()) : try metatype.valueType(for: Value.self)
             cValue = nil
         } else if let managed {
-            if let components = managed.swiftABIType.cType {
-                guard (MemoryLayout<Value>.size...MemoryLayout<Value>.stride).contains(components.size) else {
-                    throw ABIResolutionError.unsupportedDeclaration(
-                        "Swift ABI components must cover the value without exceeding its stride: \(String(reflecting: Value.self))."
-                    )
-                }
-                type = try CValueType(swiftComponents: components, size: MemoryLayout<Value>.size,
-                                      alignment: MemoryLayout<Value>.alignment)
-            } else {
-                type = try CValueType(indirectSwiftSize: MemoryLayout<Value>.size,
-                                      alignment: MemoryLayout<Value>.alignment)
-            }
+            type = try SwiftValueSchema.explicitValueLayout(
+                of: Value.self,
+                abi: managed.swiftABIType,
+                source: "The ABIBridgeSwiftValue conformance"
+            )
             cValue = nil
         } else if isAdapter {
             let codec = try CValueCodec<Value>()
@@ -122,18 +115,9 @@ struct SwiftValueCodec<Value>: Sendable {
             !(base is any NativePointerValue.Type)
         {
             // An Optional of a value with Swift storage is a Swift enum.
-            func wrapped<Wrapped>(_ type: Wrapped.Type) throws -> CValueType {
-                let codec = try SwiftValueCodec<Wrapped>()
-                guard codec.storesSwiftValue else {
-                    throw ABIResolutionError.unsupportedDeclaration(
-                        "An Optional requires its wrapped value's Swift storage: \(String(reflecting: Wrapped.self))."
-                    )
-                }
-                return codec.type
-            }
             type = try SwiftValueSchema.optionalStorage(
                 of: Value.self,
-                wrapped: _openExistential(optional.wrappedType, do: wrapped),
+                wrapped: SwiftValueSchema.optionalPayloadStorage(optional.wrappedType),
                 wrappedType: optional.wrappedType
             )
             cValue = nil

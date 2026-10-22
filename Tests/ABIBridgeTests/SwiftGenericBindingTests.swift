@@ -1220,7 +1220,8 @@ struct SwiftGenericBindingTests {
         typealias Increment = NativeSwiftClosure<(Int64) -> Int64>
         #expect(try SwiftFunctionSignature(((Increment?) -> Int64).self).closureDiscriminator() == 16285)
         #expect(try SwiftFunctionSignature((() -> Increment?).self).closureDiscriminator() == 63771)
-        // Swift 6.3 arm64e IR for callbacks taking each Optional and returning Int64.
+        // Swift 6.3 arm64e IR for callbacks taking each Optional, the last two
+        // from ManagedSwiftFixtures (scripts/check-swift-optional-codegen.py).
         let optionals: [(Any.Type, UInt16)] = [
             (((Int64??) -> Int64).self, 33376),
             (((OptionalAuthenticationObject??) -> Int64).self, 56960),
@@ -1228,6 +1229,8 @@ struct SwiftGenericBindingTests {
             (((Double?) -> Int64).self, 25171),
             (((String??) -> Int64).self, 23849),
             ((([Int]??) -> Int64).self, 46095),
+            (((UInt32?, Int64?, Double?, Bool?, UnsafeRawPointer?) -> String).self, 13547),
+            (((UInt32?) -> Void).self, 7278),
         ]
         for (type, discriminator) in optionals {
             #expect(try SwiftFunctionSignature(type).closureDiscriminator() == discriminator, "\(type)")

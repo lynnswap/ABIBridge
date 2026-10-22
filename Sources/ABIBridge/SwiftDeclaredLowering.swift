@@ -6,7 +6,8 @@ import ABIBridgeCore
 /// A complete declaration name, or a type's receiver representation, lets a
 /// host type with another Swift name stand for a declared type. Such an
 /// adapter is accepted when both pass in the same register components, or
-/// both by address with enough storage for the declared value.
+/// both by address with enough storage for the declared value. An explicit
+/// ABI for an Optional is compared the same way with the Optional's storage.
 enum SwiftDeclaredLowering {
     /// Throws `signatureMismatch` without a position when a value of `host`,
     /// stored as `layout`, does not pass as the declared `type` does.
@@ -32,6 +33,46 @@ enum SwiftDeclaredLowering {
             )
         }
     }
+
+    /// Throws `unsupportedDeclaration` when `explicit`, the storage that
+    /// `source` states for the Optional `type`, does not pass as `own`, the
+    /// storage with which Swift passes it there. The ABI is wrong for any
+    /// declaration, so the failure is not a mismatch with one candidate.
+    static func checkExplicit(
+        _ explicit: CValueType,
+        statedBy source: String,
+        forOptional type: Any.Type,
+        own: CValueType
+    ) throws {
+        let passes = withExtendedLifetime((explicit, own)) {
+            ABISwiftValuePassesAs(explicit.handle, own.handle, false)
+        }
+        guard !passes else { return }
+        throw explicitMismatch(
+            statedBy: source,
+            forOptional: type,
+            passing: lowering(of: explicit),
+            swiftPassing: lowering(of: own)
+        )
+    }
+
+    /// The failure of an explicit ABI that `source` states for the Optional
+    /// `type`, which passes it as `passing` where Swift passes it as
+    /// `swiftPassing`.
+    static func explicitMismatch(
+        statedBy source: String,
+        forOptional type: Any.Type,
+        passing: String,
+        swiftPassing: String
+    ) -> ABIResolutionError {
+        .unsupportedDeclaration(
+            "\(source) for \(String(reflecting: type)) passes it \(passing), "
+                + "but Swift passes this Optional \(swiftPassing)."
+        )
+    }
+
+    /// How a value stored as `type` passes as an argument.
+    static func lowering(of type: CValueType) -> String { description(of: type, false) }
 
     /// The failure to establish how the declaration passes its type, naming
     /// the host type and position, or nil for another kind of error.

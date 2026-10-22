@@ -68,6 +68,7 @@ if [[ "$task_mode" == focused ]]; then exit; fi
 
 python3 "$task_root/scripts/check-managed-swift-codegen.py"
 python3 "$task_root/scripts/check-swift-closure-codegen.py"
+python3 "$task_root/scripts/check-swift-optional-codegen.py"
 python3 "$task_root/scripts/check-swift-collection-codegen.py"
 python3 "$task_root/scripts/check-swift-generic-codegen.py"
 python3 "$task_root/scripts/check-swift-generic-call-codegen.py"

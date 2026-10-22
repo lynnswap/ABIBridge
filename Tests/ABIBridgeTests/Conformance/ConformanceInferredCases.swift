@@ -522,6 +522,10 @@ extension ConformanceCase {
                 @inline(never) public func cmDescribeMaybeOpenPoint(_ p: CMOpenPoint?) -> String { p.map { "\\($0.x),\\($0.y)" } ?? "nil" }
                 @inline(never) public func cmMaybeFloats(_ k: Int64) -> CMFloats5? { k == 0 ? nil : CMFloats5(Float(k)) }
                 @inline(never) public func cmDescribeMaybeFloats(_ f: CMFloats5?) -> String { f.map { "\\($0.a),\\($0.e)" } ?? "nil" }
+                @inline(never) public func cmMaybePlain(_ k: Int64) -> CMPlain? { k == 0 ? nil : .c }
+                @inline(never) public func cmDescribeMaybePlain(_ v: CMPlain?) -> String { v.map { "\\($0)" } ?? "nil" }
+                @inline(never) public func cmMaybeMixed(_ k: Int64) -> CMMixed? { k == 0 ? nil : .whole(k) }
+                @inline(never) public func cmDescribeMaybeMixed(_ v: CMMixed?) -> String { v.map { "\\($0)" } ?? "nil" }
                 """,
             oracle: """
                 let kinds: [Int64] = [0, 3]
@@ -529,14 +533,19 @@ extension ConformanceCase {
                     kinds.map { cmDescribeMaybePoint(cmMaybePoint($0)) },
                     kinds.map { cmDescribeMaybeOpenPoint(cmMaybeOpenPoint($0)) },
                     kinds.map { cmDescribeMaybeFloats(cmMaybeFloats($0)) },
+                    kinds.map { cmDescribeMaybePlain(cmMaybePlain($0)) },
+                    kinds.map { cmDescribeMaybeMixed(cmMaybeMixed($0)) },
                 ].map { $0.joined(separator: "|") }.joined(separator: ";")
                 """
         ) { f in
             var parts: [String] = []
+            // An Optional of an enum stores nil in a value the enum does not use.
             for (make, text) in [
                 ("cmMaybePoint(_:)", "cmDescribeMaybePoint(_:)"),
                 ("cmMaybeOpenPoint(_:)", "cmDescribeMaybeOpenPoint(_:)"),
                 ("cmMaybeFloats(_:)", "cmDescribeMaybeFloats(_:)"),
+                ("cmMaybePlain(_:)", "cmDescribeMaybePlain(_:)"),
+                ("cmMaybeMixed(_:)", "cmDescribeMaybeMixed(_:)"),
             ] {
                 parts.append(try await describeKinds(f, make, text, kinds: [0, 3]))
             }

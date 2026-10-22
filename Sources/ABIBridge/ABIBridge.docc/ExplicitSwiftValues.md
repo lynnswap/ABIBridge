@@ -60,6 +60,12 @@ Within this conformance, `.opaque` declares formally indirect passing. The Swift
 
 The caller must establish the declaration's indirect convention. Selecting opaque storage does not convert a direct fixed-layout declaration into an indirect one, and small storage is not a reason to change the declared convention.
 
+## Describe Optionals
+
+Swift passes an Optional as its enum storage, the payload and tag as integer data, or by address when its payload is address-only, whatever ABI describes the Optional. ABIBridge derives that convention from the payload's, so an Optional of a built-in value, or of a value with an explicit or inferred convention, needs no ABI of its own: `UInt32?` passes in one integer register, and nil as `0x1_0000_0000`.
+
+An explicit ABI for such an Optional, a `valueABIs:` entry or a conformance, must pass the same way. Otherwise preparation throws ``ABIResolutionError/unsupportedDeclaration(_:)``, naming both conventions, instead of passing the Optional by address or in floating-point registers. When ABIBridge cannot establish the payload's convention, describe the payload rather than the Optional; the Optional then follows it.
+
 ## Use callbacks and members
 
 The same conformance works with ``NativeSwiftClosure``:
