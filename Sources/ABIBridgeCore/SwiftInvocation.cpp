@@ -13,6 +13,7 @@
 #include <optional>
 #include <new>
 #include <limits>
+#include <string>
 
 // Swift's stable runtime uses preserve_most for reference counting on AArch64.
 // These operations also handle capture contexts, whose metadata need not be
@@ -534,6 +535,80 @@ static bool isAddressOnly(const TypeStorage &type) {
                        [](const auto &field) { return isAddressOnly(*field); });
 }
 bool ABISwiftValueIsAddressOnly(const ABIValueType *type) { return isAddressOnly(*type->storage); }
+
+namespace {
+struct LoweredValue {
+    Layout layout;
+    size_t size;
+    size_t alignment;
+};
+
+// A parameter expands its tuples into separate values. A result lowers as one
+// value, unless its tuple elements need indirect or separate storage.
+std::vector<LoweredValue> loweredValues(const std::shared_ptr<TypeStorage> &type, bool result) {
+    std::vector<LoweredValue> values;
+    if (result) {
+        ABISwiftCallInterface interface;
+        interface.result = type;
+        prepareSwiftResult(interface);
+        for (const auto &field : interface.indirectResults)
+            values.push_back({Layout{{}, true}, field.type->size(), field.type->native()->alignment});
+        values.push_back({interface.resultLayout, interface.directResult->size(),
+                          interface.directResult->native()->alignment});
+        return values;
+    }
+    std::vector<SwiftField> fields;
+    expandTuple(type, 0, fields);
+    for (const auto &field : fields)
+        values.push_back({lower(*field.type), field.type->size(), field.type->native()->alignment});
+    return values;
+}
+
+bool passesAs(const LoweredValue &value, const LoweredValue &declared) {
+    if (value.layout.indirect || declared.layout.indirect) {
+        return value.layout.indirect && declared.layout.indirect
+            && value.size >= declared.size && value.alignment >= declared.alignment;
+    }
+    return std::equal(value.layout.components.begin(), value.layout.components.end(),
+                      declared.layout.components.begin(), declared.layout.components.end(),
+                      [](const Component &lhs, const Component &rhs) {
+        return lhs.offset == rhs.offset && lhs.size == rhs.size && lhs.floating == rhs.floating
+            && lhs.optionalSingleton == rhs.optionalSingleton;
+    });
+}
+}
+
+bool ABISwiftValuePassesAs(const ABIValueType *value, const ABIValueType *declared, bool result) {
+    if (!value || !declared) return false;
+    const auto values = loweredValues(value->storage, result);
+    const auto declaredValues = loweredValues(declared->storage, result);
+    return std::equal(values.begin(), values.end(), declaredValues.begin(), declaredValues.end(), passesAs);
+}
+
+char *ABICopySwiftValueLoweringDescription(const ABIValueType *type, bool result) {
+    if (!type) return nullptr;
+    std::string text;
+    for (const auto &value : loweredValues(type->storage, result)) {
+        if (!text.empty()) text += "; ";
+        if (value.layout.indirect) {
+            text += "by address (" + std::to_string(value.size) + " bytes, alignment "
+                + std::to_string(value.alignment) + ")";
+        } else if (value.layout.components.empty()) {
+            text += "in no registers";
+        } else {
+            text += "in registers (";
+            for (size_t index = 0; index < value.layout.components.size(); ++index) {
+                const auto &component = value.layout.components[index];
+                if (index) text += ", ";
+                text += std::to_string(component.size) + "-byte "
+                    + (component.floating ? "float" : "integer") + " at "
+                    + std::to_string(component.offset);
+            }
+            text += ")";
+        }
+    }
+    return strdup(text.c_str());
+}
 
 static void marshalSwiftArguments(
     ABISwiftCallInterface *interface, void *const *arguments, void *result, void *errorResult,

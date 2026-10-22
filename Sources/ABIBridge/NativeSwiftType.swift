@@ -392,6 +392,31 @@ public actor NativeSwiftType: Hashable {
             codec = try cachedReceiver ?? SwiftReceiverCodec.make(for: representation ?? metadata)
             cachedCodec = codec
         }
+        // A representation is this type's adapter for self, so it must pass as
+        // self does. The adapter itself states that convention where its
+        // metadata does not establish it, because receiverABI describes the
+        // native self rather than a representation. A class receiver is a
+        // reference, which SwiftReceiverPlan checks.
+        if receiverABI == nil, let representation, representation != metadata,
+            !(metadata is AnyClass)
+        {
+            func layout<Value>(_: Value.Type) throws -> CValueType {
+                try SwiftValueCodec<Value>(position: .receiver).type
+            }
+            if let declared = try? _openExistential(metadata, do: layout) {
+                do {
+                    try SwiftDeclaredLowering.check(
+                        representation,
+                        layout: _openExistential(representation, do: layout),
+                        as: name,
+                        declared: declared,
+                        position: .receiver
+                    )
+                } catch let ABIResolutionError.signatureMismatch(mismatch) {
+                    throw ABIResolutionError.signatureMismatch(mismatch.at(.receiver))
+                }
+            }
+        }
         return (
             try SwiftReceiverPlan(
                 codec: codec,
@@ -555,7 +580,11 @@ public actor NativeSwiftType: Hashable {
                         declaredSignature: declaredSignature,
                         valueABIs: valueABIs
                     )
-                    if !isComplete { try plan.check(description, representations: representations) }
+                    if isComplete {
+                        try plan.checkLowerings(description)
+                    } else {
+                        try plan.check(description, representations: representations)
+                    }
                     return plan
                 }
             }

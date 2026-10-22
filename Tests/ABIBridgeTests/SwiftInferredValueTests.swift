@@ -854,7 +854,8 @@ struct SwiftInferredValueTests {
             arguments: ["-enable-library-evolution"]
         )
         defer { library.cleanup() }
-        // Complete names skip the signature check that relative names apply.
+        // Complete names accept a host type with another name, but not one
+        // that inference would lower.
         let adapter = "the host type \(String(reflecting: InferredAdapterPoint.self)) is an adapter"
         await expectFailure(
             "\(module).describe(\(module).Point) -> Swift.String",
@@ -937,6 +938,58 @@ struct SwiftInferredValueTests {
                 return false
             }
             return message.contains("is an adapter")
+        }
+    }
+
+    /// A complete declaration compares a host type with the declared type
+    /// once a convention for the declared type is established. Without one,
+    /// the lookup states the host type's convention itself.
+    @Test func adaptersNeedAnEstablishedDeclaredConvention() async throws {
+        let (library, module) = try provider(
+            """
+            @frozen public struct Point {
+                public var x: Double
+                public var y: Double
+            }
+            @inline(never) public func sum(_ p: Point) -> Double { p.x + p.y }
+            """
+        )
+        defer { library.cleanup() }
+        let name = "\(module).sum(\(module).Point) -> Swift.Double"
+        await #expect {
+            _ = try await runtime.resolveSwiftFunction(
+                named: name,
+                as: ((CGPoint) -> Double).self,
+                in: .path(library.libraryURL)
+            )
+        } throws: { error in
+            guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                return false
+            }
+            return message.contains("Cannot infer the Swift calling convention of \(module).Point")
+                && message.contains("valueABIs entry for \(String(reflecting: CGPoint.self))")
+        }
+        let point = try await runtime.resolveSwiftType(
+            named: module + ".Point",
+            in: .path(library.libraryURL)
+        )
+        let sum = try await runtime.resolveSwiftFunction(
+            named: name,
+            as: ((CGPoint) -> Double).self,
+            valueABIs: [point: try .structure(named: "Point", fields: [.double, .double])],
+            in: .path(library.libraryURL)
+        )
+        #expect(try unsafe sum.unsafeInvoke(CGPoint(x: 1.5, y: 2.5)) == 4)
+        do {
+            _ = try await runtime.resolveSwiftFunction(
+                named: name,
+                as: ((CGPoint) -> Double).self,
+                valueABIs: [point: try .structure(named: "Point", fields: [.int64, .int64])],
+                in: .path(library.libraryURL)
+            )
+            Issue.record("CGPoint was accepted for integer fields")
+        } catch let ABIResolutionError.signatureMismatch(mismatch) {
+            #expect(mismatch.position == .argument(0))
         }
     }
 

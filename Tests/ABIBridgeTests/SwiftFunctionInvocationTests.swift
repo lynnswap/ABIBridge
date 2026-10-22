@@ -241,6 +241,38 @@ struct SwiftFunctionInvocationTests {
         #expect([value.a, value.b, value.c, value.d] == [2, 4, 6, 8])
     }
 
+    @Test func completeNamesRejectHostTypesWithAnotherLowering() async throws {
+        let answer = "ABIBridgeTests.swiftABIAnswer() -> Swift.Int32"
+        func expectMismatch<Signature>(
+            _ name: String,
+            as signature: Signature.Type,
+            at position: ABIResolutionError.SignatureMismatch.Position
+        ) {
+            do {
+                _ = try ABIRuntime.shared.resolveSwiftFunctionAndWait(named: name, as: signature)
+                Issue.record("\(signature) resolved \(name)")
+            } catch let ABIResolutionError.signatureMismatch(mismatch) {
+                #expect(mismatch.position == position)
+            } catch {
+                Issue.record("Unexpected error: \(error)")
+            }
+        }
+        expectMismatch(answer, as: (() -> Double).self, at: .result)
+        expectMismatch(answer, as: (() -> Float).self, at: .result)
+        expectMismatch(answer, as: (() -> String).self, at: .result)
+        expectMismatch(
+            "ABIBridgeTests.swiftABINegative(Swift.Int8) -> Swift.Int8",
+            as: ((Double) -> Int8).self,
+            at: .argument(0)
+        )
+        // An adapter that the declaration lowers the same way still resolves.
+        let unsigned = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
+            named: answer,
+            as: (() -> UInt32).self
+        )
+        #expect(try unsafe unsigned.unsafeInvoke() == 42)
+    }
+
     @Test func immutableInterfaceCanBeUsedConcurrently() async throws {
         let function = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ABIBridgeTests.swiftABIString(_:)",

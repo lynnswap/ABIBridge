@@ -1021,6 +1021,139 @@ struct SwiftGenericCallPlan: Sendable {
         }
     }
 
+    /// Checks that a call naming its declaration completely passes each
+    /// argument and the result the way the declaration does.
+    ///
+    /// The complete name selects the declaration, so a host type need not
+    /// have the declared type's Swift name: it stands for the declared type
+    /// when both pass alike. Only values that the host type lowers by itself
+    /// are compared. Runtime values, closures, and generic or opaque positions
+    /// already take their lowering from the declaration, and a typed error
+    /// keeps its exact check.
+    func checkLowerings(_ signature: SwiftFunctionSignature) throws {
+        for (formal, group) in zip(binding.declaration.arguments, parameters.groups) {
+            // A pack is generic, so the declaration lowers its elements.
+            guard case .value(let index) = group else { continue }
+            var formal = formal
+            var actual = signature.parameters[index]
+            var argument = parameters.arguments[index]
+            if case .convention(let codec) = argument,
+                let convention = try binding.conventionArgument(
+                    actual,
+                    for: formal,
+                    defaultConsuming: binding.declaration.consumesArguments
+                )
+            {
+                formal = convention.value
+                actual = convention.wrapper.wrappedType
+                argument = codec.argument
+            }
+            do {
+                try checkLowering(
+                    of: actual,
+                    for: formal,
+                    position: .parameter,
+                    label: "argument \(index)"
+                ) {
+                    func prepare<Value>(_: Value.Type) throws -> CValueType {
+                        try SwiftArgumentCodec<Value>(
+                            defaultConsuming: false,
+                            generic: argument
+                        ).type
+                    }
+                    return try _openExistential(actual, do: prepare)
+                }
+            } catch let ABIResolutionError.signatureMismatch(mismatch) {
+                throw ABIResolutionError.signatureMismatch(mismatch.at(.argument(index)))
+            }
+        }
+        do {
+            try checkLowering(
+                of: signature.result,
+                for: binding.declaration.result,
+                position: .result,
+                label: "the result"
+            ) {
+                func prepare<Value>(_: Value.Type) throws -> CValueType {
+                    try SwiftResultCodec<Value>(generic: result).type
+                }
+                return try _openExistential(signature.result, do: prepare)
+            }
+        } catch let ABIResolutionError.signatureMismatch(mismatch) {
+            throw ABIResolutionError.signatureMismatch(mismatch.at(.result))
+        }
+    }
+
+    /// Compares one position, unless its declared convention is not
+    /// established and a `valueABIs` entry for the host type states it.
+    ///
+    /// - Parameter host: The storage the call gives the host value.
+    private func checkLowering(
+        of actual: Any.Type,
+        for formal: SwiftFormalType,
+        position: SwiftValuePosition,
+        label: String,
+        host: () throws -> CValueType
+    ) throws {
+        guard Self.representsClosedValue(formal, actual: actual, binding: binding) else { return }
+        let declared: CValueType
+        do {
+            if let pointer = try foreignFunctionLayout(formal) {
+                declared = pointer
+            } else {
+                let metadata: Any.Type
+                do {
+                    metadata = try binding.types(formal)[0]
+                } catch ABIResolutionError.declarationNotFound(let declaration) {
+                    // An image can use an imported C type without exporting
+                    // its descriptor, which a valueABIs entry would also need.
+                    throw ABIResolutionError.metadataUnavailable(
+                        "lookup cannot find the metadata of \(formal.spelling): \(declaration.name) is not exported."
+                    )
+                }
+                guard metadata != actual else { return }
+                declared = try SwiftValueSchema.layout(
+                    formal,
+                    actual: metadata,
+                    binding: binding,
+                    position: position
+                )
+            }
+        } catch let error as ABIResolutionError {
+            guard
+                let failure = SwiftDeclaredLowering.unestablished(
+                    error,
+                    host: actual,
+                    declared: formal.spelling,
+                    at: label
+                )
+            else { throw error }
+            // The caller states the convention with the host type's entry.
+            if try binding.explicitHostLayout(actual) != nil
+                || binding.hasExplicitHostField(actual)
+            {
+                return
+            }
+            throw failure
+        }
+        try SwiftDeclaredLowering.check(
+            actual,
+            layout: host(),
+            as: formal.spelling,
+            declared: declared,
+            position: position
+        )
+    }
+
+    /// The storage of a C function pointer or block, or an Optional of one,
+    /// which needs no metadata: each passes as one pointer.
+    private func foreignFunctionLayout(_ formal: SwiftFormalType) throws -> CValueType? {
+        var type = try binding.canonicalType(of: formal)
+        if let wrapped = type.optionalWrapped { type = try binding.canonicalType(of: wrapped) }
+        guard case .foreignFunction = type else { return nil }
+        return try CValueType(scalar: ABIValuePointer)
+    }
+
     /// Whether a call converts a class reference at some position, which a
     /// hook cannot do in the opposite direction.
     func convertsReferences(_ signature: SwiftFunctionSignature) -> Bool {

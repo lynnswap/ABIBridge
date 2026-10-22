@@ -248,6 +248,15 @@ bool ABISwiftValueIsIndirect(const ABIValueType *type);
 /// Whether the value or one of its fields is address-only: formally indirect
 /// whatever its size, as resilient values and generic storage are.
 bool ABISwiftValueIsAddressOnly(const ABIValueType *type);
+/// Whether a value with storage `value` passes as a Swift parameter, whose
+/// tuples expand into separate values, or as a result declared with storage
+/// `declared`: in the same integer and floating register components at the
+/// same offsets, or by address with at least the declared size and alignment.
+/// Scalar signedness and Swift types do not take part.
+bool ABISwiftValuePassesAs(const ABIValueType *value, const ABIValueType *declared, bool result);
+/// Describes how a fixed value passes as a parameter or a result, as
+/// ABISwiftValuePassesAs compares it. Release with ABIFreeString.
+char *ABICopySwiftValueLoweringDescription(const ABIValueType *type, bool result);
 
 /// Calls a thin Swift implementation using prepared register/stack lowering. The caller retains code and all guaranteed arguments and supplies writable, uninitialized result storage. A successful nontrivial result is owned by the caller. No Swift errors, native exceptions or async suspension may cross this boundary. context is the Swift self register, or null for a free function.
 bool ABIUnsafeInvokeSwiftCallInterface(
