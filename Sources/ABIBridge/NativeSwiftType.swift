@@ -379,11 +379,8 @@ public actor NativeSwiftType: Hashable {
         // representation's value.
         var formalSelf: CValueType?
         if let receiverABI {
-            let formalType = try SwiftValueSchema.explicitLayout(
-                of: metadata,
-                abi: receiverABI,
-                source: "receiverABI"
-            )
+            let formalType = try SwiftValueSchema.explicitLayout(of: metadata, abi: receiverABI)
+            try checkOptionalReceiverABI(formalType, generic: generic)
             codec = SwiftReceiverCodec(runtimeType: metadata, formalType: formalType)
             cachedCodec = nil
         } else if (representation == nil || representation == metadata || protocolSelf != nil),
@@ -415,6 +412,32 @@ public actor NativeSwiftType: Hashable {
                 validateClass: representation != nil && representation != metadata
             ),
             cachedCodec
+        )
+    }
+
+    /// Checks that receiverABI for an Optional self, stored as `explicit`,
+    /// passes as the declaration passes self: by address when a generic
+    /// extension's formal self is, and otherwise as the Optional's storage.
+    /// receiverABI states the convention of other self values.
+    private nonisolated func checkOptionalReceiverABI(
+        _ explicit: CValueType,
+        generic: SwiftGenericCallPlan?
+    ) throws {
+        guard metadata is any NativeOptionalValue.Type else { return }
+        let formalSelf: CValueType?
+        do {
+            formalSelf = try generic?.receiverType()
+        } catch {
+            // The declaration does not establish self's convention.
+            return
+        }
+        guard let declared = formalSelf ?? SwiftValueSchema.establishedOptionalStorage(of: metadata)
+        else { return }
+        try SwiftDeclaredLowering.checkExplicit(
+            explicit,
+            statedBy: "receiverABI",
+            forOptional: metadata,
+            own: declared
         )
     }
 
@@ -711,7 +734,7 @@ public actor NativeSwiftType: Hashable {
     ///   - genericArguments: Type arguments introduced by the member.
     ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types, such as structs and enums whose conventions ABIBridge cannot infer from their metadata. They take precedence over conformances and inferred conventions where the signature names their types, but inference does not consult them for the fields of a value it lowers. Inside an Optional, an entry describes only the declaration's own type, not an adapter host type, whose Optional can have another layout. An entry for an Optional itself must pass as Swift passes that Optional when ABIBridge establishes its payload's convention.
     ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
-    ///   - receiverABI: Explicit self ABI; nil uses the type representation or generic declaration.
+    ///   - receiverABI: Explicit self ABI; nil uses the type representation or generic declaration. For an Optional self, it must pass as the declaration passes self: by address in a generic extension, and otherwise as the Optional's enum storage.
     ///   - isMutating: Whether a value receiver is passed inout.
     ///   - isConsuming: Whether the member consumes its receiver.
     /// - Returns: A reusable method with an explicit receiver.
@@ -958,7 +981,7 @@ public actor NativeSwiftType: Hashable {
     ///   - valueType: The incoming value representation.
     ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types, such as structs and enums whose conventions ABIBridge cannot infer from their metadata. They take precedence over conformances and inferred conventions where the signature names their types, but inference does not consult them for the fields of a value it lowers. Inside an Optional, an entry describes only the declaration's own type, not an adapter host type, whose Optional can have another layout. An entry for an Optional itself must pass as Swift passes that Optional when ABIBridge establishes its payload's convention.
     ///   - declaredSignature: The formal setter type and optional canonical generic signature.
-    ///   - receiverABI: Explicit self ABI; nil uses the type representation or generic declaration.
+    ///   - receiverABI: Explicit self ABI; nil uses the type representation or generic declaration. For an Optional self, it must pass as the declaration passes self: by address in a generic extension, and otherwise as the Optional's enum storage.
     ///   - isMutating: An inout override. Nil follows the declaration's default self convention unless consuming is true.
     ///   - isConsuming: Whether the setter consumes its receiver.
     /// - Returns: A reusable method with one explicit value argument.

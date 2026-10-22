@@ -36,8 +36,8 @@ enum SwiftDeclaredLowering {
 
     /// Throws `unsupportedDeclaration` when `explicit`, the storage that
     /// `source` states for the Optional `type`, does not pass as `own`, the
-    /// storage that Swift gives it. The ABI is wrong for any declaration, so
-    /// the failure is not a mismatch with one candidate.
+    /// storage with which Swift passes it there. The ABI is wrong for any
+    /// declaration, so the failure is not a mismatch with one candidate.
     static func checkExplicit(
         _ explicit: CValueType,
         statedBy source: String,
@@ -51,7 +51,7 @@ enum SwiftDeclaredLowering {
         throw ABIResolutionError.unsupportedDeclaration(
             "\(source) for \(String(reflecting: type)) passes it "
                 + "\(description(of: explicit, false)), but Swift passes this Optional "
-                + "\(description(of: own, false)), as its payload's storage decides."
+                + "\(description(of: own, false))."
         )
     }
 

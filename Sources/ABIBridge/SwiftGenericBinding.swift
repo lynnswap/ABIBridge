@@ -1682,7 +1682,7 @@ struct SwiftGenericBinding: Sendable {
         guard let abi = valueABIs[ObjectIdentifier(type)] else { return nil }
         // Without this entry, an Optional's storage follows its payload's.
         let wrapped = (type as? any NativeOptionalValue.Type)?.wrappedType
-        return try SwiftValueSchema.explicitLayout(
+        return try SwiftValueSchema.explicitValueLayout(
             of: type,
             abi: abi,
             source: "The valueABIs entry",

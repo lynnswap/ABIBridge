@@ -216,3 +216,19 @@ public final class OptionalScreenAdapter {
         return Registration(screenID: screenID)
     }
 }
+
+extension Optional {
+    /// The payload's size, or -1 for nil. A generic extension's method takes
+    /// `self` by address, even when the Optional fits a register.
+    @inline(never) public func optionalPayloadSize() -> Int64 {
+        switch self {
+        case .none: -1
+        case .some: Int64(MemoryLayout<Wrapped>.size)
+        }
+    }
+}
+
+extension Optional where Wrapped == UInt32 {
+    /// The screen ID, or -1 for nil. A concrete `self` passes as its enum storage.
+    @inline(never) public func screenIDOrMinusOne() -> Int64 { map { Int64($0) } ?? -1 }
+}

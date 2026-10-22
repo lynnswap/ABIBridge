@@ -88,7 +88,7 @@ struct SwiftValueCodec<Value>: Sendable {
                 ? CValueType(swiftOptionalSingleton: ()) : try metatype.valueType(for: Value.self)
             cValue = nil
         } else if let managed {
-            type = try SwiftValueSchema.explicitLayout(
+            type = try SwiftValueSchema.explicitValueLayout(
                 of: Value.self,
                 abi: managed.swiftABIType,
                 source: "The ABIBridgeSwiftValue conformance"

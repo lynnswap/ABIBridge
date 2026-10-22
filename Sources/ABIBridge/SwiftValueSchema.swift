@@ -307,7 +307,46 @@ enum SwiftValueSchema {
         return try _openExistential(wrapped, do: storage)
     }
 
+    /// The storage Swift gives a value of the Optional `metadata` from its
+    /// payload's storage, `payload` or the payload type's own.
+    ///
+    /// Nil when `metadata` is not an Optional or ABIBridge cannot establish
+    /// the payload's convention, such as an undecided inferred one.
+    static func establishedOptionalStorage(
+        of metadata: Any.Type,
+        payload: CValueType? = nil
+    ) -> CValueType? {
+        guard let wrapped = (metadata as? any NativeOptionalValue.Type)?.wrappedType else {
+            return nil
+        }
+        return try? optionalStorage(
+            of: metadata,
+            wrapped: payload ?? optionalPayloadStorage(wrapped),
+            wrappedType: wrapped
+        )
+    }
+
     /// The storage `abi` describes for a Swift value of `metadata`.
+    static func explicitLayout(of metadata: Any.Type, abi: NativeType) throws -> CValueType {
+        let layout = ABISwiftGetValueLayout(unsafeBitCast(metadata, to: UnsafeRawPointer.self))
+        if let components = abi.cType {
+            guard (layout.size...layout.stride).contains(components.size) else {
+                throw ABIResolutionError.unsupportedDeclaration(
+                    "Swift ABI components must cover the value without exceeding its stride: "
+                        + "\(String(reflecting: metadata))."
+                )
+            }
+            return try CValueType(
+                swiftComponents: components,
+                size: layout.size,
+                alignment: layout.alignment
+            )
+        }
+        return try CValueType(indirectSwiftSize: layout.size, alignment: layout.alignment)
+    }
+
+    /// The storage `abi` describes for a value of `metadata` wherever the
+    /// type occurs as a value, such as an argument, a result, or a field.
     ///
     /// An Optional passes as its enum storage, or by address when its payload
     /// is address-only, whatever ABI describes it. When ABIBridge establishes
@@ -318,38 +357,16 @@ enum SwiftValueSchema {
     ///   - source: What states `abi`, such as "The valueABIs entry".
     ///   - payload: The storage the caller states for an Optional's payload,
     ///     or nil to use the payload's own.
-    static func explicitLayout(
+    static func explicitValueLayout(
         of metadata: Any.Type,
         abi: NativeType,
         source: String,
         payload: CValueType? = nil
     ) throws -> CValueType {
-        let layout = ABISwiftGetValueLayout(unsafeBitCast(metadata, to: UnsafeRawPointer.self))
-        let explicit: CValueType
-        if let components = abi.cType {
-            guard (layout.size...layout.stride).contains(components.size) else {
-                throw ABIResolutionError.unsupportedDeclaration(
-                    "Swift ABI components must cover the value without exceeding its stride: "
-                        + "\(String(reflecting: metadata))."
-                )
-            }
-            explicit = try CValueType(
-                swiftComponents: components,
-                size: layout.size,
-                alignment: layout.alignment
-            )
-        } else {
-            explicit = try CValueType(indirectSwiftSize: layout.size, alignment: layout.alignment)
-        }
-        // ABIBridge cannot pass some Optionals by itself, such as one whose
-        // payload has an undecided inferred convention; `abi` states theirs.
-        if let wrapped = (metadata as? any NativeOptionalValue.Type)?.wrappedType,
-            let own = try? optionalStorage(
-                of: metadata,
-                wrapped: payload ?? optionalPayloadStorage(wrapped),
-                wrappedType: wrapped
-            )
-        {
+        let explicit = try explicitLayout(of: metadata, abi: abi)
+        // Without an established storage, such as for an undecided inferred
+        // payload, `abi` states the Optional's convention.
+        if let own = establishedOptionalStorage(of: metadata, payload: payload) {
             try SwiftDeclaredLowering.checkExplicit(
                 explicit,
                 statedBy: source,

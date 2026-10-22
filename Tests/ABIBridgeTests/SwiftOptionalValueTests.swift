@@ -192,6 +192,41 @@ struct SwiftOptionalValueTests {
         } throws: { Self.rejectsExplicitABI($0, statedBy: "The ABIBridgeSwiftValue conformance") }
     }
 
+    /// receiverABI for an Optional self must pass as the declaration passes
+    /// self, which can differ from the Optional's own storage.
+    @Test func optionalReceiverABIsFollowTheDeclaredSelf() async throws {
+        let type = try await ABIRuntime.shared.resolveSwiftType(
+            named: "Swift.Optional",
+            as: UInt32?.self,
+            genericArguments: [.type(UInt32.self)]
+        )
+        let opaque = try NativeType.opaque(named: "Optional<UInt32>")
+        // A generic extension's method takes self by address.
+        for receiverABI in [nil, opaque] {
+            let size = try await type.resolveMethod(
+                named: "optionalPayloadSize()",
+                as: (() -> Int64).self,
+                receiverABI: receiverABI
+            )
+            #expect(try unsafe size.unsafeInvoke(on: UInt32?(7)) == 4)
+            #expect(try unsafe size.unsafeInvoke(on: UInt32?.none) == -1)
+        }
+        // A concrete self passes as the Optional's storage.
+        let screenID = try await type.resolveMethod(
+            named: "screenIDOrMinusOne()",
+            as: (() -> Int64).self
+        )
+        #expect(try unsafe screenID.unsafeInvoke(on: UInt32?(7)) == 7)
+        #expect(try unsafe screenID.unsafeInvoke(on: UInt32?.none) == -1)
+        await #expect {
+            _ = try await type.resolveMethod(
+                named: "screenIDOrMinusOne()",
+                as: (() -> Int64).self,
+                receiverABI: opaque
+            )
+        } throws: { Self.rejectsExplicitABI($0, statedBy: "receiverABI") }
+    }
+
     private static func rejectsExplicitABI(_ error: any Error, statedBy source: String) -> Bool {
         guard case ABIResolutionError.unsupportedDeclaration(let message) = error else {
             return false
