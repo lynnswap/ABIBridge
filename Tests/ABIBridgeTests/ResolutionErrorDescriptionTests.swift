@@ -12,9 +12,10 @@ struct ResolutionErrorDescriptionTests {
         language: .swift
     )
 
-    @Test(arguments: [
+    // Each case's description. The explicit type keeps type checking fast.
+    private static let descriptions: [(ABIResolutionError, String)] = [
         (
-            ABIResolutionError.imageUnavailable,
+            .imageUnavailable,
             "The image catalog or a registered image is not currently available for lookup."
         ),
         (.imageNotLoaded, "No loaded image matches the requested scope."),
@@ -75,7 +76,9 @@ struct ResolutionErrorDescriptionTests {
             .invalidAddress,
             "The address of the matching symbol does not hold the requested kind of storage."
         ),
-    ])
+    ]
+
+    @Test(arguments: descriptions)
     func describesEachCase(_ error: ABIResolutionError, as message: String) {
         #expect(error.localizedDescription == message)
         #expect(String(describing: error) == message)
