@@ -830,6 +830,8 @@ struct NativeSwiftClosureTests {
             }
             public func closureProbeTupleType() -> Any.Type { (AuthWide, Int64).self }
             @inline(never) public func closureProbeTuple(_ callback: () -> (AuthWide, Int64)) -> Int64 { callback().1 }
+            public func closureProbeOpenTupleType() -> Any.Type { (AuthOpen, Int64).self }
+            @inline(never) public func closureProbeOpenTuple(_ callback: () -> (AuthOpen, Int64)) -> Int64 { callback().1 }
 
             """
             + types.enumerated().map { index, type in
@@ -845,7 +847,9 @@ struct NativeSwiftClosureTests {
         let found = try arm64eClosureCallDiscriminators(
             source: source,
             arguments: ["-module-name", module] + flags,
-            functions: types.indices.map { "closureProbe\($0)" } + ["closureProbeTuple"]
+            functions: types.indices.map { "closureProbe\($0)" } + [
+                "closureProbeTuple", "closureProbeOpenTuple",
+            ]
         )
         let runtime = ABIRuntime()
         let typeAt = try await runtime.resolveSwiftFunction(
@@ -892,7 +896,7 @@ struct NativeSwiftClosureTests {
             as: (() -> Any.Type).self,
             in: .path(library.libraryURL)
         )
-        let expected = try #require(found.last)
+        let expected = found[types.count]
         #expect(
             swiftClosureDiscriminator(
                 parameters: [],
@@ -924,6 +928,43 @@ struct NativeSwiftClosureTests {
                 continue
             }
             #expect(plan.discriminator == expected, "valueABIs: \(valueABIs.count)")
+        }
+        // A resilient element is formally indirect, so it hashes as
+        // `-indirect`, as does an opaque layout of it.
+        let openTupleType = try await runtime.resolveSwiftFunction(
+            named: module + ".closureProbeOpenTupleType()",
+            as: (() -> Any.Type).self,
+            in: .path(library.libraryURL)
+        )
+        let openExpected = found[types.count + 1]
+        #expect(
+            swiftClosureDiscriminator(
+                parameters: [],
+                results: try swiftClosureAuthTypes(
+                    unsafe openTupleType.unsafeInvoke(),
+                    position: .result
+                )
+            ) == openExpected
+        )
+        let open = try await runtime.resolveSwiftType(
+            named: module + ".AuthOpen",
+            in: .path(library.libraryURL)
+        )
+        let openABIs: [[NativeSwiftType: NativeType]] =
+            evolution ? [[:], [open: try .opaque(named: "AuthOpen")]] : [[:]]
+        for valueABIs in openABIs {
+            let probe = try await runtime.resolveSwiftFunction(
+                named: module + ".closureProbeOpenTuple(_:)",
+                as: ((NativeSwiftClosure<() -> NativeSwiftValue>) -> Int64).self,
+                valueABIs: valueABIs,
+                in: .path(library.libraryURL)
+            )
+            let arguments = try #require(probe.call.generic).parameters.arguments
+            guard case .closure(let plan, _) = arguments[0] else {
+                Issue.record("closureProbeOpenTuple has no closure plan")
+                continue
+            }
+            #expect(plan.discriminator == openExpected, "open valueABIs: \(valueABIs.count)")
         }
     }
     #endif
