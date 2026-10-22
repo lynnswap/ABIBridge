@@ -16,16 +16,13 @@ func swiftClosureAuthType(_ type: Any.Type, position: SwiftValuePosition) throws
     // An indirect parameter or result is hashed opaquely.
     if let value = type as? any ABIBridgeSwiftValue.Type {
         guard let components = value.swiftABIType.cType else { return "-indirect" }
-        if withExtendedLifetime(components, { ABISwiftValueIsIndirect(components.handle) }) {
-            return "-indirect"
-        }
+        if swiftClosureHashesIndirectly(components, at: position) { return "-indirect" }
     }
     if SwiftInferredValue.lowersByInference(type), !(type is any NativeOptionalValue.Type) {
         func layout<Value>(_: Value.Type) throws -> CValueType {
             try SwiftValueCodec<Value>(position: position).type
         }
-        let layout = try _openExistential(type, do: layout)
-        if withExtendedLifetime(layout, { ABISwiftValueIsIndirect(layout.handle) }) {
+        if swiftClosureHashesIndirectly(try _openExistential(type, do: layout), at: position) {
             return "-indirect"
         }
     }
@@ -34,12 +31,24 @@ func swiftClosureAuthType(_ type: Any.Type, position: SwiftValuePosition) throws
     while let optional = payload as? any NativeOptionalValue.Type { payload = optional.wrappedType }
     if type is any NativeOptionalValue.Type, !RuntimeFunctionMetadata.isSwiftFunction(payload) {
         func layout<Value>(_: Value.Type) throws -> CValueType { try SwiftValueCodec<Value>().type }
-        let layout = try _openExistential(type, do: layout)
-        if withExtendedLifetime(layout, { ABISwiftValueIsIndirect(layout.handle) }) {
+        if swiftClosureHashesIndirectly(try _openExistential(type, do: layout), at: position) {
             return "-indirect"
         }
     }
     return try swiftClosureTypeHash(type)
+}
+
+/// Whether a value with `layout` is hashed as `-indirect` at `position`.
+///
+/// Swift passes a whole parameter or result above four registers by address
+/// and hashes it so. A tuple result keeps its elements as separate SIL
+/// results, which share one return buffer when they are that large, so an
+/// element is hashed by its type unless it is formally indirect.
+func swiftClosureHashesIndirectly(_ layout: CValueType, at position: SwiftValuePosition) -> Bool {
+    withExtendedLifetime(layout) {
+        position == .nested
+            ? ABISwiftValueIsAddressOnly(layout.handle) : ABISwiftValueIsIndirect(layout.handle)
+    }
 }
 
 /// Swift's `hashStringForType`, which hashes a value type within any Optionals.

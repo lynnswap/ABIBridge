@@ -782,7 +782,8 @@ struct NativeSwiftClosureTests {
     /// and otherwise as its declaration without generic arguments, both for
     /// a host value of its own type and for a declaration's closure plan. A
     /// declaration in a constrained extension includes the extension's
-    /// generic signature, which runtime type names omit.
+    /// generic signature, which runtime type names omit. A tuple result's
+    /// element is hashed by its type unless it is formally indirect.
     @Test(arguments: [false, true])
     func inferredAuthenticationMatchesNativeCompilerCalls(evolution: Bool) async throws {
         // Library evolution does not record whether a generic struct is frozen.
@@ -824,6 +825,8 @@ struct NativeSwiftClosureTests {
                 let types: [Any.Type] = [\(types.map { $0 + ".self" }.joined(separator: ", "))]
                 return types[Int(index)]
             }
+            public func closureProbeTupleType() -> Any.Type { (AuthWide, Int64).self }
+            @inline(never) public func closureProbeTuple(_ callback: () -> (AuthWide, Int64)) -> Int64 { callback().1 }
 
             """
             + types.enumerated().map { index, type in
@@ -839,7 +842,7 @@ struct NativeSwiftClosureTests {
         let found = try arm64eClosureCallDiscriminators(
             source: source,
             arguments: ["-module-name", module] + flags,
-            functions: types.indices.map { "closureProbe\($0)" }
+            functions: types.indices.map { "closureProbe\($0)" } + ["closureProbeTuple"]
         )
         let runtime = ABIRuntime()
         let typeAt = try await runtime.resolveSwiftFunction(
@@ -878,6 +881,46 @@ struct NativeSwiftClosureTests {
                 continue
             }
             #expect(plan.discriminator == expected, "\(name)")
+        }
+        // AuthWide passes by address as a whole result, but a tuple result
+        // keeps it as a direct SIL result that shares one return buffer.
+        let tupleType = try await runtime.resolveSwiftFunction(
+            named: module + ".closureProbeTupleType()",
+            as: (() -> Any.Type).self,
+            in: .path(library.libraryURL)
+        )
+        let expected = try #require(found.last)
+        #expect(
+            swiftClosureDiscriminator(
+                parameters: [],
+                results: try swiftClosureAuthTypes(
+                    unsafe tupleType.unsafeInvoke(),
+                    position: .result
+                )
+            ) == expected
+        )
+        // An explicit layout of the element follows the same rule.
+        let wide = try await runtime.resolveSwiftType(
+            named: module + ".AuthWide",
+            in: .path(library.libraryURL)
+        )
+        let wideABI = try NativeType.structure(
+            named: "AuthWide",
+            fields: Array(repeating: .int64, count: 5)
+        )
+        for valueABIs: [NativeSwiftType: NativeType] in [[:], [wide: wideABI]] {
+            let probe = try await runtime.resolveSwiftFunction(
+                named: module + ".closureProbeTuple(_:)",
+                as: ((NativeSwiftClosure<() -> NativeSwiftValue>) -> Int64).self,
+                valueABIs: valueABIs,
+                in: .path(library.libraryURL)
+            )
+            let arguments = try #require(probe.call.generic).parameters.arguments
+            guard case .closure(let plan, _) = arguments[0] else {
+                Issue.record("closureProbeTuple has no closure plan")
+                continue
+            }
+            #expect(plan.discriminator == expected, "valueABIs: \(valueABIs.count)")
         }
     }
     #endif

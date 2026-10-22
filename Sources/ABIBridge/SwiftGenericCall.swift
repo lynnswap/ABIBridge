@@ -1969,7 +1969,7 @@ struct SwiftGenericCallPlan: Sendable {
             binding: binding,
             position: position
         )
-        if ABISwiftValueIsIndirect(layout.handle) { return ["-indirect"] }
+        if swiftClosureHashesIndirectly(layout, at: position) { return ["-indirect"] }
         return [try swiftClosureTypeHash(actual)]
     }
 
