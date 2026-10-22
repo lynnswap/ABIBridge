@@ -124,3 +124,15 @@ public struct OptionalRuntimeRecord {
 ) -> String {
     describeOptionalFrozenRecord(pair.0) + "@\(pair.1)"
 }
+
+@inline(never) public func makeOptionalRuntimeRecordTuple(
+    _ count: Int64
+) -> (OptionalRuntimeRecord, Int64)? {
+    count < 0 ? nil : (OptionalRuntimeRecord(name: "record", count: count), count + 1)
+}
+
+@inline(never) public func describeOptionalRuntimeRecordTuple(
+    _ pair: (OptionalRuntimeRecord, Int64)?
+) -> String {
+    pair.map { "\($0.0.name)#\($0.0.count)@\($0.1)" } ?? "nil"
+}

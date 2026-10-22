@@ -171,6 +171,23 @@ struct SwiftOptionalValueTests {
         #expect(pair.0?.count == 6 && pair.1 == 6)
         #expect(try unsafe describePair.unsafeInvoke(pair) == "frozen#6@6")
         #expect(try unsafe describePair.unsafeInvoke((nil, 2)) == "nil@2")
+
+        // A tuple payload's element takes its entry too.
+        let makeTuple = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeOptionalRuntimeRecordTuple(_:)",
+            as: ((Int64) -> (OptionalRuntimeRecord, Int64)?).self,
+            valueABIs: abis
+        )
+        let describeTuple = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.describeOptionalRuntimeRecordTuple(_:)",
+            as: (((OptionalRuntimeRecord, Int64)?) -> String).self,
+            valueABIs: abis
+        )
+        #expect(try unsafe makeTuple.unsafeInvoke(-1) == nil)
+        let tuple = try #require(try unsafe makeTuple.unsafeInvoke(4))
+        #expect(tuple.0.name == "record" && tuple.0.count == 4 && tuple.1 == 5)
+        #expect(try unsafe describeTuple.unsafeInvoke(tuple) == "record#4@5")
+        #expect(try unsafe describeTuple.unsafeInvoke(nil) == "nil")
     }
 
     @Test func callbacksExchangeOptionalRuntimeValues() async throws {

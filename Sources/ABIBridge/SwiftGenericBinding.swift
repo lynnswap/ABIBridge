@@ -1590,19 +1590,47 @@ struct SwiftGenericBinding: Sendable {
     }
 
     /// The storage of a closed host Optional whose payload, within any
-    /// Optionals, has a `valueABIs` layout, as runtime values lower such an
-    /// Optional. Call it after `validateInferredHostValue`: an adapter
-    /// payload's Optional need not match the native Optional's layout.
+    /// Optionals, has a `valueABIs` layout or is a tuple with an element that
+    /// has one, as runtime values lower such an Optional. Call it after
+    /// `validateInferredHostValue`: an adapter payload's Optional need not
+    /// match the native Optional's layout.
     func explicitHostOptionalType(_ type: Any.Type) throws -> CValueType? {
         guard let optional = type as? any NativeOptionalValue.Type else { return nil }
         let wrapped = optional.wrappedType
-        guard let payload = try explicitHostValueType(wrapped) ?? explicitHostOptionalType(wrapped)
+        guard let payload = try explicitHostLayout(wrapped) ?? explicitHostTupleType(wrapped)
         else { return nil }
         return try SwiftValueSchema.optionalStorage(
             of: type,
             wrapped: payload,
             wrappedType: wrapped
         )
+    }
+
+    /// The storage of a closed host tuple with an element that has a
+    /// `valueABIs` layout, as an Optional payload stores it: the tuple's
+    /// other elements keep their own Swift storage.
+    private func explicitHostTupleType(_ type: Any.Type) throws -> CValueType? {
+        guard let tuple = SwiftTupleMetadata(type), try hasExplicitHostField(type) else {
+            return nil
+        }
+        func field<Element>(_ element: Element.Type) throws -> CValueType {
+            if let explicit = try explicitHostLayout(element) ?? explicitHostTupleType(element) {
+                return explicit
+            }
+            guard !(element is any ABIBridgeValue.Type) || element is any ABIBridgeSwiftValue.Type,
+                !(element is any SwiftClosureValue.Type)
+            else {
+                throw ABIResolutionError.unsupportedDeclaration(
+                    "Tuple elements require their native Swift storage representation."
+                )
+            }
+            return try SwiftValueCodec<Element>().type
+        }
+        let fields = try tuple.elements.map { try _openExistential($0.type, do: field) }
+        func layout<Value>(_ value: Value.Type) throws -> CValueType {
+            try tuple.layout(for: value, fields: fields)
+        }
+        return try _openExistential(type, do: layout)
     }
 
     /// The `valueABIs` layout of a validated closed host value: its own
