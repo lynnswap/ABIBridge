@@ -548,6 +548,11 @@ enum SwiftInferredValue {
                 of: metadata
             )
         }
+        // An enum without bytes, such as one with a single case and no
+        // payload, passes nothing.
+        if layout.size == 0 {
+            return try aggregate([], offsets: [], size: 0, alignment: layout.alignment, of: metadata)
+        }
         // An enum with exactly one case, which has a payload, lowers as that
         // payload. Other enums pass their bytes as integer chunks.
         // https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/IRGen/GenEnum.cpp

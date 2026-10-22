@@ -285,6 +285,7 @@ struct SwiftInferredValueTests {
         let (library, module) = try provider(
             """
             public struct Empty { public init() {} }
+            public enum Marker { case only }
             // Its String field sets the addressable bit, so the module's
             // clear bits certify its other types.
             public struct Label {
@@ -297,10 +298,13 @@ struct SwiftInferredValueTests {
                 public var g: Empty
                 public var unit: ()
                 public var h: Int8
-                public init() { e = Empty(); f = 1.5; g = Empty(); unit = (); h = 7 }
+                public var m: Marker
+                public init() { e = Empty(); f = 1.5; g = Empty(); unit = (); h = 7; m = .only }
             }
             @inline(never) public func makeWithEmpty() -> WithEmpty { WithEmpty() }
-            @inline(never) public func describeWithEmpty(_ v: WithEmpty) -> String { "\\(v.f),\\(v.h)" }
+            @inline(never) public func describeWithEmpty(_ v: WithEmpty) -> String { "\\(v.f),\\(v.h),\\(v.m)" }
+            @inline(never) public func makeMarker() -> Marker { .only }
+            @inline(never) public func describeMarker(_ m: Marker) -> String { "\\(m)" }
             """
         )
         defer { library.cleanup() }
@@ -309,7 +313,11 @@ struct SwiftInferredValueTests {
                 module + ".makeWithEmpty()",
                 module + ".describeWithEmpty(_:)",
                 in: library
-            ) == "1.5,7"
+            ) == "1.5,7,only"
+        )
+        // An enum without bytes passes nothing, alone or as a field.
+        #expect(
+            try await describeMade(module + ".makeMarker()", module + ".describeMarker(_:)", in: library) == "only"
         )
     }
 
