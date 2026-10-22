@@ -672,6 +672,14 @@ enum SwiftInferredValue {
 
 // MARK: Module evidence
 
+/// The mangled declaration, such as `8ProbeLib5PointV`, under which the image
+/// that defines a struct or enum exports the type's nominal type descriptor.
+/// A runtime type name omits a constrained extension's generic signature,
+/// which this declaration includes.
+func swiftExportedTypeDeclaration(_ metadata: Any.Type) -> String? {
+    ModuleContext.exportedDeclaration(of: metadata)
+}
+
 /// The image and module that declare a nominal type, and their evidence.
 private struct ModuleContext {
     let name: String?
@@ -688,60 +696,75 @@ private struct ModuleContext {
     }
     private struct Image: Sendable {
         let image: RuntimeImage?
-        let setsAddressableForDependencies: Bool
     }
-    private static let images = Mutex<[Key: Image]>([:])
+    private static let images = Mutex<[UInt: Image]>([:])
+    private static let addressability = Mutex<[Key: Bool]>([:])
 
     init(_ metadata: Any.Type) {
         let pointer = unsafeBitCast(metadata, to: UnsafeRawPointer.self)
         name = ABISwiftTypeModuleName(pointer).map { String(cString: $0) }
-        var info = Dl_info()
         guard let name, let descriptor = ABISwiftTypeDescriptor(pointer),
-            dladdr(descriptor, &info) != 0,
-            let header = info.dli_fbase, let path = info.dli_fname
+            let (header, image) = Self.image(defining: descriptor)
         else {
             image = nil; declaration = nil; evidence = nil; setsAddressableForDependencies = false
             return
         }
-        let key = Key(header: UInt(bitPattern: header), module: name)
-        let cached: Image
-        if let image = Self.images.withLock({ $0[key] }) {
-            cached = image
+        let key = Key(header: header, module: name)
+        if let sets = Self.addressability.withLock({ $0[key] }) {
+            setsAddressableForDependencies = sets
         } else {
-            // A missing image leaves only metadata evidence.
-            let image = Image(
-                image: try? RuntimeImage.opening(path: String(cString: path), loading: .loadedOnly),
-                setsAddressableForDependencies: ABISwiftModuleSetsAddressableForDependencies(
-                    pointer
-                )
-            )
-            cached = Self.images.withLock { images in
-                images[key] = images[key] ?? image
-                return images[key]!
-            }
+            let sets = ABISwiftModuleSetsAddressableForDependencies(pointer)
+            Self.addressability.withLock { $0[key] = sets }
+            setsAddressableForDependencies = sets
         }
-        image = cached.image
-        setsAddressableForDependencies = cached.setsAddressableForDependencies
-        guard let image = cached.image else {
+        self.image = image
+        // A missing image leaves only metadata evidence.
+        guard let image else {
             declaration = nil; evidence = nil
             return
         }
-        let mangled = _mangledTypeName(metadata)
-        evidence = mangled.flatMap { Self.mangling(ofModule: name, in: $0) }.map {
-            RuntimeSwiftModuleEvidence.evidence(forModule: $0, in: image)
+        evidence = _mangledTypeName(metadata).flatMap { Self.mangling(ofModule: name, in: $0) }
+            .map { RuntimeSwiftModuleEvidence.evidence(forModule: $0, in: image) }
+        declaration = RuntimeSymbolResolver.shared.exportedSwiftTypeDeclaration(
+            at: UInt64(UInt(bitPattern: descriptor)),
+            in: image
+        )
+    }
+
+    /// The mangled declaration under which the image that defines a struct
+    /// or enum exports the type's nominal type descriptor.
+    static func exportedDeclaration(of metadata: Any.Type) -> String? {
+        guard
+            let descriptor = ABISwiftTypeDescriptor(
+                unsafeBitCast(metadata, to: UnsafeRawPointer.self)
+            ),
+            let image = image(defining: descriptor)?.image
+        else { return nil }
+        return RuntimeSymbolResolver.shared.exportedSwiftTypeDeclaration(
+            at: UInt64(UInt(bitPattern: descriptor)),
+            in: image
+        )
+    }
+
+    /// The header of the image that defines `descriptor`, and the image when
+    /// ABIBridge can read its exports.
+    private static func image(
+        defining descriptor: UnsafeRawPointer
+    ) -> (header: UInt, image: RuntimeImage?)? {
+        var info = Dl_info()
+        guard dladdr(descriptor, &info) != 0, let base = info.dli_fbase,
+            let path = info.dli_fname
+        else { return nil }
+        let header = UInt(bitPattern: base)
+        if let cached = images.withLock({ $0[header] }) { return (header, cached.image) }
+        let image = Image(
+            image: try? RuntimeImage.opening(path: String(cString: path), loading: .loadedOnly)
+        )
+        let cached = images.withLock { images in
+            images[header] = images[header] ?? image
+            return images[header]!
         }
-        let address = UInt64(UInt(bitPattern: descriptor))
-        // The runtime spelling finds standard library substitutions such as
-        // `Si`, whose symbols lie outside the module's context; the module's
-        // exports by address find declarations the runtime spells otherwise.
-        if let spelled = mangled.flatMap({ Self.declaration(of: $0, metadata: metadata) }),
-            RuntimeSymbolResolver.shared.exportedAddress(named: "_$s" + spelled + "Mn", in: image)
-                == address
-        {
-            declaration = spelled
-        } else {
-            declaration = evidence?.exportedDeclaration(at: address)
-        }
+        return (header, cached.image)
     }
 
     /// The module's context as it starts a mangled type name and the
@@ -801,17 +824,5 @@ private struct ModuleContext {
         } while substitutes
         guard identifier.elementsEqual(name.utf8) else { return nil }
         return String(decoding: text[..<position], as: UTF8.self)
-    }
-
-    private static func declaration(of mangled: String, metadata: Any.Type) -> String? {
-        var info = ABISwiftValueDescriptorInfo()
-        guard
-            ABISwiftGetValueDescriptorInfo(
-                unsafeBitCast(metadata, to: UnsafeRawPointer.self),
-                &info
-            ),
-            info.isGeneric
-        else { return mangled }
-        return try? swiftNominalClosureName(mangled)
     }
 }

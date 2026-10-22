@@ -751,6 +751,13 @@ const char *ABISwiftTypeModuleName(const void *metadata) {
     return descriptor ? declaringModule(descriptor) : nullptr;
 }
 
+bool ABISwiftTypeIsDeclaredInExtension(const void *metadata) {
+    for (const char *context = typeContextDescriptor(metadata); context; context = parentContext(context)) {
+        if ((read<uint32_t>(context) & 0x1f) == 1) return true;
+    }
+    return false;
+}
+
 bool ABISwiftModuleSetsAddressableForDependencies(const void *metadata) {
     const char *descriptor = typeContextDescriptor(metadata);
     const char *module = descriptor ? declaringModule(descriptor) : nullptr;

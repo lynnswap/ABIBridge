@@ -87,10 +87,31 @@ func swiftClosureTypeHash(_ type: Any.Type) throws -> String {
         name = collection.mangledDeclaration
     }
     let kind = runtimeMetadataKind(type)
-    if kind == .structure || kind == .enumeration, name.hasSuffix("G") {
-        name = try swiftNominalClosureName(name)
+    if kind == .structure || kind == .enumeration {
+        name = try swiftNominalClosureDeclaration(type, runtimeName: name)
     }
     return "$s" + name
+}
+
+/// A struct or enum's declaration as the compiler mangles it in a
+/// discriminator. A runtime type name omits the generic signature of a
+/// constrained extension, so a type declared in an extension takes the name
+/// of its exported descriptor.
+private func swiftNominalClosureDeclaration(
+    _ type: Any.Type,
+    runtimeName: String
+) throws -> String {
+    guard ABISwiftTypeIsDeclaredInExtension(unsafeBitCast(type, to: UnsafeRawPointer.self)) else {
+        return runtimeName.hasSuffix("G") ? try swiftNominalClosureName(runtimeName) : runtimeName
+    }
+    guard let declaration = swiftExportedTypeDeclaration(type) else {
+        throw ABIResolutionError.metadataUnavailable(
+            "No Swift closure type identity for \(String(reflecting: type)): it is declared in an "
+                + "extension, and its image does not export its nominal type descriptor, whose "
+                + "name includes the extension's generic signature."
+        )
+    }
+    return declaration
 }
 
 // A bound nominal mangling contains its declaration before the generic

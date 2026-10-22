@@ -735,6 +735,28 @@ package final class SymbolIndex {
         return symbols
     }
 
+    /// The declaration, such as `8ProbeLib5PointV`, under which this image
+    /// exports the Swift nominal type descriptor at `address`. Nil when the
+    /// image exports no such descriptor, or exports it under two names.
+    package func exportedSwiftTypeDeclaration(at address: UInt64) -> String? {
+        exportedTypeDeclarations[address]
+    }
+
+    private lazy var exportedTypeDeclarations: [UInt64: String] = {
+        var declarations: [UInt64: String] = [:]
+        var ambiguous: Set<UInt64> = []
+        for symbol in exportedSymbols(withPrefix: "_$s") where symbol.name.hasSuffix("Mn") {
+            let declaration = String(symbol.name.dropFirst(3).dropLast(2))
+            if let other = declarations.updateValue(declaration, forKey: symbol.address),
+                other != declaration
+            {
+                ambiguous.insert(symbol.address)
+            }
+        }
+        for address in ambiguous { declarations[address] = nil }
+        return declarations
+    }()
+
     private func symbols(
         for query: SymbolQuery,
         swiftBucket: SwiftBucket?,

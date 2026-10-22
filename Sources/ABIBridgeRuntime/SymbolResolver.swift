@@ -602,6 +602,21 @@ package final class RuntimeSymbolResolver: Sendable {
         }
     }
 
+    /// The declaration, such as `8ProbeLib5PointV`, under which `image`
+    /// exports the Swift nominal type descriptor at `address`.
+    ///
+    /// A runtime type name can spell a declaration differently from its
+    /// symbols: it omits the generic signature of a constrained extension.
+    package func exportedSwiftTypeDeclaration(
+        at address: UInt64,
+        in image: RuntimeImage
+    ) -> String? {
+        let index = state.withLock { $0.index(for: image) }
+        return withExtendedLifetime(index) {
+            state.withLock { _ in index.exportedSwiftTypeDeclaration(at: address) }
+        }
+    }
+
     /// The symbols `image` exports with names starting with `prefix`.
     package func exportedSymbols(
         withPrefix prefix: String,

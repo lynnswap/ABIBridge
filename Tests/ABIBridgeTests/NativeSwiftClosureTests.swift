@@ -780,13 +780,20 @@ struct NativeSwiftClosureTests {
 
     /// An inferred struct hashes as `-indirect` when it passes by address,
     /// and otherwise as its declaration without generic arguments, both for
-    /// a host value of its own type and for a declaration's closure plan.
+    /// a host value of its own type and for a declaration's closure plan. A
+    /// declaration in a constrained extension includes the extension's
+    /// generic signature, which runtime type names omit.
     @Test(arguments: [false, true])
     func inferredAuthenticationMatchesNativeCompilerCalls(evolution: Bool) async throws {
         // Library evolution does not record whether a generic struct is frozen.
         let types =
-            ["AuthPoint", "AuthWide", "AuthOpen"]
-            + (evolution ? [] : ["AuthPair<Double>", "AuthPair<Int8>"])
+            ["AuthPoint", "AuthWide", "AuthOpen", "ClosedRange<Int>.Index"]
+            + (evolution
+                ? []
+                : [
+                    "AuthPair<Double>", "AuthPair<Int8>", "AuthBox<Int>.Inner",
+                    "AuthBox<Int>.Kind", "AuthBox<Int>.Same",
+                ])
         let module = "ClosureAuth_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
         let source =
             """
@@ -804,6 +811,14 @@ struct NativeSwiftClosureTests {
             }
             @frozen public struct AuthPair<T> {
                 public var a: T, b: T
+            }
+            public struct AuthBox<T> {}
+            extension AuthBox where T: Equatable {
+                public struct Inner { public var x: Double, y: Double }
+                public enum Kind { case real(Double), none }
+            }
+            extension AuthBox where T == Int {
+                public struct Same { public var x: Double, y: Double }
             }
             public func closureProbeType(_ index: Int64) -> Any.Type {
                 let types: [Any.Type] = [\(types.map { $0 + ".self" }.joined(separator: ", "))]
@@ -832,6 +847,18 @@ struct NativeSwiftClosureTests {
             as: ((Int64) -> Any.Type).self,
             in: .path(library.libraryURL)
         )
+        // A relative name does not find every declaration whose signature
+        // names a type of a constrained extension, such as
+        // `ClosedRange<Int>.Index`.
+        let exports = try library.exportedSymbols()
+        func completeName(_ function: String) throws -> String {
+            let symbol = try #require(
+                exports.first { $0.contains("\(function.utf8.count)\(function)y") }
+            )
+            return try #require(
+                DeclarationKey.demangle(String(symbol.dropFirst()), language: .swift)
+            )
+        }
         for (index, (name, expected)) in zip(types, found).enumerated() {
             let type = try unsafe typeAt.unsafeInvoke(Int64(index))
             let host = swiftClosureDiscriminator(
@@ -840,7 +867,7 @@ struct NativeSwiftClosureTests {
             )
             #expect(host == expected, "\(name)")
             let probe = try await runtime.resolveSwiftFunction(
-                named: module + ".closureProbe\(index)(_:_:)",
+                named: try completeName("closureProbe\(index)"),
                 as: ((NativeSwiftClosure<(NativeSwiftValue) -> NativeSwiftValue>, NativeSwiftValue) ->
                     NativeSwiftValue).self,
                 in: .path(library.libraryURL)
