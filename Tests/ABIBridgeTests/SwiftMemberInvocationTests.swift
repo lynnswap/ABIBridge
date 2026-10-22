@@ -183,6 +183,49 @@ extension NativeValue {
 
 struct SwiftMemberInvocationTests {
     #if os(macOS)
+    @Test func protocolExtensionReceiversPassRepresentationsAsIndirectSelf() async throws {
+        let module = "IndirectSelf_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+        let library = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                public protocol Valued {
+                    var value: Int64 { get }
+                }
+                extension Valued {
+                    @inline(never) public func doubled() -> Int64 { value * 2 }
+                }
+                public struct Counter: Valued {
+                    public var value: Int64
+                }
+                """,
+            linkArguments: ["-enable-library-evolution"]
+        )
+        defer { library.cleanup() }
+        let runtime = ABIRuntime()
+        let member = "(extension in \(module)):\(module).Valued.doubled() -> Swift.Int64"
+        // The extension takes Self by address, so the representation's storage
+        // stands for the resilient value.
+        let counter = try await runtime.resolveSwiftType(
+            named: module + ".Counter",
+            as: Int64.self,
+            in: .path(library.libraryURL)
+        )
+        let doubled = try await counter.resolveMethod(named: member, as: (() -> Int64).self)
+        #expect(try unsafe doubled.unsafeInvoke(on: Int64(21)) == 42)
+        // Storage smaller than the value cannot stand for it.
+        let narrow = try await runtime.resolveSwiftType(
+            named: module + ".Counter",
+            as: Int32.self,
+            in: .path(library.libraryURL)
+        )
+        do {
+            _ = try await narrow.resolveMethod(named: member, as: (() -> Int64).self)
+            Issue.record("Four bytes stood for an eight-byte Self")
+        } catch let ABIResolutionError.signatureMismatch(mismatch) {
+            #expect(mismatch.position == .receiver)
+        }
+    }
+
     @Test func protocolRequirementGettersUseTheReceiversConformance() async throws {
         let module = "ProtocolGetter_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
         let library = try FixtureLibrary(
