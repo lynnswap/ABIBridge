@@ -17,6 +17,7 @@ for task_check in \
     check-swift-generic-receiver-codegen.py \
     check-explicit-swift-value-codegen.py \
     check-indirect-swift-value-codegen.py \
+    check-swift-tuple-result-codegen.py \
     check-swift-error-codegen.py \
     check-swift-async-codegen.py \
     check-swift-throwing-closure-codegen.py \
