@@ -85,6 +85,11 @@ jobs:
           else
             bash scripts/test-native-consumer.sh
           fi
+      - name: Check Swift compiler codegen
+        # Release targets can predate the codegen runner.
+        if: ${{ !cancelled() && hashFiles('scripts/test-codegen.sh') != '' }}
+        timeout-minutes: 10
+        run: bash scripts/test-codegen.sh
       - name: Test SwiftUI public consumer
         if: ${{ !cancelled() && matrix.xcode == '27.0' && hashFiles('Sources/ABIBridgeRuntime/*.swift') != '' }}
         timeout-minutes: 10

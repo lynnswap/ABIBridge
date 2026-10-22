@@ -105,6 +105,7 @@ package enum RuntimeResolutionError: Error, Sendable, Hashable {
             case argument(Int)
             case result
             case argumentCount
+            case receiver
         }
 
         package let declaration: RuntimeDeclaration?
@@ -132,4 +133,74 @@ package enum RuntimeResolutionError: Error, Sendable, Hashable {
     case metadataUnavailable(String)
     case imageChanged
     case invalidAddress
+}
+
+// The C interface reports these descriptions as failure messages, and
+// ABIResolutionError describes itself with them, so both say the same.
+extension RuntimeResolutionError: CustomStringConvertible {
+    package var description: String {
+        switch self {
+        case .imageUnavailable:
+            "The image catalog or a registered image is not currently available for lookup."
+        case .imageNotLoaded:
+            "No loaded image matches the requested scope."
+        case .imageLoadFailed(let target, let message):
+            "Cannot load \(target): \(message)"
+        case .ambiguousImage(let candidates):
+            "More than one image matches the framework name: "
+                + candidates.joined(separator: ", ") + ". Select one by its path."
+        case .invalidImageTarget(let target):
+            "The image target \(target) is not a valid framework name, install name, or file URL."
+        case .declarationNotFound(let declaration):
+            "Cannot find \(declaration.name)."
+        case .ivarNotFound(let name, let className):
+            "\(className) and its superclasses have no ivar named \(name)."
+        case .ambiguousDeclaration(let declaration, let candidates):
+            "More than one definition matches \(declaration.name): "
+                + candidates.joined(separator: ", ") + "."
+        case .signatureMismatch(let mismatch):
+            mismatch.description
+        case .unsupportedDeclaration(let reason), .metadataUnavailable(let reason):
+            reason
+        case .imageChanged:
+            "The image was unloaded or replaced before a loader reference could be acquired."
+        case .invalidAddress:
+            "The address of the matching symbol does not hold the requested kind of storage."
+        }
+    }
+}
+
+extension RuntimeResolutionError.SignatureMismatch: CustomStringConvertible {
+    package var description: String {
+        let subject =
+            declaration.map { "\($0.name) does not match the requested signature" }
+            ?? "The requested signature does not match"
+        let text = subject + position.phrase + ": " + difference
+        return text.hasSuffix(".") ? text : text + "."
+    }
+
+    /// The mismatch as one entry of a list that compares several
+    /// declarations with the request.
+    package var summary: String {
+        (declaration?.name ?? "The requested signature") + position.phrase + ": " + difference
+    }
+
+    private var difference: String {
+        found.isEmpty
+            ? "expected \(expected)"
+            : "expected \(expected), found \(found.joined(separator: "; "))"
+    }
+}
+
+extension RuntimeResolutionError.SignatureMismatch.Position {
+    /// Where the mismatch is, as a phrase that follows the signature.
+    fileprivate var phrase: String {
+        switch self {
+        case .signature: ""
+        case .argument(let index): " at argument \(index)"
+        case .result: " at the result"
+        case .argumentCount: " in the argument count"
+        case .receiver: " at self"
+        }
+    }
 }

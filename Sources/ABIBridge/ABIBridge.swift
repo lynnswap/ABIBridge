@@ -1,3 +1,4 @@
+import ABIBridgeRuntime
 import Foundation
 
 /// The source language of a native declaration.
@@ -247,11 +248,44 @@ public enum ABIResolutionError: Error, Sendable, Hashable {
         }
     }
     /// The operation cannot interpret this kind of declaration.
+    ///
+    /// When Swift function or member lookup rejects a candidate for this
+    /// reason, the message begins with the candidate's declaration.
     case unsupportedDeclaration(String)
     /// Requested native metadata is unavailable.
+    ///
+    /// When Swift function or member lookup rejects a candidate for this
+    /// reason, the message begins with the candidate's declaration.
     case metadataUnavailable(String)
     /// An image was unloaded or replaced before a loader reference could be acquired.
     case imageChanged
     /// Matching symbol addresses do not satisfy the requested storage kind.
     case invalidAddress
+}
+
+extension ABIResolutionError: LocalizedError, CustomStringConvertible {
+    /// A message that names the image or declaration involved and the details
+    /// the case carries.
+    ///
+    /// A signature mismatch reports its position and what was expected and
+    /// found. ``unsupportedDeclaration(_:)`` and ``metadataUnavailable(_:)``
+    /// report their messages unchanged, including any missing evidence and
+    /// the ABI description to supply.
+    public var description: String { runtimeValue.description }
+
+    /// The same message as ``description``.
+    public var errorDescription: String? { description }
+
+    /// The loader's diagnostic for ``imageLoadFailed(target:message:)``, or
+    /// nil for the other cases.
+    public var failureReason: String? {
+        guard case .imageLoadFailed(_, let message) = self else { return nil }
+        return message
+    }
+}
+
+extension ABIResolutionError.SignatureMismatch: CustomStringConvertible {
+    /// A message that names the declaration, when known, the position, and
+    /// what was expected and found.
+    public var description: String { runtimeValue.description }
 }

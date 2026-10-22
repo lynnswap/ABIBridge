@@ -74,14 +74,16 @@ def callback(ir, name):
 def main():
     root = Path(__file__).resolve().parent.parent
     output = root / ".build/swift-optional-codegen"
+    fixtures = sorted(str(path) for path in (root / "Tests/ManagedSwiftFixtures").glob("*.swift"))
     output.mkdir(parents=True, exist_ok=True)
     reports = []
     for target, sdk_name, expected in TARGETS:
         sdk = run("xcrun", "--sdk", sdk_name, "--show-sdk-path").strip()
         ir_path = output / f"{target}.ll"
-        run("xcrun", "swiftc", "-swift-version", "6", "-parse-as-library", "-Onone", "-target", target,
-            "-sdk", sdk, "-enable-library-evolution", "-module-name", "ManagedSwiftFixtures", "-emit-ir",
-            str(root / "Tests/ManagedSwiftFixtures/Optionals.swift"), "-o", str(ir_path))
+        run("xcrun", "swiftc", "-swift-version", "6", "-enable-experimental-feature", "Lifetimes",
+            "-parse-as-library", "-Onone", "-target", target, "-sdk", sdk, "-whole-module-optimization",
+            "-enable-library-evolution", "-module-name", "ManagedSwiftFixtures", "-emit-ir",
+            *fixtures, "-o", str(ir_path))
         ir = ir_path.read_text()
         lowered = {name: parameters(ir, name) for name in expected}
         for name, types in expected.items():

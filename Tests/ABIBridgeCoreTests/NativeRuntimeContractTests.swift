@@ -148,6 +148,13 @@ struct NativeRuntimeContractTests {
             #expect(symbol == nil)
             let error = try #require(failure)
             #expect(ABIResolutionFailureCode(error) == expected)
+            if expected == Int32(ABIFailureDeclarationNotFound) {
+                // The message is the failure's description.
+                #expect(
+                    String(cString: ABIResolutionFailureMessage(error))
+                        == "Cannot find vtable for ABIBridgeMissingType::Renderer."
+                )
+            }
             ABIReleaseResolutionFailure(error)
         }
     }
