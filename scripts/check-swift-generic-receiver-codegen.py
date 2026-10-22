@@ -14,10 +14,9 @@ def main():
     root = Path(__file__).resolve().parent.parent
     output = root / '.build/swift-generic-receiver-codegen'
     output.mkdir(parents=True, exist_ok=True)
-    fixture = root / 'Tests/ArchitectureValidation/Sources/SwiftValueFixtures/GenericReceivers.swift'
-    source = output / 'Probe.swift'
-    source.write_text(fixture.with_name('Errors.swift').read_text() + fixture.read_text() + '''
-public final class ConcreteControl {
+    fixtures = sorted(str(path) for path in (root / 'Tests/ArchitectureValidation/Sources/SwiftValueFixtures').glob('*.swift'))
+    probe = output / 'Control.swift'
+    probe.write_text('''public final class ConcreteControl {
     @inline(never) public func concrete(_ prefix: String) -> String { prefix }
     public var valueText: String { @inline(never) get { "control" } }
 }
@@ -28,9 +27,9 @@ public final class ConcreteControl {
         directory = output / target
         directory.mkdir(exist_ok=True)
         sdk = run('xcrun', '--sdk', sdk_name, '--show-sdk-path').strip()
-        ir = run('xcrun', 'swiftc', '-swift-version', '6', '-parse-as-library', '-Onone',
-                 '-enable-library-evolution', '-module-name', 'ReceiverProbe', '-target', target,
-                 '-sdk', sdk, '-emit-ir', str(source))
+        ir = run('xcrun', 'swiftc', '-swift-version', '6', '-enable-experimental-feature', 'Lifetimes',
+                 '-parse-as-library', '-Onone', '-whole-module-optimization', '-enable-library-evolution',
+                 '-module-name', 'ReceiverProbe', '-target', target, '-sdk', sdk, '-emit-ir', *fixtures, str(probe))
         (directory / 'provider.ll').write_text(ir)
         headers = [line for line in ir.splitlines() if line.startswith('define ') and 'swiftcc' in line and '@"' in line]
         symbols = [line.split('@"', 1)[1].split('"', 1)[0] for line in headers]

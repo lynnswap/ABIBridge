@@ -84,14 +84,10 @@ python3 "$task_root/scripts/check-swift-existential-codegen.py"
 python3 "$task_root/scripts/check-swift-opaque-codegen.py"
 python3 "$task_root/scripts/check-swiftui-codegen.py"
 
+# Build the fixture and adapter targets whole, as Package.swift does.
 xcrun swiftc -parse-as-library -emit-library -emit-module -enable-library-evolution -enable-experimental-feature Lifetimes \
     -module-name ManagedSwiftFixtures -emit-module-path "$task_fixture/ManagedSwiftFixtures.swiftmodule" \
-    "$task_root/Tests/ManagedSwiftFixtures/Values.swift" "$task_root/Tests/ManagedSwiftFixtures/Generics.swift" \
-    "$task_root/Tests/ManagedSwiftFixtures/Errors.swift" "$task_root/Tests/ManagedSwiftFixtures/Async.swift" \
-    "$task_root/Tests/ManagedSwiftFixtures/ParameterConventions.swift" \
-    "$task_root/Tests/ManagedSwiftFixtures/Existentials.swift" \
-    "$task_root/Tests/ManagedSwiftFixtures/RuntimeValues.swift" "$task_root/Tests/ManagedSwiftFixtures/GenericCalls.swift" \
-    "$task_root/Tests/ManagedSwiftFixtures/ExplicitValues.swift" "$task_root/Tests/ManagedSwiftFixtures/ClosureValues.swift" \
+    "$task_root"/Tests/ManagedSwiftFixtures/*.swift \
     -o "$task_fixture/libManagedSwiftFixtures.dylib"
 python3 "$task_root/scripts/build-swift-import-fixtures.py" --sdk macosx --architecture "$(uname -m)" \
     --output "$task_fixture/SwiftImportFixtures"
@@ -100,7 +96,7 @@ xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     "$task_fixture/libManagedSwiftFixtures.dylib" "$task_fixture/SwiftImportFixtures"
 xcrun swiftc -parse-as-library -emit-library -module-name ManagedSwiftAdapters \
     -I "$task_fixture" -L "$task_fixture" -lManagedSwiftFixtures -Xlinker -rpath -Xlinker "$task_fixture" \
-    "$task_root/Tests/ManagedSwiftAdapters/Adapters.swift" "$task_root/Tests/ManagedSwiftAdapters/GenericAdapters.swift" \
+    "$task_root"/Tests/ManagedSwiftAdapters/*.swift \
     -o "$task_fixture/libManagedSwiftAdapters.dylib"
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_build" SwiftGenericConsumer "$task_fixture/libManagedSwiftAdapters.dylib"

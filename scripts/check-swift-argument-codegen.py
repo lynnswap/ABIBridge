@@ -12,6 +12,7 @@ def run(*args):
 def main():
     root = Path(__file__).resolve().parent.parent
     output = root / '.build/swift-argument-codegen'
+    fixtures = sorted(str(path) for path in (root / 'Tests/ManagedSwiftFixtures').glob('*.swift'))
     reports = []
     for target, sdk_name in [('arm64-apple-macos15.4','macosx'),
                              ('arm64e-apple-ios18.4','iphoneos'), ('arm64_32-apple-watchos11.4','watchos')]:
@@ -19,11 +20,9 @@ def main():
         directory.mkdir(parents=True, exist_ok=True)
         sdk = run('xcrun','--sdk',sdk_name,'--show-sdk-path').strip()
         # Emit the SIL from one whole-module job; with a job per file, the driver relays each job's SIL through stderr.
-        run('xcrun','swiftc','-swift-version','6','-parse-as-library','-enable-library-evolution','-whole-module-optimization',
-            '-module-name','ManagedSwiftFixtures','-target',target,'-sdk',sdk,'-emit-silgen',
-            *[str(root/'Tests/ManagedSwiftFixtures'/name) for name in [
-                'Errors.swift','Async.swift','ParameterConventions.swift','GenericCalls.swift',
-                'RuntimeValues.swift','Values.swift','ExplicitValues.swift']],
+        run('xcrun','swiftc','-swift-version','6','-enable-experimental-feature','Lifetimes',
+            '-parse-as-library','-enable-library-evolution','-whole-module-optimization',
+            '-module-name','ManagedSwiftFixtures','-target',target,'-sdk',sdk,'-emit-silgen',*fixtures,
             '-o',str(directory/'provider.sil'))
         sil = (directory/'provider.sil').read_text()
         signatures = {}
