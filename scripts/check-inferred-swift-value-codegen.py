@@ -1,25 +1,23 @@
 #!/usr/bin/env python3
 """Check the compiler facts that inferred struct and enum conventions read.
 
-ABIBridge infers a value's convention from its value-witness flags, enum case
-symbols, and property descriptors (#430). This probe compiles one module with
-and without library evolution and fails when one of those facts changes, so a
-new compiler fails CI instead of mislowering values:
+ABIBridge infers a value's convention from its static value-witness flags and
+from the symbols that only library evolution exports (#430). This probe
+compiles one module with and without library evolution and fails when one of
+those facts changes, so a new compiler fails CI instead of mislowering values:
 
 - the addressable-for-dependencies bit (0x02000000) is clear for frozen
   values, set for resilient ones and for values that store a String, and
   clear for any value without library evolution that stores neither;
-- resilient enums, and only those, export enum case symbols (WC);
-- a stored property's descriptor has a stored component with library
-  evolution and is trivial without it, while an unowned one, and a `let` of a
-  function or metatype, which key paths reabstract, are always trivial;
 - a stored property of an opaque type that is not class-bound sets the
   addressable-for-dependencies bit and makes its struct pass by address,
-  while a class-bound one does neither, and the property's descriptor and
-  opaque type descriptor name its opaque type;
-- an unowned reference to a type parameter passes its generic struct
-  directly when the argument is a native Swift class, and by address when it
-  is an Objective-C class;
+  while a class-bound one does neither;
+- a struct with an unowned reference to an Objective-C class is not
+  bitwise-takable, while one with an unowned reference to a native Swift
+  class is;
+- resilient enums, and only those, export enum case symbols (WC);
+- a stored property's descriptor has a stored component with library
+  evolution and is trivial without it;
 - on arm64e, a closure parameter that is passed indirectly hashes as
   `-indirect`, and generic arguments do not change a nominal type's hash;
 - on arm64e, an element of a closure's tuple result hashes as `-indirect`
@@ -45,7 +43,7 @@ public struct OpenLabel { public var text: String; public var n: Int64 }
 @frozen public enum FrozenShape { case circle(Double), none }
 public enum OpenShape { case circle(Double), none }
 public struct UnownedHolder { public unowned let owner: Box; public var x: Double }
-public struct Reabstracted { public let call: () -> Void; public let type: Int.Type }
+public struct BridgedUnownedHolder { public unowned let owner: BridgedBox; public var x: Double }
 @frozen public struct Wide { public var a: Int64, b: Int64, c: Int64, d: Int64, e: Int64 }
 @frozen public struct Pair<T> { public var a: T; public var b: T }
 public protocol Shape {}
@@ -57,9 +55,6 @@ public struct OwnedBox { public var shape: some OwnedShape = ShapeReference(); p
 
 @inline(never) public func takeOpaqueBox(_ box: OpaqueBox) {}
 @inline(never) public func takeOwnedBox(_ box: OwnedBox) {}
-@frozen public struct UnownedPair<T: AnyObject> { public unowned var t: T; public var x: Int64 }
-@inline(never) public func takeNativeUnownedPair(_ pair: UnownedPair<Box>) {}
-@inline(never) public func takeBridgedUnownedPair(_ pair: UnownedPair<BridgedBox>) {}
 
 @inline(never) public func applyFrozen(_ f: (FrozenPoint) -> Double) -> Double {
     f(FrozenPoint(x: 1, y: 2))
@@ -82,6 +77,7 @@ public struct OwnedBox { public var shape: some OwnedShape = ShapeReference(); p
 """
 
 ADDRESSABLE = 0x02000000
+NON_BITWISE_TAKABLE = 0x00100000
 TARGETS = [
     ("arm64-apple-macos15.4", "macosx"),
     ("x86_64-apple-macos15.4", "macosx"),
@@ -163,6 +159,7 @@ def check(ir, target, evolution):
     flags = {name: witness_flags(ir, target, name, kind) for name, kind in [
         ("FrozenPoint", "V"), ("OpenPoint", "V"), ("FrozenLabel", "V"), ("OpenLabel", "V"),
         ("FrozenShape", "O"), ("OpenShape", "O"), ("OpaqueBox", "V"), ("OwnedBox", "V"),
+        ("UnownedHolder", "V"), ("BridgedUnownedHolder", "V"),
     ]}
     addressable = {name: bool(value & ADDRESSABLE) for name, value in flags.items()}
     require(not addressable["FrozenPoint"] and not addressable["FrozenShape"],
@@ -173,20 +170,15 @@ def check(ir, target, evolution):
             "a String field must set the addressable bit")
     require(addressable["OpaqueBox"] and addressable["OwnedBox"] == evolution,
             "an opaque field that is not class-bound, and only that, must set the addressable bit")
-    for suffix in ["vpMV", "vpQOMQ"]:
-        name = mangled("OpaqueBox") + "V5shapeQr" + suffix
-        require(re.search(r'^@"' + re.escape(name) + r'" =', ir, re.M) is not None,
-                f"an opaque stored property must name its opaque type in {name}")
+    takable = {name: not flags[name] & NON_BITWISE_TAKABLE for name in ["UnownedHolder", "BridgedUnownedHolder"]}
+    require(takable["UnownedHolder"] and not takable["BridgedUnownedHolder"],
+            "an unowned reference must be bitwise-takable exactly when its referent is native")
     if not evolution:
         boxes = {name: parameter_types(ir, target, name) for name in ["takeOpaqueBox", "takeOwnedBox"]}
         require(boxes["takeOpaqueBox"] == ["ptr"],
                 f"an opaque field that is not class-bound must pass its struct by address: {boxes}")
         require(boxes["takeOwnedBox"] != ["ptr"],
                 f"a class-bound opaque field must leave its struct loadable: {boxes}")
-    pairs = {name: parameter_types(ir, target, name)
-             for name in ["takeNativeUnownedPair", "takeBridgedUnownedPair"]}
-    require(pairs["takeNativeUnownedPair"] == ["ptr", "i64"] and pairs["takeBridgedUnownedPair"] == ["ptr"],
-            f"an unowned reference must be loadable exactly when its referent is native: {pairs}")
 
     cases = {name: re.search(r'^@"' + re.escape(mangled(name)) + r'O[^"]*WC" =', ir, re.M) is not None
              for name in ["FrozenShape", "OpenShape"]}
@@ -194,13 +186,8 @@ def check(ir, target, evolution):
             "only resilient enums may define enum case symbols")
 
     stored = property_header(ir, target, mangled("OpenPoint") + "V1xSdvpMV")
-    unowned = property_header(ir, target, mangled("UnownedHolder") + "V5ownerAA3BoxCvpMV")
     require((stored >> 24 & 0x7f) == (1 if evolution else 0) and (evolution or stored == 0),
             f"stored property descriptor header {stored:#x}")
-    require(unowned == 0, f"unowned property descriptor header {unowned:#x}")
-    for suffix in ["4callyycvpMV", "4typeSimvpMV"]:
-        header = property_header(ir, target, mangled("Reabstracted") + "V" + suffix)
-        require(header == 0, f"reabstracted let descriptor {suffix} header {header:#x}")
 
     report = {"flags": {name: f"{value:#x}" for name, value in flags.items()},
               "enumCases": cases, "storedProperty": f"{stored:#x}"}

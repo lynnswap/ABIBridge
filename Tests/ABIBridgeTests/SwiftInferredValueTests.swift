@@ -200,10 +200,10 @@ struct SwiftInferredValueTests {
         )
     }
 
-    /// Library evolution also gives unowned, static, and computed properties
-    /// trivial descriptors, so they do not show that a module is built
-    /// without it. Open's addressable bit then leaves its resilience open.
-    @Test func trivialDescriptorsOfOtherPropertiesDoNotProveAFixedLayout() async throws {
+    /// Library evolution gives unowned, static, and computed properties
+    /// trivial descriptors, so this module exports no symbols that show it.
+    /// Open's addressable bit, which no field explains, then stays undecided.
+    @Test func modulesWithoutLibraryEvolutionSymbolsLeaveUnexplainedBitsUndecided() async throws {
         let (library, module) = try provider(
             """
             import Foundation
@@ -228,7 +228,8 @@ struct SwiftInferredValueTests {
             module + ".makeOpen()",
             in: library,
             as: (() -> NativeSwiftValue).self,
-            naming: "module `\(module)` does not show whether it is built with library evolution"
+            naming:
+                "none of the fields of struct `\(module).Open` explains its addressable-for-dependencies value-witness bit, and module `\(module)` exports no symbols that only library evolution emits"
         )
     }
 
@@ -251,42 +252,7 @@ struct SwiftInferredValueTests {
             in: library,
             as: (() -> NativeSwiftValue).self,
             naming:
-                "Cannot infer the Swift calling convention of \(module).Open in module \(module): module `\(module)` does not show whether it is built with library evolution, or whether struct `\(module).Open` is @frozen; its field `text: Swift.String` explains"
-        )
-    }
-
-    /// Key paths reabstract a stored `let` of these types, so library
-    /// evolution gives it a trivial descriptor like a computed property.
-    @Test(arguments: [
-        "public let callback: () -> Void = {}",
-        "public let type: Int.Type = Int.self",
-        "public let optional: (() -> Int)? = nil",
-        "public let pair: (Int, (Int) -> Int) = (1, { $0 })",
-    ])
-    func trivialDescriptorsOfReabstractedLetsDoNotProveAFixedLayout(
-        _ property: String
-    ) async throws {
-        let (library, module) = try provider(
-            """
-            public struct Holder {
-                \(property)
-                public init() {}
-            }
-            public struct Open {
-                var x: Double
-                var y: Double
-                public init() { x = 1; y = 2 }
-            }
-            @inline(never) public func makeOpen() -> Open { Open() }
-            """,
-            arguments: ["-enable-library-evolution"]
-        )
-        defer { library.cleanup() }
-        await expectFailure(
-            module + ".makeOpen()",
-            in: library,
-            as: (() -> NativeSwiftValue).self,
-            naming: "module `\(module)` does not show whether it is built with library evolution"
+                "Cannot infer the Swift calling convention of \(module).Open in module \(module): its field `text: Swift.String` explains its addressable-for-dependencies value-witness bit, so the bit does not show whether struct `\(module).Open` is resilient."
         )
     }
 
@@ -319,6 +285,12 @@ struct SwiftInferredValueTests {
         let (library, module) = try provider(
             """
             public struct Empty { public init() {} }
+            // Its String field sets the addressable bit, so the module's
+            // clear bits certify its other types.
+            public struct Label {
+                public var text = "label"
+                public init() {}
+            }
             @frozen public struct WithEmpty {
                 public var e: Empty
                 public var f: Float
@@ -342,40 +314,24 @@ struct SwiftInferredValueTests {
     }
 
     /// A module's symbols spell a word that repeats in its name as a
-    /// substitution, which its evidence lookup must reproduce.
-    @Test(arguments: [false, true])
-    func modulesWithRepeatedWordsKeepTheirEvidence(evolution: Bool) async throws {
+    /// substitution, which its evidence lookup must reproduce: only the
+    /// library-evolution symbols under that spelling show that Plain is
+    /// resilient.
+    @Test func modulesWithRepeatedWordsKeepTheirEvidence() async throws {
         let (library, module) = try provider(
             """
-            public struct Labeled {
-                public var text: String
-                public var x: Double
-                public init() { text = "label"; x = 1.5 }
-            }
             public struct Plain {
                 public var x: Double
                 public var y: Double
                 public init() { x = 2.5; y = 3.5 }
             }
-            @inline(never) public func makeLabeled() -> Labeled { Labeled() }
-            @inline(never) public func describeLabeled(_ v: Labeled) -> String { "\\(v.text),\\(v.x)" }
             @inline(never) public func makePlain() -> Plain { Plain() }
             @inline(never) public func describePlain(_ v: Plain) -> String { "\\(v.x),\\(v.y)" }
             """,
-            arguments: evolution ? ["-enable-library-evolution"] : [],
+            arguments: ["-enable-library-evolution"],
             modulePrefix: "Inferred_F8F8_"
         )
         defer { library.cleanup() }
-        // A library-evolution module does not record whether Labeled is frozen.
-        if !evolution {
-            #expect(
-                try await describeMade(
-                    module + ".makeLabeled()",
-                    module + ".describeLabeled(_:)",
-                    in: library
-                ) == "label,1.5"
-            )
-        }
         #expect(
             try await describeMade(
                 module + ".makePlain()",
@@ -386,8 +342,8 @@ struct SwiftInferredValueTests {
     }
 
     /// `Data` sets the addressable bit for itself, whatever it stores, so
-    /// the bit does not show whether it is resilient, and neither it nor a
-    /// value that stores it is inferred.
+    /// the bit does not show whether it or a value that stores it is
+    /// resilient, and neither is inferred.
     @Test func selfAddressableTypesStayUndecided() async throws {
         let (library, module) = try provider(
             """
@@ -420,7 +376,7 @@ struct SwiftInferredValueTests {
             module + ".makeDataBox()",
             in: library,
             as: (() -> NativeSwiftValue).self,
-            naming: evidence
+            naming: "its field `data: Foundation.Data` explains"
         )
     }
 
@@ -458,17 +414,53 @@ struct SwiftInferredValueTests {
         }
     }
 
+    /// Only exported enum case symbols show that an enum is resilient, and a
+    /// link can hide them. Their absence leaves the enum undecided.
+    @Test func enumsWithoutExportedCaseSymbolsAreUndecided() async throws {
+        let (library, module) = try provider(
+            """
+            public enum Tagged { case text(String), none }
+            public enum Choice<T> { case one(T), none }
+            @inline(never) public func makeTagged() -> Tagged { .text("t") }
+            @inline(never) public func makeChoice() -> Choice<Int64> { .one(41) }
+            """,
+            arguments: [
+                "-enable-library-evolution", "-Xlinker", "-unexported_symbol", "-Xlinker", "_$s*WC",
+            ]
+        )
+        defer { library.cleanup() }
+        await expectFailure(
+            module + ".makeTagged()",
+            in: library,
+            as: (() -> NativeSwiftValue).self,
+            naming: "its field `text: Swift.String` explains"
+        )
+        await expectFailure(
+            module + ".makeChoice()",
+            in: library,
+            as: (() -> NativeSwiftValue).self,
+            naming: "has runtime-built metadata"
+        )
+    }
+
     /// A field record describes a stored property of an opaque type by its
     /// underlying type, but signatures lower the property as an opaque
-    /// archetype: address-only unless it is class-bound. A public
-    /// property's exported descriptor shows its declared type.
-    @Test func opaqueStoredPropertiesPassAsArchetypes() async throws {
+    /// archetype: address-only unless it is class-bound. Only one that is not
+    /// class-bound sets the addressable bit, so a clear bit certifies a struct
+    /// with a class-bound one. Without library-evolution symbols, a bit that
+    /// no field explains leaves the others undecided.
+    @Test func opaqueStoredPropertiesAreDecidedByTheAddressableBit() async throws {
         let (library, module) = try provider(
             """
             public protocol Shape { var sides: Int64 { get } }
             public protocol Owned: AnyObject { var sides: Int64 { get } }
             public struct Square: Shape { public var sides: Int64 { 4 } }
             public final class Owner: Shape, Owned { public var sides: Int64 { 3 } }
+            public struct OwnerBox {
+                public var owner: some Owned = Owner()
+                public var n: Double = 1.5
+                public init() {}
+            }
             public struct Shaped {
                 public var shape: some Shape = Square()
                 public var n: Int64 = 2
@@ -479,55 +471,50 @@ struct SwiftInferredValueTests {
                 public var n: Double = 1.5
                 public init() {}
             }
-            public struct OwnerLabel {
-                public var owner: some Owned = Owner()
-                public var text: String = "o"
-                public init() {}
-            }
             public struct HoldsShaped {
                 public var shaped = Shaped()
                 public var z: Int64 = 3
                 public init() {}
             }
-            public struct GenericShaped<T> {
-                public var shape: some Shape = Square()
-                public var t: T
-                public init(t: T) { self.t = t }
-            }
+            @inline(never) public func makeOwnerBox() -> OwnerBox { OwnerBox() }
+            @inline(never) public func describeOwnerBox(_ v: OwnerBox) -> String { "\\(v.owner.sides),\\(v.n)" }
             @inline(never) public func makeShaped() -> Shaped { Shaped() }
-            @inline(never) public func describeShaped(_ v: Shaped) -> String { "\\(v.shape.sides),\\(v.n)" }
             @inline(never) public func makeClassShaped() -> ClassShaped { ClassShaped() }
-            @inline(never) public func describeClassShaped(_ v: ClassShaped) -> String { "\\(v.shape.sides),\\(v.n)" }
-            @inline(never) public func makeOwnerLabel() -> OwnerLabel { OwnerLabel() }
-            @inline(never) public func describeOwnerLabel(_ v: OwnerLabel) -> String { "\\(v.owner.sides),\\(v.text)" }
             @inline(never) public func makeHoldsShaped() -> HoldsShaped { HoldsShaped() }
-            @inline(never) public func describeHoldsShaped(_ v: HoldsShaped) -> String { "\\(v.shaped.n),\\(v.z)" }
-            @inline(never) public func makeGenericShaped() -> GenericShaped<Double> { GenericShaped(t: 0.5) }
-            @inline(never) public func describeGenericShaped(_ v: GenericShaped<Double>) -> String {
-                "\\(v.shape.sides),\\(v.t)"
-            }
             """
         )
         defer { library.cleanup() }
-        for (name, expected) in [
-            ("Shaped", "4,2"), ("ClassShaped", "3,1.5"), ("OwnerLabel", "3,o"),
-            ("HoldsShaped", "2,3"), ("GenericShaped", "4,0.5"),
-        ] {
-            #expect(
-                try await describeMade(
-                    "\(module).make\(name)()",
-                    "\(module).describe\(name)(_:)",
-                    in: library
-                ) == expected,
-                "\(name)"
+        #expect(
+            try await describeMade(
+                module + ".makeOwnerBox()",
+                module + ".describeOwnerBox(_:)",
+                in: library
+            ) == "3,1.5"
+        )
+        for name in ["Shaped", "ClassShaped"] {
+            await expectFailure(
+                "\(module).make\(name)()",
+                in: library,
+                as: (() -> NativeSwiftValue).self,
+                naming:
+                    "none of the fields of struct `\(module).\(name)` explains its addressable-for-dependencies value-witness bit, and module `\(module)` exports no symbols that only library evolution emits"
             )
         }
+        await expectFailure(
+            module + ".makeHoldsShaped()",
+            in: library,
+            as: (() -> NativeSwiftValue).self,
+            naming: "its field `shaped: \(module).Shaped` explains"
+        )
     }
 
-    /// A generic instance's value witnesses treat an unowned reference to a
-    /// type parameter as non-native, but a concrete signature stores one to
-    /// a native Swift class as a loadable pointer, also inside another value.
-    @Test func unownedReferencesToTypeParametersFollowTheirReferents() async throws {
+    /// A generic instance's value witnesses come from its pattern, which
+    /// treats an unowned reference to a type parameter as non-native, so the
+    /// instance is undecided on its own. A nongeneric value that stores it
+    /// has static value witnesses for the concrete referent, which decide
+    /// both: a native referent is a loadable reference, and an Objective-C
+    /// one is not bitwise-takable.
+    @Test func genericInstancesAreDecidedWithTheirStaticParents() async throws {
         let (library, module) = try provider(
             """
             import Foundation
@@ -548,18 +535,36 @@ struct SwiftInferredValueTests {
                 public var f: Float
                 public init(h: Holder<Native>, f: Float) { self.h = h; self.f = f }
             }
+            public struct BridgedOuter {
+                public var h: Holder<Bridged>
+                public var f: Float
+                public init(h: Holder<Bridged>, f: Float) { self.h = h; self.f = f }
+            }
+            // Its String field sets the addressable bit, so the module's
+            // clear bits certify its other types.
+            public struct Label {
+                public var text = "label"
+                public init() {}
+            }
             @inline(never) public func makeNativeHolder() -> Holder<Native> { Holder(t: Native(5), x: 3) }
-            @inline(never) public func describeNativeHolder(_ h: Holder<Native>) -> String { "\\(h.t.n),\\(h.x)" }
-            @inline(never) public func makeBridgedHolder() -> Holder<Bridged> { Holder(t: Bridged(6), x: 4) }
-            @inline(never) public func describeBridgedHolder(_ h: Holder<Bridged>) -> String { "\\(h.t.n),\\(h.x)" }
             @inline(never) public func makeOuter() -> Outer { Outer(h: Holder(t: Native(8), x: 2), f: 1.5) }
             @inline(never) public func describeOuter(_ o: Outer) -> String { "\\(o.h.t.n),\\(o.h.x),\\(o.f)" }
+            @inline(never) public func makeBridgedOuter() -> BridgedOuter {
+                BridgedOuter(h: Holder(t: Bridged(9), x: 3), f: 2.5)
+            }
+            @inline(never) public func describeBridgedOuter(_ o: BridgedOuter) -> String {
+                "\\(o.h.t.n),\\(o.h.x),\\(o.f)"
+            }
             """
         )
         defer { library.cleanup() }
-        for (name, expected) in [
-            ("NativeHolder", "5,3"), ("BridgedHolder", "6,4"), ("Outer", "8,2,1.5"),
-        ] {
+        await expectFailure(
+            module + ".makeNativeHolder()",
+            in: library,
+            as: (() -> NativeSwiftValue).self,
+            naming: "has runtime-built metadata"
+        )
+        for (name, expected) in [("Outer", "8,2,1.5"), ("BridgedOuter", "9,3,2.5")] {
             #expect(
                 try await describeMade(
                     "\(module).make\(name)()",
@@ -569,70 +574,6 @@ struct SwiftInferredValueTests {
                 "\(name)"
             )
         }
-    }
-
-    /// Where neither the addressable bit nor the exports rule out a stored
-    /// property of an opaque type, the value is undecided. Without library
-    /// evolution, a bit that no field explains is such a property's.
-    @Test func opaqueStoredPropertiesThatExportsDoNotShowAreUndecided() async throws {
-        let (library, module) = try provider(
-            """
-            public protocol Shape {}
-            public struct Square: Shape { var n: Int64 = 4 }
-            public struct Optionally {
-                public var shape: (some Shape)? = Square()
-                public var n: Double = 1
-                public init() {}
-            }
-            public struct HiddenShape {
-                var shape: some Shape = Square()
-                public var text: String = "t"
-                public init() {}
-            }
-            public struct HiddenBit {
-                var shape: some Shape = Square()
-                public var n: Double = 1
-                public init() {}
-            }
-            struct Internal {
-                var shape: some Shape = Square()
-                var text: String = "t"
-            }
-            @inline(never) public func makeOptionally() -> Optionally { Optionally() }
-            @inline(never) public func makeHiddenShape() -> HiddenShape { HiddenShape() }
-            @inline(never) public func makeHiddenBit() -> HiddenBit { HiddenBit() }
-            @inline(never) func makeInternal() -> Internal { Internal() }
-            """
-        )
-        defer { library.cleanup() }
-        await expectFailure(
-            module + ".makeOptionally()",
-            in: library,
-            as: (() -> NativeSwiftValue).self,
-            unsupported: true,
-            naming:
-                "its stored property `shape: Swift.Optional<some>` has a type that contains an opaque type"
-        )
-        await expectFailure(
-            module + ".makeHiddenShape()",
-            in: library,
-            as: (() -> NativeSwiftValue).self,
-            naming:
-                "its stored property `shape` has no exported descriptor, and only exported property descriptors show whether a stored property has an opaque (`some`) type"
-        )
-        await expectFailure(
-            module + ".makeHiddenBit()",
-            in: library,
-            as: (() -> NativeSwiftValue).self,
-            naming:
-                "struct `\(module).HiddenBit` sets its addressable-for-dependencies value-witness bit, which none of its fields explains; module `\(module)` is built without library evolution"
-        )
-        await expectFailure(
-            module + ".makeInternal()",
-            in: library,
-            as: (() -> NativeSwiftValue).self,
-            naming: "its image does not export its type descriptor"
-        )
     }
 
     /// Another module's extension of a library-evolution module's types
@@ -738,40 +679,50 @@ struct SwiftInferredValueTests {
             arguments: ["-I", directory.path, "-L", directory.path] + linkArguments
         )
         defer { library.cleanup() }
-        for make in ["makePoint()", "makeLabel()"] {
+        for (make, evidence) in [
+            ("makePoint()", "module `\(base)` exports no symbols that only library evolution emits"),
+            ("makeLabel()", "its field `name: Swift.String` explains"),
+        ] {
             await expectFailure(
                 "\(module).\(make)",
                 in: library,
                 as: (() -> NativeSwiftValue).self,
-                naming: "module `\(base)` does not show whether it is built with library evolution"
+                naming: evidence
             )
         }
     }
 
     /// A type declared in an extension of another module's type keeps its
     /// own module's evidence, although its runtime name starts with the
-    /// extended type.
-    @Test func typesInExtensionsOfOtherModulesKeepTheirModuleEvidence() async throws {
+    /// extended type: the module's clear addressable bits without library
+    /// evolution, and its library-evolution symbols with it.
+    @Test(arguments: [false, true])
+    func typesInExtensionsOfOtherModulesKeepTheirModuleEvidence(evolution: Bool) async throws {
+        // Lookup of a type in an extension of Int searches every image, and
+        // the fixture of the other argument stays loaded.
+        let name = evolution ? "EvolvedVisible" : "FixedVisible"
         let (library, module) = try provider(
             """
             public struct Top {
                 public var a: Int64
-                public init() { a = 1 }
+                public var text: String
+                public init() { a = 1; text = "top" }
             }
             extension Int {
-                public struct Visible {
+                public struct \(name) {
                     public var a: Int64
                     public var b: Int64
                     public init() { a = 1; b = 2 }
                 }
             }
-            @inline(never) public func makeVisible() -> Int.Visible { .init() }
-            @inline(never) public func describeVisible(_ v: Int.Visible) -> String { "\\(v.a),\\(v.b)" }
-            """
+            @inline(never) public func makeVisible() -> Int.\(name) { .init() }
+            @inline(never) public func describeVisible(_ v: Int.\(name)) -> String { "\\(v.a),\\(v.b)" }
+            """,
+            arguments: evolution ? ["-enable-library-evolution"] : []
         )
         defer { library.cleanup() }
         // Relative names do not find these declarations.
-        let visible = "(extension in \(module)):Swift.Int.Visible"
+        let visible = "(extension in \(module)):Swift.Int.\(name)"
         #expect(
             try await describeMade(
                 "\(module).makeVisible() -> \(visible)",

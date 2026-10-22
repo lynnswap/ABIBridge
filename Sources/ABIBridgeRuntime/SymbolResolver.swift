@@ -594,14 +594,6 @@ package final class RuntimeSymbolResolver: Sendable {
         }
     }
 
-    /// The address `image` exports under exactly `name`.
-    package func exportedAddress(named name: String, in image: RuntimeImage) -> UInt64? {
-        let index = state.withLock { $0.index(for: image) }
-        return withExtendedLifetime(index) {
-            state.withLock { _ in index.exportedAddress(named: name) }
-        }
-    }
-
     /// The declaration, such as `8ProbeLib5PointV`, under which `image`
     /// exports the Swift nominal type descriptor at `address`.
     ///

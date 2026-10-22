@@ -3,9 +3,9 @@ import Foundation
 
 #if os(macOS)
 // Runtime-only values of provider structs and enums that have no explicit ABI.
-// ABIBridge infers their conventions from metadata and export evidence; where
-// library evolution hides whether a type is frozen, the call must fail and
-// name the missing evidence.
+// ABIBridge infers their conventions from their static metadata and positive
+// evidence of resilience; where that evidence does not decide a type's
+// convention, the call must fail and name the missing evidence.
 
 private func describe(_ value: some Any) -> String { String(describing: value) }
 
@@ -51,17 +51,6 @@ private func describeKinds(
 }
 
 extension ConformanceCase {
-    /// The evolution variants do not record whether these types are frozen.
-    static func undecidedWithLibraryEvolution(
-        _ evidence: String
-    )
-        -> @Sendable (
-            ConformanceVariant
-        ) -> String?
-    {
-        { $0.libraryEvolution ? evidence : nil }
-    }
-
     static let inferredValues: [ConformanceCase] = [
         ConformanceCase(
             id: "value.openStruct.inferred",
@@ -102,7 +91,7 @@ extension ConformanceCase {
                 )
                 return try unsafe text.unsafeInvoke(bump.unsafeInvoke(make.unsafeInvoke()))
             },
-            expectedError: undecidedWithLibraryEvolution("its field `name: Swift.String` explains")
+            expectedError: { _ in "its field `name: Swift.String` explains" }
         ),
         ConformanceCase(
             id: "value.frozenStringStruct.inferred",
@@ -127,7 +116,7 @@ extension ConformanceCase {
                     "cmDescribeLabel(_:)"
                 )
             },
-            expectedError: undecidedWithLibraryEvolution("its field `text: Swift.String` explains")
+            expectedError: { _ in "its field `text: Swift.String` explains" }
         ),
         ConformanceCase(
             id: "value.payloadEnum.inferred",
@@ -177,7 +166,8 @@ extension ConformanceCase {
             return parts.joined(separator: ";")
         },
         // A String payload explains the addressable bit, so only enum case
-        // symbols show which of these enums is resilient.
+        // symbols decide: with library evolution, they show that CMTagged is
+        // resilient. Nothing decides the other enums.
         ConformanceCase(
             id: "value.stringPayloadEnum.inferred",
             provider: """
@@ -196,18 +186,27 @@ extension ConformanceCase {
                     kinds.map { cmDescribeTagged(cmMakeTagged($0)) },
                     kinds.map { cmDescribeFrozenTagged(cmMakeFrozenTagged($0)) },
                 ].map { $0.joined(separator: "|") }.joined(separator: ";")
-                """
-        ) { f in
-            [
-                try await describeKinds(f, "cmMakeTagged(_:)", "cmDescribeTagged(_:)", kinds: [0, 7]),
-                try await describeKinds(
-                    f,
-                    "cmMakeFrozenTagged(_:)",
-                    "cmDescribeFrozenTagged(_:)",
-                    kinds: [0, 7]
-                ),
-            ].joined(separator: ";")
-        },
+                """,
+            invoke: { f in
+                [
+                    try await describeKinds(
+                        f,
+                        "cmMakeTagged(_:)",
+                        "cmDescribeTagged(_:)",
+                        kinds: [0, 7]
+                    ),
+                    try await describeKinds(
+                        f,
+                        "cmMakeFrozenTagged(_:)",
+                        "cmDescribeFrozenTagged(_:)",
+                        kinds: [0, 7]
+                    ),
+                ].joined(separator: ";")
+            },
+            expectedError: {
+                $0.libraryEvolution ? ".CMFrozenTagged` is resilient" : ".CMTagged` is resilient"
+            }
+        ),
         ConformanceCase(
             id: "value.nestedFrozen.inferred",
             provider: """
@@ -453,7 +452,9 @@ extension ConformanceCase {
         },
         // A stored property of an opaque type is an opaque archetype in
         // signatures, which is address-only unless it is class-bound, while
-        // its field record describes its underlying type.
+        // its field record describes its underlying type. Without library
+        // evolution, nothing shows whether such a property or resilience sets
+        // CMSidedBox's addressable bit.
         ConformanceCase(
             id: "value.opaqueField.inferred",
             provider: """
@@ -489,21 +490,25 @@ extension ConformanceCase {
             oracle: """
                 return cmDescribeSidedBox(cmBumpSidedBox(cmMakeSidedBox(), 3)) + "|"
                     + cmDescribeOwnedBox(cmBumpOwnedBox(cmMakeOwnedBox(), 3))
-                """
-        ) { f in
-            try await describeTransformed(
-                f,
-                "cmMakeSidedBox()",
-                "cmBumpSidedBox(_:_:)",
-                "cmDescribeSidedBox(_:)"
-            ) + "|"
-                + describeTransformed(
+                """,
+            invoke: { f in
+                try await describeTransformed(
                     f,
-                    "cmMakeOwnedBox()",
-                    "cmBumpOwnedBox(_:_:)",
-                    "cmDescribeOwnedBox(_:)"
-                )
-        },
+                    "cmMakeSidedBox()",
+                    "cmBumpSidedBox(_:_:)",
+                    "cmDescribeSidedBox(_:)"
+                ) + "|"
+                    + describeTransformed(
+                        f,
+                        "cmMakeOwnedBox()",
+                        "cmBumpOwnedBox(_:_:)",
+                        "cmDescribeOwnedBox(_:)"
+                    )
+            },
+            expectedError: {
+                $0.libraryEvolution ? nil : "exports no symbols that only library evolution emits"
+            }
+        ),
         ConformanceCase(
             id: "value.optional.inferred",
             provider: """
@@ -585,8 +590,8 @@ extension ConformanceCase {
                 as: (() -> NativeSwiftValue).self
             )
             let wide = try await f.function("cmMakeWide5()", as: (() -> NativeSwiftValue).self)
-            // Evolution variants do not record whether CMWide is frozen, but
-            // its frozen lowering already passes self by address.
+            // Nothing records whether CMWide is frozen, but its frozen
+            // lowering already passes self by address.
             let total = try await f.type("CMWide").resolveMethod(
                 named: "cmTotal()",
                 as: (() -> Int64).self
@@ -663,15 +668,19 @@ extension ConformanceCase {
             invoke: { f in
                 try await describeMade(f, "cmMakeDoublePair()", "cmDescribeDoublePair(_:)")
             },
-            expectedError: undecidedWithLibraryEvolution("has runtime-built metadata")
+            expectedError: { _ in "has runtime-built metadata" }
         ),
+        // With library evolution, the resilient field makes the pair
+        // address-only; without it, the generic instance is undecided.
         ConformanceCase(
             id: "value.genericHoldsOpen.inferred",
             provider: "",
-            oracle: "return cmDescribeOpenPair(cmMakeOpenPair())"
-        ) { f in
-            try await describeMade(f, "cmMakeOpenPair()", "cmDescribeOpenPair(_:)")
-        },
+            oracle: "return cmDescribeOpenPair(cmMakeOpenPair())",
+            invoke: { f in
+                try await describeMade(f, "cmMakeOpenPair()", "cmDescribeOpenPair(_:)")
+            },
+            expectedError: { $0.libraryEvolution ? nil : "has runtime-built metadata" }
+        ),
         ConformanceCase(
             id: "value.largeUndecided.inferred",
             provider: """
@@ -732,7 +741,7 @@ extension ConformanceCase {
                 let pair = try unsafe make.unsafeInvoke()
                 return try unsafe text.unsafeInvoke(pair.0) + "#\(pair.1)"
             },
-            expectedError: undecidedWithLibraryEvolution("its field `name: Swift.String` explains")
+            expectedError: { _ in "its field `name: Swift.String` explains" }
         ),
         ConformanceCase(
             id: "value.functionFields.inferred",
@@ -819,7 +828,7 @@ extension ConformanceCase {
             invoke: { f in
                 try await describeMade(f, "cmMakeGenericType()", "cmDescribeGenericType(_:)")
             },
-            expectedError: undecidedWithLibraryEvolution("has runtime-built metadata")
+            expectedError: { _ in "has runtime-built metadata" }
         ),
         ConformanceCase(
             id: "value.tupleFields.inferred",

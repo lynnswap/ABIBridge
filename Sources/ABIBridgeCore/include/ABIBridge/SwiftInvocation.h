@@ -159,8 +159,6 @@ typedef enum ABISwiftReferenceStorage {
 ABISwiftReferenceStorage ABISwiftTypeFieldReferenceStorage(const void *metadata, size_t index);
 /// Whether a field record's declared type mentions a generic parameter of its enclosing type.
 bool ABISwiftTypeFieldIsGenericDependent(const void *metadata, size_t index);
-/// Whether the struct field named name in a raw nominal descriptor is one a key path addresses as stored in a library-evolution module: its record's type is not weak, unowned, or unowned(unsafe) storage and contains no function or metatype, which key paths reabstract. False when the descriptor is not a struct or has no such field record.
-bool ABISwiftStructDescriptorFieldHasStoredKeyPathComponent(const void *descriptor, const char *name);
 /// The module that declares the nominal type, borrowing its descriptor's name.
 const char *ABISwiftTypeModuleName(const void *metadata);
 /// Whether the nominal type is declared in an extension whose generic signature adds requirements to its extended type's, directly or within another type declared in one. True when an extension's requirements cannot be compared.

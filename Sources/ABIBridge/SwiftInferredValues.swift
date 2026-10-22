@@ -6,7 +6,7 @@ import Synchronization
 /// Where a value occurs in a Swift signature.
 ///
 /// Swift passes a whole parameter, result, or `self` indirectly once its
-/// loadable lowering exceeds four registers. A value whose resilience is
+/// loadable lowering exceeds four registers. A value whose convention is
 /// undecided but whose frozen lowering is already that large therefore has one
 /// convention either way. Elsewhere, loadable and address-only values differ.
 enum SwiftValuePosition: Sendable, Equatable {
@@ -28,31 +28,31 @@ enum SwiftValuePosition: Sendable, Equatable {
 /// A client passes a struct or enum indirectly when it is resilient to
 /// clients, or when a stored field or direct payload is address-only.
 /// Otherwise it is loadable and uses the same swiftcc expansion as an explicit
-/// layout. Nothing in a descriptor, its field records, or its property
-/// descriptors records `@frozen`, so resilience is decided from other evidence,
-/// and an inference that the evidence does not decide fails:
+/// layout. Nothing in a descriptor or its field records records `@frozen`, so
+/// inference decides only from summaries the compiler wrote into the type's
+/// own static metadata and from positive evidence of resilience. Everything
+/// else stays undecided and fails:
 ///
-/// - Runtime singleton metadata initialization stores a resilient type from
-///   another module, and static metadata that is not bitwise-takable stores a
-///   weak or non-native unowned reference. Both are address-only. A generic
-///   instance's value witnesses describe an unowned reference to a type
-///   parameter as non-native, so its fields decide from their referents.
+/// - Singleton metadata initialization stores a resilient type from another
+///   module, and static value witnesses that are not bitwise-takable store a
+///   weak or non-native unowned reference. Both are address-only, as is a
+///   value that stores a weak reference, an opaque existential, or another
+///   address-only value.
+/// - Exported enum case symbols mark an enum resilient.
 /// - The value-witness addressable-for-dependencies bit is set for a resilient
-///   type, for an opaque type (`some P`) that is not class-bound, and for any
-///   value that stores either. Static metadata without it certifies that
-///   nothing in the value is resilient or opaque, once its module has shown
-///   that it sets the bit (Swift 6.2 and later).
-/// - A set bit that no field explains marks the type itself resilient in a
-///   library-evolution module. `String`, `Data`, and imported C structs
-///   always set it, so such fields leave a public struct undecided.
-/// - A resilient enum exports enum case symbols; a module built without
-///   library evolution has trivial descriptors for its stored properties.
-///   Missing exports count only after the bit leaves the question open.
-/// - A field record describes a stored property of an opaque type by its
-///   underlying type, but clients lower the property as an opaque archetype.
-///   Only a public property's exported descriptor shows its declared type, so
-///   unless the bit rules opaque properties out, a struct with a property
-///   that is not public stays undecided.
+///   type, for a stored property of an opaque type (`some P`) that is not
+///   class-bound, and for any value that stores either. A set bit that no
+///   field explains marks the type resilient where its module exports
+///   symbols that only library evolution emits. `String`, `Data`, and
+///   imported C structs always set it, so such fields leave a type undecided.
+/// - A nongeneric type whose static value witnesses leave the bit clear is
+///   loadable once a type of its module sets the bit, which Swift 6.1 and
+///   earlier compilers never do. Its fields, including generic instances, are
+///   decided with it.
+///
+/// Missing symbols, the form of property descriptors, the runtime-built value
+/// witnesses of a generic instance, and class reference counting are not
+/// evidence: each made a resilient or address-only value look loadable.
 ///
 /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/SIL/IR/TypeLowering.cpp
 /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/IRGen/GenValueWitness.cpp
@@ -60,19 +60,20 @@ enum SwiftInferredValue {
     enum Convention: Sendable {
         case loadable(CValueType)
         case addressOnly
-        /// The evidence does not decide whether the value is resilient.
-        /// `frozen` is its lowering if it and every undecided value it stores
-        /// were frozen.
+        /// The evidence does not decide whether the value is resilient or
+        /// address-only. `frozen` is its lowering if it and every value it
+        /// stores were frozen.
         case undecided(frozen: CValueType, missing: String)
     }
 
     /// The storage of a value of `metadata` at `position`.
     static func layout(of metadata: Any.Type, position: SwiftValuePosition) throws -> CValueType {
         let convention: Convention
-        do { convention = try self.convention(of: metadata) } catch let failure as InferenceFailure
-        {
-            let message = Self.message(for: metadata, failure.detail, at: position)
-            throw failure.unsupported
+        do throws(InferenceFailure) {
+            convention = try self.convention(of: metadata)
+        } catch {
+            let message = Self.message(for: metadata, error.detail, at: position)
+            throw error.unsupported
                 ? ABIResolutionError.unsupportedDeclaration(message)
                 : ABIResolutionError.metadataUnavailable(message)
         }
@@ -138,7 +139,7 @@ enum SwiftInferredValue {
 
     /// The classification of a struct or enum, cached per metadata. Swift
     /// metadata stays valid because images with Swift metadata are not unloaded.
-    private static func convention(of metadata: Any.Type) throws -> Convention {
+    private static func convention(of metadata: Any.Type) throws(InferenceFailure) -> Convention {
         let key = ObjectIdentifier(metadata)
         if let cached = conventions.withLock({ $0[key] }) { return try cached.get() }
         // Fields classify recursively, so classify outside the lock.
@@ -164,12 +165,16 @@ enum SwiftInferredValue {
         }
     }
 
-    /// A field's storage in its parent. Loadable storage is nil for a field
-    /// with no bytes, such as a thin metatype.
+    /// A field's storage in its parent.
+    ///
+    /// A field that is undecided on its own, such as a generic instance, is
+    /// decided with its parent: only a parent whose static value witnesses
+    /// certify everything it stores is loadable.
     private enum Part {
-        case loadable(CValueType?)
         case addressOnly
-        case undecided(CValueType?, missing: String)
+        /// The field's lowering if every value in it is frozen, or nil for a
+        /// field with no bytes such as a thin metatype.
+        case fixed(CValueType?)
     }
 
     // Value-witness flags (MetadataValues.h).
@@ -197,13 +202,13 @@ enum SwiftInferredValue {
         }
         // Runtime initialization lays out a resilient type from another module.
         if info.metadataInitialization == 1 { return .addressOnly }
-        // Static value witnesses come from the concrete fields. A generic
-        // instance's come from its pattern, which treats an unowned reference
-        // to a type parameter as non-native, unlike a concrete signature.
+        // Only static value witnesses summarize the concrete fields; a generic
+        // instance's come from its pattern.
         if !info.isGeneric, flags & nonBitwiseTakable != 0 { return .addressOnly }
+        let module = ModuleContext(metadata)
+        if info.isEnum, module.exportsEnumCases { return .addressOnly }
         let fields = try readFields(of: metadata, info: info)
         var parts: [CValueType?] = []
-        var undecidedField: String?
         for field in fields {
             let part: Part
             do throws(InferenceFailure) {
@@ -214,34 +219,16 @@ enum SwiftInferredValue {
                     detail: "its field \(field.description) cannot be lowered: \(error.detail)"
                 )
             }
-            switch part {
-            case .addressOnly: return .addressOnly
-            case .loadable(let layout): parts.append(layout)
-            case .undecided(let layout, let missing):
-                parts.append(layout)
-                undecidedField = undecidedField ?? missing
-            }
+            guard case .fixed(let layout) = part else { return .addressOnly }
+            parts.append(layout)
         }
-        let frozen = try layout(of: metadata, info: info, fields: fields, parts: parts)
-        let module = ModuleContext(metadata)
-        let isStatic = !info.isGeneric && info.metadataInitialization == 0
-        // Nothing in a value whose bit stays clear is resilient or an opaque
-        // archetype that is not class-bound, which would be address-only.
-        if isStatic, flags & addressableForDependencies == 0, module.setsAddressableForDependencies {
-            return .loadable(frozen)
-        }
-        let opaque = try opaqueProperties(of: metadata, info: info, fields: fields, module: module)
-        if case .addressOnly = opaque { return .addressOnly }
-        switch resilience(of: metadata, info: info, flags: flags, fields: fields, module: module) {
-        case .resilient:
+        switch decide(metadata, info: info, flags: flags, fields: fields, module: module) {
+        case .addressOnly:
             return .addressOnly
-        case .fixed:
-            if let undecidedField { return .undecided(frozen: frozen, missing: undecidedField) }
-            if case .unknown(let missing) = opaque {
-                return .undecided(frozen: frozen, missing: missing)
-            }
-            return .loadable(frozen)
-        case .unknown(let missing):
+        case .loadable:
+            return try .loadable(layout(of: metadata, info: info, fields: fields, parts: parts))
+        case .undecided(let missing):
+            let frozen = try layout(of: metadata, info: info, fields: fields, parts: parts)
             return .undecided(frozen: frozen, missing: missing)
         }
     }
@@ -311,60 +298,12 @@ enum SwiftInferredValue {
     // MARK: Field storage
 
     private static func part(of field: Field) throws(InferenceFailure) -> Part {
-        guard let type = field.type else { return try .loadable(pointer()) }
+        guard let type = field.type else { return try .fixed(pointer()) }
         if field.reference == ABISwiftReferenceStorageWeak { return .addressOnly }
-        let part = try part(of: type, genericDependent: field.genericDependent)
-        guard field.reference == ABISwiftReferenceStorageUnowned else { return part }
-        // An unowned reference keeps its referent's storage when the referent
-        // uses native Swift reference counting; otherwise it is address-only.
-        // https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/AST/Type.cpp
-        switch usesNativeReferenceCounting(type) {
-        case true?: return part
-        case false?: return .addressOnly
-        case nil:
-            guard case .loadable(let layout) = part else { return part }
-            return .undecided(
-                layout,
-                missing:
-                    "ABIBridge cannot read whether the referent of its unowned field \(field.description) uses native Swift reference counting"
-            )
-        }
-    }
-
-    /// Whether a class reference, a class-bound existential, or an Optional
-    /// of either uses native Swift reference counting. Objective-C classes,
-    /// and existentials without a superclass, use unknown reference counting.
-    /// Nil for metadata that shows neither.
-    /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/ABI/Metadata.h
-    private static func usesNativeReferenceCounting(_ type: Any.Type) -> Bool? {
-        if let optional = type as? any NativeOptionalValue.Type {
-            return usesNativeReferenceCounting(optional.wrappedType)
-        }
-        let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
-        let word = MemoryLayout<UInt>.size
-        switch metadata.load(as: UInt.self) {
-        // Foreign and Objective-C class wrappers.
-        case 0x203, 0x305:
-            return false
-        case RuntimeMetadataKind.existential.rawValue:
-            let flags = metadata.load(fromByteOffset: word, as: UInt32.self)
-            // The superclass follows the protocol list.
-            guard flags & 0x4000_0000 != 0 else { return false }
-            let protocols = Int(metadata.load(fromByteOffset: word + 4, as: UInt32.self))
-            return usesNativeReferenceCounting(
-                metadata.load(fromByteOffset: 2 * word + protocols * word, as: Any.Type.self)
-            )
-        case let kind where kind > 0x7ff:
-            // Class metadata starts with its isa. Swift class metadata sets
-            // bit 1 of its data word on Apple platforms, and its flags
-            // record native reference counting (UsesSwiftRefcounting).
-            guard metadata.load(fromByteOffset: 4 * word, as: UInt.self) & 2 != 0 else {
-                return false
-            }
-            return metadata.load(fromByteOffset: 5 * word, as: UInt32.self) & 2 != 0
-        default:
-            return nil
-        }
+        // An unowned reference is loadable when its referent uses native Swift
+        // reference counting. Otherwise it is not bitwise-takable, which the
+        // static value witnesses of a type that stores it show.
+        return try part(of: type, genericDependent: field.genericDependent)
     }
 
     private static func part(
@@ -375,46 +314,38 @@ enum SwiftInferredValue {
     {
         switch runtimeMetadataKind(type) {
         case .function:
-            return try .loadable(functionStorage(type))
+            return try .fixed(functionStorage(type))
         case .optional:
             let wrapped = (type as! any NativeOptionalValue.Type).wrappedType
-            func optional(_ payload: CValueType?) throws(InferenceFailure) -> CValueType {
-                try failing {
-                    try SwiftValueSchema.optionalStorage(
-                        of: type,
-                        wrapped: payload
-                            ?? CValueType(swiftAggregate: [], offsets: [], size: 0, alignment: 1),
-                        wrappedType: wrapped
-                    )
-                }
+            let part = try self.part(of: wrapped, genericDependent: genericDependent)
+            guard case .fixed(let payload) = part else { return .addressOnly }
+            let layout = try failing {
+                try SwiftValueSchema.optionalStorage(
+                    of: type,
+                    wrapped: payload
+                        ?? CValueType(swiftAggregate: [], offsets: [], size: 0, alignment: 1),
+                    wrappedType: wrapped
+                )
             }
-            switch try part(of: wrapped, genericDependent: genericDependent) {
-            case .addressOnly: return .addressOnly
-            case .loadable(let payload): return try .loadable(optional(payload))
-            case .undecided(let payload, let missing):
-                return try .undecided(optional(payload), missing: missing)
-            }
+            return .fixed(layout)
         case .tuple:
             return try tuplePart(type)
         case .metatype, .existentialMetatype, .extendedExistential:
             guard let metatype = SwiftMetatypeMetadata(type) else { return try codecPart(type) }
             // A field stores a concrete non-class metatype thin, in no bytes,
             // unless its declared type is generic.
-            if metatype.isSingleton, !genericDependent { return .loadable(nil) }
+            if metatype.isSingleton, !genericDependent { return .fixed(nil) }
             func thick<Value>(_: Value.Type) throws -> CValueType {
                 try metatype.valueType(for: Value.self, thin: false)
             }
-            return try .loadable(failing { try _openExistential(type, do: thick) })
+            return try .fixed(failing { try _openExistential(type, do: thick) })
         case .opaque:
-            return try .loadable(builtinStorage(type))
+            return try .fixed(builtinStorage(type))
         case .structure, .enumeration:
             guard lowersByInference(type) else { return try codecPart(type) }
-            let convention: Convention
-            do { convention = try self.convention(of: type) } catch { throw failure(from: error) }
-            switch convention {
-            case .loadable(let layout): return .loadable(layout)
+            switch try convention(of: type) {
             case .addressOnly: return .addressOnly
-            case .undecided(let frozen, let missing): return .undecided(frozen, missing: missing)
+            case .loadable(let layout), .undecided(let layout, _): return .fixed(layout)
             }
         default:
             return try codecPart(type)
@@ -457,7 +388,7 @@ enum SwiftInferredValue {
         }
         let layout = try failing { try _openExistential(type, do: storage) }
         return withExtendedLifetime(layout, { ABISwiftValueIsAddressOnly(layout.handle) })
-            ? .addressOnly : .loadable(layout)
+            ? .addressOnly : .fixed(layout)
     }
 
     /// Thick Swift functions store an entry point and a context; blocks, thin
@@ -510,15 +441,9 @@ enum SwiftInferredValue {
             )
         }
         var layouts: [CValueType?] = []
-        var missing: String?
         for element in tuple.elements {
-            switch try part(of: element.type) {
-            case .addressOnly: return .addressOnly
-            case .loadable(let layout): layouts.append(layout)
-            case .undecided(let layout, let reason):
-                layouts.append(layout)
-                missing = missing ?? reason
-            }
+            guard case .fixed(let layout) = try part(of: element.type) else { return .addressOnly }
+            layouts.append(layout)
         }
         let layout = ABISwiftGetValueLayout(unsafeBitCast(type, to: UnsafeRawPointer.self))
         let aggregate = try aggregate(
@@ -528,7 +453,7 @@ enum SwiftInferredValue {
             alignment: layout.alignment,
             of: type
         )
-        return missing.map { .undecided(aggregate, missing: $0) } ?? .loadable(aggregate)
+        return .fixed(aggregate)
     }
 
     private static func aggregate(
@@ -558,7 +483,7 @@ enum SwiftInferredValue {
         }
     }
 
-    /// The value's lowering, assuming that it and its undecided fields are frozen.
+    /// The value's lowering, assuming that it and every value it stores are frozen.
     private static func layout(
         of metadata: Any.Type,
         info: ABISwiftValueDescriptorInfo,
@@ -590,219 +515,74 @@ enum SwiftInferredValue {
         )
     }
 
-    // MARK: Opaque properties
+    // MARK: Decision
 
-    /// What a struct's exported property descriptors show about its stored
-    /// properties of opaque types.
-    private enum OpaqueProperties {
-        case none
-        /// A stored property's own opaque type is not class-bound.
-        case addressOnly
-        /// The exports do not rule out a stored property of an opaque type.
-        case unknown(String)
-    }
-
-    /// A stored property `var x: some P` lowers as an opaque archetype in
-    /// every signature, including its own module's, while its field record
-    /// and value witnesses describe its underlying type. The archetype is
-    /// address-only unless it is class-bound, when it is a reference like its
-    /// underlying class. Enum payloads cannot have opaque types.
-    /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/SIL/IR/TypeLowering.cpp
-    private static func opaqueProperties(
-        of metadata: Any.Type,
-        info: ABISwiftValueDescriptorInfo,
-        fields: [Field],
-        module: ModuleContext
-    ) throws(InferenceFailure) -> OpaqueProperties {
-        guard !info.isEnum, !fields.isEmpty else { return .none }
-        let opaque =
-            "only exported property descriptors show whether a stored property has an opaque (`some`) type, which its field record describes by its underlying type"
-        // Optimized builds emit the opaque type descriptor of a property
-        // that is not public only where code uses it, so only exports count.
-        guard let image = module.image, let declaration = module.declaration else {
-            let reason =
-                module.image == nil
-                ? "ABIBridge cannot read the exports of \(module.name.map { "module `\($0)`" } ?? "its module")"
-                : "its image does not export its type descriptor"
-            return .unknown("\(reason), and \(opaque)")
-        }
-        let properties = RuntimeSymbolResolver.shared.exportedSwiftPropertyTypes(
-            declaration: declaration,
-            in: image
-        )
-        var addressOnly = false
-        var unsupported: String?
-        var missing: String?
-        for field in fields {
-            guard let property = properties[field.name] else {
-                missing =
-                    missing ?? "its stored property `\(field.name)` has no exported descriptor, and \(opaque)"
-                continue
-            }
-            guard mentionsOpaqueType(property.type) else { continue }
-            guard property.type == "some", let type = field.type else {
-                unsupported =
-                    unsupported
-                    ?? "its stored property `\(field.name): \(property.type)` has a type that contains an opaque type, which its field record describes by its underlying type; only a property whose whole type is opaque is inferred"
-                continue
-            }
-            // Only a class or a class-bound existential satisfies a class bound.
-            guard type is AnyClass || type == AnyObject.self
-                || runtimeMetadataKind(type) == .existential
-            else {
-                addressOnly = true
-                continue
-            }
-            // Requirements name a nongeneric context's opaque parameter `x`.
-            let symbol = property.symbol.dropLast(2) + "QOMQ"
-            guard !info.isGeneric,
-                let address = RuntimeSymbolResolver.shared.exportedAddress(
-                    named: String(symbol),
-                    in: image
-                ),
-                let descriptor = UnsafeRawPointer(bitPattern: UInt(address))
-            else {
-                missing =
-                    missing
-                    ?? "its stored property `\(field.name)` has an opaque (`some`) type whose underlying type is a reference, and ABIBridge cannot read whether that opaque type is class-bound"
-                continue
-            }
-            if !opaqueTypeIsClassBound(descriptor) { addressOnly = true }
-        }
-        if addressOnly { return .addressOnly }
-        if let unsupported { throw InferenceFailure(unsupported: true, detail: unsupported) }
-        return missing.map { .unknown($0) } ?? .none
-    }
-
-    /// Whether a demangled type mentions an opaque type: the property's own
-    /// as `some`, another declaration's as `<<opaque return type of …>>`.
-    private static func mentionsOpaqueType(_ type: String) -> Bool {
-        if type.contains("<<opaque return type of ") { return true }
-        let characters = Array(type.utf8)
-        func isIdentifier(_ byte: UInt8) -> Bool {
-            (48...57).contains(byte) || (65...90).contains(byte) || (97...122).contains(byte)
-                || byte == 95 || byte >= 0x80
-        }
-        // A type named `some` reads as a qualified name, such as `M.some`.
-        return characters.indices.contains { index in
-            characters[index...].starts(with: "some".utf8)
-                && (index == 0 || !isIdentifier(characters[index - 1]) && characters[index - 1] != 46)
-                && (index + 4 == characters.count || !isIdentifier(characters[index + 4]))
-        }
-    }
-
-    /// Whether the opaque parameter `x` of an opaque type descriptor has a
-    /// class, superclass, or class-bound protocol requirement.
-    /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/ABI/GenericContext.h
-    private static func opaqueTypeIsClassBound(_ descriptor: UnsafeRawPointer) -> Bool {
-        let parameters = Int(descriptor.loadUnaligned(fromByteOffset: 8, as: UInt16.self))
-        let count = Int(descriptor.loadUnaligned(fromByteOffset: 10, as: UInt16.self))
-        let requirements = descriptor.advanced(by: (16 + parameters + 3) & ~3)
-        return (0..<count).contains { index in
-            let requirement = RuntimeGenericRequirement(requirements.advanced(by: index * 12))
-            guard requirement.constrainsFirstParameter else { return false }
-            switch requirement.kind {
-            case 0: return requirement.isClassBoundProtocol
-            case 2: return true
-            case 0x1f: return requirement.isClassLayout
-            default: return false
-            }
-        }
-    }
-
-    // MARK: Resilience
-
-    private enum Resilience {
-        case resilient, fixed
-        case unknown(String)
+    private enum Decision {
+        case loadable, addressOnly
+        case undecided(String)
     }
 
     private enum Addressability {
         case no, yes, unknown
     }
 
-    private static func resilience(
-        of metadata: Any.Type,
+    /// What the value's own static value witnesses and its module's exports
+    /// decide, once none of its fields is address-only.
+    private static func decide(
+        _ metadata: Any.Type,
         info: ABISwiftValueDescriptorInfo,
         flags: UInt32,
         fields: [Field],
         module: ModuleContext
-    ) -> Resilience {
+    ) -> Decision {
         let name = String(reflecting: metadata)
         let kind = info.isEnum ? "enum" : "struct"
-        let evidence = module.evidence
-        if info.isEnum, let image = module.image, let declaration = module.declaration,
-            RuntimeSymbolResolver.shared.exportsSwiftEnumCases(declaration: declaration, in: image)
-        {
-            return .resilient
-        }
-        let isStatic = !info.isGeneric && info.metadataInitialization == 0
-        var explanation: String?
-        var unexplained = false
-        if isStatic, module.setsAddressableForDependencies, flags & addressableForDependencies != 0
-        {
-            if isSelfAddressable(metadata) {
-                explanation = "its own @_addressableForDependencies attribute explains"
-            } else {
-                let explained = fields.map { ($0, $0.type.map(addressability) ?? .no) }
-                if let field = explained.first(where: {
-                    if case .yes = $0.1 { true } else { false }
-                }) {
-                    explanation = "its field \(field.0.description) explains"
-                } else if let field = explained.first(where: {
-                    if case .unknown = $0.1 { true } else { false }
-                }) {
-                    explanation =
-                        "its field \(field.0.description) has runtime-built metadata, which may explain"
-                } else if evidence?.libraryEvolution == .enabled {
-                    return .resilient
-                } else {
-                    unexplained = true
-                }
-            }
-        }
         let moduleName = module.name.map { "module `\($0)`" } ?? "its module"
-        if evidence?.libraryEvolution == .disabled {
-            guard unexplained else { return .fixed }
-            return .unknown(
-                "\(kind) `\(name)` sets its addressable-for-dependencies value-witness bit, which none of its fields explains; \(moduleName) is built without library evolution, where a stored property of an opaque (`some`) type, which its field record describes by its underlying type, can set it"
+        guard !info.isGeneric else {
+            return .undecided(
+                "generic \(kind) `\(name)` has runtime-built metadata, whose value witnesses do not show whether it is resilient"
             )
         }
-        // Missing exports decide only what the value witnesses left open. An
-        // exported enum without case symbols is frozen.
-        if info.isEnum, module.image != nil, evidence != nil, module.declaration != nil {
-            return .fixed
-        }
-        let unreadable = "ABIBridge cannot read the exports of \(moduleName)"
-        let undecidedModule = "\(moduleName) does not show whether it is built with library evolution"
-        if let explanation {
-            let status =
-                switch evidence?.libraryEvolution {
-                case .enabled:
-                    "library-evolution \(moduleName) does not record whether \(kind) `\(name)` is @frozen"
-                case nil: "\(unreadable), so it cannot tell whether \(kind) `\(name)` is resilient"
-                default: "\(undecidedModule), or whether \(kind) `\(name)` is @frozen"
-                }
-            return .unknown(
-                "\(status); \(explanation) its addressable-for-dependencies value-witness bit"
+        if flags & addressableForDependencies != 0 {
+            if let explanation = explanation(of: metadata, fields: fields) {
+                return .undecided(
+                    "\(explanation) its addressable-for-dependencies value-witness bit, so the bit does not show whether \(kind) `\(name)` is resilient"
+                )
+            }
+            // Without library evolution, a stored property of an opaque type
+            // can set the bit alone, so only library-evolution symbols show
+            // that the type itself is resilient.
+            if module.showsLibraryEvolution { return .addressOnly }
+            let exports =
+                module.image == nil
+                ? "ABIBridge cannot read the exports of \(moduleName)"
+                : "\(moduleName) exports no symbols that only library evolution emits"
+            return .undecided(
+                "none of the fields of \(kind) `\(name)` explains its addressable-for-dependencies value-witness bit, and \(exports), so the bit can come from a stored property of an opaque (`some`) type, which its field record describes by its underlying type, rather than from resilience"
             )
         }
-        if !isStatic {
-            let status =
-                evidence == nil
-                ? unreadable : "\(moduleName) shows no evidence that it is built without library evolution"
-            return .unknown(
-                "\(info.isGeneric ? "generic " : "")\(kind) `\(name)` has runtime-built metadata, whose value witnesses do not show whether it is @frozen, and \(status)"
+        guard module.setsAddressableForDependencies else {
+            return .undecided(
+                "\(moduleName) never sets the addressable-for-dependencies value-witness bit, as Swift 6.1 and earlier compilers do not, so the bit does not show whether `\(name)` is resilient"
             )
         }
-        if !module.setsAddressableForDependencies {
-            return .unknown(
-                "\(moduleName) never sets the addressable-for-dependencies value-witness bit, as Swift 6.1 and earlier compilers do not, and shows no other evidence of whether `\(name)` is @frozen"
-            )
+        return .loadable
+    }
+
+    /// What explains a set addressable-for-dependencies bit other than
+    /// resilience, as the start of a sentence, or nil when nothing does.
+    private static func explanation(of metadata: Any.Type, fields: [Field]) -> String? {
+        if isSelfAddressable(metadata) {
+            return "its own @_addressableForDependencies attribute explains"
         }
-        return .unknown(
-            "\(evidence == nil ? unreadable : undecidedModule), so the addressable-for-dependencies value-witness bit of `\(name)` does not decide whether it is @frozen"
-        )
+        let explained = fields.map { ($0, $0.type.map(addressability) ?? .no) }
+        if let field = explained.first(where: { if case .yes = $0.1 { true } else { false } }) {
+            return "its field \(field.0.description) explains"
+        }
+        if let field = explained.first(where: { if case .unknown = $0.1 { true } else { false } }) {
+            return "its field \(field.0.description) has runtime-built metadata, which may explain"
+        }
+        return nil
     }
 
     /// Whether a field explains its parent's addressable-for-dependencies bit.
@@ -866,14 +646,16 @@ func swiftExportedTypeDeclaration(_ metadata: Any.Type) -> String? {
     ModuleContext.exportedDeclaration(of: metadata)
 }
 
-/// The image and module that declare a nominal type, and their evidence.
+/// The image and module that declare a nominal type, and what they show.
 private struct ModuleContext {
     let name: String?
     let image: RuntimeImage?
     /// The type's mangled declaration as its image exports the type's
     /// descriptor, or nil when the export trie does not show the descriptor.
     let declaration: String?
-    let evidence: RuntimeSwiftModuleEvidence?
+    /// Whether the image exports a symbol of the module's own declarations
+    /// that only library evolution emits.
+    let showsLibraryEvolution: Bool
     let setsAddressableForDependencies: Bool
 
     private struct Key: Hashable {
@@ -892,7 +674,8 @@ private struct ModuleContext {
         guard let name, let descriptor = ABISwiftTypeDescriptor(pointer),
             let (header, image) = Self.image(defining: descriptor)
         else {
-            image = nil; declaration = nil; evidence = nil; setsAddressableForDependencies = false
+            image = nil; declaration = nil; showsLibraryEvolution = false
+            setsAddressableForDependencies = false
             return
         }
         let key = Key(header: header, module: name)
@@ -906,14 +689,29 @@ private struct ModuleContext {
         self.image = image
         // A missing image leaves only metadata evidence.
         guard let image else {
-            declaration = nil; evidence = nil
+            declaration = nil; showsLibraryEvolution = false
             return
         }
-        evidence = Self.mangledContext(ofModule: name).map {
-            RuntimeSwiftModuleEvidence.evidence(forModule: $0, named: name, in: image)
-        }
+        showsLibraryEvolution =
+            Self.mangledContext(ofModule: name).map {
+                RuntimeSymbolResolver.shared.exportsSwiftLibraryEvolutionSymbols(
+                    ofModule: $0,
+                    named: name,
+                    in: image
+                )
+            } ?? false
         declaration = RuntimeSymbolResolver.shared.exportedSwiftTypeDeclaration(
             at: UInt64(UInt(bitPattern: descriptor)),
+            in: image
+        )
+    }
+
+    /// Whether the image exports enum case symbols for the type's own cases,
+    /// which only a resilient enum has.
+    var exportsEnumCases: Bool {
+        guard let image, let declaration else { return false }
+        return RuntimeSymbolResolver.shared.exportsSwiftEnumCases(
+            declaration: declaration,
             in: image
         )
     }

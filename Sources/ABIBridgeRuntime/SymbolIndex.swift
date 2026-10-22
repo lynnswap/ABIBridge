@@ -690,14 +690,6 @@ package final class SymbolIndex {
         return nil
     }
 
-    /// The address of the symbol this image exports under exactly `name`,
-    /// without consulting local symbols, which stripping removes.
-    package func exportedAddress(named name: String) -> UInt64? {
-        exportedOffset(named: Array(name.utf8)).flatMap {
-            imageSymbol(name: name, offset: $0)?.address
-        }
-    }
-
     /// The symbols this image exports with names starting with `prefix`. The
     /// walk visits only the trie's subtree for the prefix, such as one Swift
     /// declaration or module context.

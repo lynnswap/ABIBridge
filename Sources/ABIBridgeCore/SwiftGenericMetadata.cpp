@@ -639,18 +639,6 @@ ABISwiftReferenceStorage referenceStorage(const char *reference) {
     return ABISwiftReferenceStorageNone;
 }
 
-// Key paths address a stored field through the most general abstraction of
-// its type, which reabstracts functions and makes concrete metatypes thick.
-// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/SILGen/SILGen.cpp
-bool reabstractsInKeyPaths(const ABISwiftSyntaxNode *node) {
-    const char *kind = ABISwiftSyntaxNodeKind(node);
-    for (const char *reabstracted : {"Function", "ObjCBlock", "AutoClosure", "Metatype"})
-        if (std::strstr(kind, reabstracted)) return true;
-    for (size_t index = 0; index < ABISwiftSyntaxNodeChildCount(node); ++index)
-        if (reabstractsInKeyPaths(ABISwiftSyntaxNodeChild(node, index))) return true;
-    return false;
-}
-
 bool mentionsGenericParameter(const ABISwiftSyntaxNode *node) {
     const char *kind = ABISwiftSyntaxNodeKind(node);
     if (!std::strcmp(kind, "DependentGenericParamType") || !std::strcmp(kind, "DependentMemberType"))
@@ -727,23 +715,6 @@ bool ABISwiftTypeFieldIsGenericDependent(const void *metadata, size_t index) {
     if (!reference) return false;
     SyntaxOwner syntax(ABICopySwiftTypeSyntax(reference, symbolicNameLength(reference)), ABIReleaseSwiftSyntax);
     return syntax && mentionsGenericParameter(ABISwiftSyntaxRoot(syntax.get()));
-}
-
-bool ABISwiftStructDescriptorFieldHasStoredKeyPathComponent(const void *rawDescriptor, const char *name) {
-    auto descriptor = static_cast<const char *>(rawDescriptor);
-    if (!descriptor || !name || (read<uint32_t>(descriptor) & 0x1f) != 17) return false;
-    const char *fields = relative(descriptor + 16);
-    if (!fields) return false;
-    for (uint32_t index = 0; index < read<uint32_t>(fields + 12); ++index) {
-        const char *record = fieldRecord(fields, index);
-        const char *recordName = relative(record + 8);
-        if (!recordName || std::strcmp(recordName, name)) continue;
-        const char *reference = relative(record + 4);
-        if (referenceStorage(reference) != ABISwiftReferenceStorageNone) return false;
-        SyntaxOwner syntax(ABICopySwiftTypeSyntax(reference, symbolicNameLength(reference)), ABIReleaseSwiftSyntax);
-        return syntax && !reabstractsInKeyPaths(ABISwiftSyntaxRoot(syntax.get()));
-    }
-    return false;
 }
 
 const char *ABISwiftTypeModuleName(const void *metadata) {

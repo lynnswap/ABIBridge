@@ -22,10 +22,8 @@ package struct RuntimeGenericRequirement {
     package var isClassBoundProtocol: Bool {
         kind == 0 && ABISwiftProtocolRequirementIsClassBound(address.advanced(by: 8))
     }
-    package var isInheritedProtocol: Bool { kind == 0 && constrainsFirstParameter }
-    /// Whether the requirement's subject is the first generic parameter
-    /// itself, mangled `x`.
-    package var constrainsFirstParameter: Bool {
+    package var isInheritedProtocol: Bool {
+        guard kind == 0 else { return false }
         let field = address.advanced(by: 4)
         let subject = field.advanced(by: Int(field.loadUnaligned(as: Int32.self)))
         return subject.load(as: UInt8.self) == 120

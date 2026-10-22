@@ -779,25 +779,36 @@ struct NativeSwiftClosureTests {
     }
 
     /// An inferred struct hashes as `-indirect` when it passes by address,
-    /// and otherwise as its declaration without generic arguments, both for
-    /// a host value of its own type and for a declaration's closure plan. A
-    /// declaration in a constrained extension includes the extension's
-    /// generic signature, which runtime type names omit. A tuple result's
-    /// element is hashed by its type unless it is formally indirect.
+    /// and otherwise as its declaration, both for a host value of its own
+    /// type and for a declaration's closure plan. A declaration hashes
+    /// without generic arguments, and one in a constrained extension includes
+    /// the extension's generic signature, which runtime type names omit;
+    /// inference leaves such generic instances undecided, so only their names
+    /// are checked. A tuple result's element is hashed by its type unless it
+    /// is formally indirect.
     @Test(arguments: [false, true])
     func inferredAuthenticationMatchesNativeCompilerCalls(evolution: Bool) async throws {
-        // Library evolution does not record whether a generic struct is frozen.
-        let types =
-            ["AuthPoint", "AuthWide", "AuthOpen", "ClosedRange<Int>.Index"]
+        let inferred = ["AuthPoint", "AuthWide", "AuthOpen"]
+        // These pass directly. With library evolution, the compiler passes
+        // the resilient ones by address, which their names do not show.
+        let named =
+            ["ClosedRange<Int>.Index"]
             + (evolution
                 ? []
                 : [
                     "AuthPair<Double>", "AuthPair<Int8>", "AuthBox<Int>.Inner",
                     "AuthBox<Int>.Inner.Deep", "AuthBox<Int>.Kind", "AuthBox<Int>.Same",
                 ])
+        let types = inferred + named
         let module = "ClosureAuth_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
         let source =
             """
+            // Its String field sets the addressable bit, so the module's clear
+            // bits certify its other types.
+            public struct AuthLabel {
+                public var text: String
+                public init() { text = "label" }
+            }
             @frozen public struct AuthPoint {
                 public var x: Double, y: Double
                 public init() { x = 1; y = 2 }
@@ -871,6 +882,14 @@ struct NativeSwiftClosureTests {
         }
         for (index, (name, expected)) in zip(types, found).enumerated() {
             let type = try unsafe typeAt.unsafeInvoke(Int64(index))
+            guard index < inferred.count else {
+                let hash = try swiftClosureTypeHash(type)
+                #expect(
+                    swiftClosureDiscriminator(parameters: [hash], result: hash) == expected,
+                    "\(name)"
+                )
+                continue
+            }
             let host = swiftClosureDiscriminator(
                 parameters: [try swiftClosureAuthType(type, position: .parameter)],
                 result: try swiftClosureAuthType(type, position: .result)
