@@ -80,8 +80,11 @@ struct Layout {
     std::vector<Component> components;
     bool indirect = false;
 };
-enum class Bank { integer, floating, stack };
-enum class ArgumentSource { parameter, result, error };
+// indirectResult is the dedicated indirect-result register (x8).
+enum class Bank { integer, floating, stack, indirectResult };
+// A result move passes the address of a tuple element's output; a direct-result
+// move passes the address of the direct result's storage.
+enum class ArgumentSource { parameter, result, directResult, error };
 struct ArgumentMove {
     size_t argument;
     Component component;
@@ -92,6 +95,17 @@ struct ArgumentMove {
     ArgumentSource source = ArgumentSource::parameter;
     TypeStorage *pack = nullptr;
 };
+
+// The register or stack word of a frame that holds a move's value.
+void *slot(CallFrame &frame, const ArgumentMove &move) {
+    switch (move.bank) {
+    case Bank::integer: return &frame.integers[move.destination];
+    case Bank::floating: return &frame.floating[move.destination];
+    case Bank::stack: return reinterpret_cast<uint8_t *>(frame.stack) + move.destination;
+    case Bank::indirectResult: return &frame.indirectResult;
+    }
+    __builtin_unreachable();
+}
 
 void flatten(TypeStorage &type, size_t offset, std::vector<Component> &components) {
     if (!type.fields.empty()) {
@@ -331,6 +345,9 @@ struct ABISwiftCallInterface {
     std::vector<SwiftField> indirectResults;
     std::vector<std::shared_ptr<TypeStorage>> parameters;
     Layout resultLayout;
+    // Whether the address of a direct result too large for registers goes in
+    // the indirect-result register, rather than before the outputs.
+    bool directResultInRegister = true;
     std::shared_ptr<TypeStorage> errorResult;
     Layout errorLayout;
     bool typedError = false;
@@ -367,14 +384,20 @@ static void prepareSwiftResult(ABISwiftCallInterface &interface) {
         }
         direct->elements.push_back(nullptr);
         direct->aggregate = {size, static_cast<unsigned short>(alignment), FFI_TYPE_STRUCT, direct->elements.data()};
-        // Swift uses the dedicated indirect-result register only when the one
-        // formal output is the entire result. Otherwise outputs precede inputs.
+        // Swift's IRGen passes at most one address in the indirect-result
+        // register (sret), and none when several elements return indirectly:
+        // the direct result's storage when registers cannot hold it, or else
+        // the one element's output when that element is the entire result.
+        // Other outputs precede the inputs as ordinary arguments, after the
+        // direct result's address when it has no sret (GenCall.cpp,
+        // SignatureExpansion::expandResult).
         if (interface.indirectResults.size() == 1 && size == 0) {
             const auto field = interface.indirectResults.front();
             direct = field.type;
             interface.resultCopies = {{field.offset, 0, field.type->size()}};
             interface.indirectResults.clear();
         }
+        interface.directResultInRegister = interface.indirectResults.size() < 2;
         interface.directResult = std::move(direct);
     }
     interface.resultLayout = lower(*interface.directResult);
@@ -453,6 +476,14 @@ static ABISwiftCallInterface *createSwiftCallInterface(
         }
         interface->moves.push_back(move);
     };
+    if (interface->resultLayout.indirect) {
+        // SwiftResultStorage supplies the address, already a pack's element
+        // vector when the direct result is a pack.
+        const ArgumentMove move{0, {0, sizeof(void *), false}, Bank::indirectResult, 0, true,
+                                interface->directResult->size(), ArgumentSource::directResult};
+        if (interface->directResultInRegister) interface->moves.push_back(move);
+        else append(move);
+    }
     for (size_t index = 0; index < interface->indirectResults.size(); ++index) {
         const auto &field = interface->indirectResults[index];
         append({index, {field.offset, sizeof(void *), false}, Bank::stack, 0, true,
@@ -509,10 +540,9 @@ static bool isAddressOnly(const TypeStorage &type) {
 bool ABISwiftValueIsAddressOnly(const ABIValueType *type) { return isAddressOnly(*type->storage); }
 
 namespace {
-// What a register or stack slot of a value holds. A result's formal indirect
-// outputs pass before the inputs as ordinary pointers, while storage for a
-// direct result too large for registers uses the dedicated indirect-result
-// register, so each address keeps its role.
+// What a register or stack slot of a value holds. A result's outputs pass
+// before the inputs as ordinary pointers, while an address in the dedicated
+// indirect-result register has its own role.
 enum class SlotRole { component, address, output, indirectResult };
 
 struct LoweredPart {
@@ -527,7 +557,8 @@ struct LoweredPart {
 // The slots in call order. A parameter expands its tuples into separate
 // values, so only the sequence of slots, not the grouping of components into
 // values, decides where the call puts each byte. A result lowers as one value,
-// unless its tuple elements need indirect or separate storage.
+// unless its tuple elements need indirect or separate storage; its addresses
+// are the ones a call interface passes.
 std::vector<LoweredPart> loweredParts(const std::shared_ptr<TypeStorage> &type, bool result) {
     std::vector<LoweredPart> parts;
     auto appendAddress = [&](SlotRole role, TypeStorage &value) {
@@ -540,12 +571,15 @@ std::vector<LoweredPart> loweredParts(const std::shared_ptr<TypeStorage> &type, 
         }
     };
     if (result) {
-        ABISwiftCallInterface interface;
-        interface.result = type;
-        prepareSwiftResult(interface);
-        for (const auto &field : interface.indirectResults) appendAddress(SlotRole::output, *field.type);
-        if (interface.resultLayout.indirect) appendAddress(SlotRole::indirectResult, *interface.directResult);
-        else appendComponents(interface.resultLayout, 0);
+        const ABIValueType value{type};
+        const std::unique_ptr<ABISwiftCallInterface> interface(
+            createSwiftCallInterface(&value, nullptr, 0, nullptr, false, nullptr));
+        for (const auto &move : interface->moves) {
+            const auto role = move.bank == Bank::indirectResult ? SlotRole::indirectResult : SlotRole::output;
+            if (move.source == ArgumentSource::directResult) appendAddress(role, *interface->directResult);
+            else appendAddress(role, *interface->indirectResults[move.argument].type);
+        }
+        if (!interface->resultLayout.indirect) appendComponents(interface->resultLayout, 0);
         return parts;
     }
     std::vector<SwiftField> fields;
@@ -596,21 +630,23 @@ char *ABICopySwiftValueLoweringDescription(const ABIValueType *type, bool result
     return strdup(text.empty() ? "in no registers" : (text + ")").c_str());
 }
 
+// Writes each move into `frame`, whose stack field points to the interface's
+// stack area. `directResult` is the direct result's storage from SwiftResultStorage.
 static void marshalSwiftArguments(
-    ABISwiftCallInterface *interface, void *const *arguments, void *result, void *errorResult,
-    CallFrame &frame, std::vector<uint8_t> &stack, std::vector<std::vector<void *>> &packs) {
+    ABISwiftCallInterface *interface, void *const *arguments, void *result, void *directResult,
+    void *errorResult, CallFrame &frame, std::vector<std::vector<void *>> &packs) {
     uintptr_t errorAddress = reinterpret_cast<uintptr_t>(errorResult);
     for (const auto &move : interface->moves) {
         const bool errorArgument = move.source == ArgumentSource::error;
-        const auto base = errorArgument ? reinterpret_cast<const uint8_t *>(&errorAddress)
-            : static_cast<const uint8_t *>(move.source == ArgumentSource::result ? result : arguments[move.argument]);
-        const auto source = base + move.component.offset;
-        void *destination;
-        switch (move.bank) {
-            case Bank::integer: destination = &frame.integers[move.destination]; break;
-            case Bank::floating: destination = &frame.floating[move.destination]; break;
-            case Bank::stack: destination = stack.data() + move.destination; break;
+        const void *base = nullptr;
+        switch (move.source) {
+            case ArgumentSource::parameter: base = arguments[move.argument]; break;
+            case ArgumentSource::result: base = result; break;
+            case ArgumentSource::directResult: base = directResult; break;
+            case ArgumentSource::error: base = &errorAddress; break;
         }
+        const auto source = static_cast<const uint8_t *>(base) + move.component.offset;
+        void *destination = slot(frame, move);
         if (move.indirect) {
             const void *value = source;
             if (move.pack) {
@@ -684,9 +720,7 @@ static bool invokeSwiftCallInterface(
     frame.context = reinterpret_cast<uintptr_t>(context);
     SwiftResultStorage resultStorage(*interface, result);
     std::vector<std::vector<void *>> packs;
-    if (interface->resultLayout.indirect)
-        frame.indirectResult = reinterpret_cast<uintptr_t>(resultStorage.direct);
-    marshalSwiftArguments(interface, arguments, result, errorResult, frame, stack, packs);
+    marshalSwiftArguments(interface, arguments, result, resultStorage.direct, errorResult, frame, packs);
     uint64_t discriminator = 0;
 #if __has_feature(ptrauth_calls)
     discriminator = ptrauth_function_pointer_type_discriminator(void(void));
@@ -795,6 +829,8 @@ ABISwiftAsyncCallInterface *ABICreateSwiftAsyncCallInterface(
     Type empty(ABICreateScalarType(ABIValueVoid, error), ABIReleaseValueType);
     if (!pointer || !empty) return nullptr;
     std::vector<const ABIValueType *> inputs;
+    // An async entry never uses the indirect-result register; the direct
+    // result's address precedes the outputs (GenCall.cpp, expandAsyncEntryType).
     if (completion->resultLayout.indirect) inputs.push_back(pointer.get());
     for (size_t index = 0; index < completion->indirectResults.size(); ++index) inputs.push_back(pointer.get());
     if (inheritsCallerIsolation) { inputs.push_back(pointer.get()); inputs.push_back(pointer.get()); }
@@ -870,8 +906,8 @@ extern "C" SwiftAsyncTransfer *ABIPrepareSwiftAsyncEntry(
     bridge->executor = swift_task_getCurrentExecutor();
     invocation->isolation[0] = actor;
     invocation->isolation[1] = witness;
-    marshalSwiftArguments(invocation->entry.get(), invocation->arguments.data(), nullptr, nullptr,
-                          invocation->transfer.values, invocation->stack, invocation->packs);
+    marshalSwiftArguments(invocation->entry.get(), invocation->arguments.data(), nullptr, nullptr, nullptr,
+                          invocation->transfer.values, invocation->packs);
     bridge->callee = static_cast<SwiftAsyncHeader *>(swift_task_alloc(invocation->contextSize));
     bridge->callee->parent = reinterpret_cast<swift::AsyncContext *>(bridge);
     bridge->callee->resume = ABISwiftAsyncResume;
@@ -1107,13 +1143,8 @@ void unpackArguments(const ABISwiftCallInterface &interface, CallFrame &frame,
         arguments.push_back(storage.back().data());
     }
     for (const auto &move : interface.moves) {
-        if (move.source == ArgumentSource::result) continue;
-        const void *source = nullptr;
-        switch (move.bank) {
-            case Bank::integer: source = &frame.integers[move.destination]; break;
-            case Bank::floating: source = &frame.floating[move.destination]; break;
-            case Bank::stack: source = reinterpret_cast<const uint8_t *>(frame.stack) + move.destination; break;
-        }
+        if (move.source == ArgumentSource::result || move.source == ArgumentSource::directResult) continue;
+        const void *source = slot(frame, move);
         if (move.source == ArgumentSource::error) {
             // The trailing typed-error pointer is hidden from the Swift body.
             if (errorResult) std::memcpy(errorResult, source, sizeof(void *));
@@ -1151,8 +1182,27 @@ void packRegisters(const Layout &layout, TypeStorage &type, CallFrame &frame, co
         std::memcpy(destination, static_cast<const uint8_t *>(value) + component.offset, std::min(component.size, available));
     }
 }
+// The result addresses that a native caller passed to a callback.
+struct ResultAddresses {
+    void *direct = nullptr;
+    std::vector<void *> outputs;
+};
+ResultAddresses incomingResultAddresses(const ABISwiftCallInterface &interface, CallFrame &frame) {
+    ResultAddresses addresses;
+    for (const auto &move : interface.moves) {
+        if (move.source != ArgumentSource::result && move.source != ArgumentSource::directResult) continue;
+        void *address = nullptr;
+        std::memcpy(&address, slot(frame, move), sizeof(address));
+        if (move.source == ArgumentSource::directResult) addresses.direct = address;
+        else addresses.outputs.push_back(address);
+    }
+    return addresses;
+}
+
+// `direct` is the caller's storage for a direct result too large for
+// registers, and `outputs` are those of the tuple elements returned indirectly.
 void packResult(const ABISwiftCallInterface &interface, CallFrame &frame, void *value,
-                void *const *outputs = nullptr, ABISwiftResultInitializer initializeResult = nullptr,
+                void *direct, void *const *outputs, ABISwiftResultInitializer initializeResult = nullptr,
                 void *context = nullptr) {
     auto initialize = [&](void *destination, void *source, size_t logicalOffset, size_t size) {
         if (!size) return;
@@ -1167,25 +1217,16 @@ void packResult(const ABISwiftCallInterface &interface, CallFrame &frame, void *
                        logicalOffset + type.offsets[index], type.fields[index]->size());
     };
     for (size_t index = 0; index < interface.indirectResults.size(); ++index) {
-        void *destination = nullptr;
-        if (outputs) destination = outputs[index];
-        else {
-            const auto &move = interface.moves[index];
-            const void *source = move.bank == Bank::integer ? static_cast<const void *>(&frame.integers[move.destination])
-                : reinterpret_cast<const uint8_t *>(frame.stack) + move.destination;
-            std::memcpy(&destination, source, sizeof(destination));
-        }
         const auto &field = interface.indirectResults[index];
-        copyOutput(*field.type, destination, static_cast<uint8_t *>(value) + field.offset, field.offset);
+        copyOutput(*field.type, outputs[index], static_cast<uint8_t *>(value) + field.offset, field.offset);
     }
     if (interface.directResult->swiftPack) {
         const auto offset = interface.resultCopies.empty() ? 0 : interface.resultCopies[0].logical;
-        copyOutput(*interface.directResult, reinterpret_cast<void *>(frame.indirectResult),
-                   static_cast<uint8_t *>(value) + offset, offset);
+        copyOutput(*interface.directResult, direct, static_cast<uint8_t *>(value) + offset, offset);
         return;
     }
     if (interface.resultLayout.indirect) {
-        auto *destination = reinterpret_cast<uint8_t *>(frame.indirectResult);
+        auto *destination = static_cast<uint8_t *>(direct);
         if (interface.resultCopies.empty()) {
             initialize(destination, value, 0, interface.directResult->size());
         } else {
@@ -1430,12 +1471,11 @@ extern "C" void ABIFinishSwiftAsyncCallback(SwiftAsyncCallbackContext *bridge, S
         // The Swift execution body guarantees a completed native outcome,
         // including unchanged fallback after an unrepresentable failure.
         if (!result) std::abort();
-        transfer->values.indirectResult = reinterpret_cast<uintptr_t>(call.indirectResult);
         transfer->values.error = call.interface.errorResult ? 0 : invocation->nativeContext;
         if (result->isError) packError(call.interface, transfer->values, result->value.data(), call.indirectError,
             call.handler->functions.initializeError, call.handler->context);
-        else packResult(call.interface, transfer->values, result->value.data(), call.outputs.data(),
-            call.handler->functions.initializeResult, call.handler->context);
+        else packResult(call.interface, transfer->values, result->value.data(), call.indirectResult,
+            call.outputs.data(), call.handler->functions.initializeResult, call.handler->context);
         result->initialized = false;
         auto resume = reinterpret_cast<ABIUnmanagedFunction>(invocation->caller->resume);
         std::memcpy(&transfer->function, &resume, sizeof(resume));
@@ -1447,7 +1487,6 @@ extern "C" void ABIFinishSwiftAsyncCallback(SwiftAsyncCallbackContext *bridge, S
         return;
     }
     auto &completion = *invocation->callback.interface.completion;
-    transfer->values.indirectResult = reinterpret_cast<uintptr_t>(invocation->indirectResult);
     transfer->values.error = completion.errorResult ? 0 : invocation->nativeContext;
     if (invocation->didThrow)
         packError(completion, transfer->values, invocation->error.data(), invocation->indirectError);
@@ -1455,8 +1494,8 @@ extern "C" void ABIFinishSwiftAsyncCallback(SwiftAsyncCallbackContext *bridge, S
         auto &callback = invocation->callback;
         auto *context = callback.functions.usesNativeContext
             ? reinterpret_cast<void *>(invocation->nativeContext) : callback.context;
-        packResult(completion, transfer->values, invocation->result.data(), invocation->outputs.data(),
-                   callback.functions.initializeResult, context);
+        packResult(completion, transfer->values, invocation->result.data(), invocation->indirectResult,
+                   invocation->outputs.data(), callback.functions.initializeResult, context);
     }
     auto resume = reinterpret_cast<ABIUnmanagedFunction>(bridge->header.resume);
     std::memcpy(&transfer->function, &resume, sizeof(resume));
@@ -1481,10 +1520,7 @@ bool ABISwiftIncomingReadPointer(ABISwiftIncomingCall *call, const ABISwiftCallI
     for (const auto &move : interface->moves) {
         if (move.source != ArgumentSource::parameter || move.argument != index) continue;
         if (move.indirect || move.component.offset != 0 || move.component.size != sizeof(void *)) break;
-        const void *source = move.bank == Bank::integer ? static_cast<const void *>(&call->frame.integers[move.destination])
-            : move.bank == Bank::floating ? static_cast<const void *>(&call->frame.floating[move.destination])
-            : reinterpret_cast<const uint8_t *>(call->frame.stack) + move.destination;
-        std::memcpy(value, source, sizeof(void *));
+        std::memcpy(value, slot(call->frame, move), sizeof(void *));
         return true;
     }
     fail(error, ABIFailureInvalidRequest, "The selected Swift argument is not a directly passed pointer word.");
@@ -1712,7 +1748,9 @@ extern "C" __attribute__((visibility("hidden"))) void ABIDispatchSwiftCallback(A
         } else {
             callback->closure->invoke(context, arguments.data(), result.data());
         }
-        packResult(interface, *frame, result.data(), nullptr, callback->closure->initializeResult, context);
+        const auto addresses = incomingResultAddresses(interface, *frame);
+        packResult(interface, *frame, result.data(), addresses.direct, addresses.outputs.data(),
+                   callback->closure->initializeResult, context);
         return; // The native caller owns the selected result or error.
     }
     std::shared_ptr<SwiftHandler> handler;
@@ -1738,8 +1776,11 @@ extern "C" __attribute__((visibility("hidden"))) void ABIDispatchSwiftCallback(A
     if (call.interface.errorResult) frame->error = 0;
     if (result->isError) packError(call.interface, *frame, result->value.data(), call.indirectError,
         call.handler->functions.initializeError, call.handler->context);
-    else packResult(call.interface, *frame, result->value.data(), nullptr,
-        call.handler->functions.initializeResult, call.handler->context);
+    else {
+        const auto addresses = incomingResultAddresses(call.interface, *frame);
+        packResult(call.interface, *frame, result->value.data(), addresses.direct, addresses.outputs.data(),
+            call.handler->functions.initializeResult, call.handler->context);
+    }
     result->initialized = false; // The native caller now owns the result.
 }
 

@@ -88,7 +88,7 @@ When changing native headers, symbol lookup, call marshalling, or hooks, run the
 bash scripts/test-native-consumer.sh
 ```
 
-This builds C, C++, Objective-C++, and Swift clients of the public product. It also runs the Swift compiler probes, which inspect generated code for argument passing, results, ownership, and pointer authentication across architectures. To run only the probes, use `bash scripts/test-codegen.sh`; it runs all of them and then lists the ones that failed.
+This builds C, C++, Objective-C++, and Swift clients of the public product. It also runs the Swift compiler probes, which inspect generated code for argument passing, results, ownership, and pointer authentication across architectures. To run only the probes, use `bash scripts/test-codegen.sh`; it runs all of them and then lists the ones that failed. The tuple-result probe also builds a small consumer, in the directory that `ABI_CONSUMER_BUILD_DIR` selects, to compare ABIBridge's own placement of tuple results with the compiler's.
 
 Inferred struct and enum conventions depend on a checked-in list of the SDK's `@frozen @_addressableForDependencies` declarations. When a new SDK adds one, `scripts/check-inferred-swift-value-codegen.py` fails until you regenerate the list with each supported Xcode:
 
