@@ -60,6 +60,10 @@ xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_build" SwiftFunctionConsumer "$task_fixture/libSwiftFixture.dylib" "$task_fixture/libSwiftExtensionFixture.dylib"
 
+# Inferred struct and enum conventions read compiler facts that a new
+# toolchain can change, so CI checks them with each Xcode.
+python3 "$task_root/scripts/check-inferred-swift-value-codegen.py"
+
 if [[ "$task_mode" == focused ]]; then exit; fi
 
 python3 "$task_root/scripts/check-managed-swift-codegen.py"
@@ -70,7 +74,6 @@ python3 "$task_root/scripts/check-swift-generic-call-codegen.py"
 python3 "$task_root/scripts/check-swift-generic-receiver-codegen.py"
 python3 "$task_root/scripts/check-explicit-swift-value-codegen.py"
 python3 "$task_root/scripts/check-indirect-swift-value-codegen.py"
-python3 "$task_root/scripts/check-inferred-swift-value-codegen.py"
 python3 "$task_root/scripts/check-swift-error-codegen.py"
 python3 "$task_root/scripts/check-swift-async-codegen.py"
 python3 "$task_root/scripts/check-swift-throwing-closure-codegen.py"
