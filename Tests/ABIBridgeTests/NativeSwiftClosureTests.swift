@@ -906,7 +906,10 @@ struct NativeSwiftClosureTests {
                 Issue.record("\(name) has no closure plan")
                 continue
             }
-            #expect(plan.discriminator == expected, "\(name)")
+            #expect(
+                swiftClosureDiscriminator(description: plan.authentication) == expected,
+                "\(name)"
+            )
         }
         // AuthWide passes by address as a whole result, but a tuple result
         // keeps it as a direct SIL result that shares one return buffer.
@@ -946,7 +949,10 @@ struct NativeSwiftClosureTests {
                 Issue.record("closureProbeTuple has no closure plan")
                 continue
             }
-            #expect(plan.discriminator == expected, "valueABIs: \(valueABIs.count)")
+            #expect(
+                swiftClosureDiscriminator(description: plan.authentication) == expected,
+                "valueABIs: \(valueABIs.count)"
+            )
         }
         // A resilient element is formally indirect, so it hashes as
         // `-indirect`, as does an opaque layout of it.
@@ -983,14 +989,18 @@ struct NativeSwiftClosureTests {
                 Issue.record("closureProbeOpenTuple has no closure plan")
                 continue
             }
-            #expect(plan.discriminator == openExpected, "open valueABIs: \(valueABIs.count)")
+            #expect(
+                swiftClosureDiscriminator(description: plan.authentication) == openExpected,
+                "open valueABIs: \(valueABIs.count)"
+            )
         }
     }
 
     /// A type declared in an unconstrained extension of another module's
     /// type hashes as its runtime name, which includes the extension and has
     /// no generic signature to omit, whether or not its image exports its
-    /// descriptor. One in a constrained extension needs that descriptor.
+    /// descriptor. On arm64e, one in a constrained extension needs that
+    /// descriptor.
     @Test func unexportedTypesInExtensionsHashByTheirRuntimeNames() async throws {
         let module = "ClosureExtension_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
         let source = """
@@ -1083,18 +1093,86 @@ struct NativeSwiftClosureTests {
                 Issue.record("probe \(index) has no closure plan")
                 continue
             }
-            #expect(plan.discriminator == found[index], "probe \(index)")
+            #expect(
+                swiftClosureDiscriminator(description: plan.authentication) == found[index],
+                "probe \(index)"
+            )
         }
         // Their conventions are undecided, so only their names are hashed.
         for index: Int64 in [1, 2] {
+            let type = try unsafe typeAt.unsafeInvoke(index)
+            guard RuntimePointerAuthentication.isEnabled else {
+                // Only arm64e hashes the declaration; elsewhere the runtime
+                // name identifies the type.
+                #expect(try swiftClosureTypeHash(type) == "$s" + _mangledTypeName(type)!)
+                continue
+            }
             #expect {
-                _ = try swiftClosureTypeHash(unsafe typeAt.unsafeInvoke(index))
+                _ = try swiftClosureTypeHash(type)
             } throws: { error in
                 guard case ABIResolutionError.metadataUnavailable(let message) = error else {
                     return false
                 }
                 return message.contains("it is declared in a constrained extension")
             }
+        }
+    }
+    #endif
+
+    #if os(macOS)
+    /// Only arm64e signs a closure with a discriminator, which hashes the
+    /// declaration of each type in the closure's signature. Other
+    /// architectures prepare a closure over a type in a constrained extension
+    /// even when its image does not export the type's descriptor.
+    @Test func closuresOverTypesInConstrainedExtensionsPrepare() async throws {
+        let module =
+            "ClosureConstrained_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let source = """
+            public struct Box<T> {}
+            extension Box where T: Equatable {
+                struct Hidden { var x: Double, y: Double }
+            }
+            // Requirement records omit conformances to marker protocols.
+            extension Box where T: Sendable {
+                struct Marked { var x: Double, y: Double }
+            }
+            @inline(never) func applyHidden(_ callback: (Box<Int>.Hidden) -> Double) -> Double {
+                callback(.init(x: 1, y: 2)) + 1
+            }
+            @inline(never) func applyMarked(_ callback: (Box<Int>.Marked) -> Double) -> Double {
+                callback(.init(x: 3, y: 4)) + 2
+            }
+            """
+        let library = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: source,
+            linkArguments: ["-parse-as-library", "-swift-version", "6"]
+        )
+        defer { library.cleanup() }
+        let runtime = ABIRuntime()
+        let layout = try NativeType.structure(named: "Point", fields: [.double, .double])
+        let callback = try NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Double> { _ in 40 }
+        for (name, offset) in [("Hidden", 1.0), ("Marked", 2.0)] {
+            // Inference leaves generic structs that are not public undecided.
+            let type = try await runtime.resolveSwiftType(
+                named: "\(module).Box.\(name)",
+                in: .path(library.libraryURL),
+                genericArguments: [.type(Int.self)]
+            )
+            let apply = {
+                try await runtime.resolveSwiftFunction(
+                    named: "\(module).apply\(name)(_:)",
+                    as: ((NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Double>) -> Double).self,
+                    valueABIs: [type: layout],
+                    in: .path(library.libraryURL)
+                )
+            }
+            if NativePointerAuthentication.isEnabled {
+                await #expect(throws: ABIResolutionError.self) { try await apply() }
+                continue
+            }
+            let function = try await apply()
+            #expect(try unsafe function.unsafeInvoke(callback) == 40 + offset, "\(name)")
         }
     }
     #endif

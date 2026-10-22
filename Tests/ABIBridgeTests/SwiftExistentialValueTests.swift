@@ -341,7 +341,7 @@ struct SwiftExistentialValueTests {
         let closure = try #require(plan.arguments.first?.closure)
         // The arm64e compiler fixture hashes the formally class-based type,
         // despite passing this many object/witness components indirectly.
-        #expect(closure.discriminator == 59948)
+        #expect(swiftClosureDiscriminator(description: closure.authentication) == 59948)
     }
 
     @Test func metadataKindsAndAuthenticationKeepDistinctContracts() throws {

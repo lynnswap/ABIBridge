@@ -106,22 +106,32 @@ func swiftClosureTypeHash(_ type: Any.Type) throws -> String {
 /// discriminator. A runtime type name omits the generic signature of a
 /// constrained extension, so a type declared in one takes the name of its
 /// exported descriptor. An unconstrained extension has no signature to omit.
+///
+/// Only arm64e hashes this declaration. Elsewhere it identifies the type when
+/// two closure plans are compared, which the runtime name also does, so a
+/// declaration that cannot be established does not fail there.
 private func swiftNominalClosureDeclaration(
     _ type: Any.Type,
     runtimeName: String
 ) throws -> String {
-    let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
-    guard ABISwiftTypeIsDeclaredInConstrainedExtension(metadata) else {
-        return runtimeName.hasSuffix("G") ? try swiftNominalClosureName(runtimeName) : runtimeName
+    do {
+        let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
+        guard ABISwiftTypeIsDeclaredInConstrainedExtension(metadata) else {
+            return runtimeName.hasSuffix("G")
+                ? try swiftNominalClosureName(runtimeName) : runtimeName
+        }
+        guard let declaration = swiftExportedTypeDeclaration(type) else {
+            throw ABIResolutionError.metadataUnavailable(
+                "No Swift closure type identity for \(String(reflecting: type)): it is declared in a "
+                    + "constrained extension, whose generic signature its runtime name omits, and its "
+                    + "image does not export its nominal type descriptor, whose name includes it."
+            )
+        }
+        return declaration
+    } catch {
+        guard !RuntimePointerAuthentication.isEnabled else { throw error }
+        return runtimeName
     }
-    guard let declaration = swiftExportedTypeDeclaration(type) else {
-        throw ABIResolutionError.metadataUnavailable(
-            "No Swift closure type identity for \(String(reflecting: type)): it is declared in a "
-                + "constrained extension, whose generic signature its runtime name omits, and its "
-                + "image does not export its nominal type descriptor, whose name includes it."
-        )
-    }
-    return declaration
 }
 
 // A bound nominal mangling contains its declaration before the generic
