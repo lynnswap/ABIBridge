@@ -105,7 +105,9 @@ func swiftClosureTypeHash(_ type: Any.Type) throws -> String {
 /// A struct or enum's declaration as the compiler mangles it in a
 /// discriminator. A runtime type name omits the generic signature of a
 /// constrained extension, so a type declared in one takes the name of its
-/// exported descriptor. An unconstrained extension has no signature to omit.
+/// exported descriptor, which spells every requirement, or else the name
+/// that its context descriptors establish. An unconstrained extension has no
+/// signature to omit.
 ///
 /// Only arm64e hashes this declaration. Elsewhere it identifies the type when
 /// two closure plans are compared, which the runtime name also does, so a
@@ -120,14 +122,20 @@ private func swiftNominalClosureDeclaration(
             return runtimeName.hasSuffix("G")
                 ? try swiftNominalClosureName(runtimeName) : runtimeName
         }
-        guard let declaration = swiftExportedTypeDeclaration(type) else {
+        if let declaration = swiftExportedTypeDeclaration(type) { return declaration }
+        var failure: OpaquePointer?
+        guard let declaration = ABICopySwiftTypeDeclarationName(metadata, &failure) else {
+            defer { ABIReleaseResolutionFailure(failure) }
             throw ABIResolutionError.metadataUnavailable(
                 "No Swift closure type identity for \(String(reflecting: type)): it is declared in a "
-                    + "constrained extension, whose generic signature its runtime name omits, and its "
-                    + "image does not export its nominal type descriptor, whose name includes it."
+                    + "constrained extension, whose generic signature its runtime name omits; its "
+                    + "image does not export its nominal type descriptor, and its context "
+                    + "descriptors do not establish the signature: "
+                    + String(cString: ABIResolutionFailureMessage(failure)) + "."
             )
         }
-        return declaration
+        defer { ABIFreeString(declaration) }
+        return String(cString: declaration)
     } catch {
         guard !RuntimePointerAuthentication.isEnabled else { throw error }
         return runtimeName
