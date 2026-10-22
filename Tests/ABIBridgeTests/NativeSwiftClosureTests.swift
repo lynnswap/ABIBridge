@@ -793,7 +793,7 @@ struct NativeSwiftClosureTests {
                 ? []
                 : [
                     "AuthPair<Double>", "AuthPair<Int8>", "AuthBox<Int>.Inner",
-                    "AuthBox<Int>.Kind", "AuthBox<Int>.Same",
+                    "AuthBox<Int>.Inner.Deep", "AuthBox<Int>.Kind", "AuthBox<Int>.Same",
                 ])
         let module = "ClosureAuth_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
         let source =
@@ -815,7 +815,10 @@ struct NativeSwiftClosureTests {
             }
             public struct AuthBox<T> {}
             extension AuthBox where T: Equatable {
-                public struct Inner { public var x: Double, y: Double }
+                public struct Inner {
+                    public var x: Double, y: Double
+                    public struct Deep { public var x: Double, y: Double }
+                }
                 public enum Kind { case real(Double), none }
             }
             extension AuthBox where T == Int {
@@ -924,6 +927,117 @@ struct NativeSwiftClosureTests {
         }
     }
     #endif
+
+    /// A type declared in an unconstrained extension of another module's
+    /// type hashes as its runtime name, which includes the extension and has
+    /// no generic signature to omit, whether or not its image exports its
+    /// descriptor. One in a constrained extension needs that descriptor.
+    @Test func unexportedTypesInExtensionsHashByTheirRuntimeNames() async throws {
+        let module = "ClosureExtension_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let source = """
+            // A String field sets the addressable bit, which Helper leaves clear.
+            public struct Label { public var text: String = "" }
+            extension Int {
+                struct Helper { var x: Double, y: Double }
+            }
+            extension Array {
+                struct Foreign { var a: Int64, b: Int64 }
+            }
+            // Repeats Dictionary's own requirement on Key.
+            extension Dictionary {
+                struct Entry { var a: Int64, b: Int64 }
+            }
+            public struct Box<T> {}
+            extension Box where T: Equatable {
+                struct Hidden { var x: Double, y: Double }
+            }
+            public protocol Base {}
+            public protocol Refined: Base {}
+            extension Int: Refined {}
+            public struct Bounded<T: Base> {}
+            // As many requirements as Bounded, but a different one.
+            extension Bounded where T: Refined {
+                struct Narrow { var x: Double, y: Double }
+            }
+            func closureProbeType(_ index: Int64) -> Any.Type {
+                [Int.Helper.self, Box<Int>.Hidden.self, Bounded<Int>.Narrow.self][Int(index)]
+            }
+            @inline(never) func closureProbeHelper(_ callback: (Int.Helper) -> Double) -> Double {
+                callback(.init(x: 1, y: 2))
+            }
+            @inline(never) func closureProbeForeign(_ callback: ([Int].Foreign) -> Int64) -> Int64 {
+                callback(.init(a: 3, b: 4))
+            }
+            @inline(never) func closureProbeEntry(_ callback: ([Int: Int].Entry) -> Int64) -> Int64 {
+                callback(.init(a: 5, b: 6))
+            }
+            """
+        let library = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: source,
+            linkArguments: ["-parse-as-library", "-swift-version", "6"]
+        )
+        defer { library.cleanup() }
+        let found = try arm64eClosureCallDiscriminators(
+            source: source,
+            arguments: ["-module-name", module],
+            functions: ["closureProbeHelper", "closureProbeForeign", "closureProbeEntry"]
+        )
+        let runtime = ABIRuntime()
+        let typeAt = try await runtime.resolveSwiftFunction(
+            named: module + ".closureProbeType(_:)",
+            as: ((Int64) -> Any.Type).self,
+            in: .path(library.libraryURL)
+        )
+        let helper = try swiftClosureAuthType(unsafe typeAt.unsafeInvoke(0), position: .parameter)
+        #expect(swiftClosureDiscriminator(parameters: [helper], result: "$sSd") == found[0])
+        let inferred = try await runtime.resolveSwiftFunction(
+            named: module + ".closureProbeHelper(_:)",
+            as: ((NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Double>) -> Double).self,
+            in: .path(library.libraryURL)
+        )
+        // Inference leaves generic structs that are not public undecided, so
+        // they take explicit layouts.
+        let pair = try NativeType.structure(named: "Pair", fields: [.int64, .int64])
+        var calls = [inferred.call]
+        for (name, function, arguments) in [
+            ("Array.Foreign", "closureProbeForeign(_:)", [NativeSwiftGenericArgument.type(Int.self)]),
+            ("Dictionary.Entry", "closureProbeEntry(_:)", [.type(Int.self), .type(Int.self)]),
+        ] {
+            let type = try await runtime.resolveSwiftType(
+                named: "(extension in \(module)):Swift.\(name)",
+                in: .path(library.libraryURL),
+                genericArguments: arguments
+            )
+            calls.append(
+                try await runtime.resolveSwiftFunction(
+                    named: "\(module).\(function)",
+                    as: ((NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Int64>) -> Int64).self,
+                    valueABIs: [type: pair],
+                    in: .path(library.libraryURL)
+                ).call
+            )
+        }
+        for (index, call) in calls.enumerated() {
+            guard case .closure(let plan, _) = try #require(call.generic).parameters.arguments[0]
+            else {
+                Issue.record("probe \(index) has no closure plan")
+                continue
+            }
+            #expect(plan.discriminator == found[index], "probe \(index)")
+        }
+        // Their conventions are undecided, so only their names are hashed.
+        for index: Int64 in [1, 2] {
+            #expect {
+                _ = try swiftClosureTypeHash(unsafe typeAt.unsafeInvoke(index))
+            } throws: { error in
+                guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                    return false
+                }
+                return message.contains("it is declared in a constrained extension")
+            }
+        }
+    }
 
     @Test func preservesManagedResultsAndFloatingAggregates() async throws {
         let runtime = ABIRuntime.shared

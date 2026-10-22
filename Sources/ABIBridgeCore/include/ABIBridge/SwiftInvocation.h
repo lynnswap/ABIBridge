@@ -163,8 +163,8 @@ bool ABISwiftTypeFieldIsGenericDependent(const void *metadata, size_t index);
 bool ABISwiftStructDescriptorFieldHasStoredKeyPathComponent(const void *descriptor, const char *name);
 /// The module that declares the nominal type, borrowing its descriptor's name.
 const char *ABISwiftTypeModuleName(const void *metadata);
-/// Whether the nominal type is declared in an extension, directly or within another type declared in one.
-bool ABISwiftTypeIsDeclaredInExtension(const void *metadata);
+/// Whether the nominal type is declared in an extension whose generic signature adds requirements to its extended type's, directly or within another type declared in one. True when an extension's requirements cannot be compared.
+bool ABISwiftTypeIsDeclaredInConstrainedExtension(const void *metadata);
 /// Whether the image declaring the type has a nongeneric, statically initialized struct or enum of the same module whose value witnesses set the addressable-for-dependencies bit. Swift 6.1 and earlier never set it.
 bool ABISwiftModuleSetsAddressableForDependencies(const void *metadata);
 /// The shape's generalized type expression, preserving symbolic references.

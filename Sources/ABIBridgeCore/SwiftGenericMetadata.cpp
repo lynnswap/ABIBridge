@@ -751,13 +751,6 @@ const char *ABISwiftTypeModuleName(const void *metadata) {
     return descriptor ? declaringModule(descriptor) : nullptr;
 }
 
-bool ABISwiftTypeIsDeclaredInExtension(const void *metadata) {
-    for (const char *context = typeContextDescriptor(metadata); context; context = parentContext(context)) {
-        if ((read<uint32_t>(context) & 0x1f) == 1) return true;
-    }
-    return false;
-}
-
 bool ABISwiftModuleSetsAddressableForDependencies(const void *metadata) {
     const char *descriptor = typeContextDescriptor(metadata);
     const char *module = descriptor ? declaringModule(descriptor) : nullptr;
@@ -819,6 +812,68 @@ bool matchesNominalReference(const char *reference, const char *descriptor) {
     Syntax expected(ABICopySwiftTypeSyntax(nominal, symbolicNameLength(nominal)), ABIReleaseSwiftSyntax);
     return expected && sameTypeSyntax(ABISwiftSyntaxRoot(candidate.get()), ABISwiftSyntaxRoot(expected.get()));
 }
+
+bool sameMangledType(const char *lhs, const char *rhs) {
+    SyntaxOwner left(ABICopySwiftTypeSyntax(lhs, symbolicNameLength(lhs)), ABIReleaseSwiftSyntax);
+    SyntaxOwner right(ABICopySwiftTypeSyntax(rhs, symbolicNameLength(rhs)), ABIReleaseSwiftSyntax);
+    return left && right && sameTypeSyntax(ABISwiftSyntaxRoot(left.get()), ABISwiftSyntaxRoot(right.get()));
+}
+
+// Equal generic signatures emit the same canonical requirements. Anything
+// this cannot compare counts as different.
+bool sameRequirement(const char *lhs, const char *rhs) {
+    const auto flags = read<uint32_t>(lhs);
+    const char *leftSubject = relative(lhs + 4), *rightSubject = relative(rhs + 4);
+    if (flags != read<uint32_t>(rhs) || !leftSubject || !rightSubject || !sameMangledType(leftSubject, rightSubject))
+        return false;
+    switch (flags & 0x1f) {
+    case 0: {
+        const void *objectiveC = ABISwiftProtocolRequirementObjectiveCProtocol(lhs + 8);
+        if (objectiveC || ABISwiftProtocolRequirementObjectiveCProtocol(rhs + 8))
+            return objectiveC == ABISwiftProtocolRequirementObjectiveCProtocol(rhs + 8);
+        return ABISwiftProtocolRequirementDescriptor(lhs + 8) == ABISwiftProtocolRequirementDescriptor(rhs + 8);
+    }
+    case 1: case 2: case 4: {
+        const char *left = relative(lhs + 8), *right = relative(rhs + 8);
+        return left && right && sameMangledType(left, right);
+    }
+    case 5: case 0x1f: return read<uint32_t>(lhs + 8) == read<uint32_t>(rhs + 8);
+    default: return false;
+    }
+}
+
+// The nominal descriptor that an extension extends, resolved in the generic
+// environment of a type declared in the extension.
+const char *extendedNominal(const char *extension, const void *metadata, const char *descriptor) {
+    const char *extended = relative(extension + 8);
+    if (!extended) return nullptr;
+    if (extended[0] == 1 || extended[0] == 2) {
+        const char *target = extended + 1 + read<int32_t>(extended + 1);
+        return extended[0] == 2 ? contextPointer(target) : target;
+    }
+    const void *type = swift_getTypeByMangledNameInContext(extended, symbolicNameLength(extended), descriptor,
+        (read<uint32_t>(descriptor) & 0x80) ? genericArguments(metadata, descriptor) : nullptr);
+    return type ? typeContextDescriptor(type) : nullptr;
+}
+}
+
+bool ABISwiftTypeIsDeclaredInConstrainedExtension(const void *metadata) {
+    const char *descriptor = typeContextDescriptor(metadata);
+    for (const char *context = descriptor; context; context = parentContext(context)) {
+        const auto flags = read<uint32_t>(context);
+        // An extension of a nongeneric type has no generic context to constrain.
+        if ((flags & 0x1f) != 1 || !(flags & 0x80)) continue;
+        const char *header = context + 12;
+        const char *nominal = extendedNominal(context, metadata, descriptor);
+        const char *nominalHeader = nominal ? nominalGenericHeader(nominal) : nullptr;
+        if (!nominalHeader || read<uint16_t>(header) != read<uint16_t>(nominalHeader)) return true;
+        const auto count = read<uint16_t>(header + 2);
+        if (count != read<uint16_t>(nominalHeader + 2)) return true;
+        const char *requirements = genericRequirements(header), *expected = genericRequirements(nominalHeader);
+        for (size_t index = 0; index < count; ++index)
+            if (!sameRequirement(requirements + index * 12, expected + index * 12)) return true;
+    }
+    return false;
 }
 
 ABISwiftSyntax *ABICopySwiftAssociatedTypeSyntax(const void *metadata, const void *protocol, const char *name) {
