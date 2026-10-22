@@ -583,6 +583,39 @@ struct SwiftInferredValueTests {
         }
     }
 
+    /// A type declared in an extension of another module's type keeps its
+    /// own module's evidence, although its runtime name starts with the
+    /// extended type.
+    @Test func typesInExtensionsOfOtherModulesKeepTheirModuleEvidence() async throws {
+        let (library, module) = try provider(
+            """
+            public struct Top {
+                public var a: Int64
+                public init() { a = 1 }
+            }
+            extension Int {
+                public struct Visible {
+                    public var a: Int64
+                    public var b: Int64
+                    public init() { a = 1; b = 2 }
+                }
+            }
+            @inline(never) public func makeVisible() -> Int.Visible { .init() }
+            @inline(never) public func describeVisible(_ v: Int.Visible) -> String { "\\(v.a),\\(v.b)" }
+            """
+        )
+        defer { library.cleanup() }
+        // Relative names do not find these declarations.
+        let visible = "(extension in \(module)):Swift.Int.Visible"
+        #expect(
+            try await describeMade(
+                "\(module).makeVisible() -> \(visible)",
+                "\(module).describeVisible(\(visible)) -> Swift.String",
+                in: library
+            ) == "1,2"
+        )
+    }
+
     /// A runtime type name omits a constrained extension's generic
     /// signature, which the type's exported symbols spell.
     @Test func typesInConstrainedExtensionsKeepTheirExportEvidence() async throws {

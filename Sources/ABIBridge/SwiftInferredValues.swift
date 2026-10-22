@@ -730,8 +730,9 @@ private struct ModuleContext {
             declaration = nil; evidence = nil
             return
         }
-        evidence = _mangledTypeName(metadata).flatMap { Self.mangling(ofModule: name, in: $0) }
-            .map { RuntimeSwiftModuleEvidence.evidence(forModule: $0, named: name, in: image) }
+        evidence = Self.mangledContext(ofModule: name).map {
+            RuntimeSwiftModuleEvidence.evidence(forModule: $0, named: name, in: image)
+        }
         declaration = RuntimeSymbolResolver.shared.exportedSwiftTypeDeclaration(
             at: UInt64(UInt(bitPattern: descriptor)),
             in: image
@@ -774,62 +775,61 @@ private struct ModuleContext {
         return (header, cached.image)
     }
 
-    /// The module's context as it starts a mangled type name and the
-    /// module's symbols: `s` for the standard library, otherwise the leading
-    /// identifier, when it names the module. Within that identifier, a word
-    /// that repeats an earlier one is mangled as a letter.
-    /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/Demangling/Demangler.cpp
-    private static func mangling(ofModule name: String, in mangled: String) -> String? {
+    /// The module's context as it starts the module's own symbols: `s` for
+    /// the standard library, otherwise the module's name as the first
+    /// identifier of a mangling. A type's runtime name need not start with
+    /// it: a type declared in an extension of another module's type starts
+    /// with the extended type.
+    ///
+    /// A word of the name that repeats an earlier word is mangled as a
+    /// letter. A word starts at a character other than a digit or `_`, and
+    /// ends before `_` or an uppercase letter that follows a non-uppercase
+    /// one. Names outside ASCII use Punycode, which this does not reproduce.
+    /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/Demangling/ManglingUtils.h
+    static func mangledContext(ofModule name: String) -> String? {
         if name == "Swift" { return "s" }
-        let text = Array(mangled.utf8)
+        let text = Array(name.utf8)
         func isDigit(_ byte: UInt8) -> Bool { (48...57).contains(byte) }
         func isUpper(_ byte: UInt8) -> Bool { (65...90).contains(byte) }
-        func isLower(_ byte: UInt8) -> Bool { (97...122).contains(byte) }
-        guard let first = text.first, isDigit(first),
-            !text.starts(with: Array("00".utf8))
+        // Imported Clang modules have their own contexts.
+        guard let first = text.first, !isDigit(first), name != "__C", name != "__C_Synthesized",
+            text.allSatisfy({ $0 < 0x80 })
         else { return nil }
-        var position = first == 48 ? 1 : 0
-        var substitutes = first == 48
-        var identifier: [UInt8] = []
-        var words: [ArraySlice<UInt8>] = []
-        repeat {
-            while substitutes, position < text.count,
-                isUpper(text[position]) || isLower(text[position])
+        var words: [Range<Int>] = []
+        var substitutions: [(start: Int, word: Int?)] = []
+        var start: Int?
+        for position in 0...text.count {
+            let byte = position < text.count ? text[position] : 0
+            if let wordStart = start,
+                byte == 95 || byte == 0 || (!isUpper(text[position - 1]) && isUpper(byte))
             {
-                let letter = text[position]
-                position += 1
-                substitutes = isLower(letter)
-                let index = Int(letter - (substitutes ? 97 : 65))
-                guard index < words.count else { return nil }
-                identifier += words[index]
-            }
-            if position < text.count, text[position] == 48 {
-                position += 1
-                break
-            }
-            let start = position
-            while position < text.count, isDigit(text[position]) { position += 1 }
-            guard let length = Int(String(decoding: text[start..<position], as: UTF8.self)),
-                length > 0, position + length <= text.count
-            else { return nil }
-            let part = text[position..<position + length]
-            identifier += part
-            // A word starts at a character other than a digit or `_` and
-            // ends before `_` or an uppercase letter after a non-uppercase one.
-            var word: Int?
-            for index in part.startIndex...part.endIndex {
-                let byte = index < part.endIndex ? part[index] : 0
-                if let start = word,
-                    byte == 95 || byte == 0 || (!isUpper(part[index - 1]) && isUpper(byte))
-                {
-                    if index - start >= 2, words.count < 26 { words.append(part[start..<index]) }
-                    word = nil
+                let word = text[wordStart..<position]
+                if let index = words.firstIndex(where: { text[$0].elementsEqual(word) }) {
+                    substitutions.append((wordStart, index))
+                } else if word.count >= 2, words.count < 26 {
+                    words.append(wordStart..<position)
                 }
-                if word == nil, !isDigit(byte), byte != 95, byte != 0 { word = index }
+                start = nil
             }
-            position += length
-        } while substitutes
-        guard identifier.elementsEqual(name.utf8) else { return nil }
-        return String(decoding: text[..<position], as: UTF8.self)
+            if start == nil, byte != 0, byte != 95, !isDigit(byte) { start = position }
+        }
+        guard !substitutions.isEmpty else { return "\(text.count)\(name)" }
+        // Literal runs carry their lengths; the last substitution is uppercase.
+        var mangled = "0"
+        var position = 0
+        substitutions.append((text.count, nil))
+        for (index, substitution) in substitutions.enumerated() {
+            if position < substitution.start {
+                mangled += "\(substitution.start - position)"
+                    + String(decoding: text[position..<substitution.start], as: UTF8.self)
+                position = substitution.start
+            }
+            guard let word = substitution.word else { continue }
+            position += words[word].count
+            let last = index == substitutions.count - 2
+            mangled.append(Character(Unicode.Scalar(UInt8((last ? 65 : 97) + word))))
+            if last, position == text.count { mangled += "0" }
+        }
+        return mangled
     }
 }
