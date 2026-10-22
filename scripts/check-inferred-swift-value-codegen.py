@@ -14,7 +14,9 @@ new compiler fails CI instead of mislowering values:
   evolution and is trivial without it, while an unowned one, and a `let` of a
   function or metatype, which key paths reabstract, are always trivial;
 - on arm64e, a closure parameter that is passed indirectly hashes as
-  `-indirect`, and generic arguments do not change a nominal type's hash.
+  `-indirect`, and generic arguments do not change a nominal type's hash;
+- on arm64e, an element of a closure's tuple result hashes as `-indirect`
+  only when it is address-only, whatever its size.
 
 It also checks that the generated self-addressable declarations cover the
 selected SDKs.
@@ -53,6 +55,9 @@ public struct Reabstracted { public let call: () -> Void; public let type: Int.T
 @inline(never) public func applyBytePair(_ f: (Pair<Int8>) -> Double) -> Double {
     f(Pair(a: 1, b: 2))
 }
+@inline(never) public func returnWidePair(_ f: () -> (Wide, Int64)) -> Int64 { f().1 }
+@inline(never) public func returnOpenPair(_ f: () -> (OpenPoint, Int64)) -> Int64 { f().1 }
+@inline(never) public func returnOpenLabelPair(_ f: () -> (OpenLabel, Int64)) -> Int64 { f().1 }
 """
 
 ADDRESSABLE = 0x02000000
@@ -151,13 +156,18 @@ def check(ir, target, evolution):
               "enumCases": cases, "storedProperty": f"{stored:#x}"}
     if target.startswith("arm64e"):
         found = {name: discriminator(ir, target, name) for name in [
-            "applyFrozen", "applyOpen", "applyWide", "applyDoublePair", "applyBytePair"]}
+            "applyFrozen", "applyOpen", "applyWide", "applyDoublePair", "applyBytePair",
+            "returnWidePair", "returnOpenPair", "returnOpenLabelPair"]}
         require(found["applyDoublePair"] == found["applyBytePair"],
                 "generic arguments must not change a nominal closure parameter's hash")
         require((found["applyOpen"] == found["applyWide"]) == evolution,
                 "an indirect closure parameter must hash as -indirect")
         require(found["applyFrozen"] != found["applyWide"],
                 "a direct closure parameter must hash its type")
+        require((found["returnOpenPair"] == found["returnOpenLabelPair"]) == evolution,
+                "an address-only tuple result element must hash as -indirect")
+        require(found["returnWidePair"] != found["returnOpenPair"],
+                "a loadable tuple result element must hash its type at any size")
         report["discriminators"] = found
     return report
 
