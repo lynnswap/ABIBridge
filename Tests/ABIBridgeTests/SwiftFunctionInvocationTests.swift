@@ -37,6 +37,13 @@ import Testing
     point.0 + point.1
 }
 @inline(never) public func swiftABIPairSum(_ pair: (Int32, Int32)) -> Int32 { pair.0 &+ pair.1 }
+@inline(never) public func swiftABIApplyForeignPair(
+    _ pair: (@convention(c) (Int64) -> Int64, Int64)
+) -> Int64 { pair.0(pair.1) }
+public typealias SwiftABIForeignBody = @convention(c) (Int64) -> Int64
+@inline(never) public func swiftABIMakeForeignPair() -> (SwiftABIForeignBody?, Int64) {
+    ({ $0 * 2 }, 21)
+}
 @inline(never) public func swiftABIString(_ value: String) -> String { value + "!" }
 @inline(never) public func swiftABIImportedObject(_ value: NSString) -> NSString { value }
 @inline(never) public func swiftABIOptionalImportedObject(_ value: NSString?) -> NSString? { value }
@@ -357,6 +364,27 @@ struct SwiftFunctionInvocationTests {
         } catch let ABIResolutionError.signatureMismatch(mismatch) {
             #expect(mismatch.position == .argument(0))
         }
+    }
+
+    @Test func completeNamesLowerCFunctionPointersInsideTuples() throws {
+        typealias Body = @convention(c) (Int64) -> Int64
+        // A C function pointer passes as one pointer wherever a tuple holds it.
+        let apply = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
+            named:
+                "ABIBridgeTests.swiftABIApplyForeignPair((@convention(c) (Swift.Int64) -> Swift.Int64, Swift.Int64)) -> Swift.Int64",
+            as: (((UnsafeRawPointer, Int64)) -> Int64).self
+        )
+        let body: Body = { $0 + 21 }
+        let address = unsafeBitCast(body, to: UnsafeRawPointer.self)
+        #expect(try unsafe apply.unsafeInvoke((address, 21)) == 42)
+        let make = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
+            named:
+                "ABIBridgeTests.swiftABIMakeForeignPair() -> ((@convention(c) (Swift.Int64) -> Swift.Int64)?, Swift.Int64)",
+            as: (() -> (UnsafeRawPointer?, Int64)).self
+        )
+        let (pointer, value) = try unsafe make.unsafeInvoke()
+        let made = try #require(pointer)
+        #expect(unsafeBitCast(made, to: Body.self)(value) == 42)
     }
 
     @Test func immutableInterfaceCanBeUsedConcurrently() async throws {

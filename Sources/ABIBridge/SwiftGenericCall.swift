@@ -1098,27 +1098,24 @@ struct SwiftGenericCallPlan: Sendable {
         guard Self.representsClosedValue(formal, actual: actual, binding: binding) else { return }
         let declared: CValueType
         do {
-            if let pointer = try foreignFunctionLayout(formal) {
-                declared = pointer
-            } else {
-                let metadata: Any.Type
-                do {
-                    metadata = try binding.types(formal)[0]
-                } catch ABIResolutionError.declarationNotFound(let declaration) {
-                    // An image can use an imported C type without exporting
-                    // its descriptor, which a valueABIs entry would also need.
-                    throw ABIResolutionError.metadataUnavailable(
-                        "lookup cannot find the metadata of \(formal.spelling): \(declaration.name) is not exported."
-                    )
-                }
-                guard metadata != actual else { return }
-                declared = try SwiftValueSchema.layout(
-                    formal,
-                    actual: metadata,
-                    binding: binding,
-                    position: position
+            let lowered = try substitutingPointersForForeignFunctions(formal) ?? formal
+            let metadata: Any.Type
+            do {
+                metadata = try binding.types(lowered)[0]
+            } catch ABIResolutionError.declarationNotFound(let declaration) {
+                // An image can use an imported C type without exporting its
+                // descriptor, which a valueABIs entry would also need.
+                throw ABIResolutionError.metadataUnavailable(
+                    "lookup cannot find the metadata of \(formal.spelling): \(declaration.name) is not exported."
                 )
             }
+            guard metadata != actual else { return }
+            declared = try SwiftValueSchema.layout(
+                lowered,
+                actual: metadata,
+                binding: binding,
+                position: position
+            )
         } catch let error as ABIResolutionError {
             guard
                 let failure = SwiftDeclaredLowering.unestablished(
@@ -1145,13 +1142,28 @@ struct SwiftGenericCallPlan: Sendable {
         )
     }
 
-    /// The storage of a C function pointer or block, or an Optional of one,
-    /// which needs no metadata: each passes as one pointer.
-    private func foreignFunctionLayout(_ formal: SwiftFormalType) throws -> CValueType? {
-        var type = try binding.canonicalType(of: formal)
-        if let wrapped = type.optionalWrapped { type = try binding.canonicalType(of: wrapped) }
-        guard case .foreignFunction = type else { return nil }
-        return try CValueType(scalar: ABIValuePointer)
+    /// The formal type with `UnsafeRawPointer` for each C function pointer or
+    /// block inside it, through tuples and Optionals, or nil when it has none.
+    ///
+    /// Such a function passes and is stored as one pointer, as
+    /// `UnsafeRawPointer` is, but the runtime cannot build its metadata.
+    private func substitutingPointersForForeignFunctions(
+        _ formal: SwiftFormalType
+    ) throws -> SwiftFormalType? {
+        let type = try binding.canonicalType(of: formal)
+        switch type {
+        case .foreignFunction:
+            return .nominal("Swift.UnsafeRawPointer", [])
+        case .tuple(let fields, let labels):
+            let substituted = try fields.map(substitutingPointersForForeignFunctions)
+            guard substituted.contains(where: { $0 != nil }) else { return nil }
+            return .tuple(zip(fields, substituted).map { $1 ?? $0 }, labels: labels)
+        default:
+            guard let wrapped = type.optionalWrapped,
+                let substituted = try substitutingPointersForForeignFunctions(wrapped)
+            else { return nil }
+            return .nominal("Swift.Optional", [substituted])
+        }
     }
 
     /// Whether a call converts a class reference at some position, which a
