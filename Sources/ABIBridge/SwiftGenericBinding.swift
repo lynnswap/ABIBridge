@@ -1683,6 +1683,30 @@ struct SwiftGenericBinding: Sendable {
         }
     }
 
+    /// The native type of the closed formal type `formal` when the caller's
+    /// types include it, which establishes it without a lookup or a metadata
+    /// accessor. Nil for another type, and for a type that is spelled through
+    /// its metadata, such as a metatype or an existential.
+    func knownType(_ formal: SwiftFormalType) -> Any.Type? {
+        func isSpelledByName(_ type: SwiftFormalType) -> Bool {
+            switch type {
+            case .named(let name, let arguments):
+                (!arguments.isEmpty || self.arguments[String(name.prefix { $0 != "." })] == nil)
+                    && arguments.allSatisfy(isSpelledByName)
+            case .nominal(_, let arguments): arguments.allSatisfy(isSpelledByName)
+            case .nested(let parent, _, let arguments):
+                isSpelledByName(parent) && arguments.allSatisfy(isSpelledByName)
+            case .tuple(let fields, _): fields.allSatisfy(isSpelledByName)
+            case .objectiveCClass: true
+            default: false
+            }
+        }
+        guard isSpelledByName(formal), !dependsOnParameters(formal),
+            let key = try? Self.key(formal.spelling)
+        else { return nil }
+        return knownTypes[key]
+    }
+
     func explicitValueType(_ type: Any.Type) throws -> CValueType? {
         guard let abi = valueABIs[ObjectIdentifier(type)] else { return nil }
         // Without this entry, an Optional's storage follows its payload's.

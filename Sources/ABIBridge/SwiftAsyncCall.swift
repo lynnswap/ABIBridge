@@ -111,6 +111,9 @@ final class SwiftAsyncCall: Sendable {
             arguments: parameters.arguments,
             result: generic?.result ?? closure?.result ?? .concrete
         )
+        #if DEBUG
+        generic?.checkClosedSchemas(signature, values: values)
+        #endif
         let logical = values.arguments.map(\.type)
         var types = parameters.types(from: logical)
         if let trailingType { types.append(trailingType) }

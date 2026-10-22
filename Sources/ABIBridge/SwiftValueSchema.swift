@@ -234,6 +234,38 @@ struct SwiftValueSchema: Sendable {
         self = try _openExistential(actual, do: prepare)
     }
 
+    /// The schema of a closed value at a declaration position with the formal
+    /// type `formal`, where the call passes a value of the host type `host`.
+    ///
+    /// The formal type's schema applies when the caller's types already
+    /// establish its native type. Otherwise, such as for a function-local
+    /// type that only a lookup would find, the schema is the host
+    /// representation's, so no lookup or metadata accessor runs.
+    init(
+        closed formal: SwiftFormalType,
+        host: Any.Type,
+        binding: SwiftGenericBinding,
+        position: SwiftValuePosition
+    ) throws {
+        let canonical = try binding.canonicalType(of: formal)
+        if let metadata = binding.knownType(canonical) {
+            self = try Self(canonical, actual: metadata, binding: binding, position: position)
+        } else {
+            self = try Self(host: host, position: position)
+        }
+    }
+
+    /// Whether a value stored as `type` passes at `position` as a value of
+    /// this schema does, with the same size and alignment.
+    func passesAlike(_ type: CValueType, at position: SwiftValuePosition) -> Bool {
+        let isResult = position == .result
+        let schema = self.type
+        return withExtendedLifetime((schema, type)) {
+            ABISwiftValuePassesAs(type.handle, schema.handle, isResult)
+                && ABISwiftValuePassesAs(schema.handle, type.handle, isResult)
+        } && type.size == schema.size && type.alignment == schema.alignment
+    }
+
     /// The schema of an Optional at a declaration position, from its wrapped
     /// formal type and the Optional's native type.
     private static func optional(

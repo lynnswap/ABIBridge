@@ -1113,6 +1113,20 @@ struct SwiftGenericCallPlan: Sendable {
         host: () throws -> CValueType
     ) throws {
         guard Self.representsClosedValue(formal, actual: actual, binding: binding) else { return }
+        // The host value would pass its handles as raw objects, unless the
+        // declared type holds the handle type itself.
+        if Self.holdsRuntimeHandles(actual), (try? binding.validate(actual, for: formal)) == nil {
+            throw ABIResolutionError.signatureMismatch(
+                .init(
+                    expected: formal.spelling,
+                    found: [
+                        String(reflecting: actual)
+                            + ", whose runtime value handles convert only as the whole value,"
+                            + " its Optional, or a collection's elements"
+                    ]
+                )
+            )
+        }
         let declared: CValueType
         do {
             let lowered = try substitutingPointersForForeignFunctions(formal) ?? formal
@@ -1395,6 +1409,26 @@ struct SwiftGenericCallPlan: Sendable {
             )
         }
         return .concrete
+    }
+
+    /// Whether a host type holds a runtime value handle in an Optional, a
+    /// collection, or a tuple, at any depth.
+    private static func holdsRuntimeHandles(_ type: Any.Type) -> Bool {
+        if type == NativeSwiftValue.self || type == NativeSwiftBorrowedValue.self { return true }
+        if let optional = type as? any NativeOptionalValue.Type {
+            return holdsRuntimeHandles(optional.wrappedType)
+        }
+        if let collection = type as? any SwiftHostCollectionType.Type {
+            return switch collection.hostCollectionShape {
+            case .array(let element): holdsRuntimeHandles(element)
+            case .dictionary(let key, let value), .pairs(_, let key, let value, _):
+                holdsRuntimeHandles(key) || holdsRuntimeHandles(value)
+            }
+        }
+        if let tuple = SwiftTupleMetadata(type) {
+            return tuple.elements.contains { holdsRuntimeHandles($0.type) }
+        }
+        return false
     }
 
     /// The runtime value handle a host type stands for. `NativeSwiftValue?`
@@ -1970,6 +2004,22 @@ struct SwiftGenericCallPlan: Sendable {
                 )
             }
         }
+        #if DEBUG
+        // Closed arguments convert with their host types' codecs.
+        for (index, argument) in parameterPlan.arguments.enumerated() {
+            guard case .concrete = argument else { continue }
+            checkSchema(
+                of: String(reflecting: signature.parameters[index]),
+                at: .parameter,
+                label: "closure argument \(index)",
+                schema: { logicalTypes[index] },
+                host: {
+                    try SwiftValueSchema(host: signature.parameters[index], position: .parameter)
+                        .type
+                }
+            )
+        }
+        #endif
         if usesStorageConvention {
             logicalTypes = try zip(nativeParameters, parameterPlan.arguments).map {
                 metadata,
@@ -2002,6 +2052,17 @@ struct SwiftGenericCallPlan: Sendable {
             binding: binding,
             position: .result
         )
+        #if DEBUG
+        if case .concrete = resultPlan, !usesStorageConvention {
+            checkSchema(
+                of: result.spelling,
+                at: .result,
+                label: "the closure result",
+                schema: { resultType },
+                host: { try SwiftValueSchema(host: signature.result, position: .result).type }
+            )
+        }
+        #endif
         let errorType = try failure.flatMap {
             if usesStorageConvention && signature.failure != (any Error).self {
                 return try SwiftValueSchema.storage(of: signature.failure)
@@ -2182,6 +2243,94 @@ struct SwiftGenericCallPlan: Sendable {
     }
 
 }
+
+#if DEBUG
+extension SwiftGenericCallPlan {
+    /// Asserts that the schema of each closed position passes as the storage
+    /// that the call's host codecs give the value there.
+    ///
+    /// A closed position still converts its host value with the host type's
+    /// codec. Its schema must describe the same storage, so that conversions
+    /// derived from it pass each value as the call does now.
+    func checkClosedSchemas(_ signature: SwiftFunctionSignature, values: SwiftCallValues) {
+        for (formal, group) in zip(binding.declaration.arguments, parameters.groups) {
+            guard case .value(let index) = group else { continue }
+            var formal = formal
+            var host = signature.parameters[index]
+            if case .convention = parameters.arguments[index],
+                let convention = try? binding.conventionArgument(
+                    host,
+                    for: formal,
+                    defaultConsuming: binding.declaration.consumesArguments
+                )
+            {
+                // An inout argument passes the address of its storage.
+                guard convention.wrapper.convention != .inoutValue else { continue }
+                formal = convention.value
+                host = convention.wrapper.wrappedType
+            }
+            checkClosedSchema(
+                formal,
+                host: host,
+                passing: values.arguments[index].type,
+                at: .parameter,
+                label: "argument \(index)"
+            )
+        }
+        checkClosedSchema(
+            binding.declaration.result,
+            host: signature.result,
+            passing: values.result.type,
+            at: .result,
+            label: "the result"
+        )
+    }
+
+    private func checkClosedSchema(
+        _ formal: SwiftFormalType,
+        host: Any.Type,
+        passing type: CValueType,
+        at position: SwiftValuePosition,
+        label: String
+    ) {
+        guard Self.representsClosedValue(formal, actual: host, binding: binding) else { return }
+        Self.checkSchema(
+            of: formal.spelling,
+            at: position,
+            label: label,
+            schema: {
+                try SwiftValueSchema(closed: formal, host: host, binding: binding, position: position)
+                    .type
+            },
+            host: { type }
+        )
+    }
+
+    /// Asserts that a value of `formal` with the schema's storage passes at
+    /// `position` as the host codec's storage does.
+    static func checkSchema(
+        of formal: String,
+        at position: SwiftValuePosition,
+        label: String,
+        schema: () throws -> CValueType,
+        host: () throws -> CValueType
+    ) {
+        do {
+            let schema = try schema(), host = try host()
+            let derived = SwiftValueSchema(storage: schema, metadata: nil)
+            assert(
+                derived.passesAlike(host, at: position),
+                "The schema of \(formal) at \(label) passes "
+                    + SwiftDeclaredLowering.lowering(of: schema)
+                    + ", but its host codec passes " + SwiftDeclaredLowering.lowering(of: host)
+                    + "."
+            )
+        } catch {
+            assertionFailure("The schema of \(formal) at \(label) is not derived: \(error)")
+        }
+    }
+}
+#endif
 
 extension SwiftFormalType {
     var argumentConvention: (value: Self, convention: SwiftArgumentConvention)? {
