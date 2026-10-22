@@ -225,6 +225,25 @@ struct SwiftOptionalValueTests {
                 receiverABI: opaque
             )
         } throws: { Self.rejectsExplicitABI($0, statedBy: "receiverABI") }
+        // A mutating method or setter takes self by address.
+        let advance = try await type.resolveMethod(
+            named: "advanceScreenID()",
+            as: (() -> Void).self,
+            receiverABI: opaque,
+            mutating: true
+        )
+        let setScreenID = try await type.resolveSetter(
+            named: "screenIDValue",
+            as: Int64.self,
+            receiverABI: opaque
+        )
+        var screen: UInt32? = 7
+        try unsafe advance.unsafeInvoke(on: &screen)
+        #expect(screen == 8)
+        try unsafe setScreenID.unsafeInvoke(on: &screen, -1)
+        #expect(screen == nil)
+        try unsafe setScreenID.unsafeInvoke(on: &screen, 3)
+        #expect(screen == 3)
     }
 
     private static func rejectsExplicitABI(_ error: any Error, statedBy source: String) -> Bool {

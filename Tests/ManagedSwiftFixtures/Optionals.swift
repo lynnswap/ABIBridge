@@ -231,4 +231,13 @@ extension Optional {
 extension Optional where Wrapped == UInt32 {
     /// The screen ID, or -1 for nil. A concrete `self` passes as its enum storage.
     @inline(never) public func screenIDOrMinusOne() -> Int64 { map { Int64($0) } ?? -1 }
+
+    /// A mutating `self` passes by address.
+    @inline(never) public mutating func advanceScreenID() { self = map { $0 &+ 1 } }
+
+    /// The screen ID, or -1 for nil; its setter takes `self` by address.
+    public var screenIDValue: Int64 {
+        @inline(never) get { screenIDOrMinusOne() }
+        @inline(never) set { self = newValue < 0 ? nil : UInt32(newValue) }
+    }
 }

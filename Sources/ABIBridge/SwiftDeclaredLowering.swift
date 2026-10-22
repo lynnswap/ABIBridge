@@ -48,12 +48,31 @@ enum SwiftDeclaredLowering {
             ABISwiftValuePassesAs(explicit.handle, own.handle, false)
         }
         guard !passes else { return }
-        throw ABIResolutionError.unsupportedDeclaration(
-            "\(source) for \(String(reflecting: type)) passes it "
-                + "\(description(of: explicit, false)), but Swift passes this Optional "
-                + "\(description(of: own, false))."
+        throw explicitMismatch(
+            statedBy: source,
+            forOptional: type,
+            passing: lowering(of: explicit),
+            swiftPassing: lowering(of: own)
         )
     }
+
+    /// The failure of an explicit ABI that `source` states for the Optional
+    /// `type`, which passes it as `passing` where Swift passes it as
+    /// `swiftPassing`.
+    static func explicitMismatch(
+        statedBy source: String,
+        forOptional type: Any.Type,
+        passing: String,
+        swiftPassing: String
+    ) -> ABIResolutionError {
+        .unsupportedDeclaration(
+            "\(source) for \(String(reflecting: type)) passes it \(passing), "
+                + "but Swift passes this Optional \(swiftPassing)."
+        )
+    }
+
+    /// How a value stored as `type` passes as an argument.
+    static func lowering(of type: CValueType) -> String { description(of: type, false) }
 
     /// The failure to establish how the declaration passes its type, naming
     /// the host type and position, or nil for another kind of error.

@@ -380,7 +380,6 @@ public actor NativeSwiftType: Hashable {
         var formalSelf: CValueType?
         if let receiverABI {
             let formalType = try SwiftValueSchema.explicitLayout(of: metadata, abi: receiverABI)
-            try checkOptionalReceiverABI(formalType, generic: generic)
             codec = SwiftReceiverCodec(runtimeType: metadata, formalType: formalType)
             cachedCodec = nil
         } else if (representation == nil || representation == metadata || protocolSelf != nil),
@@ -402,42 +401,73 @@ public actor NativeSwiftType: Hashable {
         {
             try checkReceiverRepresentation(representation, formalSelf: formalSelf)
         }
-        return (
-            try SwiftReceiverPlan(
-                codec: codec,
-                metadata: metadata,
+        let plan = try SwiftReceiverPlan(
+            codec: codec,
+            metadata: metadata,
+            isMutating: isMutating,
+            isConsuming: isConsuming,
+            protocolSelf: protocolSelf,
+            validateClass: representation != nil && representation != metadata
+        )
+        if receiverABI != nil, metadata is any NativeOptionalValue.Type {
+            try checkOptionalReceiverABI(
+                plan,
+                generic: generic,
                 isMutating: isMutating,
                 isConsuming: isConsuming,
-                protocolSelf: protocolSelf,
-                validateClass: representation != nil && representation != metadata
-            ),
-            cachedCodec
-        )
+                protocolSelf: protocolSelf
+            )
+        }
+        return (plan, cachedCodec)
     }
 
-    /// Checks that receiverABI for an Optional self, stored as `explicit`,
-    /// passes as the declaration passes self: by address when a generic
-    /// extension's formal self is, and otherwise as the Optional's storage.
-    /// receiverABI states the convention of other self values.
+    /// Checks that `plan`, which passes an Optional self as receiverABI
+    /// describes it, passes self as the declaration does.
+    ///
+    /// SwiftReceiverPlan decides the passing from either convention with the
+    /// same flags. By address, as a generic extension's formal self or a
+    /// mutating self is passed, receiverABI's storage serves, because the
+    /// Optional's metadata sizes it. By value, its components must match the
+    /// Optional's storage. receiverABI states the convention of other self
+    /// values, and of an Optional self whose convention is not established.
     private nonisolated func checkOptionalReceiverABI(
-        _ explicit: CValueType,
-        generic: SwiftGenericCallPlan?
+        _ plan: SwiftReceiverPlan,
+        generic: SwiftGenericCallPlan?,
+        isMutating: Bool?,
+        isConsuming: Bool,
+        protocolSelf: SwiftFormalType?
     ) throws {
-        guard metadata is any NativeOptionalValue.Type else { return }
         let formalSelf: CValueType?
         do {
             formalSelf = try generic?.receiverType()
         } catch {
-            // The declaration does not establish self's convention.
             return
         }
-        guard let declared = formalSelf ?? SwiftValueSchema.establishedOptionalStorage(of: metadata)
+        guard let storage = formalSelf ?? SwiftValueSchema.establishedOptionalStorage(of: metadata)
         else { return }
-        try SwiftDeclaredLowering.checkExplicit(
-            explicit,
+        let declared = try SwiftReceiverPlan(
+            codec: SwiftReceiverCodec(runtimeType: metadata, formalType: storage),
+            metadata: metadata,
+            isMutating: isMutating,
+            isConsuming: isConsuming,
+            protocolSelf: protocolSelf,
+            validateClass: false
+        )
+        func passing(_ plan: SwiftReceiverPlan) -> String {
+            plan.mode == .value ? SwiftDeclaredLowering.lowering(of: plan.codec.type) : "by address"
+        }
+        let passes =
+            plan.mode == declared.mode
+            && (plan.mode != .value
+                || withExtendedLifetime((plan.codec.type, declared.codec.type)) {
+                    ABISwiftValuePassesAs(plan.codec.type.handle, declared.codec.type.handle, false)
+                })
+        guard !passes else { return }
+        throw SwiftDeclaredLowering.explicitMismatch(
             statedBy: "receiverABI",
             forOptional: metadata,
-            own: declared
+            passing: passing(plan),
+            swiftPassing: passing(declared)
         )
     }
 
@@ -734,7 +764,7 @@ public actor NativeSwiftType: Hashable {
     ///   - genericArguments: Type arguments introduced by the member.
     ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types, such as structs and enums whose conventions ABIBridge cannot infer from their metadata. They take precedence over conformances and inferred conventions where the signature names their types, but inference does not consult them for the fields of a value it lowers. Inside an Optional, an entry describes only the declaration's own type, not an adapter host type, whose Optional can have another layout. An entry for an Optional itself must pass as Swift passes that Optional when ABIBridge establishes its payload's convention.
     ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
-    ///   - receiverABI: Explicit self ABI; nil uses the type representation or generic declaration. For an Optional self, it must pass as the declaration passes self: by address in a generic extension, and otherwise as the Optional's enum storage.
+    ///   - receiverABI: Explicit self ABI; nil uses the type representation or generic declaration. For an Optional self that the declaration passes by value, it must describe the Optional's enum storage; a mutating self, or the self of a generic extension, passes by address.
     ///   - isMutating: Whether a value receiver is passed inout.
     ///   - isConsuming: Whether the member consumes its receiver.
     /// - Returns: A reusable method with an explicit receiver.
@@ -981,7 +1011,7 @@ public actor NativeSwiftType: Hashable {
     ///   - valueType: The incoming value representation.
     ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types, such as structs and enums whose conventions ABIBridge cannot infer from their metadata. They take precedence over conformances and inferred conventions where the signature names their types, but inference does not consult them for the fields of a value it lowers. Inside an Optional, an entry describes only the declaration's own type, not an adapter host type, whose Optional can have another layout. An entry for an Optional itself must pass as Swift passes that Optional when ABIBridge establishes its payload's convention.
     ///   - declaredSignature: The formal setter type and optional canonical generic signature.
-    ///   - receiverABI: Explicit self ABI; nil uses the type representation or generic declaration. For an Optional self, it must pass as the declaration passes self: by address in a generic extension, and otherwise as the Optional's enum storage.
+    ///   - receiverABI: Explicit self ABI; nil uses the type representation or generic declaration. For an Optional self that the declaration passes by value, it must describe the Optional's enum storage; a mutating self, or the self of a generic extension, passes by address.
     ///   - isMutating: An inout override. Nil follows the declaration's default self convention unless consuming is true.
     ///   - isConsuming: Whether the setter consumes its receiver.
     /// - Returns: A reusable method with one explicit value argument.
