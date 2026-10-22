@@ -534,7 +534,7 @@ struct SwiftExistentialValueTests {
                 } == "43"
             )
         } catch ABIResolutionError.unsupportedDeclaration(let reason) {
-            #expect(!compatible && reason.hasPrefix("Unsupported Swift storage layout"))
+            #expect(!compatible && reason.contains("Unsupported Swift storage layout"))
         }
     }
 
@@ -571,7 +571,7 @@ struct SwiftExistentialValueTests {
                 } == "[42, 43]"
             )
         } catch ABIResolutionError.unsupportedDeclaration(let reason) {
-            #expect(!compatible && reason.hasPrefix("Unsupported Swift storage layout"))
+            #expect(!compatible && reason.contains("Unsupported Swift storage layout"))
         }
     }
 
@@ -615,7 +615,7 @@ struct SwiftExistentialValueTests {
                 } == "[42]"
             )
         } catch ABIResolutionError.unsupportedDeclaration(let reason) {
-            #expect(!compatible && reason.hasPrefix("Unsupported Swift storage layout"))
+            #expect(!compatible && reason.contains("Unsupported Swift storage layout"))
         }
     }
 

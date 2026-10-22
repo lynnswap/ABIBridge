@@ -40,7 +40,7 @@ Compiled virtual and imported replacements offer async `prepare…` and synchron
 
 The public layer owns typed callback bodies; native entries retain their implementation and storage. Published code retains its native owner after cache eviction or release of a temporary public wrapper. Native registrations handle hook publication and retirement.
 
-Conversion to `ABIResolutionError` preserves the runtime error's category and associated data. The public APIs define mutation, cleanup, and partial-failure reporting contracts.
+Conversion to `ABIResolutionError` preserves the runtime error's category and associated data. `RuntimeResolutionError` composes the description of each case; `ABIResolutionError` describes itself with the same text, and the C interface reports it as the failure message. The public APIs define mutation, cleanup, and partial-failure reporting contracts.
 
 ## Tests by contract
 
