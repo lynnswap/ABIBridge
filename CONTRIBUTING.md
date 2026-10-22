@@ -1,6 +1,6 @@
 # Contributing
 
-Use a Mac with Xcode and Swift 6.3 or later. Create a topic branch and open your pull request against `main`. Run the commands below from the repository root unless a command changes directories.
+Use an Apple silicon Mac with Xcode and Swift 6.3 or later; ABIBridge does not build for x86_64. Create a topic branch and open your pull request against `main`. Run the commands below from the repository root unless a command changes directories.
 
 ## Select Xcode
 
@@ -187,7 +187,7 @@ API contracts belong in the [DocC guides](Sources/ABIBridge/ABIBridge.docc/ABIBr
 
 ## Run on a physical device
 
-Open `ABIBridge.xcworkspace`, select `ArchitectureTestHost`, choose your development team and a connected iOS device, then run. The host uses Release by default. Choose a probe in the app, or add `--probe swift-callback` under **Edit Scheme → Run → Arguments** to select one at launch.
+Open `ABIBridge.xcworkspace`, select `ArchitectureTestHost`, choose your development team and a connected iOS device, then run. The host uses Release by default. For a Simulator run, choose Debug or build with `ARCHS=arm64`, because a Release Simulator build also compiles the package targets for x86_64. Choose a probe in the app, or add `--probe swift-callback` under **Edit Scheme → Run → Arguments** to select one at launch.
 
 For a specific architecture, use the helper so the setting applies to the app and every package dependency:
 

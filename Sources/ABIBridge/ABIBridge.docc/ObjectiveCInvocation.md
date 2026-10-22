@@ -205,7 +205,7 @@ let result = try unsafe adjusted.unsafeInvoke(insets)
 
 Choose an SDK or caller-defined structure whose field offsets, representation, alignment, and ownership match the native value. Names may differ. The native extent must cover the Swift value without exceeding its stride; tail padding needs no artificial fields. Bounds checks do not prove ABI compatibility.
 
-Incomplete structure encodings, bitfields, unions, and nontrivial C++ values still need an appropriate native adapter. Long-double fields use the platform's double representation on Apple ARM; x86_64 x87 long-double fields require a native adapter.
+Incomplete structure encodings, bitfields, unions, and nontrivial C++ values still need an appropriate native adapter. Long-double fields use the double representation of Apple's ARM ABI.
 
 Class arguments are checked before native dispatch, so an instance supplied for a `Class` parameter throws a value-conversion error. Class results remain metatypes during Swift conversion and cannot masquerade as instances. These conversions happen during invocation; lookup does not introspect Swift metatype metadata.
 

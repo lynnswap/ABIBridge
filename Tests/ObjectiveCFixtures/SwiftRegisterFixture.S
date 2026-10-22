@@ -3,7 +3,6 @@
 .globl _ABIProbeSwiftErrorRegister
 .p2align 2
 _ABIProbeSwiftErrorRegister:
-#if defined(__aarch64__)
 #if __has_feature(ptrauth_calls)
     pacibsp
 #endif
@@ -33,29 +32,4 @@ _ABIProbeSwiftErrorRegister:
     retab
 #else
     ret
-#endif
-#elif defined(__x86_64__)
-    pushq %rbp
-    movq %rsp, %rbp
-    pushq %rbx
-    pushq %r12
-    pushq %r13
-    subq $8, %rsp
-    movq %rdi, %rbx
-    movq %rsi, %r13
-    movq $0x1234, %r12
-    movq $35, %rdi
-    callq *%rbx
-    cmpq $42, %rax
-    sete %al
-    cmpq $0x1234, %r12
-    sete %cl
-    andb %cl, %al
-    movzbl %al, %eax
-    addq $8, %rsp
-    popq %r13
-    popq %r12
-    popq %rbx
-    popq %rbp
-    retq
 #endif

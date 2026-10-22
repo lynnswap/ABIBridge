@@ -1,5 +1,6 @@
 // The Swift declaration supplies a compiler-managed caller-isolated async frame.
 // Its descriptor reserves the header, operation, callee, and saved executor.
+#include "SupportedArchitectures.h"
 .section __TEXT,__const
 .globl _ABIInvokeSwiftAsyncTu
 .p2align 3
@@ -16,7 +17,6 @@ _ABIInvokeSwiftAsyncTu:
 .p2align 2
 _ABIInvokeSwiftAsync:
 .cfi_startproc
-#if defined(__aarch64__)
 #if __has_feature(ptrauth_calls)
     pacibsp
 #endif
@@ -39,24 +39,24 @@ _ABIInvokeSwiftAsync:
     // swifttailcc's target removes its incoming stack arguments.
     ldr x10, [x9, #216]
     mov x11, x10
-Lasync_probe_arm:
+Lasync_probe:
     cmp x11, #4096
-    b.lo Lasync_stack_arm
+    b.lo Lasync_stack
     sub sp, sp, #4096
     str xzr, [sp]
     sub x11, x11, #4096
-    b Lasync_probe_arm
-Lasync_stack_arm:
+    b Lasync_probe
+Lasync_stack:
     sub sp, sp, x11
     ldr x11, [x9, #208]
     mov x12, sp
-    cbz x10, Lasync_args_arm
-Lasync_copy_arm:
+    cbz x10, Lasync_args
+Lasync_copy:
     ldr x13, [x11], #8
     str x13, [x12], #8
     subs x10, x10, #8
-    b.ne Lasync_copy_arm
-Lasync_args_arm:
+    b.ne Lasync_copy
+Lasync_args:
     ldr x16, [x9, #232]
     ldr x17, [x9, #248]
     ldr x22, [x9, #240]
@@ -74,58 +74,6 @@ Lasync_args_arm:
 #else
     br x16
 #endif
-#elif defined(__x86_64__)
-    pushq %rbp
-    .cfi_def_cfa_offset 16
-    .cfi_offset %rbp, -16
-    movq %rsp, %rbp
-    .cfi_def_cfa_register %rbp
-    movq %rsi, %rcx
-    movq %rdi, %r8
-    movq %rdx, %rdi
-    movq %r14, %rsi
-    movq %r8, %rdx
-    callq _ABIPrepareSwiftAsyncEntry
-    movq %rax, %r10
-    popq %rbp
-    movq (%rsp), %rax
-    movq 216(%r10), %rcx
-    movq %rcx, %r11
-    andq $-16, %r11
-Lasync_probe_x86:
-    cmpq $4096, %r11
-    jb Lasync_stack_x86
-    subq $4096, %rsp
-    movb $0, (%rsp)
-    subq $4096, %r11
-    jmp Lasync_probe_x86
-Lasync_stack_x86:
-    subq %r11, %rsp
-    movq %rax, (%rsp)
-    leaq 8(%rsp), %rdi
-    movq 208(%r10), %rsi
-    rep movsb
-    movq 64(%r10), %xmm0
-    movq 72(%r10), %xmm1
-    movq 80(%r10), %xmm2
-    movq 88(%r10), %xmm3
-    movq 96(%r10), %xmm4
-    movq 104(%r10), %xmm5
-    movq 112(%r10), %xmm6
-    movq 120(%r10), %xmm7
-    movq 240(%r10), %r14
-    movq 200(%r10), %r13
-    movq 232(%r10), %r11
-    movq 0(%r10), %rdi
-    movq 8(%r10), %rsi
-    movq 16(%r10), %rdx
-    movq 24(%r10), %rcx
-    movq 32(%r10), %r8
-    movq 40(%r10), %r9
-    jmpq *%r11
-#else
-#error Unsupported Swift async architecture
-#endif
 .cfi_endproc
 
 .globl _ABISwiftAsyncResume
@@ -133,7 +81,6 @@ Lasync_stack_x86:
 .p2align 2
 _ABISwiftAsyncResume:
 .cfi_startproc
-#if defined(__aarch64__)
 #if __has_feature(ptrauth_calls)
     pacibsp
 #endif
@@ -161,31 +108,4 @@ _ABISwiftAsyncResume:
     autibsp
 #endif
     b _swift_task_switch
-#elif defined(__x86_64__)
-    pushq %rbp
-    .cfi_def_cfa_offset 16
-    .cfi_offset %rbp, -16
-    movq %rsp, %rbp
-    .cfi_def_cfa_register %rbp
-    subq $240, %rsp
-    movq %rdi, 128(%rsp)
-    movq %rsi, 136(%rsp)
-    movq %rdx, 144(%rsp)
-    movq %rcx, 152(%rsp)
-    movq %xmm0, 160(%rsp)
-    movq %xmm1, 168(%rsp)
-    movq %xmm2, 176(%rsp)
-    movq %xmm3, 184(%rsp)
-    movq %r13, 224(%rsp)
-    movq %r14, %rdi
-    movq %rsp, %rsi
-    callq _ABICompleteSwiftAsync
-    movq %rax, %r10
-    movq 240(%r10), %r14
-    movq 0(%r10), %rdi
-    movq 8(%r10), %rsi
-    movq 16(%r10), %rdx
-    leave
-    jmp _swift_task_switch
-#endif
 .cfi_endproc

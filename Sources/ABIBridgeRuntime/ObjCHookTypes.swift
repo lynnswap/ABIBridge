@@ -55,14 +55,8 @@ package func objcValueType(_ type: ObjCType) throws -> OpaquePointer {
     case .float: kind = ABIValueFloat
     case .double: kind = ABIValueDouble
     case .longDouble:
-        #if arch(x86_64)
-        throw RuntimeResolutionError.unsupportedDeclaration(
-            "x87 long double encodings require a native adapter."
-        )
-        #else
         // Apple's ARM ABI gives long double the size and representation of double.
         kind = ABIValueDouble
-        #endif
     case .pointer, .charPtr, .functionPointer, .object, .class, .selector, .block:
         kind = ABIValuePointer
     case .array(let element, let count):

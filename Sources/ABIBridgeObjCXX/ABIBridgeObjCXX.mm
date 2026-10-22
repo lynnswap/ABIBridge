@@ -72,11 +72,7 @@ bool retainImplementationImage(
 }
 
 bool isForwardingImplementation(IMP implementation) {
-    if (implementation == reinterpret_cast<IMP>(_objc_msgForward)) return true;
-#if defined(__x86_64__)
-    if (implementation == reinterpret_cast<IMP>(_objc_msgForward_stret)) return true;
-#endif
-    return false;
+    return implementation == reinterpret_cast<IMP>(_objc_msgForward);
 }
 
 void fail(NSError **error, int code, NSString *message) {

@@ -356,10 +356,6 @@ inline void checkPublicObjCInvocation() {
         const std::string aggregateEncoding = std::string(@encode(ForwardedAggregate)) + "@:";
         checkForwardingImplementation(forwarded, reinterpret_cast<IMP>(_objc_msgForward),
                                       sel_registerName("ordinaryForwardingIMP"), aggregateEncoding.c_str());
-#if defined(__x86_64__)
-        checkForwardingImplementation(forwarded, reinterpret_cast<IMP>(_objc_msgForward_stret),
-                                      sel_registerName("aggregateForwardingIMP"), aggregateEncoding.c_str());
-#endif
 #if !__has_feature(objc_arc)
         [forwarded release];
 #endif

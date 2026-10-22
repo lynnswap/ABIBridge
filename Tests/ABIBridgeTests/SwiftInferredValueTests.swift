@@ -656,14 +656,9 @@ struct SwiftInferredValueTests {
             public var count: Int64 { Int64(name.count) + n }
         }
         """.write(to: baseSource, atomically: true, encoding: .utf8)
-        #if arch(arm64)
-        let architecture = "arm64"
-        #else
-        let architecture = "x86_64"
-        #endif
         try FixtureLibrary.run([
             "--sdk", "macosx", "swiftc", "-module-name", base,
-            "-target", "\(architecture)-apple-macosx15.4", "-parse-as-library", "-swift-version",
+            "-target", "arm64-apple-macosx15.4", "-parse-as-library", "-swift-version",
             "6", "-enable-library-evolution", "-emit-library", "-static", "-emit-module",
             "-emit-module-path", directory.appendingPathComponent(base + ".swiftmodule").path,
             baseSource.path, "-o", directory.appendingPathComponent("lib\(base).a").path,

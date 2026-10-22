@@ -2,6 +2,12 @@
 
 Distinguish the architecture of an inspected image from the ABI used by the calling process.
 
+## Supported architectures
+
+ABIBridge builds only for arm64, arm64e, and arm64_32. Its Swift call and callback trampolines implement the AArch64 Swift calling convention, so a build for x86_64 fails at compile time instead of producing a library without them.
+
+Release builds for macOS and Simulator destinations include x86_64 by default. Xcode applies an app target's `ARCHS` or `EXCLUDED_ARCHS` setting only to that target, not to the Swift package targets it depends on, so set the architecture for the whole build instead, for example with `xcodebuild ARCHS=arm64`. A Debug build for a specific run destination builds only that destination's architecture.
+
 ## Inspect metadata independently of execution
 
 MachOKit can recognize arm64e.x1 metadata without executing that architecture. Finding a symbol in an image or cache does not establish that its address can be invoked by the current process. Preserve the complete CPU subtype, including capability bits, when recording an image's identity.

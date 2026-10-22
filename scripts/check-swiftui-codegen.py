@@ -17,7 +17,7 @@ def main():
     root = Path(__file__).resolve().parent.parent
     output = root / '.build/swiftui-codegen'
     reports = []
-    for target, sdk_name, word in [('arm64-apple-macos15.4', 'macosx', 'i64'), ('x86_64-apple-macos15.4', 'macosx', 'i64'),
+    for target, sdk_name, word in [('arm64-apple-macos15.4', 'macosx', 'i64'),
                                    ('arm64e-apple-ios18.4', 'iphoneos', 'i64'), ('arm64_32-apple-watchos11.4', 'watchos', 'i32')]:
         directory = output / target
         directory.mkdir(parents=True, exist_ok=True)
