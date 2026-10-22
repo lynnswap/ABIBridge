@@ -17,6 +17,9 @@ new compiler fails CI instead of mislowering values:
   addressable-for-dependencies bit and makes its struct pass by address,
   while a class-bound one does neither, and the property's descriptor and
   opaque type descriptor name its opaque type;
+- an unowned reference to a type parameter passes its generic struct
+  directly when the argument is a native Swift class, and by address when it
+  is an Objective-C class;
 - on arm64e, a closure parameter that is passed indirectly hashes as
   `-indirect`, and generic arguments do not change a nominal type's hash;
 - on arm64e, an element of a closure's tuple result hashes as `-indirect`
@@ -32,7 +35,9 @@ import re
 import subprocess
 
 SOURCE = """
+import Foundation
 public final class Box {}
+public final class BridgedBox: NSObject {}
 @frozen public struct FrozenPoint { public var x: Double; public var y: Double }
 public struct OpenPoint { public var x: Double; public var y: Double }
 @frozen public struct FrozenLabel { public var text: String; public var n: Int64 }
@@ -52,6 +57,9 @@ public struct OwnedBox { public var shape: some OwnedShape = ShapeReference(); p
 
 @inline(never) public func takeOpaqueBox(_ box: OpaqueBox) {}
 @inline(never) public func takeOwnedBox(_ box: OwnedBox) {}
+@frozen public struct UnownedPair<T: AnyObject> { public unowned var t: T; public var x: Int64 }
+@inline(never) public func takeNativeUnownedPair(_ pair: UnownedPair<Box>) {}
+@inline(never) public func takeBridgedUnownedPair(_ pair: UnownedPair<BridgedBox>) {}
 
 @inline(never) public func applyFrozen(_ f: (FrozenPoint) -> Double) -> Double {
     f(FrozenPoint(x: 1, y: 2))
@@ -175,6 +183,10 @@ def check(ir, target, evolution):
                 f"an opaque field that is not class-bound must pass its struct by address: {boxes}")
         require(boxes["takeOwnedBox"] != ["ptr"],
                 f"a class-bound opaque field must leave its struct loadable: {boxes}")
+    pairs = {name: parameter_types(ir, target, name)
+             for name in ["takeNativeUnownedPair", "takeBridgedUnownedPair"]}
+    require(pairs["takeNativeUnownedPair"] == ["ptr", "i64"] and pairs["takeBridgedUnownedPair"] == ["ptr"],
+            f"an unowned reference must be loadable exactly when its referent is native: {pairs}")
 
     cases = {name: re.search(r'^@"' + re.escape(mangled(name)) + r'O[^"]*WC" =', ir, re.M) is not None
              for name in ["FrozenShape", "OpenShape"]}

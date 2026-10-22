@@ -33,8 +33,10 @@ enum SwiftValuePosition: Sendable, Equatable {
 /// and an inference that the evidence does not decide fails:
 ///
 /// - Runtime singleton metadata initialization stores a resilient type from
-///   another module; a value that is not bitwise-takable stores a weak or
-///   non-native unowned reference. Both are address-only.
+///   another module, and static metadata that is not bitwise-takable stores a
+///   weak or non-native unowned reference. Both are address-only. A generic
+///   instance's value witnesses describe an unowned reference to a type
+///   parameter as non-native, so its fields decide from their referents.
 /// - The value-witness addressable-for-dependencies bit is set for a resilient
 ///   type, for an opaque type (`some P`) that is not class-bound, and for any
 ///   value that stores either. Static metadata without it certifies that
@@ -194,9 +196,11 @@ enum SwiftInferredValue {
             )
         }
         // Runtime initialization lays out a resilient type from another module.
-        if info.metadataInitialization == 1 || flags & nonBitwiseTakable != 0 {
-            return .addressOnly
-        }
+        if info.metadataInitialization == 1 { return .addressOnly }
+        // Static value witnesses come from the concrete fields. A generic
+        // instance's come from its pattern, which treats an unowned reference
+        // to a type parameter as non-native, unlike a concrete signature.
+        if !info.isGeneric, flags & nonBitwiseTakable != 0 { return .addressOnly }
         let fields = try readFields(of: metadata, info: info)
         var parts: [CValueType?] = []
         var undecidedField: String?
@@ -309,9 +313,58 @@ enum SwiftInferredValue {
     private static func part(of field: Field) throws(InferenceFailure) -> Part {
         guard let type = field.type else { return try .loadable(pointer()) }
         if field.reference == ABISwiftReferenceStorageWeak { return .addressOnly }
-        // Unowned references keep their referent's storage; a non-native one is
-        // not bitwise-takable, which already made the parent address-only.
-        return try part(of: type, genericDependent: field.genericDependent)
+        let part = try part(of: type, genericDependent: field.genericDependent)
+        guard field.reference == ABISwiftReferenceStorageUnowned else { return part }
+        // An unowned reference keeps its referent's storage when the referent
+        // uses native Swift reference counting; otherwise it is address-only.
+        // https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/AST/Type.cpp
+        switch usesNativeReferenceCounting(type) {
+        case true?: return part
+        case false?: return .addressOnly
+        case nil:
+            guard case .loadable(let layout) = part else { return part }
+            return .undecided(
+                layout,
+                missing:
+                    "ABIBridge cannot read whether the referent of its unowned field \(field.description) uses native Swift reference counting"
+            )
+        }
+    }
+
+    /// Whether a class reference, a class-bound existential, or an Optional
+    /// of either uses native Swift reference counting. Objective-C classes,
+    /// and existentials without a superclass, use unknown reference counting.
+    /// Nil for metadata that shows neither.
+    /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/ABI/Metadata.h
+    private static func usesNativeReferenceCounting(_ type: Any.Type) -> Bool? {
+        if let optional = type as? any NativeOptionalValue.Type {
+            return usesNativeReferenceCounting(optional.wrappedType)
+        }
+        let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
+        let word = MemoryLayout<UInt>.size
+        switch metadata.load(as: UInt.self) {
+        // Foreign and Objective-C class wrappers.
+        case 0x203, 0x305:
+            return false
+        case RuntimeMetadataKind.existential.rawValue:
+            let flags = metadata.load(fromByteOffset: word, as: UInt32.self)
+            // The superclass follows the protocol list.
+            guard flags & 0x4000_0000 != 0 else { return false }
+            let protocols = Int(metadata.load(fromByteOffset: word + 4, as: UInt32.self))
+            return usesNativeReferenceCounting(
+                metadata.load(fromByteOffset: 2 * word + protocols * word, as: Any.Type.self)
+            )
+        case let kind where kind > 0x7ff:
+            // Class metadata starts with its isa. Swift class metadata sets
+            // bit 1 of its data word on Apple platforms, and its flags
+            // record native reference counting (UsesSwiftRefcounting).
+            guard metadata.load(fromByteOffset: 4 * word, as: UInt.self) & 2 != 0 else {
+                return false
+            }
+            return metadata.load(fromByteOffset: 5 * word, as: UInt32.self) & 2 != 0
+        default:
+            return nil
+        }
     }
 
     private static func part(

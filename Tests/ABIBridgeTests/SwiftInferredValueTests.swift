@@ -524,6 +524,53 @@ struct SwiftInferredValueTests {
         }
     }
 
+    /// A generic instance's value witnesses treat an unowned reference to a
+    /// type parameter as non-native, but a concrete signature stores one to
+    /// a native Swift class as a loadable pointer, also inside another value.
+    @Test func unownedReferencesToTypeParametersFollowTheirReferents() async throws {
+        let (library, module) = try provider(
+            """
+            import Foundation
+            public final class Native { public let n: Int64; public init(_ n: Int64) { self.n = n } }
+            public final class Bridged: NSObject {
+                public let n: Int64
+                public init(_ n: Int64) { self.n = n }
+            }
+            // Unowned references need their referents alive.
+            nonisolated(unsafe) public var referents: [AnyObject] = []
+            public struct Holder<T: AnyObject> {
+                public unowned var t: T
+                public var x: Int64
+                public init(t: T, x: Int64) { referents.append(t); self.t = t; self.x = x }
+            }
+            public struct Outer {
+                public var h: Holder<Native>
+                public var f: Float
+                public init(h: Holder<Native>, f: Float) { self.h = h; self.f = f }
+            }
+            @inline(never) public func makeNativeHolder() -> Holder<Native> { Holder(t: Native(5), x: 3) }
+            @inline(never) public func describeNativeHolder(_ h: Holder<Native>) -> String { "\\(h.t.n),\\(h.x)" }
+            @inline(never) public func makeBridgedHolder() -> Holder<Bridged> { Holder(t: Bridged(6), x: 4) }
+            @inline(never) public func describeBridgedHolder(_ h: Holder<Bridged>) -> String { "\\(h.t.n),\\(h.x)" }
+            @inline(never) public func makeOuter() -> Outer { Outer(h: Holder(t: Native(8), x: 2), f: 1.5) }
+            @inline(never) public func describeOuter(_ o: Outer) -> String { "\\(o.h.t.n),\\(o.h.x),\\(o.f)" }
+            """
+        )
+        defer { library.cleanup() }
+        for (name, expected) in [
+            ("NativeHolder", "5,3"), ("BridgedHolder", "6,4"), ("Outer", "8,2,1.5"),
+        ] {
+            #expect(
+                try await describeMade(
+                    "\(module).make\(name)()",
+                    "\(module).describe\(name)(_:)",
+                    in: library
+                ) == expected,
+                "\(name)"
+            )
+        }
+    }
+
     /// Where neither the addressable bit nor the exports rule out a stored
     /// property of an opaque type, the value is undecided. Without library
     /// evolution, a bit that no field explains is such a property's.
