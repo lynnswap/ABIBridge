@@ -5,7 +5,7 @@ Resolve mangled Swift and C++ symbols by source-level name, and call supported n
 ## Requirements
 
 - iOS 18.4+, macOS 15.4+, visionOS 2.4+, watchOS 11.4+, or tvOS 18.4+
-- arm64, arm64e, or arm64_32. A build that includes x86_64, such as a default Release build for macOS or a Simulator, fails to compile; see [architectures](https://lynnswap.github.io/ABIBridge/documentation/abibridge/architectures).
+- arm64, arm64e, or arm64_32. Linking ABIBridge into an x86_64 binary fails; see [architectures](https://lynnswap.github.io/ABIBridge/documentation/abibridge/architectures).
 - Xcode on macOS with Swift 6.3+
 
 In Xcode, add `https://github.com/lynnswap/ABIBridge` as a package dependency and select the `ABIBridge` product. Add `ABIBridgeSwiftUI` if you need to display native SwiftUI views.

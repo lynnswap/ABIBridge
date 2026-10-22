@@ -1,6 +1,6 @@
 // Swift's context/error registers and four-register results differ from C.
 // Offsets correspond to the statically checked CallFrame in SwiftInvocation.cpp.
-#include "SupportedArchitectures.h"
+#if defined(__aarch64__)
 .text
 .globl _ABIInvokeSwiftAssembly
 .private_extern _ABIInvokeSwiftAssembly
@@ -75,3 +75,4 @@ Lswift_args:
     ret
 #endif
 .cfi_endproc
+#endif

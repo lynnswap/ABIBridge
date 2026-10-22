@@ -1,6 +1,6 @@
 // The Swift declaration supplies a compiler-managed caller-isolated async frame.
 // Its descriptor reserves the header, operation, callee, and saved executor.
-#include "SupportedArchitectures.h"
+#if defined(__aarch64__)
 .section __TEXT,__const
 .globl _ABIInvokeSwiftAsyncTu
 .p2align 3
@@ -109,3 +109,4 @@ _ABISwiftAsyncResume:
 #endif
     b _swift_task_switch
 .cfi_endproc
+#endif

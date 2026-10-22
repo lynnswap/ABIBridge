@@ -1,6 +1,5 @@
 #include <ABIBridge/SwiftInvocation.h>
 #include "NativeValueType.hpp"
-#include "SupportedArchitectures.h"
 #include "SwiftCallbackCode.hpp"
 #include <ABIBridge/SwiftCallbacks.h>
 #include <mutex>

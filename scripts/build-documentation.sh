@@ -10,7 +10,7 @@ trap 'find "$task_derived" -delete' EXIT
 cd "$task_root"
 xcodebuild docbuild \
   -scheme ABIBridgeSwiftUI \
-  -destination 'platform=macOS,arch=arm64' \
+  -destination 'generic/platform=macOS' \
   -derivedDataPath "$task_derived"
 
 # Validate this package strictly without treating dependency documentation

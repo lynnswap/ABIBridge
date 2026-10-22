@@ -1,7 +1,7 @@
 // Incoming register storage matches CallFrame in SwiftInvocation.cpp. The
 // trampoline only consumes caller-scratch registers, preserving Swift self,
 // indirect results, argument registers and the incoming stack.
-#include "SupportedArchitectures.h"
+#if defined(__aarch64__)
 #include <mach/machine/vm_param.h>
 .text
 .p2align PAGE_MAX_SHIFT
@@ -70,3 +70,4 @@ _ABISwiftCallbackAssembly:
     ret
 #endif
 .cfi_endproc
+#endif

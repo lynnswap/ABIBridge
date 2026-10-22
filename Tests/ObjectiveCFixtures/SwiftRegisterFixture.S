@@ -1,4 +1,5 @@
 // A nonthrowing Swift entry must preserve a live caller error register.
+#if defined(__aarch64__)
 .text
 .globl _ABIProbeSwiftErrorRegister
 .p2align 2
@@ -32,4 +33,5 @@ _ABIProbeSwiftErrorRegister:
     retab
 #else
     ret
+#endif
 #endif

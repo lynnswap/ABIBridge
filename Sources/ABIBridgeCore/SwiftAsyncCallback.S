@@ -1,4 +1,4 @@
-#include "SupportedArchitectures.h"
+#if defined(__aarch64__)
 .text
 .globl _ABISwiftAsyncCallbackAssembly
 .private_extern _ABISwiftAsyncCallbackAssembly
@@ -118,3 +118,4 @@ _ABISwiftAsyncCallbackFinish:
     br x16
 #endif
 .cfi_endproc
+#endif
